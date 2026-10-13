@@ -824,6 +824,16 @@ def save_pending_apply(
     return path
 
 
+def _unique_json_members(pairs):
+    """Recovery journals must not silently discard duplicate object members."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate member in pending room apply: {key!r}")
+        result[key] = value
+    return result
+
+
 def load_pending_apply(
     config: MempalaceConfig, wing: str
 ) -> Optional[tuple[dict, int, Optional[dict], Optional[dict]]]:
@@ -839,7 +849,7 @@ def load_pending_apply(
     if not os.path.isfile(path):
         return None
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json.load(f, object_pairs_hook=_unique_json_members)
     targets = {}
     for row in data.get("closets") or []:
         if isinstance(row, list) and len(row) == 3 and all(isinstance(x, str) for x in row):
@@ -870,8 +880,6 @@ def load_pending_apply(
         or not all(isinstance(x, str) for x in entry)
         for cid, entry in moves.items()
     ):
-        raise ValueError("pending room apply has invalid closet moves")
-    if len(moves) != len(set(moves)):
         raise ValueError("pending room apply has invalid closet moves")
     if any(targets.get((source, old)) != target for source, old, target in moves.values()):
         raise ValueError("pending closet moves conflict with room apply targets")

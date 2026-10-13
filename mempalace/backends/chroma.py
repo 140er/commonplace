@@ -2294,12 +2294,8 @@ def sqlite_list_id_metadata(
         conn = open_palace_reader(db_path)
         try:
             conn.execute("PRAGMA busy_timeout = 3000")
-            if (
-                conn.execute(
-                    "SELECT 1 FROM collections WHERE name = ?", (collection_name,)
-                ).fetchone()
-                is None
-            ):
+            conn.execute("BEGIN")
+            if _sqlite_ready_metadata_segment(conn, collection_name) is None:
                 return None
             value_columns = _metadata_value_columns(conn)
             if not value_columns:
@@ -2328,6 +2324,7 @@ def sqlite_list_id_metadata(
                 {" ".join(joins)}
                 LEFT JOIN embedding_metadata m
                     ON m.id = e.id AND m.key != 'chroma:document'
+                        AND substr(m.key, 1, 7) != 'chroma:'
                 WHERE c.name = ?
                 ORDER BY e.id
                 """,
@@ -3189,6 +3186,8 @@ class ChromaCollection(BaseCollection):
     directly without going through ``ChromaBackend``.
     """
 
+    upsert_merges_metadata = True
+
     def __init__(self, collection, palace_path: Optional[str] = None, backend=None):
         self._collection = collection
         self._palace_path = palace_path
@@ -3311,6 +3310,22 @@ class ChromaCollection(BaseCollection):
             kwargs["embeddings"] = embeddings
         with self._write_lock():
             self._collection.add(**kwargs)
+
+    def _upsert_with_metadata_guard(self, *, expected, documents, ids, metadatas, embeddings):
+        """Reject metadata drift between embedding and publication.
+
+        The embedding runs before the backend lock (HTTP may yield its request
+        lock there). Cooperating MemPalace writers cannot change metadata
+        between this comparison and the nested upsert.
+        """
+        with self._write_lock():
+            result = self.get(ids=ids, include=["metadatas"])
+            current = dict(zip(result.ids, result.metadatas))
+            if current != expected:
+                raise ValueError("Metadata changed while embedding; retry the upsert")
+            return self.upsert(
+                documents=documents, ids=ids, metadatas=metadatas, embeddings=embeddings
+            )
 
     def upsert(self, *, documents, ids, metadatas=None, embeddings=None):
         if getattr(self, "_require_embeddings", False) and embeddings is None:
@@ -3530,6 +3545,11 @@ class ChromaCollection(BaseCollection):
         def rows():
             conn = open_palace_reader(db_path)
             try:
+                conn.execute("BEGIN")
+                if _sqlite_ready_metadata_segment(conn, name) is None:
+                    raise sqlite3.OperationalError(
+                        "metadata recovery pending; use collection reader"
+                    )
                 yield from _sqlite_iter_metadata(conn, name, keys, require_key, equals)
             finally:
                 conn.close()

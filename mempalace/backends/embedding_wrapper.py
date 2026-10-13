@@ -171,8 +171,41 @@ class EmbeddingCollection(BaseCollection):
         ids = _as_list(ids)
         if metadatas is not None:
             metadatas = initialize_last_modified_metadata(_as_list(metadatas))
+        if metadatas is not None and len(metadatas) != len(ids):
+            raise ValueError("metadatas length does not match ids length")
+        if len(documents) != len(ids):
+            raise ValueError("documents length does not match ids length")
+        expected = None
         if embeddings is None:
-            embeddings = _embed_texts(documents, metadatas=metadatas)
+            embedder = _get_document_embedder()
+            effective = metadatas
+            if getattr(
+                self._inner, "upsert_merges_metadata", False
+            ) is True and _supports_metadata_aware_documents(embedder):
+                existing = self._inner.get(ids=ids, include=["metadatas"])
+                old = dict(zip(existing.ids, existing.metadatas))
+                expected = old
+                effective = []
+                for index, record_id in enumerate(ids):
+                    metadata = dict(old.get(record_id) or {})
+                    if _is_native_media(metadata):
+                        raise ValueError(
+                            "native media upsert requires explicit embeddings or re-ingest"
+                        )
+                    metadata.update((metadatas[index] or {}) if metadatas is not None else {})
+                    effective.append(
+                        {key: value for key, value in metadata.items() if value is not None}
+                    )
+            embeddings = _embed_texts(documents, metadatas=effective, embedder=embedder)
+        guarded = getattr(self._inner, "_upsert_with_metadata_guard", None)
+        if expected is not None and callable(guarded):
+            return guarded(
+                expected=expected,
+                documents=documents,
+                ids=ids,
+                metadatas=metadatas,
+                embeddings=embeddings,
+            )
         return self._inner.upsert(
             documents=documents,
             ids=ids,

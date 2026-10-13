@@ -181,6 +181,29 @@ class LinkIndex:
         self._buckets.setdefault(self._bucket(ends), []).append(ends)
 
 
+def connection_index(
+    tunnels: list, extra_entities: Iterable[str] = (), *, seed: bool = True
+) -> LinkIndex:
+    """Build spelling context before deciding whether any endpoint is an alias."""
+    spellings = list(extra_entities)
+    endpoints = []
+    for tunnel in tunnels:
+        if not isinstance(tunnel, dict):
+            continue
+        ends = tunnel_endpoints(tunnel)
+        if ends:
+            endpoints.append(ends)
+            for _wing, room in ends:
+                name = _entity_room_name(room)
+                if name is not None:
+                    spellings.append(name)
+    index = LinkIndex(ambiguous_entity_spellings(spellings))
+    if seed:
+        for ends in endpoints:
+            index.add(ends)
+    return index
+
+
 def propose_tunnels(
     hallways: list,
     existing_wings: Iterable[str],
@@ -200,15 +223,10 @@ def propose_tunnels(
     from .palace_graph import ENTITY_TUNNEL_MIN_COUNT, entity_tunnel_candidates
 
     wings = {_norm_wing(str(w)) for w in existing_wings}
-    known = LinkIndex()
-    for t in existing_tunnels or []:
-        if isinstance(t, dict):
-            ends = tunnel_endpoints(t)
-            if ends:
-                known.add(ends)
     candidates = entity_tunnel_candidates(
         hallways, min_count=ENTITY_TUNNEL_MIN_COUNT if min_count is None else min_count
     )
+    known = connection_index(existing_tunnels or [], candidates)
     rows = []
     for entity, per_wing in candidates.items():
         # ``per_wing`` is keyed by normalized wing; membership must be too, or
@@ -312,12 +330,7 @@ def apply_proposal(plan: dict, config: Optional[MempalaceConfig] = None) -> int:
     """
     from .palace_graph import _load_tunnels, create_tunnel
 
-    known = LinkIndex()
-    for t in _load_tunnels(config):
-        if isinstance(t, dict):
-            ends = tunnel_endpoints(t)
-            if ends:
-                known.add(ends)
+    known = connection_index(_load_tunnels(config), (row["entity"] for row in plan["tunnels"]))
     created = 0
     for row in plan["tunnels"]:
         room = f"entity:{row['entity']}"

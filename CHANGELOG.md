@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Bug Fixes
 
+- Metadata listing and streaming wait for the collection's queued Chroma changes
+  to be recovered before using SQLite shortcuts, and check readiness in the same
+  read snapshot as the result. Public listing also filters reserved `chroma:`
+  metadata consistently with the SDK.
+- Tunnel proposal, application and auditing consider all endpoint spellings
+  before matching aliases, preserving distinct qualified connections when a
+  bare name is ambiguous.
+- Room recovery journals reject duplicate JSON object members before applying
+  any changes, preserving the original journal for inspection.
+- Metadata-aware upserts embed the fields Chroma actually retains. A cooperating
+  metadata change during embedding refuses the upsert before replacing its
+  document or vector. Existing native-media records require explicit vectors or
+  re-ingestion, and malformed batch lengths are rejected before embedding.
+- HTTP tool calls with non-string names return the normal JSON-RPC validation
+  error instead of failing during dispatch.
+
 - **`mempalace mine --mode convos --include-subagents` keeps the flag through
   a running hub or the daemon.** Both routes dropped it, so the forwarded mine
   skipped `subagents/` folders as if the flag had not been passed. The
