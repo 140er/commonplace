@@ -440,7 +440,7 @@ def _analyze_tunnels(
         # normalized, spellings of one file match, two files that only share
         # a basename do not.
         ends = tunnel_endpoints(t)
-        if ends is not None:
+        if ends is not None and not bad:
             if seen_pairs.contains(ends):
                 bad = True
                 duplicates += 1

@@ -851,9 +851,16 @@ def load_pending_apply(
     with open(path, encoding="utf-8") as f:
         data = json.load(f, object_pairs_hook=_unique_json_members)
     targets = {}
-    for row in data.get("closets") or []:
-        if isinstance(row, list) and len(row) == 3 and all(isinstance(x, str) for x in row):
-            targets[(row[0], row[1])] = row[2]
+    rows = data.get("closets", [])
+    if not isinstance(rows, list):
+        raise ValueError("pending room apply has invalid closets")
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 3 or not all(isinstance(x, str) for x in row):
+            raise ValueError("pending room apply has invalid closet row")
+        key = (row[0], row[1])
+        if key in targets:
+            raise ValueError("pending room apply has duplicate closet target")
+        targets[key] = row[2]
     inputs = data.get("inputs")
     if "closet_moves" not in data:
         if any(

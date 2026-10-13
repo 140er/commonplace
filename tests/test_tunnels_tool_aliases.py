@@ -1,4 +1,4 @@
-"""Independent acceptance probes for PR2654; no product edits or model calls.
+"""Regression cases for tunnel aliases, proposal application and audit/prune agreement.
 
 Contract: explicit different source extensions and incompatible qualified paths
 are distinct. A short alias is insufficient evidence to suppress either host.

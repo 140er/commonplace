@@ -49,6 +49,10 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 
+class MetadataRecoveryPending(sqlite3.OperationalError):
+    """The persisted metadata projection needs the normal Chroma recovery path."""
+
+
 # chromadb persists EmbeddingGemma 2's EF config on the collection and, on
 # every later open, tries to rebuild it from its own registry, which does not
 # know "embeddinggemma2": it warns "Could not reconstruct embedding function
@@ -2164,7 +2168,7 @@ def _sqlite_iter_metadata(
     else:
         sql = f"""
             SELECT ids.id, {columns} FROM ({scope}) ids
-            LEFT JOIN embedding_metadata m ON m.id = ids.id AND m.key NOT LIKE 'chroma:%'
+            LEFT JOIN embedding_metadata m ON m.id = ids.id AND substr(m.key, 1, 7) != 'chroma:'
             ORDER BY ids.id
         """
         cursor = conn.execute(sql, params)
@@ -2267,10 +2271,40 @@ def _equality_filters(where: Optional[dict]) -> Optional[dict]:
     return filters
 
 
+@contextlib.contextmanager
+def sqlite_metadata_snapshot(palace_path: str, collection_name: str):
+    """A recovered metadata snapshot, or None when callers must use Chroma.
+
+    Keep this context open through page selection and document hydration. It
+    reads no documents itself and never takes a backend write lock.
+    """
+    conn = None
+    db_path = os.path.join(palace_path, "chroma.sqlite3")
+    try:
+        if os.path.isfile(db_path):
+            conn = open_palace_reader(db_path)
+            conn.execute("PRAGMA busy_timeout = 3000")
+            conn.execute("BEGIN")
+            if _sqlite_ready_metadata_segment(conn, collection_name) is None:
+                conn.close()
+                conn = None
+    except sqlite3.Error:
+        if conn is not None:
+            conn.close()
+        conn = None
+    try:
+        yield conn
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def sqlite_list_id_metadata(
     palace_path: str,
     collection_name: str,
     where: Optional[dict] = None,
+    *,
+    _connection=None,
 ) -> Optional[tuple[list[str], list[dict]]]:
     """All matching drawer ids + metadata from sqlite, without opening HNSW.
 
@@ -2290,12 +2324,14 @@ def sqlite_list_id_metadata(
     filters = _equality_filters(where)
     if filters is None:
         return None
+    reader = (
+        contextlib.nullcontext(_connection)
+        if _connection is not None
+        else sqlite_metadata_snapshot(palace_path, collection_name)
+    )
     try:
-        conn = open_palace_reader(db_path)
-        try:
-            conn.execute("PRAGMA busy_timeout = 3000")
-            conn.execute("BEGIN")
-            if _sqlite_ready_metadata_segment(conn, collection_name) is None:
+        with reader as conn:
+            if conn is None:
                 return None
             value_columns = _metadata_value_columns(conn)
             if not value_columns:
@@ -2323,15 +2359,12 @@ def sqlite_list_id_metadata(
                 JOIN collections c ON s.collection = c.id
                 {" ".join(joins)}
                 LEFT JOIN embedding_metadata m
-                    ON m.id = e.id AND m.key != 'chroma:document'
-                        AND substr(m.key, 1, 7) != 'chroma:'
+                    ON m.id = e.id AND substr(m.key, 1, 7) != 'chroma:'
                 WHERE c.name = ?
                 ORDER BY e.id
                 """,
                 params,
             ).fetchall()
-        finally:
-            conn.close()
     except sqlite3.Error:
         return None
 
@@ -2380,6 +2413,8 @@ def sqlite_documents_for_ids(
     palace_path: str,
     collection_name: str,
     ids: list,
+    *,
+    _connection=None,
 ) -> Optional[dict]:
     """``{drawer_id: document}`` for ``ids`` only, straight from sqlite.
 
@@ -2400,10 +2435,15 @@ def sqlite_documents_for_ids(
         return None
     wanted = [str(i) for i in ids]
     docs: dict[str, str] = {}
+    reader = (
+        contextlib.nullcontext(_connection)
+        if _connection is not None
+        else sqlite_metadata_snapshot(palace_path, collection_name)
+    )
     try:
-        conn = open_palace_reader(db_path)
-        try:
-            conn.execute("PRAGMA busy_timeout = 3000")
+        with reader as conn:
+            if conn is None:
+                return None
             segments = [
                 row[0]
                 for row in conn.execute(
@@ -2442,8 +2482,6 @@ def sqlite_documents_for_ids(
                     internal,
                 ):
                     docs[public_by_internal[int(internal_id)]] = str(value or "")
-        finally:
-            conn.close()
     except sqlite3.Error:
         return None
     return docs
@@ -3316,18 +3354,19 @@ class ChromaCollection(BaseCollection):
 
         The embedding runs before the backend lock (HTTP may yield its request
         lock there). Cooperating MemPalace writers cannot change metadata
-        between this comparison and the nested upsert.
+        between this comparison and publication.
         """
         with self._write_lock():
             result = self.get(ids=ids, include=["metadatas"])
             current = dict(zip(result.ids, result.metadatas))
             if current != expected:
                 raise ValueError("Metadata changed while embedding; retry the upsert")
-            return self.upsert(
+            kwargs = self._upsert_kwargs(
                 documents=documents, ids=ids, metadatas=metadatas, embeddings=embeddings
             )
+            return self._collection.upsert(**kwargs)
 
-    def upsert(self, *, documents, ids, metadatas=None, embeddings=None):
+    def _upsert_kwargs(self, *, documents, ids, metadatas=None, embeddings=None):
         if getattr(self, "_require_embeddings", False) and embeddings is None:
             raise ValueError("caller-vector collection requires explicit embeddings")
 
@@ -3340,10 +3379,31 @@ class ChromaCollection(BaseCollection):
             kwargs["metadatas"] = sanitized
         if embeddings is not None:
             kwargs["embeddings"] = embeddings
+        return kwargs
+
+    def upsert(self, *, documents, ids, metadatas=None, embeddings=None):
+        kwargs = self._upsert_kwargs(
+            documents=documents, ids=ids, metadatas=metadatas, embeddings=embeddings
+        )
         with self._write_lock():
             self._collection.upsert(**kwargs)
 
-    def update(
+    def _update_with_metadata_guard(self, *, expected, ids, documents, metadatas, embeddings):
+        """Publish only if the documents and metadata used by embedding still agree."""
+        with self._write_lock():
+            result = self.get(ids=ids, include=["documents", "metadatas"])
+            current = {
+                record_id: (result.documents[index], result.metadatas[index] or {})
+                for index, record_id in enumerate(result.ids)
+            }
+            if current != expected:
+                raise ValueError("Document or metadata changed while embedding; retry the update")
+            kwargs = self._update_kwargs(
+                ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
+            )
+            return self._collection.update(**kwargs)
+
+    def _update_kwargs(
         self,
         *,
         ids,
@@ -3367,6 +3427,12 @@ class ChromaCollection(BaseCollection):
             kwargs["metadatas"] = metadatas
         if embeddings is not None:
             kwargs["embeddings"] = embeddings
+        return kwargs
+
+    def update(self, *, ids, documents=None, metadatas=None, embeddings=None):
+        kwargs = self._update_kwargs(
+            ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
+        )
         with self._write_lock():
             self._collection.update(**kwargs)
 
@@ -3547,7 +3613,7 @@ class ChromaCollection(BaseCollection):
             try:
                 conn.execute("BEGIN")
                 if _sqlite_ready_metadata_segment(conn, name) is None:
-                    raise sqlite3.OperationalError(
+                    raise MetadataRecoveryPending(
                         "metadata recovery pending; use collection reader"
                     )
                 yield from _sqlite_iter_metadata(conn, name, keys, require_key, equals)

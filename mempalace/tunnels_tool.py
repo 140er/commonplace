@@ -20,6 +20,7 @@ reviewable list instead:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from itertools import combinations
@@ -28,7 +29,9 @@ from typing import Iterable, Optional
 from .config import MempalaceConfig, normalize_wing_name
 from .hallways import entity_spelling_key, is_generic_entity, same_file_spelling
 
-PROPOSAL_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
+
+PROPOSAL_SCHEMA_VERSION = 2
 DEFAULT_MAX_TUNNELS = 60
 
 
@@ -181,26 +184,31 @@ class LinkIndex:
         self._buckets.setdefault(self._bucket(ends), []).append(ends)
 
 
-def connection_index(
-    tunnels: list, extra_entities: Iterable[str] = (), *, seed: bool = True
-) -> LinkIndex:
-    """Build spelling context before deciding whether any endpoint is an alias."""
+def connection_spellings(tunnels: list, extra_entities: Iterable[str] = ()) -> list[str]:
+    """Spellings from complete endpoints, plus the full proposal candidate set."""
     spellings = list(extra_entities)
-    endpoints = []
     for tunnel in tunnels:
         if not isinstance(tunnel, dict):
             continue
         ends = tunnel_endpoints(tunnel)
         if ends:
-            endpoints.append(ends)
             for _wing, room in ends:
                 name = _entity_room_name(room)
                 if name is not None:
                     spellings.append(name)
-    index = LinkIndex(ambiguous_entity_spellings(spellings))
+    return sorted(set(spellings))
+
+
+def connection_index(
+    tunnels: list, extra_entities: Iterable[str] = (), *, seed: bool = True
+) -> LinkIndex:
+    """Build spelling context before deciding whether any endpoint is an alias."""
+    index = LinkIndex(ambiguous_entity_spellings(connection_spellings(tunnels, extra_entities)))
     if seed:
-        for ends in endpoints:
-            index.add(ends)
+        for tunnel in tunnels:
+            ends = tunnel_endpoints(tunnel) if isinstance(tunnel, dict) else None
+            if ends:
+                index.add(ends)
     return index
 
 
@@ -286,6 +294,8 @@ def propose_tunnels(
         "schema_version": PROPOSAL_SCHEMA_VERSION,
         "planned_at": datetime.now(timezone.utc).isoformat(),
         "candidates": len(rows),
+        # Preserve names excluded by the cap/wing filter and existing aliases.
+        "entity_spellings": connection_spellings(existing_tunnels or [], candidates),
         "tunnels": chosen,
     }
 
@@ -330,12 +340,27 @@ def apply_proposal(plan: dict, config: Optional[MempalaceConfig] = None) -> int:
     """
     from .palace_graph import _load_tunnels, create_tunnel
 
-    known = connection_index(_load_tunnels(config), (row["entity"] for row in plan["tunnels"]))
+    spellings = plan.get("entity_spellings")
+    if spellings is None:
+        if plan.get("schema_version") == PROPOSAL_SCHEMA_VERSION:
+            raise ValueError("tunnel proposal is missing entity_spellings; re-run propose")
+        # Older plans cannot recover names omitted during selection. Keep their
+        # existing compatibility behavior, but disclose that limitation.
+        logger.warning(
+            "Legacy tunnel proposal has no spelling context; re-run propose to refresh it"
+        )
+        spellings = []
+    if not isinstance(spellings, list) or any(not isinstance(s, str) for s in spellings):
+        raise ValueError("tunnel proposal has invalid entity_spellings")
+    known = connection_index(
+        _load_tunnels(config), [*spellings, *(row["entity"] for row in plan["tunnels"])]
+    )
     created = 0
     for row in plan["tunnels"]:
         room = f"entity:{row['entity']}"
         ends = ((_norm_wing(row["wing_a"]), room), (_norm_wing(row["wing_b"]), room))
         if known.contains(ends):
+            logger.info("Skipping approved tunnel %s: equivalent connection already exists", row)
             continue
         known.add(ends)
         create_tunnel(
@@ -361,15 +386,7 @@ def prune_tunnels(tunnels: list, existing_wings: Iterable[str]) -> tuple[list, d
     wings = {_norm_wing(str(w)) for w in existing_wings}
     generic = dangling = duplicates = 0
     kept: list = []
-    entity_spellings: list[str] = []
-    for t in tunnels:
-        if not isinstance(t, dict):
-            continue
-        for end in (t.get("source") or {}, t.get("target") or {}):
-            name = _entity_room_name(str(end.get("room") or ""))
-            if name is not None:
-                entity_spellings.append(name)
-    seen = LinkIndex(ambiguous_entity_spellings(entity_spellings))
+    seen = connection_index(tunnels, seed=False)
     for t in sorted(
         (t for t in tunnels if isinstance(t, dict)),
         key=lambda t: -int(t.get("access_count") or 0),
