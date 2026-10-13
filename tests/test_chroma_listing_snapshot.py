@@ -1,6 +1,7 @@
 """Read recovered listing metadata and page previews from one SQLite snapshot."""
 
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -161,18 +162,38 @@ def test_public_listing_does_not_mix_old_metadata_and_new_preview(
         monkeypatch.setattr(mcp, "_is_chroma_backend", lambda: True)
         original = cb.sqlite_list_id_metadata
 
+        writer_errors = []
+
+        def write_new_version():
+            try:
+                cb.ChromaCollection(col, palace_path=palace_path).update(
+                    ids=["doc"],
+                    documents=["new document"],
+                    metadatas=[{"wing": "bravo"}],
+                    embeddings=[[0.0, 1.0]],
+                )
+            except Exception as exc:  # surfaced after the listing returns
+                writer_errors.append(exc)
+
+        # The write is a concurrent writer, not a call made from inside the
+        # reader's open transaction. On Windows, SQLite locks are per handle,
+        # so the snapshot's SHARED lock makes a same-thread write wait on
+        # itself until it fails with "database is locked". POSIX locks are
+        # per process, so there the write can still land mid-snapshot.
+        writer = threading.Thread(target=write_new_version)
+
         def interleaved(*args, **kwargs):
             result = original(*args, **kwargs)
-            cb.ChromaCollection(col, palace_path=palace_path).update(
-                ids=["doc"],
-                documents=["new document"],
-                metadatas=[{"wing": "bravo"}],
-                embeddings=[[0.0, 1.0]],
-            )
+            writer.start()
+            writer.join(timeout=0.5)
             return result
 
         monkeypatch.setattr(cb, "sqlite_list_id_metadata", interleaved)
         page = mcp.tool_list_drawers()
+        writer.join(timeout=120)
+        assert not writer.is_alive(), "concurrent writer never finished"
+        assert not writer_errors, writer_errors
+        assert "drawers" in page, page
         drawer = page["drawers"][0]
         actual = (drawer["wing"], drawer["content_preview"])
         assert actual in [("alpha", "old document"), ("bravo", "new document")], page
