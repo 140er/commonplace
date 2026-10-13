@@ -137,7 +137,8 @@ def _run_sqlite(command, *, deadline, stdin=None, stdout=None, error_file):
             detail = err.read(1500).decode("utf-8", errors="replace").strip()
         raise SQLiteSalvageError(
             f"sqlite3 failed (exit {result.returncode}): {detail or 'no diagnostic'}; "
-            "a sqlite3 CLI with .recover and -safe support is required"
+            "a sqlite3 CLI with .recover and -safe support is required "
+            "(including the sqlite_dbpage recovery extension)"
         )
 
 

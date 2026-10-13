@@ -178,12 +178,18 @@ mempalace repair --mode salvage-sqlite --source /path/to/archived-palace \
 # Remove --dry-run to attempt recovery.
 ```
 
-This optional mode uses a local `sqlite3` CLI with `.recover` and `-safe`
+This optional mode uses a local `sqlite3` CLI with working `.recover` and `-safe`
 support. It snapshots SQLite and any WAL/SHM sidecars under the existing writer
 lease, detects file changes during copying, and runs recovery against that
 private copy. A live cooperating writer prevents the snapshot. Paths cannot
 alias or nest inside one another; database and sidecar symlinks are refused.
 Dry-run writes nothing and launches no SQLite process.
+
+Some system SQLite builds list `.recover` in help but lack its required
+`sqlite_dbpage` extension. Such a build cannot perform salvage; the command
+reports the SQLite error and preserves its forensic snapshot. Use a local CLI
+with the recovery extension enabled, as described in
+[SQLite's recovery build requirements](https://www.sqlite.org/recovery.html#source_code_files).
 
 The result contains `chroma.sqlite3`, `recovery.sql`, the source snapshot, and
 `salvage-manifest.json` with input/output hashes, integrity results, recovered

@@ -62,12 +62,39 @@ def _require_recover():
     if binary is None:
         pytest.skip("local sqlite3 CLI not installed")
     probe = subprocess.run(
-        [binary, "-safe", "-batch", "-init", os.devnull, ":memory:", ".help recover"],
+        [
+            binary,
+            "-safe",
+            "-batch",
+            "-bail",
+            "-init",
+            os.devnull,
+            ":memory:",
+            ".recover --ignore-freelist",
+        ],
         capture_output=True,
         timeout=10,
     )
-    if probe.returncode or b".recover" not in probe.stdout:
-        pytest.skip("local sqlite3 CLI has no .recover command")
+    # Some distro CLIs advertise .recover in help but omit sqlite_dbpage from
+    # their linked SQLite library. Exercise recovery, rather than its help text.
+    if probe.returncode:
+        pytest.skip("local sqlite3 CLI has no working .recover and -safe support")
+
+
+def test_real_recovery_gate_checks_execution_not_advertised_help(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _: "sqlite3")
+    commands = []
+
+    def missing_dbpage(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command, 1, stdout=b"", stderr=b"sql error: no such table: sqlite_dbpage"
+        )
+
+    monkeypatch.setattr(subprocess, "run", missing_dbpage)
+    with pytest.raises(pytest.skip.Exception, match="no working .recover"):
+        _require_recover()
+    assert commands[0][-1] == ".recover --ignore-freelist"
 
 
 def test_real_corrupt_header_recovers_exact_text_without_modifying_source(tmp_path, monkeypatch):
@@ -256,6 +283,27 @@ def test_failed_cli_diagnostic_reads_bounded_prefix(tmp_path, monkeypatch):
         salvage._run_sqlite(["sqlite3"], deadline=time.monotonic() + 10, error_file=error)
     assert len(str(err.value)) < 1700
     assert error.stat().st_size > 2 * 1024 * 1024
+
+
+def test_missing_dbpage_recovery_fails_without_publishing_or_changing_source(tmp_path, monkeypatch):
+    source = _palace(tmp_path / "source")
+    before = _hashes(source)
+    monkeypatch.setattr(salvage.shutil, "which", lambda _: "sqlite3")
+
+    def missing_dbpage(command, **kwargs):
+        if command[-1] == ".recover --ignore-freelist":
+            kwargs["stderr"].write(b"sql error: no such table: sqlite_dbpage (1)")
+            return subprocess.CompletedProcess(command, 1)
+        kwargs["stdout"].write(b"SQLite test version")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(salvage.subprocess, "run", missing_dbpage)
+    with pytest.raises(salvage.SQLiteSalvageError, match="sqlite_dbpage.*Forensic files retained"):
+        salvage.salvage_sqlite(str(source), str(tmp_path / "dest"))
+    assert _hashes(source) == before
+    assert not (tmp_path / "dest").exists()
+    stage = next(tmp_path.glob(".dest.salvage-*"))
+    assert _hashes(stage / "source-snapshot") == {"chroma.sqlite3": before["chroma.sqlite3"]}
 
 
 def test_census_requires_chroma_schema_and_stored_document_text(tmp_path):
