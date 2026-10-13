@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Bug Fixes
 
+- Add opt-in offline SQLite salvage for palaces whose damaged database header
+  cannot be opened (#585). Recovery runs only on a stable private snapshot,
+  preserves original files, validates recovered schema and stored text, and
+  writes a forensic manifest into a fresh directory without activating it.
+
 - **`mempalace mine --mode convos --include-subagents` keeps the flag through
   a running hub or the daemon.** Both routes dropped it, so the forwarded mine
   skipped `subagents/` folders as if the flag had not been passed. The
