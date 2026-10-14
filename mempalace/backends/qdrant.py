@@ -638,6 +638,8 @@ def _requires_local_filter(where: Optional[dict], where_document: Optional[dict]
         return True
     if not where:
         return False
+    if _contains_or_operator(where):
+        return True
     return _qdrant_filter(where) is None
 
 
@@ -647,7 +649,6 @@ def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
     _validate_where(where)
     must = []
     must_not = []
-    or_groups: list[list[dict]] = []
     for key, expected in where.items():
         if key == "$and":
             for clause in expected or []:
@@ -657,16 +658,7 @@ def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
                 must.append(child)
             continue
         if key == "$or":
-            or_clauses = []
-            for clause in expected or []:
-                child = _qdrant_filter(clause)
-                if child is None:
-                    return None
-                or_clauses.append(child)
-            if not or_clauses:
-                return None
-            or_groups.append(or_clauses)
-            continue
+            return None
         if key.startswith("$"):
             return None
         condition, not_conditions = _condition(key, expected)
@@ -674,10 +666,6 @@ def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
             return None
         must.append(condition)
         must_not.extend(not_conditions)
-    if len(or_groups) == 1 and not must and not must_not:
-        return {"should": or_groups[0]}
-    for group in or_groups:
-        must.append({"should": group})
     out: dict[str, Any] = {}
     if must:
         out["must"] = must

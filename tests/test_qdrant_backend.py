@@ -680,9 +680,7 @@ def test_qdrant_creates_keyword_payload_indexes(tmp_path, fake_qdrant):
     assert ("metadata.source_file", "keyword") in created
 
 
-def test_qdrant_or_filter_pushes_down_to_should_and_local_exact_defers_vectors(
-    tmp_path, fake_qdrant
-):
+def test_qdrant_local_exact_defers_vectors(tmp_path, fake_qdrant):
     _backend, col = _collection(tmp_path)
     col.upsert(
         ids=["a", "b", "c"],
@@ -698,26 +696,17 @@ def test_qdrant_or_filter_pushes_down_to_should_and_local_exact_defers_vectors(
     client.query_calls.clear()
     client.scroll_details.clear()
 
-    # Pure $or without $contains pushes down to Qdrant's query_points via "should".
+    # For $or local filters, _query_local_exact scrolls with_vector=False first
+    # and fetches vectors only for matched IDs in the second pass.
     res = col.query(
         query_embeddings=[[1, 0]],
         n_results=5,
         where={"$or": [{"wing": "alpha"}, {"wing": "beta"}]},
     )
     assert res.ids == [["a", "b"]]
-    assert len(client.query_calls) == 1
-    assert "should" in client.query_calls[0]
-    assert client.scroll_details == []
-
-    # Combined must + $or wraps should inside must.
-    client.query_calls.clear()
-    res2 = col.query(
-        query_embeddings=[[1, 0]],
-        n_results=5,
-        where={"room": "r1", "$or": [{"wing": "alpha"}, {"wing": "gamma"}]},
-    )
-    assert res2.ids == [["a"]]
-    assert len(client.query_calls) == 1
+    assert len(client.scroll_details) == 2
+    assert client.scroll_details[0][3] is False  # first pass: payload-only
+    assert client.scroll_details[1][3] is True  # second pass: vectors for matched IDs only
 
     # When where_document requires local filtering, _query_local_exact first scrolls
     # with_vector=False (pushing down where) and only fetches vectors for matched IDs.
