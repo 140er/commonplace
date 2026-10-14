@@ -53,6 +53,7 @@ _MARKER_FILENAME = "qdrant_backend.json"
 _PAYLOAD_ID = "mempalace_id"
 _PAYLOAD_DOCUMENT = "document"
 _PAYLOAD_METADATA = "metadata"
+_KEYWORD_PAYLOAD_FIELDS = ("wing", "room", "source_file")
 _POINT_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 _TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
 # Page size for Qdrant's /points/scroll cursor. 4096 (up from the original
@@ -614,9 +615,7 @@ def _condition(field: str, expression: Any) -> tuple[Optional[dict], list[dict]]
     return {"key": key, "match": {"value": expression}}, []
 
 
-def _requires_local_filter(where: Optional[dict], where_document: Optional[dict] = None) -> bool:
-    if where_document:
-        return True
+def _contains_or_operator(where: Optional[dict]) -> bool:
     if not where:
         return False
     stack = [where]
@@ -625,15 +624,21 @@ def _requires_local_filter(where: Optional[dict], where_document: Optional[dict]
         if not isinstance(node, dict):
             continue
         for key, value in node.items():
-            if key in ("$or", "$contains"):
+            if key == "$or":
                 return True
             if isinstance(value, dict):
-                if "$contains" in value:
-                    return True
                 stack.append(value)
             elif isinstance(value, list):
                 stack.extend(item for item in value if isinstance(item, dict))
     return False
+
+
+def _requires_local_filter(where: Optional[dict], where_document: Optional[dict] = None) -> bool:
+    if where_document:
+        return True
+    if not where:
+        return False
+    return _qdrant_filter(where) is None
 
 
 def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
@@ -642,15 +647,26 @@ def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
     _validate_where(where)
     must = []
     must_not = []
+    or_groups: list[list[dict]] = []
     for key, expected in where.items():
         if key == "$and":
             for clause in expected or []:
                 child = _qdrant_filter(clause)
-                if child:
-                    must.append(child)
+                if child is None:
+                    return None
+                must.append(child)
             continue
         if key == "$or":
-            return None
+            or_clauses = []
+            for clause in expected or []:
+                child = _qdrant_filter(clause)
+                if child is None:
+                    return None
+                or_clauses.append(child)
+            if not or_clauses:
+                return None
+            or_groups.append(or_clauses)
+            continue
         if key.startswith("$"):
             return None
         condition, not_conditions = _condition(key, expected)
@@ -658,6 +674,10 @@ def _qdrant_filter(where: Optional[dict]) -> Optional[dict]:
             return None
         must.append(condition)
         must_not.extend(not_conditions)
+    if len(or_groups) == 1 and not must and not must_not:
+        return {"should": or_groups[0]}
+    for group in or_groups:
+        must.append({"should": group})
     out: dict[str, Any] = {}
     if must:
         out["must"] = must
@@ -682,6 +702,15 @@ def _text_any_filter(query: str) -> Optional[dict]:
     return {"must": [{"key": _PAYLOAD_DOCUMENT, "match": {"text_any": " ".join(tokens)}}]}
 
 
+@dataclass
+class _QdrantScrollCursor:
+    key: tuple[str, bool]
+    position: int
+    next_page_offset: Any
+    exhausted: bool
+    buffer: list[dict]
+
+
 class QdrantCollection(BaseCollection):
     def __init__(
         self,
@@ -702,6 +731,11 @@ class QdrantCollection(BaseCollection):
         self._lock = threading.RLock()
         self._closed = False
         self._known_dimension: Optional[int] = None
+        self._scroll_cursor: Optional[_QdrantScrollCursor] = None
+
+    def _invalidate_scroll_cursor(self) -> None:
+        with self._lock:
+            self._scroll_cursor = None
 
     def _ensure_open(self) -> None:
         if self._closed or self._backend._closed:
@@ -756,6 +790,12 @@ class QdrantCollection(BaseCollection):
                 self._client.create_payload_index(
                     self._remote_collection, _PAYLOAD_DOCUMENT, "text"
                 )
+                for field in _KEYWORD_PAYLOAD_FIELDS:
+                    self._client.create_payload_index(
+                        self._remote_collection,
+                        f"{_PAYLOAD_METADATA}.{field}",
+                        "keyword",
+                    )
                 self._known_dimension = dimension
                 return
             remote_dim = self._remote_dimension()
@@ -796,6 +836,65 @@ class QdrantCollection(BaseCollection):
                 return rows[:max_rows]
             if offset is None:
                 return rows
+
+    def _scroll_paged(
+        self,
+        *,
+        where: Optional[dict],
+        with_vector: bool,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
+        """Advance a cached Qdrant scroll cursor across sequential offset pages (#2659)."""
+        if limit == 0:
+            return []
+        _validate_where(where)
+        q_filter = _qdrant_filter(where)
+        cache_key = (
+            json.dumps(q_filter, sort_keys=True) if q_filter else "",
+            bool(with_vector),
+        )
+        with self._lock:
+            self._ensure_open()
+            cursor = self._scroll_cursor
+            if cursor is None or cursor.key != cache_key or offset == 0 or offset < cursor.position:
+                if not self._remote_exists():
+                    if self._marker_exists():
+                        raise CollectionNotInitializedError(self._collection_name)
+                    return []
+                cursor = _QdrantScrollCursor(
+                    key=cache_key,
+                    position=0,
+                    next_page_offset=None,
+                    exhausted=False,
+                    buffer=[],
+                )
+                self._scroll_cursor = cursor
+
+            while cursor.position + len(cursor.buffer) < offset + limit and not cursor.exhausted:
+                needed = (offset + limit) - (cursor.position + len(cursor.buffer))
+                page_limit = min(needed, _SCROLL_PAGE_SIZE)
+                points, next_offset = self._client.scroll_points(
+                    self._remote_collection,
+                    qdrant_filter=q_filter,
+                    limit=page_limit,
+                    offset=cursor.next_page_offset,
+                    with_vector=with_vector,
+                )
+                for point in points:
+                    row = _payload_row(point)
+                    if _matches_where(row["metadata"], where):
+                        cursor.buffer.append(row)
+                cursor.next_page_offset = next_offset
+                if next_offset is None or not points:
+                    cursor.exhausted = True
+
+            skip = max(0, offset - cursor.position)
+            selected = cursor.buffer[skip : skip + limit]
+            consumed = min(len(cursor.buffer), skip + len(selected))
+            cursor.buffer = cursor.buffer[consumed:]
+            cursor.position += consumed
+            return selected
 
     def _rows(
         self,
@@ -870,6 +969,7 @@ class QdrantCollection(BaseCollection):
                     },
                 }
             )
+        self._invalidate_scroll_cursor()
         self._client.upsert_points(self._remote_collection, points)
         self._backend._write_marker(self._palace, self._config)
 
@@ -923,14 +1023,24 @@ class QdrantCollection(BaseCollection):
         include: Optional[list[str]],
     ) -> QueryResult:
         spec = _IncludeSpec.resolve(include, default_distances=True)
-        q_filter = None if _requires_local_filter(where, where_document) else _qdrant_filter(where)
-        rows = self._scroll_all(qdrant_filter=q_filter, with_vector=True)
-        rows = [
-            row
-            for row in rows
+        q_filter = None if _requires_local_filter(where) else _qdrant_filter(where)
+        candidate_rows = self._scroll_all(qdrant_filter=q_filter, with_vector=False)
+        matched_ids = [
+            row["id"]
+            for row in candidate_rows
             if _matches_where(row["metadata"], where)
             and _matches_where_document(row["document"], where_document)
         ]
+        if matched_ids:
+            id_filter = {"must": [{"has_id": [_point_id(doc_id) for doc_id in matched_ids]}]}
+            rows = self._scroll_all(
+                qdrant_filter=_combine_filters(q_filter, id_filter),
+                with_vector=True,
+            )
+            matched_set = set(matched_ids)
+            rows = [row for row in rows if row["id"] in matched_set]
+        else:
+            rows = []
         outer_ids: list[list[str]] = []
         outer_docs: list[list[str]] = []
         outer_metas: list[list[dict]] = []
@@ -1044,6 +1154,25 @@ class QdrantCollection(BaseCollection):
         include=None,
     ) -> GetResult:
         spec = _IncludeSpec.resolve(include, default_distances=False)
+        if (
+            ids is None
+            and limit is not None
+            and limit >= 0
+            and (offset is None or offset >= 0)
+            and not _requires_local_filter(where, where_document)
+        ):
+            rows = self._scroll_paged(
+                where=where,
+                with_vector=spec.embeddings,
+                limit=int(limit),
+                offset=int(offset or 0),
+            )
+            return GetResult(
+                ids=[row["id"] for row in rows],
+                documents=[row["document"] for row in rows] if spec.documents else [],
+                metadatas=[row["metadata"] for row in rows] if spec.metadatas else [],
+                embeddings=[row["embedding"] or [] for row in rows] if spec.embeddings else None,
+            )
         max_rows = (offset or 0) + limit if limit is not None and ids is None else None
         rows = self._rows(
             ids=ids,
@@ -1065,6 +1194,69 @@ class QdrantCollection(BaseCollection):
             metadatas=[row["metadata"] for row in rows] if spec.metadatas else [],
             embeddings=[row["embedding"] or [] for row in rows] if spec.embeddings else None,
         )
+
+    def iter_metadata(
+        self,
+        keys: Optional[Any] = None,
+        *,
+        require_key: Optional[str] = None,
+        equals: Optional[dict] = None,
+    ):
+        """Stream every drawer's metadata from Qdrant in one cursor pass (#2659, #2684).
+
+        Matches :meth:`ChromaCollection.iter_metadata`:
+        - With ``keys``, only those keys are returned, and a drawer that has
+          none of them (or only ``None`` values) is skipped.
+        - With ``keys=None``, every key is returned and a drawer without
+          metadata yields ``None``.
+        - ``require_key`` limits the scan to drawers holding a string value
+          under that key.
+        - ``equals`` limits the scan to drawers whose string value under each
+          key equals the given one (pushed into Qdrant's scroll filter).
+        """
+        key_tuple = tuple(keys) if keys is not None else None
+        equals_dict = dict(equals) if equals else None
+        q_filter = _qdrant_filter(equals_dict) if equals_dict else None
+
+        def rows():
+            self._ensure_open()
+            if not self._remote_exists():
+                if self._marker_exists():
+                    raise CollectionNotInitializedError(self._collection_name)
+                return
+            offset = None
+            while True:
+                points, offset = self._client.scroll_points(
+                    self._remote_collection,
+                    qdrant_filter=q_filter,
+                    limit=_SCROLL_PAGE_SIZE,
+                    offset=offset,
+                    with_vector=False,
+                )
+                for point in points:
+                    payload = point.get("payload") or {}
+                    meta = payload.get(_PAYLOAD_METADATA) or {}
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    if require_key is not None and not isinstance(meta.get(require_key), str):
+                        continue
+                    if equals_dict and not all(
+                        isinstance(meta.get(k), str) and meta.get(k) == v
+                        for k, v in equals_dict.items()
+                    ):
+                        continue
+                    if key_tuple is not None:
+                        projected = {
+                            k: meta[k] for k in key_tuple if k in meta and meta[k] is not None
+                        }
+                        if projected:
+                            yield projected
+                    else:
+                        yield meta if meta else None
+                if offset is None:
+                    break
+
+        return rows()
 
     def get_all_metadata(self, where: Optional[dict] = None) -> list[dict]:
         """Return every matching record's metadata in one cursor pass (#1796).
@@ -1121,7 +1313,7 @@ class QdrantCollection(BaseCollection):
         # collection has been materialized yet — matching the order used by
         # get()/lexical_search() above (#1835 review).
         _validate_where(where)
-        if _requires_local_filter(where):
+        if _requires_local_filter(where) or _contains_or_operator(where):
             raise UnsupportedCapabilityError("facet_counts does not support local-only filters")
         if not self._remote_exists():
             if self._marker_exists():
@@ -1143,6 +1335,7 @@ class QdrantCollection(BaseCollection):
             if self._marker_exists():
                 raise CollectionNotInitializedError(self._collection_name)
             return
+        self._invalidate_scroll_cursor()
         if ids is not None and where is None:
             self._client.delete_points(
                 self._remote_collection,
