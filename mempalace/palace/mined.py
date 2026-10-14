@@ -33,10 +33,14 @@ def _meta_is_current(meta: dict, extract_mode: Optional[str]) -> bool:
     exchange scope a missing ``convo_chunker_version`` is stale too, so a
     chunker fix re-mines conversation files without touching project files.
     """
-    if meta.get("normalize_version", 1) < NORMALIZE_VERSION:
+    # An explicit null (or any non-number) is stale, never a TypeError that
+    # aborts the whole prefetch: file_already_mined treats it as stale too.
+    version = meta.get("normalize_version", 1)
+    if not _is_plain_number(version) or version < NORMALIZE_VERSION:
         return False
     if extract_mode == "exchange":
-        return meta.get("convo_chunker_version", 1) >= CONVO_CHUNKER_VERSION
+        chunker = meta.get("convo_chunker_version", 1)
+        return _is_plain_number(chunker) and chunker >= CONVO_CHUNKER_VERSION
     return True
 
 

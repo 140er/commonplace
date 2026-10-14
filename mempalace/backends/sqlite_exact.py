@@ -1468,24 +1468,36 @@ class SQLiteExactCollection(BaseCollection):
                 params: list[Any] = [collection_id]
                 multi_key: Optional[str] = None
                 multi_vals: Optional[list[str]] = None
+                # True only when every ``equals`` entry is enforced in SQL, so
+                # the source_file shortcut below may skip the Python recheck.
+                fully_pushed = True
                 if equals_dict:
                     for k, v in equals_dict.items():
-                        if _FACET_FIELD_RE.match(k):
-                            if isinstance(v, str):
-                                expr = _json_field_sql(k, locus_columns=locus)
-                                clauses.append(f"{expr} = ?")
-                                params.append(v)
-                            elif (
-                                multi_key is None
-                                and isinstance(v, (list, tuple, set, frozenset))
-                                and v
-                                and all(isinstance(x, str) for x in v)
-                            ):
-                                multi_key = k
-                                multi_vals = list(v)
+                        if isinstance(v, (list, tuple, set, frozenset)) and not v:
+                            return  # empty membership list matches nothing
+                        if _FACET_FIELD_RE.match(k) and isinstance(v, str):
+                            expr = _json_field_sql(k, locus_columns=locus)
+                            clauses.append(f"{expr} = ?")
+                            params.append(v)
+                        elif (
+                            _FACET_FIELD_RE.match(k)
+                            and multi_key is None
+                            and isinstance(v, (list, tuple, set, frozenset))
+                            and all(isinstance(x, str) for x in v)
+                        ):
+                            multi_key = k
+                            # De-duplicate so a value repeated across 900-item
+                            # chunks cannot yield the same row twice.
+                            multi_vals = list(dict.fromkeys(v))
+                        else:
+                            fully_pushed = False
                 if (
-                    key_tuple == ("source_file",)
-                    and (require_key is None or require_key == "source_file")
+                    fully_pushed
+                    and key_tuple == ("source_file",)
+                    # The shortcut yields string paths only, which is exactly
+                    # require_key="source_file"; otherwise non-string values
+                    # must survive, so take the general path.
+                    and require_key == "source_file"
                     and multi_key is None
                 ):
                     sf_expr = _json_field_sql("source_file", locus_columns=locus)
@@ -1535,8 +1547,10 @@ class SQLiteExactCollection(BaseCollection):
                 ):
                     continue
                 if key_tuple is not None:
-                    projected = {k: meta[k] for k in key_tuple if k in meta and meta[k] is not None}
-                    if projected:
+                    # Keep explicit nulls: the mined-file prefetch must tell an
+                    # absent key from one stored as null (#2745 review, R4).
+                    projected = {k: meta[k] for k in key_tuple if k in meta}
+                    if any(v is not None for v in projected.values()):
                         yield projected
                 else:
                     yield meta if meta else None
