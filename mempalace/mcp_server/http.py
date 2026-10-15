@@ -581,6 +581,8 @@ def _http_dispatch(request):
     tool_name = None
     if method == "tools/call" and isinstance(request.get("params"), dict):
         tool_name = request["params"].get("name")
+    if not isinstance(tool_name, str):
+        return handle_request(request)
     if tool_name in _HTTP_LOCK_FREE_TOOLS:
         return handle_request(request)
     # service.classify_tool is the authoritative read/write registry. The
@@ -1399,7 +1401,11 @@ def _serve_http(host: str, port: int) -> None:
                 port=bound_port,
                 scheme=getattr(httpd, "scheme", "http"),
                 read_only=_READ_ONLY,
-                capabilities=["mine_include_ignored", "search_cli_compatible"],
+                capabilities=[
+                    "mine_include_ignored",
+                    "mine_include_subagents",
+                    "search_cli_compatible",
+                ],
                 search_config_fingerprint=_config.search_config_fingerprint,
             )
             import atexit
