@@ -43,6 +43,19 @@ def _signature(st):
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
+def _same_file_content(path_sig, fd_sig):
+    """Compare a path ``lstat`` signature with an open handle's ``fstat`` one.
+
+    On Windows ``lstat`` and ``fstat`` fill ``st_dev``/``st_ino``/``st_ctime``
+    from different APIs, so the two never compare equal for the same
+    untouched file. Size and modification time are reliable on every
+    platform; identity fields are compared only where they agree (POSIX).
+    """
+    if os.name == "nt":
+        return path_sig[2:4] == fd_sig[2:4]
+    return path_sig == fd_sig
+
+
 def _source_inventory(source):
     inventory = {}
     for name in _SOURCE_FILES:
@@ -94,7 +107,8 @@ def _snapshot(source, target):
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         fd = os.open(source / name, flags)
         with os.fdopen(fd, "rb") as src:
-            if _signature(os.fstat(src.fileno())) != expected:
+            opened = _signature(os.fstat(src.fileno()))
+            if not _same_file_content(expected, opened):
                 raise SQLiteSalvageError(f"Source {name} changed before the snapshot")
             out_fd = os.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             digest = hashlib.sha256()
@@ -104,7 +118,7 @@ def _snapshot(source, target):
                     digest.update(chunk)
                 out.flush()
                 os.fsync(out.fileno())
-            if _signature(os.fstat(src.fileno())) != expected:
+            if _signature(os.fstat(src.fileno())) != opened:
                 raise SQLiteSalvageError(f"Source {name} changed during the snapshot")
         hashes[name] = {"sha256": digest.hexdigest(), "bytes": expected[2]}
     if _source_inventory(source) != before:

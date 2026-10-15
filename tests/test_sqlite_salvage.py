@@ -549,3 +549,17 @@ def test_real_cli_recovers_damaged_header_with_misspelled_embedding_model(tmp_pa
     assert "completeness is not proven" in result.stdout
     assert "--mode from-sqlite" in result.stdout
     assert _hashes(source) == before
+
+
+def test_snapshot_identity_check_tolerates_windows_fstat_fields(monkeypatch):
+    # Windows lstat and fstat report different st_dev/st_ino/st_ctime for the
+    # same untouched file; only size and mtime may be compared across them.
+    path_sig = (1, 2, 100, 5_000, 7)
+    fd_sig = (0, 9, 100, 5_000, 8)
+    monkeypatch.setattr(salvage.os, "name", "nt")
+    assert salvage._same_file_content(path_sig, fd_sig)
+    assert not salvage._same_file_content(path_sig, (0, 9, 101, 5_000, 8))
+    assert not salvage._same_file_content(path_sig, (0, 9, 100, 6_000, 8))
+    monkeypatch.setattr(salvage.os, "name", "posix")
+    assert not salvage._same_file_content(path_sig, fd_sig)
+    assert salvage._same_file_content(path_sig, path_sig)
