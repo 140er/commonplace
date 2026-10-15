@@ -550,3 +550,21 @@ def test_mcp_server_refuses_after_the_record_changes_under_it(request, monkeypat
     if change == "another-model":
         search_result, found = call("mempalace_search", {"query": "greenhouse tomatoes"})
         assert search_result.get("isError") is True, found
+
+
+def test_unknown_row_count_still_warns_on_read(tmp_path, monkeypatch):
+    from mempalace import palace as P
+
+    _sqlite_palace(tmp_path, monkeypatch, rows=False, record=None)
+    monkeypatch.setattr(P, "_collection_has_rows", lambda *a, **k: None)
+    with pytest.warns(EmbedderIdentityUnknownWarning, match="row count could not be read"):
+        P.get_collection(str(tmp_path), create=False)
+
+
+def test_failed_first_mine_discards_a_palace_without_closets(tmp_path, monkeypatch):
+    from mempalace.cli import _discard_unused_new_palace
+
+    _sqlite_palace(tmp_path / "p", monkeypatch, rows=False, record=None)
+    assert (tmp_path / "p").exists()
+    _discard_unused_new_palace(str(tmp_path / "p"))
+    assert not (tmp_path / "p").exists()

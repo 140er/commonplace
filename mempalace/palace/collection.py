@@ -251,7 +251,7 @@ def _enforce_bare_openai_compat(
             f"{problem}; writing with the configured model {model_name!r} could mix two "
             f"models in one palace. {hint}"
         )
-    if has_rows:
+    if has_rows is not False:  # True, or None: count unreadable
         warnings.warn(
             f"palace {problem}; reading with the configured model {model_name!r}. Writes "
             f"are refused until the model is recorded. {hint}",
@@ -445,7 +445,7 @@ def _enforce_embedder_identity(
                         f"{problem}; writing with the current model {model_name!r} could mix "
                         f"two models in one palace. {hint}"
                     )
-                if has_rows:
+                if has_rows is not False:  # True, or None: count unreadable
                     warnings.warn(
                         f"palace {problem}; reading with the current model {model_name!r}. "
                         f"Writes are refused until the model is recorded. {hint}",

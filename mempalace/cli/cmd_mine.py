@@ -80,6 +80,10 @@ def cmd_mine(args):
     # with nothing printed or created.
     _exit_on_misspelled_embedding_model()
 
+    # A palace folder this command creates is removed again if the mine
+    # fails before anything is filed (see _discard_unused_new_palace).
+    palace_is_new = not args.dry_run and not os.path.lexists(palace_path)
+
     if source_adapter:
         try:
             drawers_written = mine_source_adapter(
@@ -109,6 +113,8 @@ def cmd_mine(args):
             print(f"mempalace: {exc}", file=sys.stderr)
             sys.exit(1)
         except (*model_errors, EmbeddingAPIError) as exc:
+            if palace_is_new:
+                _discard_unused_new_palace(palace_path)
             print(f"mempalace: {exc}", file=sys.stderr)
             sys.exit(1)
         suffix = " would be written" if args.dry_run else " written"
@@ -124,10 +130,6 @@ def cmd_mine(args):
         args, palace_path, include_ignored=include_ignored
     ):
         return
-
-    # A palace folder this command creates is removed again if the mine
-    # fails before anything is filed (see _discard_unused_new_palace).
-    palace_is_new = not args.dry_run and not os.path.lexists(palace_path)
 
     # --redetect-origin re-runs corpus_origin on the current corpus state
     # and overwrites <palace>/.mempalace/origin.json before mining proceeds.
@@ -240,18 +242,21 @@ def _discard_unused_new_palace(palace_path: str) -> None:
     """
     import shutil
 
+    from ..backends.base import CollectionNotInitializedError
     from ..backends.registry import reset_backends
     from ..palace import get_collection
 
-    try:
-        for name in (None, "mempalace_closets"):
+    for name in (None, "mempalace_closets"):
+        try:
             col = get_collection(
                 palace_path, collection_name=name, create=False, _skip_identity_check=True
             )
             if col is not None and col.count():
                 return
-    except Exception:
-        return
+        except CollectionNotInitializedError:
+            continue  # never created (e.g. no closets yet): nothing to keep
+        except Exception:
+            return
     reset_backends()  # release the database handles before removing the files
     shutil.rmtree(palace_path, ignore_errors=True)
 

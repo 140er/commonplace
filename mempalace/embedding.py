@@ -886,7 +886,9 @@ class OpenAICompatEmbeddingFunction:
             # IncompleteRead) common with local/overloaded servers.
             except HTTPError as e:
                 raise self._http_error(e) from e
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                # Invalid UTF-8 is a ValueError too; the server did answer, so
+                # it is a bad response, not an unavailable endpoint.
                 raise EmbeddingAPIError(
                     f"Embedding API at {self._url} returned a response that is not JSON: {e}. "
                     f"Check that embedding_api_url points at an OpenAI-compatible "
