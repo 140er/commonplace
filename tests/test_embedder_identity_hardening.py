@@ -564,9 +564,21 @@ def test_unknown_row_count_still_warns_on_read(tmp_path, monkeypatch):
 def test_failed_first_mine_discards_a_palace_without_closets(tmp_path, monkeypatch):
     from mempalace.cli import _discard_unused_new_palace
 
-    _sqlite_palace(tmp_path / "p", monkeypatch, rows=False, record=None)
+    from mempalace.backends.registry import get_backend
+
+    monkeypatch.setenv("MEMPALACE_EMBEDDING_MODEL", "minilm")
+    monkeypatch.setenv("MEMPALACE_BACKEND", "sqlite_exact")
+    palace = str(tmp_path / "p")
+    # Open through the cached backend, as a real mine does, so the discard has
+    # to release that handle itself (Windows refuses to remove open files).
+    get_backend("sqlite_exact").get_collection(
+        palace=PalaceRef(id=palace, local_path=palace),
+        collection_name="mempalace_drawers",
+        create=True,
+    )
+    _forget_validated()
     assert (tmp_path / "p").exists()
-    _discard_unused_new_palace(str(tmp_path / "p"))
+    _discard_unused_new_palace(palace)
     assert not (tmp_path / "p").exists()
 
 
