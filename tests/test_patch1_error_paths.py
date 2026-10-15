@@ -217,13 +217,16 @@ def test_a_cold_search_of_a_fresh_palace_runs_no_migration(request, monkeypatch,
     a cold read of a fresh palace has nothing to migrate."""
     import logging
 
-    from mempalace.backends.registry import reset_backends
     from mempalace.miner import mine
+    from mempalace.palace import _DEFAULT_BACKEND
     from mempalace.searcher import search_memories
 
     project, palace, _ = request.getfixturevalue("unknown_model_palace")
     mine(str(project), str(palace))
-    reset_backends()  # drop the in-process client so the next open is cold
+    # Drop this palace's in-process client so the next open is cold. Not
+    # reset_backends(): that replaces the registry's instances and leaves
+    # palace._DEFAULT_BACKEND detached for every later test in the session.
+    _DEFAULT_BACKEND.close_palace(str(palace))
     markers = _folder_state(palace)
     with caplog.at_level(logging.INFO, logger="mempalace.backends.chroma"):
         search_memories("greenhouse tomatoes", str(palace))

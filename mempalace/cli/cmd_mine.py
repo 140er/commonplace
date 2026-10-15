@@ -243,7 +243,7 @@ def _discard_unused_new_palace(palace_path: str) -> None:
     import shutil
 
     from ..backends.base import CollectionNotInitializedError
-    from ..backends.registry import reset_backends
+    from ..backends import registry as _backend_registry
     from ..palace import get_collection
 
     for name in (None, "mempalace_closets"):
@@ -257,7 +257,17 @@ def _discard_unused_new_palace(palace_path: str) -> None:
             continue  # never created (e.g. no closets yet): nothing to keep
         except Exception:
             return
-    reset_backends()  # release the database handles before removing the files
+    # Release only this palace's handles before removing the files. A full
+    # reset_backends() would replace the process-wide backend instances and
+    # leave palace._DEFAULT_BACKEND pointing at a closed, detached one.
+    from ..backends.base import PalaceRef
+
+    ref = PalaceRef(id=palace_path, local_path=palace_path)
+    for backend in list(_backend_registry._instances.values()):
+        try:
+            backend.close_palace(ref)
+        except Exception:
+            return  # a handle could not be released: keep the folder
     shutil.rmtree(palace_path, ignore_errors=True)
 
 
