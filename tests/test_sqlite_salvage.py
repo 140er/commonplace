@@ -57,10 +57,18 @@ def _hashes(source):
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()}
 
 
+def _skip_or_fail(reason):
+    # CI installs a recover-capable sqlite3 and sets this, so the real-CLI
+    # tests cannot silently skip there.
+    if os.environ.get("MEMPALACE_REQUIRE_SQLITE_RECOVER"):
+        pytest.fail(f"MEMPALACE_REQUIRE_SQLITE_RECOVER is set but {reason}")
+    pytest.skip(reason)
+
+
 def _require_recover():
     binary = shutil.which("sqlite3")
     if binary is None:
-        pytest.skip("local sqlite3 CLI not installed")
+        _skip_or_fail("local sqlite3 CLI not installed")
     probe = subprocess.run(
         [
             binary,
@@ -78,10 +86,11 @@ def _require_recover():
     # Some distro CLIs advertise .recover in help but omit sqlite_dbpage from
     # their linked SQLite library. Exercise recovery, rather than its help text.
     if probe.returncode:
-        pytest.skip("local sqlite3 CLI has no working .recover and -safe support")
+        _skip_or_fail("local sqlite3 CLI has no working .recover and -safe support")
 
 
 def test_real_recovery_gate_checks_execution_not_advertised_help(monkeypatch):
+    monkeypatch.delenv("MEMPALACE_REQUIRE_SQLITE_RECOVER", raising=False)
     monkeypatch.setattr(shutil, "which", lambda _: "sqlite3")
     commands = []
 
@@ -563,3 +572,69 @@ def test_snapshot_identity_check_tolerates_windows_fstat_fields(monkeypatch):
     monkeypatch.setattr(salvage.os, "name", "posix")
     assert not salvage._same_file_content(path_sig, fd_sig)
     assert salvage._same_file_content(path_sig, path_sig)
+
+
+def _chromadb_palace(path, texts):
+    """A palace written by chromadb itself, with its FTS5 virtual table."""
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(path))
+    col = client.get_or_create_collection("mempalace_drawers")
+    col.add(
+        ids=[f"drawer-{i}" for i in range(1, len(texts) + 1)],
+        documents=list(texts),
+        embeddings=[[float(i), 1.0, 0.0] for i in range(1, len(texts) + 1)],
+        metadatas=[{"wing": "original"} for _ in texts],
+    )
+    if hasattr(client, "close"):
+        client.close()
+    return path
+
+
+def test_real_chromadb_palace_with_fts5_recovers_under_safe_apply(tmp_path):
+    # .recover restores Chroma's FTS5 table through a sqlite_schema INSERT,
+    # which `sqlite3 -safe` refused, so every real palace failed to apply.
+    _require_recover()
+    texts = ("the lighthouse keeper's log", "second drawer, tide tables", "third: fog horn")
+    source = _chromadb_palace(tmp_path / "source", texts)
+    with closing(sqlite3.connect(source / "chroma.sqlite3")) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='embedding_fulltext_search'"
+        ).fetchone()
+    _damage_header(source)
+    before = hashlib.sha256((source / "chroma.sqlite3").read_bytes()).hexdigest()
+    dest = tmp_path / "recovered"
+    manifest = salvage.salvage_sqlite(str(source), str(dest), progress=lambda _: None)
+    assert hashlib.sha256((source / "chroma.sqlite3").read_bytes()).hexdigest() == before
+    assert manifest["census"]["document_rows"] == len(texts)
+    with closing(sqlite3.connect(dest / "chroma.sqlite3")) as conn:
+        docs = sorted(
+            row[0]
+            for row in conn.execute(
+                "SELECT string_value FROM embedding_metadata WHERE key='chroma:document'"
+            )
+        )
+        assert docs == sorted(texts)
+        assert conn.execute(
+            "SELECT count(*) FROM embedding_fulltext_search WHERE string_value MATCH 'lighthouse'"
+        ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ATTACH DATABASE 'outside.db' AS o;",
+        "PRAGMA journal_mode=WAL;",
+        "SELECT load_extension('x');",
+    ],
+)
+def test_recovery_apply_refuses_statements_outside_the_stage(tmp_path, statement):
+    sql = tmp_path / "recovery.sql"
+    sql.write_text("BEGIN;\nCREATE TABLE t(x);\n" + statement + "\nCOMMIT;\n")
+    target = tmp_path / "stage.sqlite3"
+    target.touch()
+    with pytest.raises(salvage.SQLiteSalvageError, match="Applying the recovered SQL failed"):
+        salvage._apply_recovery_sql(
+            sql, target, deadline=time.monotonic() + 30, error_file=tmp_path / "err.txt"
+        )
+    assert not (tmp_path / "outside.db").exists()

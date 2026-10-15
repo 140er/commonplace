@@ -156,6 +156,69 @@ def _run_sqlite(command, *, deadline, stdin=None, stdout=None, error_file):
         )
 
 
+# PRAGMAs that ``.recover`` emits to rebuild a database. Anything else in the
+# recovered script is refused rather than run.
+_RECOVERY_PRAGMAS = frozenset(
+    {
+        "application_id",
+        "auto_vacuum",
+        "encoding",
+        "foreign_keys",
+        "page_size",
+        "user_version",
+        "writable_schema",
+    }
+)
+# Functions that could reach outside the private stage database.
+_DENIED_FUNCTIONS = frozenset({"load_extension", "readfile", "writefile", "edit", "fts3_tokenizer"})
+
+
+def _recovery_authorizer(action, arg1, arg2, _db, _trigger):
+    if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH):
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_PRAGMA and (arg1 or "").lower() not in _RECOVERY_PRAGMAS:
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in _DENIED_FUNCTIONS:
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def _apply_recovery_sql(sql_path, recovered, *, deadline, error_file):
+    """Run ``.recover``'s script into the empty private stage database.
+
+    ``.recover`` restores virtual tables (Chroma's FTS5
+    ``embedding_fulltext_search``) by inserting their ``sqlite_schema`` row
+    under ``PRAGMA writable_schema``, which ``sqlite3 -safe`` forbids, so every
+    real Chroma palace failed to apply. The script is applied here instead,
+    with the same intent as ``-safe``: no ATTACH/DETACH, no extension loading
+    or file functions, only the PRAGMAs ``.recover`` writes, untrusted schema,
+    and the overall deadline. The source snapshot is never opened here.
+    """
+    if time.monotonic() >= deadline:
+        raise SQLiteSalvageError("SQLite salvage timed out; original files are unchanged")
+    script = Path(sql_path).read_bytes().decode("utf-8", errors="surrogateescape")
+    # sqlite3 3.48+ starts the script with a shell dot-command so the CLI can
+    # write sqlite_schema. A Python connection is not in defensive mode, so it
+    # is dropped; any other dot-command is a syntax error here (fails closed).
+    for directive in (".dbconfig defensive off\n", ".dbconfig defensive off\r\n"):
+        if script.startswith(directive):
+            script = script[len(directive) :]
+            break
+    try:
+        with closing(sqlite3.connect(str(recovered), isolation_level=None)) as conn:
+            conn.execute("PRAGMA trusted_schema=OFF")
+            conn.set_authorizer(_recovery_authorizer)
+            conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            conn.executescript(script)
+    except (sqlite3.Error, UnicodeEncodeError) as exc:
+        Path(error_file).write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+        if time.monotonic() >= deadline:
+            raise SQLiteSalvageError(
+                "SQLite salvage timed out; original files are unchanged"
+            ) from exc
+        raise SQLiteSalvageError(f"Applying the recovered SQL failed: {exc}") from exc
+
+
 def _census(db_path, *, deadline):
     """Validate the artifact, then count stored text without opening Chroma."""
     uri = db_path.as_uri() + "?mode=ro"
@@ -241,8 +304,9 @@ def salvage_sqlite(source_palace, dest_palace, *, dry_run=False, timeout=300, pr
     """Salvage SQLite pages into a fresh review directory, preserving originals.
 
     Requires a local ``sqlite3`` CLI with ``.recover`` and ``-safe`` support.
-    Native recovery and SQL application run in separate subprocesses, using only
-    a private snapshot. The original palace's existing writer lease is respected;
+    ``.recover`` runs in a ``-safe`` subprocess against a private snapshot; its
+    script is applied in-process to an empty stage database under an authorizer
+    with the same intent (see :func:`_apply_recovery_sql`). The original palace's existing writer lease is respected;
     uncoordinated external writers are detected through snapshot file identity,
     size and timestamp checks, rather than promised to be fenced by that lease.
     """
@@ -299,14 +363,9 @@ def salvage_sqlite(source_palace, dest_palace, *, dry_run=False, timeout=300, pr
         recovered = stage / "chroma.sqlite3"
         fd = os.open(recovered, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)
-        with open(sql_path, "rb") as sql, open(stage / "apply-output.txt", "wb") as output:
-            _run_sqlite(
-                [*base, str(recovered)],
-                deadline=deadline,
-                stdin=sql,
-                stdout=output,
-                error_file=stage / "apply-error.txt",
-            )
+        _apply_recovery_sql(
+            sql_path, recovered, deadline=deadline, error_file=stage / "apply-error.txt"
+        )
         census = _census(recovered, deadline=deadline)
         with open(version_path, "rb") as version:
             cli_version = version.read(2000).decode("utf-8", errors="replace").strip()
