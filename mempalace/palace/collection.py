@@ -261,6 +261,27 @@ def _enforce_bare_openai_compat(
     _VALIDATED_IDENTITY.add(key + ("r", stored))
 
 
+def _identity_check_failed(exc, palace_path, collection_name, *, create):
+    """An unexpected error while checking the identity: refuse writes, warn reads.
+
+    Returning silently here used to skip enforcement for the whole open, so an
+    unforeseen error let a write through unchecked (fail open).
+    """
+    import warnings
+
+    from ..backends.base import EmbedderIdentityUnconfirmedError, EmbedderIdentityUnknownWarning
+
+    problem = (
+        f"could not check the embedder identity of collection {collection_name!r} in "
+        f"{palace_path} ({type(exc).__name__}: {exc})"
+    )
+    if create:
+        raise EmbedderIdentityUnconfirmedError(
+            f"{problem}; refusing to write until it can be checked."
+        ) from exc
+    warnings.warn(f"{problem}; reading anyway.", EmbedderIdentityUnknownWarning, stacklevel=3)
+
+
 def _enforce_embedder_identity(
     collection,
     palace_path,
@@ -324,7 +345,10 @@ def _enforce_embedder_identity(
     else:
         try:
             model_name = current_model_name()
-        except Exception:
+        except Exception as exc:
+            if type(exc).__name__ == "UnknownEmbeddingModelError":
+                raise  # a misspelled model: the caller prints the fix
+            _identity_check_failed(exc, palace_path, collection_name, create=create)
             return
         if not model_name:
             return  # nameless embedder — cannot enforce identity
@@ -389,7 +413,8 @@ def _enforce_embedder_identity(
         state = check_embedder_identity(stored, current)
     except (EmbedderIdentityMismatchError, DimensionMismatchError):
         raise  # deliberate, user-facing — the whole point of the contract
-    except Exception:
+    except Exception as exc:
+        _identity_check_failed(exc, palace_path, collection_name, create=create)
         return
 
     if state == "unknown" and stored is None:

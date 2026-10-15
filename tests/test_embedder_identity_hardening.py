@@ -568,3 +568,20 @@ def test_failed_first_mine_discards_a_palace_without_closets(tmp_path, monkeypat
     assert (tmp_path / "p").exists()
     _discard_unused_new_palace(str(tmp_path / "p"))
     assert not (tmp_path / "p").exists()
+
+
+def test_an_unexpected_identity_check_error_refuses_writes(tmp_path, monkeypatch):
+    from mempalace import palace as P
+    from mempalace.backends import base
+
+    _sqlite_palace(tmp_path, monkeypatch, rows=True, record="minilm")
+
+    def _boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(base, "check_embedder_identity", _boom)
+    with pytest.raises(EmbedderIdentityUnconfirmedError, match="unexpected"):
+        P.get_collection(str(tmp_path), create=True)
+    _forget_validated()
+    with pytest.warns(EmbedderIdentityUnknownWarning, match="reading anyway"):
+        P.get_collection(str(tmp_path), create=False)
