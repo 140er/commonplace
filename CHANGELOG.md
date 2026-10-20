@@ -74,7 +74,10 @@ requires Python 3.10.
   palace already records, matching on subject, predicate, object and
   validity window, and lists, rather than copies, a current fact whose
   subject and predicate already hold a different current value in the
-  palace.
+  palace. The preview accounts for earlier accepted source facts, so its
+  counts and conflicts match applying unchanged inputs. Reused fact IDs
+  with different content or validity windows are reported separately and
+  leave the target fact intact; they are never counted as copied.
 
 - **A project now has one wing, whichever tool files into it.** Wing names
   come from one slug rule (lower case, spaces and hyphens become `_`), used by
@@ -274,7 +277,9 @@ requires Python 3.10.
 - **`mempalace_update_drawer` keeps the text it replaces.** Before an
   overwrite, the previous verbatim text and metadata are appended to
   `drawer_revisions.jsonl` in the palace directory, and the update is refused
-  if that append fails. Closets are purged only after the new text is
+  if that append fails. Partial OS writes are completed before the revision
+  is acknowledged; a write that cannot finish or be synced leaves the
+  original drawer intact. Closets are purged only after the new text is
   written, so a failed update leaves the drawer and its closets as they were.
   Deleting a drawer (`mempalace_delete_drawer`, `mempalace_delete_drawers`,
   `mempalace_delete_by_source`) removes its revisions too, after the delete
