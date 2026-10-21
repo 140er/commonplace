@@ -8,12 +8,11 @@ import copy
 import json
 
 import pytest
+from test_qdrant_backend import _fake_match_filter, _FakeQdrantClient
 
 import mempalace.backends.qdrant as qdrant
 from mempalace.backends.base import BackendClosedError, PalaceRef
 from mempalace.backends.qdrant import QdrantBackend
-
-from test_qdrant_backend import _FakeQdrantClient, _fake_match_filter
 
 
 class _CursorClient(_FakeQdrantClient):
