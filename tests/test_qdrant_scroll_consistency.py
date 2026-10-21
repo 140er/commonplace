@@ -200,3 +200,26 @@ def test_iter_metadata_keeps_explicit_nulls(tmp_path, cursor_qdrant):
     )
     rows = list(col.iter_metadata(["source_file", "normalize_version"]))
     assert rows == [{"source_file": "/s.md", "normalize_version": None}]
+
+
+@pytest.mark.parametrize("value", ["raw\0value", "raw\udcffvalue", "\x01mpesc:literal"])
+@pytest.mark.parametrize("route", ["all", "projection", "equality"])
+def test_iter_metadata_decodes_values_and_removes_the_storage_flag(
+    tmp_path, cursor_qdrant, value, route
+):
+    backend, _, col = _open(tmp_path)
+    try:
+        metadata = {"source_file": value, "wing": value}
+        _put(col, ["a"], metas=[metadata])
+        if route == "all":
+            rows = col.iter_metadata()
+            expected = metadata
+        elif route == "projection":
+            rows = col.iter_metadata(("source_file",))
+            expected = {"source_file": value}
+        else:
+            rows = col.iter_metadata(equals={"wing": value})
+            expected = metadata
+        assert list(rows) == [expected]
+    finally:
+        backend.close()

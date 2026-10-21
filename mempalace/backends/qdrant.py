@@ -1038,9 +1038,8 @@ class QdrantCollection(BaseCollection):
                 )
                 for point in points:
                     payload = point.get("payload") or {}
-                    meta = payload.get(_PAYLOAD_METADATA) or {}
-                    if not isinstance(meta, dict):
-                        meta = {}
+                    raw_meta = payload.get(_PAYLOAD_METADATA)
+                    _, meta = decode_record("", raw_meta if isinstance(raw_meta, dict) else {})
                     if require_key is not None and not isinstance(meta.get(require_key), str):
                         continue
                     if equals_dict and not all(

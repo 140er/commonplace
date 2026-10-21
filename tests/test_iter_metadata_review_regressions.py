@@ -2,6 +2,7 @@
 mined-file fast paths. Adapted from Astra's review probes."""
 
 import os
+from contextlib import contextmanager
 
 import pytest
 
@@ -136,3 +137,76 @@ def test_source_only_projection_keeps_non_string_values_without_require_key(col)
         {"source_file": 42},
         {"source_file": False},
     ]
+
+
+@pytest.mark.parametrize("value", ["raw\0value", "raw\udcffvalue", "\x01mpesc:literal"])
+@pytest.mark.parametrize("route", ["all", "projection", "equality", "source_only", "membership"])
+def test_metadata_iterator_decodes_stored_text_and_encodes_scoped_values(col, value, route):
+    metadata = {"source_file": value, "wing": value}
+    _add(col, [metadata])
+    if route == "all":
+        rows = col.iter_metadata()
+        expected = metadata
+    elif route == "projection":
+        rows = col.iter_metadata(("source_file",))
+        expected = {"source_file": value}
+    elif route == "equality":
+        rows = col.iter_metadata(equals={"wing": value})
+        expected = metadata
+    elif route == "source_only":
+        rows = col.iter_metadata(("source_file",), require_key="source_file")
+        expected = {"source_file": value}
+    else:
+        rows = col.iter_metadata(("source_file",), equals={"wing": [value]})
+        expected = {"source_file": value}
+    assert list(rows) == [expected]
+
+
+@pytest.mark.parametrize("route", ["all", "source_only", "membership"])
+def test_metadata_iterator_does_not_materialize_the_full_collection(col, monkeypatch, route):
+    _add(col, [{"source_file": "/a", "wing": "w"}, {"source_file": "/b", "wing": "w"}])
+    original = col._cursor
+
+    class StreamingCursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def execute(self, *args):
+            self.cursor.execute(*args)
+            return self
+
+        def fetchall(self):
+            raise AssertionError("iter_metadata must stream rows instead of calling fetchall")
+
+        def __iter__(self):
+            return iter(self.cursor)
+
+        def __getattr__(self, name):
+            return getattr(self.cursor, name)
+
+    @contextmanager
+    def cursor():
+        with original() as raw:
+            yield StreamingCursor(raw)
+
+    monkeypatch.setattr(col, "_cursor", cursor)
+    kwargs = {}
+    if route == "source_only":
+        kwargs = {"keys": ("source_file",), "require_key": "source_file"}
+    elif route == "membership":
+        kwargs = {"equals": {"wing": ["w"]}}
+    assert len(list(col.iter_metadata(**kwargs))) == 2
+
+
+def test_failed_prefetch_closes_its_metadata_stream(col, monkeypatch):
+    closed = []
+
+    def broken(*args, **kwargs):
+        try:
+            yield {"source_file": []}  # An unusable row makes the consumer fall back.
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(col, "iter_metadata", broken)
+    assert prefetch_complete_mtimes(col, ["/a"]) is None
+    assert closed == [True]

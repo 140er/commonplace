@@ -1443,7 +1443,7 @@ class SQLiteExactCollection(BaseCollection):
                         if _FACET_FIELD_RE.match(k) and isinstance(v, str):
                             expr = _json_field_sql(k, locus_columns=locus)
                             clauses.append(f"{expr} = ?")
-                            params.append(v)
+                            params.append(encode_filter(v))
                         elif (
                             _FACET_FIELD_RE.match(k)
                             and multi_key is None
@@ -1453,7 +1453,7 @@ class SQLiteExactCollection(BaseCollection):
                             multi_key = k
                             # De-duplicate so a value repeated across 900-item
                             # chunks cannot yield the same row twice.
-                            multi_vals = list(dict.fromkeys(v))
+                            multi_vals = list(dict.fromkeys(encode_filter(value) for value in v))
                         else:
                             fully_pushed = False
                 if (
@@ -1468,57 +1468,52 @@ class SQLiteExactCollection(BaseCollection):
                     sf_expr = _json_field_sql("source_file", locus_columns=locus)
                     clauses.append(f"{sf_expr} IS NOT NULL")
                     where_sql = " AND ".join(clauses)
-                    sf_rows = [
-                        row[0]
-                        for row in cur.execute(
-                            f"SELECT {sf_expr} FROM documents WHERE {where_sql}",
-                            params,
-                        ).fetchall()
-                    ]
-                    for sf in sf_rows:
+                    for (sf,) in cur.execute(
+                        f"SELECT {sf_expr} FROM documents WHERE {where_sql}", params
+                    ):
                         if isinstance(sf, str):
-                            yield {"source_file": sf}
+                            yield {"source_file": decode_value(sf)}
                     return
                 where_sql = " AND ".join(clauses)
                 if multi_key is not None and multi_vals is not None:
                     m_expr = _json_field_sql(multi_key, locus_columns=locus)
-                    raw_metas = []
-                    for start in range(0, len(multi_vals), 900):
-                        chunk = multi_vals[start : start + 900]
+                    chunks = (
+                        multi_vals[start : start + 900] for start in range(0, len(multi_vals), 900)
+                    )
+                else:
+                    chunks = (None,)
+                for chunk in chunks:
+                    sql = f"SELECT metadata_json FROM documents WHERE {where_sql}"
+                    query_params = params
+                    if chunk is not None:
                         ph = ",".join("?" for _ in chunk)
-                        raw_metas.extend(
-                            row[0]
-                            for row in cur.execute(
-                                f"SELECT metadata_json FROM documents WHERE {where_sql} AND {m_expr} IN ({ph})",
-                                (*params, *chunk),
-                            ).fetchall()
-                        )
-                else:
-                    raw_metas = [
-                        row[0]
-                        for row in cur.execute(
-                            f"SELECT metadata_json FROM documents WHERE {where_sql}",
-                            params,
-                        ).fetchall()
-                    ]
-            for raw in raw_metas:
-                meta = _json_loads(raw)
-                if require_key is not None and not isinstance(meta.get(require_key), str):
-                    continue
-                if equals_dict and not all(
-                    isinstance(meta.get(k), str)
-                    and (meta.get(k) == v if isinstance(v, str) else meta.get(k) in v)
-                    for k, v in equals_dict.items()
-                ):
-                    continue
-                if key_tuple is not None:
-                    # Keep explicit nulls: the mined-file prefetch must tell an
-                    # absent key from one stored as null.
-                    projected = {k: meta[k] for k in key_tuple if k in meta}
-                    if any(v is not None for v in projected.values()):
-                        yield projected
-                else:
-                    yield meta if meta else None
+                        sql += f" AND {m_expr} IN ({ph})"
+                        query_params = (*params, *chunk)
+                    # Keep the cursor lazy: a metadata pass over a large palace
+                    # must not retain every JSON document before yielding one.
+                    for (raw,) in cur.execute(sql, query_params):
+                        _, meta = decode_record("", _json_loads(raw))
+                        if require_key is not None and not isinstance(meta.get(require_key), str):
+                            continue
+                        if equals_dict and not all(
+                            isinstance(meta.get(k), str)
+                            and (
+                                meta.get(k) == v
+                                if isinstance(v, str)
+                                else isinstance(v, (list, tuple, set, frozenset))
+                                and meta.get(k) in v
+                            )
+                            for k, v in equals_dict.items()
+                        ):
+                            continue
+                        if key_tuple is not None:
+                            # Keep explicit nulls so the mined-file prefetch can
+                            # distinguish an absent key from a stored null.
+                            projected = {k: meta[k] for k in key_tuple if k in meta}
+                            if any(v is not None for v in projected.values()):
+                                yield projected
+                        else:
+                            yield meta if meta else None
 
         return rows()
 

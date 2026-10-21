@@ -133,6 +133,10 @@ def _scan_collection_metadata(collection, keys, absorb, reset) -> None:
                 exc_info=True,
             )
             reset()
+        finally:
+            close = getattr(fast, "close", None)
+            if close is not None:
+                close()
     try:
         for meta in _paged_metadata(collection):
             absorb(meta)
@@ -430,7 +434,7 @@ def prefetch_complete_mtimes(collection, source_files) -> Optional[dict[str, tup
             src = meta.get("source_file")
             if src not in wanted or src in unprovable:
                 continue
-            if not _is_comparable(meta):
+            if not _is_comparable(meta) or not _is_plain_number(meta.get("normalize_version", 1)):
                 unprovable.add(src)
                 groups.pop(src, None)
                 continue
@@ -452,6 +456,10 @@ def prefetch_complete_mtimes(collection, source_files) -> Optional[dict[str, tup
     except Exception:
         logger.warning("sqlite metadata scan failed; checking each file on its own", exc_info=True)
         return None
+    finally:
+        close = getattr(rows, "close", None)
+        if close is not None:
+            close()
     complete: dict[str, tuple] = {}
     for src, by_mtime in groups.items():
         mtimes = tuple(
