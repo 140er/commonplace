@@ -156,11 +156,16 @@ class _FakeQdrantClient:
     ):
         self.scroll_calls.append(qdrant_filter)
         self.scroll_details.append((qdrant_filter, limit, offset, with_vector))
-        points = list(self.collections.get(collection, {"points": {}})["points"].values())
+        points = sorted(
+            self.collections.get(collection, {"points": {}})["points"].values(),
+            key=lambda point: point["id"],
+        )
         points = [point for point in points if _fake_match_filter(point, qdrant_filter)]
-        start = int(offset or 0)
-        selected = points[start : start + limit]
-        next_offset = start + limit if start + limit < len(points) else None
+        # Qdrant resumes from an inclusive point ID, not a row number.
+        if offset is not None:
+            points = [point for point in points if point["id"] >= offset]
+        selected = points[:limit]
+        next_offset = points[limit]["id"] if len(points) > limit else None
         out = []
         for point in selected:
             item = {"id": point["id"], "payload": point["payload"]}
@@ -749,6 +754,8 @@ def test_qdrant_local_exact_defers_vectors(tmp_path, fake_qdrant):
 
 
 def test_qdrant_sequential_get_pagination_uses_scroll_cursor(tmp_path, fake_qdrant):
+    from mempalace.backends.qdrant import _point_id
+
     _backend, col = _collection(tmp_path)
     col.upsert(
         ids=[f"id-{i}" for i in range(6)],
@@ -763,11 +770,16 @@ def test_qdrant_sequential_get_pagination_uses_scroll_cursor(tmp_path, fake_qdra
     p1 = col.get(limit=2, offset=2, include=["metadatas"])
     p2 = col.get(limit=2, offset=4, include=["metadatas"])
 
-    assert p0.ids + p1.ids + p2.ids == [f"id-{i}" for i in range(6)]
-    # Each sequential page advances Qdrant's scroll offset (None -> 2 -> 4) with limit=2,
-    # rather than re-scrolling from offset=None with limit=2, 4, 6.
+    ordered_ids = sorted((f"id-{i}" for i in range(6)), key=_point_id)
+    assert p0.ids + p1.ids + p2.ids == ordered_ids
+    # Each page resumes at the next unread point ID without growing the limit.
     offsets_and_limits = [(limit, offset) for _flt, limit, offset, _vec in client.scroll_details]
-    assert offsets_and_limits == [(2, None), (2, 2), (2, 4)]
+    assert offsets_and_limits == [
+        (2, None),
+        (2, _point_id(ordered_ids[2])),
+        (2, _point_id(ordered_ids[4])),
+    ]
+    assert col.get(limit=2, offset=6).ids == []
 
     # Writes invalidate the scroll cursor so fresh data is visible on the next page read.
     col.upsert(
