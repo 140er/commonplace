@@ -127,6 +127,7 @@ from ..embedding import (  # noqa: E402
 from ..hallways import (  # noqa: E402
     delete_hallway,
     list_hallways,
+    list_hallways_page,
 )
 from ..ids import ID_RECIPE, make_drawer_id_from_content  # noqa: E402
 from ..knowledge_graph import KnowledgeGraph, knowledge_graph_notice  # noqa: E402

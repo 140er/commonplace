@@ -2290,9 +2290,10 @@ def _compute_entity_tunnels_for_wing(wing: str, config=None) -> int:
     """Drop tunnels between ``wing`` and every other wing that shares an
     entity via the within-wing hallway primitive.
 
-    Reads hallway records (``mempalace.hallways.list_hallways``) and
-    materializes cross-wing tunnels for any entity that has hallways in
-    this wing AND at least one other wing. Tunnels use ``kind="entity"``
+    Reads each entity's strongest hallway per wing
+    (``mempalace.hallways.entity_strength_records``) and materializes
+    cross-wing tunnels for any entity that has hallways in this wing AND at
+    least one other wing. Tunnels use ``kind="entity"``
     and the synthetic endpoint room ``entity:<name>`` so they're
     distinguishable from explicit and topic tunnels at read time but
     interchangeable with them via the standard ``list_tunnels`` /
@@ -2301,10 +2302,12 @@ def _compute_entity_tunnels_for_wing(wing: str, config=None) -> int:
     Returns the number of tunnels created or refreshed. Zero means no
     eligible entity exists in this wing yet (or no hallway records do).
     """
-    from .hallways import list_hallways
+    from .hallways import entity_strength_records
     from .palace_graph import entity_tunnels_for_wing
 
-    hallways = list_hallways(config=config)
+    # Not every hallway of the palace: the tunnels read one strength per
+    # (wing, entity), so the store hands over only that.
+    hallways = entity_strength_records(config=config)
     if not hallways:
         return 0
     created = entity_tunnels_for_wing(wing, hallways, config=config)
