@@ -1284,7 +1284,21 @@ def _build_http_server(host: str, port: int):
 
     class _MCPHTTPServer(ThreadingHTTPServer):
         daemon_threads = True
-        allow_reuse_address = True
+        # Windows SO_REUSEADDR lets a second socket bind a port that is already
+        # listening, and that socket then takes connections meant for this one.
+        # Windows gets SO_EXCLUSIVEADDRUSE instead (see server_bind); POSIX keeps
+        # SO_REUSEADDR, which there only allows a rebind past TIME_WAIT.
+        allow_reuse_address = sys.platform != "win32"
+        allow_reuse_port = False
+
+        def server_bind(self):
+            if sys.platform == "win32":
+                import socket
+
+                # Reserve the port before binding, so a server that binds it
+                # later fails instead of sharing it.
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
 
         def handle_error(self, request, client_address):
             # A client hanging up mid-response makes the send path raise

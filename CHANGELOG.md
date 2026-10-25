@@ -323,6 +323,16 @@ requires Python 3.10.
   the daemon's token, endpoint and pid files were written in place, where a
   reader could see half a record. All of them now create a new randomly named
   file and rename it into place.
+- **On Windows, no other server can take over the HTTP hub's port.** The hub
+  bound with `SO_REUSEADDR`, which on Windows lets a later socket bind a port
+  that is already listening and receive some of its connections.
+  `python -m http.server 8765`, a static preview server on the same port,
+  answered requests meant for the hub: authenticated MCP calls failed with
+  `RemoteDisconnected`, and the server that took them over received their
+  `Authorization` header. On Windows the hub now binds with
+  `SO_EXCLUSIVEADDRUSE`, so a later server on its port fails to start, and
+  the hub itself refuses to start on a port another server holds. POSIX
+  binds are unchanged.
 
 ### Performance
 
