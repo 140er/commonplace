@@ -735,13 +735,16 @@ class MempalaceConfig:
 
     @property
     def hallway_file(self):
-        """Path to the hallway file, sibling of palace_path.
+        """Path to ``hallways.json``, sibling of palace_path.
 
         Mirrors ``tunnel_file`` so within-wing hallway state is scoped to the
         configured palace and survives palace rebuilds (it does not live in
-        ChromaDB which can be recreated). Prior to this property the path was
-        hardcoded under ``~/.mempalace/hallways.json`` and multiple palaces on
-        one host silently shared one file (see ``hallways._legacy_hallway_file``).
+        ChromaDB which can be recreated). The records now live in
+        ``hallways.sqlite3`` beside this path; the first hallway write imports
+        this file once (see ``hallways._import_json_once``). Prior to this
+        property the path was hardcoded under ``~/.mempalace/hallways.json``
+        and multiple palaces on one host silently shared one file (see
+        ``hallways._legacy_hallway_file``).
         """
         return os.path.join(os.path.dirname(self.palace_path), "hallways.json")
 
