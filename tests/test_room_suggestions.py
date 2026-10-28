@@ -669,3 +669,28 @@ def test_undo_refuses_a_closet_move_after_new_source_drawers_arrive(palace, monk
         s.apply(store, job, yes=True, undo=True)
     assert content(palace) == before
     assert content(palace, closets=True) == before_closets
+
+
+def test_conflicted_partial_apply_keeps_its_journal_without_blocking_new_jobs(palace, monkeypatch):
+    from mempalace.palace import get_collection
+
+    path, backend, store = palace
+    job = ready(palace)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            store, "mark_move", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("lost ack"))
+        )
+        with pytest.raises(RuntimeError):
+            s.apply(store, job, yes=True)
+    col = get_collection(path, backend=backend, create=False)
+    col.update(ids=["b"], metadatas=[{"note": "later user edit"}])
+    col.close()
+    before = content(palace)
+    for undo in (False, True):
+        with pytest.raises(RoomSuggestionError, match="edited"):
+            s.apply(store, job, yes=True, undo=undo)
+        assert store.job(job)["state"] == "apply_conflict"
+        assert content(palace) == before
+    assert store.moves(job)
+    other = start(palace)
+    assert store.job(other)["state"] == "queued"

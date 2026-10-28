@@ -649,7 +649,11 @@ def apply(store, job_id, *, ids=None, yes=False, undo=False):
         raise RoomSuggestionError("Resume must use the original reviewed selection")
     if job["state"] == ("undone" if undo else "applied"):
         return {"state": job["state"], "changed": 0, "already_complete": True}
-    allowed = {"applied", "applying", "undoing"} if undo else {"ready", "applying"}
+    allowed = (
+        {"applied", "applying", "undoing", "apply_conflict", "undo_conflict"}
+        if undo
+        else {"ready", "applying", "apply_conflict"}
+    )
     if job["state"] not in allowed:
         raise RoomSuggestionError(
             "Wait for a ready suggestion job, or resume the interrupted operation"
@@ -679,10 +683,24 @@ def apply(store, job_id, *, ids=None, yes=False, undo=False):
                 raise RoomSuggestionError("Resume must use the original reviewed selection")
             moves = store.moves(job_id)
             collections = {"drawer": drawers, "closet": closets}
-            _validate_closet_sources(moves, drawers, job["config"]["wing"])
-            _validate_moves(moves, collections, undo=undo, undo_started=job["state"] == "undoing")
-            store.state(job_id, "undoing" if undo else "applying")
-            changed = _replay(store, job_id, moves, collections, undo=undo)
+            try:
+                _validate_closet_sources(moves, drawers, job["config"]["wing"])
+                _validate_moves(
+                    moves,
+                    collections,
+                    undo=undo,
+                    undo_started=job["state"] in {"undoing", "undo_conflict"},
+                )
+                store.state(job_id, "undoing" if undo else "applying")
+                changed = _replay(store, job_id, moves, collections, undo=undo)
+            except RoomSuggestionError as exc:
+                previous = store.job(job_id)["state"]
+                if previous in {"applying", "undoing", "apply_conflict", "undo_conflict"}:
+                    # A later edit can make recovery impossible until reviewed.
+                    # Keep its journal, but do not block every future job.
+                    conflict = "undo_conflict" if previous.startswith("undo") else "apply_conflict"
+                    store.state(job_id, conflict, error=str(exc))
+                raise
             state = "undone" if undo else "applied"
             store.state(job_id, state)
     return {

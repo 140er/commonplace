@@ -85,6 +85,9 @@ A crash can leave an operation partially applied. Retry `apply JOB_ID --yes` or
 `undo JOB_ID --yes` to replay the journal idempotently. You can also undo a partial
 apply. This is a recoverable per-record journal, not a transaction spanning every
 drawer and closet. Keep the local suggestion state until you no longer need undo.
+If later edits prevent recovery, the job becomes `apply_conflict` or
+`undo_conflict`. Its journal stays available for review and the same operation can
+be retried after the conflict is resolved. Other suggestion jobs can still run.
 
 ## Background controls and privacy
 
