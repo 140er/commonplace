@@ -13,8 +13,8 @@ from mempalace.room_benchmark import (
     metrics,
     prepare,
     read_palace,
-    run,
     report,
+    run,
 )
 from mempalace.rooms import RoomSet, RoomSpec
 

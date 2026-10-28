@@ -70,10 +70,15 @@ def _open_closets_collection(palace_path):
 
 
 def cmd_rooms(args):
+    if getattr(args, "rooms_action", None) == "suggestions":
+        cmd_room_suggestions(args)
+        return
+
     if getattr(args, "rooms_action", None) == "benchmark":
         from ..room_benchmark import run
 
-        return run(args)
+        run(args)
+        return
 
     from ..rooms import (
         DEFAULT_THRESHOLD,

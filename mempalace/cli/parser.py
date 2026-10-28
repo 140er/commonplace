@@ -683,6 +683,7 @@ def main():
         "rooms", help="Propose a closed room set for a wing with an LLM, then assign drawers to it"
     )
     rooms_sub = p_rooms.add_subparsers(dest="rooms_action")
+    add_room_suggestions_parser(rooms_sub)
     p_rooms_benchmark = rooms_sub.add_parser(
         "benchmark", help="Classify a frozen pilot snapshot without modifying any drawers"
     )

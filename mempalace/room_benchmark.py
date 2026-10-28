@@ -42,10 +42,14 @@ def _outside_palace(output: Path, palace: Path) -> None:
 
 
 def write_private(path: Path, data: dict) -> None:
+    from .private_state import restrict_private
+
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    restrict_private(path.parent, directory=True)
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=".room-pilot-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            restrict_private(Path(name))
             json.dump(data, stream, ensure_ascii=False, allow_nan=False)
             stream.write("\n")
         os.replace(name, path)
