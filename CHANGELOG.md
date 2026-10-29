@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `reference`, and `creative` hall keywords. Existing palaces keep their legacy
   classification vocabulary, including when they have no config yet. The unused `topic_wings` setting was already removed.
 
+- Codex project-hook diagnostics handle linked worktrees, Windows path spelling,
+  and user-level hooks correctly. Status also tolerates a deleted working directory.
+
 ### Changed
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).

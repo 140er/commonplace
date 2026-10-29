@@ -319,6 +319,12 @@ periodically and before context compression:
   compaction) →
   [mempalaceofficial.com/guide/cursor-hooks](https://mempalaceofficial.com/guide/cursor-hooks.html)
 
+Codex CLI project hooks require project trust in global `~/.codex/config.toml`
+and separate hook-definition review in `/hooks`; CLI 0.163 can silently skip
+unreviewed hooks. MemPalace never edits global Codex or Claude config.
+See the [Codex hook setup](https://mempalaceofficial.com/guide/hooks.html#codex-cli)
+for nested JSON, trust checks, and per-invocation automation.
+
 If you are installing under time pressure, start with the
 [Claude Code retention setup checklist](https://mempalaceofficial.com/guide/claude-code-retention.html):
 wire the hooks, back up existing JSONL transcripts, and backfill them with

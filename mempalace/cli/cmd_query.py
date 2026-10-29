@@ -183,6 +183,7 @@ def cmd_export(args):
 
 
 def cmd_status(args):
+    from ..codex_hooks import codex_hook_notice
     from ..knowledge_graph import knowledge_graph_notice
     from ..miner import status
 
@@ -191,3 +192,10 @@ def cmd_status(args):
     notice = knowledge_graph_notice(palace_path, explicit=bool(args.palace))
     if notice:
         print(f"\n  Note: {notice}")
+    try:
+        project_dir = Path.cwd()
+    except OSError:
+        return
+    hook_notice = codex_hook_notice(project_dir)
+    if hook_notice:
+        print(f"\n  Warning: {hook_notice}")

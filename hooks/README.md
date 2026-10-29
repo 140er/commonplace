@@ -95,29 +95,49 @@ integration uses.
 
 ## Install — Codex CLI (OpenAI)
 
-Add to `.codex/hooks.json`:
+For Codex CLI 0.163, add this to the project's `.codex/hooks.json`.
+Use the nested `hooks` object and handler groups; a flat event-to-command
+map does not work. `mempalace` must be on Codex's PATH (or replace it with
+an absolute path to the executable).
 
 ```json
 {
-  "Stop": [{
-    "type": "command",
-    "command": "/absolute/path/to/hooks/mempal_save_hook.sh",
-    "timeout": 30
-  }],
-  "PreCompact": [{
-    "type": "command",
-    "command": "/absolute/path/to/hooks/mempal_precompact_hook.sh",
-    "timeout": 30
-  }]
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "mempalace hook run --harness codex --hook session-start",
+        "timeout": 30
+      }]
+    }],
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "mempalace hook run --harness codex --hook stop",
+        "timeout": 30
+      }]
+    }],
+    "SessionEnd": [{
+      "hooks": [{
+        "type": "command",
+        "command": "mempalace hook run --harness codex --hook session-end",
+        "timeout": 3
+      }]
+    }],
+    "PreCompact": [{
+      "hooks": [{
+        "type": "command",
+        "command": "mempalace hook run --harness codex --hook precompact",
+        "timeout": 90
+      }]
+    }]
+  }
 }
 ```
 
-**Other harnesses:** the clean-exit save runs through the harness-agnostic
-`mempalace hook run --hook session-end` entry point. This release wires it
-for Claude Code. Antigravity exposes no dedicated session-end event (its
-lifecycle hooks are PreToolUse/PostToolUse/PreInvocation/PostInvocation/Stop,
-and MemPalace already saves there via `Stop`); Cursor and Codex can adopt the
-same entry point as a follow-up wherever their own session-end event is available.
+SessionEnd has a three-second Codex deadline; MemPalace backgrounds its save.
+See the [Codex hook guide](../website/guide/hooks.md#install--codex-cli)
+for project trust, hook review, and TOML configuration.
 
 ## Configuration
 
