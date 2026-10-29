@@ -1,5 +1,6 @@
 import json
 import stat
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -454,6 +455,109 @@ def test_codex_jsonl_payload_not_dict():
     ]
     result = _try_codex_jsonl("\n".join(lines))
     assert result is not None
+
+
+_CODEX_0163 = Path(__file__).parent / "fixtures" / "codex_rollout_0163.jsonl"
+
+
+def test_codex_jsonl_0163_item_completed_turns():
+    """Codex 0.163+ rollouts carry turns only as item_completed items."""
+    result = _try_codex_jsonl(_CODEX_0163.read_text(encoding="utf-8"))
+    assert result is not None
+    assert "> Store pin state as pinnedAt, not isPinned." in result
+    assert "Noted: pinnedAt is a nullable ISO timestamp." in result
+    # The AGENTS.md injection rides in a response_item "user" message.
+    assert "never file me" not in result
+    assert result.count("pinnedAt, not isPinned") == 1
+
+
+def test_codex_jsonl_mixed_forms_file_each_turn_once():
+    """A rollout with both forms files the current one only."""
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {}}),
+        json.dumps({"type": "event_msg", "payload": {"type": "user_message", "message": "Q"}}),
+        json.dumps({"type": "event_msg", "payload": {"type": "agent_message", "message": "A"}}),
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {"type": "UserMessage", "content": [{"type": "text", "text": "Q"}]},
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {"type": "AgentMessage", "content": [{"type": "Text", "text": "A"}]},
+                },
+            }
+        ),
+    ]
+    result = _try_codex_jsonl("\n".join(lines))
+    assert result is not None
+    assert result.count("> Q") == 1
+
+
+def _legacy(kind, text):
+    return json.dumps({"type": "event_msg", "payload": {"type": kind, "message": text}})
+
+
+def _current(kind, text):
+    block = "text" if kind == "UserMessage" else "Text"
+    return json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": kind, "content": [{"type": block, "text": text}]},
+            },
+        }
+    )
+
+
+def test_codex_jsonl_resumed_across_upgrade_keeps_every_turn():
+    """Turns written before the upgrade (legacy) and after (current) all file."""
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {}}),
+        _legacy("user_message", "old question"),
+        _legacy("agent_message", "old answer"),
+        _current("UserMessage", "new question"),
+        _current("AgentMessage", "new answer"),
+    ]
+    result = _try_codex_jsonl("\n".join(lines))
+    assert "> old question" in result and "> new question" in result
+
+
+def test_codex_jsonl_keeps_a_turn_the_user_really_repeated():
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {}}),
+        _current("UserMessage", "continue"),
+        _current("AgentMessage", "done one"),
+        _current("UserMessage", "continue"),
+        _current("AgentMessage", "done two"),
+    ]
+    assert _try_codex_jsonl("\n".join(lines)).count("> continue") == 2
+
+
+def test_codex_turn_ignores_other_items_and_bad_shapes():
+    from mempalace.normalize import codex_turn
+
+    def item(item):
+        return {"type": "event_msg", "payload": {"type": "item_completed", "item": item}}
+
+    assert codex_turn(item({"type": "Reasoning", "content": [{"text": "x"}]})) is None
+    assert codex_turn(item({"type": "UserMessage", "content": "not a list"})) is None
+    assert codex_turn(item({"type": "UserMessage", "content": [{"type": "image"}]})) is None
+    assert codex_turn(item("not a dict")) is None
+    assert codex_turn({"type": "event_msg", "payload": {"type": "task_complete"}}) is None
+    assert codex_turn(item({"type": "AgentMessage", "content": [{"text": " hi "}]})) == (
+        "assistant",
+        "hi",
+        True,
+    )
 
 
 # ── _try_gemini_jsonl ──────────────────────────────────────────────────
