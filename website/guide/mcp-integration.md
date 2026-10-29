@@ -128,3 +128,13 @@ This protocol is what turns storage into memory — the AI knows to verify befor
 | `mempalace_reconnect` | Force reconnect to the database |
 
 For detailed schemas and parameters, see [MCP Tools Reference](/reference/mcp-tools).
+
+## Codex auto-save hooks
+
+MCP setup alone does not enable auto-save. Follow the [Codex hook setup](/guide/hooks#install-codex-cli)
+for the nested hook format and all four lifecycle events. Project `.codex/hooks.json`
+and `.codex/config.toml` load only when the project is trusted in global
+`~/.codex/config.toml`; hook definitions also need separate review with `/hooks`.
+Codex CLI 0.163 can silently skip unreviewed hooks. MemPalace never writes global
+Codex or Claude configuration. For vetted automation, the hook guide documents
+`--dangerously-bypass-hook-trust` and per-invocation configuration.

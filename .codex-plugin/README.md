@@ -52,7 +52,29 @@ The main `$mempalace:mempalace` skill can be invoked with six different subcomma
 
 ## Hooks
 
-The plugin includes auto-save hooks that run on session stop (every 15 messages) and before context compaction, automatically preserving conversation context into your palace.
+For Codex CLI 0.163, configure `SessionStart`, `Stop`, `SessionEnd`, and
+`PreCompact` with the [manual hook setup](../website/guide/hooks.md#install--codex-cli).
+The plugin manifest registers MCP and skills; it does not register the
+`.codex-plugin/hooks.json` reference file. That file already uses the nested
+`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "..."}]}]}}`
+format; flat command entries do not work.
+
+Project `.codex/hooks.json` and `.codex/config.toml` are ignored unless the
+project is trusted in global `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`).
+Use Codex's project-trust flow; MemPalace never changes global Codex or Claude
+configuration. Then open `/hooks` in the Codex TUI to review and trust each
+hook definition. Project trust and plugin installation do not approve hooks;
+new or changed definitions require review. Codex CLI 0.163 can silently skip
+unreviewed hooks, so verify these steps even if MCP tools work.
+
+`mempalace status` checks project-trust entries read-only when project hooks
+are present. It cannot verify individual hook reviews. For automation with
+commands you have already vetted, `--dangerously-bypass-hook-trust` bypasses
+hook review for that invocation; project-layer trust is still required.
+The manual setup also shows per-invocation `-c 'hooks.Stop=[{hooks=[...]}]'`
+overrides that need no global config writes.
+
+See the [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks).
 
 Set the `MEMPAL_DIR` environment variable to a directory path to automatically run `mempalace mine` on that directory during each save trigger.
 
