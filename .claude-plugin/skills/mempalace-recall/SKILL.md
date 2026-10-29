@@ -1,6 +1,6 @@
 ---
 name: mempalace-recall
-description: "Search MemPalace before answering anything earlier sessions may have covered: what was decided, why, by whom, unfinished work, and \"anything I should know about X\", \"safe way to do Y\", gotchas or warnings about this repo or machine. Search before saying you don't know. If memory has nothing, answer from the code. Requires the mempalace-mcp server."
+description: "Search MemPalace before answering anything earlier sessions may have covered: what was decided, why, by whom, unfinished work, and \"anything I should know about X\", \"safe way to do Y\", gotchas or warnings about this repo or machine. Search before saying you don't know. If memory has nothing, answer from the repo and say so. Requires the mempalace-mcp server."
 ---
 
 # MemPalace Recall
@@ -18,15 +18,15 @@ covered the question, even if the code could answer part of it:
   "who …?", "what branch / what was left unfinished?"
 - Warnings and know-how about this repo, machine, or setup: "anything I
   should know about X?", "what's the safe way to Y?", gotchas, things not
-  to touch, why something is the way it is
+  to touch
 - A person, project, or entity: "who is …", "what is …"
 - An earlier session: "remember when …", "last time …"
 - A preference or fact that could have changed over time
 
-Always search before saying "I don't know" about earlier work, and before
-relying on other memory files. Do **not** search on pure greenfield edits
-("rename this variable", "fix this typo"); one search per question is
-enough.
+Always search before saying "I don't know" about earlier work, even if
+another memory file seems to answer it. Do **not** search on pure
+greenfield edits ("rename this variable", "fix this typo"); one search,
+widened once, is enough.
 
 ## Protocol
 
@@ -75,7 +75,7 @@ shared hub or wait for its reply or patch, use the logstream tools
   (code, `git log`, `git diff`) and label it as such. Never stop at "the
   palace is empty", and never answer from model memory.
 - **No record of a decision.** Code or a commit existing is not a decision.
-  If neither the palace nor the repo records one, say none was recorded.
+  Unless the palace or a commit message states one, say none was recorded.
 - **MCP tools missing or erroring.** Say the server is not connected (fix:
   `mempalace status`, `/mempalace-init`), then answer from the repo as above.
 - **Index corrupt** (HNSW segment-writer error, ChromaDB compaction

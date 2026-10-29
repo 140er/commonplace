@@ -112,8 +112,8 @@ does not impose a fixed token budget.
   check and widen the scope. If recall still finds nothing, say so in
   one line, then answer from the repo (code, `git log`, `git diff`) and
   label it as such. An empty palace is not an answer, and model memory
-  is never a source. Code or a commit existing is not a decision: if
-  neither the palace nor the repo records one, say none was recorded.
+  is never a source. Code or a commit existing is not a decision:
+  unless the palace or a commit message states one, say none was recorded.
 - **MCP unavailable / tool error.** Surface the error plainly and suggest
   the user verify the server (`mempalace status`, or re-run install),
   then answer from the repo as above, never from model memory.
