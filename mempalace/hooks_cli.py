@@ -31,7 +31,7 @@ from mempalace._env import env_float, env_str, parse_bool
 from mempalace._proc import pid_alive as _pid_alive
 from mempalace.config import MempalaceConfig, normalize_wing_name
 from mempalace.fsio import decode_source
-from mempalace.normalize import codex_turn
+from mempalace.normalize import codex_same_turn, codex_turn
 from mempalace.timeutil import utc_now_iso
 from mempalace.write_routing import (
     ResolvedWriteRoutingPolicy,
@@ -201,9 +201,7 @@ def _count_human_messages(transcript_path: str) -> int:
     if not path.is_file():
         return 0
     count = 0
-    # Codex user turns by form, legacy (False) and current (True); a rollout
-    # holding both counts only the current form so no turn counts twice.
-    codex_counts = {False: 0, True: 0}
+    last_codex: dict = {}  # latest Codex turn per role, see codex_same_turn
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -226,13 +224,20 @@ def _count_human_messages(transcript_path: str) -> int:
                     # records (see normalize.codex_turn for both forms).
                     elif entry.get("type") == "event_msg":
                         turn = codex_turn(entry)
-                        if turn and turn[0] == "user" and "<command-message>" not in turn[1]:
-                            codex_counts[turn[2]] += 1
+                        if turn is None:
+                            continue
+                        if (
+                            turn[0] == "user"
+                            and not codex_same_turn(last_codex, turn)
+                            and not _is_harness_boilerplate(turn[1])
+                        ):
+                            count += 1
+                        last_codex[turn[0]] = turn
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
         return 0
-    return count + (codex_counts[True] or codex_counts[False])
+    return count
 
 
 _state_dir_initialized = False
@@ -884,6 +889,7 @@ _HARNESS_BOILERPLATE_MARKERS = (
     "[Request interrupted by user",  # interruption record, carries no topic
     "[Image:",  # pasted-image placeholder, no words to summarize
     "Base directory for this skill:",  # skill preamble
+    "Background command completed (exit",  # Codex background-command notice
 )
 
 
@@ -921,8 +927,7 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
     if not path.is_file():
         return []
     messages = []
-    # Codex user turns by form, as in _count_human_messages.
-    codex_messages: dict[bool, list[str]] = {False: [], True: []}
+    last_codex: dict = {}  # as in _count_human_messages
     try:
         with open(path, "rb") as f:
             for raw_line in f:
@@ -944,13 +949,19 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
                     # Codex CLI format
                     elif entry.get("type") == "event_msg":
                         turn = codex_turn(entry)
-                        if turn and turn[0] == "user" and not _is_harness_boilerplate(turn[1]):
-                            codex_messages[turn[2]].append(turn[1][:200])
+                        if turn is None:
+                            continue
+                        if (
+                            turn[0] == "user"
+                            and not codex_same_turn(last_codex, turn)
+                            and not _is_harness_boilerplate(turn[1])
+                        ):
+                            messages.append(turn[1][:200])
+                        last_codex[turn[0]] = turn
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
         return []
-    messages += codex_messages[True] or codex_messages[False]
     return messages[-count:]
 
 
@@ -1375,6 +1386,12 @@ def _cwd_from_jsonl(transcript_path: str) -> Optional[str]:
                 _wt_marker = "/.claude/worktrees/"
                 if _wt_marker in cwd_norm:
                     cwd_norm = cwd_norm.split(_wt_marker, 1)[0]
+                # T3 Code keeps worktrees at ~/.t3/worktrees/<project>/<wt>.
+                _t3_marker = "/.t3/worktrees/"
+                if _t3_marker in cwd_norm:
+                    project = cwd_norm.split(_t3_marker, 1)[1].split("/", 1)[0]
+                    if project:
+                        cwd_norm = cwd_norm.split(_t3_marker, 1)[0] + "/" + project
                 return cwd_norm
     except OSError:
         pass

@@ -2970,3 +2970,30 @@ def test_project_wing_reads_the_codex_session_meta_cwd(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text(_CODEX_0163.read_text(encoding="utf-8"), encoding="utf-8")
     assert _project_wing(str(path)) == "acme_app"
+
+
+def test_codex_background_command_notice_is_not_a_user_turn(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    notice = "Background command completed (exit 143): /bin/bash -lc sleep 9"
+    _write_transcript(
+        transcript,
+        [
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {"type": "UserMessage", "content": [{"type": "text", "text": text}]},
+                },
+            }
+            for text in (notice, "ship it")
+        ],
+    )
+    assert _count_human_messages(str(transcript)) == 1
+    assert _extract_recent_messages(str(transcript)) == ["ship it"]
+
+
+def test_project_wing_collapses_t3_worktrees(tmp_path):
+    from mempalace.hooks_cli import _project_wing
+
+    path = _write_transcript_with_cwd(tmp_path, "/home/me/.t3/worktrees/acme-app/claude-fix-x")
+    assert _project_wing(path) == "acme_app"

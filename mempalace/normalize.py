@@ -422,19 +422,33 @@ def codex_turn(entry) -> Optional[Tuple[str, str, bool]]:
     return (role, msg.strip(), False)
 
 
+def codex_same_turn(last: dict, turn) -> bool:
+    """Whether ``turn`` repeats the role's last turn in the other record form.
+
+    ``last`` maps a role to its latest turn. A rollout written across a
+    Codex upgrade can describe one turn in both forms; only that cross-form
+    repeat is dropped, so a user who really says the same thing twice keeps
+    both turns.
+    """
+    prev = last.get(turn[0])
+    return prev is not None and prev[2] != turn[2] and prev[1] == turn[1]
+
+
 def _try_codex_jsonl(content: str) -> Optional[str]:
     """OpenAI Codex CLI sessions (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
 
     Uses only event_msg entries, which carry the canonical conversation
     turns: ``item_completed`` UserMessage / AgentMessage items on Codex
-    0.163+, ``user_message`` / ``agent_message`` on older rollouts. When a
-    file has both, the current form wins so no turn is filed twice.
+    0.163+, ``user_message`` / ``agent_message`` on older rollouts. A
+    session resumed across the upgrade holds both; every turn is kept, and
+    a turn repeated in the other form is filed once.
     response_item entries are skipped because they include synthetic
     context injections (AGENTS.md, environment) as "user" messages and
     duplicate the real ones.
     """
     lines = [line.strip() for line in content.strip().split("\n") if line.strip()]
-    current, legacy = [], []
+    messages = []
+    last: dict = {}
     has_session_meta = False
     for line in lines:
         try:
@@ -465,10 +479,10 @@ def _try_codex_jsonl(content: str) -> Optional[str]:
         turn = codex_turn(entry)
         if turn is None:
             continue
-        role, text, is_current = turn
-        (current if is_current else legacy).append((role, text))
+        if not codex_same_turn(last, turn):
+            messages.append(turn[:2])
+        last[turn[0]] = turn
 
-    messages = current or legacy
     if len(messages) >= 2 and has_session_meta:
         return _messages_to_transcript(messages)
     return None

@@ -501,6 +501,47 @@ def test_codex_jsonl_mixed_forms_file_each_turn_once():
     assert result.count("> Q") == 1
 
 
+def _legacy(kind, text):
+    return json.dumps({"type": "event_msg", "payload": {"type": kind, "message": text}})
+
+
+def _current(kind, text):
+    block = "text" if kind == "UserMessage" else "Text"
+    return json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": kind, "content": [{"type": block, "text": text}]},
+            },
+        }
+    )
+
+
+def test_codex_jsonl_resumed_across_upgrade_keeps_every_turn():
+    """Turns written before the upgrade (legacy) and after (current) all file."""
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {}}),
+        _legacy("user_message", "old question"),
+        _legacy("agent_message", "old answer"),
+        _current("UserMessage", "new question"),
+        _current("AgentMessage", "new answer"),
+    ]
+    result = _try_codex_jsonl("\n".join(lines))
+    assert "> old question" in result and "> new question" in result
+
+
+def test_codex_jsonl_keeps_a_turn_the_user_really_repeated():
+    lines = [
+        json.dumps({"type": "session_meta", "payload": {}}),
+        _current("UserMessage", "continue"),
+        _current("AgentMessage", "done one"),
+        _current("UserMessage", "continue"),
+        _current("AgentMessage", "done two"),
+    ]
+    assert _try_codex_jsonl("\n".join(lines)).count("> continue") == 2
+
+
 def test_codex_turn_ignores_other_items_and_bad_shapes():
     from mempalace.normalize import codex_turn
 
