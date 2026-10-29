@@ -24,9 +24,18 @@ Each setting resolves from its environment variable first, then
 `config.json`, then the default (`backend` is the exception: `config.json`
 wins over `MEMPALACE_BACKEND`). `mempalace init` creates `config.json` only
 when there is none, and records only what you chose: `--palace`, `--lang`
-and `--backend`. Defaults stay out of the file, so a later release's defaults
+and `--backend`. New configs also record neutral `hall_keywords` for
+`technical`, `planning`, `reference`, and `creative` halls (unmatched content
+uses `general`). This map is recorded so existing configs without the key
+keep their legacy classification; existing files are never rewritten.
+Customize `hall_keywords` to suit your work. Other defaults stay out of the file, so a later release's defaults
 still reach you, and a `MEMPALACE_PALACE_PATH` set in your shell is not
 copied into it.
+
+`mempalace init <dir> --yes` accepts detected entities and rooms and skips
+mining unless `--auto-mine` is passed. Non-TTY stdin uses the same defaults
+without prompting. Init leaves `.gitignore` unchanged; pass
+`--update-gitignore` to add the per-project files explicitly.
 
 ## Storage backends
 

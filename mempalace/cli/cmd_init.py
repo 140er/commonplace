@@ -11,6 +11,8 @@ def cmd_init(args):
     from ..project_scanner import discover_entities
     from ..room_detector_local import detect_rooms_local
 
+    noninteractive = bool(getattr(args, "yes", False)) or not sys.stdin.isatty()
+
     # --palace goes through the environment, like mcp_server.py, so every
     # downstream read of ``cfg.palace_path`` (Pass 0, cfg.init(), the
     # post-init mine) uses it.
@@ -92,7 +94,7 @@ def cmd_init(args):
                     if api_key_source == "env" and not accept_flag:
                         allowed = require_external_consent(
                             candidate,
-                            interactive=True,
+                            interactive=not noninteractive,
                             prompt=(
                                 "  Your API key was loaded from the environment "
                                 "(not passed via --llm-api-key). Continue with "
@@ -147,7 +149,7 @@ def cmd_init(args):
         + len(detected["uncertain"])
     )
     if total > 0:
-        confirmed = confirm_entities(detected, yes=getattr(args, "yes", False))
+        confirmed = confirm_entities(detected, yes=noninteractive)
         # Save confirmed entities to <project>/entities.json (per-project
         # audit trail — user can inspect or hand-edit) AND merge into the
         # global registry the miner reads at mine time. Topics are kept
@@ -198,7 +200,7 @@ def cmd_init(args):
 
     # Pass 2: detect rooms from folder structure
     try:
-        detect_rooms_local(project_dir=args.dir, yes=getattr(args, "yes", False))
+        detect_rooms_local(project_dir=args.dir, yes=noninteractive)
     except OSError as exc:
         # Writing mempalace.yaml is the point of init; a target it cannot
         # write (a pre-existing pipe, a full disk) is a hard failure, and a
@@ -211,14 +213,16 @@ def cmd_init(args):
     elif not cfg.recorded_backend:
         _record_env_backend(cfg)
 
-    # Pass 3: protect git repos from accidentally committing per-project files
-    _ensure_mempalace_files_gitignored(args.dir)
+    # Changing a repository's ignore rules requires an explicit opt-in.
+    if getattr(args, "update_gitignore", False):
+        _ensure_mempalace_files_gitignored(args.dir)
+    elif (Path(args.dir).expanduser().resolve() / ".git").exists():
+        print("  Hint: add MemPalace's project files to .gitignore with --update-gitignore.")
 
     # Pass 4: offer to run mine immediately. The directory just had its
     # rooms + entities set up, so 99% of users will mine next anyway —
     # asking here removes the "remember to type the next command" friction.
-    # `--auto-mine` skips the prompt and mines automatically; `--yes` is
-    # SCOPED to entity auto-accept and does NOT imply mining.
+    # Only --auto-mine opts scripted callers into the potentially long mine.
     _maybe_run_mine_after_init(args, cfg)
 
 
@@ -275,8 +279,8 @@ def _maybe_run_mine_after_init(args, cfg) -> None:
 
     Behaviour matrix:
 
-    - default (no flags) — prompt, default Yes, mine in-process if accepted
-    - ``--yes`` — entity auto-accept only; STILL prompts for the mine step
+    - default (TTY, no flags) — prompt, default Yes, mine if accepted
+    - ``--yes`` or non-TTY stdin — skip mining without prompting
     - ``--auto-mine`` — skip the mine prompt and mine directly
     - ``--yes --auto-mine`` — fully non-interactive
 
@@ -289,6 +293,9 @@ def _maybe_run_mine_after_init(args, cfg) -> None:
 
     project_dir = args.dir
     auto_mine = bool(getattr(args, "auto_mine", False))
+    if not auto_mine and (getattr(args, "yes", False) or not sys.stdin.isatty()):
+        print(f"\n  Skipped. Run `mempalace mine {shlex.quote(project_dir)}` when ready.")
+        return
 
     # Single corpus walk: this scan feeds BOTH the "what would be mined"
     # estimate the user sees in the prompt AND the file list mine() will

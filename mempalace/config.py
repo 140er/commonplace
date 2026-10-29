@@ -441,6 +441,16 @@ DEFAULT_HALL_KEYWORDS = {
     ],
 }
 
+# Keep the legacy fallback above for existing configs with no hall_keywords.
+# New installs record this neutral map so an upgrade never reclassifies an
+# existing user's content just because their old config omitted the setting.
+NEW_HALL_KEYWORDS = {
+    "technical": DEFAULT_HALL_KEYWORDS["technical"],
+    "planning": ["plan", "decision", "milestone", "deadline", "priority", "roadmap"],
+    "reference": ["reference", "documentation", "guide", "manual", "research", "source"],
+    "creative": DEFAULT_HALL_KEYWORDS["creative"],
+}
+
 
 def _make_config_dir(directory: Path) -> None:
     """Create the config directory, restricted to the owner when this call makes it.
@@ -1668,8 +1678,8 @@ class MempalaceConfig:
     def init(self, palace_path=None):
         """Create the config directory, and ``config.json`` if it doesn't exist.
 
-        A new file records only what was chosen explicitly: ``palace_path``
-        (or the constructor's ``palace_path``). Defaults are left out, so a
+        A new file records a neutral hall map and explicit ``palace_path``
+        (or the constructor's ``palace_path``). Other defaults are left out, so a
         later release's defaults and the environment keep applying (env, then
         file, then default), and the default palace keeps following the
         config directory. An existing file is never rewritten.
@@ -1681,7 +1691,7 @@ class MempalaceConfig:
         except (OSError, NotImplementedError):
             pass  # Windows doesn't support Unix permissions
         if not self._config_file.exists():
-            chosen = {}
+            chosen = {"hall_keywords": NEW_HALL_KEYWORDS}
             explicit_palace = palace_path if palace_path is not None else self._palace_path_override
             if explicit_palace is not None:
                 chosen["palace_path"] = os.path.abspath(os.path.expanduser(str(explicit_palace)))

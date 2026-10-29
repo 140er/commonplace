@@ -80,7 +80,10 @@ def main():
     p_init.add_argument(
         "--yes",
         action="store_true",
-        help="Auto-accept all detected entities (non-interactive)",
+        help=(
+            "Accept detected entities and rooms without prompting; skip mining unless "
+            "--auto-mine is set. Non-TTY stdin uses the same defaults."
+        ),
     )
     p_init.add_argument(
         "--auto-mine",
@@ -89,6 +92,11 @@ def main():
             "Skip the post-init mine prompt and run mine automatically. "
             "Combine with --yes for a fully non-interactive setup."
         ),
+    )
+    p_init.add_argument(
+        "--update-gitignore",
+        action="store_true",
+        help="Add MemPalace's per-project files to .gitignore (default: leave it unchanged)",
     )
     p_init.add_argument(
         "--lang",

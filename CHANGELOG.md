@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `mempalace init --yes` never prompts. With `--yes` or non-TTY stdin,
+  init accepts detected entities and rooms and skips mining unless
+  `--auto-mine` is set. External LLM consent still requires its explicit opt-in.
+- Init leaves `.gitignore` unchanged unless `--update-gitignore` is passed.
+- New configs use neutral `technical`, `planning`, `reference`, and `creative`
+  hall keywords. Existing configs and their classification defaults are
+  unchanged. The unused `topic_wings` setting was already removed.
+
 ---
 
 ## [3.12.0] — 2026-10-18
