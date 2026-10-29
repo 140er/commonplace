@@ -57,7 +57,7 @@ MemPalace provides dynamic, version-correct instructions via the CLI. To get ins
 mempalace instructions <command>
 ```
 
-Where `<command>` is one of: `help`, `init`, `mine`, `search`, `status`.
+Where `<command>` is one of: `help`, `init`, `mine`, `search`, `status`, `audit`, `recall`.
 
 Run the appropriate instructions command, then follow the returned instructions step by step.
 

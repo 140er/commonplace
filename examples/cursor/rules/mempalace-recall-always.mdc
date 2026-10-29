@@ -1,5 +1,5 @@
 ---
-description: Always-on MemPalace recall: search the palace before answering about earlier work, decisions or warnings, and before saying "I don't know".
+description: Always-on MemPalace recall: search before answering about earlier work or warnings, or saying "I don't know".
 alwaysApply: true
 ---
 

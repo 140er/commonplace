@@ -49,10 +49,25 @@ def test_every_recall_skill_triggers_on_warning_questions_by_itself():
             assert command not in desc, (path, command)
 
 
-def test_recall_description_stays_within_its_token_budget():
-    """Listed in every session: no longer than the 410 chars it replaced."""
+# Recall text is loaded into sessions, so it may only shrink. Budgets are the
+# sizes in characters when this test was written; lower them when text shrinks.
+DESCRIPTION_BUDGET = 366
+FILE_BUDGETS = {
+    "skills/mempalace-recall/SKILL.md": 4781,
+    ".antigravity-plugin/skills/mempalace-recall/SKILL.md": 4918,
+    "rules/mempalace-recall.mdc": 1113,
+    "examples/cursor/rules/mempalace-recall.mdc": 1008,
+    "examples/cursor/rules/mempalace-recall-always.mdc": 959,
+    ".antigravity-plugin/rules/mempalace-recall.md": 835,
+}
+
+
+def test_recall_text_stays_within_its_token_budget():
     for path in SKILLS:
-        assert len(_description(path)) <= 410, path
+        assert len(_description(path)) <= DESCRIPTION_BUDGET, path
+    for rel, budget in FILE_BUDGETS.items():
+        size = len((REPO / rel).read_text(encoding="utf-8"))
+        assert size <= budget, (rel, size, budget)
 
 
 def test_codex_plugin_loads_the_recall_skill_from_the_repo_root():
@@ -60,16 +75,23 @@ def test_codex_plugin_loads_the_recall_skill_from_the_repo_root():
     plugin at the repo root, and the manifest loads ``./skills/`` from there,
     so ``skills/mempalace-recall`` sits in the skill list of every session.
     """
-    market = json.loads((REPO / ".agents" / "plugins" / "marketplace.json").read_text())
+    market = json.loads(
+        (REPO / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+    )
     (entry,) = [p for p in market["plugins"] if p["name"] == "mempalace"]
     assert entry["source"]["path"] == "./"
-    manifest = json.loads((REPO / ".codex-plugin" / "plugin.json").read_text())
+    manifest = json.loads((REPO / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert manifest["skills"] == "./skills/"
     assert CANONICAL.is_file()
 
 
 def test_the_recall_commands_are_optional_extras():
-    """The commands only force recall; none of them is the trigger."""
+    """The commands only force recall; none of them is the trigger.
+
+    Codex 0.163 does not read .codex-plugin/skills (it builds command skills
+    from the root commands/); the recall wrapper there keeps the Codex
+    command set equal to the other plugins' for loaders that do.
+    """
     for path in (
         CODEX_SKILL,
         REPO / ".claude-plugin" / "commands" / "recall.md",
@@ -92,4 +114,3 @@ def test_recall_rules_fall_back_to_the_repo_and_stay_short():
         assert "anything I should know" in text, path
         assert "answer from the repo" in text, path
         assert "do not fall back to guessing" not in text, path
-        assert len(text) <= 1200, (path, len(text))
