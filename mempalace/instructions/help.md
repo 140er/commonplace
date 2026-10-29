@@ -10,6 +10,7 @@ AI memory system. Store everything, find anything. Local, free, no API key.
 |----------------------|--------------------------------|
 | /mempalace:init      | Install and set up MemPalace   |
 | /mempalace:search    | Search your memories           |
+| /mempalace:recall    | Answer from memory, then repo  |
 | /mempalace:mine      | Mine projects and conversations|
 | /mempalace:status    | Palace overview and stats      |
 | /mempalace:help      | This help message              |

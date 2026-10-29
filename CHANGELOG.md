@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- An optional `recall` command in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`) and `mempalace instructions recall`. Recall never needs it: the `mempalace-recall` skill fires on its own in Claude Code and in Codex, whose plugin loads the repo-root `skills/`. `scripts/evals/codex_auto_recall.sh` checks the Codex half against a real `codex exec`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
+
 ### Fixed
 
 - Codex CLI 0.163+ sessions are filed again. Those rollouts carry turns only as `item_completed` UserMessage / AgentMessage events, so the hooks counted 0 exchanges and mining filed 0 drawers. Older `user_message` rollouts still parse, and a file holding both forms files each turn once. Codex sessions now file into the project wing from `session_meta.cwd` instead of `sessions`.

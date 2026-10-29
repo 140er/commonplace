@@ -1,80 +1,52 @@
 ---
 name: mempalace-recall
-description: "Recall protocol for MemPalace — search the palace before answering about past work, people, projects, or prior decisions. Apply when the user asks what was decided, what happened before, who someone is, what was discussed last time, or anything that may already be filed in their memory palace; or when mempalace-recall is invoked. Complements the mempalace setup skill and requires the mempalace-mcp server."
+description: "Search MemPalace before answering anything earlier sessions may have covered: what was decided, why, by whom, unfinished work, and \"anything I should know about X\", \"safe way to do Y\", gotchas or warnings about this repo or machine. Search before saying you don't know. If memory has nothing, answer from the repo and say so. Requires the mempalace-mcp server."
 ---
 
 # MemPalace Recall
 
-Search-before-answer protocol for MemPalace. This skill makes the agent
-read the user's memory palace before answering anything that may already
-be filed there, instead of guessing from model memory. It complements
-the `mempalace` skill, which covers install / mine / status; this one
-covers recall only.
-
-## Step 0 — Verify MemPalace is available
-
-Before relying on recall, confirm MemPalace is installed and reachable:
-
-- Official release page: <https://github.com/MemPalace/mempalace/releases>
-- Check installed: `mempalace --version`
-- Do not assume a version — the MCP tool set is the source of truth for
-  what this installed build supports.
-
-If the `mempalace_*` MCP tools are not available, tell the user the
-server is not connected and point them at the `mempalace` skill to set
-it up. Do not silently fall back to answering from model memory.
-
-## Identity
-
-Act as a senior AI-memory systems engineer with decades of experience
-building verbatim recall, semantic retrieval, and temporal knowledge
-graphs. Verbatim recall from the palace always beats a confident guess
-from model memory — wrong is worse than slow.
+Search-before-answer protocol for MemPalace. The `mempalace` skill covers
+install / mine / status; this one covers recall only. Wrong is worse than
+slow: a palace hit beats a confident guess from model memory.
 
 ## When to recall
 
-Search the palace **before answering** whenever the user asks about
-something that may already be filed:
+Search the palace **before answering** whenever earlier sessions may have
+covered the question, even if the code could answer part of it:
 
-- Past work or prior decisions — "what did we decide / try / do?"
-- A person, project, or entity — "who is …", "what is …"
-- An earlier session — "remember when …", "last time …", "the thing we
-  discussed"
-- A preference, fact, or relationship that could have changed over time
+- Past work or decisions: "what did we decide / try / do?", "why …?",
+  "who …?", "what branch / what was left unfinished?"
+- Warnings and know-how about this repo, machine, or setup: "anything I
+  should know about X?", "what's the safe way to Y?", gotchas, things not
+  to touch
+- A person, project, or entity: "who is …", "what is …"
+- An earlier session: "remember when …", "last time …"
+- A preference or fact that could have changed over time
 
-Do **not** search on pure greenfield work with no memory relevance
-(e.g. "rename this variable", "fix this typo"). Recall is
-question-driven, not reflexive — a search on every turn wastes latency
-and violates MemPalace's "memory should feel instant" budget.
+Always search before saying "I don't know" about earlier work, even if
+another memory file seems to answer it. Do **not** search on pure
+greenfield edits ("rename this variable", "fix this typo"); one search,
+widened once, is enough.
 
 ## Protocol
 
-1. On wake-up, the MemPalace PreInvocation hook injects verbatim palace
-   content via `injectSteps[].ephemeralMessage` on the first model call
-   of a conversation. If memory was injected, start from it before
-   searching further.
-2. **Before responding** about people, projects, past events, or prior
-   decisions: use `mempalace_kg_query` for known relationships or time-bound
-   facts, `mempalace_search` for source text, or `mempalace_diary_read` for
-   recent agent continuity. Stop when answered; follow the canonical
+1. The MemPalace PreInvocation hook may inject verbatim palace content
+   (`injectSteps[].ephemeralMessage`) on the first model call; start from
+   it before searching further.
+2. Use `mempalace_search` with a short keyword query (not a pasted
+   conversation), `mempalace_kg_query` for relationships or time-bound
+   facts, `mempalace_diary_read` for recent continuity. Stop when answered;
+   see the
    [query guide](https://github.com/MemPalace/mempalace/blob/develop/integrations/shared/recall-protocol.md#retrieve-only-the-context-you-need).
-3. **If unsure** about a fact (name, age, relationship, preference): say
-   "let me check the palace" and query. Wrong is worse than slow.
-4. **Return verbatim.** Quote the drawer's exact stored words. Never
-   summarize, paraphrase, or lossy-compress what the palace returns —
-   that is the whole point of the system.
-5. **After a substantive session**, record continuity with
-   `mempalace_diary_write` (background hooks may already do this — do not
-   double-file).
-6. **When a fact changes**, choose the operation that preserves temporal
-   history: use `mempalace_kg_supersede` for single-valued replacements
-   (model, employer, owner, address, current status),
-   `mempalace_kg_invalidate` for facts that ended without replacement,
-   and `mempalace_kg_add` for independent/coexisting facts.
-
-The full canonical protocol — shared verbatim with the Antigravity
-recall rule and the other integrations — lives in
-[`integrations/shared/recall-protocol.md`](https://github.com/MemPalace/mempalace/blob/main/integrations/shared/recall-protocol.md).
+3. Quote the drawer's **verbatim** text. Never summarize or paraphrase
+   stored content.
+4. Combine sources: the palace for why / who / what was agreed, the repo
+   (code, `git log`, `git diff`) for what exists now. Say which is which.
+5. After a substantive session, record continuity with
+   `mempalace_diary_write` (skip if a background hook already saved).
+6. When a fact changes: `mempalace_kg_supersede` for single-valued
+   replacements, `mempalace_kg_invalidate` for facts that ended without
+   replacement, `mempalace_kg_add` for coexisting facts.
 
 ## Tool selection
 
@@ -82,45 +54,42 @@ recall rule and the other integrations — lives in
 |---|---|
 | Find any memory by meaning | `mempalace_search` |
 | Relational / time-bound facts about an entity | `mempalace_kg_query` |
-| Replace a single-valued fact | `mempalace_kg_supersede` |
 | The chronological story of an entity | `mempalace_kg_timeline` |
 | Recent session continuity | `mempalace_diary_read` |
-| Which wings / rooms exist (scope unknown) | `mempalace_list_wings`, `mempalace_list_rooms` |
+| Which wings / rooms exist | `mempalace_list_wings`, `mempalace_list_rooms` |
 | Record this session | `mempalace_diary_write` |
 
-`mempalace_search` takes a short natural-language `query` (keywords or a
-question — not a system prompt or pasted conversation) plus optional
-`wing` / `room` filters and `limit` (default 5).
+`mempalace_search` takes a short `query` plus optional `wing` / `room`
+filters and `limit` (default 5).
 
-## Unhappy paths
+**Active coordination is not recall.** To delegate to another agent on the
+shared hub or wait for its reply or patch, use the logstream tools
+(`mempalace_event_append`, `mempalace_event_wait`,
+`mempalace_patch_submit`, `mempalace_artifact_get`); see the
+[coordination protocol](https://github.com/MemPalace/mempalace/blob/main/integrations/shared/coordination-protocol.md).
 
-- **Empty results.** One empty KG query or filtered search does not prove
-  the palace has nothing on this. Follow the query guide to check or widen
-  the scope. If recall still finds nothing, state what was checked; do not
-  invent an answer. Offer to file the new information.
-- **MCP unavailable / tool error.** Surface the error plainly and suggest
-  the user verify the server (`mempalace status`, or re-run the
-  installer `hooks/antigravity/install.sh`). Do not silently fall back
-  to guessing from model memory.
-- **Stale or conflicting facts.** Prefer the knowledge graph's
-  time-valid answer. Use `mempalace_kg_supersede` for single-valued replacements,
-  `mempalace_kg_invalidate` for facts that ended without replacement,
-  and `mempalace_kg_add` for independent/coexisting facts.
+## When memory has nothing
 
-## Anti-patterns — never do these
+- **Empty palace or no hit.** One empty filtered search does not prove the
+  palace has nothing; widen once (drop the wing filter, try other
+  keywords). Still nothing: say so in one line, then answer from the repo
+  (code, `git log`, `git diff`) and label it as such. Never stop at "the
+  palace is empty", and never answer from model memory.
+- **No record of a decision.** Code or a commit existing is not a decision.
+  Unless the palace or a commit message states one, say none was recorded.
+- **MCP tools missing or erroring.** Say the server is not connected (fix:
+  `mempalace status`, or re-run `hooks/antigravity/install.sh`), then
+  answer from the repo as above.
+- **Index corrupt** (HNSW segment-writer error, ChromaDB compaction
+  failure, "Not connected" after a write). Drawers in `chroma.sqlite3` are
+  intact. Tell the user to stop the server and run
+  `mempalace repair --mode from-sqlite --archive-existing --yes`, then
+  `mempalace repair-status`. Do not re-mine (it drops MCP-added drawers and
+  diary entries, #1843) or repair in-process.
+- **Conflicting facts.** Trust the knowledge graph's time-valid answer.
 
-- Answering about past work, people, or decisions from model memory when
-  the palace might know — search first.
-- Paraphrasing or summarizing stored content instead of quoting it
-  verbatim.
-- Searching reflexively on every turn, including pure greenfield coding
-  with no memory relevance.
-- Pasting the full conversation or a system prompt into the `query`
-  argument — keep queries short and keyword-driven.
-
-## Official References
+## References
 
 - MemPalace: <https://github.com/MemPalace/mempalace>
-- MemPalace releases: <https://github.com/MemPalace/mempalace/releases>
 - Antigravity documentation: <https://antigravity.google/docs>
-- Agent Skills specification: <https://agentskills.io/specification>
+- Full recall protocol: <https://github.com/MemPalace/mempalace/blob/main/integrations/shared/recall-protocol.md>

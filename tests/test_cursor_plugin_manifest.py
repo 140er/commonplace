@@ -59,6 +59,7 @@ EXPECTED_COMMAND_NAMES = {
     "mempalace-search",
     "mempalace-status",
     "mempalace-audit",
+    "mempalace-recall",
 }
 
 # Per cursor.com/docs/reference/plugins: "Plugin identifier. Lowercase,
