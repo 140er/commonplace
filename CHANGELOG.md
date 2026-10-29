@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex CLI 0.163+ sessions are filed again. Those rollouts carry turns only as `item_completed` UserMessage / AgentMessage events, so the hooks counted 0 exchanges and mining filed 0 drawers. Older `user_message` rollouts still parse, and a file holding both forms files each turn once. Codex sessions now file into the project wing from `session_meta.cwd` instead of `sessions`.
+
+### Changed
+
+- The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).
+
 ---
 
 ## [3.12.0] — 2026-10-18

@@ -31,6 +31,7 @@ from mempalace._env import env_float, env_str, parse_bool
 from mempalace._proc import pid_alive as _pid_alive
 from mempalace.config import MempalaceConfig, normalize_wing_name
 from mempalace.fsio import decode_source
+from mempalace.normalize import codex_same_turn, codex_turn
 from mempalace.timeutil import utc_now_iso
 from mempalace.write_routing import (
     ResolvedWriteRoutingPolicy,
@@ -200,6 +201,7 @@ def _count_human_messages(transcript_path: str) -> int:
     if not path.is_file():
         return 0
     count = 0
+    last_codex: dict = {}  # latest Codex turn per role, see codex_same_turn
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -218,14 +220,19 @@ def _count_human_messages(transcript_path: str) -> int:
                             if "<command-message>" in text:
                                 continue
                         count += 1
-                    # Codex CLI transcripts nest a user turn as an event_msg
-                    # whose payload has type user_message and a message field.
+                    # Codex CLI transcripts carry user turns as event_msg
+                    # records (see normalize.codex_turn for both forms).
                     elif entry.get("type") == "event_msg":
-                        payload = entry.get("payload", {})
-                        if isinstance(payload, dict) and payload.get("type") == "user_message":
-                            msg_text = payload.get("message", "")
-                            if isinstance(msg_text, str) and "<command-message>" not in msg_text:
-                                count += 1
+                        turn = codex_turn(entry)
+                        if turn is None:
+                            continue
+                        if (
+                            turn[0] == "user"
+                            and not codex_same_turn(last_codex, turn)
+                            and not _is_harness_boilerplate(turn[1])
+                        ):
+                            count += 1
+                        last_codex[turn[0]] = turn
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
@@ -882,6 +889,7 @@ _HARNESS_BOILERPLATE_MARKERS = (
     "[Request interrupted by user",  # interruption record, carries no topic
     "[Image:",  # pasted-image placeholder, no words to summarize
     "Base directory for this skill:",  # skill preamble
+    "Background command completed (exit",  # Codex background-command notice
 )
 
 
@@ -919,6 +927,7 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
     if not path.is_file():
         return []
     messages = []
+    last_codex: dict = {}  # as in _count_human_messages
     try:
         with open(path, "rb") as f:
             for raw_line in f:
@@ -939,12 +948,16 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
                         messages.append(content.strip()[:200])
                     # Codex CLI format
                     elif entry.get("type") == "event_msg":
-                        payload = entry.get("payload", {})
-                        if isinstance(payload, dict) and payload.get("type") == "user_message":
-                            text = payload.get("message", "")
-                            if isinstance(text, str) and text.strip():
-                                if not _is_harness_boilerplate(text):
-                                    messages.append(text.strip()[:200])
+                        turn = codex_turn(entry)
+                        if turn is None:
+                            continue
+                        if (
+                            turn[0] == "user"
+                            and not codex_same_turn(last_codex, turn)
+                            and not _is_harness_boilerplate(turn[1])
+                        ):
+                            messages.append(turn[1][:200])
+                        last_codex[turn[0]] = turn
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
@@ -1358,6 +1371,10 @@ def _cwd_from_jsonl(transcript_path: str) -> Optional[str]:
                 except (json.JSONDecodeError, ValueError):
                     continue
                 cwd = data.get("cwd")
+                # Codex rollouts keep it on the session_meta payload.
+                if not cwd and data.get("type") == "session_meta":
+                    payload = data.get("payload")
+                    cwd = payload.get("cwd") if isinstance(payload, dict) else None
                 if not cwd or not isinstance(cwd, str):
                     continue
                 cwd_norm = cwd.replace("\\", "/").rstrip("/")
@@ -1369,6 +1386,12 @@ def _cwd_from_jsonl(transcript_path: str) -> Optional[str]:
                 _wt_marker = "/.claude/worktrees/"
                 if _wt_marker in cwd_norm:
                     cwd_norm = cwd_norm.split(_wt_marker, 1)[0]
+                # T3 Code keeps worktrees at ~/.t3/worktrees/<project>/<wt>.
+                _t3_marker = "/.t3/worktrees/"
+                if _t3_marker in cwd_norm:
+                    project = cwd_norm.split(_t3_marker, 1)[1].split("/", 1)[0]
+                    if project:
+                        cwd_norm = cwd_norm.split(_t3_marker, 1)[0] + "/" + project
                 return cwd_norm
     except OSError:
         pass

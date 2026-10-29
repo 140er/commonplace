@@ -17,13 +17,17 @@ Search the palace **before answering** whenever the user asks about
 anything that may already be filed:
 
 - Past work, prior decisions, or "what did we do / decide / try?"
+- Warnings and know-how about this repo, machine, or setup ("anything I
+  should know about X?", "what's the safe way to Y?", gotchas), even when
+  the code could answer part of it
 - A person, project, or entity ("who is …", "what is …")
 - Something that happened in an earlier session ("remember when …",
   "last time …", "the thing we discussed")
 - A preference, fact, or relationship that could have changed over time
 
-If the question is pure greenfield work with no memory relevance (e.g.
-"rename this variable", "fix this typo"), do not search — recall is
+Always search before saying "I don't know" about earlier work. If the
+question is pure greenfield work with no memory relevance (e.g. "rename
+this variable", "fix this typo"), do not search — recall is
 question-driven, not reflexive.
 
 ## The protocol
@@ -105,12 +109,14 @@ does not impose a fixed token budget.
 
 - **Empty results.** An empty KG query or filtered search does not prove
   the palace has nothing on this. Try the appropriate text search or
-  check and widen the scope. If recall still finds nothing, state what
-  was checked; do not invent an answer to fill the gap. Offer to file
-  the new information.
+  check and widen the scope. If recall still finds nothing, say so in
+  one line, then answer from the repo (code, `git log`, `git diff`) and
+  label it as such. An empty palace is not an answer, and model memory
+  is never a source. Code or a commit existing is not a decision:
+  unless the palace or a commit message states one, say none was recorded.
 - **MCP unavailable / tool error.** Surface the error plainly and suggest
-  the user verify the server (`mempalace status`, or re-run install).
-  Do not silently fall back to guessing from model memory.
+  the user verify the server (`mempalace status`, or re-run install),
+  then answer from the repo as above, never from model memory.
 - **Palace index corrupt / compactor error.** When the server returns an
   error mentioning the HNSW segment writer, a ChromaDB compaction
   failure, or a stuck "Not connected" state after a write, the on-disk
