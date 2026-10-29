@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Codex now gets the recall skill from its plugin (`.codex-plugin/skills/recall`), so it searches memory on its own, without a command, the way Claude Code does. Its description adds about 92 tokens to every Codex session. An optional `recall` command now ships in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`), plus `mempalace instructions recall`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
+- An optional `recall` command in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`) and `mempalace instructions recall`. Recall never needs it: the `mempalace-recall` skill fires on its own in Claude Code and in Codex, whose plugin loads the repo-root `skills/`. `scripts/evals/codex_auto_recall.sh` checks the Codex half against a real `codex exec`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
 
 ### Fixed
 

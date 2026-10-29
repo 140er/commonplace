@@ -6,6 +6,7 @@ trigger wording, the repo fallback, the copies that must not drift, and
 the size budget (the description costs tokens in every session).
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -24,7 +25,6 @@ SKILLS = [
     CANONICAL,
     REPO / ".claude-plugin" / "skills" / "mempalace-recall" / "SKILL.md",
     REPO / ".antigravity-plugin" / "skills" / "mempalace-recall" / "SKILL.md",
-    CODEX_SKILL,
 ]
 
 
@@ -55,12 +55,28 @@ def test_recall_description_stays_within_its_token_budget():
         assert len(_description(path)) <= 410, path
 
 
-def test_codex_plugin_ships_the_canonical_recall_skill():
-    """Codex lists plugin skills by name and description; the body is the canonical one."""
-    front, text = _frontmatter(CODEX_SKILL)
-    assert re.search(r"^name: recall$", front, re.MULTILINE), "name must match its directory"
-    canonical = CANONICAL.read_text(encoding="utf-8")
-    assert text == canonical.replace("name: mempalace-recall\n", "name: recall\n", 1)
+def test_codex_plugin_loads_the_recall_skill_from_the_repo_root():
+    """How Codex recalls with no command: its marketplace entry points the
+    plugin at the repo root, and the manifest loads ``./skills/`` from there,
+    so ``skills/mempalace-recall`` sits in the skill list of every session.
+    """
+    market = json.loads((REPO / ".agents" / "plugins" / "marketplace.json").read_text())
+    (entry,) = [p for p in market["plugins"] if p["name"] == "mempalace"]
+    assert entry["source"]["path"] == "./"
+    manifest = json.loads((REPO / ".codex-plugin" / "plugin.json").read_text())
+    assert manifest["skills"] == "./skills/"
+    assert CANONICAL.is_file()
+
+
+def test_the_recall_commands_are_optional_extras():
+    """The commands only force recall; none of them is the trigger."""
+    for path in (
+        CODEX_SKILL,
+        REPO / ".claude-plugin" / "commands" / "recall.md",
+        REPO / "commands" / "mempalace-recall.md",
+    ):
+        assert _description(path).startswith("Optional."), path
+    assert "mempalace instructions recall" in CODEX_SKILL.read_text(encoding="utf-8")
 
 
 def test_recall_instructions_are_the_skill_body():

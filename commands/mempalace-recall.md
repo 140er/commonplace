@@ -1,5 +1,5 @@
 ---
-description: Answer from MemPalace memory first; fall back to the repo when memory has nothing.
+description: Optional. Recall runs on its own through the mempalace-recall skill; this only forces it.
 ---
 
 Invoke the `mempalace-recall` skill from this plugin and follow it to answer the question.
