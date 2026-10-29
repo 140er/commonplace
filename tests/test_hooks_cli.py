@@ -2930,3 +2930,43 @@ def test_ingest_transcript_passes_the_project_wing_to_mine(tmp_path, monkeypatch
     )
     hooks_cli._ingest_transcript(path)
     assert jobs and jobs[0]["wing"] == "mempalace"
+
+
+_CODEX_0163 = Path(__file__).parent / "fixtures" / "codex_rollout_0163.jsonl"
+
+
+def test_codex_0163_rollout_counts_and_extracts_the_real_user_turn():
+    """Codex 0.163+ writes user turns only as item_completed UserMessage items."""
+    assert _count_human_messages(str(_CODEX_0163)) == 1
+    assert _extract_recent_messages(str(_CODEX_0163)) == [
+        "Store pin state as pinnedAt, not isPinned."
+    ]
+
+
+def test_codex_rollout_with_both_forms_counts_each_turn_once(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            {"type": "event_msg", "payload": {"type": "user_message", "message": "Q"}},
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {"type": "UserMessage", "content": [{"type": "text", "text": "Q"}]},
+                },
+            },
+        ],
+    )
+    assert _count_human_messages(str(transcript)) == 1
+    assert _extract_recent_messages(str(transcript)) == ["Q"]
+
+
+def test_project_wing_reads_the_codex_session_meta_cwd(tmp_path):
+    """Codex rollouts live under ~/.codex/sessions/Y/M/D; the wing is the project."""
+    from mempalace.hooks_cli import _project_wing
+
+    path = tmp_path / ".codex" / "sessions" / "2026" / "10" / "29" / "rollout-x.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(_CODEX_0163.read_text(encoding="utf-8"), encoding="utf-8")
+    assert _project_wing(str(path)) == "acme_app"

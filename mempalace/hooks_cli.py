@@ -31,6 +31,7 @@ from mempalace._env import env_float, env_str, parse_bool
 from mempalace._proc import pid_alive as _pid_alive
 from mempalace.config import MempalaceConfig, normalize_wing_name
 from mempalace.fsio import decode_source
+from mempalace.normalize import codex_turn
 from mempalace.timeutil import utc_now_iso
 from mempalace.write_routing import (
     ResolvedWriteRoutingPolicy,
@@ -200,6 +201,9 @@ def _count_human_messages(transcript_path: str) -> int:
     if not path.is_file():
         return 0
     count = 0
+    # Codex user turns by form, legacy (False) and current (True); a rollout
+    # holding both counts only the current form so no turn counts twice.
+    codex_counts = {False: 0, True: 0}
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -218,19 +222,17 @@ def _count_human_messages(transcript_path: str) -> int:
                             if "<command-message>" in text:
                                 continue
                         count += 1
-                    # Codex CLI transcripts nest a user turn as an event_msg
-                    # whose payload has type user_message and a message field.
+                    # Codex CLI transcripts carry user turns as event_msg
+                    # records (see normalize.codex_turn for both forms).
                     elif entry.get("type") == "event_msg":
-                        payload = entry.get("payload", {})
-                        if isinstance(payload, dict) and payload.get("type") == "user_message":
-                            msg_text = payload.get("message", "")
-                            if isinstance(msg_text, str) and "<command-message>" not in msg_text:
-                                count += 1
+                        turn = codex_turn(entry)
+                        if turn and turn[0] == "user" and "<command-message>" not in turn[1]:
+                            codex_counts[turn[2]] += 1
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
         return 0
-    return count
+    return count + (codex_counts[True] or codex_counts[False])
 
 
 _state_dir_initialized = False
@@ -919,6 +921,8 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
     if not path.is_file():
         return []
     messages = []
+    # Codex user turns by form, as in _count_human_messages.
+    codex_messages: dict[bool, list[str]] = {False: [], True: []}
     try:
         with open(path, "rb") as f:
             for raw_line in f:
@@ -939,16 +943,14 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
                         messages.append(content.strip()[:200])
                     # Codex CLI format
                     elif entry.get("type") == "event_msg":
-                        payload = entry.get("payload", {})
-                        if isinstance(payload, dict) and payload.get("type") == "user_message":
-                            text = payload.get("message", "")
-                            if isinstance(text, str) and text.strip():
-                                if not _is_harness_boilerplate(text):
-                                    messages.append(text.strip()[:200])
+                        turn = codex_turn(entry)
+                        if turn and turn[0] == "user" and not _is_harness_boilerplate(turn[1]):
+                            codex_messages[turn[2]].append(turn[1][:200])
                 except (json.JSONDecodeError, AttributeError):
                     pass
     except OSError:
         return []
+    messages += codex_messages[True] or codex_messages[False]
     return messages[-count:]
 
 
@@ -1358,6 +1360,10 @@ def _cwd_from_jsonl(transcript_path: str) -> Optional[str]:
                 except (json.JSONDecodeError, ValueError):
                     continue
                 cwd = data.get("cwd")
+                # Codex rollouts keep it on the session_meta payload.
+                if not cwd and data.get("type") == "session_meta":
+                    payload = data.get("payload")
+                    cwd = payload.get("cwd") if isinstance(payload, dict) else None
                 if not cwd or not isinstance(cwd, str):
                     continue
                 cwd_norm = cwd.replace("\\", "/").rstrip("/")

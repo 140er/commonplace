@@ -387,15 +387,54 @@ def _try_claude_code_jsonl(content: str) -> Optional[str]:
     return None
 
 
+def codex_turn(entry) -> Optional[Tuple[str, str, bool]]:
+    """One conversational turn from a Codex rollout record, or ``None``.
+
+    Returns ``(role, text, current)``. ``current`` is True for the
+    ``item_completed`` records Codex 0.163+ writes (``UserMessage`` /
+    ``AgentMessage`` items) and False for the ``user_message`` /
+    ``agent_message`` records older rollouts carry. Text is stripped; empty
+    turns come back as ``None``.
+    """
+    if not isinstance(entry, dict) or entry.get("type") != "event_msg":
+        return None
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    payload_type = payload.get("type", "")
+    if payload_type == "item_completed":
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return None
+        role = {"UserMessage": "user", "AgentMessage": "assistant"}.get(item.get("type"))
+        content = item.get("content")
+        if role is None or not isinstance(content, list):
+            return None
+        # User blocks are typed "text", agent blocks "Text"; both carry "text".
+        text = "\n".join(
+            b["text"] for b in content if isinstance(b, dict) and isinstance(b.get("text"), str)
+        ).strip()
+        return (role, text, True) if text else None
+    role = {"user_message": "user", "agent_message": "assistant"}.get(payload_type)
+    msg = payload.get("message")
+    if role is None or not isinstance(msg, str) or not msg.strip():
+        return None
+    return (role, msg.strip(), False)
+
+
 def _try_codex_jsonl(content: str) -> Optional[str]:
     """OpenAI Codex CLI sessions (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl).
 
-    Uses only event_msg entries (user_message / agent_message) which represent
-    the canonical conversation turns. response_item entries are skipped because
-    they include synthetic context injections and duplicate the real messages.
+    Uses only event_msg entries, which carry the canonical conversation
+    turns: ``item_completed`` UserMessage / AgentMessage items on Codex
+    0.163+, ``user_message`` / ``agent_message`` on older rollouts. When a
+    file has both, the current form wins so no turn is filed twice.
+    response_item entries are skipped because they include synthetic
+    context injections (AGENTS.md, environment) as "user" messages and
+    duplicate the real ones.
     """
     lines = [line.strip() for line in content.strip().split("\n") if line.strip()]
-    messages = []
+    current, legacy = [], []
     has_session_meta = False
     for line in lines:
         try:
@@ -410,11 +449,10 @@ def _try_codex_jsonl(content: str) -> Optional[str]:
             has_session_meta = True
             continue
 
-        payload = entry.get("payload", {})
-        if not isinstance(payload, dict):
-            continue
-
         if entry_type == "response_item":
+            payload = entry.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
             # Messages repeat the event_msg turns; tool calls, their output
             # and reasoning appear only here and are not filed.
             item_type = payload.get("type", "")
@@ -424,22 +462,13 @@ def _try_codex_jsonl(content: str) -> Optional[str]:
                 _record("conversations.content_block_drop")
             continue
 
-        if entry_type != "event_msg":
+        turn = codex_turn(entry)
+        if turn is None:
             continue
+        role, text, is_current = turn
+        (current if is_current else legacy).append((role, text))
 
-        payload_type = payload.get("type", "")
-        msg = payload.get("message")
-        if not isinstance(msg, str):
-            continue
-        text = msg.strip()
-        if not text:
-            continue
-
-        if payload_type == "user_message":
-            messages.append(("user", text))
-        elif payload_type == "agent_message":
-            messages.append(("assistant", text))
-
+    messages = current or legacy
     if len(messages) >= 2 and has_session_meta:
         return _messages_to_transcript(messages)
     return None
