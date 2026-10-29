@@ -39,7 +39,7 @@ codex
 
 ### Skill Commands
 
-The main `$mempalace:mempalace` skill can be invoked with six different subcommands. `$mempalace <command>` can be used as a short form invocation.
+The main `$mempalace:mempalace` skill can be invoked with seven different subcommands. `$mempalace <command>` can be used as a short form invocation.
 
 | Command | Description |
 |---------| ------------|
@@ -49,6 +49,7 @@ The main `$mempalace:mempalace` skill can be invoked with six different subcomma
 | `$mempalace mine` | Mine a project or conversation into your palace |
 | `$mempalace status` | Show palace status, room counts, and health |
 | `$mempalace audit` | Score palace organization, then a guided repair session |
+| `$mempalace recall` | Optional: answer from memory first, then the repo. The `recall` skill also fires on its own |
 
 ## Hooks
 

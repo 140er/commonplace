@@ -289,8 +289,7 @@ def test_recall_skill_has_required_sections() -> None:
         "When to recall",
         "Protocol",
         "Tool selection",
-        "Unhappy paths",
-        "Anti-patterns",
+        "When memory has nothing",
     ):
         assert section in body, f"recall SKILL.md must contain a '{section}' section"
 

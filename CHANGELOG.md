@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Codex now gets the recall skill from its plugin (`.codex-plugin/skills/recall`), so it searches memory on its own, without a command, the way Claude Code does. Its description adds about 92 tokens to every Codex session. An optional `recall` command now ships in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`), plus `mempalace instructions recall`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
+
 ### Fixed
 
 - Codex CLI 0.163+ sessions are filed again. Those rollouts carry turns only as `item_completed` UserMessage / AgentMessage events, so the hooks counted 0 exchanges and mining filed 0 drawers. Older `user_message` rollouts still parse, and a file holding both forms files each turn once. Codex sessions now file into the project wing from `session_meta.cwd` instead of `sessions`.
