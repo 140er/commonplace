@@ -78,7 +78,7 @@ def test_noninteractive_init_can_explicitly_mine(init_project, monkeypatch):
 
 @pytest.mark.parametrize("yes,tty", [(True, True), (False, False)])
 def test_noninteractive_init_does_not_prompt_for_external_consent(
-    init_project, monkeypatch, yes, tty
+    init_project, monkeypatch, yes, tty, capsys
 ):
     project, _, _ = init_project
     provider = Mock(is_external_service=True, api_key_source="env")
@@ -90,6 +90,9 @@ def test_noninteractive_init_does_not_prompt_for_external_consent(
     cmd_init(argparse.Namespace(dir=str(project), yes=yes, no_llm=False, llm_provider="anthropic"))
     assert consent.call_args.kwargs["interactive"] is False
     assert "accept" not in consent.call_args.kwargs
+    out = capsys.readouterr().out
+    assert "Not asking in non-interactive mode" in out
+    assert "to skip this prompt" not in out
 
 
 def test_new_config_uses_neutral_halls(tmp_path):
@@ -108,3 +111,52 @@ def test_existing_config_keeps_hall_classification(tmp_path, saved):
     cfg.init()
     assert path.read_text(encoding="utf-8") == original
     assert cfg.hall_keywords == saved.get("hall_keywords", DEFAULT_HALL_KEYWORDS)
+
+
+@pytest.mark.parametrize("entries", ["mempalace.yaml\nentities.json\n", "mempalace.yaml\n"])
+def test_init_gitignore_hint_only_for_missing_entries(init_project, capsys, entries):
+    project, _, _ = init_project
+    (project / ".gitignore").write_text(entries, encoding="utf-8")
+    cmd_init(argparse.Namespace(dir=str(project), yes=True, no_llm=True))
+    assert ("--update-gitignore" in capsys.readouterr().out) == ("entities.json" not in entries)
+    assert (project / ".gitignore").read_text(encoding="utf-8") == entries
+
+
+def test_init_checks_interactivity_once(init_project, monkeypatch):
+    project, _, mine = init_project
+    isatty = Mock(side_effect=[False, AssertionError("interactivity checked twice")])
+    monkeypatch.setattr("sys.stdin.isatty", isatty)
+    cmd_init(argparse.Namespace(dir=str(project), yes=False, no_llm=True))
+    isatty.assert_called_once()
+    mine.assert_not_called()
+
+
+@pytest.mark.parametrize("path_source", ["init", "constructor", "env"])
+def test_existing_palace_without_config_keeps_legacy_halls(tmp_path, monkeypatch, path_source):
+    import chromadb
+
+    palace = tmp_path / "existing-palace"
+    client = chromadb.PersistentClient(path=str(palace))
+    client.get_or_create_collection("mempalace_drawers").add(
+        ids=["old-drawer"], documents=["Original words"], embeddings=[[1.0, 0.0]]
+    )
+    config_dir = tmp_path / "config"
+    if path_source == "env":
+        monkeypatch.setenv("MEMPALACE_PALACE_PATH", str(palace))
+    cfg = MempalaceConfig(
+        config_dir=str(config_dir),
+        palace_path=str(palace) if path_source == "constructor" else None,
+    )
+    assert not (config_dir / "config.json").exists()
+    cfg.init(palace_path=str(palace) if path_source == "init" else None)
+    assert cfg.hall_keywords == DEFAULT_HALL_KEYWORDS
+    assert MempalaceConfig(config_dir=str(config_dir)).hall_keywords == DEFAULT_HALL_KEYWORDS
+    assert client.get_collection("mempalace_drawers").get()["documents"] == ["Original words"]
+
+
+def test_empty_palace_without_config_uses_neutral_halls(tmp_path):
+    palace = tmp_path / "palace"
+    palace.mkdir()
+    cfg = MempalaceConfig(config_dir=str(tmp_path / "config"), palace_path=str(palace))
+    cfg.init()
+    assert set(cfg.hall_keywords) == {"technical", "planning", "reference", "creative"}

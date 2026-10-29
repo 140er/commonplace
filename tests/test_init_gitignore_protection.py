@@ -76,7 +76,8 @@ def test_gitignore_io_pins_utf8_and_defensive_decode(tmp_path):
     ):
         assert _ensure_mempalace_files_gitignored(tmp_path) is True
 
-    read_text.assert_called_once_with(encoding="utf-8", errors="replace")
+    assert read_text.call_count == 2
+    read_text.assert_called_with(encoding="utf-8", errors="replace")
     append_handle.assert_called_once_with(gitignore, "a", encoding="utf-8")
 
 

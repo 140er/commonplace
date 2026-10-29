@@ -685,7 +685,7 @@ def test_init_auto_mine_daemon_preserves_prescan(
             "mempalace.miner.mine",
         ) as direct_mine,
     ):
-        cli._maybe_run_mine_after_init(args, config)
+        cli._maybe_run_mine_after_init(args, config, noninteractive=False)
 
     scan.assert_called_once_with(str(project))
     direct_mine.assert_not_called()
@@ -732,7 +732,7 @@ def test_init_auto_mine_direct_reuses_prescan(
             "mempalace.miner.mine",
         ) as direct_mine,
     ):
-        cli._maybe_run_mine_after_init(args, config)
+        cli._maybe_run_mine_after_init(args, config, noninteractive=False)
 
     submit.assert_not_called()
     direct_mine.assert_called_once_with(

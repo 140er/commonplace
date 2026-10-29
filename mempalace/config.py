@@ -1678,7 +1678,8 @@ class MempalaceConfig:
     def init(self, palace_path=None):
         """Create the config directory, and ``config.json`` if it doesn't exist.
 
-        A new file records a neutral hall map and explicit ``palace_path``
+        A new file records neutral halls only for a new or empty palace; existing
+        palace data keeps the legacy halls. It also records explicit ``palace_path``
         (or the constructor's ``palace_path``). Other defaults are left out, so a
         later release's defaults and the environment keep applying (env, then
         file, then default), and the default palace keeps following the
@@ -1691,8 +1692,12 @@ class MempalaceConfig:
         except (OSError, NotImplementedError):
             pass  # Windows doesn't support Unix permissions
         if not self._config_file.exists():
-            chosen = {"hall_keywords": NEW_HALL_KEYWORDS}
             explicit_palace = palace_path if palace_path is not None else self._palace_path_override
+            target = Path(explicit_palace or self.palace_path).expanduser()
+            # Opening a backend can create files or migrate data. Conservatively
+            # preserve the vocabulary whenever palace files already exist.
+            new_palace = not target.exists() or (target.is_dir() and not any(target.iterdir()))
+            chosen = {"hall_keywords": NEW_HALL_KEYWORDS if new_palace else DEFAULT_HALL_KEYWORDS}
             if explicit_palace is not None:
                 chosen["palace_path"] = os.path.abspath(os.path.expanduser(str(explicit_palace)))
             fsio.atomic_write_json(self._config_file, chosen)

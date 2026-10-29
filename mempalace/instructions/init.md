@@ -57,6 +57,10 @@ Run `mempalace init --yes <dir>` where `<dir>` is the directory from Step 4.
 
 If this fails, report the error and stop.
 
+If init prints the gitignore hint, ask whether to add `mempalace.yaml` and
+`entities.json` to `.gitignore`. Only if the user agrees, append the missing
+filenames on separate lines, preserving existing rules.
+
 ## Step 6: Configure MCP server
 
 Run the command for the AI client the user is configuring:

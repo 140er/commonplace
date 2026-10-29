@@ -102,11 +102,17 @@ def cmd_init(args):
                             ),
                         )
                         if not allowed:
-                            print(
-                                "  Declined — falling back to heuristics-only. "
-                                "Pass --llm-api-key explicitly or "
-                                "--accept-external-llm to skip this prompt."
-                            )
+                            if noninteractive:
+                                print(
+                                    "  Not asking in non-interactive mode; pass --llm-api-key "
+                                    "or --accept-external-llm to use the external LLM."
+                                )
+                            else:
+                                print(
+                                    "  Declined — falling back to heuristics-only. "
+                                    "Pass --llm-api-key explicitly or "
+                                    "--accept-external-llm to skip this prompt."
+                                )
                             llm_provider = None
                     else:
                         require_external_consent(candidate, accept=True)
@@ -216,14 +222,14 @@ def cmd_init(args):
     # Changing a repository's ignore rules requires an explicit opt-in.
     if getattr(args, "update_gitignore", False):
         _ensure_mempalace_files_gitignored(args.dir)
-    elif (Path(args.dir).expanduser().resolve() / ".git").exists():
+    elif _missing_mempalace_gitignore_entries(args.dir):
         print("  Hint: add MemPalace's project files to .gitignore with --update-gitignore.")
 
     # Pass 4: offer to run mine immediately. The directory just had its
     # rooms + entities set up, so 99% of users will mine next anyway —
     # asking here removes the "remember to type the next command" friction.
     # Only --auto-mine opts scripted callers into the potentially long mine.
-    _maybe_run_mine_after_init(args, cfg)
+    _maybe_run_mine_after_init(args, cfg, noninteractive)
 
 
 def _record_env_backend(cfg) -> None:
@@ -272,7 +278,7 @@ def _format_size_mb(num_bytes: int) -> str:
     return f"{mb:.0f} MB"
 
 
-def _maybe_run_mine_after_init(args, cfg) -> None:
+def _maybe_run_mine_after_init(args, cfg, noninteractive) -> None:
     """Prompt the user to mine the directory just initialised, or auto-mine
     when ``--auto-mine`` was passed. Extracted so the prompt path is
     unit-testable.
@@ -293,7 +299,7 @@ def _maybe_run_mine_after_init(args, cfg) -> None:
 
     project_dir = args.dir
     auto_mine = bool(getattr(args, "auto_mine", False))
-    if not auto_mine and (getattr(args, "yes", False) or not sys.stdin.isatty()):
+    if not auto_mine and noninteractive:
         print(f"\n  Skipped. Run `mempalace mine {shlex.quote(project_dir)}` when ready.")
         return
 
