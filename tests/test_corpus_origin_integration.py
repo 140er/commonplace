@@ -1055,14 +1055,15 @@ def test_persona_user_name_collision_user_kept_in_people(
 # ─────────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("update_gitignore", [False, True])
 def test_integration_cmd_init_runs_pass_zero_to_pass_four_in_order(
-    ai_dialogue_corpus: Path, tmp_path: Path
+    ai_dialogue_corpus: Path, tmp_path: Path, update_gitignore: bool
 ):
     """cmd_init now has FIVE passes after this PR lands on develop:
        0: corpus-origin (this PR)
        1: discover_entities (existing)
        2: detect_rooms_local (existing)
-       3: gitignore protection (existing)
+       3: gitignore protection (only with --update-gitignore)
        4: _maybe_run_mine_after_init (develop, PR #1183)
 
     Order matters: Pass 0 must produce origin.json BEFORE Pass 1 reads
@@ -1074,6 +1075,7 @@ def test_integration_cmd_init_runs_pass_zero_to_pass_four_in_order(
 
     palace = tmp_path / "palace"
     args = _init_args(ai_dialogue_corpus, no_llm=True)
+    args.update_gitignore = update_gitignore
     call_log: list = []
 
     real_run_pass_zero = __import__("mempalace.cli", fromlist=["_run_pass_zero"])._run_pass_zero
@@ -1110,7 +1112,7 @@ def test_integration_cmd_init_runs_pass_zero_to_pass_four_in_order(
         "pass_zero",
         "discover_entities",
         "detect_rooms_local",
-        "gitignore",
+        *(["gitignore"] if update_gitignore else []),
         "mine_prompt",
     ]
     assert call_log == expected, (
@@ -1861,12 +1863,17 @@ def test_init_blocks_with_consent_prompt_when_api_key_from_env(
     from mempalace.cli import cmd_init
 
     palace = tmp_path / "palace"
-    args = _init_args(ai_dialogue_corpus)
+    args = _init_args(ai_dialogue_corpus, yes=False)
     fake_provider = _external_env_provider()
 
     with (
         patch("mempalace.cli.MempalaceConfig", return_value=_stub_cfg(palace)),
         patch("mempalace.cli.get_provider", return_value=fake_provider),
+        patch("sys.stdin.isatty", return_value=True),
+        patch(
+            "mempalace.entity_detector.confirm_entities",
+            return_value={"people": [], "projects": [], "topics": []},
+        ),
         patch("mempalace.cli._maybe_run_mine_after_init"),
         patch("mempalace.room_detector_local.detect_rooms_local"),
         patch("builtins.input", return_value="y") as mock_input,
@@ -1885,12 +1892,17 @@ def test_init_consent_prompt_y_proceeds_with_llm(ai_dialogue_corpus: Path, tmp_p
     from mempalace.cli import cmd_init
 
     palace = tmp_path / "palace"
-    args = _init_args(ai_dialogue_corpus)
+    args = _init_args(ai_dialogue_corpus, yes=False)
     fake_provider = _external_env_provider()
 
     with (
         patch("mempalace.cli.MempalaceConfig", return_value=_stub_cfg(palace)),
         patch("mempalace.cli.get_provider", return_value=fake_provider),
+        patch("sys.stdin.isatty", return_value=True),
+        patch(
+            "mempalace.entity_detector.confirm_entities",
+            return_value={"people": [], "projects": [], "topics": []},
+        ),
         patch("mempalace.cli._maybe_run_mine_after_init"),
         patch("mempalace.room_detector_local.detect_rooms_local"),
         patch("builtins.input", return_value="y"),
@@ -1911,12 +1923,17 @@ def test_init_consent_prompt_n_falls_back_to_heuristic(
     from mempalace.cli import cmd_init
 
     palace = tmp_path / "palace"
-    args = _init_args(ai_dialogue_corpus)
+    args = _init_args(ai_dialogue_corpus, yes=False)
     fake_provider = _external_env_provider()
 
     with (
         patch("mempalace.cli.MempalaceConfig", return_value=_stub_cfg(palace)),
         patch("mempalace.cli.get_provider", return_value=fake_provider),
+        patch("sys.stdin.isatty", return_value=True),
+        patch(
+            "mempalace.entity_detector.confirm_entities",
+            return_value={"people": [], "projects": [], "topics": []},
+        ),
         patch("mempalace.cli._maybe_run_mine_after_init"),
         patch("mempalace.room_detector_local.detect_rooms_local"),
         patch("builtins.input", return_value="n"),

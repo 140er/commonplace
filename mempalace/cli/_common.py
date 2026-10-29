@@ -205,27 +205,20 @@ def _run_pass_zero(project_dir, palace_dir, llm_provider) -> dict:
     return wrapped
 
 
-def _ensure_mempalace_files_gitignored(project_dir) -> bool:
-    """If project_dir is a git repo, ensure MemPalace's per-project files
-    are listed in .gitignore so they don't get committed by accident.
-
-    Returns True if .gitignore was updated, False otherwise.
-    `mempalace init` writes mempalace.yaml + entities.json into the
-    project root, where they previously had no protection against being
-    staged into git.
-    """
+def _missing_mempalace_gitignore_entries(project_dir) -> list[str]:
+    """Return missing project-file entries without changing ignore rules."""
     from pathlib import Path
 
     project_path = Path(project_dir).expanduser().resolve()
     if not (project_path / ".git").exists():
-        return False
+        return []
     gitignore = project_path / ".gitignore"
     # ``exists()`` is true for a FIFO, and both the read below and the append
     # at the end of this function would block in the kernel on one. Decide by
     # type instead: an absent file still yields "" as before, a regular one
     # is read, and anything else is left untouched.
     if gitignore.exists() and not gitignore.is_file():
-        return False
+        return []
     # Force UTF-8: Windows defaults to GBK and chokes on non-ASCII .gitignore
     # comments, killing auto-init even though the file is valid UTF-8.
     existing = (
@@ -238,9 +231,20 @@ def _ensure_mempalace_files_gitignored(project_dir) -> bool:
     config_path = find_project_config(project_path)
     config_name = config_path.name if config_path else PROJECT_CONFIG_FILENAMES[0]
     existing_lines = {line.strip() for line in existing.splitlines()}
-    missing = [p for p in (config_name, ENTITIES_FILENAME) if p not in existing_lines]
+    return [p for p in (config_name, ENTITIES_FILENAME) if p not in existing_lines]
+
+
+def _ensure_mempalace_files_gitignored(project_dir) -> bool:
+    """Append missing project-file entries; return whether .gitignore changed."""
+    from pathlib import Path
+
+    missing = _missing_mempalace_gitignore_entries(project_dir)
     if not missing:
         return False
+    gitignore = Path(project_dir).expanduser().resolve() / ".gitignore"
+    existing = (
+        gitignore.read_text(encoding="utf-8", errors="replace") if gitignore.is_file() else ""
+    )
     prefix = "" if not existing or existing.endswith("\n") else "\n"
     block = prefix + "\n# MemPalace per-project files (issue #185)\n" + "\n".join(missing) + "\n"
     with open(gitignore, "a", encoding="utf-8") as f:

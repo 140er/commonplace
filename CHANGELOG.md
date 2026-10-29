@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Codex CLI 0.163+ sessions are filed again. Those rollouts carry turns only as `item_completed` UserMessage / AgentMessage events, so the hooks counted 0 exchanges and mining filed 0 drawers. Older `user_message` rollouts still parse, and a file holding both forms files each turn once. Codex sessions now file into the project wing from `session_meta.cwd` instead of `sessions`.
+- `mempalace init --yes` never prompts. With `--yes` or non-TTY stdin,
+  init accepts detected entities and rooms and skips mining unless
+  `--auto-mine` is set. External LLM consent still requires its explicit opt-in.
+- Init leaves `.gitignore` unchanged unless `--update-gitignore` is passed.
+- New configs for new or empty palaces use neutral `technical`, `planning`,
+  `reference`, and `creative` hall keywords. Existing palaces keep their legacy
+  classification vocabulary, including when they have no config yet. The unused `topic_wings` setting was already removed.
 
 ### Changed
 

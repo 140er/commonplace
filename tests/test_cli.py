@@ -30,6 +30,7 @@ from mempalace.cli import (
     cmd_wakeup,
     main,
 )
+from mempalace.config import NEW_HALL_KEYWORDS
 from mempalace.palace import MineAlreadyRunning
 
 # ── CLI entry point: PYTHONPATH stripping ────────────────────────────────
@@ -517,17 +518,21 @@ def _run_init_into(tmp_path, monkeypatch, **arg_values):
 
 
 def test_cmd_init_records_only_explicit_choices(tmp_path, monkeypatch):
-    """--palace and --lang both land in a new config.json; nothing else does.
+    """--palace and --lang both land in a new config.json alongside neutral halls.
     Before, --lang created the file first, so --palace was never recorded,
     and init wrote every default, freezing them against later releases."""
     palace = tmp_path / "custom_palace"
     saved = _run_init_into(tmp_path, monkeypatch, palace=str(palace), lang="en,pt")
-    assert saved == {"palace_path": str(palace), "entity_languages": ["en", "pt"]}
+    assert saved == {
+        "palace_path": str(palace),
+        "entity_languages": ["en", "pt"],
+        "hall_keywords": NEW_HALL_KEYWORDS,
+    }
 
 
 def test_cmd_init_does_not_freeze_the_environment_palace(tmp_path, monkeypatch):
     saved = _run_init_into(tmp_path, monkeypatch)
-    assert saved == {}
+    assert saved == {"hall_keywords": NEW_HALL_KEYWORDS}
 
 
 def test_cmd_init_keeps_an_aaak_entities_json(tmp_path, monkeypatch, capsys):
@@ -614,9 +619,10 @@ def test_maybe_run_mine_prompt_accepted_runs_mine(tmp_path):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=scanned),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", return_value=""),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
         mock_mine.assert_called_once_with(
             project_dir=str(tmp_path),
             palace_path=cfg.palace_path,
@@ -633,9 +639,10 @@ def test_maybe_run_mine_prompt_yes_accepted_runs_mine(tmp_path):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=[]),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", return_value="Y"),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
         mock_mine.assert_called_once()
 
 
@@ -648,9 +655,10 @@ def test_maybe_run_mine_prompt_declined_prints_hint(tmp_path, capsys):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=[]),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", return_value="n"),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
         mock_mine.assert_not_called()
     out = capsys.readouterr().out
     # shlex.quote is a no-op on POSIX-safe paths but wraps Windows paths
@@ -660,24 +668,19 @@ def test_maybe_run_mine_prompt_declined_prints_hint(tmp_path, capsys):
     assert "Skipped" in out
 
 
-def test_maybe_run_mine_yes_alone_still_prompts(tmp_path):
-    """`--yes` is scoped to entity auto-accept and MUST still prompt for mine.
-
-    Regression guard for the flag-overload review feedback on #1183: extending
-    `--yes` to also auto-mine would silently change behaviour for scripted
-    callers and turn a fast command into a minutes-long ChromaDB write.
-    """
+def test_maybe_run_mine_yes_alone_skips_without_prompt(tmp_path):
     from mempalace.cli import _maybe_run_mine_after_init
 
-    args = _init_args(tmp_path, yes=True, auto_mine=False)
-    cfg = _fake_cfg(tmp_path)
     with (
         patch("mempalace.miner.mine") as mock_mine,
-        patch("mempalace.miner.scan_project", return_value=[]),
-        patch("builtins.input", return_value="n") as mock_input,
+        patch("mempalace.miner.scan_project") as mock_scan,
+        patch("sys.stdin.isatty", return_value=True),
+        patch("builtins.input", side_effect=AssertionError("unexpected prompt")),
     ):
-        _maybe_run_mine_after_init(args, cfg)
-        mock_input.assert_called_once()  # the prompt MUST fire
+        _maybe_run_mine_after_init(
+            _init_args(tmp_path, yes=True), _fake_cfg(tmp_path), noninteractive=True
+        )
+        mock_scan.assert_not_called()
         mock_mine.assert_not_called()
 
 
@@ -691,9 +694,10 @@ def test_maybe_run_mine_auto_mine_skips_prompt(tmp_path):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=scanned),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", side_effect=AssertionError("input() must not be called")),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
         mock_mine.assert_called_once_with(
             project_dir=str(tmp_path),
             palace_path=cfg.palace_path,
@@ -710,9 +714,10 @@ def test_maybe_run_mine_yes_and_auto_mine_fully_noninteractive(tmp_path):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=[]),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", side_effect=AssertionError("input() must not be called")),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=True)
         mock_mine.assert_called_once()
 
 
@@ -728,9 +733,10 @@ def test_maybe_run_mine_decline_quotes_path_with_spaces(tmp_path, capsys):
     with (
         patch("mempalace.miner.mine"),
         patch("mempalace.miner.scan_project", return_value=[]),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", return_value="n"),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
     out = capsys.readouterr().out
     # shlex.quote wraps paths with spaces (and Windows backslashes) in
     # single quotes — the assertion must use the same shlex form so the
@@ -750,9 +756,10 @@ def test_maybe_run_mine_eof_on_stdin_treated_as_decline(tmp_path, capsys):
     with (
         patch("mempalace.miner.mine") as mock_mine,
         patch("mempalace.miner.scan_project", return_value=[]),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", side_effect=EOFError),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
         mock_mine.assert_not_called()
     assert "Skipped" in capsys.readouterr().out
 
@@ -768,7 +775,7 @@ def test_maybe_run_mine_failure_surfaces_via_exit(tmp_path, capsys):
         patch("mempalace.miner.scan_project", return_value=[]),
     ):
         with pytest.raises(SystemExit) as exc_info:
-            _maybe_run_mine_after_init(args, cfg)
+            _maybe_run_mine_after_init(args, cfg, noninteractive=False)
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
     assert "boom" in err
@@ -796,9 +803,10 @@ def test_maybe_run_mine_estimate_appears_before_prompt(tmp_path, capsys):
     with (
         patch("mempalace.miner.mine"),
         patch("mempalace.miner.scan_project", return_value=scanned),
+        patch("sys.stdin.isatty", return_value=True),
         patch("builtins.input", side_effect=fake_input),
     ):
-        _maybe_run_mine_after_init(args, cfg)
+        _maybe_run_mine_after_init(args, cfg, noninteractive=False)
 
     pre_prompt = captured_when_prompted["stdout"]
     assert "4 files" in pre_prompt, f"file count missing from pre-prompt output: {pre_prompt!r}"

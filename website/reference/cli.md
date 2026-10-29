@@ -32,7 +32,9 @@ mempalace init .                     # initialize from the current directory
 | Option  | Description                                                                  |
 |---------|------------------------------------------------------------------------------|
 | `<dir>` | **Required.** Project directory to scan. Pass `.` for the current directory. |
-| `--yes` | Auto-accept all detected entities                                            |
+| `--yes` | Accept detected entities and rooms without prompting; skip mining unless `--auto-mine` is set. Non-TTY stdin uses the same defaults. |
+| `--auto-mine` | Skip the post-init mine prompt and run mine automatically. Combine with `--yes` for a fully non-interactive setup. |
+| `--update-gitignore` | Add MemPalace's per-project files to `.gitignore` (default: leave it unchanged). |
 | `--embedding-model` | Record the embedding model in `config.json`: `embeddinggemma` (multilingual, ~300 MB download), `minilm` (English-only, ~30 MB), `embeddinggemma2` or `openai-compat` |
 
 What it does:
