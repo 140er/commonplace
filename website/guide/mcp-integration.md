@@ -131,7 +131,7 @@ For detailed schemas and parameters, see [MCP Tools Reference](/reference/mcp-to
 
 ## Codex auto-save hooks
 
-MCP setup alone does not enable auto-save. Follow the [Codex hook setup](/guide/hooks#install-codex-cli)
+MCP setup alone does not enable auto-save. Follow the [Codex hook setup](/guide/hooks#codex-cli)
 for the nested hook format and all four lifecycle events. Project `.codex/hooks.json`
 and `.codex/config.toml` load only when the project is trusted in global
 `~/.codex/config.toml`; hook definitions also need separate review with `/hooks`.

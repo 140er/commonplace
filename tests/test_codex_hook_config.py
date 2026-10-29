@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -138,8 +140,9 @@ def test_plugin_hook_config_already_uses_nested_format():
     _assert_nested(json.loads((REPO_ROOT / ".codex-plugin" / "hooks.json").read_text()))
 
 
-def test_codex_guide_config_uses_all_four_events_with_nested_handlers():
-    guide = (REPO_ROOT / "website" / "guide" / "hooks.md").read_text(encoding="utf-8")
+@pytest.mark.parametrize("document", ["website/guide/hooks.md", "hooks/README.md"])
+def test_codex_guide_config_uses_all_four_events_with_nested_handlers(document):
+    guide = (REPO_ROOT / document).read_text(encoding="utf-8")
     section = guide.split("## Install — Codex CLI", 1)[1].split("## Configuration", 1)[0]
     example = re.search(r"```json\n(.*?)\n```", section, re.DOTALL)
     config = json.loads(example.group(1))
@@ -171,3 +174,93 @@ def test_codex_guide_toml_and_invocation_match_nested_json_schema():
             _assert_nested(config)
             events.update(config["hooks"])
     assert events == {"SessionStart", "Stop", "SessionEnd", "PreCompact"}
+
+
+@pytest.mark.parametrize("relative", [False, True])
+def test_linked_worktree_uses_main_checkout_trust(project, tmp_path, relative):
+    _hooks(project)
+    main = tmp_path / "main-checkout"
+    gitdir = main / ".git" / "worktrees" / "linked"
+    gitdir.mkdir(parents=True)
+    (project / ".git").rmdir()
+    pointer = os.path.relpath(gitdir, project) if relative else str(gitdir)
+    (project / ".git").write_text(f"gitdir: {pointer}\n", encoding="utf-8")
+    path = _trust(main)
+    assert codex_hook_notice(project) is None
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(f'[projects.{json.dumps(str(project))}]\ntrust_level = "untrusted"\n')
+    assert "will be skipped" in codex_hook_notice(project)
+
+
+@pytest.mark.parametrize("filename", ["hooks.json", "config.toml"])
+@pytest.mark.parametrize("repository", [False, True])
+def test_user_level_hooks_never_require_project_trust(project, filename, repository):
+    home = Path.home()
+    local = home / ".codex"
+    local.mkdir()
+    contents = '{"hooks": {"Stop": []}}' if filename == "hooks.json" else "[hooks]\nStop=[]\n"
+    (local / filename).write_text(contents, encoding="utf-8")
+    if repository:
+        (home / ".git").mkdir()
+    assert codex_hook_notice(home) is None
+    subdir = home / "notes"
+    subdir.mkdir()
+    assert codex_hook_notice(subdir) is None
+
+
+def test_custom_codex_home_is_not_a_project_layer(project, monkeypatch):
+    _hooks(project)
+    monkeypatch.setenv("CODEX_HOME", str(project / ".codex"))
+    assert codex_hook_notice(project) is None
+
+
+def test_no_repository_checks_only_starting_directory(project):
+    _hooks(project)
+    (project / ".git").rmdir()
+    assert "will be skipped" in codex_hook_notice(project)
+    subdir = project / "src"
+    subdir.mkdir()
+    assert codex_hook_notice(subdir) is None
+
+
+@pytest.mark.parametrize("spelling", ["resolved", "original"])
+def test_trust_accepts_canonical_and_original_symlink_paths(project, tmp_path, spelling):
+    _hooks(project)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(project, target_is_directory=True)
+    except OSError:
+        pytest.skip("Directory symlinks unavailable")
+    (project / "src").mkdir()
+    _trust(project if spelling == "resolved" else alias)
+    assert codex_hook_notice(alias / "src") is None
+
+
+@pytest.mark.parametrize("platform", ["posix", "nt"])
+@pytest.mark.parametrize("case", ["lower", "upper"])
+def test_windows_trust_keys_are_case_insensitive(project, monkeypatch, platform, case):
+    import mempalace.codex_hooks as hooks
+
+    _hooks(project)
+    _trust(getattr(str(project), case)())
+    monkeypatch.setattr(hooks, "os", SimpleNamespace(name=platform, environ=os.environ))
+    notice = codex_hook_notice(project)
+    if platform == "nt" or getattr(str(project), case)() == str(project):
+        assert notice is None
+    else:
+        assert "will be skipped" in notice
+
+
+def test_status_skips_hook_notice_when_cwd_was_deleted(project, monkeypatch, capsys):
+    from mempalace.cli import cmd_status
+
+    status = Mock()
+    notice = Mock()
+    monkeypatch.setattr("mempalace.miner.status", status)
+    monkeypatch.setattr("mempalace.knowledge_graph.knowledge_graph_notice", lambda *a, **kw: None)
+    monkeypatch.setattr("mempalace.codex_hooks.codex_hook_notice", notice)
+    monkeypatch.setattr(Path, "cwd", Mock(side_effect=FileNotFoundError("deleted cwd")))
+    cmd_status(argparse.Namespace(palace=str(project / "palace")))
+    status.assert_called_once_with(palace_path=str(project / "palace"))
+    notice.assert_not_called()
+    assert "Warning:" not in capsys.readouterr().out

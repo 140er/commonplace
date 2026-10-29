@@ -192,6 +192,10 @@ def cmd_status(args):
     notice = knowledge_graph_notice(palace_path, explicit=bool(args.palace))
     if notice:
         print(f"\n  Note: {notice}")
-    hook_notice = codex_hook_notice(Path.cwd())
+    try:
+        project_dir = Path.cwd()
+    except OSError:
+        return
+    hook_notice = codex_hook_notice(project_dir)
     if hook_notice:
         print(f"\n  Warning: {hook_notice}")

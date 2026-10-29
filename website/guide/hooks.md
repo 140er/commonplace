@@ -42,6 +42,8 @@ Make them executable:
 chmod +x hooks/mempal_save_hook.sh hooks/mempal_precompact_hook.sh
 ```
 
+<a id="codex-cli"></a>
+
 ## Install — Codex CLI
 
 For Codex CLI 0.163, add this to the project's `.codex/hooks.json`.

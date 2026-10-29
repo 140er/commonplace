@@ -322,7 +322,7 @@ periodically and before context compression:
 Codex CLI project hooks require project trust in global `~/.codex/config.toml`
 and separate hook-definition review in `/hooks`; CLI 0.163 can silently skip
 unreviewed hooks. MemPalace never edits global Codex or Claude config.
-See the [Codex hook setup](https://mempalaceofficial.com/guide/hooks.html#install-codex-cli)
+See the [Codex hook setup](https://mempalaceofficial.com/guide/hooks.html#codex-cli)
 for nested JSON, trust checks, and per-invocation automation.
 
 If you are installing under time pressure, start with the
