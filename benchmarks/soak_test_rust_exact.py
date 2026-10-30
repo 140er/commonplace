@@ -67,9 +67,13 @@ def run_soak_test():
     p95 = latencies[95]
     p99 = latencies[99]
 
-    print(f"    Completed 100 queries in {total_seq_time:.2f}s ({100/total_seq_time:.1f} QPS)")
-    print(f"    Latency p50: {p50:.2f}ms | p95: {p95:.2f}ms | p99: {p99:.2f}ms | min: {latencies[0]:.2f}ms | max: {latencies[-1]:.2f}ms")
-    print(f"    RSS after Phase 1: {rss_after_seq:.2f} MB (diff: {rss_after_seq - rss_start:+.2f} MB)\n")
+    print(f"    Completed 100 queries in {total_seq_time:.2f}s ({100 / total_seq_time:.1f} QPS)")
+    print(
+        f"    Latency p50: {p50:.2f}ms | p95: {p95:.2f}ms | p99: {p99:.2f}ms | min: {latencies[0]:.2f}ms | max: {latencies[-1]:.2f}ms"
+    )
+    print(
+        f"    RSS after Phase 1: {rss_after_seq:.2f} MB (diff: {rss_after_seq - rss_start:+.2f} MB)\n"
+    )
 
     # 3. Concurrent Multi-Threaded Stress Test: 80 queries across 4 threads
     print("--> Running Phase 2: Concurrent multi-threaded stress (4 threads x 20 queries)...")
@@ -97,14 +101,22 @@ def run_soak_test():
     rss_after_conc = proc.memory_info().rss / 1048576
     concurrent_latencies.sort()
 
-    print(f"    Completed 80 concurrent queries in {total_conc_time:.2f}s ({80/total_conc_time:.1f} QPS)")
-    print(f"    Concurrent Latency p50: {concurrent_latencies[len(concurrent_latencies)//2]:.2f}ms | p95: {concurrent_latencies[int(len(concurrent_latencies)*0.95)]:.2f}ms")
-    print(f"    RSS after Phase 2: {rss_after_conc:.2f} MB (diff from start: {rss_after_conc - rss_start:+.2f} MB)\n")
+    print(
+        f"    Completed 80 concurrent queries in {total_conc_time:.2f}s ({80 / total_conc_time:.1f} QPS)"
+    )
+    print(
+        f"    Concurrent Latency p50: {concurrent_latencies[len(concurrent_latencies) // 2]:.2f}ms | p95: {concurrent_latencies[int(len(concurrent_latencies) * 0.95)]:.2f}ms"
+    )
+    print(
+        f"    RSS after Phase 2: {rss_after_conc:.2f} MB (diff from start: {rss_after_conc - rss_start:+.2f} MB)\n"
+    )
 
     # 4. Filter Verification (Wing & Complex Fallback)
     print("--> Running Phase 3: Filtered query verification...")
     res_wing = col.query(query_embeddings=[q], n_results=5, where={"wing": "projects"})
-    print(f"    Wing-filtered returned: {len(res_wing.ids[0])} results, all matched wing 'projects'.")
+    print(
+        f"    Wing-filtered returned: {len(res_wing.ids[0])} results, all matched wing 'projects'."
+    )
 
     # 5. Final Memory Leak Check
     rss_final = proc.memory_info().rss / 1048576
@@ -116,7 +128,9 @@ def run_soak_test():
     print("=" * 60)
 
     # Memory growth during 180 queries should be virtually negligible (<15 MB heap fragmentation)
-    assert (rss_final - rss_start) < 15.0, f"Possible memory leak detected: {rss_final - rss_start:.2f} MB growth"
+    assert (rss_final - rss_start) < 15.0, (
+        f"Possible memory leak detected: {rss_final - rss_start:.2f} MB growth"
+    )
 
 
 if __name__ == "__main__":

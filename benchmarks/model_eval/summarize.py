@@ -13,6 +13,7 @@ The report includes:
 - Open-set viability (does any model meet the discover-mode threshold?)
 - Instruct vs reasoning comparison for qwen3:4b pair
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,14 +44,20 @@ def rank_by(rows: list[dict], task: str, mode: str, key: str, reverse: bool = Tr
     return sorted(filtered, key=lambda r: float(r.get(key) or 0), reverse=reverse)
 
 
-def render_accuracy_table(rows: list[dict], task: str, mode: str, primary_key: str = "accuracy") -> str:
+def render_accuracy_table(
+    rows: list[dict], task: str, mode: str, primary_key: str = "accuracy"
+) -> str:
     ranked = rank_by(rows, task, mode, primary_key, reverse=True)
     if not ranked:
         return f"_No successful runs for {task}/{mode}._\n"
 
     lines = []
-    extras_keys = sorted({k for r in ranked for k in json.loads(r.get("extras_json") or "{}").keys()})
-    extras_keys = [k for k in extras_keys if k not in {"correct", "total", "error_count", "error_sample"}][:4]
+    extras_keys = sorted(
+        {k for r in ranked for k in json.loads(r.get("extras_json") or "{}").keys()}
+    )
+    extras_keys = [
+        k for k in extras_keys if k not in {"correct", "total", "error_count", "error_sample"}
+    ][:4]
 
     header = ["Rank", "Model", primary_key]
     if extras_keys:
@@ -64,19 +71,31 @@ def render_accuracy_table(rows: list[dict], task: str, mode: str, primary_key: s
         row = [str(i), r["model_tag"], fmt(r[primary_key], 3)]
         for k in extras_keys:
             row.append(fmt(extras.get(k), 2))
-        row.extend([fmt(r.get("e2e_p50_ms"), 1), fmt(r.get("tps_p50"), 1), r.get("vram_resident_mb") or "—"])
+        row.extend(
+            [
+                fmt(r.get("e2e_p50_ms"), 1),
+                fmt(r.get("tps_p50"), 1),
+                r.get("vram_resident_mb") or "—",
+            ]
+        )
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines) + "\n"
 
 
 def render_speed_table(rows: list[dict], task: str, mode: str) -> str:
-    valid = [r for r in rows if r["task"] == task and r["mode"] == mode and not r.get("error") and r.get("e2e_p50_ms")]
+    valid = [
+        r
+        for r in rows
+        if r["task"] == task and r["mode"] == mode and not r.get("error") and r.get("e2e_p50_ms")
+    ]
     ranked = sorted(valid, key=lambda r: float(r.get("e2e_p50_ms") or 99999))
     if not ranked:
         return ""
 
-    lines = ["| Rank | Model | e2e p50 ms | e2e p95 ms | TTFT p50 ms | TPS p50 | TPS p95 |",
-             "|---|---|---|---|---|---|---|"]
+    lines = [
+        "| Rank | Model | e2e p50 ms | e2e p95 ms | TTFT p50 ms | TPS p50 | TPS p95 |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for i, r in enumerate(ranked, 1):
         lines.append(
             f"| {i} | {r['model_tag']} | "
@@ -114,11 +133,15 @@ def render_vram_table(rows: list[dict]) -> str:
             delta = int(peak) - int(resident) if resident and peak else None
         except (TypeError, ValueError):
             delta = None
-        lines.append(f"| {tag} | {resident or '—'} | {peak or '—'} | {delta if delta is not None else '—'} |")
+        lines.append(
+            f"| {tag} | {resident or '—'} | {peak or '—'} | {delta if delta is not None else '—'} |"
+        )
     return "\n".join(lines) + "\n"
 
 
-def render_production_picks(rows: list[dict], min_acc: float = 0.80, max_e2e_ms: float = 500) -> str:
+def render_production_picks(
+    rows: list[dict], min_acc: float = 0.80, max_e2e_ms: float = 500
+) -> str:
     """Models that meet a quality threshold AND a speed threshold across all tasks."""
     by_model: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
@@ -158,7 +181,9 @@ def render_production_picks(rows: list[dict], min_acc: float = 0.80, max_e2e_ms:
     if not picks:
         return f"_No model met both thresholds (min_acc={min_acc}, max_e2e={max_e2e_ms}ms across all tasks)._\n"
 
-    lines = [f"Models meeting min_accuracy ≥ {min_acc} on every task AND e2e p50 ≤ {max_e2e_ms}ms:\n"]
+    lines = [
+        f"Models meeting min_accuracy ≥ {min_acc} on every task AND e2e p50 ≤ {max_e2e_ms}ms:\n"
+    ]
     lines.append("| Rank | Model | Avg primary metric | Worst e2e p50 ms |")
     lines.append("|---|---|---|---|")
     for i, (tag, avg, e2e) in enumerate(picks, 1):
@@ -167,14 +192,22 @@ def render_production_picks(rows: list[dict], min_acc: float = 0.80, max_e2e_ms:
 
 
 def render_instruct_vs_reasoning(rows: list[dict]) -> str:
-    instruct = [r for r in rows if r["model_tag"].startswith("qwen3:4b-instruct-2507") and not r.get("error")]
-    reasoning = [r for r in rows if r["model_tag"].startswith("qwen3:4b-thinking") and not r.get("error")]
+    instruct = [
+        r
+        for r in rows
+        if r["model_tag"].startswith("qwen3:4b-instruct-2507") and not r.get("error")
+    ]
+    reasoning = [
+        r for r in rows if r["model_tag"].startswith("qwen3:4b-thinking") and not r.get("error")
+    ]
 
     if not instruct or not reasoning:
         return "_Not enough qwen3:4b paired results to compare._\n"
 
     inst_q4 = next((r for r in instruct if r["model_tag"] == "qwen3:4b-instruct-2507-q4_K_M"), None)
-    reas_q4 = next((r for r in reasoning if r["model_tag"] == "qwen3:4b-thinking-2507-q4_K_M"), None)
+    reas_q4 = next(
+        (r for r in reasoning if r["model_tag"] == "qwen3:4b-thinking-2507-q4_K_M"), None
+    )
 
     if not inst_q4 or not reas_q4:
         return "_qwen3:4b-instruct-2507-q4_K_M vs qwen3:4b-thinking-2507-q4_K_M comparison unavailable._\n"
@@ -186,7 +219,9 @@ def render_instruct_vs_reasoning(rows: list[dict]) -> str:
         by_pair[(r["task"], r["mode"])][r["model_tag"]] = r
 
     lines = ["Direct comparison: qwen3:4b instruct vs reasoning at q4_K_M.\n"]
-    lines.append("| Task | Mode | Instruct accuracy | Reasoning accuracy | Instruct e2e p50 | Reasoning e2e p50 |")
+    lines.append(
+        "| Task | Mode | Instruct accuracy | Reasoning accuracy | Instruct e2e p50 | Reasoning e2e p50 |"
+    )
     lines.append("|---|---|---|---|---|---|")
     for (task, mode), pair in sorted(by_pair.items()):
         inst = pair.get("qwen3:4b-instruct-2507-q4_K_M")
@@ -202,20 +237,32 @@ def render_instruct_vs_reasoning(rows: list[dict]) -> str:
 
 
 def render_open_set_viability(rows: list[dict], min_similarity: float = 0.7) -> str:
-    open_runs = [r for r in rows if r["task"] == "room_classification" and r["mode"] == "open" and not r.get("error")]
+    open_runs = [
+        r
+        for r in rows
+        if r["task"] == "room_classification" and r["mode"] == "open" and not r.get("error")
+    ]
     if not open_runs:
         return "_No open-set runs available._\n"
 
     qualified = [r for r in open_runs if float(r.get("accuracy") or 0) >= min_similarity]
-    lines = [f"Open-set discovery viability. Threshold: mean cosine similarity ≥ {min_similarity}.\n"]
+    lines = [
+        f"Open-set discovery viability. Threshold: mean cosine similarity ≥ {min_similarity}.\n"
+    ]
 
     if not qualified:
-        lines.append(f"**No model met the threshold.** Best score: {max(float(r.get('accuracy') or 0) for r in open_runs):.3f}.")
-        lines.append("\nRecommendation: do NOT ship `mempalace mine --mode discover`. Closed-set classification stays required.\n")
+        lines.append(
+            f"**No model met the threshold.** Best score: {max(float(r.get('accuracy') or 0) for r in open_runs):.3f}."
+        )
+        lines.append(
+            "\nRecommendation: do NOT ship `mempalace mine --mode discover`. Closed-set classification stays required.\n"
+        )
         return "\n".join(lines)
 
     lines.append(f"**{len(qualified)} model(s) met the threshold.**\n")
-    lines.append("| Model | Mean similarity | Exact match count | High-sim (≥0.8) | Low-sim (<0.5) |")
+    lines.append(
+        "| Model | Mean similarity | Exact match count | High-sim (≥0.8) | Low-sim (<0.5) |"
+    )
     lines.append("|---|---|---|---|---|")
     for r in sorted(qualified, key=lambda r: -float(r.get("accuracy") or 0)):
         extras = json.loads(r.get("extras_json") or "{}")
@@ -226,7 +273,9 @@ def render_open_set_viability(rows: list[dict], min_similarity: float = 0.7) -> 
             f"{extras.get('high_similarity_count', '—')} | "
             f"{extras.get('low_similarity_count', '—')} |"
         )
-    lines.append(f"\nRecommendation: ship `mempalace mine --mode discover` with the top model as default.\n")
+    lines.append(
+        f"\nRecommendation: ship `mempalace mine --mode discover` with the top model as default.\n"
+    )
     return "\n".join(lines)
 
 
@@ -299,12 +348,14 @@ def render_report(rows: list[dict]) -> str:
 
     errored = [r for r in rows if r.get("error")]
     if errored:
-        sections.extend([
-            "## Errors",
-            "",
-            "| Model | Task | Mode | Error |",
-            "|---|---|---|---|",
-        ])
+        sections.extend(
+            [
+                "## Errors",
+                "",
+                "| Model | Task | Mode | Error |",
+                "|---|---|---|---|",
+            ]
+        )
         for r in errored:
             err_short = r["error"][:120].replace("|", "\\|")
             sections.append(f"| {r['model_tag']} | {r['task']} | {r['mode']} | {err_short} |")

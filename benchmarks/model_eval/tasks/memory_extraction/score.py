@@ -6,6 +6,7 @@ Looser than entity F1 because content paraphrasing is expected. We score:
   predicted item with semantic match (cosine similarity > 0.6 on content)
 - Hallucination rate: predicted items with no semantic match in truth
 """
+
 from __future__ import annotations
 
 import json

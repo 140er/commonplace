@@ -1,4 +1,5 @@
 """Entity extraction prompts. Output is JSON; we use json_mode=True."""
+
 from __future__ import annotations
 
 

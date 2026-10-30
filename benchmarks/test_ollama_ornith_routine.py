@@ -35,7 +35,12 @@ from mempalace.config import MempalaceConfig
 from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.logstream import Logstream
 from mempalace import mcp_server, mcp_light_server
-from mempalace.mcp_light_server import LIGHT_TOOLS, tool_palace_query, tool_palace_exec, tool_palace_coordinate
+from mempalace.mcp_light_server import (
+    LIGHT_TOOLS,
+    tool_palace_query,
+    tool_palace_exec,
+    tool_palace_coordinate,
+)
 from mempalace.mcp_server import TOOLS as LEGACY_TOOLS
 from mempalace.palace_graph import create_tunnel, invalidate_graph_cache
 
@@ -103,7 +108,6 @@ TEST_SUITE: List[TestCase] = [
         expected_keywords_in_query=["check", "dup", "duplicate", "alembic"],
         description="Duplicate content detection check",
     ),
-
     # ── Category 2: Knowledge Graph (KG) ─────────────────────────────────────
     TestCase(
         id="kg_query_entity",
@@ -129,7 +133,6 @@ TEST_SUITE: List[TestCase] = [
         expected_keywords_in_query=["stats", "kg"],
         description="Knowledge Graph overview statistics",
     ),
-
     # ── Category 3: Graph Traversal & Tunnels ────────────────────────────────
     TestCase(
         id="graph_traverse_room",
@@ -147,7 +150,6 @@ TEST_SUITE: List[TestCase] = [
         expected_keywords_in_query=["tunnels", "backend", "frontend"],
         description="Find bridge rooms / tunnels between wings",
     ),
-
     # ── Category 4: Agent Diary ──────────────────────────────────────────────
     TestCase(
         id="diary_read_recent",
@@ -165,7 +167,6 @@ TEST_SUITE: List[TestCase] = [
         expected_keywords_in_query=["diary", "write", "antigravity", "passkeys"],
         description="Append agent journal entry in AAAK format",
     ),
-
     # ── Category 5: Memory Mutations & Ingestion ─────────────────────────────
     TestCase(
         id="add_new_drawer",
@@ -199,7 +200,6 @@ TEST_SUITE: List[TestCase] = [
         expected_keywords_in_query=["tunnel", "create", "backend", "frontend"],
         description="Create an explicit cross-wing link between rooms",
     ),
-
     # ── Category 6: Multi-Agent Coordination ─────────────────────────────────
     TestCase(
         id="coord_task_create",
@@ -269,11 +269,46 @@ class TestPalaceEnvironment:
         ]
         ids = [f"drw_seed_{i}" for i in range(len(docs))]
         metadatas = [
-            {"wing": "project_backend", "room": "auth", "source_file": "auth.py", "chunk_index": 0, "added_by": "miner", "filed_at": "2026-01-01T00:00:00"},
-            {"wing": "project_backend", "room": "database", "source_file": "db.py", "chunk_index": 0, "added_by": "miner", "filed_at": "2026-01-02T00:00:00"},
-            {"wing": "project_frontend", "room": "architecture", "source_file": "app.tsx", "chunk_index": 0, "added_by": "miner", "filed_at": "2026-01-03T00:00:00"},
-            {"wing": "team", "room": "planning", "source_file": "roadmap.md", "chunk_index": 0, "added_by": "miner", "filed_at": "2026-01-04T00:00:00"},
-            {"wing": "security", "room": "policies", "source_file": "sec.md", "chunk_index": 0, "added_by": "miner", "filed_at": "2026-01-05T00:00:00"},
+            {
+                "wing": "project_backend",
+                "room": "auth",
+                "source_file": "auth.py",
+                "chunk_index": 0,
+                "added_by": "miner",
+                "filed_at": "2026-01-01T00:00:00",
+            },
+            {
+                "wing": "project_backend",
+                "room": "database",
+                "source_file": "db.py",
+                "chunk_index": 0,
+                "added_by": "miner",
+                "filed_at": "2026-01-02T00:00:00",
+            },
+            {
+                "wing": "project_frontend",
+                "room": "architecture",
+                "source_file": "app.tsx",
+                "chunk_index": 0,
+                "added_by": "miner",
+                "filed_at": "2026-01-03T00:00:00",
+            },
+            {
+                "wing": "team",
+                "room": "planning",
+                "source_file": "roadmap.md",
+                "chunk_index": 0,
+                "added_by": "miner",
+                "filed_at": "2026-01-04T00:00:00",
+            },
+            {
+                "wing": "security",
+                "room": "policies",
+                "source_file": "sec.md",
+                "chunk_index": 0,
+                "added_by": "miner",
+                "filed_at": "2026-01-05T00:00:00",
+            },
         ]
         self.collection.add(ids=ids, documents=docs, metadatas=metadatas)
 
@@ -285,17 +320,33 @@ class TestPalaceEnvironment:
         self.kg.add_triple("Arthur", "founded", "Project Camelot", valid_from="2024-01-01")
 
     def _seed_tunnels(self):
-        create_tunnel("project_backend", "auth", "project_frontend", "architecture", "Auth to UI", self.palace_path)
+        create_tunnel(
+            "project_backend",
+            "auth",
+            "project_frontend",
+            "architecture",
+            "Auth to UI",
+            self.palace_path,
+        )
         invalidate_graph_cache()
 
     def _seed_diaries(self):
         from mempalace.ids import make_drawer_id_from_content
+
         entry = "SESSION:2026-08-28|optimized search ranking + benchmarked hybrid backend|ALC.req:fast.mcp|★★★"
         drw_id = make_drawer_id_from_content("wing_antigravity", "diary", entry)
         self.collection.add(
             ids=[drw_id],
             documents=[entry],
-            metadatas=[{"wing": "wing_antigravity", "room": "diary", "agent": "antigravity", "topic": "general", "filed_at": "2026-08-28T12:00:00"}]
+            metadatas=[
+                {
+                    "wing": "wing_antigravity",
+                    "room": "diary",
+                    "agent": "antigravity",
+                    "topic": "general",
+                    "filed_at": "2026-08-28T12:00:00",
+                }
+            ],
         )
 
     def _seed_logstream(self):
@@ -369,7 +420,9 @@ def call_ollama_chat(
         payload["tools"] = tools
 
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"}
+    )
     start_t = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         res = json.loads(resp.read().decode("utf-8"))
@@ -418,7 +471,7 @@ def execute_tool_call(tool_name: str, arguments: Any, mode: str) -> Tuple[bool, 
                 res = tool_palace_coordinate(arguments)
             else:
                 return False, None, f"Unknown lightweight tool: {tool_name}"
-            
+
             if isinstance(res, dict) and res.get("success") is False and "error" in res:
                 return False, res, res["error"]
             return True, res, None
@@ -520,16 +573,24 @@ def run_single_test(
             selection_correct = True
 
     # Execute Tool Call against live test environment
-    exec_success, exec_result, exec_error = execute_tool_call(called_tool_name, called_tool_args, mode)
+    exec_success, exec_result, exec_error = execute_tool_call(
+        called_tool_name, called_tool_args, mode
+    )
 
     # Multi-turn verification: feed tool output back and request final answer
     messages.append(assistant_msg)
-    tool_resp_str = json.dumps(exec_result, ensure_ascii=False) if exec_success else json.dumps({"error": exec_error})
-    messages.append({
-        "role": "tool",
-        "tool_call_id": tc.get("id", "call_0"),
-        "content": tool_resp_str,
-    })
+    tool_resp_str = (
+        json.dumps(exec_result, ensure_ascii=False)
+        if exec_success
+        else json.dumps({"error": exec_error})
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": tc.get("id", "call_0"),
+            "content": tool_resp_str,
+        }
+    )
 
     multi_turn_success = False
     final_text = ""
@@ -562,7 +623,9 @@ def run_full_suite() -> Dict[str, Any]:
     print(f"==================================================================")
     print(f"  EXTENSIVE TESTING: {MODEL_NAME} ON ROUTINE PALACE USAGE")
     print(f"==================================================================")
-    print(f"Testing {len(TEST_SUITE)} routine tasks across Lightweight (3 tools) vs Legacy (45 tools)...\n")
+    print(
+        f"Testing {len(TEST_SUITE)} routine tasks across Lightweight (3 tools) vs Legacy (45 tools)...\n"
+    )
 
     env = TestPalaceEnvironment()
 
@@ -571,11 +634,17 @@ def run_full_suite() -> Dict[str, Any]:
 
     try:
         # 1. Run Lightweight Suite
-        print(">>> Running Mode 1: LIGHTWEIGHT 3-TOOL MCP (palace_query, palace_exec, palace_coordinate)...")
+        print(
+            ">>> Running Mode 1: LIGHTWEIGHT 3-TOOL MCP (palace_query, palace_exec, palace_coordinate)..."
+        )
         for idx, tc in enumerate(TEST_SUITE, 1):
             print(f"  [{idx}/{len(TEST_SUITE)}] [{tc.category}] {tc.id} ...", end=" ", flush=True)
             res = run_single_test(tc, env, mode="lightweight")
-            status = "PASS" if (res.selection_correct and res.execution_success and res.multi_turn_success) else "FAIL"
+            status = (
+                "PASS"
+                if (res.selection_correct and res.execution_success and res.multi_turn_success)
+                else "FAIL"
+            )
             print(f"{status} ({res.latency_sec:.2f}s) -> Tool: {res.tool_name}")
             if not res.execution_success:
                 print(f"      Execution Error: {res.execution_error}")
@@ -585,7 +654,11 @@ def run_full_suite() -> Dict[str, Any]:
         for idx, tc in enumerate(TEST_SUITE, 1):
             print(f"  [{idx}/{len(TEST_SUITE)}] [{tc.category}] {tc.id} ...", end=" ", flush=True)
             res = run_single_test(tc, env, mode="legacy")
-            status = "PASS" if (res.selection_correct and res.execution_success and res.multi_turn_success) else "FAIL"
+            status = (
+                "PASS"
+                if (res.selection_correct and res.execution_success and res.multi_turn_success)
+                else "FAIL"
+            )
             print(f"{status} ({res.latency_sec:.2f}s) -> Tool: {res.tool_name}")
             if not res.execution_success:
                 print(f"      Execution Error: {res.execution_error}")
@@ -601,7 +674,11 @@ def run_full_suite() -> Dict[str, Any]:
         sel_correct = sum(1 for r in results if r.selection_correct)
         exec_success = sum(1 for r in results if r.execution_success)
         multi_turn = sum(1 for r in results if r.multi_turn_success)
-        all_pass = sum(1 for r in results if r.selection_correct and r.execution_success and r.multi_turn_success)
+        all_pass = sum(
+            1
+            for r in results
+            if r.selection_correct and r.execution_success and r.multi_turn_success
+        )
         avg_lat = sum(r.latency_sec for r in results) / total if total else 0.0
 
         return {

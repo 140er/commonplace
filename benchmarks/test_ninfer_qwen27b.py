@@ -122,7 +122,9 @@ def run_routine_single_test(
             }
             for name, t in LEGACY_TOOLS.items()
         ]
-        sys_prompt = "You are an AI assistant with access to MemPalace MCP tools. Call the appropriate tool."
+        sys_prompt = (
+            "You are an AI assistant with access to MemPalace MCP tools. Call the appropriate tool."
+        )
 
     messages = [
         {"role": "system", "content": sys_prompt},
@@ -138,7 +140,11 @@ def run_routine_single_test(
     exec_err_last = None
     final_text = ""
 
-    expected_types = test_case.expected_tool_type if isinstance(test_case.expected_tool_type, list) else [test_case.expected_tool_type]
+    expected_types = (
+        test_case.expected_tool_type
+        if isinstance(test_case.expected_tool_type, list)
+        else [test_case.expected_tool_type]
+    )
 
     for turn in range(3):
         try:
@@ -154,7 +160,9 @@ def run_routine_single_test(
 
         tcs = assistant_msg.get("tool_calls", [])
         if not tcs:
-            final_text = (assistant_msg.get("content") or assistant_msg.get("reasoning_content") or "").strip()
+            final_text = (
+                assistant_msg.get("content") or assistant_msg.get("reasoning_content") or ""
+            ).strip()
             break
 
         tool_called_any = True
@@ -186,15 +194,23 @@ def run_routine_single_test(
             exec_success_all = False
             exec_err_last = exec_err
 
-        tool_payload = json.dumps(exec_res, ensure_ascii=False) if exec_success else json.dumps({"error": exec_err})
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc0.get("id", f"call_{turn}"),
-            "content": tool_payload,
-        })
+        tool_payload = (
+            json.dumps(exec_res, ensure_ascii=False)
+            if exec_success
+            else json.dumps({"error": exec_err})
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc0.get("id", f"call_{turn}"),
+                "content": tool_payload,
+            }
+        )
 
     if not final_text and messages:
-        final_text = (messages[-1].get("content") or messages[-1].get("reasoning_content") or "").strip()
+        final_text = (
+            messages[-1].get("content") or messages[-1].get("reasoning_content") or ""
+        ).strip()
 
     multi_turn_success = bool(final_text and len(final_text) > 10)
 
@@ -228,9 +244,15 @@ def evaluate_routine_benchmark() -> Dict[str, Any]:
         results = []
         try:
             for idx, tc in enumerate(TEST_SUITE, 1):
-                print(f"  [{idx}/{len(TEST_SUITE)}] [{tc.category}] {tc.id} ...", end=" ", flush=True)
+                print(
+                    f"  [{idx}/{len(TEST_SUITE)}] [{tc.category}] {tc.id} ...", end=" ", flush=True
+                )
                 res = run_routine_single_test(tc, mode, env)
-                passed = res["selection_correct"] and res["execution_success"] and res["multi_turn_success"]
+                passed = (
+                    res["selection_correct"]
+                    and res["execution_success"]
+                    and res["multi_turn_success"]
+                )
                 status = "PASS" if passed else "FAIL"
                 print(f"{status} ({res['latency_sec']:.2f}s) -> Tool: {res['tool_name']}")
                 if not res["execution_success"]:
@@ -240,7 +262,11 @@ def evaluate_routine_benchmark() -> Dict[str, Any]:
             env.cleanup()
 
         total = len(results)
-        all_pass = sum(1 for r in results if r["selection_correct"] and r["execution_success"] and r["multi_turn_success"])
+        all_pass = sum(
+            1
+            for r in results
+            if r["selection_correct"] and r["execution_success"] and r["multi_turn_success"]
+        )
         avg_lat = sum(r["latency_sec"] for r in results) / total if total else 0.0
 
         summary_by_mode[mode] = {
@@ -317,7 +343,9 @@ def run_stress_single_test(
 
         tcs = assistant_msg.get("tool_calls", [])
         if not tcs:
-            final_answer = (assistant_msg.get("content") or assistant_msg.get("reasoning_content") or "").strip()
+            final_answer = (
+                assistant_msg.get("content") or assistant_msg.get("reasoning_content") or ""
+            ).strip()
             break
 
         tc0 = tcs[0]
@@ -343,15 +371,23 @@ def run_stress_single_test(
             exec_err = str(e)
             exec_success_all = False
 
-        tool_payload = json.dumps(exec_res, ensure_ascii=False) if exec_res is not None else json.dumps({"error": exec_err})
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc0.get("id", f"call_{turn}"),
-            "content": tool_payload,
-        })
+        tool_payload = (
+            json.dumps(exec_res, ensure_ascii=False)
+            if exec_res is not None
+            else json.dumps({"error": exec_err})
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc0.get("id", f"call_{turn}"),
+                "content": tool_payload,
+            }
+        )
 
     if not final_answer and messages:
-        final_answer = (messages[-1].get("content") or messages[-1].get("reasoning_content") or "").strip()
+        final_answer = (
+            messages[-1].get("content") or messages[-1].get("reasoning_content") or ""
+        ).strip()
 
     # Evaluate Assertions
     passed_asserts = []
@@ -398,11 +434,17 @@ def evaluate_stress_benchmark() -> Dict[str, Any]:
     results = []
     try:
         for idx, tc in enumerate(STRESS_TEST_SUITE, 1):
-            print(f"  [{idx}/{len(STRESS_TEST_SUITE)}] [{tc.dimension}] {tc.id} ...", end=" ", flush=True)
+            print(
+                f"  [{idx}/{len(STRESS_TEST_SUITE)}] [{tc.dimension}] {tc.id} ...",
+                end=" ",
+                flush=True,
+            )
             res = run_stress_single_test(tc, env)
             score_pct = int(res["reasoning_accuracy_score"] * 100)
             status = "PASS" if score_pct >= 70 else "FAIL"
-            print(f"{status} (Score: {score_pct}%, {res['latency_sec']:.2f}s) -> Tool: {res['tool_name']}")
+            print(
+                f"{status} (Score: {score_pct}%, {res['latency_sec']:.2f}s) -> Tool: {res['tool_name']}"
+            )
             if res["assertions_failed"]:
                 print(f"      Missing Truths: {res['assertions_failed']}")
             if res["negative_violations"]:

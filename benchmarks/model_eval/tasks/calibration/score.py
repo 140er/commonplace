@@ -1,4 +1,5 @@
 """Calibration scoring: exact-match against single-class label."""
+
 from __future__ import annotations
 
 

@@ -3,6 +3,7 @@
 - closed: room list provided, model picks one or "other"
 - open: no list, model invents a slug
 """
+
 from __future__ import annotations
 
 

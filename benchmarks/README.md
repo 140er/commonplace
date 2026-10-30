@@ -109,6 +109,26 @@ User Facts:      0.980
 Time:            ~2 minutes
 ```
 
+## Benchmark 4: Fact recall (synthetic, offline)
+
+Do facts work as an index into the full chats? A seeded corpus of chat threads is stored verbatim, facts pointing at exact message ranges are filed into the knowledge graph, and each question is answered from the fact index alone, then checked against the message it cites. It needs no download, no model and no network.
+
+```bash
+python benchmarks/fact_recall_bench.py              # metrics
+python benchmarks/fact_recall_bench.py --threads 200 --json
+```
+
+| Metric | Bar | Meaning |
+|---|---|---|
+| `recall_at_1` | 1.0 | the expected value is the index's first answer |
+| `stale_rate` | 0.0 | a replaced value still reads as current |
+| `source_hit_rate` | 1.0 | the cited range contains the answer verbatim |
+| `old_thread_recall` | 1.0 | facts said only in the oldest thread |
+| `private_leaks` | 0 | facts a restricted reader may not see |
+| `merge_rate` | 1.0 | a restated fact is one fact with every source |
+
+`tests/test_fact_recall_eval.py` holds these bars in the normal test run and checks each metric fails when the behavior it measures breaks. Today facts are filed by an oracle (`--saver oracle`, as an agent calling `fact_save`); handoff-time extraction will plug in as another saver.
+
 ## What Each Benchmark Tests
 
 | Benchmark | What it measures | Why it matters |

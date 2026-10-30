@@ -10,6 +10,7 @@ Usage:
 Designed to be called by orchestrator.py for matrix runs, but standalone
 runnable for one-off debugging.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -85,7 +86,11 @@ def _ensure_embed_model(endpoint: str, model: str = _EMBED_MODEL) -> None:
     if embed_text("ping", model=model, endpoint=endpoint) is not None:
         return
 
-    print(f"  Embedding model '{model}' not found — pulling automatically...", file=sys.stderr, flush=True)
+    print(
+        f"  Embedding model '{model}' not found — pulling automatically...",
+        file=sys.stderr,
+        flush=True,
+    )
     # Pass OLLAMA_HOST so the pull targets the same endpoint being benchmarked,
     # not the default localhost:11434.
     env = {**os.environ, "OLLAMA_HOST": endpoint}
@@ -147,12 +152,18 @@ def _classify_with_timing(
 def _build_prompt(task: str, mode: str, sample: dict, label: dict) -> tuple[str, str, bool]:
     """Return (system, user, json_mode)."""
     if task == "calibration":
-        return cal_prompts.SYSTEM, cal_prompts.build_user_prompt(sample["text"], sample["classes"]), False
+        return (
+            cal_prompts.SYSTEM,
+            cal_prompts.build_user_prompt(sample["text"], sample["classes"]),
+            False,
+        )
     if task == "room_classification":
         if mode == "closed":
             return (
                 rc_prompts.CLOSED_SYSTEM,
-                rc_prompts.build_closed_user(sample["agent"], sample["session_summary"], sample["__rooms__"]),
+                rc_prompts.build_closed_user(
+                    sample["agent"], sample["session_summary"], sample["__rooms__"]
+                ),
                 False,
             )
         return (
@@ -167,17 +178,29 @@ def _build_prompt(task: str, mode: str, sample: dict, label: dict) -> tuple[str,
     raise ValueError(f"Unknown task: {task}")
 
 
-def _score_one(task: str, mode: str, predicted: str, sample: dict, label: dict, endpoint: str, embed_model: str = _EMBED_MODEL) -> dict:
+def _score_one(
+    task: str,
+    mode: str,
+    predicted: str,
+    sample: dict,
+    label: dict,
+    endpoint: str,
+    embed_model: str = _EMBED_MODEL,
+) -> dict:
     if task == "calibration":
         return cal_score.score(predicted, label["label"], sample["classes"])
     if task == "room_classification":
         if mode == "closed":
             return rc_score.score_closed(predicted, label["closed_set_label"], sample["__rooms__"])
-        return rc_score.score_open(predicted, label["preferred_open_label"], embed_model=embed_model, endpoint=endpoint)
+        return rc_score.score_open(
+            predicted, label["preferred_open_label"], embed_model=embed_model, endpoint=endpoint
+        )
     if task == "entity_extraction":
         return ent_score.score(predicted, label["entities"])
     if task == "memory_extraction":
-        return mem_score.score(predicted, label["memories"], embed_model=embed_model, endpoint=endpoint)
+        return mem_score.score(
+            predicted, label["memories"], embed_model=embed_model, endpoint=endpoint
+        )
     raise ValueError(f"Unknown task: {task}")
 
 
@@ -257,10 +280,18 @@ def run(
 
     if not _LANGUAGE_RE.match(language):
         return Result(
-            model_tag=model_tag, task=task, mode=mode,
-            accuracy=0.0, extras={}, timing=aggregate_timings([]),
-            vram_resident_mb=None, vram_peak_mb=None, host=host,
-            run_date=run_date, n_samples=0, language=language,
+            model_tag=model_tag,
+            task=task,
+            mode=mode,
+            accuracy=0.0,
+            extras={},
+            timing=aggregate_timings([]),
+            vram_resident_mb=None,
+            vram_peak_mb=None,
+            host=host,
+            run_date=run_date,
+            n_samples=0,
+            language=language,
             error=f"Invalid language code: {language!r}. Expected pattern like 'en', 'pt-BR', 'zh-CN'.",
         )
 
@@ -274,18 +305,34 @@ def run(
             raise ValueError("resolved path escapes task_dir")
     except (ValueError, OSError) as e:
         return Result(
-            model_tag=model_tag, task=task, mode=mode,
-            accuracy=0.0, extras={}, timing=aggregate_timings([]),
-            vram_resident_mb=None, vram_peak_mb=None, host=host,
-            run_date=run_date, n_samples=0, language=language,
+            model_tag=model_tag,
+            task=task,
+            mode=mode,
+            accuracy=0.0,
+            extras={},
+            timing=aggregate_timings([]),
+            vram_resident_mb=None,
+            vram_peak_mb=None,
+            host=host,
+            run_date=run_date,
+            n_samples=0,
+            language=language,
             error=f"Refused to load dataset outside task_dir: {dataset_path} ({e})",
         )
     if not dataset_path.exists():
         return Result(
-            model_tag=model_tag, task=task, mode=mode,
-            accuracy=0.0, extras={}, timing=aggregate_timings([]),
-            vram_resident_mb=None, vram_peak_mb=None, host=host,
-            run_date=run_date, n_samples=0, language=language,
+            model_tag=model_tag,
+            task=task,
+            mode=mode,
+            accuracy=0.0,
+            extras={},
+            timing=aggregate_timings([]),
+            vram_resident_mb=None,
+            vram_peak_mb=None,
+            host=host,
+            run_date=run_date,
+            n_samples=0,
+            language=language,
             error=f"Dataset not found: {dataset_path}",
         )
     samples = load_jsonl(dataset_path)
@@ -304,15 +351,24 @@ def run(
             print(
                 f"  info: language={language} labels=labels.jsonl "
                 f"(no labels.{language}.jsonl found — scoring against English ground truth)",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
     labels = load_jsonl(labels_path)
     if len(samples) != len(labels):
         return Result(
-            model_tag=model_tag, task=task, mode=mode,
-            accuracy=0.0, extras={}, timing=aggregate_timings([]),
-            vram_resident_mb=None, vram_peak_mb=None, host=host,
-            run_date=run_date, n_samples=0, language=language,
+            model_tag=model_tag,
+            task=task,
+            mode=mode,
+            accuracy=0.0,
+            extras={},
+            timing=aggregate_timings([]),
+            vram_resident_mb=None,
+            vram_peak_mb=None,
+            host=host,
+            run_date=run_date,
+            n_samples=0,
+            language=language,
             error=f"Sample/label count mismatch: {len(samples)} vs {len(labels)}",
         )
 
@@ -320,10 +376,18 @@ def run(
         room_lists = load_jsonl(task_dir / "room_lists.jsonl")
         if len(room_lists) != len(samples):
             return Result(
-                model_tag=model_tag, task=task, mode=mode,
-                accuracy=0.0, extras={}, timing=aggregate_timings([]),
-                vram_resident_mb=None, vram_peak_mb=None, host=host,
-                run_date=run_date, n_samples=0, language=language,
+                model_tag=model_tag,
+                task=task,
+                mode=mode,
+                accuracy=0.0,
+                extras={},
+                timing=aggregate_timings([]),
+                vram_resident_mb=None,
+                vram_peak_mb=None,
+                host=host,
+                run_date=run_date,
+                n_samples=0,
+                language=language,
                 error=f"Room-list count mismatch: {len(room_lists)} vs {len(samples)}",
             )
         for s, rl in zip(samples, room_lists):
@@ -338,10 +402,18 @@ def run(
             _ensure_embed_model(embed_endpoint, model=embed_model)
         except (RuntimeError, subprocess.TimeoutExpired, FileNotFoundError) as e:
             return Result(
-                model_tag=model_tag, task=task, mode=mode,
-                accuracy=0.0, extras={}, timing=aggregate_timings([]),
-                vram_resident_mb=None, vram_peak_mb=None, host=host,
-                run_date=run_date, n_samples=0, language=language,
+                model_tag=model_tag,
+                task=task,
+                mode=mode,
+                accuracy=0.0,
+                extras={},
+                timing=aggregate_timings([]),
+                vram_resident_mb=None,
+                vram_peak_mb=None,
+                host=host,
+                run_date=run_date,
+                n_samples=0,
+                language=language,
                 error=f"Embedding model unavailable: {e}",
             )
 
@@ -349,13 +421,23 @@ def run(
         provider_kwargs: dict = {}
         if num_ctx is not None:
             provider_kwargs["num_ctx"] = num_ctx
-        provider = get_provider(llm_provider, model=model_tag, endpoint=endpoint, timeout=180, **provider_kwargs)
+        provider = get_provider(
+            llm_provider, model=model_tag, endpoint=endpoint, timeout=180, **provider_kwargs
+        )
     except LLMError as e:
         return Result(
-            model_tag=model_tag, task=task, mode=mode,
-            accuracy=0.0, extras={}, timing=aggregate_timings([]),
-            vram_resident_mb=None, vram_peak_mb=None, host=host,
-            run_date=run_date, n_samples=0, language=language,
+            model_tag=model_tag,
+            task=task,
+            mode=mode,
+            accuracy=0.0,
+            extras={},
+            timing=aggregate_timings([]),
+            vram_resident_mb=None,
+            vram_peak_mb=None,
+            host=host,
+            run_date=run_date,
+            n_samples=0,
+            language=language,
             error=f"Provider init failed: {e}",
         )
 
@@ -367,10 +449,18 @@ def run(
                 provider.classify(system=sys_p, user=user_p, json_mode=json_mode, think=False)
         except LLMError as e:
             return Result(
-                model_tag=model_tag, task=task, mode=mode,
-                accuracy=0.0, extras={}, timing=aggregate_timings([]),
-                vram_resident_mb=None, vram_peak_mb=None, host=host,
-                run_date=run_date, n_samples=0, language=language,
+                model_tag=model_tag,
+                task=task,
+                mode=mode,
+                accuracy=0.0,
+                extras={},
+                timing=aggregate_timings([]),
+                vram_resident_mb=None,
+                vram_peak_mb=None,
+                host=host,
+                run_date=run_date,
+                n_samples=0,
+                language=language,
                 error=f"Warmup failed: {e}",
             )
 
@@ -392,7 +482,9 @@ def run(
             text = strip_thinking_tokens(text, response.raw)
         timings.append(timing)
         try:
-            score_result = _score_one(task, mode, text, sample, label, embed_endpoint, embed_model=embed_model)
+            score_result = _score_one(
+                task, mode, text, sample, label, embed_endpoint, embed_model=embed_model
+            )
             scores.append(score_result)
         except Exception as e:
             errors.append(f"score error: {e}")
@@ -428,33 +520,62 @@ def run(
 def main():
     parser = argparse.ArgumentParser(description="Run one (model, task, mode) benchmark triple")
     parser.add_argument("--model", required=True, help="Ollama model tag")
-    parser.add_argument("--task", required=True, choices=["room_classification", "entity_extraction", "memory_extraction", "calibration"])
-    parser.add_argument("--mode", default="closed", choices=["closed", "open", "default"], help="Mode: closed/open for room_classification, 'default' otherwise")
-    parser.add_argument("--dataset-dir", required=True, type=Path, help="Path to the bench dataset root")
+    parser.add_argument(
+        "--task",
+        required=True,
+        choices=["room_classification", "entity_extraction", "memory_extraction", "calibration"],
+    )
+    parser.add_argument(
+        "--mode",
+        default="closed",
+        choices=["closed", "open", "default"],
+        help="Mode: closed/open for room_classification, 'default' otherwise",
+    )
+    parser.add_argument(
+        "--dataset-dir", required=True, type=Path, help="Path to the bench dataset root"
+    )
     parser.add_argument("--endpoint", default="http://localhost:11434")
     parser.add_argument("--warmup", type=int, default=1)
-    parser.add_argument("--n", type=int, default=None, help="Limit to first N samples (for debugging)")
+    parser.add_argument(
+        "--n", type=int, default=None, help="Limit to first N samples (for debugging)"
+    )
     parser.add_argument("--no-strip-thinking", action="store_true")
-    parser.add_argument("--llm-provider", default="ollama",
-                        choices=["ollama", "openai-compat", "anthropic"],
-                        help="LLM provider (default: ollama)")
-    parser.add_argument("--embed-endpoint", default=None,
-                        help="Endpoint for the embedding model (always Ollama). "
-                             "When omitted: defaults to --endpoint if --llm-provider=ollama, "
-                             "else http://localhost:11434.")
-    parser.add_argument("--language", default="en",
-                        help="Dataset language suffix. 'en' loads dataset.jsonl; "
-                             "other values load dataset.{lang}.jsonl (e.g. pt-BR, es, zh).")
-    parser.add_argument("--embed-model", default=_EMBED_MODEL,
-                        help=f"Embedding model for semantic-similarity scoring "
-                             f"(memory_extraction, room_classification:open). "
-                             f"Default: {_EMBED_MODEL}.")
-    parser.add_argument("--num-ctx", type=int, default=4096,
-                        help="Ollama context window per request (sent as options.num_ctx). "
-                             "Defaults to 4096 so every candidate runs at the same window regardless "
-                             "of its Modelfile default — without this, a 32k-default model pre-allocates "
-                             "KV cache that a 4k-default model doesn't, and accuracy/latency/VRAM stop "
-                             "being comparable. Pass a larger value if a task prompt exceeds 4k tokens.")
+    parser.add_argument(
+        "--llm-provider",
+        default="ollama",
+        choices=["ollama", "openai-compat", "anthropic"],
+        help="LLM provider (default: ollama)",
+    )
+    parser.add_argument(
+        "--embed-endpoint",
+        default=None,
+        help="Endpoint for the embedding model (always Ollama). "
+        "When omitted: defaults to --endpoint if --llm-provider=ollama, "
+        "else http://localhost:11434.",
+    )
+    parser.add_argument(
+        "--language",
+        default="en",
+        help="Dataset language suffix. 'en' loads dataset.jsonl; "
+        "other values load dataset.{lang}.jsonl (e.g. pt-BR, es, zh).",
+    )
+    parser.add_argument(
+        "--embed-model",
+        default=_EMBED_MODEL,
+        help=f"Embedding model for semantic-similarity scoring "
+        f"(memory_extraction, room_classification:open). "
+        f"Default: {_EMBED_MODEL}.",
+    )
+    parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=4096,
+        help="Ollama context window per request (sent as options.num_ctx). "
+        "Defaults to 4096 so every candidate runs at the same window regardless "
+        "of its Modelfile default — without this, a 32k-default model pre-allocates "
+        "KV cache that a 4k-default model doesn't, and accuracy/latency/VRAM stop "
+        "being comparable. Pass a larger value if a task prompt exceeds 4k tokens.",
+    )
     args = parser.parse_args()
 
     if args.task != "room_classification" and args.mode in ("closed", "open"):
@@ -464,7 +585,9 @@ def main():
     # follow --endpoint when the LLM provider is Ollama so a remote benchmark
     # run scores against the same host.
     if args.embed_endpoint is None:
-        args.embed_endpoint = args.endpoint if args.llm_provider == "ollama" else "http://localhost:11434"
+        args.embed_endpoint = (
+            args.endpoint if args.llm_provider == "ollama" else "http://localhost:11434"
+        )
 
     result = run(
         model_tag=args.model,

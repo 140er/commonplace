@@ -41,8 +41,12 @@ class StressTestCase:
     id: str
     dimension: str
     user_prompt: str
-    ground_truth_assertions: List[str]  # Substrings or semantic criteria that must be present in final answer
-    negative_assertions: List[str]      # Substrings that MUST NOT be present (e.g. obsolete/hallucinated facts)
+    ground_truth_assertions: List[
+        str
+    ]  # Substrings or semantic criteria that must be present in final answer
+    negative_assertions: List[
+        str
+    ]  # Substrings that MUST NOT be present (e.g. obsolete/hallucinated facts)
     expected_tool_type: List[str]
     description: str
 
@@ -61,7 +65,6 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
         expected_tool_type=["query"],
         description="Must recognize Metformin was superseded/stopped in 2025 due to eGFR drop and Empagliflozin 25mg is active.",
     ),
-
     # ── Dimension 2: Multi-Hop Cross-Wing Diagnostic Inference ────────────────
     StressTestCase(
         id="stress_multihop_allergy_contraindication",
@@ -70,12 +73,17 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
             "A resident physician wants to prescribe Amoxicillin-Clavulanate for Patient 1042's acute sinus infection. "
             "Evaluate whether this prescription is safe based on our private palace records, and retrieve the guideline-recommended alternative."
         ),
-        ground_truth_assertions=["unsafe", "contraindicated", "allergy", "Penicillin", "Doxycycline"],
+        ground_truth_assertions=[
+            "unsafe",
+            "contraindicated",
+            "allergy",
+            "Penicillin",
+            "Doxycycline",
+        ],
         negative_assertions=["safe to prescribe", "no allergies found"],
         expected_tool_type=["query"],
         description="Must cross-reference Patient allergy to Penicillin/beta-lactams and fetch guideline alternative (Doxycycline).",
     ),
-
     # ── Dimension 3: Needle-in-a-Haystack with 50+ Distractor Records ─────────
     StressTestCase(
         id="stress_needle_haystack_distractor",
@@ -88,7 +96,6 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
         expected_tool_type=["query"],
         description="Must isolate Patient 1067 among 50 distractor patient records and not bleed Patient 1042 data.",
     ),
-
     # ── Dimension 4: Hallucination Resistance & Negative Retrieval Discipline ─
     StressTestCase(
         id="stress_hallucination_unstored_fact",
@@ -102,7 +109,6 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
         expected_tool_type=["query"],
         description="Must query the palace, find no record, and state that no CAC scan or statin is recorded.",
     ),
-
     # ── Dimension 5: Implicit / Indirect Symptom Query (Zero Direct Keywords) ─
     StressTestCase(
         id="stress_implicit_symptom_search",
@@ -116,7 +122,6 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
         expected_tool_type=["query"],
         description="Must semantically infer to search allergy records for hives/bronchospasm triggers.",
     ),
-
     # ── Dimension 6: Multi-Constraint PQL Syntax Construction ────────────────
     StressTestCase(
         id="stress_pql_multi_constraint_query",
@@ -130,7 +135,6 @@ STRESS_TEST_SUITE: List[StressTestCase] = [
         expected_tool_type=["query"],
         description="Must generate valid PQL containing wing/room filters and limit.",
     ),
-
     # ── Dimension 7: Medical Mutation Consistency ────────────────────────────
     StressTestCase(
         id="stress_mutation_allergy_update",
@@ -179,27 +183,93 @@ class HighSensitivityPalaceEnvironment:
 
         # 1. Target Patient 1042 Longitudinal History (with temporal succession)
         p1042_records = [
-            ("drw_1042_enc_2023", "Encounter 2023-04-10: Initial diagnosis of Type 2 Diabetes. Started Metformin 500mg daily. Baseline HbA1c 7.6%.", "patient_1042", "encounters", "2023-04-10T09:00:00"),
-            ("drw_1042_enc_2024", "Encounter 2024-06-15: HbA1c elevated to 8.5%. Escalated Metformin to 1000mg BID. Added Lisinopril 10mg for blood pressure.", "patient_1042", "encounters", "2024-06-15T10:00:00"),
-            ("drw_1042_aki_2025", "Acute Renal Event 2025-06-20: Patient experienced acute kidney injury (eGFR dropped from 78 to 26 mL/min). Metformin was permanently DISCONTINUED due to high risk of lactic acidosis. Switched diabetes therapy to SGLT2 inhibitor Empagliflozin 10mg daily.", "patient_1042", "encounters", "2025-06-20T14:00:00"),
-            ("drw_1042_enc_2026", "Encounter 2026-01-15: Renal function stabilized at eGFR 45 mL/min. Empagliflozin increased to 25mg daily as sole active diabetes medication. Blood pressure controlled on Lisinopril 10mg.", "patient_1042", "encounters", "2026-01-15T11:00:00"),
-            ("drw_1042_lab_2026", "Lab Panel 2026-01-15: HbA1c 8.2%, Fasting Glucose 165 mg/dL, eGFR 45 mL/min/1.73m2, Serum Creatinine 1.4 mg/dL.", "patient_1042", "labs", "2026-01-15T08:30:00"),
-            ("drw_1042_allergy", "Critical Allergy Record: Patient has documented severe anaphylactic allergy to Penicillin and all beta-lactam class antibiotics (experienced bronchospasm, urticaria, and angioedema in 2021).", "patient_1042", "allergies", "2021-08-05T12:00:00"),
+            (
+                "drw_1042_enc_2023",
+                "Encounter 2023-04-10: Initial diagnosis of Type 2 Diabetes. Started Metformin 500mg daily. Baseline HbA1c 7.6%.",
+                "patient_1042",
+                "encounters",
+                "2023-04-10T09:00:00",
+            ),
+            (
+                "drw_1042_enc_2024",
+                "Encounter 2024-06-15: HbA1c elevated to 8.5%. Escalated Metformin to 1000mg BID. Added Lisinopril 10mg for blood pressure.",
+                "patient_1042",
+                "encounters",
+                "2024-06-15T10:00:00",
+            ),
+            (
+                "drw_1042_aki_2025",
+                "Acute Renal Event 2025-06-20: Patient experienced acute kidney injury (eGFR dropped from 78 to 26 mL/min). Metformin was permanently DISCONTINUED due to high risk of lactic acidosis. Switched diabetes therapy to SGLT2 inhibitor Empagliflozin 10mg daily.",
+                "patient_1042",
+                "encounters",
+                "2025-06-20T14:00:00",
+            ),
+            (
+                "drw_1042_enc_2026",
+                "Encounter 2026-01-15: Renal function stabilized at eGFR 45 mL/min. Empagliflozin increased to 25mg daily as sole active diabetes medication. Blood pressure controlled on Lisinopril 10mg.",
+                "patient_1042",
+                "encounters",
+                "2026-01-15T11:00:00",
+            ),
+            (
+                "drw_1042_lab_2026",
+                "Lab Panel 2026-01-15: HbA1c 8.2%, Fasting Glucose 165 mg/dL, eGFR 45 mL/min/1.73m2, Serum Creatinine 1.4 mg/dL.",
+                "patient_1042",
+                "labs",
+                "2026-01-15T08:30:00",
+            ),
+            (
+                "drw_1042_allergy",
+                "Critical Allergy Record: Patient has documented severe anaphylactic allergy to Penicillin and all beta-lactam class antibiotics (experienced bronchospasm, urticaria, and angioedema in 2021).",
+                "patient_1042",
+                "allergies",
+                "2021-08-05T12:00:00",
+            ),
         ]
         for drw_id, doc, wing, room, filed_at in p1042_records:
             ids.append(drw_id)
             docs.append(doc)
-            metas.append({"wing": wing, "room": room, "source_file": f"{drw_id}.md", "chunk_index": 0, "added_by": "ehr", "filed_at": filed_at})
+            metas.append(
+                {
+                    "wing": wing,
+                    "room": room,
+                    "source_file": f"{drw_id}.md",
+                    "chunk_index": 0,
+                    "added_by": "ehr",
+                    "filed_at": filed_at,
+                }
+            )
 
         # 2. Clinical Guidelines (Infectious Disease & Diabetes)
         guidelines = [
-            ("drw_guide_sinusitis", "Infectious Disease Practice Guidelines 2026: First-line empiric therapy for acute bacterial rhinosinusitis is Amoxicillin-Clavulanate 875/125mg BID. For patients with documented Penicillin or beta-lactam allergy, Amoxicillin is STRICTLY CONTRAINDICATED; recommended alternative first-line agents are Doxycycline 100mg BID or Levofloxacin 500mg daily.", "clinical_guidelines", "infectious_disease", "2026-01-01T00:00:00"),
-            ("drw_guide_metformin_renal", "ADA/KDIGO Consensus 2026: Metformin is contraindicated in patients with eGFR < 30 mL/min due to lactic acidosis risk. For eGFR 30-44 mL/min, maximum recommended dose is 1000mg/day.", "clinical_guidelines", "nephrology", "2026-01-01T00:00:00"),
+            (
+                "drw_guide_sinusitis",
+                "Infectious Disease Practice Guidelines 2026: First-line empiric therapy for acute bacterial rhinosinusitis is Amoxicillin-Clavulanate 875/125mg BID. For patients with documented Penicillin or beta-lactam allergy, Amoxicillin is STRICTLY CONTRAINDICATED; recommended alternative first-line agents are Doxycycline 100mg BID or Levofloxacin 500mg daily.",
+                "clinical_guidelines",
+                "infectious_disease",
+                "2026-01-01T00:00:00",
+            ),
+            (
+                "drw_guide_metformin_renal",
+                "ADA/KDIGO Consensus 2026: Metformin is contraindicated in patients with eGFR < 30 mL/min due to lactic acidosis risk. For eGFR 30-44 mL/min, maximum recommended dose is 1000mg/day.",
+                "clinical_guidelines",
+                "nephrology",
+                "2026-01-01T00:00:00",
+            ),
         ]
         for drw_id, doc, wing, room, filed_at in guidelines:
             ids.append(drw_id)
             docs.append(doc)
-            metas.append({"wing": wing, "room": room, "source_file": f"{drw_id}.md", "chunk_index": 0, "added_by": "guidelines", "filed_at": filed_at})
+            metas.append(
+                {
+                    "wing": wing,
+                    "room": room,
+                    "source_file": f"{drw_id}.md",
+                    "chunk_index": 0,
+                    "added_by": "guidelines",
+                    "filed_at": filed_at,
+                }
+            )
 
         # 3. 50 Distractor Patient Records (Patient 1040 to Patient 1089)
         for i in range(1040, 1090):
@@ -212,20 +282,60 @@ class HighSensitivityPalaceEnvironment:
             p_doc = f"Baseline Panel Patient {i}: Fasting Glucose {glucose_val} mg/dL, eGFR {egfr_val} mL/min/1.73m2, HbA1c {hba1c_val:.1f}%. Current therapy: {med_text}."
             ids.append(f"drw_distract_{i}")
             docs.append(p_doc)
-            metas.append({"wing": f"patient_{i}", "room": "labs", "source_file": f"patient_{i}_panel.md", "chunk_index": 0, "added_by": "ehr", "filed_at": "2026-01-10T00:00:00"})
+            metas.append(
+                {
+                    "wing": f"patient_{i}",
+                    "room": "labs",
+                    "source_file": f"patient_{i}_panel.md",
+                    "chunk_index": 0,
+                    "added_by": "ehr",
+                    "filed_at": "2026-01-10T00:00:00",
+                }
+            )
 
         self.collection.add(ids=ids, documents=docs, metadatas=metas)
 
         # 4. Knowledge Graph Triples with Temporal Intervals
-        self.kg.add_triple("Patient_1042", "diagnosed_with", "Type 2 Diabetes Mellitus", valid_from="2023-04-10")
-        self.kg.add_triple("Patient_1042", "prescribed", "Metformin 500mg", valid_from="2023-04-10", valid_to="2024-06-15")
-        self.kg.add_triple("Patient_1042", "prescribed", "Metformin 1000mg BID", valid_from="2024-06-15", valid_to="2025-06-20")
-        self.kg.add_triple("Patient_1042", "prescribed", "Empagliflozin 10mg", valid_from="2025-06-20", valid_to="2026-01-15")
-        self.kg.add_triple("Patient_1042", "prescribed", "Empagliflozin 25mg", valid_from="2026-01-15")
+        self.kg.add_triple(
+            "Patient_1042", "diagnosed_with", "Type 2 Diabetes Mellitus", valid_from="2023-04-10"
+        )
+        self.kg.add_triple(
+            "Patient_1042",
+            "prescribed",
+            "Metformin 500mg",
+            valid_from="2023-04-10",
+            valid_to="2024-06-15",
+        )
+        self.kg.add_triple(
+            "Patient_1042",
+            "prescribed",
+            "Metformin 1000mg BID",
+            valid_from="2024-06-15",
+            valid_to="2025-06-20",
+        )
+        self.kg.add_triple(
+            "Patient_1042",
+            "prescribed",
+            "Empagliflozin 10mg",
+            valid_from="2025-06-20",
+            valid_to="2026-01-15",
+        )
+        self.kg.add_triple(
+            "Patient_1042", "prescribed", "Empagliflozin 25mg", valid_from="2026-01-15"
+        )
         self.kg.add_triple("Patient_1042", "has_allergy", "Penicillin", valid_from="2021-08-05")
-        self.kg.add_triple("Patient_1042", "has_allergy", "Beta-Lactam Antibiotics", valid_from="2021-08-05")
+        self.kg.add_triple(
+            "Patient_1042", "has_allergy", "Beta-Lactam Antibiotics", valid_from="2021-08-05"
+        )
 
-        create_tunnel("patient_1042", "allergies", "clinical_guidelines", "infectious_disease", "Allergy to Antibiotic Guideline", self.palace_path)
+        create_tunnel(
+            "patient_1042",
+            "allergies",
+            "clinical_guidelines",
+            "infectious_disease",
+            "Allergy to Antibiotic Guideline",
+            self.palace_path,
+        )
         invalidate_graph_cache()
 
     def patch_globals(self):
@@ -262,7 +372,9 @@ class StressResult:
     tool_name: Optional[str]
     tool_args: Any
     execution_success: bool
-    reasoning_accuracy_score: float  # 0.0 to 1.0 based on ground truth and negative assertion matching
+    reasoning_accuracy_score: (
+        float  # 0.0 to 1.0 based on ground truth and negative assertion matching
+    )
     assertions_passed: List[str]
     assertions_failed: List[str]
     negative_violations: List[str]
@@ -299,7 +411,18 @@ def _extract_tool_call_from_message(msg: Dict[str, Any]) -> Tuple[Optional[str],
         except Exception:
             pass
 
-    for kw in ("FIND", "SEARCH", "TAXONOMY", "WINGS", "KG", "TRAVERSE", "DIARY", "STATUS", "ADD", "UPDATE"):
+    for kw in (
+        "FIND",
+        "SEARCH",
+        "TAXONOMY",
+        "WINGS",
+        "KG",
+        "TRAVERSE",
+        "DIARY",
+        "STATUS",
+        "ADD",
+        "UPDATE",
+    ):
         if re.search(rf"\b{kw}\b", content):
             lines = [line.strip() for line in content.splitlines() if line.strip().startswith(kw)]
             if lines:
@@ -327,7 +450,9 @@ def call_ollama_with_retry(
         payload["tools"] = tools
 
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"}
+    )
     start_t = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         res = json.loads(resp.read().decode("utf-8"))
@@ -376,7 +501,9 @@ def run_stress_test_case(
 
     for turn in range(max_turns):
         try:
-            resp = call_ollama_with_retry(model_name, messages, tools=tools if turn < max_turns - 1 else None)
+            resp = call_ollama_with_retry(
+                model_name, messages, tools=tools if turn < max_turns - 1 else None
+            )
         except Exception as e:
             final_answer = f"Ollama error: {e}"
             break
@@ -409,11 +536,17 @@ def run_stress_test_case(
             exec_err = str(e)
             exec_success_all = False
 
-        tool_payload = json.dumps(exec_res, ensure_ascii=False) if exec_res is not None else json.dumps({"error": exec_err})
-        messages.append({
-            "role": "tool",
-            "content": tool_payload,
-        })
+        tool_payload = (
+            json.dumps(exec_res, ensure_ascii=False)
+            if exec_res is not None
+            else json.dumps({"error": exec_err})
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "content": tool_payload,
+            }
+        )
 
     if not final_answer and messages:
         final_answer = messages[-1].get("content", "")
@@ -464,11 +597,17 @@ def evaluate_stress_model(model_name: str) -> Dict[str, Any]:
 
     try:
         for idx, tc in enumerate(STRESS_TEST_SUITE, 1):
-            print(f"  [{idx}/{len(STRESS_TEST_SUITE)}] [{tc.dimension}] {tc.id} ...", end=" ", flush=True)
+            print(
+                f"  [{idx}/{len(STRESS_TEST_SUITE)}] [{tc.dimension}] {tc.id} ...",
+                end=" ",
+                flush=True,
+            )
             res = run_stress_test_case(tc, model_name, env)
             score_pct = int(res.reasoning_accuracy_score * 100)
             status = "PASS" if score_pct >= 70 else "FAIL"
-            print(f"{status} (Score: {score_pct}%, {res.latency_sec:.2f}s) -> Tool: {res.tool_name}")
+            print(
+                f"{status} (Score: {score_pct}%, {res.latency_sec:.2f}s) -> Tool: {res.tool_name}"
+            )
             if res.assertions_failed:
                 print(f"      Missing Truths: {res.assertions_failed}")
             if res.negative_violations:

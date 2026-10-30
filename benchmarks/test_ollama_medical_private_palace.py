@@ -31,7 +31,12 @@ from mempalace.config import MempalaceConfig
 from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.logstream import Logstream
 from mempalace import mcp_server, mcp_light_server
-from mempalace.mcp_light_server import LIGHT_TOOLS, tool_palace_query, tool_palace_exec, tool_palace_coordinate
+from mempalace.mcp_light_server import (
+    LIGHT_TOOLS,
+    tool_palace_query,
+    tool_palace_exec,
+    tool_palace_coordinate,
+)
 from mempalace.palace_graph import create_tunnel, invalidate_graph_cache
 
 OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/chat")
@@ -97,7 +102,6 @@ MEDICAL_TEST_SUITE: List[MedicalTestCase] = [
         expected_keywords_in_query=["check", "dup", "hba1c"],
         description="Duplicate clinical record detection",
     ),
-
     # ── Category 2: Medical Knowledge Graph (KG) ─────────────────────────────
     MedicalTestCase(
         id="med_kg_patient_profile",
@@ -123,7 +127,6 @@ MEDICAL_TEST_SUITE: List[MedicalTestCase] = [
         expected_keywords_in_query=["stats", "kg"],
         description="Medical Knowledge Graph overview",
     ),
-
     # ── Category 3: Clinical Navigation & Cross-Wing Bridges ─────────────────
     MedicalTestCase(
         id="med_graph_traverse_clinical",
@@ -133,7 +136,6 @@ MEDICAL_TEST_SUITE: List[MedicalTestCase] = [
         expected_keywords_in_query=["traverse", "patient_1042", "labs"],
         description="Graph traversal linking patient labs to treatment protocols",
     ),
-
     # ── Category 4: Clinician Journal / Handoff Diary ────────────────────────
     MedicalTestCase(
         id="med_diary_read_recent_handoff",
@@ -151,7 +153,6 @@ MEDICAL_TEST_SUITE: List[MedicalTestCase] = [
         expected_keywords_in_query=["diary", "write", "antigravity"],
         description="File clinician rounds continuity note in AAAK format",
     ),
-
     # ── Category 5: Clinical Memory Mutations ────────────────────────────────
     MedicalTestCase(
         id="med_exec_file_encounter",
@@ -219,33 +220,88 @@ class MedicalPalaceEnvironment:
         ]
         ids = [f"drw_med_seed_{i}" for i in range(len(docs))]
         metadatas = [
-            {"wing": "patient_1042", "room": "encounters", "source_file": "encounter_20260115.md", "chunk_index": 0, "added_by": "clinician", "filed_at": "2026-01-15T09:00:00"},
-            {"wing": "patient_1042", "room": "labs", "source_file": "lab_panel_20260115.pdf", "chunk_index": 0, "added_by": "lab_system", "filed_at": "2026-01-15T11:30:00"},
-            {"wing": "patient_1042", "room": "allergies", "source_file": "allergy_records.md", "chunk_index": 0, "added_by": "clinician", "filed_at": "2026-01-15T09:15:00"},
-            {"wing": "clinical_guidelines", "room": "diabetes", "source_file": "ada_standards_2026.md", "chunk_index": 0, "added_by": "guidelines_miner", "filed_at": "2026-01-01T00:00:00"},
-            {"wing": "clinical_guidelines", "room": "hypertension", "source_file": "aha_htn_2026.md", "chunk_index": 0, "added_by": "guidelines_miner", "filed_at": "2026-01-01T00:00:00"},
+            {
+                "wing": "patient_1042",
+                "room": "encounters",
+                "source_file": "encounter_20260115.md",
+                "chunk_index": 0,
+                "added_by": "clinician",
+                "filed_at": "2026-01-15T09:00:00",
+            },
+            {
+                "wing": "patient_1042",
+                "room": "labs",
+                "source_file": "lab_panel_20260115.pdf",
+                "chunk_index": 0,
+                "added_by": "lab_system",
+                "filed_at": "2026-01-15T11:30:00",
+            },
+            {
+                "wing": "patient_1042",
+                "room": "allergies",
+                "source_file": "allergy_records.md",
+                "chunk_index": 0,
+                "added_by": "clinician",
+                "filed_at": "2026-01-15T09:15:00",
+            },
+            {
+                "wing": "clinical_guidelines",
+                "room": "diabetes",
+                "source_file": "ada_standards_2026.md",
+                "chunk_index": 0,
+                "added_by": "guidelines_miner",
+                "filed_at": "2026-01-01T00:00:00",
+            },
+            {
+                "wing": "clinical_guidelines",
+                "room": "hypertension",
+                "source_file": "aha_htn_2026.md",
+                "chunk_index": 0,
+                "added_by": "guidelines_miner",
+                "filed_at": "2026-01-01T00:00:00",
+            },
         ]
         self.collection.add(ids=ids, documents=docs, metadatas=metadatas)
 
     def _seed_medical_kg(self):
-        self.kg.add_triple("Patient_1042", "diagnosed_with", "Type 2 Diabetes Mellitus", valid_from="2023-04-10")
-        self.kg.add_triple("Patient_1042", "diagnosed_with", "Essential Hypertension", valid_from="2024-02-18")
+        self.kg.add_triple(
+            "Patient_1042", "diagnosed_with", "Type 2 Diabetes Mellitus", valid_from="2023-04-10"
+        )
+        self.kg.add_triple(
+            "Patient_1042", "diagnosed_with", "Essential Hypertension", valid_from="2024-02-18"
+        )
         self.kg.add_triple("Patient_1042", "has_allergy", "Penicillin", valid_from="2021-08-05")
         self.kg.add_triple("Patient_1042", "prescribed", "Metformin 500mg", valid_from="2023-04-12")
         self.kg.add_triple("Patient_1042", "prescribed", "Lisinopril 10mg", valid_from="2024-02-20")
 
     def _seed_tunnels(self):
-        create_tunnel("patient_1042", "labs", "clinical_guidelines", "diabetes", "Lab to Guideline Escalation", self.palace_path)
+        create_tunnel(
+            "patient_1042",
+            "labs",
+            "clinical_guidelines",
+            "diabetes",
+            "Lab to Guideline Escalation",
+            self.palace_path,
+        )
         invalidate_graph_cache()
 
     def _seed_diaries(self):
         from mempalace.ids import make_drawer_id_from_content
+
         entry = "SESSION:2026-01-15|reviewed Patient 1042 labs (HbA1c 8.2%)|discussed lifestyle modifications + planned Metformin titration|★★★"
         drw_id = make_drawer_id_from_content("wing_antigravity", "diary", entry)
         self.collection.add(
             ids=[drw_id],
             documents=[entry],
-            metadatas=[{"wing": "wing_antigravity", "room": "diary", "agent": "antigravity", "topic": "rounds", "filed_at": "2026-01-15T14:00:00"}]
+            metadatas=[
+                {
+                    "wing": "wing_antigravity",
+                    "room": "diary",
+                    "agent": "antigravity",
+                    "topic": "rounds",
+                    "filed_at": "2026-01-15T14:00:00",
+                }
+            ],
         )
 
     def patch_globals(self):
@@ -316,7 +372,18 @@ def _extract_tool_call_from_message(msg: Dict[str, Any]) -> Tuple[Optional[str],
             pass
 
     # Check for direct PQL command line in output
-    for kw in ("FIND", "SEARCH", "TAXONOMY", "WINGS", "KG", "TRAVERSE", "DIARY", "STATUS", "ADD", "UPDATE"):
+    for kw in (
+        "FIND",
+        "SEARCH",
+        "TAXONOMY",
+        "WINGS",
+        "KG",
+        "TRAVERSE",
+        "DIARY",
+        "STATUS",
+        "ADD",
+        "UPDATE",
+    ):
         if re.search(rf"\b{kw}\b", content):
             lines = [line.strip() for line in content.splitlines() if line.strip().startswith(kw)]
             if lines:
@@ -344,7 +411,9 @@ def call_ollama(
         payload["tools"] = tools
 
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        OLLAMA_API_URL, data=data, headers={"Content-Type": "application/json"}
+    )
     start_t = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         res = json.loads(resp.read().decode("utf-8"))
@@ -451,11 +520,17 @@ def run_medical_test(
 
     # Multi-turn synthesis
     messages.append(assistant_msg)
-    tool_resp_str = json.dumps(exec_res, ensure_ascii=False) if exec_success else json.dumps({"error": exec_err})
-    messages.append({
-        "role": "tool",
-        "content": tool_resp_str,
-    })
+    tool_resp_str = (
+        json.dumps(exec_res, ensure_ascii=False)
+        if exec_success
+        else json.dumps({"error": exec_err})
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "content": tool_resp_str,
+        }
+    )
 
     multi_turn_success = False
     final_text = ""
@@ -494,9 +569,17 @@ def evaluate_model(model_name: str) -> Tuple[Dict[str, Any], List[ModelEvalResul
 
     try:
         for idx, tc in enumerate(MEDICAL_TEST_SUITE, 1):
-            print(f"  [{idx}/{len(MEDICAL_TEST_SUITE)}] [{tc.category}] {tc.id} ...", end=" ", flush=True)
+            print(
+                f"  [{idx}/{len(MEDICAL_TEST_SUITE)}] [{tc.category}] {tc.id} ...",
+                end=" ",
+                flush=True,
+            )
             res = run_medical_test(tc, model_name, env)
-            status = "PASS" if (res.selection_correct and res.execution_success and res.multi_turn_success) else "FAIL"
+            status = (
+                "PASS"
+                if (res.selection_correct and res.execution_success and res.multi_turn_success)
+                else "FAIL"
+            )
             print(f"{status} ({res.latency_sec:.2f}s) -> Tool: {res.tool_name}")
             if not res.execution_success:
                 print(f"      Execution Error: {res.execution_error}")
@@ -509,7 +592,9 @@ def evaluate_model(model_name: str) -> Tuple[Dict[str, Any], List[ModelEvalResul
     sel_correct = sum(1 for r in results if r.selection_correct)
     exec_success = sum(1 for r in results if r.execution_success)
     multi_turn = sum(1 for r in results if r.multi_turn_success)
-    all_pass = sum(1 for r in results if r.selection_correct and r.execution_success and r.multi_turn_success)
+    all_pass = sum(
+        1 for r in results if r.selection_correct and r.execution_success and r.multi_turn_success
+    )
     avg_lat = sum(r.latency_sec for r in results) / total if total else 0.0
 
     stats = {
