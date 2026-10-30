@@ -179,7 +179,8 @@ def test_auth_failure_returns_rpc_error_without_leaking_token(hub, monkeypatch):
 
 @pytest.mark.parametrize("http_status", [302, 403, 500])
 def test_http_errors_and_redirects_never_reveal_response_bodies(hub, monkeypatch, http_status):
-    token = "secret-token-marker"
+    # A valid token gets past the gateway's auth to the failing route.
+    token = hub.owner_token("bridge")
     monkeypatch.setenv("COMMONPLACE_TOKEN", token)
 
     def fail(handler):
@@ -215,8 +216,10 @@ def test_network_failure_is_sanitized(monkeypatch):
     "response", ["secret-token", [], {"jsonrpc": "2.0", "id": 99, "result": {}}]
 )
 def test_invalid_http_response_is_sanitized(hub, monkeypatch, response):
-    monkeypatch.setenv("COMMONPLACE_TOKEN", "secret-token")
+    token = hub.owner_token("bridge")
+    monkeypatch.setenv("COMMONPLACE_TOKEN", token)
     hub.gateway.add_route("POST", "/bad-response", lambda h: h._send_json(200, response))
     status, replies, error = _drive(_url(hub, "/bad-response"), [_request()])
     assert status == 1 and "Invalid response from memory hub" in error
-    assert "secret-token" not in error + json.dumps(replies)
+    assert token not in error + json.dumps(replies)
+    assert "secret-token" not in error

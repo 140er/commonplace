@@ -33,6 +33,8 @@ MARKERS = {
 
 @pytest.fixture
 def seeded(hub):
+    # The canary calls every tool many times; it tests leaks, not rate limits.
+    hub.gateway.rate_limits = False
     owner = hub.owner_token()
     ids = {}
 
