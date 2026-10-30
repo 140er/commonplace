@@ -9,9 +9,10 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +31,7 @@ from commonplace.handoff.models import (
     SuccessorRef,
     ThreadMeta,
 )
+from commonplace.handoff.thread_store import ThreadConflict, ThreadStore, canonical_sha256
 from commonplace.handoff.wiring import install
 from commonplace.policy import Policy
 
@@ -283,6 +285,92 @@ def test_only_one_connection_takes_over_expired_pending_lease(harness, monkeypat
             control.close()
 
 
+@pytest.mark.parametrize("old_failure", [False, True])
+def test_paused_old_writer_cannot_mutate_replacement_pending_row(harness, monkeypatch, old_failure):
+    moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(db_module, "_now", lambda: moment)
+    other_control = ControlDB(str(harness.root / "control.sqlite3"))
+    other = install(Gateway(other_control, _NoWorker()), harness.root, start_outbox=False)
+    other.service.call_tool = None
+    old_entered, old_release = threading.Event(), threading.Event()
+    new_entered, new_release = threading.Event(), threading.Event()
+
+    def pause(store, entered, release, fail):
+        original = store.store
+
+        def store_and_pause(*args, **kwargs):
+            result = original(*args, **kwargs)
+            entered.set()
+            assert release.wait(timeout=10)
+            if fail:
+                raise OSError(errno.ENOSPC, "old writer resumed into storage failure")
+            return result
+
+        monkeypatch.setattr(store, "store", store_and_pause)
+
+    pause(harness.ctx.store_for(harness.workspace), old_entered, old_release, old_failure)
+    pause(other.store_for(harness.workspace), new_entered, new_release, False)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            old = pool.submit(harness.ctx.service.run, harness.principal, request())
+            try:
+                assert old_entered.wait(timeout=10)
+                moment += timedelta(seconds=601)
+                new = pool.submit(other.service.run, harness.principal, request())
+                assert new_entered.wait(timeout=10)
+                row = other.handoff_db.by_key(harness.workspace, "thread:source")
+                assert row.state == "pending"
+                old_release.set()
+                old_result = old.result(timeout=10)
+                assert (old_result.action, old_result.launch) == ("compact", False)
+                assert other.handoff_db.get(row.id) == row
+                assert not harness.events(EVENT_FAILED)
+                new_release.set()
+                new_result = new.result(timeout=10)
+                assert new_result.launch
+                other.service.register_successor(harness.principal, row.id, SuccessorRef("new"))
+                assert len(harness.rows("threads")) == 1
+                assert len(harness.events(EVENT_COMPLETED)) == 1
+            finally:
+                old_release.set()
+                new_release.set()
+    finally:
+        other.close()
+        other_control.close()
+
+
+@pytest.mark.parametrize("operation", ["mark_stored", "mark_failed", "claim_launch"])
+def test_replaced_lease_rejects_old_or_omitted_token(harness, monkeypatch, operation):
+    moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(db_module, "_now", lambda: moment)
+    database = harness.ctx.handoff_db
+    row, _ = database.begin(
+        harness.workspace,
+        "fenced",
+        ThreadMeta("fenced"),
+        connection_id=harness.principal.connection_id,
+        lease_token="old-owner",
+    )
+    moment += timedelta(seconds=601)
+    replacement, created = database.begin(
+        harness.workspace,
+        "fenced",
+        ThreadMeta("fenced"),
+        connection_id=harness.principal.connection_id,
+        lease_token="new-owner",
+    )
+    assert created
+    arguments = {
+        "mark_stored": ("thr_saved", "private quote"),
+        "mark_failed": ("failed",),
+        "claim_launch": (),
+    }
+    for token in ("old-owner", ""):
+        with pytest.raises(HandoffDBError, match="replaced"):
+            getattr(database, operation)(row.id, *arguments[operation], lease_token=token)
+        assert database.get(row.id) == replacement
+
+
 def test_independent_database_connections_claim_and_register_once(harness):
     row = prepared(harness)
     connections = [ControlDB(str(harness.root / "control.sqlite3")) for _ in range(4)]
@@ -315,7 +403,7 @@ def test_independent_database_connections_claim_and_register_once(harness):
             control.close()
 
 
-def test_longer_retry_keeps_original_snapshot_and_one_successor(harness):
+def test_longer_retry_appends_losslessly_and_keeps_one_successor(harness):
     first = harness.ctx.service.run(harness.principal, request())
     original = harness.rows("messages")
     harness.ctx.service.register_successor(harness.principal, first.handoff.id, SuccessorRef("new"))
@@ -327,8 +415,219 @@ def test_longer_retry_keeps_original_snapshot_and_one_successor(harness):
     assert retried["launch"] is False
     assert retried["handoff"]["stored_thread_id"] == first.handoff.stored_thread_id
     assert retried["handoff"]["successor"]["agent_ref"] == "new"
-    assert harness.rows("messages") == original
+    assert harness.rows("messages")[: len(original)] == original
+    assert (
+        harness.ctx.store_for(harness.workspace).messages(first.handoff.stored_thread_id)[-1].text
+        == "Agent kept going"
+    )
     assert len(harness.rows("threads")) == 1
+
+
+@pytest.mark.parametrize("field", ["text", "raw", "role", "kind", "name", "call_id", "seq"])
+def test_append_rejects_changed_canonical_prefix_without_mutation(harness, field):
+    first = harness.ctx.service.run(harness.principal, request())
+    store = harness.ctx.store_for(harness.workspace)
+    original = store.messages(first.handoff.stored_thread_id)
+    changed = list(original)
+    changed[0] = replace(changed[0], **{field: 17 if field == "seq" else "changed"})
+    before = {table: harness.rows(table) for table in ("threads", "messages", "chunks")}
+    with pytest.raises((ThreadConflict, ValueError)):
+        store.append(first.handoff.stored_thread_id, changed)
+    assert {table: harness.rows(table) for table in before} == before
+
+
+def test_append_concurrent_connections_preserve_old_chunks_and_fts(harness):
+    first = harness.ctx.service.run(harness.principal, request())
+    store = harness.ctx.store_for(harness.workspace)
+    original = store.messages(first.handoff.stored_thread_id)
+    old_chunks = store.chunks(first.handoff.stored_thread_id)
+    extended = original + [
+        replace(original[-1], seq=2, text="  uniqueaddedfact 雪\r\n", raw="exact raw tail\r\n")
+    ]
+    path = harness.root / "workspaces" / harness.workspace / "threads.sqlite3"
+    stores = [ThreadStore(str(path)) for _ in range(4)]
+    barrier = threading.Barrier(4)
+    try:
+
+        def append(current):
+            barrier.wait(timeout=5)
+            return current.append(first.handoff.stored_thread_id, extended)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(append, stores))
+        assert all(result == results[0] for result in results)
+        assert results[0].message_count == 3
+        assert results[0].sha256 == canonical_sha256(extended)
+        assert store.messages(first.handoff.stored_thread_id) == extended
+        assert store.chunks(first.handoff.stored_thread_id)[: len(old_chunks)] == old_chunks
+        assert len(store.search([first.handoff.stored_thread_id], "uniqueaddedfact")) == 1
+        assert store.append(first.handoff.stored_thread_id, original) == results[0]
+    finally:
+        for current in stores:
+            current.close()
+
+
+def test_append_failure_rolls_back_then_retry_mirrors_new_tail(harness, monkeypatch):
+    first = harness.ctx.service.run(harness.principal, request())
+    store = harness.ctx.store_for(harness.workspace)
+    baseline = {table: harness.rows(table) for table in ("threads", "messages", "chunks")}
+    body = request(texts=("Verbatim goal", "Verbatim status", "uniqueaddedfact"))
+    store._conn.execute(
+        "CREATE TEMP TRIGGER fail_append BEFORE INSERT ON chunks WHEN NEW.idx > 0 "
+        "BEGIN SELECT RAISE(ABORT, 'append disk full'); END"
+    )
+    try:
+        failed = harness.ctx.service.run(harness.principal, body)
+    finally:
+        store._conn.execute("DROP TRIGGER fail_append")
+    assert (failed.action, failed.launch) == ("compact", False)
+    assert {table: harness.rows(table) for table in baseline} == baseline
+    assert len(harness.events(EVENT_FAILED)) == 1
+    mirrored = []
+    harness.ctx.service.call_tool = lambda *args: None
+    monkeypatch.setattr(
+        palace_mirror, "mirror", lambda call, principal, stored, chunks: mirrored.extend(chunks)
+    )
+    result = harness.ctx.service.run(harness.principal, body)
+    assert result.handoff == first.handoff
+    assert not result.launch
+    assert any("uniqueaddedfact" in chunk.text for chunk in mirrored)
+    before = harness.rows("messages")
+    assert not harness.ctx.service.run(harness.principal, body).launch
+    assert harness.rows("messages") == before
+
+    def mirror_down(*args):
+        raise OSError("configured Memory mirror unavailable")
+
+    monkeypatch.setattr(palace_mirror, "mirror", mirror_down)
+    extended = request(
+        texts=(
+            "Verbatim goal",
+            "Verbatim status",
+            "uniqueaddedfact",
+            "tail while mirror unavailable",
+        )
+    )
+    assert not harness.ctx.service.run(harness.principal, extended).launch
+    assert (
+        store.messages(first.handoff.stored_thread_id)[-1].text == "tail while mirror unavailable"
+    )
+    assert len(harness.events(EVENT_FAILED)) == 1  # Only the actual append failure.
+
+
+def test_workspace_doc_hydrates_after_restart_and_cli_reads_it(harness, monkeypatch, capsys):
+    from commonplace import cli
+
+    result = harness.ctx.service.run(harness.principal, request())
+    document = result.handoff.doc_markdown
+    assert "Verbatim goal" in document
+    assert harness.ctx.store_for(harness.workspace).doc(result.handoff.id) == document
+    assert harness.control._conn.execute("SELECT doc_markdown FROM handoffs").fetchone()[0] == ""
+    harness.restart()
+    assert harness.ctx.handoff_db.get(result.handoff.id).doc_markdown == document
+    assert harness.ctx.handoff_db.list(harness.workspace)[0].doc_markdown == document
+    status, body = harness.request(f"/api/handoffs/{result.handoff.id}", method="GET")
+    assert status == 200 and body["doc_markdown"] == document
+    monkeypatch.setattr(cli, "_db", lambda args: harness.control)
+    assert cli.cmd_handoff_show(SimpleNamespace(handoff_id=result.handoff.id)) == 0
+    assert document in capsys.readouterr().out
+
+
+def test_relaunch_restores_original_note_from_workspace_doc(harness):
+    first = harness.ctx.service.run(
+        harness.principal, replace(request(), note="  Original agent note 雪\r\n")
+    )
+    harness.ctx.service.report_launch_failure(
+        harness.principal, first.handoff.id, "verified failed"
+    )
+    harness.restart()
+    result = harness.ctx.service.relaunch(harness.principal, first.handoff.id)
+    assert result.launch
+    assert first.handoff.doc_markdown in result.prompt
+    assert "  Original agent note 雪\r\n" in result.prompt
+
+
+def test_document_write_failure_never_launches_and_can_retry(harness, monkeypatch):
+    store = harness.ctx.store_for(harness.workspace)
+
+    def full_disk(*args):
+        raise OSError(errno.ENOSPC, "workspace document disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "put_doc", full_disk)
+        result = harness.ctx.service.run(harness.principal, request())
+    assert (result.action, result.launch, result.handoff.state) == ("compact", False, "failed")
+    assert len(harness.events(EVENT_FAILED)) == 1
+    assert "Verbatim goal" not in "\n".join(harness.control._conn.iterdump())
+    assert harness.ctx.service.run(harness.principal, request()).launch
+    assert len(harness.rows("threads")) == 1
+
+
+def test_pre_release_document_migration_clears_control_files(harness):
+    row = prepared(harness)
+    private = "old_private_document_0a65fadb 再见"
+    harness.control._conn.execute(
+        "UPDATE handoffs SET doc_markdown = ? WHERE id = ?", (private, row.id)
+    )
+    harness.ctx.handoff_db.set_document_store(harness.ctx.store_for)
+    assert harness.ctx.handoff_db.get(row.id).doc_markdown == private
+    assert harness.ctx.store_for(harness.workspace).doc(row.id) == private
+    assert private not in "\n".join(harness.control._conn.iterdump())
+    assert not any(
+        private.encode() in path.read_bytes() for path in harness.root.glob("control.sqlite3*")
+    )
+
+
+def test_document_scrub_resumes_after_rows_already_moved(harness):
+    # A previous process moved the document but exited before its WAL scrub.
+    harness.control._conn.execute(
+        "INSERT INTO meta(key, value) VALUES ('handoff_docs_scrub_pending', '1')"
+    )
+    harness.restart()
+    assert (
+        harness.control._conn.execute(
+            "SELECT 1 FROM meta WHERE key = 'handoff_docs_scrub_pending'"
+        ).fetchone()
+        is None
+    )
+
+
+@pytest.mark.parametrize("off", [False, True])
+def test_other_connection_retry_is_empty_without_touching_lease(harness, monkeypatch, off):
+    moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(db_module, "_now", lambda: moment)
+    user = harness.control.create_user("other-member@example.test")
+    harness.control.add_member(harness.workspace, user, "member", actor=harness.owner)
+    _, token = harness.control.create_token(
+        workspace_ref=harness.workspace,
+        user_ref=user,
+        name="other-member",
+        client="test",
+        policy=Policy.build(profile="full", scopes=["handoff:write"], trust="trusted"),
+        actor=harness.owner,
+    )
+    principal = harness.control.authenticate_token(token)
+    row, _ = harness.ctx.handoff_db.begin(
+        harness.workspace,
+        "thread:source",
+        request().meta,
+        connection_id=harness.principal.connection_id,
+        lease_token="original",
+    )
+    moment += timedelta(seconds=601)
+    if off:
+        harness.ctx.handoff_db.put_setting(
+            SettingRow(harness.workspace, "workspace", "", enabled=False), actor=harness.owner
+        )
+    result = harness.ctx.service.run(principal, request())
+    assert (result.action, result.reason, result.handoff, result.launch) == (
+        "compact",
+        "in progress",
+        None,
+        False,
+    )
+    assert harness.ctx.handoff_db.get(row.id) == row
+    assert not harness.rows("threads")
 
 
 @pytest.mark.parametrize("boundary", ["parse", "messages", "chunks", "fts", "disk", "control"])
@@ -661,6 +960,39 @@ def test_completion_crash_window_is_preserved_without_duplicate_successor(harnes
         EVENT_COMPLETED
     )  # Known durable event gap, per orchestration decision.
     assert not harness.ctx.service.run(harness.principal, request()).launch
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Completion event deduplication needs a durable transition shared by gateways",
+)
+def test_separate_gateways_emit_only_one_completion(harness, monkeypatch):
+    row = prepared(harness)
+    other_control = ControlDB(str(harness.root / "control.sqlite3"))
+    other = install(Gateway(other_control, _NoWorker()), harness.root, start_outbox=False)
+    barrier = threading.Barrier(2)
+    try:
+        for current in (harness.ctx.service, other.service):
+            authorize = current._authorized
+
+            def simultaneous(principal, identifier, original=authorize):
+                result = original(principal, identifier)
+                barrier.wait(timeout=5)
+                return result
+
+            monkeypatch.setattr(current, "_authorized", simultaneous)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    current.register_successor, harness.principal, row.id, SuccessorRef("same")
+                )
+                for current in (harness.ctx.service, other.service)
+            ]
+            assert all(future.result(timeout=10).state == "done" for future in futures)
+        assert len(harness.events(EVENT_COMPLETED)) == 1
+    finally:
+        other.close()
+        other_control.close()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="The hook's fcntl lock is POSIX only")

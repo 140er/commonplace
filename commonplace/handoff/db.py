@@ -2,11 +2,13 @@
 
 Uses the ``ControlDB``'s connection, lock and ``_tx()``; tables are created
 on construction (``CREATE TABLE IF NOT EXISTS``), so old control DBs upgrade
-in place. Full thread text stays in ``thread_store``; the control database
-holds settings, pointers and the short handoff document.
+in place. Thread text and handoff documents stay in the workspace
+``thread_store``; the control database holds settings, pointers and state.
+Bind ``document_store_for`` (or call ``set_document_store``) before storing
+documents. Hydrated Handoff values contain quotes; their control rows do not.
 
 Tables: ``handoff_settings`` (unique workspace_id+scope+ref),
-``handoffs`` (unique workspace_id+idempotency_key; ``launch_claimed`` flag),
+``handoffs`` (unique workspace_id+idempotency_key; launch claim and lease token),
 ``handoff_webhooks``, ``handoff_outbox``.
 
 State graph (see ``models.STATES``)::
@@ -27,7 +29,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import timedelta
 from typing import Optional
 
@@ -72,6 +74,7 @@ CREATE TABLE IF NOT EXISTS handoffs (
     successor_url TEXT NOT NULL DEFAULT '',
     successor_thread_id TEXT NOT NULL DEFAULT '',
     launch_claimed INTEGER NOT NULL DEFAULT 0 CHECK (launch_claimed IN (0, 1)),
+    lease_token TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
     connection_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
@@ -124,6 +127,7 @@ def _handoff(row: sqlite3.Row) -> Handoff:
     url = values.pop("successor_url")
     thread_id = values.pop("successor_thread_id")
     values.pop("launch_claimed")
+    values.pop("lease_token")
     values["successor"] = SuccessorRef(agent_ref, url, thread_id) if agent_ref else None
     return Handoff(**values)
 
@@ -139,17 +143,59 @@ class HandoffDBError(ValueError):
     pass
 
 
+class HandoffLeaseError(HandoffDBError):
+    """A storage attempt was replaced; it may no longer mutate the handoff."""
+
+
 class HandoffDB:
-    def __init__(self, control_db: ControlDB):
+    def __init__(self, control_db: ControlDB, *, document_store_for=None):
         self._control = control_db
         self._conn = control_db._conn
         self._lock = control_db._lock
+        self._document_store_for = None
         with self._lock:
+            self._conn.execute("PRAGMA secure_delete = ON")
             self._conn.executescript(_SCHEMA)
             with self._control._tx() as conn:
                 columns = {row["name"] for row in conn.execute("PRAGMA table_info(handoffs)")}
                 if "cwd" not in columns:
                     conn.execute("ALTER TABLE handoffs ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
+                if "lease_token" not in columns:
+                    conn.execute(
+                        "ALTER TABLE handoffs ADD COLUMN lease_token TEXT NOT NULL DEFAULT ''"
+                    )
+        if document_store_for is not None:
+            self.set_document_store(document_store_for)
+
+    def set_document_store(self, store_for) -> None:
+        """Keep quotes only in the workspace store; migrate pre-release rows."""
+        with self._lock:
+            self._document_store_for = store_for
+            rows = self._conn.execute("SELECT * FROM handoffs WHERE doc_markdown != ''").fetchall()
+            if rows:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('handoff_docs_scrub_pending', '1')"
+                )
+            for row in rows:
+                with self._control._tx() as conn:
+                    store_for(row["workspace_id"]).put_doc(row["id"], row["doc_markdown"])
+                    conn.execute("UPDATE handoffs SET doc_markdown = '' WHERE id = ?", (row["id"],))
+            if self._conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'handoff_docs_scrub_pending'"
+            ).fetchone():
+                result = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if result[0]:
+                    raise HandoffDBError(
+                        "handoff document migration needs exclusive database access"
+                    )
+                self._conn.execute("DELETE FROM meta WHERE key = 'handoff_docs_scrub_pending'")
+
+    def _handoff(self, row) -> Handoff:
+        handoff = _handoff(row)
+        if self._document_store_for is not None and handoff.stored_thread_id:
+            markdown = self._document_store_for(handoff.workspace_id).doc(handoff.id)
+            handoff = replace(handoff, doc_markdown=markdown)
+        return handoff
 
     def _required(self, handoff_id: str) -> sqlite3.Row:
         """Called with the control lock held, inside a write transaction."""
@@ -159,24 +205,42 @@ class HandoffDB:
         return row
 
     def _transition(
-        self, handoff_id: str, state: str, allowed: tuple, *, repeat: bool = True, **values
+        self,
+        handoff_id: str,
+        state: str,
+        allowed: tuple,
+        *,
+        repeat: bool = True,
+        lease_token: Optional[str] = None,
+        document: Optional[str] = None,
+        **values,
     ) -> Handoff:
         with self._lock, self._control._tx() as conn:
             row = self._required(handoff_id)
-            if (
+            if lease_token is not None and row["lease_token"] != lease_token:
+                raise HandoffLeaseError("handoff storage attempt was replaced")
+            repeated = (
                 repeat
                 and row["state"] == state
                 and all(row[key] == value for key, value in values.items())
-            ):
-                return _handoff(row)
-            if row["state"] not in allowed:
+            )
+            if not repeated and row["state"] not in allowed:
                 raise HandoffDBError(f"cannot change handoff from {row['state']} to {state}")
+            if document is not None:
+                if self._document_store_for is None:
+                    raise HandoffDBError("handoff document store is unavailable")
+                store = self._document_store_for(row["workspace_id"])
+                if repeated and store.doc(handoff_id) != document:
+                    raise HandoffDBError("handoff already has a different document")
+                store.put_doc(handoff_id, document)
+            if repeated:
+                return self._handoff(row)
             values.update(state=state, updated_at=_iso(_now()))
             columns = ", ".join(f"{key} = ?" for key in values)
             conn.execute(
                 f"UPDATE handoffs SET {columns} WHERE id = ?", (*values.values(), handoff_id)
             )
-            return _handoff(self._required(handoff_id))
+            return self._handoff(self._required(handoff_id))
 
     # ── settings ──
     def setting_rows(
@@ -249,7 +313,13 @@ class HandoffDB:
 
     # ── handoffs ──
     def begin(
-        self, workspace_id: str, idempotency_key: str, meta: ThreadMeta, *, connection_id: str
+        self,
+        workspace_id: str,
+        idempotency_key: str,
+        meta: ThreadMeta,
+        *,
+        connection_id: str,
+        lease_token: str = "",
     ) -> tuple[Handoff, bool]:
         """Create the ``pending`` row, or return the existing one. ``(handoff, created)``.
         Two concurrent calls with one key: exactly one gets ``created=True``.
@@ -257,6 +327,9 @@ class HandoffDB:
         a retry after a store failure can try again. A pending writer leases
         its row for ``PENDING_LEASE_S``; an older row can be resumed after a
         crash. The lease refresh and ownership decision share one transaction.
+        Services supply a fresh opaque ``lease_token`` and pass it unchanged
+        to storage transitions and launch claims. Legacy empty-token rows
+        acquire a token on takeover, fencing their original unowned writer.
         ``_now`` is the injectable UTC clock used for lease checks.
         """
         with self._lock, self._control._tx() as conn:
@@ -270,18 +343,23 @@ class HandoffDB:
                     now - _parse(row["updated_at"]) > timedelta(seconds=PENDING_LEASE_S)
                 )
                 if row["state"] != "failed" and not expired:
-                    return _handoff(row), False
+                    return self._handoff(row), False
                 conn.execute(
-                    "UPDATE handoffs SET state = 'pending', error = '', updated_at = ? WHERE id = ?",
-                    (_iso(now), row["id"]),
+                    "UPDATE handoffs SET state = 'pending', error = '', updated_at = ?, "
+                    "lease_token = ? WHERE id = ?",
+                    (
+                        _iso(now),
+                        lease_token or (_new_id("lease") if expired or row["lease_token"] else ""),
+                        row["id"],
+                    ),
                 )
-                return _handoff(self._required(row["id"])), True
+                return self._handoff(self._required(row["id"])), True
             handoff_id = _new_id("hof")
             now = _iso(now)
             conn.execute(
                 "INSERT INTO handoffs(id, workspace_id, idempotency_key, source_thread_id, state, "
                 "agent, task_ref, branch, pr_url, cwd, parent_handoff_id, connection_id, created_at, "
-                "updated_at) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?)",
+                "updated_at, lease_token) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
                 (
                     handoff_id,
                     workspace_id,
@@ -296,27 +374,44 @@ class HandoffDB:
                     connection_id,
                     now,
                     now,
+                    lease_token,
                 ),
             )
-            return _handoff(self._required(handoff_id)), True
+            return self._handoff(self._required(handoff_id)), True
 
-    def mark_stored(self, handoff_id: str, stored_thread_id: str, doc_markdown: str) -> Handoff:
+    def mark_stored(
+        self, handoff_id: str, stored_thread_id: str, doc_markdown: str, *, lease_token: str = ""
+    ) -> Handoff:
         if not stored_thread_id:
             raise HandoffDBError("stored thread not found")
         return self._transition(
             handoff_id,
             "stored",
             ("pending",),
+            lease_token=lease_token,
+            document=doc_markdown,
             stored_thread_id=stored_thread_id,
-            doc_markdown=doc_markdown,
+            doc_markdown="",
         )
 
-    def mark_failed(self, handoff_id: str, error: str) -> Handoff:
-        return self._transition(handoff_id, "failed", ("pending",), error=error)
+    def mark_failed(self, handoff_id: str, error: str, *, lease_token: str = "") -> Handoff:
+        return self._transition(
+            handoff_id, "failed", ("pending",), lease_token=lease_token, error=error
+        )
 
-    def claim_launch(self, handoff_id: str) -> bool:
-        """True once per launch attempt; only release_launch permits a retry."""
+    def lease_token(self, handoff_id: str) -> str:
+        """Read the current token when resuming an already stored handoff."""
         with self._lock:
+            return self._required(handoff_id)["lease_token"]
+
+    def claim_launch(self, handoff_id: str, *, lease_token: str = "") -> bool:
+        """True once per launch attempt; only release_launch permits a retry."""
+        with self._lock, self._control._tx():
+            row = self._conn.execute(
+                "SELECT lease_token FROM handoffs WHERE id = ?", (handoff_id,)
+            ).fetchone()
+            if row is not None and row["lease_token"] != lease_token:
+                raise HandoffLeaseError("handoff storage attempt was replaced")
             return (
                 self._conn.execute(
                     "UPDATE handoffs SET launch_claimed = 1, updated_at = ? "
@@ -364,7 +459,7 @@ class HandoffDB:
                         "updated_at = ? WHERE id = ?",
                         (url, thread_id, _iso(_now()), handoff_id),
                     )
-                return _handoff(self._required(handoff_id))
+                return self._handoff(self._required(handoff_id))
             if row["state"] not in ("stored", "launched"):
                 raise HandoffDBError(f"cannot register a successor for {row['state']} handoff")
             if row["state"] == "stored":
@@ -375,14 +470,14 @@ class HandoffDB:
                 "WHERE id = ?",
                 (ref.agent_ref, ref.url, ref.thread_id, _iso(_now()), handoff_id),
             )
-            return _handoff(self._required(handoff_id))
+            return self._handoff(self._required(handoff_id))
 
     def get(self, handoff_id: str) -> Optional[Handoff]:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM handoffs WHERE id = ?", (handoff_id,)
             ).fetchone()
-        return _handoff(row) if row is not None else None
+        return self._handoff(row) if row is not None else None
 
     def by_key(self, workspace_id: str, idempotency_key: str) -> Optional[Handoff]:
         """Read-only lookup by idempotency key; never creates a row."""
@@ -391,7 +486,7 @@ class HandoffDB:
                 "SELECT * FROM handoffs WHERE workspace_id = ? AND idempotency_key = ?",
                 (workspace_id, idempotency_key),
             ).fetchone()
-        return _handoff(row) if row is not None else None
+        return self._handoff(row) if row is not None else None
 
     def by_stored_thread(self, stored_thread_id: str) -> Optional[Handoff]:
         if not stored_thread_id:
@@ -401,7 +496,7 @@ class HandoffDB:
                 "SELECT * FROM handoffs WHERE stored_thread_id = ? ORDER BY rowid LIMIT 1",
                 (stored_thread_id,),
             ).fetchone()
-        return _handoff(row) if row is not None else None
+        return self._handoff(row) if row is not None else None
 
     def by_successor_thread(self, workspace_id: str, thread_id: str) -> Optional[Handoff]:
         if not thread_id:
@@ -412,7 +507,7 @@ class HandoffDB:
                 "ORDER BY rowid LIMIT 1",
                 (workspace_id, thread_id),
             ).fetchone()
-        return _handoff(row) if row is not None else None
+        return self._handoff(row) if row is not None else None
 
     def list(self, workspace_id: str, *, task_ref: str = "", limit: int = 50) -> list[Handoff]:
         sql = "SELECT * FROM handoffs WHERE workspace_id = ?"
@@ -424,7 +519,7 @@ class HandoffDB:
         params.append(max(0, int(limit)))
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
-        return [_handoff(row) for row in rows]
+        return [self._handoff(row) for row in rows]
 
     # ── webhooks ──
     def add_webhook(

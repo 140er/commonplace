@@ -260,20 +260,23 @@ def cmd_handoff_list(args) -> int:
 def cmd_handoff_show(args) -> int:
     from .handoff.db import HandoffDB
 
-    record = _handoff_record(HandoffDB(_db(args)), args.handoff_id)
-    _print_handoff(record)
-    sys.stdout.write(record.doc_markdown)
+    db = _db(args)
+    with ExitStack() as stack:
+        documents = _stores(args, stack, root=Path(db.path).parent)
+        record = _handoff_record(HandoffDB(db, document_store_for=documents), args.handoff_id)
+        _print_handoff(record)
+        sys.stdout.write(record.doc_markdown)
     return 0
 
 
-def _stores(args, stack):
+def _stores(args, stack, *, root=None):
     from .handoff.thread_store import ThreadStore
 
     stores = {}
 
     def store_for(workspace_id):
         if workspace_id not in stores:
-            path = _data_dir(args) / "workspaces" / workspace_id / "threads.sqlite3"
+            path = (root or _data_dir(args)) / "workspaces" / workspace_id / "threads.sqlite3"
             path.parent.mkdir(parents=True, exist_ok=True)
             store = stores[workspace_id] = ThreadStore(str(path))
             stack.callback(store.close)

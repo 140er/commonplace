@@ -31,6 +31,9 @@ from commonplace.handoff.thread_store import Chunk, ThreadConflict
 
 
 class FakeDB:
+    def set_document_store(self, store_for):
+        pass
+
     def __init__(self, control, trace):
         self.lock = control._lock
         self.trace = trace
@@ -44,7 +47,7 @@ class FakeDB:
             found = self.keys.get((workspace_id, idempotency_key))
             return self.rows[found] if found else None
 
-    def begin(self, workspace_id, idempotency_key, meta, *, connection_id):
+    def begin(self, workspace_id, idempotency_key, meta, *, connection_id, lease_token=""):
         with self.lock:
             self.trace.append("begin")
             key = workspace_id, idempotency_key
@@ -79,17 +82,20 @@ class FakeDB:
             self.rows[handoff_id] = row
             return row
 
-    def mark_stored(self, handoff_id, stored_thread_id, doc_markdown):
+    def mark_stored(self, handoff_id, stored_thread_id, doc_markdown, *, lease_token=""):
         self.trace.append("mark_stored")
         return self.update(
             handoff_id, state="stored", stored_thread_id=stored_thread_id, doc_markdown=doc_markdown
         )
 
-    def mark_failed(self, handoff_id, error):
+    def mark_failed(self, handoff_id, error, *, lease_token=""):
         self.trace.append("mark_failed")
         return self.update(handoff_id, state="failed", error=error)
 
-    def claim_launch(self, handoff_id):
+    def lease_token(self, handoff_id):
+        return ""
+
+    def claim_launch(self, handoff_id, *, lease_token=""):
         with self.lock:
             self.trace.append("claim")
             if handoff_id in self.claims:
@@ -179,6 +185,19 @@ class FakeStore:
 
     def get(self, stored_id):
         return self.rows.get(stored_id)
+
+    def append(self, stored_id, messages):
+        previous = self.contents[stored_id]
+        common = min(len(previous), len(messages))
+        if previous[:common] != messages[:common]:
+            raise ThreadConflict("different thread content")
+        if len(messages) > len(previous):
+            self.contents[stored_id] = list(messages)
+            self.rows[stored_id] = replace(self.rows[stored_id], message_count=len(messages))
+        return self.rows[stored_id]
+
+    def chunks(self, stored_id):
+        return []
 
     def parent_of(self, stored_id):
         return self.parents.get(stored_id) or None
@@ -298,7 +317,7 @@ def rig(monkeypatch, tmp_path):
         trace.append("render")
         return json.dumps(doc.__dict__, ensure_ascii=False)
 
-    def successor_prompt(doc):
+    def successor_prompt(doc, **kwargs):
         trace.append("prompt")
         return f"continue {doc.stored_thread_id}: {doc.goal}\n{doc.note}"
 
@@ -430,7 +449,7 @@ def test_pending_is_compact_in_progress(rig):
 
 def test_stored_without_a_claim_is_retryable_and_keeps_its_snapshot(rig, monkeypatch):
     claim = rig.db.claim_launch
-    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id, **kwargs: False)
     first = rig.service.run(rig.principal, make_request())
     assert first.handoff.state == "stored" and not first.launch
     rig.settings.current = HandoffSettings(enabled=False, launcher=LauncherConfig(kind="command"))
@@ -493,7 +512,7 @@ def test_eight_concurrent_runs_store_and_launch_once(rig):
 
 def test_claim_is_atomic_across_service_instances(rig, monkeypatch):
     claim = rig.db.claim_launch
-    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id, **kwargs: False)
     rig.service.run(rig.principal, make_request())
     monkeypatch.setattr(rig.db, "claim_launch", claim)
     barrier = threading.Barrier(8)
@@ -728,7 +747,7 @@ def test_completion_during_prompt_skips_launcher_and_preserves_done(rig, monkeyp
     entered = threading.Event()
     release = threading.Event()
 
-    def successor_prompt(doc):
+    def successor_prompt(doc, **kwargs):
         entered.set()
         assert release.wait(10)
         return "continue"
@@ -753,12 +772,12 @@ def test_completion_during_prompt_skips_launcher_and_preserves_done(rig, monkeyp
 
 
 def test_stale_stored_caller_does_not_fail_completed_row_when_claim_raises(rig, monkeypatch):
-    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id, **kwargs: False)
     first = rig.service.run(rig.principal, make_request())
     entered = threading.Event()
     release = threading.Event()
 
-    def claim_launch(handoff_id):
+    def claim_launch(handoff_id, **kwargs):
         entered.set()
         assert release.wait(10)
         raise sqlite3.OperationalError("private claim error")
@@ -783,7 +802,7 @@ def test_stale_stored_caller_does_not_fail_completed_row_when_claim_raises(rig, 
 def test_claim_error_leaves_unowned_stored_row_retryable(rig, monkeypatch):
     claim = rig.db.claim_launch
 
-    def fail(handoff_id):
+    def fail(handoff_id, **kwargs):
         raise sqlite3.OperationalError("private claim value")
 
     monkeypatch.setattr(rig.db, "claim_launch", fail)
@@ -1068,7 +1087,7 @@ def test_relaunch_rejects_other_states(rig, state):
 
 def test_restart_reconstructs_unclaimed_stored_doc_without_storing_again(rig, monkeypatch):
     claim = rig.db.claim_launch
-    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id, **kwargs: False)
     first = rig.service.run(rig.principal, make_request())
     monkeypatch.setattr(rig.db, "claim_launch", claim)
     result = rig.new_service().run(
@@ -1093,7 +1112,7 @@ def test_restart_relaunch_reconstructs_doc_and_ignores_disabled_toggle(rig):
 
 def test_cross_instance_stored_retry_honors_settings_captured_before_disable(rig, monkeypatch):
     claim = rig.db.claim_launch
-    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id, **kwargs: False)
     first = rig.service.run(rig.principal, make_request())
     assert first.handoff.state == "stored" and not rig.db.claims
     monkeypatch.setattr(rig.db, "claim_launch", claim)
