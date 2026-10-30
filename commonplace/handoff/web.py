@@ -144,8 +144,9 @@ def _meter(handoff):
     )
 
 
-# render_markdown writes Goal, then Status, first; read only from the top, so a
+# render_markdown writes provenance, Goal, then Status; read only from the top, so a
 # section quoted inside a later Note can never stand in for them.
+_PROVENANCE = re.compile(r"## Provenance\n\n(`{3,})\n(.*?)\n\1(?!`)(?:\n\n|\Z)", re.DOTALL)
 _OPENING = re.compile(
     r"(?:## (Goal)\n\n(`{3,})\n(.*?)\n\2(?!`)(?:\n\n|\Z))?"
     r"(?:## (Status)\n\n(`{3,})\n(.*?)\n\5(?!`)(?:\n\n|\Z))?",
@@ -155,8 +156,17 @@ _OPENING = re.compile(
 
 def _preview(markdown):
     """Goal and Status, the verbatim quotes the handoff document opens with."""
-    match = _OPENING.match(markdown or "")
+    markdown = markdown or ""
     items = ""
+    provenance = _PROVENANCE.match(markdown)
+    if provenance:
+        items += (
+            "<div><dt>Provenance</dt><dd><pre><span>"
+            + escape(provenance[2]).replace("\r", "&#13;")
+            + "</span></pre></dd></div>"
+        )
+        markdown = markdown[provenance.end() :]
+    match = _OPENING.match(markdown)
     for name, text in ((match[1], match[3]), (match[4], match[6])):
         if name:
             items += (

@@ -699,6 +699,7 @@ def test_thread_range_and_verbatim_messages(hub):
     status, result, _ = hub.request("GET", "/api/threads/thr_local/messages?start=1&end=2")
     assert status == 200
     assert result[0]["text"] == result[0]["raw"] == TRANSCRIPT
+    assert result[0]["provenance"]["approval_status"] == "unknown"
     assert hub.calls[-1] == ("messages", hub.workspace, "thr_local", 1, 2)
     assert hub.request("GET", "/api/threads/thr_local/messages")[0] == 200
     assert hub.calls[-1][-2:] == (0, None)
@@ -731,6 +732,8 @@ def test_recall_parameters_and_defaults(hub):
         {"query": "  café  ", "limit": 2, "follow_chain": False},
     )
     assert status == 200 and result[0]["text"] == TRANSCRIPT
+    assert result[0]["provenance"]["approval_status"] == "unknown"
+    assert result[0]["provenance"]["origin_link"] == "/app/threads/thr_local"
     assert hub.calls[-1] == ("recall", hub.workspace, "thr_local", "  café  ", 2, False)
     hub.request("POST", "/api/threads/thr_local/recall", {"query": "fact"})
     assert hub.calls[-1][-2:] == (8, True)

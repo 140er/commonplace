@@ -154,6 +154,7 @@ class Principal:
     def identity(self) -> dict:
         """The verified identity the worker stamps on writes."""
         return {
+            **({"person": True} if self.person else {}),
             "user": self.user_id,
             "connection": self.connection,
             "client": self.client,

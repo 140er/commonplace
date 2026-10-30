@@ -195,6 +195,7 @@ class HandoffDoc:
     stored_thread_id: str = ""
     handoff_id: str = ""
     chain: tuple = ()  # older stored thread ids, newest first
+    source_actor: str = ""  # who filed the transcript; not proof of its speakers
 
 
 @dataclass(frozen=True)

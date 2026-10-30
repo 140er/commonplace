@@ -40,7 +40,7 @@ from .models import (
     SuccessorRef,
     ThreadMeta,
 )
-from .recall import ThreadNotFound
+from .recall import ThreadNotFound, thread_provenance
 from .settings import SettingsError
 from .thread_store import ThreadConflict
 
@@ -424,13 +424,16 @@ class _API:
             _missing()
         record = self.thread(principal, thread_id)
         if not action:
-            return 200, _public(record)
+            return 200, {**_public(record), "provenance": thread_provenance(record)}
         if action == "messages":
             start = _range_value(query, "start", 0)
             end = _range_value(query, "end", None)
             if end is not None and end < start:
                 raise _RequestError(400, "invalid end")
-            return 200, _public(self.ctx.recall.get(principal, thread_id, start, end))
+            return 200, [
+                {**_public(message), "provenance": thread_provenance(record)}
+                for message in self.ctx.recall.get(principal, thread_id, start, end)
+            ]
         if action == "chain":
             chain = []
             for row in self.ctx.recall.chain(principal, thread_id):
@@ -438,8 +441,8 @@ class _API:
                     row.wing
                 ):
                     break
-                chain.append(row)
-            return 200, _public(chain)
+                chain.append({**_public(row), "provenance": thread_provenance(row)})
+            return 200, chain
         data = _object(_read_json(handler), {"query", "limit", "follow_chain"})
         query_text = _text(data, "query", required=True)
         limit = _integer(data.get("limit", 8), "limit", 1)
@@ -449,7 +452,17 @@ class _API:
         hits = self.ctx.recall.recall(
             principal, thread_id, query_text, limit=limit, follow_chain=follow_chain
         )
-        return 200, _public(hits)
+        return 200, [
+            {
+                **_public(hit),
+                "provenance": thread_provenance(
+                    record
+                    if hit.stored_thread_id == record.id
+                    else self.thread(principal, hit.stored_thread_id)
+                ),
+            }
+            for hit in hits
+        ]
 
     def settings(self, handler, principal, query: dict):
         workspace = principal.workspace_id

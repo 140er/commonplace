@@ -235,6 +235,7 @@ class HandoffService:
                 messages,
                 meta,
                 note=request.note,
+                source_actor=stored.created_by,
                 stored_thread_id=stored.id,
                 handoff_id=handoff.id,
                 chain=self._chain(store, parent_id, workspace_id, exclude=stored.id),
@@ -458,6 +459,7 @@ class HandoffService:
                     store.messages(handoff.stored_thread_id),
                     snapshot.meta,
                     stored_thread_id=handoff.stored_thread_id,
+                    source_actor=store.get(handoff.stored_thread_id).created_by,
                     handoff_id=handoff.id,
                     chain=self._chain(
                         store,

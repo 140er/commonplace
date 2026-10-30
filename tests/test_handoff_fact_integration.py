@@ -264,3 +264,26 @@ def test_named_facts_do_not_depend_on_or_infer_a_user_profile(hub, enabled, monk
     assert context.service.run(principal, request()).action == "handoff"
     context.service.wait_for_facts(timeout=10)
     assert [fact["object"] for fact in query(hub, token)] == ["8443"]
+
+
+def test_person_upload_does_not_approve_automatically_extracted_facts(hub, enabled):
+    from commonplace import sessions
+
+    context, _, reader = enabled
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    result = context.service.run(person, request(thread="person-upload"))
+    context.service.wait_for_facts(timeout=10)
+    (fact,) = query(hub, reader)
+    assert fact["object"] == "8443"
+    assert fact["source_thread"] == result.handoff.stored_thread_id
+    assert fact["approval_status"] == fact["fact_status"] == "proposal"
+    assert fact["origin_kind"] == "thread"
+    assert fact["origin_id"] == result.handoff.stored_thread_id
+    assert fact["approved_by"] is None and fact["approval_link"] is None
+    assert fact["origin_link"] == "/app/threads/" + result.handoff.stored_thread_id
+    assert fact["sources"][0]["approval_status"] == "proposal"
+    assert fact["sources"][0]["origin_kind"] == "thread"
+    assert fact["sources"][0]["origin_id"] == result.handoff.stored_thread_id
+    assert fact["sources"][0]["origin_link"] == fact["origin_link"]
+    assert fact["sources"][0].get("approved_by") is None
+    assert fact["sources"][0].get("approval_link") is None

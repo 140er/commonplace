@@ -30,6 +30,19 @@ class ThreadNotFound(LookupError):
     pass
 
 
+def thread_provenance(stored: StoredThread) -> dict:
+    """A filing actor does not verify any transcript's deciding speakers."""
+    from mempalace.fact_provenance import source_link
+
+    return {
+        "origin_kind": "thread",
+        "origin_id": stored.source_thread_id,
+        "origin_link": source_link(stored.id),
+        "filed_by": stored.created_by or "unknown",
+        "approval_status": "proposal" if stored.created_by else "unknown",
+    }
+
+
 def _readable(principal, stored: StoredThread) -> bool:
     return (
         principal.policy.has_scope("threads:read")

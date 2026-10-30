@@ -103,7 +103,7 @@ MCP tools (aliases over the `mempalace_*` tools through `ctx.memory`, so policy 
 | Tool | Args | Maps to |
 |---|---|---|
 | `memory_save` | `text`, `theme?` (wing; default: the token's write wing, else `shared`), `topic?` (room, default `general`), `task?`, `source?` (`{thread, seq_start?, seq_end?}`: the chat messages the words came from) | `mempalace_add_drawer`; then `link_drawer` when `task` given. Returns `saved <id>` (+ `linked to #n`) |
-| `fact_save` | `subject`, `predicate`, `object`, `theme?` (wing), `source?`, `valid_from?`, `sensitivity?`, `single_valued?` | `mempalace_kg_save` under the token's KG wing rules; refuses text the privacy scan flags as a secret. Returns `saved <id>`, `merged into <id>`, `saved <id>, replacing "<old>"` or `saved <id> as history: <id> is newer` |
+| `fact_save` | `subject`, `predicate`, `object`, `theme?` (wing), `source` (required: `{thread, seq_start?, seq_end?, url?}`; `url` required for chats outside Commonplace or T3), `valid_from?`, `sensitivity?`, `single_valued?` | `mempalace_kg_save` under the token's KG wing rules; refuses text the privacy scan flags as a secret. Returns `saved <id>`, `merged into <id>`, `saved <id>, replacing "<old>"` or `saved <id> as history: <id> is newer` |
 | `memory_search` | `query`, `theme?`, `limit?` (default 5) | `mempalace_search`; text: one hit per block: id, theme, author stamp, date, then the verbatim text quoted |
 | `memory_get` | `id` | `mempalace_get_drawer` |
 | `memory_link` | `id`, `task` | `link_drawer` |
@@ -114,11 +114,14 @@ REST:
 GET  /api/memory/search?q=&theme=&limit=   -> {"results":[{"id","theme","topic","text","author","trust","at","cards":[…]}]}
 GET  /api/memory/<id>                      -> {"id","theme","topic","text","author","trust","at","cards":[…]}
 POST /api/memory                           {"text","theme?","topic?","task?"} -> {"id"}
+POST /api/facts                            {"subject","predicate","object","source","theme?","valid_from?","sensitivity?","single_valued?"} -> fact with provenance
 GET  /api/memory/map?limit=400             -> {"nodes":[{"id","kind":"memory|person|card","label","theme","at","weight"}],
                                                "links":[{"source","target","kind":"fact|card|theme","label"}],
                                                "themes":[{"id","label","count"}],
                                                "weeks":[{"week":"2026-W44","count":12}]}
 ```
+`POST /api/facts` uses the same required source and write policy as `fact_save`. Only a verified person session with a navigable source link approves a fact; agent bearer writes remain proposals.
+
 Map links are stored links only: knowledge-graph facts (person↔person, person↔memory via the fact's source), memory↔card links, and memory→theme. Weeks in Europe/Amsterdam.
 
 ## Webhooks (W3): `commonplace/webhooks.py`

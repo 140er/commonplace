@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from mempalace import fact_provenance
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
@@ -125,7 +126,7 @@ def _cards(ctx, memory_id, store):
     ]
 
 
-def _source(args):
+def _source(args, *, fact=False):
     """The chat range a save came from, as add_drawer arguments."""
     value = args.get("source")
     if value is None:
@@ -136,8 +137,10 @@ def _source(args):
             value = json.loads(value)
         except (ValueError, RecursionError):
             value = None
-    if not isinstance(value, dict) or set(value) - {"thread", "seq_start", "seq_end"}:
-        raise ToolError("no: source must be {thread, seq_start, seq_end}")
+    allowed = {"thread", "seq_start", "seq_end"} | ({"url"} if fact else set())
+    if not isinstance(value, dict) or set(value) - allowed:
+        shape = "{thread, seq_start, seq_end, url?}" if fact else "{thread, seq_start, seq_end}"
+        raise ToolError(f"no: source must be {shape}")
     try:
         thread, start, end = source_range(
             value.get("thread"), value.get("seq_start"), value.get("seq_end")
@@ -147,6 +150,11 @@ def _source(args):
     if thread is None:
         raise ToolError("no: source needs a thread")
     found = {"source_thread": thread, "source_seq_start": start, "source_seq_end": end}
+    if fact and "url" in value:
+        try:
+            found["source_url"] = fact_provenance.source_link(thread, value["url"])
+        except ValueError as exc:
+            raise ToolError(f"no: {exc}") from None
     return {key: item for key, item in found.items() if item is not None}
 
 
@@ -281,8 +289,11 @@ def memory_save(ctx, args):
     return f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
 
 
-def fact_save(ctx, args):
-    """File one fact (subject, predicate, object), folded into what is known."""
+def _file_fact(ctx, args):
+    """The server establishes authority; arguments cannot claim user approval."""
+    reserved = set(fact_provenance.COLUMNS) | {"person", "fact_status", "status", "superseded_by"}
+    if reserved.intersection(args):
+        raise ToolError("no: fact origin and approval come from the authenticated caller")
     fact = {key: _string(args, key) for key in ("subject", "predicate", "object")}
     flags = _privacy_flags(" ".join(fact.values()))
     if any(flag.startswith("secret:") for flag in flags):
@@ -298,8 +309,20 @@ def fact_save(ctx, args):
         if not isinstance(args["single_valued"], bool):
             raise ToolError("no: single_valued must be true or false")
         call["single_valued"] = args["single_valued"]
-    call.update(_source(args))
-    result = _memory(ctx, "mempalace_kg_save", call)
+    call.update(_source(args, fact=True))
+    if not call.get("source_thread"):
+        raise ToolError("no: fact_save needs a source thread")
+    if fact_provenance.source_link(call["source_thread"], call.get("source_url")) is None:
+        raise ToolError("no: source.url is required for a chat outside Commonplace or T3")
+    return _memory(ctx, "mempalace_kg_save", call)
+
+
+def fact_save(ctx, args):
+    """File one fact (subject, predicate, object), folded into what is known."""
+    result = _file_fact(ctx, args)
+    flags = _privacy_flags(
+        " ".join(_string(args, key) for key in ("subject", "predicate", "object"))
+    )
     triple_id, action = result.get("triple_id"), result.get("action")
     _emit(ctx, "fact.saved", triple_id, action=action, flags=flags)
     if action == "merged":
@@ -504,6 +527,27 @@ def install(gateway):
             log_failure(logger, "memory HTTP request failed", exc)
             send_json(h, 500, {"error": "memory request failed"})
 
+    def save_fact_http(h):
+        principal = require_principal(gateway, h)
+        if principal is None:
+            return
+        try:
+            if principal.policy.refusal("fact_save"):
+                raise ToolError("no: fact write refused")
+            ctx = ToolContext(principal=principal, gateway=gateway)
+            result = _file_fact(ctx, read_json(h))
+            _emit(ctx, "fact.saved", result.get("triple_id"), action=result.get("action"))
+            send_json(h, 201, result)
+        except BadRequest:
+            pass
+        except ToolError as exc:
+            send_json(h, 403, {"error": str(exc)})
+        except Exception as exc:
+            log_failure(logger, "fact HTTP request failed", exc)
+            send_json(h, 500, {"error": "fact request failed"})
+
+    gateway.add_route("POST", "/api/facts", save_fact_http)
+
     gateway.add_prefix_route("GET", "/api/memory/", handle)
     gateway.add_prefix_route("POST", "/api/memory/", handle)
 
@@ -547,20 +591,21 @@ _register(
 )
 _register(
     "fact_save",
-    "Save one fact as subject, predicate, object. The same fact gains a source"
-    " instead of a copy; a new value of a single-valued predicate replaces the old.",
+    "Save one fact with its originating chat source. Agent writes are proposals;"
+    " user approval comes from a signed-in person, never an agent's claim."
+    " Repeated facts gain sources; single-valued changes replace eligible older facts.",
     fact_save,
     {
         "subject": _STRING,
         "predicate": _STRING,
         "object": _STRING,
         "theme": _STRING,
-        "source": _SOURCE,
+        "source": {**_SOURCE, "properties": {**_SOURCE["properties"], "url": _STRING}},
         "valid_from": _STRING,
         "sensitivity": {"type": "string", "enum": ["public", "internal", "private", "secret"]},
         "single_valued": {"type": "boolean"},
     },
-    ["subject", "predicate", "object"],
+    ["subject", "predicate", "object", "source"],
     "kg:write",
     "write",
     # The worker tool it calls is not in the slim profile and refuses

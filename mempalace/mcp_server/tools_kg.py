@@ -119,6 +119,7 @@ def tool_kg_add(
     source_thread: str = None,
     source_seq_start: int = None,
     source_seq_end: int = None,
+    source_url: str = None,
     wing: str = None,
     sensitivity: str = None,
     sensitivities: list = None,
@@ -165,6 +166,7 @@ def tool_kg_add(
             "source_thread": source_thread,
             "source_seq_start": source_seq_start,
             "source_seq_end": source_seq_end,
+            "source_url": source_url,
             "wing": wing,
             "sensitivity": sensitivity,
         },
@@ -184,6 +186,7 @@ def tool_kg_add(
                 source_thread=source_thread,
                 source_seq_start=source_seq_start,
                 source_seq_end=source_seq_end,
+                source_url=source_url,
                 wing=wing,
                 sensitivity=sensitivity,
                 sensitivities=sensitivities,
@@ -216,6 +219,7 @@ def tool_kg_save(
     source_thread: str = None,
     source_seq_start: int = None,
     source_seq_end: int = None,
+    source_url: str = None,
     source_drawer_id: str = None,
     source_file: str = None,
     wing: str = None,
@@ -256,6 +260,7 @@ def tool_kg_save(
             "source_thread": source_thread,
             "source_seq_start": source_seq_start,
             "source_seq_end": source_seq_end,
+            "source_url": source_url,
             "source_drawer_id": source_drawer_id,
             "source_file": source_file,
             "confidence": confidence,
@@ -276,6 +281,7 @@ def tool_kg_save(
                 source_thread=source_thread,
                 source_seq_start=source_seq_start,
                 source_seq_end=source_seq_end,
+                source_url=source_url,
                 source_drawer_id=source_drawer_id,
                 source_file=source_file,
                 wing=wing,
@@ -288,8 +294,24 @@ def tool_kg_save(
         outcome = {"success": False, "error": str(e)}
         _wal_result("kg_save", outcome)
         return outcome
+    saved = _call_kg(
+        lambda kg: next(
+            (
+                row
+                for row in kg.query_entity(
+                    subject, wings=[wing] if wing else None, sensitivities=sensitivities
+                )
+                if row["id"] == outcome["triple_id"]
+            ),
+            {},
+        ),
+        read=True,
+    )
+    from mempalace.fact_provenance import COLUMNS
+
     outcome = {
         "success": True,
+        **{key: saved.get(key) for key in (*COLUMNS, "fact_status")},
         **outcome,
         "fact": f"{subject} → {predicate} → {object}",
         "wing": wing,
@@ -367,6 +389,7 @@ def tool_kg_supersede(
     source_thread: str = None,
     source_seq_start: int = None,
     source_seq_end: int = None,
+    source_url: str = None,
     wing: str = None,
     sensitivity: str = None,
     sensitivities: list = None,
@@ -408,6 +431,7 @@ def tool_kg_supersede(
             "source_thread": source_thread,
             "source_seq_start": source_seq_start,
             "source_seq_end": source_seq_end,
+            "source_url": source_url,
             "wing": wing,
             "sensitivity": sensitivity,
         },
@@ -427,6 +451,7 @@ def tool_kg_supersede(
             source_thread=source_thread,
             source_seq_start=source_seq_start,
             source_seq_end=source_seq_end,
+            source_url=source_url,
             wing=wing,
             sensitivity=sensitivity,
             sensitivities=sensitivities,

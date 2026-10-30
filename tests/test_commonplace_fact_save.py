@@ -16,6 +16,7 @@ SCOPED = dict(
 
 
 def _save(hub, token, **args):
+    args.setdefault("source", {"thread": "mcp:test-fact-save"})
     response = hub.rpc(token, "tools/call", {"name": "fact_save", "arguments": args})
     assert "error" not in response, response
     result = response["result"]
@@ -35,7 +36,7 @@ def test_fact_save_merges_and_replaces(hub):
         subject="Jeffrey",
         predicate="works_at",
         object="Acme",
-        source={"thread": "t1", "seq_start": 3},
+        source={"thread": "mcp:t1", "seq_start": 3},
         valid_from="2024-01-01",
     )
     assert not error and text.startswith("saved ")
@@ -46,7 +47,7 @@ def test_fact_save_merges_and_replaces(hub):
         subject="Jeffrey",
         predicate="works_at",
         object="Acme",
-        source={"thread": "t2", "seq_start": 8},
+        source={"thread": "mcp:t2", "seq_start": 8},
     )
     assert text == f"merged into {first}"
     text, _ = _save(
@@ -60,7 +61,7 @@ def test_fact_save_merges_and_replaces(hub):
     assert text.endswith('replacing "Acme"')
     facts = {f["object"]: f for f in _facts(hub, "Jeffrey")}
     assert facts["Acme"]["status"] == "superseded" and facts["Acme"]["wing"] == "shared"
-    assert [s["source_thread"] for s in facts["Acme"]["sources"]] == ["t1", "t2"]
+    assert [s["source_thread"] for s in facts["Acme"]["sources"]] == ["mcp:t1", "mcp:t2"]
     assert facts["Initech"]["current"]
     kinds = [e["kind"] for e in events.after(hub.db, hub.workspace)]
     assert kinds.count("fact.saved") == 3
