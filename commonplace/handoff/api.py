@@ -8,7 +8,7 @@ POST /api/handoff                         handoff:write   HandoffRequest → Han
 GET  /api/handoffs?task=#142              threads:read    list
 GET  /api/handoffs/<id>                   threads:read
 POST /api/handoffs/<id>/successor         handoff:write   {agent_ref, url?, thread_id?}
-POST /api/handoffs/<id>/launch-failed     handoff:write   {error} (client launcher failed)
+POST /api/handoffs/<id>/launch-failed     handoff:write   {error} (max 1 KB JSON body)
 POST /api/handoffs/<id>/relaunch          owner
 GET  /api/threads/<id>                    threads:read    StoredThread
 GET  /api/threads/<id>/messages?start=&end=   threads:read
@@ -49,6 +49,7 @@ from .thread_store import ThreadConflict
 
 MAX_HANDOFF_BYTES = 64 * 1024 * 1024
 MAX_BODY_BYTES = 1024 * 1024
+MAX_FAILURE_BYTES = 1024
 
 
 class _RequestError(Exception):
@@ -339,7 +340,11 @@ class _API:
             if method == "GET" and len(parts) == 1:
                 self.readable(principal)
                 return 200, _public(self.handoff(principal, record_id))
-            if method == "POST" and len(parts) == 2 and parts[1] in ("successor", "relaunch"):
+            if (
+                method == "POST"
+                and len(parts) == 2
+                and parts[1] in ("successor", "launch-failed", "relaunch")
+            ):
                 if parts[1] == "relaunch":
                     self.require(principal, owner=True)
                     self.handoff(principal, record_id)
@@ -349,13 +354,18 @@ class _API:
                     )
                 self.require(principal, SCOPE_HANDOFF)
                 self.handoff(principal, record_id)
-                data = _object(_read_json(handler), {"agent_ref", "url", "thread_id"})
-                ref = SuccessorRef(
-                    agent_ref=_text(data, "agent_ref", required=True),
-                    url=_text(data, "url"),
-                    thread_id=_text(data, "thread_id"),
-                )
-                record = self.ctx.service.register_successor(principal, record_id, ref)
+                if parts[1] == "launch-failed":
+                    data = _object(_read_json(handler, MAX_FAILURE_BYTES), {"error"})
+                    error = _text(data, "error", default=None)
+                    record = self.ctx.service.report_launch_failure(principal, record_id, error)
+                else:
+                    data = _object(_read_json(handler), {"agent_ref", "url", "thread_id"})
+                    ref = SuccessorRef(
+                        agent_ref=_text(data, "agent_ref", required=True),
+                        url=_text(data, "url"),
+                        thread_id=_text(data, "thread_id"),
+                    )
+                    record = self.ctx.service.register_successor(principal, record_id, ref)
                 if record.workspace_id != workspace:
                     _missing()
                 return 200, _public(record)

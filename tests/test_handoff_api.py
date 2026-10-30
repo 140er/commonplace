@@ -51,6 +51,14 @@ ROUTES = [
         "write",
         200,
     ),
+    (
+        "launch_failure",
+        "POST",
+        "/api/handoffs/hof_local/launch-failed",
+        {"error": "launcher exited"},
+        "write",
+        200,
+    ),
     ("relaunch", "POST", "/api/handoffs/hof_local/relaunch", None, "owner", 200),
     ("thread", "GET", "/api/threads/thr_local", None, "read", 200),
     ("messages", "GET", "/api/threads/thr_local/messages", None, "read", 200),
@@ -209,6 +217,10 @@ class _Service:
     def register_successor(self, principal, handoff_id, ref):
         self.calls.append(("successor", principal, handoff_id, ref))
         return replace(self.data.records[handoff_id], successor=ref, state="done")
+
+    def report_launch_failure(self, principal, handoff_id, error):
+        self.calls.append(("launch_failure", principal, handoff_id, error))
+        return replace(self.data.records[handoff_id], state="launch_failed")
 
     def relaunch(self, principal, handoff_id):
         self.calls.append(("relaunch", principal, handoff_id))
@@ -410,6 +422,7 @@ def test_every_route_uses_callers_workspace(hub, route):
     if name in {
         "handoff",
         "successor",
+        "launch_failure",
         "relaunch",
         "thread",
         "messages",
@@ -419,7 +432,16 @@ def test_every_route_uses_callers_workspace(hub, route):
     }:
         assert (status, result) == (404, NOT_FOUND)
         assert not any(
-            call[0] in {"successor", "relaunch", "remove_webhook", "messages", "recall", "chain"}
+            call[0]
+            in {
+                "successor",
+                "launch_failure",
+                "relaunch",
+                "remove_webhook",
+                "messages",
+                "recall",
+                "chain",
+            }
             for call in hub.calls
         )
     else:
@@ -454,7 +476,8 @@ def test_body_routes_reject_invalid_json_or_missing_fields(hub, route, body):
     status, result, _ = hub.request(method, path, body)
     assert status == 400, result
     assert not any(
-        call[0] in {"run", "successor", "recall", "set", "add_webhook"} for call in hub.calls
+        call[0] in {"run", "successor", "launch_failure", "recall", "set", "add_webhook"}
+        for call in hub.calls
     )
 
 
@@ -583,6 +606,90 @@ def test_successor_fields_and_actor(hub):
 )
 def test_invalid_successor_fields(hub, body):
     assert hub.request("POST", "/api/handoffs/hof_local/successor", body)[0] == 400
+
+
+@pytest.mark.parametrize("error", ["", "  launcher failed\r\ncafé 🦉  "])
+def test_launch_failure_passes_exact_error_and_sanitizes_handoff(hub, error):
+    status, result, _ = hub.request(
+        "POST", "/api/handoffs/hof_local/launch-failed", {"error": error}, token="member"
+    )
+    assert status == 200
+    assert result["id"] == "hof_local" and result["state"] == "launch_failed"
+    assert "connection_id" not in result and "secret" not in json.dumps(result)
+    _, principal, handoff_id, supplied_error = hub.calls[-1]
+    assert principal.actor == "conn:member" and principal.workspace_id == hub.workspace
+    assert handoff_id == "hof_local" and supplied_error == error
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"error": None},
+        {"error": 1},
+        {"error": False},
+        {"error": []},
+        {"error": {}},
+        {"error": "failure", "workspace_id": "forged"},
+    ],
+)
+def test_launch_failure_rejects_missing_or_invalid_error(hub, body):
+    assert hub.request("POST", "/api/handoffs/hof_local/launch-failed", body)[0] == 400
+    assert not any(call[0] == "launch_failure" for call in hub.calls)
+
+
+@pytest.mark.parametrize("glyph", ["x", "é", "🦉"])
+def test_launch_failure_limit_counts_entire_utf8_body(hub, glyph):
+    overhead = len(b'{"error":""}')
+    count, padding = divmod(api.MAX_FAILURE_BYTES - overhead, len(glyph.encode("utf-8")))
+    error = glyph * count + "x" * padding
+    raw = json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    assert len(raw) == 1024
+    assert hub.request("POST", "/api/handoffs/hof_local/launch-failed", raw)[0] == 200
+    assert hub.calls[-1][3] == error
+    hub.calls.clear()
+    oversized = raw[:-2] + b'x"}'
+    assert len(oversized) == 1025
+    if glyph != "x":
+        assert len(oversized.decode("utf-8")) < 1024
+    assert hub.request("POST", "/api/handoffs/hof_local/launch-failed", oversized)[0] == 413
+    assert not any(call[0] == "launch_failure" for call in hub.calls)
+
+
+@pytest.mark.parametrize("handoff_id", ["missing", "hof_other"])
+def test_launch_failure_hides_missing_and_foreign_handoffs(hub, handoff_id):
+    assert hub.request("POST", f"/api/handoffs/{handoff_id}/launch-failed", {"error": "failed"})[
+        :2
+    ] == (404, NOT_FOUND)
+    assert not any(call[0] == "launch_failure" for call in hub.calls)
+
+
+def test_launch_failure_does_not_allow_owner_to_bypass_write_scope(hub):
+    assert hub.request(
+        "POST", "/api/handoffs/hof_local/launch-failed", {"error": "failed"}, token="owner_empty"
+    )[:2] == (404, NOT_FOUND)
+    assert not hub.calls
+
+
+def test_launch_failure_service_visibility_error_stays_not_found(hub, monkeypatch):
+    def missing(*args):
+        raise ThreadNotFound("private")
+
+    monkeypatch.setattr(hub.ctx.service, "report_launch_failure", missing)
+    assert hub.request("POST", "/api/handoffs/hof_local/launch-failed", {"error": "failed"})[
+        :2
+    ] == (404, NOT_FOUND)
+
+
+def test_launch_failure_cannot_return_foreign_workspace(hub, monkeypatch):
+    monkeypatch.setattr(
+        hub.ctx.service,
+        "report_launch_failure",
+        lambda *args: hub.ctx.handoff_db.records["hof_other"],
+    )
+    assert hub.request("POST", "/api/handoffs/hof_local/launch-failed", {"error": "failed"})[
+        :2
+    ] == (404, NOT_FOUND)
 
 
 def test_thread_range_and_verbatim_messages(hub):
@@ -813,10 +920,13 @@ def test_invalid_webhook_fields(hub, body):
 def test_body_limits_and_media_types(hub, route):
     name, method, path, body, _, _ = route
     assert hub.request(method, path, body, headers={"Content-Type": "text/plain"})[0] == 415
-    limit = api.MAX_HANDOFF_BYTES if name == "create" else api.MAX_BODY_BYTES
+    limit = {"create": api.MAX_HANDOFF_BYTES, "launch_failure": api.MAX_FAILURE_BYTES}.get(
+        name, api.MAX_BODY_BYTES
+    )
     assert hub.request(method, path, b"{}", headers={"Content-Length": str(limit + 1)})[0] == 413
     assert not any(
-        call[0] in {"run", "successor", "recall", "set", "add_webhook"} for call in hub.calls
+        call[0] in {"run", "successor", "launch_failure", "recall", "set", "add_webhook"}
+        for call in hub.calls
     )
 
 
@@ -871,6 +981,15 @@ def test_exact_handoff_body_limit(hub, monkeypatch):
             None,
             "service",
             "relaunch",
+            HandoffDBError("private"),
+            409,
+        ),
+        (
+            "POST",
+            "/api/handoffs/hof_local/launch-failed",
+            {"error": "launcher exited"},
+            "service",
+            "report_launch_failure",
             HandoffDBError("private"),
             409,
         ),
