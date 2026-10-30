@@ -86,10 +86,14 @@ For Claude Code, usage includes input, cache-read, cache-creation and output
 tokens. For Codex, it comes from `token_count` events. The hook reads the
 transcript tail rather than the whole file for this check.
 
-Windows come from a model-name table. A name containing `[1m]` means a
-1,000,000-token window. The default window is 200,000 tokens. Set
-`context_window` through the API, or use `--window` on `handoff enable`,
-to supply the correct window for your model.
+Windows come from a model-name table; the default is 200,000 tokens. A
+Claude model runs with a 1,000,000-token window when its name ends in
+`[1m]` or `-1m`, is on the known list (add more with
+`COMMONPLACE_1M_MODELS=name,prefix`), or is the model Claude Code was told
+to use (`ANTHROPIC_MODEL`, or `model` in `.claude/settings.json`) and that
+has the marker. A transcript that already uses more than the table window
+is on 1M too. `--window` on `handoff enable` (or `context_window` through
+the API) always wins.
 
 Unknown usage does not trigger a threshold handoff. `PreCompact` is the
 backstop: when handoff is enabled, it requests a handoff even if the
@@ -150,8 +154,9 @@ to stop the old agent.
 ### Codex
 
 Use the repository's Codex hook mechanism: `.codex/hooks.json`, with a
-nested `hooks` object and handler groups. This example checks at `Stop`
-and uses `PreCompact` as the backstop.
+nested `hooks` object and handler groups. Register the hook for `Stop`
+(the check), `PreCompact` (the backstop) and `UserPromptSubmit` (where the
+handoff happens).
 
 ```json
 {
@@ -177,6 +182,17 @@ and uses `PreCompact` as the backstop.
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/absolute/path/to/repo/hooks/commonplace_handoff_hook.sh\" --client codex",
+            "timeout": 60
+          }
+        ]
+      }
     ]
   }
 }
@@ -189,13 +205,13 @@ either JSON or TOML in a config layer so hooks do not run twice. See the
 existing configuration and trust flow. `mempalace status` checks project
 trust; it cannot confirm that each definition was reviewed.
 
-Codex hooks have no output that stops a running turn, so for Codex the
-hook only shows `Context handed off. Successor: …` as a system message.
-The thread is stored and the successor runs; end the old Codex session
-yourself.
-The Codex stop mechanism still needs verification. A `systemMessage`
-alone does not establish that the old agent stops or compaction is
-cancelled. Do not rely on automatic replacement until that is confirmed.
+A Codex hook can't stop a running turn. So over the threshold the hook
+only marks the session and shows "Context is nearly full. It hands off at
+the start of the next turn." When your next message arrives
+(`UserPromptSubmit`), it stores the thread, writes the handoff and starts
+the successor with your message passed on, word for word. The old session
+refuses that message with "Context handed off. Successor: …". If the hub
+can't be reached, the mark stays and the next turn tries again.
 
 ## Choose the successor command
 
@@ -248,13 +264,13 @@ Without `successor_argv`, the hook starts nothing and names the prompt
 file in its stop message, so you can start the successor yourself.
 
 The hook registers the successor as `pid:<pid>` of the command it ran.
-For `t3 thread start` that is the CLI, not the T3 thread, and T3 does not
-pass `COMMONPLACE_HANDOFF_ID` to the thread's agent. The chain still
-links when the successor's thread id is registered
-(`POST /api/handoffs/<id>/successor` with `thread_id`), and the prompt
-always names the old thread, so recall works either way.
-For T3, thread ID and URL capture, forwarding the handoff ID into the new
-agent, and selection of the working branch or worktree need verification.
+
+The successor prompt ends with `commonplace-handoff-id: hof_…`. A
+successor whose environment has no `COMMONPLACE_HANDOFF_ID` (a T3 thread:
+`t3 thread start` can't pass environment variables to the thread's agent)
+gets it from that line: its own hook reads it from the start of its
+transcript, so its next handoff links into the chain right away. The hub
+checks that the parent is in the same workspace.
 
 ## What the successor gets
 
@@ -524,13 +540,13 @@ old thread and the successor reference or URL.
   decision quotes. Use their full-range pointers for the rest.
 - Request limits are 64 MB for `/api/handoff` and 1 MB for
   other JSON requests.
-- Model windows must match the model you run. Claude Code transcripts
-  don't say whether a model runs with a 1M window, so set `--window
-  1000000` for those agents.
-- Codex hooks can't stop a running turn; see the Codex section.
+- A Codex handoff happens at the start of the next turn, not mid-turn;
+  see the Codex section.
 - Each stored thread is also written into Memory search in the background,
   in a private section: ordinary Memory tools show it only to tokens with
   `private:read`. The thread tools need `threads:read`.
-- If the gateway crashes between recording a successor and sending
-  `handoff.completed`, that one event is lost. Run one gateway per
-  control database.
+- `handoff.completed` is queued in the same transaction that records the
+  successor and delivered exactly once, also after a crash (it goes out
+  when the gateway starts again) and with several gateways on one control
+  database. A webhook receiver may still see one delivery twice if the
+  hub crashed after the receiver accepted it; deduplicate by delivery id.
