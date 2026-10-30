@@ -2,6 +2,7 @@
 
 import json
 import os
+import pwd
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,8 @@ def main():
     )
     environment = dict(os.environ)
     environment.pop("CLAUDECODE", None)
+    # The hook runs under a throwaway HOME; the agent needs the user's own login.
+    environment["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
     try:
         process = subprocess.run(
             [
