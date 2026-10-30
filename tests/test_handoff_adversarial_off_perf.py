@@ -2,25 +2,27 @@
 
 import hashlib
 import http.client
+import inspect
 import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from commonplace import cli
+from commonplace import cli, extensions
 from commonplace.control_db import ControlDB
-from commonplace.gateway import Gateway
+from commonplace.gateway import Gateway, Mediator
 from commonplace.handoff import hook, mcp_tools, palace_mirror, transcripts, writer
 from commonplace.handoff.models import HandoffRequest, SettingRow, ThreadMeta
 from commonplace.handoff.recall import Recall
@@ -182,6 +184,7 @@ def _source(values, fmt, ascii_only):
 def _principal():
     return SimpleNamespace(
         workspace_id="workspace-review",
+        role="owner",
         policy=Policy.build(
             profile="full",
             scopes=["memory:read", "threads:read"],
@@ -191,13 +194,32 @@ def _principal():
     )
 
 
-def _thread_tool(store):
-    ctx = SimpleNamespace(
-        gateway=SimpleNamespace(mediator=SimpleNamespace(local_tools={})),
+def _thread_get(store, stored_id):
+    context = SimpleNamespace(
         recall=Recall(lambda workspace: store),
+        handoff_db=SimpleNamespace(list_settings=lambda workspace: []),
+        has_threads=lambda workspace: True,
+        store_for=lambda workspace: store,
     )
-    mcp_tools.register(ctx)
-    return ctx.gateway.mediator.local_tools["thread_get"]
+    mediator = Mediator(None, _Workers())
+    mediator.gateway = SimpleNamespace(handoff=context)
+    principal = _principal()
+    listed = mediator.handle(principal, {"id": 1, "method": "tools/list"})
+    assert "thread_get" in {tool["name"] for tool in listed["result"]["tools"]}
+    assert extensions.get("thread_get").usable_by(principal, mediator.gateway)
+    response = mediator.handle(
+        principal,
+        {
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "thread_get",
+                "arguments": {"thread_id": stored_id, "include_raw": True},
+            },
+        },
+    )
+    assert "error" not in response and not response["result"].get("isError"), response
+    return json.loads(response["result"]["content"][0]["text"])
 
 
 def _coverage(messages, chunks):
@@ -262,9 +284,7 @@ def test_parse_store_get_and_quotes_are_verbatim(fmt, values, ascii_only, chunk_
     store = ThreadStore(":memory:")
     try:
         stored = store.store("workspace-review", "source", messages, actor="reviewer")
-        result = _thread_tool(store).handler(
-            _principal(), {"thread_id": stored.id, "include_raw": True}
-        )
+        result = _thread_get(store, stored.id)
         restored = json.loads(json.dumps(result))
         assert restored["messages"] == [asdict(message) for message in messages]
         for actual, expected, expected_raw in zip(restored["messages"], values, raw):
@@ -306,9 +326,7 @@ def test_escaped_lone_surrogate_round_trip(fmt):
     store = ThreadStore(":memory:")
     try:
         stored = store.store("workspace-review", "source", messages, actor="reviewer")
-        result = _thread_tool(store).handler(
-            _principal(), {"thread_id": stored.id, "include_raw": True}
-        )
+        result = _thread_get(store, stored.id)
         assert result["messages"][0]["text"] == values[0]
         assert result["messages"][0]["raw"] == raw[0]
     finally:
@@ -360,14 +378,19 @@ def _http(port, token, method, path, body=None):
 
 @pytest.fixture
 def gateway(tmp_path):
-    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    path = tmp_path / "control.sqlite3"
+    db = ControlDB(str(path))
     owner = db.create_user("review@example.test", is_admin=True)
     workspace = db.create_workspace("review", owner)
     instance = Gateway(db, SimpleNamespace())
     instance.mediator.workers = _Workers()
-    ctx = install(instance, tmp_path, start_outbox=False)
+    assert not hasattr(instance, "handoff")
+    ctx = install(instance, tmp_path)
+    assert install(instance, tmp_path) is ctx
     try:
-        yield SimpleNamespace(db=db, owner=owner, workspace=workspace, gateway=instance, ctx=ctx)
+        yield SimpleNamespace(
+            db=db, path=path, owner=owner, workspace=workspace, gateway=instance, ctx=ctx
+        )
     finally:
         ctx.close()
         db.close()
@@ -385,32 +408,118 @@ def _token(local, policy, name="review"):
     return token
 
 
-# hub-core (PR #13) as reviewed: the baseline "off" must match. A commit in
+# Develop after PR #14: the baseline "off" must match. A commit in
 # this branch's own history, so any clone of the branch can read it.
-HUB_CORE = "a14761ec2b26bc8f75320af051ca433f4859b552"
+DEVELOP_BASELINE = "c07bb354"
 
 
 @pytest.fixture(scope="module")
-def legacy():
-    modules = []
-    for area in ("policy", "gateway", "cli"):
-        name = "commonplace._handoff_review_legacy_" + area
+def legacy(tmp_path_factory):
+    snapshot = tmp_path_factory.mktemp("develop-baseline")
+    archive = subprocess.check_output(
+        ["git", "archive", DEVELOP_BASELINE, "commonplace", "mempalace"], cwd=ROOT
+    )
+    with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+        source.extractall(snapshot, filter="data")
+    # A separate interpreter keeps relative and dynamic imports, policies and
+    # extension registrations entirely on the pinned source tree.
+    script = (
+        """
+import io
+import json
+import sys
+import threading
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
+from pathlib import Path
+from types import SimpleNamespace
+from commonplace import cli, extensions, gateway, policy
+from commonplace.control_db import ControlDB
+from commonplace.gateway import Gateway
+from commonplace.policy import TOOL_RULES, Policy
+
+for module in (cli, extensions, gateway, policy):
+    assert Path(module.__file__).resolve().is_relative_to(Path.cwd())
+assert "commonplace.handoff.extension" not in extensions.MODULES
+"""
+        + inspect.getsource(_Workers)
+        + inspect.getsource(_server)
+        + """
+db = None
+server_context = None
+try:
+    for line in sys.stdin:
+        request = json.loads(line)
+        action = request["action"]
+        if action == "policy":
+            result = Policy.build(**request["values"]).to_json()
+        elif action == "open":
+            db = ControlDB(request["path"])
+            instance = Gateway(db, SimpleNamespace())
+            instance.mediator.workers = _Workers()
+            server_context = _server(instance)
+            result = server_context.__enter__()
+        elif action == "close":
+            server_context.__exit__(None, None, None)
+            server_context = None
+            db.close()
+            db = None
+            result = None
+        elif action == "cli":
+            cli._db = lambda args: db
+            output, errors = io.StringIO(), io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                status = cli.main(request["arguments"])
+            result = [status, output.getvalue(), errors.getvalue()]
+        print(json.dumps(result), flush=True)
+finally:
+    if server_context is not None:
+        server_context.__exit__(None, None, None)
+    if db is not None:
+        db.close()
+"""
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-u", "-c", script],
+        cwd=snapshot,
+        env={**os.environ, "PYTHONPATH": str(snapshot)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    def exchange(action, **values):
+        process.stdin.write(json.dumps({"action": action, **values}) + "\n")
+        process.stdin.flush()
+        line = process.stdout.readline()
+        assert line, process.stderr.read()
+        return json.loads(line)
+
+    @contextmanager
+    def server(path):
+        port = exchange("open", path=str(path))
         try:
-            source = subprocess.check_output(
-                ["git", "show", f"{HUB_CORE}:commonplace/{area}.py"],
-                cwd=ROOT,
-                stderr=subprocess.DEVNULL,
-            )
-        except (OSError, subprocess.CalledProcessError):
-            pytest.skip("hub-core baseline commit is not in this clone")
-        module = ModuleType(name)
-        module.__file__ = str(ROOT / "commonplace" / f"{area}.py")
-        sys.modules[name] = module
-        exec(compile(source, module.__file__, "exec"), module.__dict__)
-        modules.append(module)
-    yield SimpleNamespace(policy=modules[0], gateway=modules[1], cli=modules[2])
-    for module in modules:
-        sys.modules.pop(module.__name__, None)
+            yield port
+        finally:
+            exchange("close")
+
+    try:
+        yield SimpleNamespace(
+            policy=lambda **values: Policy.from_json(exchange("policy", values=values)),
+            server=server,
+            cli=lambda arguments: exchange("cli", arguments=arguments),
+        )
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+            raise
+        assert process.returncode == 0, process.stderr.read()
+        process.stdout.close()
+        process.stderr.close()
 
 
 @pytest.mark.parametrize("profile", ["slim", "standard", "full"])
@@ -422,12 +531,8 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             actor=gateway.owner,
             is_owner=True,
         )
-    policy = legacy.policy.Policy.build(
-        profile=profile, read_wings=["*"], write_wings=["*"], trust="trusted"
-    )
-    token = _token(gateway, Policy.from_json(policy.to_json()))
-    baseline = legacy.gateway.Gateway(gateway.db, SimpleNamespace())
-    baseline.mediator.workers = _Workers()
+    policy = legacy.policy(profile=profile, read_wings=["*"], write_wings=["*"], trust="trusted")
+    token = _token(gateway, policy)
     requests = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -456,7 +561,7 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             },
         },
     ]
-    with _server(baseline) as before, _server(gateway.gateway) as after:
+    with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
         for request in requests:
             initial = len(gateway.db.audit_entries(limit=10_000))
             expected = _http(before, token, "POST", "/mcp", request)
@@ -466,11 +571,94 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             assert actual == expected
             count = len(middle) - initial
             assert len(final) - len(middle) == count
-            keys = ("action", "tool", "decision", "reason", "target_ids")
+            keys = (
+                "action",
+                "tool",
+                "decision",
+                "reason",
+                "workspace_id",
+                "user_id",
+                "connection_id",
+                "auth",
+                "wing",
+                "target_ids",
+            )
             assert [[entry[key] for key in keys] for entry in final[:count]] == [
                 [entry[key] for key in keys] for entry in middle[:count]
             ]
     assert not gateway.ctx._stores
+
+
+class _AuditDifference(AssertionError):
+    pass
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=_AuditDifference,
+    reason=(
+        "commonplace/gateway.py audits unavailable thread_get as a policy denial "
+        "instead of c07bb354's unknown tool; fix belongs to the gateway"
+    ),
+)
+@pytest.mark.parametrize("profile", ["slim", "standard", "full"])
+@pytest.mark.parametrize("explicit_off", [False, True])
+def test_unavailable_thread_audit_matches_develop(gateway, legacy, profile, explicit_off):
+    if explicit_off:
+        gateway.ctx.settings.set(
+            SettingRow(gateway.workspace, "workspace", "", enabled=False),
+            actor=gateway.owner,
+            is_owner=True,
+        )
+    token = _token(gateway, legacy.policy(profile=profile, read_wings=["*"], trust="trusted"))
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "thread_get", "arguments": {"thread_id": "missing"}},
+    }
+    with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
+        initial = len(gateway.db.audit_entries(limit=10_000))
+        expected = _http(before, token, "POST", "/mcp", request)
+        middle = gateway.db.audit_entries(limit=10_000)
+        actual = _http(after, token, "POST", "/mcp", request)
+        final = gateway.db.audit_entries(limit=10_000)
+    assert len(middle) - initial == len(final) - len(middle) == 1
+    expected_audit = middle[0]
+    actual_audit = final[0]
+    # Only audit parity can xfail; any external response change still fails.
+    assert (
+        actual
+        == expected
+        == (
+            200,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {"code": -32601, "message": "Unknown tool: thread_get"},
+            },
+        )
+    )
+    assert not gateway.ctx._stores
+    keys = (
+        "action",
+        "tool",
+        "decision",
+        "workspace_id",
+        "user_id",
+        "connection_id",
+        "auth",
+        "wing",
+        "target_ids",
+    )
+    assert [actual_audit[key] for key in keys] == [expected_audit[key] for key in keys]
+    assert expected_audit["reason"] == "unknown tool"
+    denial = (
+        "tool not allowed for this connection" if profile == "slim" else "needs scope threads:read"
+    )
+    assert actual_audit["reason"] in {"unknown tool", denial}
+    if actual_audit["reason"] != expected_audit["reason"]:
+        raise _AuditDifference((actual_audit["reason"], expected_audit["reason"]))
 
 
 @pytest.mark.parametrize("profile", ["slim", "standard", "full"])
@@ -505,12 +693,16 @@ def test_new_token_has_legacy_tool_list_when_workspace_off(gateway, legacy, prof
             is_owner=True,
         )
     token = _token(gateway, Policy.build(profile=profile, read_wings=["*"], trust="trusted"))
-    principal = gateway.gateway.authenticate("Bearer " + token)
-    baseline = legacy.gateway.Mediator(gateway.db, _Workers())
-    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-    assert gateway.gateway.mediator.handle(principal, request) == baseline.handle(
-        principal, request
+    before_token = _token(
+        gateway,
+        legacy.policy(profile=profile, read_wings=["*"], trust="trusted"),
+        name="review-before",
     )
+    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
+        assert _http(after, token, "POST", "/mcp", request) == _http(
+            before, before_token, "POST", "/mcp", request
+        )
     assert not gateway.ctx._stores
 
 
@@ -540,18 +732,22 @@ def test_thread_tools_available_for_enabled_or_stored_workspace(gateway, availab
 
 
 def test_legacy_cli_outputs_match(gateway, legacy, monkeypatch, capsys):
-    policy = legacy.policy.Policy.build(profile="standard", read_wings=["*"], trust="trusted")
-    _token(gateway, Policy.from_json(policy.to_json()))
+    policy = legacy.policy(profile="standard", read_wings=["*"], trust="trusted")
+    _token(gateway, policy)
     monkeypatch.setattr(cli, "_db", lambda args: gateway.db)
-    monkeypatch.setattr(legacy.cli, "_db", lambda args: gateway.db)
-    for args in (["user", "list"], ["workspace", "list"], ["token", "list"], ["audit"]):
-        expected_status = legacy.cli.main(args)
-        expected = capsys.readouterr()
-        assert cli.main(args) == expected_status
-        assert capsys.readouterr() == expected
+    with legacy.server(gateway.path):
+        for args in (["user", "list"], ["workspace", "list"], ["token", "list"], ["audit"]):
+            expected_status, output, errors = legacy.cli(args)
+            assert cli.main(args) == expected_status
+            assert capsys.readouterr() == (output, errors)
 
 
 def test_service_returns_before_slow_mirror_finishes(gateway, monkeypatch):
+    # A disk-backed run took 0.241s, waiting at SQLite COMMIT while the mirror
+    # stayed blocked. Isolate scheduling here; full API budgets below keep
+    # the default durable SQLite settings.
+    gateway.db._conn.execute("PRAGMA synchronous = OFF")
+    gateway.ctx.store_for(gateway.workspace)._conn.execute("PRAGMA synchronous = OFF")
     gateway.ctx.settings.set(
         SettingRow(gateway.workspace, "workspace", "", enabled=True),
         actor=gateway.owner,
@@ -670,7 +866,8 @@ def test_real_worker_storage_and_recall_budgets(tmp_path, monkeypatch, config, k
     _patch_mcp_server(monkeypatch, config, kg)
     assert collection.count() == 0
     hub = Hub(tmp_path / "real-worker", InProcessLauncher(monkeypatch))
-    ctx = install(hub.gateway, tmp_path / "real-worker", start_outbox=False)
+    ctx = hub.gateway.handoff
+    assert install(hub.gateway, tmp_path / "real-worker") is ctx
     try:
         token = hub.token(
             "review", profile="full", read_wings=["*"], write_wings=["*"], trust="trusted"
