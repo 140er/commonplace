@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,32 @@ from .policy import canonical_wing
 
 logger = logging.getLogger(__name__)
 _AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+_APP_URL = (
+    os.environ.get("COMMONPLACE_APP_URL")
+    or os.environ.get("COMMONPLACE_BASE_URL")
+    or "http://127.0.0.1:8765"
+).rstrip("/")
+
+
+def _optional_module(name):
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError as exc:
+        if exc.name != name:
+            raise
+        return None
+
+
+def _privacy_flags(text):
+    privacy = _optional_module("commonplace.privacy")
+    return privacy.scan(text) if privacy is not None else []
+
+
+def _share_link(ctx, path):
+    urls = _optional_module("commonplace.urls")
+    if urls is None:
+        return _APP_URL + path
+    return urls.share_link(ctx.db, ctx.principal.workspace_id, path)
 
 
 def _string(args, name, default=None):
@@ -85,7 +112,14 @@ def _task(args):
 def _cards(ctx, memory_id, store):
     if store is None:
         return []
-    return store.cards_for_drawer(memory_id, principal=ctx.principal)
+    return [
+        {
+            **{key: card[key] for key in ("number", "title", "status", "board")},
+            "url": _share_link(ctx, f"/app/#/card/{card['number']}"),
+        }
+        for card in store.cards_for_drawer(memory_id, principal=ctx.principal)
+        if ctx.principal.policy.can_read_wing(card.get("wing", ""))
+    ]
 
 
 def _get(ctx, memory_id, store=None):
@@ -131,14 +165,14 @@ def _search(ctx, args, store=None):
     return found
 
 
-def _emit(ctx, kind, memory_id, **ids):
+def _emit(ctx, kind, memory_id, **data):
     events.emit(
         ctx.db,
         ctx.principal.workspace_id,
         kind,
         subject=memory_id,
         actor=ctx.principal.actor,
-        data={"id": memory_id, **ids},
+        data={"id": memory_id, **data},
     )
 
 
@@ -175,9 +209,12 @@ def _save(ctx, args):
     store = _boards(ctx, required=True) if task is not None else None
     if task is not None:
         _link_target(ctx, task, store)
+    flags = _privacy_flags(text)
+    if "health" in flags and ctx.principal.policy.can_write_wing("private"):
+        theme = "private"
     result = _memory(ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text})
     memory_id = result["drawer_id"]
-    _emit(ctx, "memory.saved", memory_id)
+    _emit(ctx, "memory.saved", memory_id, flags=flags)
     if task is not None:
         _link(ctx, memory_id, task, store)
     return memory_id, task
