@@ -487,7 +487,6 @@ def test_thread_tool_visibility_requires_scope(gateway, profile, thread_scope):
 
 @pytest.mark.parametrize("profile", ["standard", "full"])
 @pytest.mark.parametrize("explicit_off", [False, True])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="needs the R1 visibility gate")
 def test_new_token_has_legacy_tool_list_when_workspace_off(gateway, legacy, profile, explicit_off):
     if explicit_off:
         gateway.ctx.settings.set(
