@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
+import traceback
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 MAX_JSON_BYTES = 1024 * 1024
+
+
+def log_failure(logger, message, exc):
+    """Keep diagnostic stack locations without exception text or local values."""
+    frames = [(f.filename, f.lineno, f.name) for f in traceback.extract_tb(exc.__traceback__)]
+    logger.error("%s (%s), stack=%s", message, type(exc).__name__, frames)
 
 
 def _invalid_constant(value):

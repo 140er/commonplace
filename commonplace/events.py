@@ -24,6 +24,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
+from .http_util import log_failure
+
 logger = logging.getLogger("commonplace.events")
 
 SCHEMA = """
@@ -101,8 +103,8 @@ def emit(
     for listener in listeners:
         try:
             listener(event)
-        except Exception:
-            logger.exception("event listener failed for %s", kind)
+        except Exception as exc:
+            log_failure(logger, "event listener failed", exc)
     return event
 
 

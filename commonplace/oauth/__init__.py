@@ -240,12 +240,14 @@ def _show_authorize(gateway, h, *, status=200):
 
 
 def _submit_authorize(gateway, h):
+    principal = _person(gateway, h)
+    if principal is None and not _browser_cookie(h):
+        raise OAuthError("invalid_request", "Sign in required", 401)
     data = body(h)
     request = data.get("request", "")
     if not request or len(request) > 200:
         raise OAuthError("invalid_request", "Invalid authorization form", 403)
     db = gateway.db
-    principal = _person(gateway, h)
     with db._lock, db._tx() as conn:
         pending = conn.execute(
             "SELECT * FROM oauth_requests WHERE request_hash = ?", (store.digest(request),)

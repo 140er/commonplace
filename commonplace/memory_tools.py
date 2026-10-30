@@ -16,6 +16,7 @@ from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 from . import events
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
 from .extensions import LocalTool, ToolContext, ToolError, register
+from .http_util import log_failure
 from .policy import canonical_wing
 
 logger = logging.getLogger(__name__)
@@ -411,8 +412,8 @@ def install(gateway):
         except ToolError as exc:
             status = 404 if str(exc) == "no: memory not found" else 403
             send_json(h, status, {"error": str(exc)})
-        except Exception:
-            logger.exception("memory HTTP request failed")
+        except Exception as exc:
+            log_failure(logger, "memory HTTP request failed", exc)
             send_json(h, 500, {"error": "memory request failed"})
 
     gateway.add_prefix_route("GET", "/api/memory/", handle)
