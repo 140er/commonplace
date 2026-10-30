@@ -1,0 +1,163 @@
+/* Commonplace boards v2, in the site's look (landing/public/site.css): tiles on a gap grid,
+   square corners, one orange, mono type, terminal panels. Geist Mono ships in ./fonts (OFL). */
+
+@font-face { font-family: "Geist Mono"; src: url("fonts/geist-mono-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+:root {
+  /* Site tokens */
+  --bg: #0b0c0b;
+  --surface: #161816;
+  --surface-2: #202320;
+  --term: #050605;
+  --ink: #e8e9e5;
+  --muted: #a3a69c;
+  --accent: #f7941d;
+  --accent-ink: #0b0c0b;
+  --paper: #d9dbd6;
+  --ok: #7fd18b;
+  --wait: #5a5e57;
+
+  /* App additions: one quieter text step (4.9:1 on --surface) and a hover step. */
+  --quiet: #80847b;
+  --surface-3: #292c29;
+  --person: #a9bdf5;
+  --flag: #e5c15d;
+
+  --mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+  /* Type: 11 12 13 15 20 32. Space: 4 6 8 12 16 20 24 32. Gap between tiles is always 6. */
+  --gap: 6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; overflow: hidden;
+  background: var(--bg); color: var(--ink);
+  font: 400 13px/20px var(--mono);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p, ul, ol, blockquote { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; }
+svg { display: block; flex: none; }
+::selection { background: var(--accent); color: var(--accent-ink); }
+
+.muted { color: var(--muted); } .quiet { color: var(--quiet); }
+
+/* ---------- Shell: tiles on the gap grid ---------- */
+.app { display: grid; grid-template-columns: 208px 1fr; gap: var(--gap); padding: var(--gap); height: 100vh; }
+
+.side { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; }
+.ws { display: grid; grid-template-columns: 48px 1fr; gap: var(--gap); height: 48px; }
+.ws .mark { background: var(--accent); display: grid; place-items: center; }
+.ws .mark svg { width: 22px; height: 22px; }
+.ws .name { background: var(--surface); display: flex; align-items: center; padding: 0 14px; font-weight: 700; letter-spacing: -0.02em; }
+.navs { background: var(--surface); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.navs.fill { flex: 1; }
+.navs a {
+  display: flex; align-items: center; gap: 10px;
+  height: 32px; padding: 0 10px;
+  color: var(--muted); text-decoration: none;
+}
+.navs a[aria-current] { background: var(--ink); color: var(--bg); font-weight: 700; }
+.navs a .n { margin-left: auto; min-width: 22px; height: 20px; display: grid; place-items: center; padding: 0 5px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 12px; }
+.navs a kbd { margin-left: auto; }
+
+.main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); position: relative; }
+.head { flex: none; height: 72px; background: var(--surface); display: flex; align-items: flex-end; gap: 14px; padding: 0 20px 14px; }
+.head h1 { font-size: 32px; line-height: 32px; font-weight: 700; letter-spacing: -0.05em; }
+.head h1 .n { color: var(--accent); }
+.head .right { margin-left: auto; display: flex; gap: var(--gap); align-self: center; margin-top: 12px; }
+.blockbtn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: var(--bg); font-weight: 700; }
+.blockbtn kbd { background: rgba(11, 12, 11, 0.12); color: var(--bg); }
+
+kbd {
+  display: inline-grid; place-items: center;
+  min-width: 20px; height: 20px; padding: 0 5px;
+  font: 500 11px/1 var(--mono);
+  color: var(--muted); background: var(--surface-2);
+}
+
+/* ---------- Shared bits ---------- */
+.actor { white-space: nowrap; color: var(--muted); }
+.actor.person { color: var(--person); }
+.actor.untrusted { color: var(--wait); }
+.meta { display: flex; align-items: center; gap: 12px; font-size: 12px; line-height: 16px; color: var(--quiet); }
+.meta .push { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.links { display: inline-flex; align-items: center; gap: 5px; }
+.links svg { width: 11px; height: 11px; color: var(--wait); }
+.flag { display: inline-grid; place-items: center; width: 16px; height: 16px; background: var(--flag); color: var(--accent-ink); font: 700 11px/1 var(--mono); }
+
+/* Claim left: six blocks, like the site's meters. Green while healthy, the last one amber. */
+.claim { display: inline-flex; gap: 2px; }
+.claim i { width: 5px; height: 10px; background: var(--surface-3); }
+.claim i.on { background: var(--ok); }
+.claim.low i.on { background: var(--flag); }
+
+/* Block cursor from the site's terminal. */
+.cursor { display: inline-block; width: 0.6em; height: 1.15em; background: var(--accent); vertical-align: -0.2em; margin-left: 2px; }
+
+/* Options: square blocks. */
+.opts { display: flex; align-items: stretch; gap: var(--gap); }
+.opt { height: 32px; padding: 0 14px; display: inline-flex; align-items: center; gap: 10px; background: var(--surface-2); color: var(--ink); font-weight: 700; }
+.opt .k { font-weight: 400; color: var(--quiet); }
+.field {
+  flex: 1; min-width: 0; height: 32px;
+  display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px;
+  background: var(--term); color: var(--ink); white-space: nowrap; overflow: hidden;
+}
+.field kbd { margin-left: auto; }
+
+/* ---------- Card panel ---------- */
+.panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 488px; z-index: 5;
+  display: flex; flex-direction: column; gap: var(--gap);
+  background: var(--bg); padding-left: var(--gap);
+}
+.panel .tile { background: var(--surface); padding: 20px; }
+.panel .top { display: flex; flex-direction: column; gap: 14px; }
+.panel .bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--quiet); }
+.panel .bar .id { color: var(--ink); font-weight: 700; }
+.panel .bar .right { margin-left: auto; display: flex; gap: 4px; }
+.state { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; font-size: 12px; font-weight: 700; }
+.state.review { background: var(--accent); color: var(--accent-ink); }
+.state.doing { background: var(--ok); color: var(--accent-ink); }
+.panel h2 { font-size: 20px; line-height: 26px; font-weight: 700; letter-spacing: -0.035em; }
+.props { display: flex; gap: 20px; align-items: center; font-size: 12px; color: var(--muted); }
+.props > span { display: inline-flex; align-items: center; gap: 8px; }
+.prose { color: var(--muted); line-height: 21px; }
+.prose code { color: var(--ink); background: var(--surface-2); padding: 1px 4px; }
+
+/* The ask as a recall hit: verbatim, then the stamp in orange. */
+.hit { background: var(--term); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.hit .q { font-size: 15px; line-height: 22px; color: var(--ink); }
+.hit .stamp { font-size: 12px; color: var(--accent); margin-top: -8px; }
+.hit .opt { background: var(--surface-2); }
+.hit .opt.go { background: var(--ink); color: var(--bg); }
+.hit .opt.go .k { color: rgba(11, 12, 11, 0.55); }
+.hit .field { background: var(--surface); }
+.hit .then { display: flex; gap: var(--gap); font-size: 12px; }
+.hit .then span { padding: 3px 8px; background: var(--surface); color: var(--quiet); }
+.hit .then span.on { background: var(--ink); color: var(--bg); font-weight: 700; }
+
+.drawers { display: flex; flex-direction: column; gap: 2px; }
+.drawers li { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; background: var(--surface-2); color: var(--muted); min-width: 0; font-size: 12px; }
+.drawers li svg { width: 12px; height: 12px; color: var(--quiet); }
+.drawers li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawers li.gone { background: transparent; }
+.drawers li.gone span { color: var(--wait); text-decoration: line-through; }
+
+/* Event log as a terminal: time, actor, verb. Said text is a hit block. */
+.log { flex: 1; min-height: 0; background: var(--term); padding: 16px 20px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 18px; overflow: hidden; }
+.ev { display: grid; grid-template-columns: 44px 1fr; column-gap: 12px; color: var(--muted); }
+.ev time { color: var(--wait); }
+.ev .v { color: var(--quiet); }
+.ev.warn .v { color: var(--flag); }
+.ev.hand .v { color: var(--accent); }
+.ev .said { grid-column: 2; margin: 4px 0 6px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 20px; }
+.composer { flex: none; display: flex; gap: var(--gap); height: 44px; }
+.composer .field { height: 44px; background: var(--surface); padding-left: 16px; }
+.composer .send { width: 44px; display: grid; place-items: center; background: var(--surface); color: var(--wait); font-weight: 700; }
+.composer .send.go { background: var(--accent); color: var(--accent-ink); }

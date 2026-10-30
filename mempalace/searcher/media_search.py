@@ -39,6 +39,7 @@ def search_with_media(
     from ..palace import ASSETS_COLLECTION_NAME
     from . import (
         _distance_to_similarity,
+        _result_author_fields,
         _result_date_fields,
         _search_result_envelope,
         build_where_filter,
