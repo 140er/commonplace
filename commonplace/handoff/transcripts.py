@@ -113,7 +113,7 @@ def _incomplete(raw: str, error: ValueError) -> bool:
         return False
     if not isinstance(error, json.JSONDecodeError):
         return False
-    tail = raw[error.pos :].rstrip()
+    tail = raw[error.pos :]
     return (
         error.pos >= len(raw.rstrip())
         or error.msg.startswith("Unterminated string")

@@ -289,6 +289,22 @@ def test_invalid_tail_is_garbage(bad):
         parse(_line(_claude("valid")) + bad)
 
 
+@pytest.mark.parametrize("codex", [False, True])
+@pytest.mark.parametrize("whitespace", [" ", "\t"])
+@pytest.mark.parametrize("token", ["tru", "fals", "nul", "-", "1.", "1e-", '"\\u12'])
+def test_whitespace_after_partial_token_is_malformed(codex, whitespace, token):
+    first = _codex("message", role="user", content="valid") if codex else _claude("valid")
+    tail = '{"x":' + token + whitespace
+    with pytest.raises(ValueError, match="line 2"):
+        parse(_line(first) + tail)
+
+
+@pytest.mark.parametrize("tail", ['{"x": ', '{"x":true ', '{"x":1 ', '{"x":"text '])
+def test_whitespace_in_recoverable_tail_is_retained(tail):
+    messages = parse(_line(_claude("valid")) + tail)
+    assert (messages[-1].kind, messages[-1].raw) == ("other", tail)
+
+
 def test_invalid_interior_line_is_garbage():
     with pytest.raises(ValueError, match="line 2"):
         parse(_line(_claude("valid")) + '{"type":\n' + _line(_claude("later")))
