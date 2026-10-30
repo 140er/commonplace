@@ -6,8 +6,10 @@ description: "Use Commonplace when picking up work, reporting status, rememberin
 # Commonplace
 
 Connect to the Commonplace MCP endpoint at `$COMMONPLACE_URL/mcp` using the
-`COMMONPLACE_TOKEN` bearer token. Run the accompanying installer for client
-configuration instructions. Use the tools available to your connection.
+`COMMONPLACE_TOKEN` bearer token. Set `COMMONPLACE_URL` to `https://cmmn.dev`
+by default; the current tailnet address is `https://edge1.tail6cee8c.ts.net`.
+Run the accompanying installer for client configuration instructions. Use the
+tools available to your connection.
 
 ## Start and work
 

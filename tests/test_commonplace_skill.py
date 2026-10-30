@@ -70,11 +70,47 @@ def test_installer_dry_run_is_non_mutating_and_safe(tmp_path):
     assert list(tmp_path.iterdir()) == []
     for root in (".claude", ".codex", ".agents"):
         assert f"{root}/skills/commonplace/SKILL.md" in result.stdout
-    assert "COMMONPLACE_URL is unset" in result.stdout
+    assert 'export COMMONPLACE_URL="${COMMONPLACE_URL:-https://cmmn.dev}"' in result.stdout
+    assert "https://edge1.tail6cee8c.ts.net" in result.stdout
     assert '"$COMMONPLACE_URL/mcp"' in result.stdout
     assert '"Authorization: Bearer $COMMONPLACE_TOKEN"' in result.stdout
     assert 'bearer_token_env_var = "COMMONPLACE_TOKEN"' in result.stdout
     assert "secret-test-token" not in result.stdout
     bad = subprocess.run([str(INSTALLER), "--unknown"], env=env, capture_output=True)
     assert bad.returncode != 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_documented_url_defaults_overrides_and_oauth(tmp_path):
+    skill = SKILL.read_text(encoding="utf-8")
+    snippet = SNIPPET.read_text(encoding="utf-8")
+    assert "https://cmmn.dev" in skill
+    assert "https://edge1.tail6cee8c.ts.net" in skill
+    assert (
+        "For claude.ai or ChatGPT, add `https://cmmn.dev/mcp` as a custom connector "
+        "and connect through OAuth; no token is needed."
+    ) in snippet
+    env = {**os.environ, "HOME": str(tmp_path)}
+    env.pop("COMMONPLACE_URL", None)
+    output = subprocess.run(
+        [str(INSTALLER), "--dry-run"], env=env, text=True, capture_output=True, check=True
+    ).stdout
+    export = next(
+        line for line in output.splitlines() if line.startswith("export COMMONPLACE_URL=")
+    )
+    for override, expected in (
+        (None, "https://cmmn.dev"),
+        ("https://example.test", "https://example.test"),
+    ):
+        test_env = env.copy()
+        if override is not None:
+            test_env["COMMONPLACE_URL"] = override
+        result = subprocess.run(
+            ["sh", "-c", export + '\nprintf "%s" "$COMMONPLACE_URL/mcp"'],
+            env=test_env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        assert result.stdout == expected + "/mcp"
     assert list(tmp_path.iterdir()) == []

@@ -24,7 +24,10 @@ for root in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.agents/skills";
 done
 
 cat <<'INSTRUCTIONS'
-Set COMMONPLACE_URL to the Commonplace base URL and COMMONPLACE_TOKEN to your token.
+Set COMMONPLACE_TOKEN to your token. The default base URL is https://cmmn.dev.
+Current tailnet address: https://edge1.tail6cee8c.ts.net.
+Set COMMONPLACE_URL to override the default, then run:
+export COMMONPLACE_URL="${COMMONPLACE_URL:-https://cmmn.dev}"
 Claude Code:
 claude mcp add --transport http commonplace "$COMMONPLACE_URL/mcp" --header "Authorization: Bearer $COMMONPLACE_TOKEN"
 Codex config.toml (replace <COMMONPLACE_URL> with the base URL):
@@ -32,6 +35,3 @@ Codex config.toml (replace <COMMONPLACE_URL> with the base URL):
 url = "<COMMONPLACE_URL>/mcp"
 bearer_token_env_var = "COMMONPLACE_TOKEN"
 INSTRUCTIONS
-if [ -z "${COMMONPLACE_URL:-}" ]; then
-    printf 'COMMONPLACE_URL is unset; set it before connecting.\n'
-fi

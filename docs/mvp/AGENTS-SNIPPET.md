@@ -12,6 +12,8 @@ Ask Jeffrey via tool:ask or tool:task_handoff to=jeffrey with options, then end 
 Finish with tool:task_update status=done and lesson.
 ```
 
+For claude.ai or ChatGPT, add `https://cmmn.dev/mcp` as a custom connector and connect through OAuth; no token is needed.
+
 # Grok Bot system prompt
 
 ```text
