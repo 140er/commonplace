@@ -245,8 +245,34 @@ def test_snapshot_failure_removes_partial_and_unlocks(populated, tmp_path, monke
     backup(data, tmp_path / "backup")
 
 
-@pytest.mark.parametrize("candidate", [False, True])
-def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monkeypatch, candidate):
+@pytest.mark.parametrize(
+    ("cmdline", "candidate"),
+    [
+        (b"/usr/bin/python3\x00-m\x00mempalace.mcp_server\x00", True),
+        (b"/opt/mempalace/bin/mempalace\x00serve\x00", True),
+        (b"/home/me/My Apps/mempalace\x00serve\x00", True),
+        (b"/usr/lib/systemd/systemd\x00--user\x00", False),
+        # Tailscale SSH session child: the remote command is one argument and
+        # its environment is unreadable even for the same uid.
+        (
+            b"/usr/sbin/tailscaled\x00be-child\x00ssh\x00--uid=1001\x00"
+            b"--cmd=bash /opt/jobs/mempalace-check.sh\x00",
+            False,
+        ),
+        (b"/bin/bash\x00-c\x00exec python -m mempalace.mcp_server\x00", False),
+    ],
+    ids=[
+        "python-worker",
+        "named-binary",
+        "named-binary-spaced-path",
+        "systemd",
+        "ssh-session-child",
+        "shell-command-string",
+    ],
+)
+def test_denied_process_environment_only_blocks_worker_candidates(
+    tmp_path, monkeypatch, cmdline, candidate
+):
     import importlib
 
     module = importlib.import_module("commonplace.backup")
@@ -255,11 +281,7 @@ def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monk
     (proc_root / "self" / "environ").write_bytes(b"")
     process = proc_root / str(os.getpid() + 1000000)
     process.mkdir()
-    (process / "cmdline").write_bytes(
-        b"/usr/bin/python3\x00-m\x00mempalace.mcp_server\x00"
-        if candidate
-        else b"/usr/lib/systemd/systemd\x00--user\x00"
-    )
+    (process / "cmdline").write_bytes(cmdline)
     denied = process / "environ"
     read_bytes = Path.read_bytes
 
@@ -275,6 +297,35 @@ def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monk
             module._verify_offline(tmp_path / "data")
     else:
         module._verify_offline(tmp_path / "data")
+
+
+@pytest.mark.parametrize("entrypoint", ["mempalace", "commonplace"])
+@pytest.mark.parametrize("option", ["--palace", "--data"])
+def test_console_script_with_spaced_path_blocks_active_data(
+    tmp_path, monkeypatch, entrypoint, option
+):
+    import importlib
+
+    module = importlib.import_module("commonplace.backup")
+    proc_root = tmp_path / "proc"
+    (proc_root / "self").mkdir(parents=True)
+    (proc_root / "self" / "environ").write_bytes(b"")
+    process = proc_root / str(os.getpid() + 1000000)
+    process.mkdir()
+    data = tmp_path / "data"
+    palace = data / "workspaces" / "example" / "palace"
+    arguments = [
+        "/opt/My Apps/venv/bin/python3",
+        f"/opt/My Apps/venv/bin/{entrypoint}",
+        option,
+        str(palace),
+    ]
+    (process / "cmdline").write_bytes(b"\x00".join(os.fsencode(arg) for arg in arguments) + b"\x00")
+    (process / "environ").write_bytes(b"")
+    monkeypatch.setattr(module, "_PROC_ROOT", proc_root)
+
+    with pytest.raises(BackupError, match="data directory is in use by process"):
+        module._verify_offline(data)
 
 
 def test_parent_that_looks_like_a_worker_is_not_one(populated, tmp_path):
