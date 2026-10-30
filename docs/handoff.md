@@ -76,6 +76,147 @@ To force handoff off for one run, regardless of saved settings:
 COMMONPLACE_HANDOFF=off claude
 ```
 
+## Start a handoff by hand
+
+Run this on the machine hosting the source T3 thread and the Commonplace
+gateway, using the gateway's `COMMONPLACE_DATA` directory. This also works
+when the source model has hit its session limit: it reads the saved native
+transcript without calling that model.
+
+Claude → Sol:
+
+```bash
+commonplace handoff start --thread '<t3-thread-id>' --to codex/gpt-6.1-sol --effort max --workspace personal
+```
+
+Sol → Claude Opus:
+
+```bash
+commonplace handoff start --thread '<t3-thread-id>' --to claude-code/claude-opus-5-5 --effort high --workspace personal
+```
+
+Replace the thread ID with the source T3 ID, including `mcp:` when present.
+`claude-code` and `claude` map to T3's default `claudeAgent` instance;
+`codex` stays `codex`. Other configured T3 instance IDs pass through.
+Models use their exact T3 catalog slug; the examples select Sol and Opus
+5.5. T3 validates the selected instance, model and effort.
+
+Add `--note 'your exact continuation instructions'` for a verbatim note.
+`--dry-run` prints the resolved checkout, native transcript paths, settings
+and destination without saving a handoff or starting or settling a thread.
+`--workspace` can be omitted when `COMMONPLACE_WORKSPACE` or the local
+checkout map below selects one. `--data` before `handoff` selects another
+gateway data directory, as with the other local administration commands.
+
+Manual handoff respects the same task → agent → workspace settings. Use
+`--agent <connection-name>` and `--task '#142'` when the source has those
+overrides; they default to `COMMONPLACE_AGENT` / `COMMONPLACE_TASK`, then
+the caller's connection for the agent. It refuses when the effective
+setting is off, or `COMMONPLACE_HANDOFF=off` applies. There is no `--force`:
+enable the intended scope first. The token and settings of the successor
+must permit `thread_recall` and `thread_get` as described below.
+
+The full source is saved through `HandoffService`, with the same
+`thread:<source T3 ID>` idempotency key and atomic launch claim used by
+`POST /api/handoff`. The short handoff and prompt stay in the existing
+private stores. Manual selection overrides the launcher for this call;
+it does not change `successor_argv` or any saved launcher setting.
+
+For a project-root source, the client runs
+`t3 thread start <cwd> - --provider <p> --model <m> [--effort <e>] --json`,
+passing the prompt over stdin. For an existing worktree, the installed T3
+CLI cannot bind that checkout: its path argument selects a project and
+otherwise starts at the root. The adapter uses T3's `acp-mcp-call`
+bridge to `t3_thread_launch` with
+`workspaceStrategy={"type":"existing_worktree","worktreePath":"…"}`.
+It issues a five-minute local session restricted to
+`orchestration:read` / `orchestration:operate`, keeps its bearer in the
+bridge process environment, and revokes it after the call. It never creates
+another worktree. The prompt ends with `commonplace-handoff-id: hof_…`,
+which the successor's existing hook uses to recover its chain ID without
+needing T3 to pass environment variables.
+
+Only a confirmed T3 start is registered as `t3:<new thread ID>`. Registration
+is followed by `t3 thread settle <source ID>`, which settles a running
+source when its turn ends. Storage or launch failures leave the source
+running; a failed launch records `launch_failed`. Repeating the command
+returns the existing successor. Concurrent manual calls serialize, and the
+database launch claim also excludes competing hook requests with the same
+key. A private launch journal recovers registration after a confirmed start;
+an unconfirmed start is never retried automatically. Inspect T3 before an
+owner releases a failed launch claim. If source settlement fails, the result
+has `source_settled:false`; retry the same command to retry settlement.
+
+### How the source is resolved
+
+`t3 thread show <id> --json --messages 0` supplies the provider instance,
+model, project ID, branch and worktree. It does **not** supply a transcript.
+The adapter opens `$T3CODE_HOME/userdata/statev2.sqlite` read-only (default
+`~/.t3/userdata/statev2.sqlite`) and reads:
+
+- `projection_projects.workspace_root` for a project-root thread's cwd.
+- `orchestration_v2_projection_provider_threads.payload_json`, specifically
+  each main thread's `driver` and `nativeThreadRef.nativeId` in run order.
+
+It locates the exact native ID in Claude Code's `projects/*/<id>.jsonl`
+or Codex's `sessions/**/*.jsonl` / `archived_sessions/**/*.jsonl`. Provider
+`homePath` in T3's `userdata/settings.json` takes precedence, followed by
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, then the standard home directories.
+Tool results and raw records are retained, including CR/LF. The adapter
+refuses missing or ambiguous transcripts, unavailable checkouts, unsupported
+drivers, and mixed native formats instead of handing over a partial
+latest-message view. This state-schema dependency is covered by fake-T3
+tests and may need updating after a T3 schema change.
+
+### Setup on t3code-home
+
+This is an opt-in setup recipe; installing the feature does not run it.
+Use the existing local gateway's data directory and workspace name in
+these commands. The `personal` workspace below is an example.
+
+```bash
+commonplace handoff enable --workspace personal --threshold 0.80
+commonplace handoff status --workspace personal
+```
+
+Merge this checkout map into `~/.commonplace/handoff-client.json` (preserve
+any existing `successor_argv`):
+
+```json
+{
+  "workspaces": {
+    "~/work/mempalace": "personal",
+    "~/work/simsteer": "personal",
+    "~/work/schilderen-op-nummer": "personal"
+  }
+}
+```
+
+The deepest mapped checkout wins. T3 worktrees inherit their source
+project's mapping. Manual CLI starts need no hook or `successor_argv`.
+The `handoff_start` MCP tool runs on the gateway machine and requires this
+map to bind the source checkout to the token's workspace. It accepts
+`thread_id`, `to`, and optional `effort`, `note`, `agent`, `task`, `dry_run`;
+it needs `handoff:write`, a `standard` or `full` tool profile (or an explicit
+`handoff_start` grant), and a connection that is not untrusted. It cannot
+select another workspace. For example:
+
+```json
+{"thread_id":"mcp:source-id","to":"codex/gpt-6.1-sol","effort":"max","note":"Continue the deployment checks."}
+```
+
+For automatic threshold handoffs too, set `COMMONPLACE_URL` and a
+workspace-scoped `COMMONPLACE_TOKEN` in the environment that starts T3's
+agents, then merge the Claude and Codex hook definitions in the next section
+into **user-level** hook configuration. Use the absolute wrapper path
+`/home/jeffrey/work/mempalace/hooks/commonplace_handoff_hook.sh` and the
+appropriate `--client`. Review Codex's hook definitions as described below.
+Choose `successor_argv` only if automatic hooks should launch a static
+successor. All three checkouts then use those user-level hooks and the
+workspace setting. Keep credentials and local setup outside the public
+simsteer and schilderen-op-nummer repositories; do not commit hook
+configuration or this machine's paths there.
+
 ## When it triggers
 
 The default threshold is `0.80`. The allowed range is `0.50` to `0.95`.

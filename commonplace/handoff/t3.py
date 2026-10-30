@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,11 +109,11 @@ class T3:
             raise T3Error("invalid T3 thread id")
         view = self._json(["thread", "show", thread_id, "--json", "--messages", "0"])
         thread = view.get("thread", {})
-        if thread.get("threadId") != thread_id:
+        if not isinstance(thread, dict) or thread.get("threadId") != thread_id:
             raise T3Error("T3 did not return the requested thread")
         try:
             database = (self.state_dir / "statev2.sqlite").resolve().as_uri() + "?mode=ro"
-            with sqlite3.connect(database, uri=True) as connection:
+            with closing(sqlite3.connect(database, uri=True)) as connection:
                 project = connection.execute(
                     "SELECT workspace_root FROM projection_projects WHERE project_id = ?",
                     (thread["projectId"],),
@@ -205,8 +206,10 @@ class T3:
         identifier = value.get("threadId")
         if (
             not isinstance(identifier, str)
-            or not identifier.strip()
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}", identifier)
             or identifier == source.thread_id
+            or not value.get("runId")
+            or value.get("status") in ("failed", "cancelled", "interrupted")
         ):
             raise T3Error("T3 did not confirm a new successor thread")
         return SuccessorRef(agent_ref=f"t3:{identifier}", thread_id=identifier)
@@ -230,8 +233,14 @@ class T3:
                 "--json",
             ]
         )
+        if not all(
+            isinstance(issued.get(key), str) and issued[key] for key in ("token", "sessionId")
+        ):
+            raise T3Error("T3 did not issue a bridge session")
         try:
             runtime = json.loads((self.state_dir / "server-runtime.json").read_text())
+            if not isinstance(runtime, dict) or not isinstance(runtime.get("origin"), str):
+                raise T3Error("T3's local server address is unavailable")
             environment = os.environ.copy()
             environment.update(
                 T3_ACP_MCP_ENDPOINT=runtime["origin"].rstrip("/") + "/mcp",
@@ -251,9 +260,9 @@ class T3:
                 cwd=source.cwd,
                 environment=environment,
             )
-            if result.get("isError"):
+            if result.get("isError") or not isinstance(result.get("structuredContent"), dict):
                 raise T3Error("T3 could not start the successor in the existing worktree")
-            return result.get("structuredContent") or {}
+            return result["structuredContent"]
         finally:
             # Tokens never reach a file, prompt, log, result, or successor env.
             try:
