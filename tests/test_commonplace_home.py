@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -22,11 +23,13 @@ def test_open_cards_are_scoped_and_carry_need(hub, env):  # noqa: F811
     secret = owner.seed_card(board="secret", title="SECRET CANARY", status="todo")
 
     status, payload = api(hub, cookie, "GET", "/api/cards")
-    assert status == 200
+    assert status == 200 and payload["total"] == 3
     needs = {c["number"]: c["need"] for c in payload["cards"]}
     assert needs == {asked["number"]: "you", todo["number"]: "idle", secret["number"]: "idle"}
-    assert payload["cards"][0]["title"] == 'Ship <b>"now"</b>?'
-    assert payload["cards"][0]["url"]  # Every card keeps its short link.
+    first = payload["cards"][0]
+    assert first["title"] == 'Ship <b>"now"</b>?' and first["ask"] == 'Ship <b>"now"</b>?'
+    # Slim: no body, and no share link minted per row.
+    assert all("body" not in c and "url" not in c for c in payload["cards"])
 
     scoped = hub.token("home-reader", profile="full", scopes=["memory:read"], read_wings=["shared"])
     status, payload = api(hub, scoped, "GET", "/api/cards")
@@ -35,6 +38,23 @@ def test_open_cards_are_scoped_and_carry_need(hub, env):  # noqa: F811
     assert "SECRET CANARY" not in json.dumps(payload)
     assert api(hub, None, "GET", "/api/cards")[0] == 401
     assert api(hub, cookie, "POST", "/api/cards", {})[0] == 404
+    for bad in ("0", "501", "x"):
+        assert api(hub, cookie, "GET", f"/api/cards?limit={bad}")[0] == 400
+
+
+def test_open_cards_are_capped_most_urgent_first_and_fast(hub, env):  # noqa: F811
+    token, agent, person, cookie, owner = env
+    for n in range(300):
+        owner.seed_card(board="work", title=f"Card {n}", status="todo")
+    asked = service(hub, agent).ask("Last but urgent?", board="work")
+    start = time.perf_counter()
+    status, payload = api(hub, cookie, "GET", "/api/cards")
+    elapsed = time.perf_counter() - start
+    assert status == 200 and payload["total"] == 301 and len(payload["cards"]) == 200
+    assert payload["cards"][0]["number"] == asked["number"]  # Needs you survives the cap.
+    assert elapsed < 3, elapsed
+    status, payload = api(hub, cookie, "GET", "/api/cards?limit=500")
+    assert status == 200 and len(payload["cards"]) == 301 and payload["total"] == 301
 
 
 def test_home_renders_three_sections_from_a_seeded_payload():

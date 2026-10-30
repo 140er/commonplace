@@ -131,13 +131,13 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
 - Routes: `GET /app/login?t=<token>` (redeem, set cookie, 302 to `/app/`), `POST /app/logout`, `GET /app/*` static (index.html for unknown paths), `GET /api/me` → `{"user","email","workspace","actor"}`, `GET /api/events?after=<seq>` → `{"events":[…],"seq":<latest>}`, `GET /api/connections` (token list without secrets; owners).
 - Not signed in: `/app/` shows only a "Sign in" state with a token field (paste a login link token) — no helper text.
 - Screens (look B; port `design/kanban-opus-v2/` and `design/memory-map-mix/` on their branches; system fonts or the bundled Geist Mono OFL font only; no third-party requests; strict CSP):
-  - **Needs you** (default, nav count): asks with option buttons + reply field (inline decision cards), Done?, agent backlog, ready to merge, stale.
+  - **Home** (default, nav count of what needs you): an "N things need you" box, one line per card (title + a reason from its `need`: asks, plan to approve, ready to merge, claim went stale, filed by an agent; Speak in its header; asks are answered in the card), one tile per space (worst need, open and waiting counts, Open), and a table of open tasks from `GET /api/cards` (Answer / Approve / Merge / Retake only where needed).
   - **Board**: columns backlog rail, todo, doing, review, done; task rows show status dot, title, assignee, branch, PR #, elapsed time, status line, claim bar; drag & drop with version.
   - **Card panel**: as in DESIGN.md + branch/PR/checks.
   - **Memory**: search + the map (from memory-map-mix) on `/api/memory/map`, panel with verbatim text and linked cards.
   - **Settings**: connections (read-only list, last used), webhooks (add/remove/deliveries).
 - Live: poll `/api/events` every 2 s visible, 30 s hidden; refetch what changed.
-- Phone 390 px works for Needs you and Card.
+- Phone 390 px works for Home and Card.
 
 ## CLI, stdio bridge, seed (W5)
 

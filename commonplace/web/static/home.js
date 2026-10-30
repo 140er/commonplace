@@ -64,15 +64,15 @@ function spaces(boards, open, items, stale, dot) {
   }).join("")}</section>`;
 }
 
-function tasks(open, stale, boards, { dot, taskRow }) {
+function tasks(open, total, stale, boards, selected, { dot, taskRow }) {
   const names = new Map(boards.map((b) => [b.slug, b.name || b.slug]));
   const rows = open.map((card) => ({ card, state: stateOf(card, stale) })).sort((a, b) => rank(a.state) - rank(b.state) || a.card.number - b.card.number);
   const space = (card) => `<a href="#/board/${enc(card.board)}">${e(names.get(card.board) || card.board)}</a>`;
   const sub = (card) => [card.branch ? `<span>${e(card.branch)}</span>` : "", card.pr_number ? `<span>PR #${e(card.pr_number)}</span>` : ""].filter(Boolean).join("");
-  return `<section class="home-tasks" aria-labelledby="tasks-title"><h2 id="tasks-title">Open tasks <span class="n">${rows.length}</span></h2>${rows.length ? `<table><thead><tr><th scope="col">Task</th><th scope="col">Space</th><th scope="col">Status</th><th scope="col">Elapsed</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>${rows.map(({ card, state }) => `<tr data-key="task-${card.number}"><td class="task"><a href="#/card/${card.number}">${e(card.title)}</a>${sub(card) ? `<span class="sub">${sub(card)}</span>` : ""}</td><td>${space(card)}</td><td>${pill(state, dot)}</td><td><time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></td><td class="act">${action(card, state)}</td></tr>`).join("")}</tbody></table><div class="tstack">${rows.map(({ card, state }) => `<article class="trow-card" data-key="stack-${card.number}">${taskRow(card, space(card))}${action(card, state) ? `<div class="opts">${action(card, state)}</div>` : ""}</article>`).join("")}</div>` : '<p class="empty">No open tasks</p>'}</section>`;
+  return `<section class="home-tasks" aria-labelledby="tasks-title"><h2 id="tasks-title">Open tasks <span class="n">${total ?? rows.length}</span></h2>${rows.length ? `<table><thead><tr><th scope="col">Task</th><th scope="col">Space</th><th scope="col">Status</th><th scope="col">Elapsed</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody>${rows.map(({ card, state }) => `<tr data-row="${card.number}" data-key="task-${card.number}" class="${card.number === selected ? "sel" : ""}"><td class="task"><a href="#/card/${card.number}">${e(card.title)}</a>${sub(card) ? `<span class="sub">${sub(card)}</span>` : ""}</td><td>${space(card)}</td><td>${pill(state, dot)}</td><td><time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></td><td class="act">${action(card, state)}</td></tr>`).join("")}</tbody></table><div class="tstack">${rows.map(({ card, state }) => `<article class="trow-card ${card.number === selected ? "sel" : ""}" data-row="${card.number}" data-key="stack-${card.number}">${taskRow(card, space(card))}${action(card, state) ? `<div class="opts">${action(card, state)}</div>` : ""}</article>`).join("")}</div>` : '<p class="empty">No open tasks</p>'}</section>`;
 }
 
-export function homeView({ needs = {}, boards = [], open = [], selected = null, speak = false }, rows) {
+export function homeView({ needs = {}, boards = [], open = [], total = null, selected = null, speak = false }, rows) {
   const items = needItems(needs), stale = staleSet(needs);
-  return `<section class="queue home">${needBox(items, selected, speak, rows.dot)}${spaces(boards, open, items, stale, rows.dot)}${tasks(open, stale, boards, rows)}</section>`;
+  return `<section class="queue home">${needBox(items, selected, speak, rows.dot)}${spaces(boards, open, items, stale, rows.dot)}${tasks(open, total, stale, boards, selected, rows)}</section>`;
 }

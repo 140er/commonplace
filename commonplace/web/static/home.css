@@ -11,7 +11,7 @@
 .needbox header .speak { margin-left: auto; }
 .needbox .digest-captions { margin: 4px 20px 8px; }
 .nline { display: grid; grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); align-items: center; column-gap: 12px; min-height: 36px; padding: 6px 20px; }
-.nline .tt { font-weight: 700; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.nline .tt { font-weight: 700; letter-spacing: -0.015em; overflow-wrap: break-word; }
 .nline .tt:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nline .why { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nline.sel { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
@@ -38,7 +38,10 @@
 .home-tasks th:first-child, .home-tasks td:first-child { padding-left: 20px; }
 .home-tasks th:last-child, .home-tasks td:last-child { padding-right: 20px; }
 .home-tasks td.task { width: 100%; }
-.home-tasks td.task a { font-weight: 500; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.home-tasks td.task a { font-weight: 500; letter-spacing: -0.015em; overflow-wrap: break-word; }
+.home-tasks tr.sel td { background: var(--surface-2); }
+.home-tasks tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.home-tasks tr.sel .opt, .trow-card.sel .opt { background: var(--surface-3); }
 .home-tasks .sub { display: flex; flex-wrap: wrap; gap: 0 12px; font-size: 12px; line-height: 16px; color: var(--quiet); }
 .home-tasks td:nth-child(2) { color: var(--muted); white-space: nowrap; }
 .home-tasks td time { font-size: 12px; color: var(--quiet); white-space: nowrap; }
@@ -47,7 +50,15 @@
 .home-tasks .tstack { display: none; }
 .home-tasks .empty { padding: 4px 20px 12px; color: var(--muted); }
 
-@media (min-width: 1100px) { .main:has(#card-panel:not([hidden])) .home-tasks :is(th, td):nth-child(2) { display: none; } }
+/* Beside an open card only task, status and action stay; narrow screens get the stacked rows. */
+@media (min-width: 1100px) { .main:has(#card-panel:not([hidden])) .home-tasks :is(th, td):is(:nth-child(2), :nth-child(4)) { display: none; } }
+@media (max-width: 900px) {
+  .home-tasks table { display: none; }
+  .home-tasks .tstack { display: flex; flex-direction: column; }
+  .trow-card { container-type: inline-size; padding: 12px 20px; border-top: 2px solid var(--bg); display: flex; flex-direction: column; gap: 10px; }
+  .trow-card.sel { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .trow-card .opts { margin-left: 18px; }
+}
 @media (max-width: 640px) {
   .needbox header { padding: 0 16px; }
   .nline { grid-template-columns: 8px minmax(0, 1fr); row-gap: 2px; padding: 8px 16px; }
@@ -55,9 +66,6 @@
   .home-spaces { grid-template-columns: 1fr; }
   .home-space { padding: 14px 16px; }
   .home-tasks h2 { padding: 0 16px 10px; }
-  .home-tasks table { display: none; }
-  .home-tasks .tstack { display: flex; flex-direction: column; }
-  .trow-card { container-type: inline-size; padding: 12px 16px; border-top: 2px solid var(--bg); display: flex; flex-direction: column; gap: 10px; }
-  .trow-card .opts { margin-left: 18px; }
+  .trow-card { padding: 12px 16px; }
   .trow-card .opt { min-height: 44px; justify-content: center; }
 }

@@ -23,7 +23,7 @@ const boards = [
   { slug: "lab", name: "Lab", counts: { doing: 2 } },
   { slug: "quiet", name: "Quiet", counts: { todo: 1 } },
 ];
-const html = homeView({ needs, boards, open: [ask, plan, merge, stale, working, quiet], selected: 1, speak: true }, rows);
+const html = homeView({ needs, boards, open: [ask, plan, merge, stale, working, quiet], total: 240, selected: 1, speak: true }, rows);
 
 // Three parts, top to bottom: the box, one tile per space, the task table.
 const at_ = (s) => html.indexOf(s);
@@ -61,9 +61,12 @@ assert.match(row(4), /<button class="opt" data-action="move" data-card="4" data-
 assert.match(row(4), />Lab<\/a>/);
 assert.match(row(4), /<time data-elapsed="[^"]+" datetime="[^"]+">3h<\/time>/);
 for (const n of [5, 7]) assert.doesNotMatch(row(n), /class="opt"/);
+// Rows select like the box lines; the header counts every open task, not just those sent.
+assert.ok(table.includes('<tr data-row="1" data-key="task-1" class="sel">') && table.includes('<tr data-row="2" data-key="task-2" class="">'));
+assert.ok(html.includes('Open tasks <span class="n">240</span>'));
 // Phone: the same rows through the shared task-row component.
-assert.equal((html.match(/class="trow-card"/g) || []).length, 6);
-assert.ok(html.includes('<article class="trow-card" data-key="stack-1"><div class="trow">#1<a href="#/board/work">Work &lt;b&gt;</a></div><div class="opts"><a class="opt" href="#/card/1">Answer</a></div></article>'));
+assert.equal((html.match(/class="trow-card[ "]/g) || []).length, 6);
+assert.ok(html.includes('<article class="trow-card sel" data-row="1" data-key="stack-1"><div class="trow">#1<a href="#/board/work">Work &lt;b&gt;</a></div><div class="opts"><a class="opt" href="#/card/1">Answer</a></div></article>'));
 
 const empty = homeView({ needs: { count: 0 }, boards: [], open: [], speak: false }, rows);
 assert.ok(empty.includes('<section class="needbox " aria-labelledby="needbox-title"><header><h2 id="needbox-title">Nothing needs you</h2></header>'));

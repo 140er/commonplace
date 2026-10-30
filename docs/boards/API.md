@@ -188,8 +188,10 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 
 ### Open tasks
 
-`GET /api/cards` returns `{cards}`: every `todo`, `doing` and `review` card on
-the boards the caller can see, each with its `need`. Home's task table reads it.
+`GET /api/cards` returns `{cards, total}`: the `todo`, `doing` and `review` cards
+on the boards the caller can see, each with its `need`, most urgent first (by
+`need`, then number). Cards are slim (no `body`, no share `url`). `limit`
+defaults to 200 (1 to 500); `total` counts them all. Home's task table reads it.
 
 ### Spoken Needs you digest
 
