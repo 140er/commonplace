@@ -877,7 +877,12 @@ def _origin(value):
 
 def _session_write_allowed(gateway, handler):
     media = handler.headers.get_all("Content-Type", [])
-    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != "application/json":
+    expected = (
+        "application/octet-stream"
+        if handler.command == "POST" and urlparse(handler.path).path == "/api/voice/transcribe"
+        else "application/json"
+    )
+    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != expected:
         return False
     origins = handler.headers.get_all("Origin", [])
     if not origins:
@@ -1092,6 +1097,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             if path == "/mcp"
             else HANDOFF_REQUEST_BYTES
             if path == "/api/handoff"
+            else 1_920_000
+            if path == "/api/voice/transcribe"
             else 65536
             if path.startswith("/oauth/")
             else 1024 * 1024

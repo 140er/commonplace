@@ -1,6 +1,7 @@
 import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
+import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
 
 const root = document.querySelector("#root");
@@ -19,6 +20,7 @@ const message = (text, retry = false) => `<div class="message" role="status">${e
 const options = (items, selected) => items.map((s) => `<option value="${e(s)}" ${s === selected ? "selected" : ""}>${e(s)}</option>`).join("");
 let speechState = { active: false, text: "" };
 const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
+const voice = voiceInput(root, api, showError);
 function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
@@ -98,6 +100,7 @@ function callTree(card) {
 }
 
 function remember() {
+  voice.remember();
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
   const active = document.activeElement, ask = active?.closest?.("[data-ask]"), cols = root.querySelector(".cols");
   return {
@@ -134,6 +137,7 @@ function restore(saved) {
   if (chat) chat.scrollTop = saved?.view === state.base && saved.chatBottom === false ? saved.chat || 0 : chat.scrollHeight;
   const tree = root.querySelector(".cs-body");
   if (tree && saved?.tree != null) tree.scrollTop = saved.tree;
+  voice.view();
   if (saved?.view !== state.base) return; // Board scroll belongs to the board it came from.
   const cols = root.querySelector(".cols");
   if (cols && saved.cols) [cols.scrollTop, cols.scrollLeft] = saved.cols;
@@ -142,7 +146,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 function signin() {
-  speech.stop();
+  speech.stop(); voice.reset();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
@@ -347,6 +351,7 @@ async function cardPanel(number, epoch) {
   }
 }
 function newCardForm(edit = null) {
+  voice.stop();
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
   const slug = edit?.board || decodeURIComponent(state.base.split("/")[2]);
@@ -354,6 +359,7 @@ function newCardForm(edit = null) {
   panel.querySelector("input").focus();
 }
 function handoffForm() {
+  voice.stop();
   const panel = root.querySelector("#card-panel");
   panel.innerHTML = `<form class="form-tile" data-form="handoff"><h2>Hand off #${state.card.number}</h2><label>To<input name="to" required></label><label>Note<textarea name="note" required></textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="retry">Cancel</button></form>`;
 }
@@ -364,7 +370,7 @@ async function settingsView(epoch) {
   const [connections, hooks] = await Promise.allSettled([api("/api/connections"), api("/api/webhooks")]);
   if (epoch !== state.screen) return;
   const saved = remember();
-  content.innerHTML = `<div class="settings"><section class="settings-section"><h2>Connections</h2>${connections.status === "fulfilled" ? (connections.value.connections || []).map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.last_used_at ? `Used ${elapsed(c.last_used_at)} ago` : "Unused"}</small></span></div>`).join("") || message("No connections") : message(connections.reason.message, true)}</section><section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  content.innerHTML = `<div class="settings">${voice.settings(connections.status === "fulfilled")}<section class="settings-section"><h2>Connections</h2>${connections.status === "fulfilled" ? (connections.value.connections || []).map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.last_used_at ? `Used ${elapsed(c.last_used_at)} ago` : "Unused"}</small></span></div>`).join("") || message("No connections") : message(connections.reason.message, true)}</section><section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   restore(saved);
 }
 
@@ -473,6 +479,7 @@ async function route() {
   if (!state.me) return;
   remember();
   const hash = location.hash || "#/";
+  if (hash !== state.route) voice.stop();
   const previousBase = state.base;
   state.screen++; state.route = hash;
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
@@ -554,8 +561,10 @@ root.addEventListener("click", async (event) => {
     else if (action === "retry") await refresh();
     else if (action === "older-messages") await olderMessages();
     else if (action === "space-tab") {
+      voice.stop();
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
     } else if (action === "coordinator") {
+      voice.stop();
       const slug = decodeURIComponent(state.base.split("/")[2]), board = state.boards.find((b) => b.slug === slug);
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
       panel.innerHTML = `<form class="form-tile" data-form="coordinator" data-board="${e(slug)}"><h2>Coordinator</h2><label>Agent<input name="coordinator" value="${e(board?.coordinator || "")}" data-draft="coordinator-${e(slug)}"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>`;
@@ -575,6 +584,7 @@ root.addEventListener("click", async (event) => {
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
       panel.innerHTML = '<form class="form-tile" data-form="memory"><h2>Save memory</h2><label>Text<textarea name="text" required></textarea></label><label>Theme<input name="theme"></label><label>Topic<input name="topic"></label><label>Card<input name="task"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
     } else if (action === "logout") {
+      voice.stop();
       await api("/app/logout", { method: "POST" }); state.me = null; state.drafts.clear(); signin();
     } else if (action === "remove-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}`, { method: "DELETE" }));
     else if (action === "test-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}/test`, { method: "POST", body: {} }));
@@ -707,7 +717,7 @@ async function poll() {
 document.addEventListener("visibilitychange", () => schedule(document.hidden ? 30000 : 0));
 document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => speech.stop());
+window.addEventListener("pagehide", () => { speech.stop(); voice.stop(); });
 setInterval(() => {
   root.querySelectorAll("[data-elapsed]").forEach((time) => { time.textContent = elapsed(time.dataset.elapsed); });
   root.querySelectorAll("[data-claim-until]").forEach((bar) => {
@@ -721,6 +731,8 @@ setInterval(() => {
 async function boot() {
   try { state.me = await api("/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; signin(); return; }
+  await voice.load();
+  if (!state.me) return;
   shell(); await route(); schedule(0);
 }
 boot();
