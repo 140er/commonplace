@@ -659,3 +659,57 @@ class TestKGChatSource:
         )
         assert result["success"] is False
         assert [f["status"] for f in kg.query_entity("Bot")] == ["active"]
+
+
+class TestKGSave:
+    def test_kg_save_merges_then_replaces_by_config(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_save
+
+        first = tool_kg_save(
+            subject="Bot",
+            predicate="uses_model",
+            object="old",
+            source_thread="t",
+            source_seq_start=1,
+        )
+        assert first["success"] and first["action"] == "added"
+        merged = tool_kg_save(
+            subject="Bot",
+            predicate="uses_model",
+            object="old",
+            source_thread="t2",
+            source_seq_start=3,
+        )
+        assert merged["action"] == "merged" and merged["triple_id"] == first["triple_id"]
+        # uses_model is single-valued by default.
+        replaced = tool_kg_save(subject="Bot", predicate="uses_model", object="new")
+        assert replaced["action"] == "superseded" and replaced["previous"] == ["old"]
+        # An explicit false keeps both.
+        both = tool_kg_save(
+            subject="Bot", predicate="uses_model", object="other", single_valued=False
+        )
+        assert both["action"] == "added"
+
+    def test_kg_query_lists_every_source(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_query, tool_kg_save
+
+        tool_kg_save(
+            subject="A", predicate="likes", object="B", source_thread="t1", source_seq_start=1
+        )
+        tool_kg_save(
+            subject="A", predicate="likes", object="B", source_thread="t2", source_seq_start=7
+        )
+        (fact,) = tool_kg_query(entity="A", direction="outgoing")["facts"]
+        assert [s["source_thread"] for s in fact["sources"]] == ["t1", "t2"]
+        assert fact["seen_count"] == 2
+
+    def test_kg_save_refuses_bad_input(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_save
+
+        for args in ({"confidence": 3}, {"single_valued": "yes"}, {"source_seq_start": 1}):
+            result = tool_kg_save(subject="A", predicate="b", object="C", **args)
+            assert result["success"] is False, args
+        assert kg.stats()["triples"] == 0

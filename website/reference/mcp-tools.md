@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Detailed parameter schemas for all 47 MCP tools.
+Detailed parameter schemas for all 48 MCP tools.
 
 ## Palace — Read Tools
 
@@ -337,6 +337,31 @@ Add a fact to the knowledge graph.
 | `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
 
 **Returns:** `{ success, triple_id, fact }`
+
+---
+
+### `mempalace_kg_save`
+
+Save a fact, folding it into what the graph holds. Same open fact in the same wing: **merged**. The new source is added to the fact's `sources` and `seen_count` goes up; sensitivity and confidence only rise. A new value of a single-valued predicate (`works_at`, `uses_model`, `lives_in`, `default_branch`, plus `single_valued_predicates` in config): **superseded** at `valid_from`. If the open value started later, the new fact is filed as **historical** instead. Otherwise: **added**.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `subject` | string | **Yes** | The entity doing/being something |
+| `predicate` | string | **Yes** | Relationship type |
+| `object` | string | **Yes** | The entity being connected to |
+| `valid_from` | string | No | When this became true; a replacement happens at this instant (default: now) |
+| `confidence` | number | No | 0 to 1 (default 1) |
+| `source_thread` | string | No | Chat thread the fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `source_drawer_id` | string | No | Drawer the fact came from |
+| `source_file` | string | No | Source file |
+| `wing` | string | No | Wing the fact belongs to |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
+| `sensitivities` | string[] | No | Only merge with or replace stored facts of these sensitivities |
+| `single_valued` | boolean | No | Override the predicate's config |
+
+**Returns:** `{ success, action, triple_id, fact, wing }`, plus `superseded` and `previous` on a replacement, `current` on history, and `source_added` on a merge.
 
 ---
 

@@ -138,6 +138,52 @@ TOOLS = {
         },
         "handler": tool_kg_add,
     },
+    "mempalace_kg_save": {
+        "description": "Save a fact into the knowledge graph, folding it into what is there: the same open fact gains a source instead of a copy, and a new value of a single-valued predicate (works_at, uses_model, ...) replaces the open one. Returns action merged, superseded, historical or added.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "The entity doing/being something"},
+                "predicate": {"type": "string", "description": "The relationship type"},
+                "object": {"type": "string", "description": "The entity being connected to"},
+                "valid_from": {
+                    "type": "string",
+                    "description": "When this became true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; a replacement happens at this instant, default now)",
+                },
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {"type": "integer", "minimum": 0},
+                "source_seq_end": {"type": "integer", "minimum": 0},
+                "source_drawer_id": {
+                    "type": "string",
+                    "description": "Drawer the fact came from (optional)",
+                },
+                "source_file": {"type": "string", "description": "Source file (optional)"},
+                "wing": {"type": "string", "description": "Wing the fact belongs to (optional)"},
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only merge with or replace stored facts of these sensitivities (optional)",
+                },
+                "single_valued": {
+                    "type": "boolean",
+                    "description": "Replace the subject's open value for this predicate (default: from config)",
+                },
+            },
+            "required": ["subject", "predicate", "object"],
+        },
+        "handler": tool_kg_save,
+    },
     "mempalace_kg_invalidate": {
         "description": "Mark a fact as no longer true. E.g. ankle injury resolved, job ended, moved house.",
         "input_schema": {
