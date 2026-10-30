@@ -75,9 +75,18 @@ Hybrid search over vector and lexical candidates. Returns verbatim drawer conten
 
 **Returns:** `{ query, filters, results: [{ text, wing, room, source_file, similarity, score }] }`
 
-`score` is the hybrid rank score; use it to merge results across scopes.
+`score` is the hybrid rank score, normalized within one candidate pool. Hits also
+carry `rank_components` (vector similarity, raw BM25, and ranking weights).
+Commonplace gateway and handoff recall re-rank merged scopes once; Python callers
+can use `mempalace.lexical.rerank_merged_hits(query, hits)` before sorting by score.
+Older workers without components retain approximate ordering across scopes.
 `similarity` remains the raw vector similarity and can be null for a lexical-only hit.
 Media/code task search always uses shared-space vector ranking, regardless of `candidate_strategy`.
+
+Lexical retrieval uses at most eight terms, prioritizing tokens with digits,
+mixed case, or `_ - / . :`, then longer words as a rarity proxy. Queries longer
+than twelve tokens without those literals keep vector candidates and report
+`lexical_skipped: "long_query_no_literal"`; short keyword queries remain lexical.
 
 When `max_distance` drops results, the response says how many in
 `filtered_by_max_distance`. With `candidate_strategy: "union"`, a lexical-only

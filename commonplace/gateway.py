@@ -554,8 +554,8 @@ class Mediator:
     def _fan_out_search(self, principal, name, args) -> dict:
         """One search per readable wing, merged by score.
 
-        Each wing's own top ``limit`` is exact, so the merged top ``limit`` over
-        the readable wings is exact too; nothing outside them is ever queried.
+        Re-rank the readable wings' candidate lists in one pool. Per-wing
+        truncation can still omit candidates; unreadable wings are never queried.
         """
         policy = principal.policy
         listing = self.workers.call_tool(principal, "mempalace_list_wings", {}) or {}
@@ -579,8 +579,11 @@ class Mediator:
                 if key not in seen:
                     seen.add(key)
                     merged.append(hit)
-        merged.sort(key=_score_key)
         merged = [h for h in merged if _scrub(h, policy.can_read_wing) is not _DROP]
+        from mempalace.lexical import rerank_merged_hits
+
+        rerank_merged_hits(args.get("query", ""), merged)
+        merged.sort(key=_score_key)
         out = dict(first or {"query": args.get("query", "")})
         out["results"] = merged[: max(1, limit)]
         if isinstance(out.get("filters"), dict):

@@ -142,6 +142,12 @@ def test_filtered_lexical_search_bounds_hydration(tmp_path, monkeypatch, backend
 def test_lexical_date_window_uses_wider_candidate_pool(lexical_palace):
     palace, col = lexical_palace
     col.add(
+        ids=[f"in-window-{i}" for i in range(100)],
+        documents=[f"Routine current engineering note {i}" for i in range(100)],
+        embeddings=[[0.01, 1.0]] * 100,
+        metadatas=[{"wing": "build", "room": "logs", "filed_at": "2026-03-01"}] * 100,
+    )
+    col.add(
         ids=[f"old-{i}" for i in range(25)],
         documents=[f"ZXQ739251 ZXQ739251 old record {i}" for i in range(25)],
         embeddings=[[0.0, 0.0]] * 25,
@@ -149,6 +155,37 @@ def test_lexical_date_window_uses_wider_candidate_pool(lexical_palace):
     )
     result = search_memories("ZXQ739251", palace, since="2026-01-01", n_results=5)
     assert "artifact" in {hit["drawer_id"] for hit in result["results"]}
+    assert (
+        next(hit for hit in result["results"] if hit["drawer_id"] == "artifact")["matched_via"]
+        == "bm25_backend"
+    )
+
+
+def test_long_plain_query_skips_lexical_and_keeps_vector_results(lexical_palace, monkeypatch):
+    palace, col = lexical_palace
+    query = (
+        "review the deployment configuration authentication middleware and database "
+        "optimization before discussing implementation verification operational followup"
+    )
+    vector = search_memories(query, palace, candidate_strategy="vector")
+    monkeypatch.setattr(
+        col, "lexical_search", lambda **kw: pytest.fail("long plain query used lexical")
+    )
+    default = search_memories(query, palace)
+    assert default["lexical_skipped"] == "long_query_no_literal"
+    assert default["results"] == vector["results"]
+
+
+def test_long_literal_query_still_finds_lexical_only_needle(lexical_palace):
+    palace, _ = lexical_palace
+    query = (
+        "review the deployment configuration authentication middleware and database "
+        "optimization before discussing implementation verification operational followup ZXQ739251"
+    )
+    result = search_memories(query, palace)
+    needle = next(hit for hit in result["results"] if hit["drawer_id"] == "artifact")
+    assert needle["matched_via"] == "bm25_backend"
+    assert "lexical_skipped" not in result
 
 
 def test_default_cli_keeps_vector_results_without_lexical_support(

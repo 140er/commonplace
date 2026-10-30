@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ..lexical import bm25_scores, tokenize
+from ..lexical import bm25_scores, select_lexical_terms
 from ..stored_text import (
     decode_record,
     decode_value,
@@ -1430,6 +1430,10 @@ class SQLiteExactCollection(BaseCollection):
 
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         validate_where(where)
+        terms, skip = select_lexical_terms(query)
+        if skip or not terms:
+            return LexicalResult(hits=[])
+        query = " ".join(terms)
         with self._cursor() as cur:
             hits = self._lexical_search_fts(cur, query=query, n_results=n_results, where=where)
             if hits is not None:
@@ -1452,7 +1456,9 @@ class SQLiteExactCollection(BaseCollection):
     def _lexical_search_fts(self, cur, *, query: str, n_results: int, where: Optional[dict]):
         if not self._fts_available(cur):
             return None
-        tokens = [t for t in tokenize(query) if len(t) >= 2]
+        tokens, skip = select_lexical_terms(query)
+        if skip:
+            return []
         if not tokens:
             return None
         fts_query = " OR ".join(tokens)
@@ -1465,7 +1471,7 @@ class SQLiteExactCollection(BaseCollection):
                 filter_sql, filter_params = pushed
                 scope_sql = (
                     "AND EXISTS (SELECT 1 FROM documents "
-                    "WHERE documents.rowid = docs_fts.rowid "
+                    "WHERE documents.id = docs_fts.doc_id "
                     f"AND collection_id = ? AND ({filter_sql}))"
                 )
                 params = (*params, collection_id, *filter_params)
@@ -1474,7 +1480,7 @@ class SQLiteExactCollection(BaseCollection):
                 params = (*params, max(n_results * 5, n_results))
             rows = cur.execute(
                 f"""
-                SELECT doc_id, bm25(docs_fts) AS rank
+                SELECT doc_id, rank
                 FROM docs_fts
                 WHERE docs_fts MATCH ? AND collection_id = ?
                 {scope_sql}

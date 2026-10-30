@@ -15,7 +15,7 @@ import sqlite3
 from collections import defaultdict
 from typing import Iterable, Iterator, Optional
 
-from ..lexical import tokenize
+from ..lexical import select_lexical_terms, tokenize
 from ..stored_text import FLAG, decode_record, decode_value, encode_filter, encode_where
 from ..timeutil import recency_floor, recency_key
 from ._filters import matches_where
@@ -461,7 +461,10 @@ def sqlite_lexical_rows(
     full-text query fails; a clean miss stays empty. ``[]`` when the database
     is missing or unreadable.
     """
-    tokens = [t for t in tokenize(query) if len(t) >= 3]
+    selected, skip = select_lexical_terms(query)
+    if skip:
+        return []
+    tokens = [t for t in selected if len(t) >= 3]
     equalities = _string_equalities(encode_where(where))
     filter_sql, filter_params = (
         _match_sql(equalities, "e.id") if equalities is not None else ("", [])
@@ -479,14 +482,16 @@ def sqlite_lexical_rows(
                     row[0]
                     for row in conn.execute(
                         f"""
-                        SELECT e.id
+                        SELECT embedding_fulltext_search.rowid
                         FROM embedding_fulltext_search
-                        JOIN embeddings e ON e.id = embedding_fulltext_search.rowid
-                        JOIN segments s ON e.segment_id = s.id
-                        JOIN collections c ON s.collection = c.id
                         WHERE embedding_fulltext_search MATCH ?
-                          AND c.name = ?
+                          AND EXISTS (
+                            SELECT 1 FROM embeddings e
+                            JOIN segments s ON e.segment_id = s.id
+                            JOIN collections c ON s.collection = c.id
+                            WHERE e.id = embedding_fulltext_search.rowid AND c.name = ?
                           {filter_sql}
+                          )
                         {limit_sql}
                         """,
                         (" OR ".join(tokens), collection_name, *filter_params)

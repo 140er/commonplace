@@ -31,7 +31,11 @@ mempalace search "deploy process" --candidate-strategy vector
 3. Optional wing/room filters narrow both candidate sources.
 4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
 
-Use the returned hybrid `score` when combining search results from different scopes. A backend without lexical search keeps vector results and reports `candidate_strategy_fallback: "lexical_search_unsupported"`. Experimental media/code task search always uses shared-space vector ranking.
+Lexical retrieval selects at most eight terms, prioritizing identifiers, paths, mixed-case names, and tokens containing digits or `_ - / . :`, then longer words as a rarity proxy. For queries longer than twelve tokens without one of those literals, search keeps vector candidates and reports `lexical_skipped: "long_query_no_literal"`. Short keyword queries retain lexical retrieval.
+
+The returned hybrid `score` is normalized within each candidate pool. Commonplace gateway and handoff recall re-rank merged scopes once using the returned `rank_components` and verbatim text. Python integrations can do the same with `mempalace.lexical.rerank_merged_hits(query, hits)` before sorting by `score`. Results from older workers without those components retain approximate score ordering.
+
+A backend without lexical search keeps vector results and reports `candidate_strategy_fallback: "lexical_search_unsupported"`. Experimental media/code task search always uses shared-space vector ranking.
 
 ### Why Scoping Matters
 

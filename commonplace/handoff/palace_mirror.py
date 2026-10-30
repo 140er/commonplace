@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 from typing import Callable
+
+from mempalace.lexical import rerank_merged_hits
 
 from .models import MIRROR_WING, RecallHit, StoredThread
 
@@ -143,6 +146,7 @@ def palace_search(
         return []
     fetch_limit = min(limit * 4, 50)
     hits = {}
+    components = {}
     hydrated = {}
     for stored_id in dict.fromkeys(stored_ids):
         result = _call(
@@ -180,4 +184,8 @@ def palace_search(
             key = (stored_id, index)
             if key not in hits or recalled.score > hits[key].score:
                 hits[key] = recalled
+                components[key] = {**hit, "text": text}
+    rerank_merged_hits(query, list(components.values()))
+    for key, hit in components.items():
+        hits[key] = replace(hits[key], score=_score(hit))
     return sorted(hits.values(), key=lambda hit: hit.score, reverse=True)[:limit]

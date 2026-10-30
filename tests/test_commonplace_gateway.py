@@ -324,6 +324,56 @@ def test_multiwing_search_merges_by_hybrid_score_before_limit():
     assert [hit["drawer_id"] for hit in result["results"]] == ["lexical"]
 
 
+def test_multiwing_search_normalizes_bm25_over_the_merged_pool():
+    from commonplace.gateway import Mediator
+    from mempalace.searcher import _hybrid_rank
+
+    query = "ZXQ739251 port"
+    results = {
+        "shared": _hybrid_rank(
+            [
+                {
+                    "drawer_id": "exact",
+                    "wing": "shared",
+                    "text": query,
+                    "distance": None,
+                    "similarity": None,
+                }
+            ],
+            query,
+        ),
+        "project_a": _hybrid_rank(
+            [
+                {
+                    "drawer_id": "partial",
+                    "wing": "project_a",
+                    "text": "port",
+                    "distance": 0.8,
+                    "similarity": 0.2,
+                }
+            ],
+            query,
+        ),
+    }
+    assert results["project_a"][0]["score"] > results["shared"][0]["score"]
+
+    def call_tool(principal, name, args):
+        return (
+            {"wings": {"shared": {}, "project_a": {}}}
+            if name == "mempalace_list_wings"
+            else {"results": results[args["wing"]]}
+        )
+
+    mediator = object.__new__(Mediator)
+    mediator.workers = SimpleNamespace(call_tool=call_tool)
+    result = mediator._fan_out_search(
+        SimpleNamespace(policy=Policy.build(**CODER)),
+        "mempalace_search",
+        {"query": query, "limit": 1},
+    )
+    assert [hit["drawer_id"] for hit in result["results"]] == ["exact"]
+
+
 def test_get_drawers_hides_other_wings_as_missing(hub):
     owner = hub.owner_token()
     a, _ = hub.call(owner, "mempalace_add_drawer", wing="shared", room="r", content="one")

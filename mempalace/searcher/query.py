@@ -252,7 +252,10 @@ def search_memories(
               embedding space.
             * ``"union"`` (default) — also pull top ``n_results * 3`` lexical candidates
               through the backend's ``lexical_search`` capability and merge
-              them into the rerank pool (deduped by source_file). Catches docs
+              them into the rerank pool (deduped by stored row ID). Date windows
+              widen the lexical pool. Queries use at most eight selected terms;
+              long queries without literal-looking terms keep vector candidates.
+              Catches docs
               with strong BM25 signal that are vector-distant from the query.
               Backends without lexical search retain vector candidates and
               report ``candidate_strategy_fallback="lexical_search_unsupported"``.
@@ -455,7 +458,7 @@ def search_memories(
     # candidates against the same cutoff where their distance is computable.
     # The helper also runs the final BM25 hybrid re-rank and strips internal
     # dedup fields before returning.
-    hits, strategy_error = _finalize_candidate_hits(
+    hits, _ = _finalize_candidate_hits(
         candidate_strategy=candidate_strategy,
         hits=hits,
         drawers_col=drawers_col,
@@ -471,9 +474,6 @@ def search_memories(
         stats=stats,
         known_distances=measured,
     )
-    if strategy_error:
-        return strategy_error
-
     candidates_fetched = len(_first_or_empty(drawer_results, "documents"))
     envelope = _search_result_envelope(
         query=query,

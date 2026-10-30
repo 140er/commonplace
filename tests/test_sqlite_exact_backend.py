@@ -1021,6 +1021,31 @@ def test_search_vector_disabled_fallback_is_chroma_only(tmp_path, monkeypatch):
     assert result["backend"] == "sqlite_exact"
 
 
+def test_readonly_lexical_scope_survives_legacy_fts_rowid_drift(tmp_path):
+    backend, col = _collection(tmp_path)
+    col.add(
+        ids=["needle", "other"],
+        documents=["ZXQ739251 port", "ZXQ739251 port"],
+        metadatas=[{"wing": "target"}, {"wing": "other"}],
+        embeddings=[[1.0, 0.0]] * 2,
+    )
+    backend.close_palace(str(tmp_path))
+    path = tmp_path / "sqlite_exact.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE docs_fts SET rowid = rowid + 1000")
+        conn.execute("DELETE FROM meta WHERE key = 'fts5_rowid_synced'")
+    readonly = backend.get_collection(
+        palace=PalaceRef(id=str(tmp_path), local_path=str(tmp_path)),
+        collection_name="mempalace_drawers",
+        create=False,
+        options={"read_only": True},
+    )
+    result = readonly.lexical_search(query="ZXQ739251", where={"wing": "target"})
+    assert [hit.id for hit in result.hits] == ["needle"]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT min(rowid) FROM docs_fts").fetchone()[0] >= 1000
+
+
 def test_concurrent_first_open_single_connection_no_leak(tmp_path, monkeypatch):
     """Two threads first-opening the same palace concurrently must share one
     handle and one sqlite connection.

@@ -2338,7 +2338,13 @@ class ChromaCollection(BaseCollection):
         backend capability. The HNSW-disabled fallback in ``searcher.py`` still
         reads ``chroma.sqlite3`` directly and remains Chroma-only.
         """
+        from ..lexical import select_lexical_terms
+
         validate_where(where)
+        terms, skip = select_lexical_terms(query)
+        if skip or not terms:
+            return LexicalResult(hits=[])
+        query = " ".join(terms)
         sqlite_hits = self._lexical_search_via_sqlite(query=query, n_results=n_results, where=where)
         if sqlite_hits is not None:
             return LexicalResult(hits=sqlite_hits)

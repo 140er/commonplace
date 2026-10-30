@@ -186,6 +186,7 @@ def _cli_ranked_hits(
     ]
     # Bookkeeping rows held slots in the fetch, so the caller widens for them too.
     skipped = len(docs) - len(hits)
+    stats = {}
     _apply_candidate_strategy(
         candidate_strategy,
         hits,
@@ -197,7 +198,12 @@ def _cli_ranked_hits(
         since_dt=window[0] if window else None,
         before_dt=window[1] if window else None,
         known_distances=known_distances,
+        stats=stats,
     )
+    if stats.get("candidate_strategy_fallback"):
+        import sys
+
+        print(f"  Candidate fallback: {stats['candidate_strategy_fallback']}", file=sys.stderr)
 
     for hit in hits:
         if "metadata" not in hit:

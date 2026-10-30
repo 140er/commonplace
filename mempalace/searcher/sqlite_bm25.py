@@ -300,6 +300,13 @@ def _bm25_only_via_sqlite(
     for c, raw in zip(candidates, bm25_raw):
         c["bm25_score"] = round(raw, 3)
         c["_score"] = (raw / max_bm25) if max_bm25 > 0 else 0.0
+        c["score"] = round(c["_score"], 6)
+        c["rank_components"] = {
+            "vector_similarity": 0.0,
+            "bm25": raw,
+            "vector_weight": 0.0,
+            "bm25_weight": 1.0,
+        }
     candidates.sort(key=lambda c: c["_score"], reverse=True)
     hits = _fold_copies_across_sources(candidates, _search_hit_source, _search_hit_ref)[:n_results]
     for h in hits:
@@ -358,11 +365,17 @@ def _merge_bm25_union_candidates(
     is not counted twice.
     """
     stats = {} if stats is None else stats
+    terms, skipped = select_lexical_terms(query, stop_words)
+    if skipped:
+        stats["lexical_skipped"] = skipped
+        return
+    if not terms:
+        return
     known_distances = known_distances or {}
     where = build_where_filter(wing, room, source_file, col=drawers_col)
     try:
         lexical = drawers_col.lexical_search(
-            query=query,
+            query=" ".join(terms),
             n_results=_candidate_pool_size(
                 n_results, since_dt is not None or before_dt is not None
             ),

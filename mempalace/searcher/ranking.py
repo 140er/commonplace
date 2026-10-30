@@ -216,8 +216,15 @@ def _hybrid_rank(
             distance = _metric_scale_distance(boosted, metric)
         vec_sim = _distance_to_similarity(distance, metric)
         r["bm25_score"] = round(raw, 3)
-        r["score"] = vector_weight * vec_sim + bm25_weight * norm
-        scored.append((r["score"], r))
+        score = vector_weight * vec_sim + bm25_weight * norm
+        r["score"] = round(score, 6)
+        r["rank_components"] = {
+            "vector_similarity": vec_sim,
+            "bm25": raw,
+            "vector_weight": vector_weight,
+            "bm25_weight": bm25_weight,
+        }
+        scored.append((score, r))
 
     # Break exact score ties by raw vector distance first: boosted drawers closer
     # than their boost all clamp to the same score and must keep vector order.

@@ -270,6 +270,26 @@ def test_cross_thread_recall_preserves_hybrid_score_before_limit():
     assert [hit.stored_thread_id for hit in hits] == ["thr_second"]
 
 
+def test_cross_thread_recall_normalizes_bm25_over_the_merged_pool():
+    from mempalace.searcher import _hybrid_rank
+
+    query = "ZXQ739251 port"
+    worker = FakeWorker()
+    worker.search_results["thr_first"] = _hybrid_rank(
+        [_hit(text="[0] user message: port", distance=0.8, similarity=0.2)], query
+    )
+    worker.search_results["thr_second"] = _hybrid_rank(
+        [_hit("thr_second", text=f"[0] user message: {query}", distance=None, similarity=None)],
+        query,
+    )
+    assert (
+        worker.search_results["thr_first"][0]["score"]
+        > worker.search_results["thr_second"][0]["score"]
+    )
+    hits = palace_search(worker, object(), ["thr_first", "thr_second"], query, limit=1)
+    assert [hit.stored_thread_id for hit in hits] == ["thr_second"]
+
+
 @pytest.mark.parametrize(
     ("extra", "expected"),
     [
