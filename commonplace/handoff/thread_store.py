@@ -355,34 +355,14 @@ class ThreadStore:
         if not tokens or not stored_ids or limit <= 0:
             return []
         stored_ids = list(dict.fromkeys(stored_ids))
-        placeholders = ",".join("?" for _ in stored_ids)
         with self._lock:
             # FTS5's query parser treats NUL as an end marker even in a
             # quoted string, so such queries use the literal scan as well.
             if self._fts_enabled and "\x00" not in query:
-                match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
-                rows = self._conn.execute(
-                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
-                    "-bm25(chunks_fts) AS score FROM chunks_fts "
-                    "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
-                    f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
-                    "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
-                    (match, *stored_ids, limit),
-                ).fetchall()
+                rows = self._search_fts(stored_ids, tokens, limit)
             else:
-                # Escape LIKE wildcards rather than interpreting user text
-                # as a pattern. Bound values also protect thread-id filters.
-                patterns = [
-                    "%" + token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                    for token in tokens
-                ]
-                matches = " OR ".join("text LIKE ? ESCAPE '\\'" for _ in patterns)
-                rows = self._conn.execute(
-                    "SELECT thread_id, idx, seq_start, seq_end, text, 0.0 AS score FROM chunks "
-                    f"WHERE thread_id IN ({placeholders}) AND ({matches}) "
-                    "ORDER BY thread_id, idx LIMIT ?",
-                    (*stored_ids, *patterns, limit),
-                ).fetchall()
+                rows = self._search_like(stored_ids, tokens, limit)
+            rows.sort(key=lambda row: (-row["score"], row["thread_id"], row["idx"]))
             return [
                 RecallHit(
                     stored_thread_id=row["thread_id"],
@@ -392,5 +372,72 @@ class ThreadStore:
                     score=row["score"],
                     text=row["text"],
                 )
-                for row in rows
+                for row in rows[:limit]
             ]
+
+    def _sqlite_limit(self, category: str, default: int) -> int:
+        # getlimit was added in Python 3.11; retain conservative defaults
+        # for Python 3.10, which this project still supports.
+        read_limit = getattr(self._conn, "getlimit", None)
+        return read_limit(getattr(sqlite3, category)) if read_limit is not None else default
+
+    def _search_fts(self, stored_ids: list[str], tokens: list[str], limit: int) -> list:
+        match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+        batch_size = max(1, min(500, self._sqlite_limit("SQLITE_LIMIT_VARIABLE_NUMBER", 999) - 2))
+        rows = []
+        for offset in range(0, len(stored_ids), batch_size):
+            ids = stored_ids[offset : offset + batch_size]
+            placeholders = ",".join("?" for _ in ids)
+            rows.extend(
+                self._conn.execute(
+                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
+                    "-bm25(chunks_fts) AS score FROM chunks_fts "
+                    "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
+                    f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
+                    "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
+                    (match, *ids, limit),
+                ).fetchall()
+            )
+        # BM25 scores use the same corpus for every id batch, so their
+        # best results can be merged without changing relevance scores.
+        return rows
+
+    def _search_like(self, stored_ids: list[str], tokens: list[str], limit: int) -> list:
+        variables = self._sqlite_limit("SQLITE_LIMIT_VARIABLE_NUMBER", 999)
+        depth = self._sqlite_limit("SQLITE_LIMIT_EXPR_DEPTH", 1_000)
+        pattern_limit = self._sqlite_limit("SQLITE_LIMIT_LIKE_PATTERN_LENGTH", 50_000)
+        term_batch = max(1, min(100, (variables - 1) // 2, (depth or 1_000) - 8))
+        id_batch = max(1, min(500, variables - term_batch - 1))
+        predicates = []
+        values = []
+        for token in tokens:
+            pattern = (
+                "%" + token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            )
+            if "\x00" in token or len(pattern.encode("utf-8")) > pattern_limit:
+                # LIKE truncates at NUL and limits pattern length. instr
+                # compares the whole string; SQLite lower preserves LIKE's
+                # default case-insensitivity for ASCII characters.
+                predicates.append("instr(lower(text), lower(?)) > 0")
+                values.append(token)
+            else:
+                predicates.append("text LIKE ? ESCAPE '\\'")
+                values.append(pattern)
+
+        found = {}
+        for id_offset in range(0, len(stored_ids), id_batch):
+            ids = stored_ids[id_offset : id_offset + id_batch]
+            placeholders = ",".join("?" for _ in ids)
+            for offset in range(0, len(tokens), term_batch):
+                matches = " OR ".join(predicates[offset : offset + term_batch])
+                rows = self._conn.execute(
+                    "SELECT thread_id, idx, seq_start, seq_end, text, 0.0 AS score FROM chunks "
+                    f"WHERE thread_id IN ({placeholders}) AND ({matches}) "
+                    "ORDER BY thread_id, idx LIMIT ?",
+                    (*ids, *values[offset : offset + term_batch], limit),
+                ).fetchall()
+                for row in rows:
+                    found[row["thread_id"], row["idx"]] = row
+        # Equal scores have the same stable ordering in every batch; each
+        # batch's first `limit` rows suffice for the final first `limit`.
+        return list(found.values())

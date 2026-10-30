@@ -460,6 +460,95 @@ def test_search_or_semantics_and_limit(searchable):
     assert searchable.search([], "alpine") == []
 
 
+def test_search_nul_queries_match_the_complete_literal(searchable):
+    exact = searchable.store("workspace-a", "exact", [message("foo\x00bar")], actor="actor-a")
+    different = searchable.store(
+        "workspace-a", "different", [message("foo\x00baz")], actor="actor-a"
+    )
+    plain = searchable.store("workspace-a", "plain", [message("foo")], actor="actor-a")
+    ids = [different.id, plain.id, exact.id]
+    hits = searchable.search(ids, "foo\x00bar")
+    assert [hit.stored_thread_id for hit in hits] == [exact.id]
+    assert hits[0].text == "[0] user message: foo\x00bar"
+    assert searchable.search(ids, "FOO\x00BAR") == hits
+    assert searchable.search(ids, "foo\x00qux") == []
+    assert searchable.messages(exact.id) == [message("foo\x00bar")]
+
+
+def test_search_long_queries_keep_all_tokens_and_respect_limit(searchable):
+    words = [f"absent{index}" for index in range(1_500)] + ["needle"]
+    ids = [
+        searchable.store("workspace-a", word, [message(word)], actor="actor-a").id
+        for word in (words[0], words[749], words[-1])
+    ]
+    query = " ".join(words)
+    hits = searchable.search(ids, query)
+    assert {hit.stored_thread_id for hit in hits} == set(ids)
+    assert searchable.search(ids, query, limit=1) == hits[:1]
+
+
+def test_search_token_longer_than_like_pattern_limit(searchable):
+    stored = searchable.store("workspace-a", "plain", [message("foo")], actor="actor-a")
+    assert searchable.search([stored.id], "x" * 60_000) == []
+
+
+@pytest.mark.skipif(not hasattr(sqlite3.Connection, "setlimit"), reason="Python 3.11+ API")
+@pytest.mark.parametrize("category", ["SQLITE_LIMIT_VARIABLE_NUMBER", "SQLITE_LIMIT_EXPR_DEPTH"])
+def test_search_respects_sqlite_query_limits(searchable, category):
+    stored = searchable.store("workspace-a", "found", [message("needle")], actor="actor-a")
+    previous = searchable._conn.setlimit(getattr(sqlite3, category), 32)
+    try:
+        ids = [f"missing{index}" for index in range(80)] + [stored.id]
+        query = " ".join([f"absent{index}" for index in range(80)] + ["needle"])
+        hits = searchable.search(ids, query)
+        assert [hit.stored_thread_id for hit in hits] == [stored.id]
+    finally:
+        searchable._conn.setlimit(getattr(sqlite3, category), previous)
+
+
+@pytest.mark.skipif(not hasattr(sqlite3.Connection, "setlimit"), reason="Python 3.11+ API")
+def test_fts_id_batches_preserve_global_scores_and_limits(store):
+    weak = store.store(
+        "workspace-a", "weak", [message("needle " + "filler " * 100)], actor="actor-a"
+    )
+    strong = store.store("workspace-a", "strong", [message("needle " * 20)], actor="actor-a")
+    ids = [weak.id] + [f"missing{index}" for index in range(40)] + [strong.id]
+    expected = store.search(ids, "needle")
+    assert [hit.stored_thread_id for hit in expected] == [strong.id, weak.id]
+    previous = store._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 8)
+    try:
+        assert store.search(ids, "needle") == expected
+        assert store.search(ids, "needle", limit=1) == expected[:1]
+    finally:
+        store._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous)
+
+
+@pytest.mark.skipif(not hasattr(sqlite3.Connection, "setlimit"), reason="Python 3.11+ API")
+def test_search_matches_when_token_exceeds_configured_pattern_limit(searchable):
+    stored = searchable.store("workspace-a", "found", [message("needle")], actor="actor-a")
+    previous = searchable._conn.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 4)
+    try:
+        hits = searchable.search([stored.id], "NEEDLE")
+        assert [hit.stored_thread_id for hit in hits] == [stored.id]
+    finally:
+        searchable._conn.setlimit(sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, previous)
+
+
+@pytest.mark.parametrize("use_fts", [True, False], ids=["fts", "like"])
+def test_search_without_runtime_limit_api(monkeypatch, make_store, use_fts):
+    base = sqlite3.Connection if use_fts else NoFtsConnection
+
+    class LegacyConnection(base):
+        getlimit = None
+
+    use_connection(monkeypatch, LegacyConnection)
+    value = make_store()
+    assert value._fts_enabled is use_fts
+    stored = value.store("workspace-a", "found", [message("needle")], actor="actor-a")
+    query = " ".join([f"absent{index}" for index in range(1_500)] + ["needle"])
+    assert [hit.stored_thread_id for hit in value.search([stored.id], query)] == [stored.id]
+
+
 def test_fts_bm25_best_first(store):
     strong = store.store("workspace-a", "strong", [message("needle " * 20)], actor="actor-a")
     weak = store.store(
