@@ -69,14 +69,16 @@ const app = await readFile(new URL("../commonplace/web/static/app.js", import.me
 const functionSource = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
 const document = { activeElement: null, title: "" };
 let button = null, buttonsCreated = 0;
-const elements = { "#title": {}, "#content": {}, "#digest-captions": {}, ".queue": { insertAdjacentHTML() {} } };
-elements["#head-actions"] = {
+const elements = { "#title": {}, "#head-actions": {}, "#digest-captions": {} };
+// Home draws the Speak button in its Needs you box, inside #content.
+elements["#content"] = {
   set innerHTML(markup) {
     if (document.activeElement === button) document.activeElement = null;
     button = markup.includes('data-action="speak-digest"') ? {
       dataset: {}, attributes: {},
       setAttribute(name, value) { this.attributes[name] = value; },
       focus() { document.activeElement = this; },
+      replaceWith(node) { button = node; },
     } : null;
     if (button) buttonsCreated++;
   },
@@ -84,7 +86,9 @@ elements["#head-actions"] = {
 const context = {
   document, root: { querySelector: (selector) => selector === '[data-action="speak-digest"]' ? button : elements[selector] },
   speech: { supported: true }, speechState: { active: false, text: "" },
-  state: { needs: {}, route: "#/" }, needsCards: () => [], message: () => "Nothing needs you",
+  state: { needs: {}, open: [], boards: [], route: "#/" }, needsCards: () => [],
+  homeView: ({ speak }) => (speak ? '<button data-action="speak-digest">Speak</button>' : ""),
+  dot: () => "", taskRow: () => "",
 };
 const view = runInNewContext([
   functionSource("function speechView()", "\nconst prLink"),
@@ -98,7 +102,7 @@ focused.focus();
 context.speechState = { active: true, text: "Three things need you." };
 view.speechView();
 view.needsView();
-assert.equal(buttonsCreated, 1);
+assert.equal(buttonsCreated, 2); // Redrawn, then swapped back for the original node.
 assert.equal(button, focused);
 assert.equal(document.activeElement, focused);
 assert.equal(button.textContent, "Stop");
