@@ -71,7 +71,7 @@ rust_exact = "mempalace.backends.rust_exact:RustExactBackend"
 [project.entry-points."mempalace.sources"]
 
 [project.optional-dependencies]
-voice = ["useful-moonshine-onnx>=20251121", "faster-whisper>=1.2.1"]
+voice = ["useful-moonshine-onnx>=20251121,<20260101", "faster-whisper>=1.2.1"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
