@@ -6,9 +6,15 @@ CHECK = '<svg class="check" viewBox="0 0 12 12" fill="none" stroke="currentColor
 
 
 def side(current):
-    boards = [("mempalace", "#f7941d", 9), ("commonplace-site", "#7fd18b", 3), ("computercraft", "#9db7ff", 12), ("home", "#c79bf2", 2)]
+    boards = [
+        ("mempalace", "#f7941d", 9),
+        ("commonplace-site", "#7fd18b", 3),
+        ("computercraft", "#9db7ff", 12),
+        ("home", "#c79bf2", 2),
+    ]
+    cur = ' aria-current="page"'
     rows = "".join(
-        f'<a href="board.html"{" aria-current=\"page\"" if b == current else ""}><span class="sq" style="background:{c}"></span>{b} <span class="n">{n}</span></a>'
+        f'<a href="board.html"{cur if b == current else ""}><span class="sq" style="background:{c}"></span>{b} <span class="n">{n}</span></a>'
         for b, c, n in boards
     )
     return f"""<aside class="side">
@@ -40,8 +46,22 @@ DOING = [
     (146, "board_repos: normalise git remotes", "claude-code:vm", "27m", 10, 0),
 ]
 REVIEW = [
-    (145, "Pick the token expiry default", "claude-code:vm", "2h", "1 year or 90 days for personal tokens?", 2),
-    (150, "Phone push for the Decide count", "claude-code:vm", "1h", "Self-hosted ntfy on zurvur, or only the Decide count for v1?", 2),
+    (
+        145,
+        "Pick the token expiry default",
+        "claude-code:vm",
+        "2h",
+        "1 year or 90 days for personal tokens?",
+        2,
+    ),
+    (
+        150,
+        "Phone push for the Decide count",
+        "claude-code:vm",
+        "1h",
+        "Self-hosted ntfy on zurvur, or only the Decide count for v1?",
+        2,
+    ),
     (151, "Split the hook output", "codex:vm", "40m", None, 0),
 ]
 DONE = [
@@ -76,23 +96,31 @@ def cols(focus=None, open_=None):
 
     todo = "".join(
         f'<article class="{cls(i)}"><p class="ct">{t}</p><div class="cm"><span class="id">#{i}</span>'
-        f'<span class="r">{links(l)}{f"<span class=res></span>{actor(a)}" if a else ""}</span></div></article>'
-        for i, t, a, l, _ in TODO
+        f'<span class="r">{links(n_links)}{f"<span class=res></span>{actor(a)}" if a else ""}</span></div></article>'
+        for i, t, a, n_links, _ in TODO
     )
     doing = ""
-    for i, t, a, held, left, l in DOING:
-        bar = "" if left is None else f'<span class="claim{" low" if left < 20 else ""}"><i style="width:{left}%"></i></span>'
+    for i, t, a, held, left, n_links in DOING:
+        bar = (
+            ""
+            if left is None
+            else f'<span class="claim{" low" if left < 20 else ""}"><i style="width:{left}%"></i></span>'
+        )
         doing += (
             f'<article class="{cls(i)}"><p class="ct">{t}</p><div class="cm"><span class="id">#{i}</span>'
-            f'<span class="r">{links(l)}{actor(a)}<span>{held}</span></span></div>{bar}</article>'
+            f'<span class="r">{links(n_links)}{actor(a)}<span>{held}</span></span></div>{bar}</article>'
         )
     review = ""
-    for i, t, a, age, q, l in REVIEW:
-        title = f'<span style="font:600 11px var(--mono);color:var(--accent);margin-right:6px">Done?</span>{t}' if q is None else t
+    for i, t, a, age, q, n_links in REVIEW:
+        title = (
+            f'<span style="font:600 11px var(--mono);color:var(--accent);margin-right:6px">Done?</span>{t}'
+            if q is None
+            else t
+        )
         quote = f'<p class="cq">“{q}”</p>' if q else ""
         review += (
             f'<article class="{cls(i)}"><p class="ct">{title}</p>{quote}<div class="cm"><span class="id">#{i}</span>'
-            f'<span class="r">{links(l)}{actor(a)}<span>{age}</span></span></div></article>'
+            f'<span class="r">{links(n_links)}{actor(a)}<span>{age}</span></span></div></article>'
         )
     done = "".join(
         f'<article class="card"><p class="ct">{t}</p><div class="cm">{CHECK}<span class="id">#{i}</span>'
@@ -182,4 +210,6 @@ def page(title, body_cls, inner):
 
 
 open("board.html", "w").write(page("mempalace", "", HEAD + cols(focus=147)))
-open("card.html", "w").write(page("#142 Fix the Windows lock on repair", "with-panel", HEAD + cols(open_=142) + PANEL))
+open("card.html", "w").write(
+    page("#142 Fix the Windows lock on repair", "with-panel", HEAD + cols(open_=142) + PANEL)
+)

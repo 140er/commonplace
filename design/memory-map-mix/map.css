@@ -1,0 +1,137 @@
+/* Memory map. Shell and tokens come from app.css (kanban v2, from the site). */
+
+.app { grid-template-rows: 1fr; }
+.mmark, .mtabs { display: none; }
+
+.head h1 .n { margin-left: 12px; }
+.head .right { align-self: flex-end; margin: 0; }
+.filter { width: 320px; flex: none; background: var(--term); color: var(--quiet); }
+.filter svg { width: 14px; height: 14px; }
+.filter input {
+  flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none;
+  font: inherit; color: var(--ink); caret-color: var(--accent);
+}
+.filter input::placeholder { color: var(--wait); }
+.filter input::-webkit-search-cancel-button { display: none; }
+.filter .hits { color: var(--accent); font-weight: 700; }
+.filter:focus-within kbd { display: none; }
+
+.views { display: flex; gap: 2px; background: var(--surface-2); padding: 2px; }
+.views button { height: 28px; padding: 0 14px; color: var(--muted); font-weight: 700; cursor: pointer; }
+.views button:hover { color: var(--ink); }
+.views button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+
+/* ---------- Stage ---------- */
+.stage { flex: 1; min-height: 0; position: relative; background: var(--term); overflow: hidden; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+.stage canvas.over { cursor: pointer; }
+.stage canvas.drag { cursor: grabbing; }
+
+.legend { position: absolute; top: var(--gap); left: var(--gap); display: flex; flex-direction: column; gap: 2px; }
+.legend button {
+  width: 188px; height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 10px;
+  background: var(--surface); color: var(--ink); cursor: pointer; text-align: left;
+}
+.legend button:hover { background: var(--surface-2); }
+.legend i { width: 10px; height: 10px; flex: none; }
+.legend .c { margin-left: auto; color: var(--quiet); font-size: 12px; }
+.legend button[aria-pressed="false"] { color: var(--wait); background: rgba(22, 24, 22, 0.6); }
+.legend button[aria-pressed="false"] i { background: var(--surface-3) !important; }
+
+.zoom { position: absolute; right: var(--gap); bottom: var(--gap); display: flex; flex-direction: column; gap: 2px; width: 40px; }
+.zoom button { height: 40px; display: grid; place-items: center; background: var(--surface); font-size: 18px; font-weight: 700; cursor: pointer; }
+.zoom button:hover { background: var(--surface-2); }
+.zoom button svg { width: 14px; height: 14px; }
+.zoom span { height: 26px; display: grid; place-items: center; background: var(--surface); color: var(--quiet); font-size: 11px; }
+.main:has(.panel:not([hidden])) .zoom { right: calc(488px + var(--gap) * 2); }
+
+/* When: memories per week. Bars on a surface tile; the lit share of each week in orange. */
+.when {
+  position: absolute; left: var(--gap); right: calc(40px + var(--gap) * 2); bottom: var(--gap); height: 64px;
+  display: flex; align-items: stretch; gap: 2px; padding: 8px 10px 22px; background: var(--surface);
+}
+.when button { flex: 1; position: relative; cursor: pointer; }
+.when i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; transition: height 260ms cubic-bezier(0.2, 0.7, 0.1, 1); }
+.when .all { background: var(--surface-3); }
+.when .lit { background: var(--accent); }
+.when button:hover .all { background: var(--quiet); }
+.when button.sel .all { background: var(--ink); }
+.when span { position: absolute; left: 0; top: 100%; margin-top: 5px; font-size: 11px; line-height: 12px; color: var(--quiet); pointer-events: none; }
+.main:has(.panel:not([hidden])) .when { right: calc(488px + 40px + var(--gap) * 3); }
+
+/* Hover read-out: the memory's first words in an orange block. */
+.tip {
+  position: absolute; z-index: 3; pointer-events: none; max-width: 340px;
+  padding: 8px 10px; background: var(--accent); color: var(--accent-ink);
+  font-size: 12px; line-height: 17px;
+}
+.tip b { display: block; font-weight: 700; }
+.tip .t { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tip.ink { background: var(--ink); color: var(--bg); }
+
+/* ---------- Panel ---------- */
+.panel { overflow: hidden; }
+.panel .tile { flex: none; }
+.panel .grow { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 16px; scrollbar-width: none; }
+.panel .bar .sq { width: 10px; height: 10px; }
+.panel .bar b { color: var(--ink); }
+.panel .x { width: 28px; height: 28px; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 16px; }
+.panel .x:hover { color: var(--ink); }
+.panel h2 .n { color: var(--accent); margin-left: 10px; }
+
+.sec h3 { font-size: 12px; line-height: 16px; font-weight: 400; color: var(--quiet); margin-bottom: 8px; display: flex; gap: 8px; }
+.sec h3 b { color: var(--muted); font-weight: 700; }
+.rows { display: flex; flex-direction: column; gap: 2px; }
+.rows li {
+  display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 7px 10px;
+  background: var(--surface-2); color: var(--muted); font-size: 12px; line-height: 18px; cursor: pointer;
+}
+.rows li:hover { background: var(--surface-3); color: var(--ink); }
+.rows li .sq { width: 8px; height: 8px; flex: none; }
+.rows li .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rows li time, .rows li .k { color: var(--quiet); flex: none; }
+.rows li .who { color: var(--ink); font-weight: 700; flex: none; }
+.rows li .id { color: var(--ink); flex: none; }
+.state.todo, .state.backlog { background: var(--surface-3); color: var(--muted); }
+
+/* Facts: the knowledge graph as terminal lines, with their valid dates. Ended facts stay as history. */
+.facts { background: var(--term); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px; }
+.facts li { display: grid; grid-template-columns: 1fr auto; gap: 12px; color: var(--ink); white-space: nowrap; }
+.facts li > span { overflow: hidden; text-overflow: ellipsis; }
+.hit .stamp span { white-space: nowrap; }
+.facts .p { color: var(--quiet); }
+.facts time { color: var(--wait); }
+.facts li.ended { color: var(--wait); }
+.facts li.ended .o { text-decoration: line-through; }
+
+/* ---------- Phone ---------- */
+@media (max-width: 640px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr 64px; height: 100vh; height: 100dvh; }
+  .side, .zoom, .filter kbd { display: none; }
+  .main { display: contents; }
+  .head { height: auto; display: grid; grid-template-columns: 1fr 64px; align-items: stretch; gap: var(--gap); padding: 0; background: none; }
+  .head h1 { background: var(--surface); height: 64px; display: flex; align-items: flex-end; padding: 0 16px 14px; }
+  .mmark { display: grid; place-items: center; background: var(--accent); }
+  .mmark svg { width: 24px; height: 24px; }
+  .head .right { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: var(--gap); }
+  .filter { width: auto; height: 44px; font-size: 14px; }
+  .views { height: 44px; }
+  .views button { height: 40px; padding: 0 12px; }
+  .stage { min-height: 0; }
+  .legend { top: auto; bottom: var(--gap); left: var(--gap); right: var(--gap); flex-direction: row; overflow-x: auto; scrollbar-width: none; }
+  .legend button { width: auto; flex: none; height: 32px; }
+  .legend .c { margin-left: 4px; }
+  .mtabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+  .mtabs a { display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface); color: var(--muted); text-decoration: none; font-weight: 700; }
+  .mtabs a[aria-current] { background: var(--ink); color: var(--bg); }
+  .mtabs b { background: var(--accent); color: var(--accent-ink); padding: 0 6px; }
+
+  /* The panel becomes a sheet over the lower part of the map. */
+  .panel { position: fixed; top: 34%; left: 0; right: 0; bottom: 0; width: auto; padding: var(--gap); padding-top: 0; z-index: 6; }
+  .panel::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--gap)); height: var(--gap); background: var(--bg); }
+  .panel .tile { padding: 16px; }
+  .panel .grow .sec + .sec { margin-top: 0; }
+  .when { right: var(--gap); bottom: calc(32px + var(--gap) * 2); height: 56px; padding: 6px 8px 20px; }
+  .tip { display: none; }
+}
+.panel[hidden] { display: none; }
