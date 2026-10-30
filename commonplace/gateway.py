@@ -17,21 +17,27 @@ Every write and every refusal goes to the audit log (ids only, never text).
 from __future__ import annotations
 
 import copy
+import hashlib
 import http.client
+import ipaddress
 import json
 import logging
+import os
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from mempalace import provenance
 from mempalace.config import normalize_wing_name
 from mempalace.tool_capabilities import classify_tool
 
+from . import events, extensions, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
+from .http_util import log_failure
 from .policy import TOOL_RULES, Policy
 from .workers import Worker, WorkerSupervisor
 
@@ -98,7 +104,7 @@ class WorkerClient:
         try:
             worker = self.supervisor.get(principal.workspace_id)
         except Exception as exc:
-            logger.error("worker start failed for %s: %s", principal.workspace_id, exc)
+            log_failure(logger, "worker start failed", exc)
             raise WorkerUnavailable() from exc
         return self._post(worker, principal, request)
 
@@ -152,6 +158,7 @@ class Mediator:
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
+        self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
     def handle(self, principal: Principal, request) -> Optional[dict]:
@@ -176,7 +183,10 @@ class Mediator:
 
     # ── tools/list ──
     def _tools_list(self, principal: Principal, request: dict) -> dict:
-        response = self.workers.post(principal, request)
+        try:
+            response = self.workers.post(principal, request)
+        except WorkerUnavailable:
+            response = {"jsonrpc": "2.0", "id": request.get("id"), "result": {"tools": []}}
         policy = principal.policy
         try:
             tools = response["result"]["tools"]
@@ -184,8 +194,43 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        response["result"]["tools"] = [t for t in tools if policy.tool_visible(t.get("name"))]
+        visible = [t for t in tools if policy.tool_visible(t.get("name"))]
+        for name in sorted(extensions.names()):
+            tool = extensions.get(name)
+            if policy.tool_visible(name) and (not tool.owner_only or principal.role == "owner"):
+                visible.append(tool.schema())
+        response["result"]["tools"] = visible
         return response
+
+    def _local_call(self, principal: Principal, tool, req_id, args: dict) -> dict:
+        if tool.owner_only and principal.role != "owner":
+            self._audit(principal, tool.name, "deny", "owner only")
+            return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
+        ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
+        try:
+            result = tool.handler(ctx, args)
+        except extensions.ToolError as exc:
+            if tool.kind == "write":
+                self._audit(principal, tool.name, "deny", str(exc)[:200])
+            text = str(exc)
+            if not text.startswith("no:"):
+                text = f"no: {text}"
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": text}], "isError": True},
+            }
+        if tool.kind == "write":
+            self._audit(principal, tool.name, "ok")
+        if isinstance(result, str):
+            text = result
+        else:
+            text = json.dumps(result, indent=2, ensure_ascii=False)
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"content": [{"type": "text", "text": text}]},
+        }
 
     # ── tools/call ──
     def _tools_call(self, principal: Principal, request: dict) -> dict:
@@ -204,6 +249,10 @@ class Mediator:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
+
+        local = extensions.get(name)
+        if local is not None:
+            return self._local_call(principal, local, req_id, args)
 
         rule = TOOL_RULES[name][1]
         notes: list = []
@@ -615,6 +664,132 @@ def _filter_drawer_batch(result, policy: Policy):
 RouteHandler = Callable[[BaseHTTPRequestHandler], None]
 
 
+def _host_name(authority: str) -> str:
+    """Normalize a Host's name, validating (but ignoring) its optional port."""
+    if not authority or any(ord(c) <= 32 or ord(c) >= 127 for c in authority):
+        raise ValueError("invalid host")
+    parts = urlparse("//" + authority)
+    if (
+        parts.username is not None
+        or parts.password is not None
+        or parts.path
+        or parts.params
+        or parts.query
+        or parts.fragment
+        or authority.endswith(":")
+        or "?" in authority
+        or "#" in authority
+        or "\\" in authority
+        or "%" in authority
+        or (parts.port is not None and not 0 < parts.port <= 65535)
+    ):
+        raise ValueError("invalid host")
+    host = (parts.hostname or "").lower().removesuffix(".")
+    if authority.startswith("["):
+        if not re.fullmatch(r"\[[0-9a-fA-F:.]+\](?::[0-9]+)?", authority):
+            raise ValueError("invalid host")
+        return str(ipaddress.IPv6Address(host))
+    if len(host) > 253 or not all(
+        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split(".")
+    ):
+        raise ValueError("invalid host")
+    return host
+
+
+def _public_route(method: str, path: str) -> bool:
+    if method == "GET":
+        return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
+            ("/app/", "/s/", "/.well-known/")
+        )
+    return method == "POST" and path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+
+
+def _write_request(method: str, path: str, request) -> bool:
+    if path != "/mcp":
+        return method in ("POST", "PATCH", "DELETE")
+    if not isinstance(request, dict) or request.get("method") != "tools/call":
+        return False
+    params = request.get("params")
+    name = params.get("name") if isinstance(params, dict) else None
+    if not isinstance(name, str):
+        return False
+    local = extensions.get(name)
+    return local.kind == "write" if local else classify_tool(name) in ("write", "maintenance")
+
+
+def _rest_tool(method, path):
+    """REST aliases share MCP's tool visibility gate, before route execution."""
+    parts = [unquote(part) for part in path.split("/") if part]
+    if parts == ["api", "boards"]:
+        return {"GET": "board_list", "POST": "board_add"}.get(method)
+    if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":
+        return {"GET": "task_list", "POST": "task_add"}.get(method)
+    if parts == ["api", "needs-me"] and method == "GET":
+        return "needs_me"
+    if parts[:2] == ["api", "cards"]:
+        if len(parts) == 3:
+            return {"GET": "task_show", "PATCH": "task_update"}.get(method)
+        if len(parts) == 4 and method == "POST":
+            return {"comments": "task_comment", "handoff": "task_handoff", "decide": "decide"}.get(
+                parts[3]
+            )
+    if parts[:2] == ["api", "memory"]:
+        if len(parts) == 2 and method == "POST":
+            return "memory_save"
+        if len(parts) == 3 and method == "GET":
+            return "memory_search" if parts[2] in ("search", "map") else "memory_get"
+    if parts[:2] == ["api", "webhooks"]:
+        if len(parts) == 2:
+            return {"GET": "webhook_list", "POST": "webhook_add"}.get(method)
+        if len(parts) == 3 and method == "DELETE":
+            return "webhook_remove"
+        if len(parts) == 4:
+            if method == "GET" and parts[3] == "deliveries":
+                return "webhook_list"
+            if method == "POST" and parts[3] == "test":
+                return "webhook_test"
+    return None
+
+
+def _origin(value):
+    """A strict serialized HTTP origin, normalized for default ports."""
+    try:
+        if not value or any(ord(c) <= 32 or ord(c) >= 127 for c in value):
+            return None
+        parsed = urlparse(value)
+        if (
+            parsed.scheme not in ("http", "https")
+            or parsed.path
+            or parsed.params
+            or "?" in value
+            or "#" in value
+        ):
+            return None
+        _host_name(parsed.netloc)
+        host = parsed.hostname.lower()
+        return parsed.scheme, host, parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+
+
+def _session_write_allowed(gateway, handler):
+    media = handler.headers.get_all("Content-Type", [])
+    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != "application/json":
+        return False
+    origins = handler.headers.get_all("Origin", [])
+    if not origins:
+        return True
+    if len(origins) != 1 or (origin := _origin(origins[0])) is None:
+        return False
+    app = urlparse(urls.APP_URL)
+    allowed = {_origin(app.scheme + "://" + app.netloc)}
+    hosts = handler.headers.get_all("Host", [])
+    if len(hosts) == 1:
+        scheme = "https" if gateway.secure_cookies else "http"
+        allowed.add(_origin(scheme + "://" + hosts[0]))
+    return origin in allowed
+
+
 class Gateway:
     """The HTTP front. ``routes`` is the seam OAuth plugs its endpoints into."""
 
@@ -628,10 +803,79 @@ class Gateway:
         self.supervisor = supervisor
         self.authenticators: list = authenticators or [PersonalTokenAuthenticator(db)]
         self.mediator = Mediator(db, WorkerClient(supervisor))
+        self.mediator.gateway = self
         self.routes: dict = {}
+        self.prefix_routes: list = []
+        self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
+        self.limiter = ratelimit.TokenBuckets()
+        allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
+        self.allowed_hosts = (
+            {_host_name(host.strip()) for host in allowed.split(",")} if allowed else None
+        )
+        app_url = os.environ.get("COMMONPLACE_APP_URL") or os.environ.get(
+            "COMMONPLACE_BASE_URL", ""
+        )
+        self.secure_cookies = app_url.startswith("https://")
+        events.ensure_schema(db)
+        sessions.ensure_schema(db)
+        extensions.install(self)
 
     def add_route(self, method: str, path: str, handler: RouteHandler) -> None:
         self.routes[(method.upper(), path)] = handler
+
+    def add_prefix_route(self, method: str, prefix: str, handler: RouteHandler) -> None:
+        """Serve every path under ``prefix`` (longest prefix wins). The handler
+        gets the request handler; ``urlparse(h.path)`` gives the rest."""
+        self.prefix_routes.append((method.upper(), prefix, handler))
+        self.prefix_routes.sort(key=lambda r: len(r[1]), reverse=True)
+
+    def find_route(self, method: str, path: str):
+        handler = self.routes.get((method, path))
+        if handler is not None:
+            return handler
+        for m, prefix, h in self.prefix_routes:
+            if m == method and (path == prefix.rstrip("/") or path.startswith(prefix)):
+                return h
+        return None
+
+    def workspace_dir(self, workspace_id: str) -> str:
+        path = self.supervisor.workspace_dir(workspace_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def principal_for(self, handler) -> Optional[Principal]:
+        """A route's caller: a bearer token, else the web session cookie."""
+        if hasattr(handler, "_commonplace_principal"):
+            return handler._commonplace_principal
+        header = handler.headers.get("Authorization")
+        if header:
+            return self.authenticate(header)
+        session = sessions.cookie_value(handler.headers.get("Cookie"))
+        if session:
+            return sessions.session_principal(self.db, session)
+        return None
+
+    def call_memory_tool(self, principal: Principal, name: str, arguments: dict):
+        """Run a MemPalace tool for ``principal`` through the full policy path."""
+        request = {
+            "jsonrpc": "2.0",
+            "id": "commonplace-local",
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        try:
+            response = self.mediator._tools_call(principal, request)
+        except WorkerUnavailable:
+            raise extensions.ToolError("Memory is unavailable right now") from None
+        if "error" in response:
+            raise extensions.ToolError(response["error"].get("message", "refused"))
+        result = _tool_result(response)
+        if response.get("result", {}).get("isError") or (
+            isinstance(result, dict) and result.get("error")
+        ):
+            message = result.get("error") if isinstance(result, dict) else "refused"
+            raise extensions.ToolError(str(message))
+        return result
 
     def authenticate(self, header: Optional[str]) -> Optional[Principal]:
         bearer = bearer_from_header(header)
@@ -644,98 +888,8 @@ class Gateway:
         return None
 
     def build_server(self, host: str, port: int) -> ThreadingHTTPServer:
-        gateway = self
-
-        class _Handler(BaseHTTPRequestHandler):
-            server_version = "commonplace"
-            sys_version = ""
-            protocol_version = "HTTP/1.1"
-
-            def log_message(self, fmt, *args):
-                logger.debug("%s - %s", self.address_string(), fmt % args)
-
-            def _send_json(self, status: int, payload, extra_headers=None) -> None:
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                for key, value in (extra_headers or {}).items():
-                    self.send_header(key, value)
-                if status >= 400:
-                    # The request body may be unread: never reuse this connection.
-                    self.send_header("Connection", "close")
-                    self.close_connection = True
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _route(self, method: str) -> bool:
-                handler = gateway.routes.get((method, urlparse(self.path).path))
-                if handler is None:
-                    return False
-                handler(self)
-                return True
-
-            def do_GET(self):
-                path = urlparse(self.path).path
-                if self._route("GET"):
-                    return
-                if path == "/health":
-                    self._send_json(200, {"ok": True})
-                    return
-                if path == "/mcp":
-                    self._send_json(405, {"error": "use POST"}, {"Allow": "POST"})
-                    return
-                self._send_json(404, {"error": "not found"})
-
-            def do_POST(self):
-                path = urlparse(self.path).path
-                if self.headers.get("Transfer-Encoding"):
-                    self._send_json(411, {"error": "send a Content-Length, not Transfer-Encoding"})
-                    return
-                if path != "/mcp":
-                    if not self._route("POST"):
-                        self._send_json(404, {"error": "not found"})
-                    return
-                principal = gateway.authenticate(self.headers.get("Authorization"))
-                if principal is None:
-                    self._send_json(
-                        401,
-                        {"error": "unauthorized"},
-                        {"WWW-Authenticate": 'Bearer realm="commonplace"'},
-                    )
-                    return
-                media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-                if media != "application/json":
-                    self._send_json(415, {"error": "POST /mcp needs application/json"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length") or "0")
-                except ValueError:
-                    length = -1
-                if length < 0 or length > MAX_REQUEST_BYTES:
-                    self._send_json(413, _rpc_error(None, -32600, "Request too large"))
-                    return
-                try:
-                    request = json.loads(self.rfile.read(length).decode("utf-8"))
-                except Exception:
-                    self._send_json(400, _rpc_error(None, -32700, "Parse error"))
-                    return
-                try:
-                    response = gateway.mediator.handle(principal, request)
-                except Exception:
-                    logger.exception("gateway error")
-                    req_id = request.get("id") if isinstance(request, dict) else None
-                    self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
-                    return
-                if response is None:
-                    self.send_response(202)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
-                self._send_json(200, response)
-
-        server = ThreadingHTTPServer((host, port), _Handler)
+        server = ThreadingHTTPServer((host, port), _GatewayHandler)
+        server.gateway = self
         server.daemon_threads = True
         return server
 
@@ -748,6 +902,14 @@ class Gateway:
                 self.supervisor.stop_idle()
 
         threading.Thread(target=reap, daemon=True).start()
+        if threading.current_thread() is threading.main_thread():
+            import signal
+
+            def _terminate(signum, frame):
+                # Unwind through serve_forever so the finally block stops every worker.
+                raise SystemExit(0)
+
+            signal.signal(signal.SIGTERM, _terminate)
         logger.info("commonplace gateway on %s:%s", host, server.server_address[1])
         try:
             server.serve_forever()
@@ -755,3 +917,240 @@ class Gateway:
             stop.set()
             server.server_close()
             self.supervisor.stop_all()
+
+
+class _GatewayHandler(BaseHTTPRequestHandler):
+    server_version = "commonplace"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        # Targets contain login tokens and memory-search text. Do not
+        # log targets, headers, or the stdlib's raw request line.
+        return
+
+    def send_response(self, code, message=None):
+        self._response_started = True
+        self._connection_header = False
+        self.send_response_only(code, message)
+        self.send_header("Date", self.date_time_string())
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == "connection":
+            self._connection_header = True
+        if keyword.lower() not in ("server", "x-content-type-options"):
+            super().send_header(keyword, value)
+
+    def end_headers(self):
+        if self.close_connection and not getattr(self, "_connection_header", False):
+            super().send_header("Connection", "close")
+        super().send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def send_error(self, code, message=None, explain=None):
+        self.close_connection = True
+        self._send_json(code, {"error": "request refused"})
+
+    def _send_json(self, status: int, payload, extra_headers=None) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body_length(self, path):
+        lengths = self.headers.get_all("Content-Length", [])
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            self._send_json(411, {"error": "send a Content-Length, not Transfer-Encoding"})
+            return None
+        try:
+            if len(lengths) > 1:
+                raise ValueError
+            text = lengths[0] if lengths else "0"
+            if not text.isascii() or not text.isdecimal():
+                raise ValueError
+            length = int(text)
+        except ValueError:
+            self.close_connection = True
+            self._send_json(400, {"error": "invalid request body"})
+            return None
+        cap = (
+            MAX_REQUEST_BYTES
+            if path == "/mcp"
+            else 65536
+            if path.startswith("/oauth/")
+            else 1024 * 1024
+        )
+        if length > cap:
+            self.close_connection = True
+            self._send_json(413, {"error": "request too large"})
+            return None
+        return length
+
+    def _rate_limit(self, path, principal, request=None):
+        if not self.server.gateway.rate_limits:
+            return False
+        forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
+        ip = ratelimit.client_ip(self.client_address[0], forwarded)
+        policies = []
+        if path == "/app/login" or (
+            self.command == "POST"
+            and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
+        ):
+            policies.append((ratelimit.CREDENTIALS, ip))
+        if principal is not None:
+            if principal.person:
+                session = sessions.cookie_value(self.headers.get("Cookie")) or ""
+                identity = "session:" + hashlib.sha256(session.encode()).hexdigest()
+            else:
+                identity = "connection:" + principal.connection_id
+            untrusted = principal.policy.trust == "untrusted"
+            policies.append(
+                (ratelimit.UNTRUSTED if untrusted else ratelimit.AUTHENTICATED, identity)
+            )
+            if untrusted and _write_request(self.command, path, request):
+                policies.append((ratelimit.WRITES, identity))
+        # Short links replace the anonymous policy with their own budget.
+        if self.command == "GET" and path.startswith("/s/"):
+            policies.append((ratelimit.SHORT_LINKS, ip))
+        elif principal is None:
+            policies.append((ratelimit.ANONYMOUS, ip))
+        retry = self.server.gateway.limiter.check(policies)
+        if not retry:
+            return False
+        self.close_connection = True
+        self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
+        return True
+
+    def _dispatch(self):
+        self._response_started = False
+        # The stdlib reuses this object for keepalive requests.
+        self.__dict__.pop("_commonplace_principal", None)
+        try:
+            self._handle()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+        except Exception as exc:
+            log_failure(logger, "gateway request failed", exc)
+            self.close_connection = True
+            if not self._response_started:
+                self._send_json(500, {"error": "internal error"})
+
+    def _handle(self):
+        path = urlparse(self.path).path
+        if path in ("/health", "/healthz"):
+            self.close_connection = True
+            if self._body_length(path) is not None:
+                self._send_json(200, {"ok": True})
+            return
+        if self.server.gateway.allowed_hosts is not None:
+            try:
+                hosts = self.headers.get_all("Host", [])
+                valid = (
+                    len(hosts) == 1 and _host_name(hosts[0]) in self.server.gateway.allowed_hosts
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                self.close_connection = True
+                self._send_json(421, {"error": "host refused"})
+                return
+        length = self._body_length(path)
+        if length is None:
+            return
+        principal = self.server.gateway.principal_for(self)
+        self._commonplace_principal = principal
+        if (
+            principal is not None
+            and principal.person
+            and self.command in ("POST", "PATCH", "DELETE")
+            and (path.startswith("/api/") or path == "/app/logout")
+            and not _session_write_allowed(self.server.gateway, self)
+        ):
+            self.close_connection = True
+            self._send_json(403, {"error": "JSON and same-origin request required"})
+            return
+        handler = self.server.gateway.find_route(self.command, path)
+        request, parse_error = None, None
+        if path == "/mcp" and self.command == "POST" and principal is not None:
+            media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if media != "application/json":
+                parse_error = (415, {"error": "POST /mcp needs application/json"})
+            else:
+                try:
+                    raw = self.rfile.read(length)
+                    if len(raw) != length:
+                        raise ValueError
+                    request = json.loads(raw.decode("utf-8"))
+                except (ValueError, UnicodeError, RecursionError):
+                    parse_error = (400, _rpc_error(None, -32700, "Parse error"))
+        if self._rate_limit(path, principal, request):
+            return
+        tool = _rest_tool(self.command, path)
+        if (
+            principal is not None
+            and not principal.person
+            and tool
+            and not principal.policy.tool_visible(tool)
+        ):
+            self.close_connection = True
+            self._send_json(403, {"error": "tool not allowed for this connection"})
+            return
+        # OAuth POST has a browser-bound login-token stage. Its handler
+        # checks sign-in before validating the authorization form.
+        oauth_login = self.command == "POST" and path == "/oauth/authorize"
+        if (
+            principal is None
+            and (handler is not None or path == "/mcp")
+            and not _public_route(self.command, path)
+            and not oauth_login
+        ):
+            self.close_connection = True
+            challenge = (
+                'Bearer resource_metadata="'
+                + urls.AGENT_URL
+                + '/.well-known/oauth-protected-resource"'
+            )
+            self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
+            return
+        if path == "/mcp":
+            if self.command != "POST":
+                self.close_connection = True
+                self._send_json(405, {"error": "use POST"}, {"Allow": "POST"})
+            elif parse_error:
+                self.close_connection = True
+                self._send_json(*parse_error)
+            else:
+                self._mcp(principal, request)
+            return
+        if handler is None:
+            self.close_connection = True
+            self._send_json(404, {"error": "not found"})
+            return
+        # A route can reject a body before reading it. Close so its
+        # remaining bytes cannot become another HTTP request.
+        self.close_connection = True
+        handler(self)
+
+    def _mcp(self, principal, request):
+        try:
+            response = self.server.gateway.mediator.handle(principal, request)
+        except Exception as exc:
+            log_failure(logger, "gateway MCP request failed", exc)
+            self.close_connection = True
+            req_id = request.get("id") if isinstance(request, dict) else None
+            self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
+            return
+        if response is None:
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._send_json(200, response)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch

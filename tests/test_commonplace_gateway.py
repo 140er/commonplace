@@ -76,8 +76,8 @@ def test_non_json_and_oversized_and_batch_requests(hub):
 
 def test_health_and_unknown_paths(hub):
     assert hub.raw(None, b"", method="GET", path="/health") == (200, '{"ok": true}')
-    assert hub.raw(None, b"", method="GET", path="/mcp")[0] == 405
-    assert hub.raw(None, b"", method="GET", path="/oauth/authorize")[0] == 404
+    assert hub.raw(None, b"", method="GET", path="/mcp")[0] == 401
+    assert hub.raw(None, b"", method="GET", path="/oauth/authorize")[0] == 400
     assert hub.raw(None, {}, path="/elsewhere")[0] == 404
 
 
@@ -101,7 +101,9 @@ def test_unknown_method_and_notifications(hub):
 # ── tools/list ──
 def test_tools_list_follows_the_profile(hub):
     slim = hub.tool_names(hub.token("bot", **INBOX_BOT))
-    assert slim == {
+    # The integrated MVP also lists local board/memory tools; their own tests
+    # cover those profiles. Keep this assertion exact for the MemPalace tools.
+    assert {name for name in slim if name.startswith("mempalace_")} == {
         "mempalace_search",
         "mempalace_get_drawer",
         "mempalace_add_drawer",

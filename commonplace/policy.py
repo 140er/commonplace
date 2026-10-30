@@ -237,7 +237,10 @@ class Policy:
     ) -> "Policy":
         if tools is not None:
             tool_spec = tuple(sorted(set(tools)))
-            unknown = [t for t in tool_spec if t not in TOOL_RULES]
+            from . import extensions
+
+            local = extensions.names()
+            unknown = [t for t in tool_spec if t not in TOOL_RULES and t not in local]
             if unknown:
                 raise PolicyError(f"unknown or ungated tools: {', '.join(unknown)}")
         else:
@@ -361,7 +364,13 @@ class Policy:
     # ── tools ──
     def tool_names(self) -> frozenset:
         if isinstance(self.tools, str):
-            return PROFILES.get(self.tools, frozenset())
+            from . import extensions
+
+            extensions.names()
+            local = frozenset(
+                t.name for t in extensions.REGISTRY.values() if self.tools in t.profiles
+            )
+            return PROFILES.get(self.tools, frozenset()) | local
         return frozenset(self.tools)
 
     def tool_visible(self, name: str) -> bool:
@@ -372,6 +381,11 @@ class Policy:
         """Why ``name`` is refused before its arguments are looked at, or ``None``."""
         if name in GATEWAY_NEVER:
             return "this tool is not served through the gateway"
+        from . import extensions
+
+        local = extensions.get(name)
+        if local is not None:
+            return self.local_refusal(local)
         if name not in TOOL_CAPABILITIES or name not in TOOL_RULES:
             return "unknown tool"
         if name not in self.tool_names():
@@ -389,8 +403,21 @@ class Policy:
                 return "needs write access to every wing"
         return None
 
+    def local_refusal(self, tool) -> Optional[str]:
+        """Why a gateway-served tool (``extensions.LocalTool``) is refused, or ``None``."""
+        if tool.name not in self.tool_names():
+            return "tool not allowed for this connection"
+        if not self.has_scope(tool.scope):
+            return f"needs scope {tool.scope}"
+        if tool.trusted_only and self.trust == "untrusted":
+            return "untrusted connections can't use this tool"
+        return None
+
     def visible_tools(self) -> list:
-        return sorted(n for n in TOOL_RULES if self.tool_visible(n))
+        from . import extensions
+
+        names = set(TOOL_RULES) | set(extensions.names())
+        return sorted(n for n in names if self.tool_visible(n))
 
     def summary(self) -> dict:
         return {

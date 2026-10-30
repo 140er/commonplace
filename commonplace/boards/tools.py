@@ -1,0 +1,241 @@
+"""Short MCP replies; quoted card and history text remains untrusted data."""
+
+import json
+
+from commonplace.extensions import ALL_PROFILES, WORK_PROFILES, LocalTool, ToolError, register
+
+from .display import card_url, people
+from .service import BoardService
+
+STRING = {"type": "string"}
+TASK = {"type": ["string", "integer"]}
+ARRAY = {"type": "array", "items": STRING}
+STATUS = {"type": "string", "enum": ["backlog", "todo", "doing", "review", "done"]}
+
+
+def quoted(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+def line(c):
+    result = f"#{c['number']} {c['status']}  {quoted(c['title'])}"
+    if c["assignee"]:
+        result += f"  {c['assignee']}"
+    if c["claim_until"]:
+        result += f" until {c['claim_until']}"
+    if c["ask_to"]:
+        result += f" asks {c['ask_to']}"
+    return result
+
+
+def show(c):
+    rows = [f"{line(c)}  board {c['board']}", f"body: {quoted(c['body'])}"]
+    if c["ask"]:
+        rows.append(f"asks {c['ask_to']}: {quoted(c['ask'])}  options: {quoted(c['ask_options'])}")
+    for key, label in (
+        ("repo", "repo"),
+        ("branch", "branch"),
+        ("pr_url", "PR"),
+        ("pr_number", "PR #"),
+        ("checks", "checks"),
+        ("status_line", "status"),
+    ):
+        if c[key] not in (None, ""):
+            rows.append(f"{label}: {quoted(c[key])}")
+    for event in c["events"][-10:]:
+        rows.append(f"- {event['at']} {event['actor']} {event['kind']}: {quoted(event['text'])}")
+    if c["linked"]:
+        rows.append(
+            "memories: "
+            + ", ".join(
+                f"{link['drawer_id']} {quoted(link['title'])}"
+                + (" (invalidated)" if link["invalidated"] else "")
+                for link in c["linked"]
+            )
+        )
+    return "\n".join(rows)
+
+
+def run(ctx, name, args):
+    return people(ctx, _run(ctx, name, args))
+
+
+def _run(ctx, name, args):
+    service = BoardService(ctx)
+    try:
+        result = getattr(service, name)(**args)
+    except TypeError:
+        raise ToolError("no: invalid arguments") from None
+    if name == "board_list":
+        return (
+            "\n".join(
+                f"{b['slug']}  "
+                + "  ".join(f"{s} {b['counts'][s]}" for s in ("todo", "doing", "review"))
+                for b in result
+            )
+            or "no boards"
+        )
+    if name == "board_add":
+        return f"added board {result['slug']}"
+    if name == "task_list":
+        return "\n".join(line(c) for c in result) or "no cards"
+    if name == "task_show":
+        return show(result) + f"\nlink: {card_url(ctx, result['number'])}"
+    if name == "task_add":
+        return f"#{result['number']} added to {result['status']} on {result['board']}"
+    if name == "task_take_next":
+        if result is None:
+            return "nothing to take"
+        reply = f"#{result['number']} {quoted(result['title'])}  yours" + (
+            f" until {result['claim_until']}" if result["claim_until"] else ""
+        )
+        reply += f"\nbody: {quoted(result['body'])}"
+        if "decision" in result:
+            d = result["decision"]
+            reply += f"\ndecision by {d['actor']}: {d['choice'] or ''}  {quoted(d['reply'])}"
+        return reply
+    if name == "ask":
+        return (
+            f"#{result['number']} waiting on {result['ask_to']}  {card_url(ctx, result['number'])}"
+        )
+    if name == "needs_me":
+        lines = []
+        for key, label in (
+            ("asks", "Asks"),
+            ("done_review", "Done?"),
+            ("backlog_from_agents", "Backlog"),
+            ("ready_to_merge", "Ready to merge"),
+            ("stale", "Stale"),
+        ):
+            if result[key]:
+                lines.append(
+                    label
+                    + ": "
+                    + ", ".join(f"#{c['number']} {quoted(c['title'])}" for c in result[key])
+                )
+        return "\n".join(lines) or "nothing waiting"
+    return f"ok #{result['number']} {result['status']}" + (
+        f"  until {result['claim_until']}" if result["claim_until"] else ""
+    )
+
+
+def add(name, properties, required=(), *, work=False, trusted=False, owner=False, write=False):
+    register(
+        LocalTool(
+            name=name,
+            description={
+                "board_list": "List visible boards.",
+                "board_add": "Create a board.",
+                "task_list": "List visible cards.",
+                "task_show": "Read a card and its history and linked memories.",
+                "task_add": "Add a card; submissions from untrusted connections enter backlog.",
+                "task_comment": "Append a comment and renew your claim.",
+                "task_take_next": "Claim a ready card reserved for you or free for anyone.",
+                "task_update": "Update your card or finish it, optionally saving a lesson.",
+                "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
+                "ask": "Ask the workspace owner and end the turn.",
+                "decide": "Answer a review and return, release, close or park the card.",
+                "needs_me": "Read the owner's decision queue.",
+            }[name],
+            input_schema={
+                "type": "object",
+                "properties": properties,
+                "required": list(required),
+                "additionalProperties": False,
+            },
+            handler=lambda ctx, args: run(ctx, name, args),
+            scope="memory:write" if write else "memory:read",
+            kind="write" if write else "read",
+            profiles=WORK_PROFILES if work else ALL_PROFILES,
+            trusted_only=trusted,
+            owner_only=owner,
+        )
+    )
+
+
+def register_tools():
+    add("board_list", {})
+    add(
+        "board_add",
+        {k: STRING for k in ("slug", "name", "wing", "repo")},
+        ("slug",),
+        work=True,
+        trusted=True,
+        write=True,
+    )
+    add("task_list", {"board": STRING, "status": STATUS, "mine": {"type": "boolean"}})
+    add("task_show", {"task": TASK}, ("task",))
+    add(
+        "task_add",
+        {
+            "title": STRING,
+            "body": STRING,
+            "board": STRING,
+            "status": {"type": "string", "enum": ["todo", "backlog"]},
+            "assignee": STRING,
+            "labels": ARRAY,
+        },
+        ("title",),
+        write=True,
+    )
+    add("task_comment", {"task": TASK, "text": STRING}, ("task", "text"), write=True)
+    add("task_take_next", {"board": STRING, "task": TASK}, work=True, trusted=True, write=True)
+    add(
+        "task_update",
+        {
+            "task": TASK,
+            "status": STATUS,
+            "before": TASK,
+            "after": TASK,
+            "pr": {"type": ["string", "integer"]},
+            "labels": ARRAY,
+            **{
+                k: STRING
+                for k in (
+                    "title",
+                    "body",
+                    "link",
+                    "unlink",
+                    "lesson",
+                    "repo",
+                    "branch",
+                    "checks",
+                    "status_line",
+                )
+            },
+        },
+        ("task",),
+        work=True,
+        trusted=True,
+        write=True,
+    )
+    add(
+        "task_handoff",
+        {"task": TASK, "to": STRING, "note": STRING, "options": ARRAY},
+        ("task", "to", "note"),
+        work=True,
+        trusted=True,
+        write=True,
+    )
+    add(
+        "ask",
+        {"question": STRING, "options": ARRAY, "board": STRING, "task": TASK},
+        ("question",),
+        work=True,
+        trusted=True,
+        write=True,
+    )
+    add(
+        "decide",
+        {
+            "task": TASK,
+            "choice": STRING,
+            "reply": STRING,
+            "then": {"type": "string", "enum": ["return", "todo", "done", "backlog"]},
+        },
+        ("task",),
+        owner=True,
+        trusted=True,
+        write=True,
+    )
+    add("needs_me", {}, owner=True)
