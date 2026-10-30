@@ -1,10 +1,11 @@
 import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
+import { homeView, needItems } from "./home.js";
 
 const root = document.querySelector("#root");
 const state = {
-  me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
+  me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
@@ -148,7 +149,7 @@ function signin() {
   root.innerHTML = `<main class="signin"><h1>Sign in</h1><form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${state.error ? message(state.error) : ""}</main>`;
 }
 function shell() {
-  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Needs you <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Needs you</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Needs you <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
+  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
   navigation();
 }
 function navigation() {
@@ -198,17 +199,16 @@ function conversation(card, { compact = false, controls = true } = {}) {
   return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, { ...item, compact, controls })).join("");
 }
 function needsCards() {
-  return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
+  return needItems(state.needs).map((item) => item.card);
 }
 function needsView() {
-  // Keep the focused Speak/Stop node through live refreshes.
-  if (!root.querySelector('[data-action="speak-digest"]')) title("Needs you", speech.supported ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "");
-  const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
+  title("Home");
   const cards = needsCards();
-  if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  const open = state.route.startsWith("#/card/") ? Number(state.route.slice(7)) : null; // its controls live in the panel
-  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="0">${taskRow(card, `<a href="#/board/${enc(card.board)}">${e(card.board)}</a><span class="actor">${e(actor(card.return_to || card.assignee || card.created_by))}</span>`)}${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${card.number === open ? "" : ["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${rowFoot(card)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
-  root.querySelector(".queue").insertAdjacentHTML("afterbegin", '<div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div>');
+  if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
+  // Keep the Speak/Stop node (and its focus) through live refreshes.
+  const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
+  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow });
+  if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
   speechView();
 }
 function boardView() {
@@ -418,9 +418,11 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest;
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
-    const [boards, needs] = await Promise.all([api("/api/boards"), api("/api/needs-me")]);
+    const home = state.base === "#/";
+    const [boards, needs, open] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
+    if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
       const result = await api(`/api/boards/${enc(slug)}/cards`);
@@ -485,7 +487,12 @@ async function route() {
   showError("");
   await refresh();
 }
-function findCard(number) { return state.card?.number === number ? state.card : [...state.cards, ...needsCards()].find((c) => c.number === number); }
+// The current view's list first, so a write never sends a version left over from another view.
+function findCard(number) {
+  if (state.card?.number === number) return state.card;
+  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.open, needsCards()] : [state.open, needsCards(), state.cards];
+  return lists.flat().find((c) => c.number === number);
+}
 async function mutate(key, action) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
@@ -658,6 +665,8 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault(); return;
   }
   if (state.base !== "#/" || !state.me) return;
+  // With a card open, its keys answer and open that card, not the row selected behind it.
+  const target = /^#\/card\/\d+$/.test(state.route) ? Number(state.route.slice(7)) : state.selected;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
   const index = cards.findIndex((c) => c.number === state.selected);
   if (["j", "k"].includes(event.key) && cards.length) {
@@ -666,11 +675,16 @@ document.addEventListener("keydown", (event) => {
     root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
     root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
   } else if (/^[1-6]$/.test(event.key)) {
+    // Answer through the open card's own buttons, so its "After decision" select applies.
     const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
-    const button = root.querySelector(`[data-row="${state.selected}"] ${option}, [data-ask="${state.selected}"] ${option}`);
+    const button = root.querySelector(`[data-ask="${target}"] ${option}`);
     if (button) { event.preventDefault(); button.click(); }
-  } else if (event.key === "o" && state.selected) location.hash = `#/card/${state.selected}`;
-  else if (event.key === "Enter" && state.selected && !(event.target instanceof Element && event.target.closest("button,a"))) { event.preventDefault(); root.querySelector(`[data-draft="reply-${state.selected}"]`)?.focus(); }
+  } else if (event.key === "o" && target) location.hash = `#/card/${target}`;
+  else if (event.key === "Enter" && target && !(event.target instanceof Element && event.target.closest("button,a"))) {
+    event.preventDefault();
+    const reply = root.querySelector(`[data-draft="reply-${target}"]`);
+    if (reply) reply.focus(); else location.hash = `#/card/${target}`;
+  }
 });
 let timer = null, polling = false, retryDelay = 2000;
 function schedule(delay) { clearTimeout(timer); timer = setTimeout(poll, delay ?? (document.hidden ? 30000 : 2000)); }
