@@ -482,7 +482,7 @@ board implementation.
   range; stored messages are never shortened.
 - Handoff quotes are limited to 1,200 characters and at most eight
   decision quotes. Use their full-range pointers for the rest.
-- The planned request limits are 64 MB for `/api/handoff` and 1 MB for
+- Request limits are 64 MB for `/api/handoff` and 1 MB for
   other JSON requests.
 - Model windows must match the model you run. Claude Code transcripts
   don't say whether a model runs with a 1M window, so set `--window
