@@ -209,7 +209,13 @@ stops it. Browsers without speech synthesis hide the button. If no local voice
 is installed, install an English voice in the device's speech settings.
 
 `GET /api/needs-me/digest?format=text` returns UTF-8 plain text with `no-store`.
-For an iOS Shortcut, use Get Contents of URL with that URL and an
+`GET /api/needs-me/digest?format=ssml` returns `application/ssml+xml` with the
+same words inside one `<speak>` document. Titles and board names are escaped
+as XML text, including quotes, so embedded tags cannot become SSML commands.
+It uses the same session/token authentication, wing visibility and `no-store`
+policy as the JSON and plain-text formats.
+
+For an iOS Shortcut, use Get Contents of URL with the plain-text URL and an
 `Authorization: Bearer <your token>` header, then Speak Text. Use a token scoped
 to the wings you want read aloud and an installed local voice. The phone must
 be able to reach your Commonplace host.

@@ -20,7 +20,7 @@ function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
     button.textContent = speechState.active ? "Stop" : "Speak";
-    button.setAttribute("aria-pressed", String(speechState.active));
+    button.dataset.active = String(speechState.active);
     button.setAttribute("aria-label", speechState.active ? "Stop speaking" : "Speak what needs you today");
   }
   const captions = root.querySelector("#digest-captions");
@@ -169,7 +169,10 @@ function needsView() {
   title("Home");
   const cards = needsCards();
   if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
+  // Keep the Speak/Stop node (and its focus) through live refreshes.
+  const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
   root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow });
+  if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
   speechView();
 }
 function boardView() {

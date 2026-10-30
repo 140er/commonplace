@@ -3,6 +3,7 @@
 from commonplace.extensions import ToolContext, ToolError
 
 from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json, send_text
+from .digest import ssml
 from .display import NEEDS, with_urls
 from .service import BoardService, VersionClash
 
@@ -38,10 +39,13 @@ def install(gateway):
         except TypeError:
             send_json(h, 400, {"error": "invalid arguments"})
             return
+        format = query(h).get("format")
         if parts == ["cards"]:
             send_json(h, status, result)  # No share link per card: rows link to #/card/N.
-        elif parts == ["needs-me", "digest"] and query(h).get("format") == "text":
-            send_text(h, status, result["text"], "text/plain; charset=utf-8")
+        elif parts == ["needs-me", "digest"] and format in ("text", "ssml"):
+            text = ssml(result) if format == "ssml" else result["text"]
+            content_type = "application/ssml+xml" if format == "ssml" else "text/plain"
+            send_text(h, status, text, f"{content_type}; charset=utf-8")
         else:
             send_json(h, status, with_urls(service.ctx, result))
 
@@ -87,8 +91,8 @@ def dispatch(service, h, parts, method):
     if parts == ["needs-me"] and method == "GET":
         return 200, service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":
-        if query(h).get("format", "json") not in ("json", "text"):
-            raise HTTPError(400, "format must be json or text")
+        if query(h).get("format", "json") not in ("json", "text", "ssml"):
+            raise HTTPError(400, "format must be json, text or ssml")
         return 200, service.needs_me(format="digest")
     if len(parts) in (2, 3) and parts[0] == "cards":
         task = parts[1]
