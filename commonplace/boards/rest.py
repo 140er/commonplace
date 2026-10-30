@@ -81,6 +81,9 @@ def dispatch(service, h, parts, method):
             }
             if parts[2] in handlers:
                 body = read_json(h)
+                # A decision answers the ask the person saw; a newer ask is a 409.
+                if parts[2] == "decide" and body.get("version") is None:
+                    raise HTTPError(400, "version is required")
                 body.pop("task", None)
                 return 200, handlers[parts[2]](task, **body)
     raise HTTPError(404, "not found")

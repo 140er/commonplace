@@ -32,6 +32,14 @@ EXACT = {
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/events"): "authenticated",
     ("GET", "/api/connections"): "authenticated",
+    # Context handoff (commonplace/handoff), off by default.
+    ("POST", "/api/handoff"): "authenticated",
+    ("GET", "/api/handoffs"): "authenticated",
+    ("GET", "/api/settings/handoff"): "authenticated",
+    ("PUT", "/api/settings/handoff"): "authenticated",
+    ("DELETE", "/api/settings/handoff"): "authenticated",
+    ("GET", "/app/settings/memory"): "public",
+    ("POST", "/app/settings/memory"): "authenticated",
 }
 PREFIX = {
     **{
@@ -46,6 +54,13 @@ PREFIX = {
     ("DELETE", "/api/webhooks/"): "authenticated",
     ("GET", "/app/"): "public",
     ("GET", "/s/"): "public",
+    ("GET", "/api/handoffs/"): "authenticated",
+    ("POST", "/api/handoffs/"): "authenticated",
+    ("GET", "/api/threads/"): "authenticated",
+    ("POST", "/api/threads/"): "authenticated",
+    ("GET", "/app/cards/"): "public",
+    ("GET", "/app/threads/"): "public",
+    ("GET", "/app/static/"): "public",
 }
 BUILTIN = {
     ("GET", "/health"): "public",

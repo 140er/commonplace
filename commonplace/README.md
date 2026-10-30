@@ -11,6 +11,10 @@ commonplace serve --host 127.0.0.1 --port 8765
 
 `token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus `workspaces/<id>/palace`.
 
+## Context handoff
+
+Optional handoff saves a full thread in Memory and starts a fresh agent with a pointer to it. It is installed with the gateway and off by default. Thread tools appear once a workspace enables handoff or has stored threads. Pages use the hub's web sign-in; events use its signed webhooks with the `handoff` preset. See [setup and API](../docs/handoff.md).
+
 ## Policy
 
 | Field | Meaning |

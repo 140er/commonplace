@@ -217,6 +217,8 @@ All bodies are JSON. Writes send the card's `version`; a stale one gets `409` wi
 
 The server writes one `decide` event (choice and reply verbatim), clears `ask`, `ask_options` and `ask_to`, and moves the card.
 
+Every event that opens an ask (`ask`, a `handoff` to a person, a `move` into `review`) stores the question and the offered options verbatim. `task_show` returns them as `options` on those events (`[]` for a free-text ask), so a client can show each ask in the log with its choices; the next `decide` event answers it.
+
 ## Hook line
 
 The hooks package (PRODUCT-DESIGN.md §11) adds at most one line at session start, and only when something waits for this connection:
