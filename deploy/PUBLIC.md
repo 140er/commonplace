@@ -42,7 +42,7 @@ OAuth issuer and every metadata URL then come from `https://cmmn.dev`; sign-in a
 
 - [ ] Every gateway route answers 401 without credentials, except: `/health`, `/healthz`, `/app/` static files, `/app/login`, `/s/<code>`, `/.well-known/*`, `/oauth/register|authorize|token|revoke` (test: `tests/test_commonplace_public_surface.py`).
 - [ ] Rate limits on (default): unauthenticated and failed auth 30/min per IP; login and OAuth endpoints 10/min per IP; 600/min per token; untrusted tokens 60/min and 120 writes/hour; short links 120/min per IP.
-- [ ] Client IP from Caddy's `X-Forwarded-For` only (Caddy overwrites it with the real peer).
+- [ ] Client IP from Caddy's `X-Forwarded-For` only (with no trusted proxies configured, Caddy replaces any client-sent value with the real peer).
 - [ ] Host check on (`COMMONPLACE_ALLOWED_HOSTS`): other Host headers get 421.
 - [ ] No debug endpoints, no tracebacks in responses, no tokens or memory text in logs.
 - [ ] Request bodies capped (8 MiB MCP, 1 MiB REST).
