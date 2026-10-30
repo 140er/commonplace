@@ -207,10 +207,17 @@ class ThreadStore:
                 if "no such module: fts5" not in str(error).lower():
                     raise
                 return False
-            # Version 1 aligns the derived index with chunks.rowid. Rebuild
-            # atomically: legacy FTS rowids need not match after fallback writes.
+            # Old writers ignore user_version and can misalign FTS rowids after
+            # fallback writes. Repair identities on every open, retaining all
+            # aligned entries so migration does not rewrite a healthy index.
+            self._conn.execute(
+                """DELETE FROM chunks_fts WHERE rowid IN (
+                       SELECT f.rowid FROM chunks_fts f
+                       LEFT JOIN chunks c ON c.rowid=f.rowid
+                       WHERE c.thread_id IS NOT f.thread_id OR c.idx IS NOT f.idx
+                   )"""
+            )
             if self._conn.execute("PRAGMA user_version").fetchone()[0] < 1:
-                self._conn.execute("DELETE FROM chunks_fts")
                 self._conn.execute("PRAGMA user_version=1")
             # Also handles reopening with FTS5 after stores made without it.
             self._conn.execute(
@@ -504,22 +511,50 @@ class ThreadStore:
         for offset in range(0, len(stored_ids), batch_size):
             ids = stored_ids[offset : offset + batch_size]
             placeholders = ",".join("?" for _ in ids)
+            chunk_count = self._conn.execute(
+                f"SELECT coalesce(sum(chunk_count), 0) FROM threads WHERE id IN ({placeholders})",
+                ids,
+            ).fetchone()[0]
+            if not chunk_count:
+                continue
+            # Stop counting at the scoped chunk count. A rare global match set
+            # is cheaper to join directly than materializing the entire scope.
+            match_count = self._conn.execute(
+                "SELECT count(*) FROM (SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT ?)",
+                (match, chunk_count),
+            ).fetchone()[0]
+            if match_count < chunk_count:
+                scope_sql = ""
+                rank_sql = (
+                    "FROM chunks_fts CROSS JOIN chunks AS s ON s.rowid=chunks_fts.rowid "
+                    f"WHERE chunks_fts MATCH ? AND s.thread_id IN ({placeholders}) "
+                    "ORDER BY bm25(chunks_fts), s.thread_id, s.idx LIMIT ?"
+                )
+                parameters = (match, *ids, limit)
+            else:
+                # Covering primary-key metadata avoids payload reads for common
+                # terms. AS MATERIALIZED requires SQLite 3.35+ and prevents the
+                # planner from moving chunk payload lookups ahead of LIMIT.
+                scope_sql = (
+                    "scope AS MATERIALIZED ("
+                    "SELECT rowid AS chunk_rowid, thread_id, idx FROM chunks "
+                    f"WHERE thread_id IN ({placeholders})), "
+                )
+                rank_sql = (
+                    "FROM chunks_fts JOIN scope ON scope.chunk_rowid=chunks_fts.rowid "
+                    "WHERE chunks_fts MATCH ? "
+                    "ORDER BY bm25(chunks_fts), scope.thread_id, scope.idx LIMIT ?"
+                )
+                parameters = (*ids, match, limit)
             rows.extend(
                 self._conn.execute(
-                    # Scope and tie keys come from the covering primary-key
-                    # index, never FTS's unindexed columns or chunk payloads.
-                    # LIMIT stays after scoping and the complete tie ordering.
-                    "WITH scope AS MATERIALIZED ("
-                    "SELECT rowid, thread_id, idx FROM chunks "
-                    f"WHERE thread_id IN ({placeholders})), "
-                    "ranked AS MATERIALIZED ("
+                    "WITH " + scope_sql + "ranked AS MATERIALIZED ("
                     "SELECT chunks_fts.rowid AS chunk_rowid, -bm25(chunks_fts) AS score "
-                    "FROM chunks_fts JOIN scope ON scope.rowid=chunks_fts.rowid "
-                    "WHERE chunks_fts MATCH ? "
-                    "ORDER BY bm25(chunks_fts), scope.thread_id, scope.idx LIMIT ?) "
+                    + rank_sql
+                    + ") "
                     "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, ranked.score "
                     "FROM ranked JOIN chunks AS c ON c.rowid=ranked.chunk_rowid",
-                    (*ids, match, limit),
+                    parameters,
                 ).fetchall()
             )
         # BM25 scores use the same corpus for every id batch, so their

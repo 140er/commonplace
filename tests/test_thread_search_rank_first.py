@@ -1,47 +1,17 @@
 """Rank-first equivalence, access control and derived-index migration."""
 
 import sqlite3
+import tempfile
+from itertools import count
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
+from _thread_search_oracle import assert_alignment, old_search
 from hypothesis import given, settings, strategies as st
 
-from commonplace.handoff.models import RecallHit, ThreadMessage
+from commonplace.handoff.models import ThreadMessage
 from commonplace.handoff.thread_store import ThreadStore
-
-
-def old_search(store, stored_ids, query, limit=8):
-    """Original algorithm, including ID batching and final ordering."""
-    tokens = query.split()
-    if not tokens or not stored_ids or limit <= 0:
-        return []
-    stored_ids = list(dict.fromkeys(stored_ids))
-    match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
-    batch_size = max(1, min(500, store._sqlite_limit("SQLITE_LIMIT_VARIABLE_NUMBER", 999) - 2))
-    rows = []
-    for offset in range(0, len(stored_ids), batch_size):
-        ids = stored_ids[offset : offset + batch_size]
-        placeholders = ",".join("?" for _ in ids)
-        rows.extend(
-            store._conn.execute(
-                "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
-                "-bm25(chunks_fts) AS score FROM chunks_fts "
-                "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
-                f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
-                "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
-                (match, *ids, limit),
-            ).fetchall()
-        )
-    rows.sort(key=lambda row: (-row["score"], row["thread_id"], row["idx"]))
-    return [
-        RecallHit(
-            stored_thread_id=r["thread_id"],
-            chunk_index=r["idx"],
-            seq_start=r["seq_start"],
-            seq_end=r["seq_end"],
-            score=r["score"],
-            text=r["text"],
-        )
-        for r in rows[:limit]
-    ]
 
 
 @settings(max_examples=35, deadline=None)
@@ -55,13 +25,20 @@ def old_search(store, stored_ids, query, limit=8):
         min_size=1,
         max_size=7,
     ),
+    data=st.data(),
     query=st.lists(
         st.sampled_from(["alpha", "beta", "gamma", "absent", '"alpha"']), min_size=1, max_size=3
     ).map(" ".join),
 )
-def test_rank_first_matches_original(corpora, query):
-    store = ThreadStore(":memory:")
-    try:
+def test_rank_first_matches_original(corpora, query, data):
+    counter = count()
+    with patch(
+        "commonplace.handoff.thread_store.secrets.token_hex",
+        side_effect=lambda _: f"{next(counter):016x}",
+    ):
+        directory = tempfile.TemporaryDirectory()
+        path = str(Path(directory.name) / "threads.sqlite3")
+        store = ThreadStore(path)
         ids = []
         messages = []
         for i, texts in enumerate(corpora):
@@ -72,6 +49,8 @@ def test_rank_first_matches_original(corpora, query):
             ]
             messages.append(items)
             ids.append(store.store("test", str(i), items, actor="test").id)
+    try:
+        drawn_scope = data.draw(st.lists(st.sampled_from(ids + ["missing"]), max_size=12))
         for appended in (False, True):
             if appended:
                 store.append(
@@ -79,7 +58,13 @@ def test_rank_first_matches_original(corpora, query):
                     messages[0]
                     + [ThreadMessage(len(messages[0]), "user", "message", "alpha beta", raw="")],
                 )
-            for scope in ([], ids[:1], ids[-1:], ids, ids[::2] + ["missing", ids[0]]):
+            expected = old_search(store, ids, query, 1000)
+            assert_alignment(store)
+            store.close()
+            store = ThreadStore(path)
+            assert_alignment(store)
+            assert store.search(ids, query, 1000) == expected
+            for scope in ([], ids[:1], ids[-1:], ids, ids[::2] + ["missing", ids[0]], drawn_scope):
                 for limit in (0, 1, 3, 1000):
                     assert store.search(scope, query, limit) == old_search(
                         store, scope, query, limit
@@ -96,6 +81,7 @@ def test_rank_first_matches_original(corpora, query):
                     store._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous)
     finally:
         store.close()
+        directory.cleanup()
 
 
 def test_legacy_rowids_migrate_and_reopen_idempotently(tmp_path):
@@ -109,8 +95,8 @@ def test_legacy_rowids_migrate_and_reopen_idempotently(tmp_path):
     ]
     expected = old_search(store, ids, "alpha beta")
     # Simulate a legacy file with arbitrary FTS rowids, plus an unindexed chunk.
-    store._conn.execute("UPDATE chunks_fts SET rowid=rowid+100")
-    store._conn.execute("DELETE FROM chunks_fts WHERE rowid=102")
+    store._conn.execute("UPDATE chunks_fts SET rowid=rowid+100 WHERE rowid=1")
+    store._conn.execute("DELETE FROM chunks_fts WHERE rowid=2")
     store._conn.execute("PRAGMA user_version=0")
     original = [tuple(row) for row in store._conn.execute("SELECT * FROM chunks")]
     store.close()
@@ -118,6 +104,8 @@ def test_legacy_rowids_migrate_and_reopen_idempotently(tmp_path):
         store = ThreadStore(path)
         try:
             assert store.search(ids, "alpha beta") == expected
+            assert store.search(ids, "alpha beta") == old_search(store, ids, "alpha beta")
+            assert_alignment(store)
             assert [tuple(row) for row in store._conn.execute("SELECT * FROM chunks")] == original
             assert store._conn.execute("SELECT count(*) FROM chunks_fts").fetchone()[0] == 3
             assert (
@@ -153,6 +141,7 @@ def test_scope_excludes_global_top_hits():
         store.close()
 
 
+@pytest.mark.skipif(not hasattr(sqlite3.Connection, "setlimit"), reason="Python 3.11+ API")
 def test_ties_use_thread_and_chunk_order_across_id_batches():
     store = ThreadStore(":memory:")
     try:
@@ -177,5 +166,104 @@ def test_ties_use_thread_and_chunk_order_across_id_batches():
                 assert store.search(ids, "alpha", limit) == expected[:limit]
         finally:
             store._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous)
+    finally:
+        store.close()
+
+
+def test_aligned_legacy_migration_and_reopen_do_not_rewrite_index(tmp_path):
+    path = str(tmp_path / "threads.sqlite3")
+    store = ThreadStore(path)
+    stored = store.store(
+        "test", "original", [ThreadMessage(0, "user", "message", "alpha", raw="")], actor="test"
+    )
+    store._conn.execute("PRAGMA user_version=0")
+    store.close()
+    for _ in range(2):
+        store = ThreadStore(path)
+        try:
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert store._conn.total_changes == 0
+            assert_alignment(store)
+            assert store.search([stored.id], "alpha") == old_search(store, [stored.id], "alpha")
+        finally:
+            store.close()
+
+
+def test_old_writer_after_fallback_repairs_alignment_even_at_version_one(tmp_path):
+    path = str(tmp_path / "threads.sqlite3")
+    original = ThreadStore(path)
+    original.store(
+        "test", "first", [ThreadMessage(0, "user", "message", "alpha", raw="")], actor="test"
+    )
+    # Model an old FTS writer already open while another writer lacks FTS5.
+    fallback = ThreadStore(path)
+    fallback._fts_enabled = False
+    denied = fallback.store(
+        "other", "denied", [ThreadMessage(0, "user", "message", "topsecret", raw="")], actor="test"
+    )
+    fallback.close()
+    original._fts_enabled = False
+    allowed = original.store(
+        "test", "allowed", [ThreadMessage(0, "user", "message", "public", raw="")], actor="test"
+    )
+    # The old store path assigns its own FTS rowid, filling the fallback gap.
+    original._conn.execute(
+        "INSERT INTO chunks_fts(thread_id, idx, text) "
+        "SELECT thread_id, idx, text FROM chunks WHERE thread_id=?",
+        (allowed.id,),
+    )
+    original.close()
+    # The old initializer backfills by identity and ignores user_version.
+    with sqlite3.connect(path) as legacy:
+        legacy.execute(
+            "INSERT INTO chunks_fts(thread_id, idx, text) "
+            "SELECT thread_id, idx, text FROM chunks WHERE (thread_id, idx) NOT IN "
+            "(SELECT thread_id, idx FROM chunks_fts)"
+        )
+        assert legacy.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert (
+            legacy.execute(
+                "SELECT c.thread_id FROM chunks_fts f JOIN chunks c ON c.rowid=f.rowid "
+                "WHERE f.text LIKE '%topsecret%'"
+            ).fetchone()[0]
+            == allowed.id
+        )
+    reopened = ThreadStore(path)
+    try:
+        assert_alignment(reopened)
+        for scope in ([allowed.id], [denied.id], [allowed.id, denied.id]):
+            for query in ("topsecret", "public", "alpha public"):
+                assert reopened.search(scope, query) == old_search(reopened, scope, query)
+        assert reopened.search([allowed.id], "topsecret") == []
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    "query,expected_plan", [("alpha", "scope AS MATERIALIZED"), ("rare", "CROSS JOIN")]
+)
+def test_hybrid_plans_match_original(query, expected_plan):
+    store = ThreadStore(":memory:")
+    try:
+        ids = [
+            store.store(
+                "test",
+                str(i),
+                [
+                    ThreadMessage(
+                        0, "user", "message", "alpha rare" if i == 0 else "alpha filler", raw=""
+                    )
+                ],
+                actor="test",
+            ).id
+            for i in range(10)
+        ]
+        statements = []
+        store._conn.set_trace_callback(statements.append)
+        hits = store.search(ids, query, 1)
+        store._conn.set_trace_callback(None)
+        assert hits == old_search(store, ids, query, 1)
+        assert any(expected_plan in sql for sql in statements)
+        assert_alignment(store)
     finally:
         store.close()
