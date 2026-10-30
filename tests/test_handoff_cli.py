@@ -46,9 +46,6 @@ class FakeControl:
                 return space
         raise ControlError("workspace not found")
 
-    def workspaces(self):
-        return self.spaces
-
     def role(self, workspace_id, user_id):
         if workspace_id == "ws_home":
             return "owner" if user_id == "usr_owner" else "member"
@@ -93,31 +90,6 @@ def database_class(state):
                 and (not task_ref or record.task_ref == task_ref)
             ][:limit]
 
-        def add_webhook(self, workspace_id, url, secret, events, *, actor):
-            assert actor == "usr_owner"
-            webhook_id = f"hook_{len(state.hooks)}"
-            state.hooks[webhook_id] = {
-                "id": webhook_id,
-                "workspace_id": workspace_id,
-                "url": url,
-                "secret": secret,
-                "events": events,
-                "created_at": "2026-10-30T00:00:00Z",
-            }
-            return webhook_id
-
-        def webhooks(self, workspace_id):
-            return [hook for hook in state.hooks.values() if hook["workspace_id"] == workspace_id]
-
-        def webhook_secret(self, webhook_id):
-            raise AssertionError("CLI must never retrieve an existing secret")
-
-        def remove_webhook(self, webhook_id, *, actor):
-            state.removed.append((webhook_id, actor))
-            if not state.remove_result:
-                return False
-            return state.hooks.pop(webhook_id, None) is not None
-
     return FakeHandoffDB
 
 
@@ -129,20 +101,17 @@ def adapter(monkeypatch, tmp_path):
         control=control,
         rows={},
         records={},
-        hooks={},
         threads={},
         messages={},
         hits=[],
         stores=[],
         writes=[],
         searches=[],
-        removed=[],
         relaunches=[],
         set_error=None,
         clear_error=None,
         read_error=None,
         launch_error=None,
-        remove_result=True,
         result=HandoffResult("handoff"),
     )
 
@@ -291,12 +260,6 @@ def add_thread(adapter, workspace="ws_home"):
             cli.cmd_thread,
         ),
         (["thread", "recall", "thr_one", "a query", "--workspace", "home"], cli.cmd_thread),
-        (
-            ["webhook", "add", "https://example.test/wake", "--workspace", "home"],
-            cli.cmd_webhook_add,
-        ),
-        (["webhook", "list"], cli.cmd_webhook_read),
-        (["webhook", "remove", "hook_one"], cli.cmd_webhook_read),
     ],
 )
 def test_parser_commands(words, handler):
@@ -437,9 +400,6 @@ def test_missing_launcher_secret(adapter, monkeypatch, capsys, value):
         ["handoff", "disable", "--workspace", "home", "--task", "#42"],
         ["handoff", "clear", "--workspace", "home", "--task", "#42"],
         ["handoff", "relaunch", "hof_one"],
-        ["webhook", "add", "https://example.test", "--workspace", "home"],
-        ["webhook", "list", "--workspace", "home"],
-        ["webhook", "remove", "hook_one", "--workspace", "home"],
     ],
 )
 def test_owner_only_paths(adapter, capsys, words):
@@ -447,9 +407,7 @@ def test_owner_only_paths(adapter, capsys, words):
     assert adapter.run(*words, "--by", "member@example.test") == 2
     assert capsys.readouterr().err == "commonplace: only a workspace owner can do that\n"
     assert adapter.control.owner_checks == [("ws_home", "usr_member")]
-    assert (
-        not adapter.writes and not adapter.removed and not adapter.relaunches and not adapter.hooks
-    )
+    assert not adapter.writes and not adapter.relaunches
 
 
 @pytest.mark.parametrize(
@@ -645,82 +603,6 @@ def test_thread_expected_error(adapter, capsys):
     assert adapter.stores[0].closed
 
 
-def test_webhook_secret_once(adapter, capsys):
-    assert (
-        adapter.run(
-            "webhook",
-            "add",
-            "http://localhost:4321/wake",
-            "--workspace",
-            "home",
-            "--events",
-            "handoff.stored,handoff.failed,handoff.stored",
-            "--by",
-            "owner@example.test",
-        )
-        == 0
-    )
-    output = capsys.readouterr()
-    webhook_id, secret = output.out.split()
-    assert len(secret) >= 32 and output.err == ""
-    assert adapter.hooks[webhook_id]["secret"] == secret
-    assert adapter.hooks[webhook_id]["events"] == ("handoff.stored", "handoff.failed")
-    assert adapter.run("webhook", "list", "--workspace", "home") == 0
-    assert adapter.run("webhook", "list") == 0
-    listing = capsys.readouterr()
-    assert webhook_id in listing.out and secret not in listing.out + listing.err
-    assert adapter.run("webhook", "remove", webhook_id) == 0
-    removal = capsys.readouterr()
-    assert removal.out == f"{webhook_id}\n" and secret not in removal.err
-    assert adapter.removed == [(webhook_id, "usr_owner")]
-    assert adapter.run("webhook", "list") == 0
-    assert capsys.readouterr().out == ""
-    assert adapter.run("webhook", "remove", webhook_id) == 2
-    assert secret not in capsys.readouterr().err
-
-
-def test_webhook_default_events_and_scoped_remove(adapter, capsys):
-    assert adapter.run("webhook", "add", "https://example.test", "--workspace", "home") == 0
-    capsys.readouterr()
-    assert adapter.hooks["hook_0"]["events"] == ("handoff.*",)
-    assert adapter.run("webhook", "remove", "hook_0", "--workspace", "home") == 0
-    assert capsys.readouterr().out == "hook_0\n"
-
-
-def test_failed_webhook_creation_never_prints_secret(adapter, monkeypatch, capsys):
-    def fail_add(self, workspace_id, url, secret, events, *, actor):
-        assert secret == "new secret"
-        raise handoff_db.HandoffDBError("could not save webhook")
-
-    monkeypatch.setattr(cli.secrets, "token_urlsafe", lambda length: "new secret")
-    monkeypatch.setattr(handoff_db.HandoffDB, "add_webhook", fail_add)
-    assert adapter.run("webhook", "add", "https://example.test", "--workspace", "home") == 2
-    output = capsys.readouterr()
-    assert output.out == ""
-    assert output.err == "commonplace: could not save webhook\n"
-    assert not adapter.hooks
-
-
-@pytest.mark.parametrize("racing_remove", [True, False])
-def test_webhook_missing_or_removed(adapter, capsys, racing_remove):
-    if racing_remove:
-        adapter.hooks["hook_one"] = {"id": "hook_one", "workspace_id": "ws_home"}
-        adapter.remove_result = False
-    assert adapter.run("webhook", "remove", "hook_one", "--workspace", "home") == 2
-    assert capsys.readouterr().err == "commonplace: webhook not found\n"
-
-
-def test_webhooks_outside_owned_workspaces_hidden(adapter, capsys):
-    adapter.hooks["hook_hidden"] = {"id": "hook_hidden", "workspace_id": "ws_other"}
-    assert adapter.run("webhook", "list") == 0
-    assert capsys.readouterr().out == ""
-    assert adapter.run("webhook", "remove", "hook_hidden") == 2
-    assert capsys.readouterr().err == "commonplace: webhook not found\n"
-    assert adapter.run("webhook", "list", "--by", "member@example.test") == 0
-    assert capsys.readouterr().out == ""
-    assert not adapter.removed
-
-
 @pytest.mark.parametrize("action", ["enable", "disable", "clear"])
 def test_setting_scope_conflicts(action):
     with pytest.raises(SystemExit) as error:
@@ -735,7 +617,6 @@ def test_setting_scope_conflicts(action):
     [
         ["handoff"],
         ["thread"],
-        ["webhook"],
         ["handoff", "status"],
         ["handoff", "enable"],
         ["handoff", "disable"],
@@ -745,8 +626,6 @@ def test_setting_scope_conflicts(action):
         ["handoff", "relaunch"],
         ["thread", "get", "thr_one"],
         ["thread", "recall", "thr_one", "--workspace", "home"],
-        ["webhook", "add", "https://example.test"],
-        ["webhook", "remove"],
     ],
 )
 def test_required_parser_arguments(words):
@@ -816,26 +695,18 @@ def test_invalid_ranges_and_limits(words):
         "http://example.test/a\nb",
     ],
 )
-def test_invalid_webhook_urls(url):
-    with pytest.raises(SystemExit) as error:
-        cli.build_parser().parse_args(["webhook", "add", url, "--workspace", "home"])
-    assert error.value.code == 2
-
-
-@pytest.mark.parametrize(
-    "event_names", ["", " , ", "other.*", "handoff.unknown", "handoff.stored,other"]
-)
-def test_invalid_webhook_events(event_names):
+def test_invalid_handoff_launcher_urls(url):
     with pytest.raises(SystemExit) as error:
         cli.build_parser().parse_args(
             [
-                "webhook",
-                "add",
-                "https://example.test",
+                "handoff",
+                "enable",
                 "--workspace",
                 "home",
-                "--events",
-                event_names,
+                "--launcher",
+                "webhook",
+                "--launcher-url",
+                url,
             ]
         )
     assert error.value.code == 2
