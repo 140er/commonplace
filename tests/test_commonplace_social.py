@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-from commonplace import sessions, social, urls
+from commonplace import plans, sessions, social, urls
 from commonplace.oauth import store
 from commonplace.social import accounts, providers
 from tests.test_commonplace_oauth import Client
@@ -165,11 +165,11 @@ def remote(monkeypatch):
 
 @pytest.fixture
 def make_signin(make_surface, monkeypatch, apple_key):
-    def make(ids=("google",), *, signup=False):
+    def make(ids=("google",), *, signup=None):
         for provider_id in ids:
             enable(monkeypatch, provider_id, apple_key)
-        if signup:
-            monkeypatch.setenv("COMMONPLACE_SIGNUP", " OPEN ")
+        if signup is not None:
+            monkeypatch.setenv("COMMONPLACE_SIGNUP", " OPEN " if signup else "closed")
         surface = make_surface()
         surface.gateway.rate_limits = False
         return surface
@@ -385,8 +385,13 @@ def test_next_rejects_other_and_unsafe_paths(make_signin, remote, next_path):
     refused(finish(surface, flow, error="access_denied"), "cancelled")
 
 
-def test_closed_signup_refuses_unknown_email_without_creating_anything(make_signin, remote):
+@pytest.mark.parametrize("signup", ["closed", " CLOSED ", "maybe"])
+def test_closed_signup_refuses_unknown_email_without_creating_anything(
+    make_signin, remote, monkeypatch, caplog, signup
+):
+    monkeypatch.setenv("COMMONPLACE_SIGNUP", signup)
     surface = make_signin()
+    social.install(surface.gateway)
     remote.claims["email"] = "new@example.com"
     refused(finish(surface, start(surface, remote)), "account")
     assert len(rows(surface, "users")) == len(rows(surface, "workspaces")) == 1
@@ -397,10 +402,31 @@ def test_closed_signup_refuses_unknown_email_without_creating_anything(make_sign
         "deny",
         "google:account",
     )
+    if signup == "maybe":
+        [warning] = caplog.records
+        assert warning.levelname == "WARNING"
+        assert "COMMONPLACE_SIGNUP" in warning.message
+        assert "open" in warning.message and "closed" in warning.message
+        assert signup not in warning.message
+    else:
+        assert not caplog.records
 
 
-def test_open_signup_creates_user_personal_workspace_identity_and_session(make_signin, remote):
-    surface = make_signin(signup=True)
+@pytest.mark.parametrize("signup", [None, "", " OPEN "])
+def test_open_signup_creates_user_personal_workspace_identity_and_session(
+    make_signin, remote, monkeypatch, signup
+):
+    if signup is not None:
+        monkeypatch.setenv("COMMONPLACE_SIGNUP", signup)
+    calls = []
+
+    def assign_signup_plan(db, uid, workspace_id, *, via):
+        assert db.user(uid)["id"] == uid
+        assert db.workspace(workspace_id)["personal_of"] == uid
+        calls.append((db, uid, workspace_id, via))
+
+    monkeypatch.setattr(plans, "assign_signup_plan", assign_signup_plan)
+    surface = make_signin()
     remote.claims.update(email="new@example.com", name="  Test\tPerson\x00\n " + "x" * 120)
     response = finish(surface, start(surface, remote))
     user = surface.db.user("new@example.com")
@@ -408,6 +434,7 @@ def test_open_signup_creates_user_personal_workspace_identity_and_session(make_s
     me = signed_in(surface, response, user["id"])
     workspace = surface.db.workspace(me["workspace"])
     assert workspace["name"] == "new@example.com" and workspace["personal_of"] == user["id"]
+    assert calls == [(surface.db, user["id"], workspace["id"], "google")]
     assert surface.db.role(workspace["id"], user["id"]) == "owner"
     [identity] = rows(surface, "user_identities")
     assert identity["provider"] == "google" and identity["subject"] == "test-oidc-subject"
@@ -419,12 +446,17 @@ def test_open_signup_creates_user_personal_workspace_identity_and_session(make_s
     assert next(a for a in audits if a["action"] == "identity.link")["reason"] == "google"
     assert next(a for a in audits if a["action"] == "session.create")["reason"] == "google"
     assert rows(surface, "signin_flows") == []
+    signed_in(surface, finish(surface, start(surface, remote)), user["id"])
+    assert calls == [(surface.db, user["id"], workspace["id"], "google")]
 
 
 def test_verified_email_links_case_insensitively_then_subject_survives_email_change(
-    make_signin, remote
+    make_signin, remote, monkeypatch
 ):
-    surface = make_signin()
+    monkeypatch.setattr(
+        plans, "assign_signup_plan", lambda *a, **kw: pytest.fail("unexpected plan")
+    )
+    surface = make_signin(signup=False)
     remote.claims["email"] = "OWNER@EXAMPLE.COM"
     signed_in(surface, finish(surface, start(surface, remote)))
     assert len(rows(surface, "users")) == len(rows(surface, "user_identities")) == 1
