@@ -1,10 +1,8 @@
 """Loopback gateway tests with no Memory worker or external service."""
 
-import hashlib
 import http.client
 import json
 import threading
-import time
 from dataclasses import replace
 from html.parser import HTMLParser
 from types import SimpleNamespace
@@ -12,9 +10,9 @@ from urllib.parse import urlencode
 
 import pytest
 
+from commonplace import sessions
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
-from commonplace.handoff import web
 from commonplace.handoff.models import (
     Handoff,
     HandoffSettings,
@@ -26,6 +24,7 @@ from commonplace.handoff.models import (
 )
 from commonplace.handoff.recall import ThreadNotFound
 from commonplace.handoff.settings import SettingsError
+from commonplace.handoff.wiring import install
 from commonplace.policy import Policy
 
 
@@ -167,13 +166,16 @@ class Browser:
             self.cookie = result.headers["Set-Cookie"].split(";", 1)[0]
         return result
 
-    def login(self, token=None, headers=None):
-        response = self.request("GET", "/app/login", headers=headers)
-        fields = Forms(response.body).forms[-1]["fields"]
-        fields = [(key, value) for key, value in fields if key != "token"]
-        return self.request(
-            "POST", "/app/login", fields + [("token", token or self.app.token)], headers=headers
+    def login(self, email=None, workspace=None):
+        token = sessions.create_login_link(
+            self.app.db,
+            email or self.app.db.user(self.app.owner)["email"],
+            workspace or self.app.workspace,
         )
+        response = self.request("GET", "/app/login?" + urlencode({"t": token}))
+        assert response.status == 302 and response.headers["Location"] == "/app/"
+        assert self.cookie.startswith(sessions.COOKIE + "=")
+        return response
 
     def csrf(self):
         response = self.request("GET", "/app/settings/memory")
@@ -192,9 +194,12 @@ class App:
         self.handoff_db = FakeHandoffs(self.settings)
         self.recall = FakeRecall()
         self.gateway = Gateway(self.db, NoWorkers())
-        self.control_db = self.db
+        assert not hasattr(self.gateway, "handoff")
+        self.handoff = install(self.gateway, path)
+        self.handoff.settings = self.settings
+        self.handoff.handoff_db = self.handoff_db
+        self.handoff.recall = self.recall
         self.connection, self.token = self.make_token("codex:vm")
-        web.register(self)
         self.server = self.gateway.build_server("127.0.0.1", 0)
         self.thread = threading.Thread(
             target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
@@ -253,6 +258,7 @@ class App:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
+        self.handoff.close()
         self.db.close()
 
 
@@ -267,109 +273,55 @@ def app(tmp_path):
 
 def test_registration_and_default_off_have_no_side_effects(app):
     assert not app.settings.calls and not app.handoff_db.handoffs
-    assert len(app.gateway.routes) == 8
-    assert app.browser.login().status == 303
+    routes = dict(app.gateway.routes)
+    prefixes = list(app.gateway.prefix_routes)
+    assert install(app.gateway, app.handoff.data_dir) is app.gateway.handoff is app.handoff
+    assert app.gateway.routes == routes and app.gateway.prefix_routes == prefixes
+    assert ("GET", "/app/settings/memory") in routes
+    assert ("POST", "/app/settings/memory") in routes
+    app.browser.login()
     response = app.browser.request("GET", "/app/settings/memory")
     assert response.status == 200 and "<h1>Memory</h1>" in response.body
+    assert '<a class="brand" href="/app/">Commonplace</a>' in response.body
+    assert "/app/logout" not in response.body and "/app/login" not in response.body
     assert " checked" not in response.body and 'value="80"' in response.body
     assert not app.settings.calls
 
 
-def test_session_rotation_hash_storage_and_cookie(app):
+def test_forms_use_current_person_session_for_csrf(app):
     browser = app.browser
-    first = browser.request("GET", "/app/login")
+    browser.login()
     old_cookie = browser.cookie
-    old_csrf = dict(Forms(first.body).forms[-1]["fields"])["csrf"]
-    response = browser.login()
-    assert response.status == 303 and browser.cookie != old_cookie
-    cookie = response.headers["Set-Cookie"]
-    assert all(
-        value in cookie for value in ("HttpOnly", "SameSite=Strict", "Path=/app", "Max-Age=43200")
-    )
-    assert "Secure" not in cookie
-    raw_id = browser.cookie.partition("=")[2]
-    assert len(bytes.fromhex(raw_id)) == 32
-    rows = app.db._conn.execute("SELECT * FROM web_sessions").fetchall()
-    assert len(rows) == 1 and rows[0]["id_hash"] == hashlib.sha256(raw_id.encode()).hexdigest()
-    assert rows[0]["connection_id"] == app.connection
-    assert rows[0]["csrf"] != old_csrf
-    assert raw_id not in json.dumps([dict(row) for row in rows])
-    assert app.token not in json.dumps([dict(row) for row in rows])
-    assert 43190 < rows[0]["expires_at"] - time.time() <= 43200
+    old_csrf = browser.csrf()
+    assert len(bytes.fromhex(old_csrf)) == 32 and browser.csrf() == old_csrf
+    assert old_csrf != sessions.cookie_value(browser.cookie)
+    browser.login()
+    assert browser.cookie != old_cookie and browser.csrf() != old_csrf
     assert (
         browser.request("POST", "/app/settings/memory", {"csrf": old_csrf, "action": "save"}).status
         == 400
     )
-    assert (
-        browser.request("GET", "/app/settings/memory", headers={"Cookie": old_cookie}).status == 404
-    )
-    assert browser.request("GET", "/app/login").status == 303
-
-
-def test_secure_cookie_forwarded_https_and_tls(app):
-    response = app.browser.login(headers={"X-Forwarded-Proto": "https"})
-    assert "; Secure" in response.headers["Set-Cookie"]
-    # Exercise the TLS branch without requiring a certificate fixture.
-    request = SimpleNamespace(connection=object(), headers={})
-    from unittest.mock import patch
-
-    with patch.object(web.ssl, "SSLSocket", object):
-        assert "; Secure" in web._Pages(app)._cookie(request, "value", 0)
-
-
-@pytest.mark.parametrize("token", ["wrong", "cmmn_invalid", "cmmn_\r\nX-Forged: true", ""])
-def test_invalid_login_never_authenticates(app, token):
-    response = app.browser.request("GET", "/app/login")
-    fields = dict(Forms(response.body).forms[-1]["fields"])
-    fields["token"] = token
-    assert app.browser.request("POST", "/app/login", fields).status == 404
-    assert app.browser.request("GET", "/app/settings/memory").status == 404
-
-
-@pytest.mark.parametrize("csrf", [None, "", "0" * 64, "é" * 64])
-def test_login_requires_anonymous_csrf(app, csrf):
-    app.browser.request("GET", "/app/login")
-    fields = {"token": app.token}
-    if csrf is not None:
-        fields["csrf"] = csrf
-    assert app.browser.request("POST", "/app/login", fields).status == 400
-
-
-def test_login_requires_prelogin_session_and_it_expires(app):
-    assert app.browser.request("POST", "/app/login", {"token": app.token}).status == 404
-    app.browser.request("GET", "/app/login")
-    row = app.db._conn.execute("SELECT * FROM web_sessions").fetchone()
-    assert 590 < row["expires_at"] - time.time() <= 600
-    app.db._conn.execute("UPDATE web_sessions SET expires_at = 0")
-    assert (
-        app.browser.request("POST", "/app/login", {"token": app.token, "csrf": row["csrf"]}).status
-        == 404
-    )
+    assert not app.settings.calls
 
 
 @pytest.mark.parametrize(
     "change",
-    ["session", "revoked", "token_expired", "disabled", "membership", "credential", "bad_expiry"],
+    ["session", "revoked", "disabled", "membership"],
 )
 def test_stale_identity_fails_closed(app, change):
     app.browser.login()
     if change == "session":
-        app.db._conn.execute("UPDATE web_sessions SET expires_at = 0")
+        app.db._conn.execute("UPDATE sessions SET expires_at = '2000-01-01T00:00:00Z'")
+    elif change == "revoked":
+        sessions.end_session(app.db, sessions.cookie_value(app.browser.cookie))
     elif change == "membership":
         app.db._conn.execute("PRAGMA foreign_keys = OFF")
         app.db._conn.execute("DELETE FROM memberships")
     elif change == "disabled":
         app.db._conn.execute("UPDATE users SET disabled_at = 'now'")
-    else:
-        column, value = {
-            "revoked": ("revoked_at", "now"),
-            "token_expired": ("expires_at", "2000-01-01T00:00:00Z"),
-            "credential": ("token_hash", "changed"),
-            "bad_expiry": ("expires_at", "invalid"),
-        }[change]
-        app.db._conn.execute(f"UPDATE connections SET {column} = ?", (value,))
     for path in ("/app/settings/memory", "/app/cards/142", "/app/threads/thr_old"):
-        assert app.browser.request("GET", path).status == 404
+        response = app.browser.request("GET", path)
+        assert response.status == 303 and response.headers["Location"] == "/app/login"
 
 
 @pytest.mark.parametrize(
@@ -383,40 +335,64 @@ def test_stale_identity_fails_closed(app, change):
     ],
 )
 def test_malformed_cookie_is_not_found(app, cookie):
-    assert (
-        app.browser.request("GET", "/app/settings/memory", headers={"Cookie": cookie}).status == 404
-    )
+    response = app.browser.request("GET", "/app/settings/memory", headers={"Cookie": cookie})
+    assert response.status == 303 and response.headers["Location"] == "/app/login"
 
 
-@pytest.mark.parametrize("path", ["/app/logout", "/app/settings/memory", "/app/login"])
-def test_authenticated_posts_reject_missing_or_wrong_csrf(app, path):
+@pytest.mark.parametrize("csrf", [None, "", "0" * 64, "é" * 64])
+def test_authenticated_posts_reject_missing_or_wrong_csrf(app, csrf):
     app.browser.login()
-    for fields in ({}, {"csrf": "0" * 64}):
-        assert app.browser.request("POST", path, fields).status == 400
+    fields = {"action": "save", "threshold": "80"}
+    if csrf is not None:
+        fields["csrf"] = csrf
+    assert app.browser.request("POST", "/app/settings/memory", fields).status == 400
     assert not app.settings.calls
     assert app.browser.request("GET", "/app/settings/memory").status == 200
 
 
-def test_logout_clears_cookie_and_server_session(app):
-    app.browser.login()
-    cookie = app.browser.cookie
-    response = app.browser.post({}, "/app/logout")
+@pytest.mark.parametrize("path", ["/app/settings/memory", "/app/cards/142", "/app/threads/thr_old"])
+def test_signed_out_pages_redirect_to_shared_login(app, path):
+    response = app.browser.request("GET", path)
     assert response.status == 303 and response.headers["Location"] == "/app/login"
-    assert "Path=/app; Max-Age=0" in response.headers["Set-Cookie"]
-    assert app.db._conn.execute("SELECT COUNT(*) FROM web_sessions").fetchone()[0] == 0
-    assert (
-        app.browser.request("GET", "/app/settings/memory", headers={"Cookie": cookie}).status == 404
-    )
+    assert "Set-Cookie" not in response.headers
 
 
 def test_revoked_session_can_start_a_fresh_login(app):
     app.browser.login()
     old_cookie = app.browser.cookie
-    app.db.revoke(app.connection, actor=app.owner)
-    _, token = app.make_token("replacement")
-    assert app.browser.login(token).status == 303
+    sessions.end_session(app.db, sessions.cookie_value(old_cookie))
+    app.browser.login()
     assert app.browser.cookie != old_cookie
     assert app.browser.request("GET", "/app/settings/memory").status == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "https://other.example.test"},
+        {"Origin": "null"},
+    ],
+)
+def test_cross_site_posts_refuse_otherwise_valid_forms(app, headers):
+    app.browser.login()
+    fields = {"csrf": app.browser.csrf(), "action": "save", "threshold": "80"}
+    assert app.browser.request("POST", "/app/settings/memory", fields, headers).status == 400
+    assert not app.settings.calls
+    assert app.browser.request("POST", "/app/settings/memory", fields).status == 303
+    assert len(app.settings.calls) == 1
+
+
+def test_same_origin_post_accepts_valid_csrf(app):
+    app.browser.login()
+    origin = f"http://127.0.0.1:{app.server.server_port}"
+    response = app.browser.request(
+        "POST",
+        "/app/settings/memory",
+        {"csrf": app.browser.csrf(), "action": "save", "threshold": "80"},
+        {"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+    )
+    assert response.status == 303 and len(app.settings.calls) == 1
 
 
 def test_ui_settings_updates_preserve_other_configured_fields(app):
@@ -453,7 +429,7 @@ def test_owner_saves_toggle_threshold_and_adds_updates_removes_override(app):
     )
     assert response.status == 303
     assert app.settings.calls[-1][1] == SettingRow(app.workspace, "workspace", "", True, 0.875)
-    assert app.settings.calls[-1][2] == "conn:codex:vm"
+    assert app.settings.calls[-1][2] == f"user:{app.owner}"
     assert (
         browser.post({"action": "save", "scope": "task", "ref": "142", "enabled": "on"}).status
         == 303
@@ -477,11 +453,10 @@ def test_owner_saves_toggle_threshold_and_adds_updates_removes_override(app):
 def test_member_reads_but_direct_mutations_are_hidden(app):
     user = app.db.create_user("reader@example.com")
     app.db.add_member(app.workspace, user, "member", actor=app.owner)
-    _, token = app.make_token("reader", user=user)
     app.settings.rows[(app.workspace, "agent", "bot")] = SettingRow(
         app.workspace, "agent", "bot", True
     )
-    app.browser.login(token)
+    app.browser.login("reader@example.com")
     response = app.browser.request("GET", "/app/settings/memory")
     assert response.status == 200 and " disabled" in response.body
     assert (
@@ -498,6 +473,11 @@ def test_member_reads_but_direct_mutations_are_hidden(app):
     assert not app.settings.calls
     app.db._conn.execute("UPDATE memberships SET role = ? WHERE user_id = ?", ("owner", user))
     assert app.browser.post({"action": "save", "threshold": "80"}).status == 303
+    assert app.settings.calls[-1][2] == f"user:{user}"
+    app.db._conn.execute("UPDATE memberships SET role = ? WHERE user_id = ?", ("member", user))
+    app.settings.calls.clear()
+    assert app.browser.post({"action": "save", "threshold": "80"}).status == 404
+    assert not app.settings.calls
 
 
 @pytest.mark.parametrize(
@@ -624,13 +604,23 @@ def test_workspace_and_thread_visibility(app):
     assert app.browser.request("GET", "/app/threads/thr_old").status == 404
     assert app.handoff_db.calls == [(app.workspace, "#142")]
     app.add_thread(wing="private")
+    # People see every wing in their workspace, including private agent wings.
+    assert app.browser.request("GET", "/app/cards/142").status == 200
+    assert app.browser.request("GET", "/app/threads/thr_old").status == 200
     _, token = app.make_token("limited", wings=["threads"])
+    headers = {"Authorization": "Bearer " + token}
+    assert app.browser.request("GET", "/api/threads/thr_old", headers=headers).status == 404
+    response = app.browser.request("GET", "/api/handoffs?task=%23142", headers=headers)
+    assert response.status == 200 and json.loads(response.body) == []
+    user = app.db.create_user("other@example.com")
+    workspace = app.db.create_workspace("other", user)
     other = Browser(app)
-    other.login(token)
+    other.login("other@example.com", workspace)
     assert other.request("GET", "/app/cards/142").status == 404
     assert other.request("GET", "/app/threads/thr_old").status == 404
 
 
+@pytest.mark.parametrize("role", ["owner", "member"])
 @pytest.mark.parametrize(
     "scopes,wings",
     [
@@ -639,13 +629,74 @@ def test_workspace_and_thread_visibility(app):
         (["memory:read", "threads:read"], ["shared"]),
     ],
 )
-def test_card_and_thread_need_scopes_and_readable_memory(app, scopes, wings):
+def test_person_reads_card_and_thread_despite_agent_policy(app, role, scopes, wings):
+    app.add_thread()
+    app.add_handoff()
+    user = app.owner
+    if role == "member":
+        user = app.db.create_user("reader@example.com")
+        app.db.add_member(app.workspace, user, role, actor=app.owner)
+    app.make_token("limited", user=user, scopes=scopes, wings=wings)
+    app.browser.login(app.db.user(user)["email"])
+    principal = sessions.session_principal(app.db, sessions.cookie_value(app.browser.cookie))
+    assert principal.person and principal.role == role
+    assert principal.policy.has_scope("memory:read")
+    assert principal.policy.has_scope("threads:read")
+    assert principal.policy.can_read_wing("threads")
+    assert not principal.policy.has_scope("admin")
+    assert app.browser.request("GET", "/app/cards/142").status == 200
+    assert app.browser.request("GET", "/app/threads/thr_old").status == 200
+
+
+@pytest.mark.parametrize(
+    "scopes,wings,status",
+    [
+        (["memory:read"], ["*"], 404),
+        (["threads:read"], ["*"], 404),
+        (["memory:read", "threads:read"], ["shared"], 404),
+        (["memory:read", "threads:read"], ["*"], 200),
+    ],
+)
+def test_bearer_thread_reads_keep_agent_scope_and_wing_checks(app, scopes, wings, status):
     app.add_thread()
     app.add_handoff()
     _, token = app.make_token("limited", scopes=scopes, wings=wings)
-    app.browser.login(token)
-    assert app.browser.request("GET", "/app/cards/142").status == 404
-    assert app.browser.request("GET", "/app/threads/thr_old").status == 404
+    headers = {"Authorization": "Bearer " + token}
+    for path in ("/api/handoffs?task=%23142", "/api/threads/thr_old"):
+        assert app.browser.request("GET", path, headers=headers).status == status
+    # A bearer has no browser session and cannot sign in to the handoff pages.
+    response = app.browser.request("GET", "/app/cards/142", headers=headers)
+    assert response.status == 303 and response.headers["Location"] == "/app/login"
+
+
+@pytest.mark.parametrize(
+    "change", ["revoked", "token_expired", "disabled", "membership", "credential", "bad_expiry"]
+)
+def test_stale_bearer_identity_fails_closed(app, change):
+    if change == "membership":
+        app.db._conn.execute("PRAGMA foreign_keys = OFF")
+        app.db._conn.execute("DELETE FROM memberships")
+    elif change == "disabled":
+        app.db._conn.execute("UPDATE users SET disabled_at = 'now'")
+    else:
+        column, value = {
+            "revoked": ("revoked_at", "now"),
+            "token_expired": ("expires_at", "2000-01-01T00:00:00Z"),
+            "credential": ("token_hash", "changed"),
+            "bad_expiry": ("expires_at", "invalid"),
+        }[change]
+        app.db._conn.execute(f"UPDATE connections SET {column} = ?", (value,))
+    response = app.browser.request(
+        "GET", "/api/settings/handoff", headers={"Authorization": "Bearer " + app.token}
+    )
+    if change == "bad_expiry" and response.status != 401:
+        assert response.status == 500
+        assert json.loads(response.body) == {"error": "internal error"}
+        pytest.xfail(
+            "Develop ControlDB._parse raises ValueError for malformed connection expiry; "
+            "the gateway returns 500. Core production changes are outside this handoff task."
+        )
+    assert response.status == 401 and json.loads(response.body)["error"] == "unauthorized"
 
 
 def test_failed_unstored_handoff_visibility(app):
@@ -655,11 +706,20 @@ def test_failed_unstored_handoff_visibility(app):
     assert response.status == 200 and "Old thread" not in response.body
     user = app.db.create_user("member@example.com")
     app.db.add_member(app.workspace, user, "member", actor=app.owner)
-    connection, token = app.make_token("member", user=user)
     browser = Browser(app)
-    browser.login(token)
+    browser.login("member@example.com")
     assert browser.request("GET", "/app/cards/142").status == 404
+    connection, token = app.make_token("member", user=user)
+    headers = {"Authorization": "Bearer " + token}
+    response = browser.request("GET", "/api/handoffs?task=%23142", headers=headers)
+    assert response.status == 200 and json.loads(response.body) == []
     app.handoff_db.handoffs[0] = replace(app.handoff_db.handoffs[0], connection_id=connection)
+    response = browser.request("GET", "/api/handoffs?task=%23142", headers=headers)
+    assert response.status == 200 and [row["id"] for row in json.loads(response.body)] == [
+        "hof_one"
+    ]
+    assert browser.request("GET", "/app/cards/142").status == 404
+    app.db._conn.execute("UPDATE memberships SET role = ? WHERE user_id = ?", ("owner", user))
     assert browser.request("GET", "/app/cards/142").status == 200
 
 

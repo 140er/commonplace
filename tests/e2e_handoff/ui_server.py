@@ -10,8 +10,8 @@ import base64
 import hashlib
 import http.client
 import json
+import os
 import secrets
-import shutil
 import socket
 import struct
 import subprocess
@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
+from commonplace import sessions
 from commonplace.handoff.models import SettingRow, SuccessorRef, ThreadMessage, ThreadMeta
 from commonplace.handoff.wiring import install
 from tests._commonplace_helpers import Hub
@@ -39,7 +40,9 @@ class UIServer:
         self.hub = Hub(directory, NoWorkerLauncher())
         self.ctx = None
         try:
-            self.ctx = install(self.hub.gateway, directory, start_outbox=False)
+            self.ctx = install(self.hub.gateway, directory)
+            assert self.ctx is self.hub.gateway.handoff
+            assert self.ctx.data_dir == Path(directory)
             member = self.hub.db.create_user("member@example.com")
             self.hub.db.add_member(self.hub.workspace, member, "member", actor=self.hub.admin)
             policy = dict(
@@ -50,6 +53,12 @@ class UIServer:
             )
             self.owner_token = self.hub.token("ui-owner", **policy)
             self.member_token = self.hub.token("ui-member", user=member, **policy)
+            self.owner_login_link = sessions.create_login_link(
+                self.hub.db, "owner@example.com", self.hub.workspace
+            )
+            self.member_login_link = sessions.create_login_link(
+                self.hub.db, "member@example.com", self.hub.workspace
+            )
             self.origin = f"http://127.0.0.1:{self.hub.port}"
             self._seed()
             status, _ = self.api("/api/settings/handoff")
@@ -349,9 +358,16 @@ class Browser:
             + (f" && location.href === {json.dumps(expected)}" if expected else "")
         )
 
-    def login(self, server, token):
-        self.navigate(server.origin + "/app/login")
-        self.submit("form.login", {"token": token}, expected=server.origin + "/app/settings/memory")
+    def login(self, server, login_link):
+        """Redeem a one-time web login link, keeping the browser's real cookie."""
+        self.call(
+            "Page.navigate", {"url": server.origin + "/app/login?" + urlencode({"t": login_link})}
+        )
+        self.wait(
+            f"location.href === {json.dumps(server.origin + '/app/')} "
+            "&& document.readyState === 'complete'"
+        )
+        self.navigate(server.origin + "/app/settings/memory")
 
     def close(self):
         if self.context:
@@ -363,8 +379,14 @@ class Browser:
 
 
 def lightpanda_binary():
-    path = Path.home() / ".local/bin/lightpanda"
-    return str(path) if path.is_file() else shutil.which("lightpanda")
+    try:
+        import pwd
+    except ImportError:
+        return None
+    # The test harness redirects HOME; locate the installed browser through
+    # the account's home directory without changing test data isolation.
+    path = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/bin/lightpanda"
+    return str(path) if path.is_file() else None
 
 
 def stop_process(process):

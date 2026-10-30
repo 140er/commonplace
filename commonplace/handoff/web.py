@@ -116,7 +116,7 @@ class _Pages:
             '<link rel="stylesheet" href="/app/static/handoff.css"></head><body>'
             '<div class="app"><aside class="side"><a class="brand" href="/app/">Commonplace</a>'
             '<nav><a href="/app/settings/memory" aria-current="page">Memory</a></nav>'
-            "</aside><main><header><h1>{escape(title)}</h1></header>"
+            f"</aside><main><header><h1>{escape(title)}</h1></header>"
             f'<div class="content">{content}</div></main></div></body></html>',
             headers=headers,
         )

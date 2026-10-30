@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+from commonplace import sessions
 from tests.e2e_handoff.ui_server import (
     SCRIPT_MESSAGE,
     SUCCESSOR_MESSAGE,
@@ -27,7 +28,7 @@ from tests.e2e_handoff.ui_server import (
 def browser_tools(tmp_path):
     binary = lightpanda_binary()
     if not binary:
-        pytest.skip("Lightpanda binary missing (~/.local/bin/lightpanda or PATH)")
+        pytest.skip("Lightpanda binary missing (~/.local/bin/lightpanda)")
     # Resolve the browser before constructing the real Hub or any stores.
     with lightpanda(binary, tmp_path) as tools:
         yield tools
@@ -43,7 +44,7 @@ def app(browser_tools, tmp_path):
 def owner(app, browser_tools):
     browser = Browser(browser_tools)
     try:
-        browser.login(app, app.owner_token)
+        browser.login(app, app.owner_login_link)
         yield browser
     finally:
         browser.close()
@@ -59,17 +60,27 @@ def setting_state(browser):
     )
 
 
-def post_form(app, browser, fields):
+def browser_session(app, browser):
     cookies = browser.call("Network.getCookies", {"urls": [app.origin + "/app/settings/memory"]})
-    cookie = "; ".join(f"{item['name']}={item['value']}" for item in cookies["cookies"])
-    assert "cmmn_session=" in cookie
+    matching = [item for item in cookies["cookies"] if item["name"] == sessions.COOKIE]
+    assert len(matching) == 1
+    assert matching[0]["httpOnly"] is True
+    return matching[0]["value"]
+
+
+def post_form(app, browser, fields, *, headers=None):
+    cookie = f"{sessions.COOKIE}={browser_session(app, browser)}"
     connection = http.client.HTTPConnection("127.0.0.1", app.hub.port, timeout=5)
     try:
         connection.request(
             "POST",
             "/app/settings/memory",
             form_body(fields),
-            {"Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded"},
+            {
+                "Cookie": cookie,
+                "Content-Type": "application/x-www-form-urlencoded",
+                **(headers or {}),
+            },
         )
         response = connection.getresponse()
         return response.status, response.read().decode()
@@ -79,6 +90,16 @@ def post_form(app, browser, fields):
 
 def test_owner_toggle_override_and_member_read_only(app, owner, browser_tools):
     assert app.owner_token.startswith("cmmn_")
+    raw_session = browser_session(app, owner)
+    assert raw_session != app.owner_token
+    principal = sessions.session_principal(app.hub.db, raw_session)
+    assert principal is not None and principal.person is True
+    assert principal.role == "owner"
+    assert principal.workspace_id == app.hub.workspace
+    assert principal.policy.has_scope("handoff:write")
+    assert not principal.policy.has_scope("admin")
+    assert owner.evaluate("document.querySelector('.brand').getAttribute('href')") == "/app/"
+    assert owner.evaluate("document.querySelector('form[action=\"/app/logout\"]') === null")
     state = setting_state(owner)
     assert state["enabled"] is False
     assert state["disabled"] is False
@@ -119,7 +140,13 @@ def test_owner_toggle_override_and_member_read_only(app, owner, browser_tools):
     owner.close()
     member = Browser(browser_tools)
     try:
-        member.login(app, app.member_token)
+        member.login(app, app.member_login_link)
+        member_session = browser_session(app, member)
+        assert member_session not in (raw_session, app.member_token)
+        member_principal = sessions.session_principal(app.hub.db, member_session)
+        assert member_principal is not None and member_principal.person is True
+        assert member_principal.role == "member"
+        assert member_principal.policy == principal.policy
         readonly = setting_state(member)
         assert readonly["enabled"] is True
         assert readonly["disabled"] is True
@@ -144,6 +171,21 @@ def test_owner_toggle_override_and_member_read_only(app, owner, browser_tools):
         assert app.api("/api/settings/handoff?task=%23142")[1]["effective"]["enabled"] is False
     finally:
         member.close()
+
+
+@pytest.mark.parametrize("path", ["/app/settings/memory", "/app/cards/142", "/app/threads/missing"])
+def test_signed_out_handoff_pages_use_shared_login(app, path):
+    connection = http.client.HTTPConnection("127.0.0.1", app.hub.port, timeout=5)
+    try:
+        # An API token does not stand in for the web app's session cookie.
+        connection.request("GET", path, headers={"Authorization": f"Bearer {app.owner_token}"})
+        response = connection.getresponse()
+        assert response.status == 303
+        assert response.getheader("Location") == "/app/login"
+        assert response.getheader("Set-Cookie") is None
+        assert response.read() == b""
+    finally:
+        connection.close()
 
 
 def test_card_links_failure_and_verbatim_script(app, owner):
@@ -204,6 +246,25 @@ def test_invalid_owner_forms_leave_settings_off(app, owner, changes, expected):
     before = app.api("/api/settings/handoff")[1]
     status, body = post_form(app, owner, fields)
     assert status == expected
+    assert "Invalid form" in body
+    assert app.api("/api/settings/handoff")[1] == before
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{"Origin": "https://other.example"}, {"Sec-Fetch-Site": "cross-site"}],
+)
+def test_cross_site_owner_forms_leave_settings_off(app, owner, headers):
+    fields = {
+        "csrf": setting_state(owner)["csrf"],
+        "scope": "workspace",
+        "action": "save",
+        "threshold": "80",
+        "enabled": "on",
+    }
+    before = app.api("/api/settings/handoff")[1]
+    status, body = post_form(app, owner, fields, headers=headers)
+    assert status == 400
     assert "Invalid form" in body
     assert app.api("/api/settings/handoff")[1] == before
 

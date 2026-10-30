@@ -1,7 +1,7 @@
 """Capture the five seeded UI states using Chromium, not Lightpanda.
 
 Run from the repository root: uv run python -m tests.e2e_handoff.shoot
-The authenticated profile is acquired by submitting the real login form.
+The authenticated profile is acquired by redeeming a one-use develop login link.
 """
 
 import argparse
@@ -82,7 +82,7 @@ def capture(output=DEFAULT_OUTPUT):
             with chromium(binary, directory, profile) as tools:
                 browser = Browser(tools, isolated=False)
                 try:
-                    browser.login(server, server.owner_token)
+                    browser.login(server, server.owner_login_link)
                     assert browser.evaluate("document.querySelector('h1').textContent") == "Memory"
                 finally:
                     browser.close()
