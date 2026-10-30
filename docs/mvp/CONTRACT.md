@@ -179,3 +179,22 @@ Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JS
 
 - Agents pull work (`task_take_next`). A runner on a user's machine is an opt-in for advanced features only, never required. Nothing in the MVP runs code on a user's machine.
 - PR, branch and check state on cards come from agents and pr-check (`task_update pr= checks=`). Read-only GitHub polling comes later.
+## Agent support matrix (decided 03:33 CET: zero-install first)
+
+Principle: reach as many agents as possible with nothing installed on the user's machine. A runner is opt-in, labelled advanced, and only for agents nothing else can reach.
+
+| Agent | Connects over | Wake path | Install on the user's PC | MVP |
+|---|---|---|---|---|
+| Claude Code (CLI, any machine) | Remote MCP over HTTP, cmmn_ PAT | Polls at session start (`task_list mine`); a wake webhook to the T3 server when it runs in T3 | No (one `claude mcp add` line + the skill file) | Yes |
+| Codex CLI / IDE | Remote MCP over HTTP, PAT via env var | Same as Claude Code | No (config.toml block + skill) | Yes |
+| T3 Code threads (Claude or Codex harness) | Remote MCP via the harness | Wake webhook → T3 server endpoint that starts or steers the thread | No (T3 server already runs) | Webhook yes; T3 receiver adapter next |
+| Grok Bot (Chief + bots) | Remote MCP connector by URL, PAT header | Wake webhook → its routine endpoint | No | Yes |
+| claude.ai (web, desktop, mobile) | Remote MCP connector, OAuth | None (chat is user-started); polls via `needs_me`/`task_list` when asked | No | OAuth built, live with the public URL |
+| ChatGPT | Remote MCP connector, OAuth | Same as claude.ai | No | Same |
+| Cloud agents (Codex cloud, Claude Code on the web, CI-less bots) | Remote MCP over HTTP | Wake webhook to their trigger URL, or polling | No | Yes (webhooks) |
+| Slack / Telegram bots | Their own webhook endpoint | Wake webhook → bot endpoint | No | Webhooks yes; ready-made formatters later |
+| Cursor | Remote MCP over HTTP, PAT header | Polls at session start | No | Yes |
+| Local models (LM Studio, Open WebUI) | Remote MCP over HTTP | Polling | No | Yes |
+| Stdio-only clients | `commonplace connect` (stdio bridge) or `npx mcp-remote` | Polling | Yes, a small bridge (advanced) | Bridge yes |
+| Local CLI agent without its own endpoint that must be woken | — | Optional runner per machine (opt-in, advanced) | Yes | No (later) |
+| Anyone, fallback | — | Wake by email (later) | No | No |
