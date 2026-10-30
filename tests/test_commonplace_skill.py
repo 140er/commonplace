@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / "skills/commonplace/SKILL.md"
+SKILL = ROOT / "commonplace/agent-skill/SKILL.md"
 SNIPPET = ROOT / "docs/mvp/AGENTS-SNIPPET.md"
-INSTALLER = ROOT / "skills/commonplace/install.sh"
+INSTALLER = ROOT / "commonplace/agent-skill/install.sh"
 CONTRACT = ROOT / "docs/mvp/CONTRACT.md"
 
 

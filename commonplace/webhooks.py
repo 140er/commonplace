@@ -144,6 +144,10 @@ def validate_url(url):
         if host == "localhost" or (host.endswith(".ts.net") and host != "ts.net"):
             return url
         address = ipaddress.ip_address(host)
+        # IPv4-mapped IPv6 hosts are refused outright: Python versions
+        # disagree on whether ::ffff:127.0.0.1 counts as loopback.
+        if getattr(address, "ipv4_mapped", None) is not None:
+            raise ValueError()
         if address.is_loopback or (
             isinstance(address, ipaddress.IPv4Address)
             and address in ipaddress.ip_network("100.64.0.0/10")

@@ -311,7 +311,9 @@ def test_authoritative_write_classification(surface, name, expected):
         ("127.0.0.1", "fe80::1%eth0", "127.0.0.1"),
         ("127.0.0.2", "192.0.2.1", "127.0.0.2"),
         ("::1", "192.0.2.1", "::1"),
-        ("::ffff:127.0.0.1", "192.0.2.1", "::ffff:7f00:1"),
+        # The mapped spelling of loopback is normalised but is not the exact
+        # 127.0.0.1 peer Caddy uses, so the forwarded header is not trusted.
+        ("::ffff:127.0.0.1", "192.0.2.1", "127.0.0.1"),
     ],
 )
 def test_forwarded_ip_trust(peer, forwarded, expected):

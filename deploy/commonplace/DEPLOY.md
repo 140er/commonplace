@@ -196,7 +196,7 @@ Each token is printed once. Store it in that client's secret environment as
 Clients supporting only stdio can use W5's
 `commonplace connect --url https://edge1.tail6cee8c.ts.net/mcp` with that
 environment variable; install the same reviewed release on the client.
-See `skills/commonplace/SKILL.md` for client integration.
+See `commonplace/agent-skill/SKILL.md` for client integration.
 
 Verify with one issued token in an operator shell (the prompt does not echo
 the token or put it in command history):

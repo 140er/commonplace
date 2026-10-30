@@ -29,13 +29,21 @@ def client_ip(peer: str, forwarded: str = "") -> str:
     candidate = forwarded.rsplit(",", 1)[-1].strip() if peer == "127.0.0.1" else ""
     try:
         if candidate and "%" not in candidate:
-            return str(ipaddress.ip_address(candidate))
+            return _canonical(candidate)
     except ValueError:
         pass
     try:
-        return str(ipaddress.ip_address(peer))
+        return _canonical(peer)
     except ValueError:
         return "unknown"
+
+
+def _canonical(value: str) -> str:
+    """One spelling per address on every Python version: an IPv4-mapped
+    IPv6 address (``::ffff:1.2.3.4``) is that IPv4 address."""
+    address = ipaddress.ip_address(value)
+    mapped = getattr(address, "ipv4_mapped", None)
+    return str(mapped or address)
 
 
 class TokenBuckets:
