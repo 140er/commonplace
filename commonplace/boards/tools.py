@@ -81,7 +81,9 @@ def show(c):
 
 
 def run(ctx, name, args):
-    return people(ctx, _run(ctx, name, args))
+    result = _run(ctx, name, args)
+    # Digest titles (including actor references) must stay verbatim.
+    return result if name == "needs_me" and args.get("format") == "digest" else people(ctx, result)
 
 
 def _run(ctx, name, args):
@@ -123,6 +125,8 @@ def _run(ctx, name, args):
             f"#{result['number']} waiting on {result['ask_to']}  {card_url(ctx, result['number'])}"
         )
     if name == "needs_me":
+        if args.get("format") == "digest":
+            return json.dumps(result, ensure_ascii=False)
         lines = []
         for key, label in (
             ("asks", "Asks"),
@@ -264,4 +268,4 @@ def register_tools():
         trusted=True,
         write=True,
     )
-    add("needs_me", {}, owner=True)
+    add("needs_me", {"format": {"type": "string", "enum": ["list", "digest"]}}, owner=True)

@@ -2,7 +2,8 @@
 
 from commonplace.extensions import ToolContext, ToolError
 
-from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json
+from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json, send_text
+from .digest import ssml
 from .display import with_urls
 from .service import BoardService, VersionClash
 
@@ -36,7 +37,13 @@ def install(gateway):
         except TypeError:
             send_json(h, 400, {"error": "invalid arguments"})
             return
-        send_json(h, status, with_urls(service.ctx, result))
+        format = query(h).get("format")
+        if parts == ["needs-me", "digest"] and format in ("text", "ssml"):
+            text = ssml(result) if format == "ssml" else result["text"]
+            content_type = "application/ssml+xml" if format == "ssml" else "text/plain"
+            send_text(h, status, text, f"{content_type}; charset=utf-8")
+        else:
+            send_json(h, status, with_urls(service.ctx, result))
 
     for method in ("GET", "POST", "PATCH", "DELETE"):
         for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/"):
@@ -62,6 +69,10 @@ def dispatch(service, h, parts, method):
             return 201, service.task_add(board=parts[1], **body)
     if parts == ["needs-me"] and method == "GET":
         return 200, service.needs_me()
+    if parts == ["needs-me", "digest"] and method == "GET":
+        if query(h).get("format", "json") not in ("json", "text", "ssml"):
+            raise HTTPError(400, "format must be json, text or ssml")
+        return 200, service.needs_me(format="digest")
     if len(parts) in (2, 3) and parts[0] == "cards":
         task = parts[1]
         if len(parts) == 2:
