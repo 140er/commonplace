@@ -139,7 +139,7 @@ def test_signature_payload_and_routes(live, receiver, monkeypatch):
     payload = json.loads(raw)
     assert payload == {
         "agent": "commonplace",
-        "task": "#7",
+        "task": "#7 A card",
         "need": "info",
         "message": '#7 "A card" updated https://memory.example/app/#/card/7',
         "id": f"evt_{event['seq']}",
@@ -726,3 +726,37 @@ def test_auth_header_is_sent_and_never_shown(live, receiver):
     assert "chief-wake-key" not in listed
     status, _ = rest(hub, "POST", token=token, body={"url": url, "auth": "X-Bad\r\nInjected: yes"})
     assert status == 403 or status == 400
+
+
+def test_env_auth_reference_keeps_the_secret_out_of_the_database(live, receiver, monkeypatch):
+    hub = live
+    url, requests, _ = receiver
+    monkeypatch.setenv("COMMONPLACE_WEBHOOK_AUTH_CHIEF", "Bearer from-env-only")
+    token = hub.owner_token()
+    status, hook = rest(
+        hub,
+        "POST",
+        token=token,
+        body={
+            "url": url,
+            "events": ["review_needed"],
+            "auth": "env:COMMONPLACE_WEBHOOK_AUTH_CHIEF",
+        },
+    )
+    assert status == 201
+    stored = hub.db._conn.execute(
+        "SELECT auth_header FROM webhooks WHERE id=?", (hook["id"],)
+    ).fetchone()[0]
+    assert "from-env-only" not in stored
+    emit(hub, kind="card.review_needed", title="Pick one", ask_to="user:usr_x")
+    headers, raw = requests.get(timeout=3)
+    assert headers["Authorization"] == "Bearer from-env-only"
+    payload = json.loads(raw)
+    assert payload["task"] == "#7 Pick one" and payload["need"] == "decision"
+    for bad in ("env:OPENAI_API_KEY", "env:COMMONPLACE_DATA"):
+        status, _ = rest(hub, "POST", token=token, body={"url": url, "auth": bad})
+        assert status in (400, 403)
+    status, result = rest(hub, "POST", f"/api/webhooks/{hook['id']}/test", token)
+    assert status == 202
+    _headers, raw = requests.get(timeout=3)
+    assert json.loads(raw)["message"].startswith("test wake ")

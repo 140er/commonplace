@@ -216,6 +216,14 @@ def _auth_header(auth):
     Stored to send with each delivery; never returned by any API."""
     if auth is None or auth == "":
         return None
+    if isinstance(auth, str) and auth.startswith("env:"):
+        # A reference, resolved at send time from the gateway's environment:
+        # the secret never enters the database. Only this prefix, so no
+        # caller can point a webhook at some other secret.
+        name = auth[4:]
+        if not re.fullmatch(r"COMMONPLACE_WEBHOOK_AUTH_[A-Z0-9_]{1,40}", name):
+            raise ToolError("no: env auth must name COMMONPLACE_WEBHOOK_AUTH_<NAME>")
+        return json.dumps({"env": name})
     if not isinstance(auth, str) or len(auth) > 1000 or any(c in auth for c in "\r\n\x00"):
         raise ToolError("no: invalid auth header")
     name, sep, value = auth.partition(":")
@@ -390,11 +398,13 @@ def _payload(db, event):
     message = " ".join(
         part for part in (event["subject"], f'"{title}"' if title else "", label, url) if part
     )
+    if event["kind"] == "webhook.test":
+        message = f"test wake {event['subject']} {url}"
     return json.dumps(
         {
             # Read by agents' own wake endpoints (Chief, Grok routines, T3).
             "agent": "commonplace",
-            "task": event["subject"],
+            "task": f"{event['subject']} {title}" if title else event["subject"],
             "need": "decision" if decision else "info",
             "message": message,
             "id": f"evt_{event['seq']}",
@@ -488,9 +498,22 @@ def _extra_header(auth_header) -> dict:
         return {}
     try:
         parsed = json.loads(auth_header)
+        if "env" in parsed:
+            return _header_from_value(os.environ.get(parsed["env"], ""))
         return {parsed["name"]: parsed["value"]}
     except (ValueError, KeyError, TypeError):
         return {}
+
+
+def _header_from_value(raw: str) -> dict:
+    """``"Bearer xyz"`` or ``"X-Name: value"`` from an env value."""
+    raw = raw.strip()
+    if not raw or any(c in raw for c in "\r\n\x00"):
+        return {}
+    name, sep, value = raw.partition(":")
+    if sep and re.fullmatch(r"Authorization|X-[A-Za-z0-9-]{1,40}", name.strip()):
+        return {name.strip(): value.strip()}
+    return {"Authorization": raw}
 
 
 def _post(url, body, secret, delivery_id, kind, auth_header=None):
