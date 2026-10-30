@@ -616,7 +616,7 @@ def tool_search(
     max_distance: float = None,
     min_similarity: float = None,
     context: str = None,
-    candidate_strategy: str = "vector",
+    candidate_strategy: str = "union",
     cli_compatible: bool = False,
     include_media: bool = False,
     query_task: str = "search",
@@ -650,8 +650,6 @@ def tool_search(
         if source_file is not None:
             return {"error": "cli-compatible search does not support source_file"}
         unsupported_controls = []
-        if candidate_strategy != "vector":
-            unsupported_controls.append("candidate_strategy")
         if min_similarity is not None:
             unsupported_controls.append("min_similarity")
         if max_distance is not None:
@@ -698,6 +696,7 @@ def tool_search(
                         since=since,
                         before=before,
                         collection=collection,
+                        candidate_strategy=candidate_strategy,
                     )
                 )
         except SearchError as exc:

@@ -361,7 +361,8 @@ LIGHT_TOOLS = {
                 "candidate_strategy": {
                     "type": "string",
                     "enum": ["vector", "union"],
-                    "description": "Search candidate strategy (optional)",
+                    "default": "union",
+                    "description": "Search candidate strategy (default: union of vector and lexical)",
                 },
                 "source_file": {
                     "type": "string",

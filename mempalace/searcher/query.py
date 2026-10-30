@@ -197,7 +197,7 @@ def search_memories(
     n_results: int = 5,
     max_distance: Optional[float] = None,
     vector_disabled: bool = False,
-    candidate_strategy: str = "vector",
+    candidate_strategy: str = "union",
     collection_name: str = None,
     lang: Optional[str] = None,
     _pool_scale: int = 1,
@@ -244,16 +244,15 @@ def search_memories(
             load.
         candidate_strategy: How candidates for the hybrid re-rank are gathered.
 
-            * ``"vector"`` (default) — preserves historical behavior: top
+            * ``"vector"`` — preserves historical behavior: top
               ``n_results * 4`` rows from the vector index are the rerank pool.
               Cheap; works well when query and target docs agree in the
               embedding space.
-            * ``"union"`` — also pull top ``n_results * 3`` lexical candidates
+            * ``"union"`` (default) — also pull top ``n_results * 3`` lexical candidates
               through the backend's ``lexical_search`` capability and merge
               them into the rerank pool (deduped by source_file). Catches docs
               with strong BM25 signal that are vector-distant from the query.
-              Perf depends on the selected backend; opt in until the cost is
-              characterized.
+              Requires a backend with lexical search support.
 
               When ``max_distance`` is also set, a BM25-only candidate whose
               computed vector distance is past it is dropped; one whose
@@ -445,8 +444,8 @@ def search_memories(
 
     hits = _enrich_closet_hits(hits, drawers_col)
 
-    # Candidate strategy hook: optionally widen the rerank pool's *source*
-    # before ranking. Default ("vector") is a no-op; "union" merges top-K
+    # Candidate strategy hook: widen the rerank pool's *source*
+    # before ranking. "vector" is a no-op; default "union" merges top-K
     # backend lexical candidates. See `_apply_candidate_strategy`.
     # ``max_distance`` is forwarded so union mode checks its BM25-only
     # candidates against the same cutoff where their distance is computable.

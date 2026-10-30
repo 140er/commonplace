@@ -35,17 +35,14 @@ def _candidate_pool_limits(
     """Return vector-query and pre-enrichment candidate limits.
 
     Date-window searches retain the wider current-develop pool because the
-    timestamp constraint is applied after retrieval. The normal vector path
-    also remains at least four times wide through closet enrichment. Union
-    mode keeps only the requested top vector candidates before lexical merge.
+    timestamp constraint is applied after retrieval. Both strategies retain
+    at least four times the requested vector candidates through closet
+    enrichment. Union adds lexical candidates without shrinking that pool.
     """
     base_query_limit = _candidate_pool_size(
         n_results,
         date_window_active,
     )
-
-    if candidate_strategy == "union":
-        return base_query_limit, n_results
 
     widened = max(
         base_query_limit,
@@ -235,7 +232,7 @@ def _search_hit_ref(hit: dict) -> dict:
 # project's complexity ceiling (C901 max-complexity=25). New strategies
 # register here.
 _CANDIDATE_MERGERS = {
-    "vector": None,  # default no-op
+    "vector": None,  # vector-only no-op
     "union": _merge_bm25_union_candidates,
 }
 

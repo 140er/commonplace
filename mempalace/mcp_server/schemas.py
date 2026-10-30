@@ -507,7 +507,8 @@ TOOLS = {
                 "candidate_strategy": {
                     "type": "string",
                     "enum": ["vector", "union"],
-                    "description": "Candidate source strategy. 'vector' preserves default semantic search; 'union' also merges backend BM25 lexical candidates before reranking.",
+                    "default": "union",
+                    "description": "Candidate source strategy. Default 'union' merges vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only.",
                 },
                 "cli_compatible": {
                     "type": "boolean",

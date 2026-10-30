@@ -52,6 +52,7 @@ Closets are a ranking signal, never a gate. An earlier design searched closets f
 
 ```
 Query → vector search over mempalace_drawers (the floor; see the fallback below)
+      + backend BM25 lexical candidates (default union strategy)
          ↓
     closet search over mempalace_closets → best closet rank per source file
          ↓

@@ -60,12 +60,13 @@ Full wing → room → drawer count tree.
 
 ### `mempalace_search`
 
-Semantic search. Returns verbatim drawer content with similarity scores.
+Hybrid search over vector and lexical candidates. Returns verbatim drawer content with similarity scores.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | **Yes** | What to search for |
 | `limit` | integer | No | Max results (default: 5) |
+| `candidate_strategy` | string | No | `union` (default) merges vector and BM25 lexical candidates; `vector` selects vector candidates only |
 | `wing` | string | No | Filter by wing |
 | `room` | string | No | Filter by room |
 | `since` | string | No | Include drawers filed on or after this ISO date/datetime |

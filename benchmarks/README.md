@@ -10,6 +10,20 @@ cd mempalace
 uv sync --extra dev   # or: pip install -e ".[dev]"
 ```
 
+## Offline default-search comparison
+
+```bash
+uv run python benchmarks/search_union_bench.py
+```
+
+Measures the default production search path on 20,000 synthetic `sqlite_exact`
+drawers, including local MiniLM query embedding. It refuses to download a missing
+model. Run the same harness on both revisions for before/after p50/p95 and
+recall@5. Each query is warmed once, then 300 searches are timed. Construction
+reuses 100 filler-template embeddings with unique record suffixes; ten embedded
+needles and ten zero-vector ID/path needles measure both candidate sources.
+These search timings do not measure hook execution or startup injection.
+
 ## Benchmark 1: LongMemEval (500 questions)
 
 Tests retrieval across ~53 conversation sessions per question. The standard benchmark for AI memory.

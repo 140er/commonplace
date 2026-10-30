@@ -146,7 +146,8 @@ def test_export_is_a_cli_command(tmp_path):
 
 
 @patch("mempalace.cli.MempalaceConfig")
-def test_cmd_search_calls_search(mock_config_cls):
+@pytest.mark.parametrize("strategy", [None, "vector", "union"])
+def test_cmd_search_calls_search(mock_config_cls, strategy):
     mock_config_cls.return_value.palace_path = "/fake/palace"
     args = argparse.Namespace(
         palace=None,
@@ -158,6 +159,8 @@ def test_cmd_search_calls_search(mock_config_cls):
         before=None,
     )
     with patch("mempalace.searcher.search") as mock_search:
+        if strategy is not None:
+            args.candidate_strategy = strategy
         cmd_search(args)
         mock_search.assert_called_once_with(
             query="test query",
@@ -167,6 +170,7 @@ def test_cmd_search_calls_search(mock_config_cls):
             n_results=3,
             since="2026-04-01",
             before=None,
+            **({"candidate_strategy": "vector"} if strategy == "vector" else {}),
         )
 
 

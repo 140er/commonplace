@@ -1,16 +1,15 @@
 """Tests for ``candidate_strategy="union"`` in ``search_memories``.
 
-The default ``"vector"`` strategy gathers candidates from the vector index
+The selectable ``"vector"`` strategy gathers candidates from the vector index
 only. Docs with strong BM25 signal but vector embeddings far from the query
 get skipped — terminology guides looked up by narrative-shaped queries are
 the canonical case.
 
-The ``"union"`` strategy also pulls top-K BM25-only candidates from sqlite
+The default ``"union"`` strategy also pulls top-K BM25-only candidates from sqlite
 FTS5 and merges them into the rerank pool. Both signal sources contribute
 candidates; the hybrid rerank picks the best from a richer pool.
 
-Default behavior is unchanged ("vector") — these tests exercise opt-in
-"union" mode.
+Both implicit and explicit union selection must retrieve lexical-only drawers.
 """
 
 from mempalace.palace import get_collection
@@ -58,17 +57,17 @@ _NARRATIVE_QUERY = (
 
 
 class TestCandidateUnion:
-    def test_default_vector_strategy_unchanged(self, tmp_path):
+    def test_default_strategy_is_union(self, tmp_path):
         """Default behavior must be identical to omitting the parameter."""
         palace = str(tmp_path / "palace")
         _seed_drawers(palace)
         without = search_memories(_NARRATIVE_QUERY, palace, n_results=5)
         with_default = search_memories(
-            _NARRATIVE_QUERY, palace, n_results=5, candidate_strategy="vector"
+            _NARRATIVE_QUERY, palace, n_results=5, candidate_strategy="union"
         )
         ids_a = [h["source_file"] for h in without["results"]]
         ids_b = [h["source_file"] for h in with_default["results"]]
-        assert ids_a == ids_b, "explicit candidate_strategy='vector' must match default"
+        assert ids_a == ids_b, "explicit candidate_strategy='union' must match default"
 
     def test_union_surfaces_bm25_strong_vector_distant_doc(self, tmp_path):
         """The brand-voice doc has strong BM25 signal for the query but is

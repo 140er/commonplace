@@ -105,7 +105,18 @@ def _print_also_in(hit: dict) -> None:
 
 
 def _cli_ranked_hits(
-    col, query, *, fetch, n_results, where, wing, room, window, metric, stop_words
+    col,
+    query,
+    *,
+    fetch,
+    n_results,
+    where,
+    wing,
+    room,
+    window,
+    metric,
+    stop_words,
+    candidate_strategy,
 ):
     """``(hits, fetched, skipped)``: the top ``fetch`` drawers, re-ranked and
     folded, and how many bookkeeping rows the fetch held.
@@ -158,12 +169,47 @@ def _cli_ranked_hits(
     # >= 1.0 when it is a mechanical artifact (directory listing, diff, log
     # fragment). Hybridize with BM25 as `mempalace_search` does.
     hits = [
-        {"text": doc or "", "distance": float(dist), "metadata": meta or {}}
+        {
+            "text": doc or "",
+            "distance": float(dist),
+            "metadata": meta or {},
+            "source_file": Path((meta or {}).get("source_file") or "?").name,
+            "_source_file_full": (meta or {}).get("source_file"),
+            "_chunk_index": (meta or {}).get("chunk_index"),
+        }
         for doc, meta, dist in zip(docs, metas, dists)
         if not is_bookkeeping(meta)
     ]
     # Bookkeeping rows held slots in the fetch, so the caller widens for them too.
     skipped = len(docs) - len(hits)
+    try:
+        _apply_candidate_strategy(
+            candidate_strategy,
+            hits,
+            col,
+            query,
+            wing,
+            room,
+            n_results,
+            since_dt=window[0] if window else None,
+            before_dt=window[1] if window else None,
+            known_distances=dict(
+                zip(
+                    _aligned_query_ids(results, len(_first_or_empty(results, "documents"))),
+                    _first_or_empty(results, "distances"),
+                )
+            ),
+        )
+    except UnsupportedCapabilityError as exc:
+        raise SearchError(str(exc)) from exc
+    for hit in hits:
+        if "metadata" not in hit:
+            hit["metadata"] = {
+                "wing": hit["wing"],
+                "room": hit["room"],
+                "source_file": hit["source_path"],
+                "chunk_index": hit.get("_chunk_index"),
+            }
     vector_weight, bm25_weight = _resolve_hybrid_rank_weights()
     hits = _hybrid_rank(
         hits,
@@ -187,6 +233,7 @@ def search(
     collection=None,
     include_media: bool = False,
     query_task: str = "search",
+    candidate_strategy: str = "union",
 ):
     """
     Search the palace. Returns verbatim drawer content.
@@ -194,6 +241,7 @@ def search(
     drawers whose ``filed_at`` falls in the ``[since, before)`` window —
     same semantics as ``search_memories``/``list_drawers``.
     """
+    _validate_candidate_strategy(candidate_strategy)
     if include_media or query_task != "search":
         result = search_memories(
             query,
@@ -205,6 +253,7 @@ def search(
             before=before,
             include_media=include_media,
             query_task=query_task,
+            candidate_strategy=candidate_strategy,
         )
         if result.get("error"):
             if result.get("error_class"):
@@ -297,6 +346,7 @@ def search(
             window=(since_dt, before_dt) if date_window_active else None,
             metric=metric,
             stop_words=stop_words,
+            candidate_strategy=candidate_strategy,
         )
         # Folded copies or skipped bookkeeping rows can leave the page short
         # while the fetch came back full, so more candidates exist: widen, as
@@ -327,7 +377,11 @@ def search(
     print(f"{'=' * 60}\n")
 
     for i, hit in enumerate(hits, 1):
-        vec_sim = round(_distance_to_similarity(hit["distance"], metric), 3)
+        vec_sim = (
+            round(_distance_to_similarity(hit["distance"], metric), 3)
+            if hit["distance"] is not None
+            else None
+        )
         bm25 = hit.get("bm25_score", 0.0)
         meta = hit["metadata"]
         source = Path(meta.get("source_file", "?")).name

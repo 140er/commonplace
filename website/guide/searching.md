@@ -1,6 +1,6 @@
 # Searching Memories
 
-MemPalace uses ChromaDB's semantic vector search to find relevant memories. When you search, you get **verbatim text** — the exact words, never summaries.
+MemPalace combines semantic vector candidates with BM25 lexical candidates by default (`union`). This also finds exact paths, identifiers, and error strings that embeddings miss. When you search, you get **verbatim text** — the exact words, never summaries.
 
 ## CLI Search
 
@@ -19,14 +19,17 @@ mempalace search "pricing" --wing driftwood --room costs
 
 # More results
 mempalace search "deploy process" --results 10
+
+# Select vector candidates only
+mempalace search "deploy process" --candidate-strategy vector
 ```
 
 ## How Search Works
 
 1. Your query is embedded using the vector store's default model (`all-MiniLM-L6-v2` with the default ChromaDB backend).
-2. The embedding is compared against all drawers using cosine similarity.
-3. Optional wing/room filters narrow the search scope — standard metadata filtering in the underlying vector store.
-4. Results are returned with similarity scores and source metadata.
+2. Vector matches and backend BM25 lexical matches form the candidate pool. `candidate_strategy="vector"` keeps vector candidates only.
+3. Optional wing/room filters narrow both candidate sources.
+4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
 
 ### Why Scoping Matters
 
