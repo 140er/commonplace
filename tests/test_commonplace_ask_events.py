@@ -166,5 +166,6 @@ def test_app_sends_the_rendered_version_and_keeps_one_live_place():
     app = (Path(STATIC) / "app.js").read_text()
     assert 'data-version="${e(card.version)}"' in app
     assert "body: { ...payload, version }" in app
-    # Needs you draws no controls for the card open in the panel.
-    assert 'card.number === open ? ""' in app
+    # Home draws no decision controls at all: an open ask is answered in its card.
+    assert "homeView(" in app and "decision(card)" not in app
+    assert 'data-action="decide"' not in (Path(STATIC) / "home.js").read_text()

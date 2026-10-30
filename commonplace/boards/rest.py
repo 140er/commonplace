@@ -4,8 +4,10 @@ from commonplace.extensions import ToolContext, ToolError
 
 from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json, send_text
 from .digest import ssml
-from .display import with_urls
+from .display import NEEDS, with_urls
 from .service import BoardService, VersionClash
+
+OPEN_LIMIT, OPEN_LIMIT_MAX = 200, 500
 
 
 def install(gateway):
@@ -38,7 +40,9 @@ def install(gateway):
             send_json(h, 400, {"error": "invalid arguments"})
             return
         format = query(h).get("format")
-        if parts == ["needs-me", "digest"] and format in ("text", "ssml"):
+        if parts == ["cards"]:
+            send_json(h, status, result)  # No share link per card: rows link to #/card/N.
+        elif parts == ["needs-me", "digest"] and format in ("text", "ssml"):
             text = ssml(result) if format == "ssml" else result["text"]
             content_type = "application/ssml+xml" if format == "ssml" else "text/plain"
             send_text(h, status, text, f"{content_type}; charset=utf-8")
@@ -48,6 +52,21 @@ def install(gateway):
     for method in ("GET", "POST", "PATCH", "DELETE"):
         for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/"):
             gateway.add_prefix_route(method, prefix, route)
+
+
+def open_cards(cards, limit=None):
+    """Home's task table: slim cards, the most urgent first, capped, with the full count."""
+    try:
+        limit = OPEN_LIMIT if limit in (None, "") else int(limit)
+    except ValueError:
+        raise HTTPError(400, "limit must be a number") from None
+    if not 1 <= limit <= OPEN_LIMIT_MAX:
+        raise HTTPError(400, f"limit must be 1 to {OPEN_LIMIT_MAX}")
+    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), c["number"]))
+    return {
+        "cards": [{k: v for k, v in c.items() if k != "body"} for c in cards[:limit]],
+        "total": len(cards),
+    }
 
 
 def _space_route(service, h, parts, method):
@@ -128,6 +147,8 @@ def dispatch(service, h, parts, method):
             body = read_json(h)
             body.pop("board", None)
             return 201, service.task_add(board=parts[1], **body)
+    if parts == ["cards"] and method == "GET":
+        return 200, open_cards(service.task_list(), query(h).get("limit"))
     if parts == ["needs-me"] and method == "GET":
         return 200, service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":

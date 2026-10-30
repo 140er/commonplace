@@ -78,6 +78,17 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+def _names_worker(arg: bytes) -> bool:
+    """Match worker names without treating multiword wrapper commands as workers.
+
+    Keep absolute script paths with spaces as candidates. Single-word wrapper
+    commands remain candidates too, conservatively failing closed.
+    """
+    return (b"mempalace" in arg or b"commonplace" in arg) and (
+        arg.startswith(b"/") or len(arg.split()) == 1
+    )
+
+
 def _process_path(value: str, proc: Path) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -103,7 +114,9 @@ def _verify_offline(root: Path) -> None:
                 continue
             args = (proc / "cmdline").read_bytes().split(b"\x00")
             executable = Path(os.fsdecode(args[0])).name.lower() if args[0] else ""
-            named_worker = any(b"mempalace" in arg or b"commonplace" in arg for arg in args)
+            named_worker = _names_worker(os.fsencode(executable)) or any(
+                _names_worker(arg) for arg in args
+            )
             if not executable.startswith(("python", "pypy")) and not named_worker:
                 # Services such as systemd --user can deny environment access
                 # even to their own uid; they cannot be our Python workers.

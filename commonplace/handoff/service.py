@@ -78,6 +78,7 @@ from .models import (
     HandoffRequest,
     HandoffResult,
     HandoffSettings,
+    LauncherConfig,
     SuccessorRef,
     ThreadMeta,
 )
@@ -123,7 +124,7 @@ class HandoffService:
         self._background_closed = False
         self._snapshots: dict[tuple[str, str], _Snapshot] = {}
 
-    def run(self, principal, request: HandoffRequest) -> HandoffResult:
+    def run(self, principal, request: HandoffRequest, *, manual: bool = False) -> HandoffResult:
         meta = request.meta
         if not meta.thread_id or not meta.thread_id.strip():
             raise ValueError("thread_id must not be empty")
@@ -134,8 +135,16 @@ class HandoffService:
         current = self.settings.effective(
             workspace_id, meta.agent or principal.connection, meta.task_ref
         )
+        if manual:
+            # Per-call selection belongs to the local T3 client. Never execute
+            # the workspace's automatic launcher as well as its manual one.
+            current = replace(current, launcher=LauncherConfig())
         with self.control_db._lock:
             snapshot = self._snapshots.get((workspace_id, key))
+        if manual and snapshot:
+            snapshot = replace(
+                snapshot, settings=replace(snapshot.settings, launcher=LauncherConfig())
+            )
         settings = snapshot.settings if snapshot else current
         if not settings.enabled:
             # Turning handoff off later never strands a handoff already under way:
@@ -180,6 +189,10 @@ class HandoffService:
                 return HandoffResult("compact", handoff, reason="in progress")
             with self.control_db._lock:
                 snapshot = self._snapshots.get((workspace_id, key))
+            if manual and snapshot:
+                snapshot = replace(
+                    snapshot, settings=replace(snapshot.settings, launcher=LauncherConfig())
+                )
             if snapshot is None:
                 snapshot = _Snapshot(settings, self._meta(handoff))
             if request.next_message or not snapshot.next_message:

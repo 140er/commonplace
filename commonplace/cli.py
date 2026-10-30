@@ -349,6 +349,12 @@ def cmd_handoff_relaunch(args) -> int:
     return 0
 
 
+def cmd_handoff_start(args) -> int:
+    from .handoff.manual import run_cli
+
+    return run_cli(args)
+
+
 def cmd_thread(args) -> int:
     db = _db(args)
     workspace = db.workspace(args.workspace)["id"]
@@ -422,6 +428,17 @@ def _webhook_url(value):
 
 def _handoff_parsers(sub):
     handoff = sub.add_parser("handoff").add_subparsers(dest="action", required=True)
+    s = handoff.add_parser("start", help="hand a chosen T3 thread to another provider/model")
+    s.add_argument("--thread", required=True)
+    s.add_argument("--to", required=True)
+    s.add_argument("--effort", default="")
+    s.add_argument("--note", default="")
+    s.add_argument("--workspace")
+    s.add_argument("--agent", default="")
+    s.add_argument("--task", default="")
+    s.add_argument("--by")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_handoff_start)
     s = handoff.add_parser("status")
     s.add_argument("--workspace", required=True)
     s.add_argument("--agent")
@@ -631,10 +648,12 @@ def main(argv=None) -> int:
     errors = (ControlError, PolicyError, BackupError, ToolError, OSError, sqlite3.Error)
     if args.command in ("handoff", "thread"):
         from .handoff.db import HandoffDBError
+        from .handoff.manual import ManualHandoffError
         from .handoff.recall import ThreadNotFound
         from .handoff.settings import SettingsError
+        from .handoff.t3 import T3Error
 
-        errors += (HandoffDBError, SettingsError, ThreadNotFound)
+        errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
         if args.command in {"connect", "backup"}:
             return args.func(args)
