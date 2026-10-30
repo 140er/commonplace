@@ -172,7 +172,7 @@ def test_loopback_serve_keeps_an_explicit_token(isolated_home, capture_exec, cap
 
 
 def test_proxied_loopback_serve_generates_a_token(isolated_home, capture_exec, monkeypatch):
-    monkeypatch.setenv("MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS", "hub.example.com")
+    monkeypatch.setenv("MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS", "box.example.ts.net")
     with pytest.raises(_ExecCalled):
         cli.cmd_serve(_serve_args(isolated_home, host="127.0.0.1"))
     token = capture_exec["env"].get("MEMPALACE_MCP_HTTP_TOKEN")

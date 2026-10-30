@@ -443,11 +443,11 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - Rename and repo setup: new repo, `NOTICE`, Docker image `ghcr.io/<org>/commonplace` (org name open, §16), built on the deployment server and pushed by hand (§3).
 - One command: `docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/<org>/commonplace`. It prints a setup URL, and there is no Qdrant by default (Chroma inside the container).
 - `commonplace doctor`: a preflight check that reports what is set up and what isn't, such as a writable data volume, a free port, HTTPS reachable from outside, encryption on `/data`, and the tokens that exist (astro-conversion-kit's `preflight.mjs` idea). The setup URL page shows the same checks.
-- Several named bearer tokens, each with a tool profile, wing scopes, trust level and write wing (§6). Managed by CLI (`commonplace token add grok-cos --profile slim --trust untrusted`). No web UI yet.
+- Several named bearer tokens, each with a tool profile, wing scopes, trust level and write wing (§6). Managed by CLI (`commonplace token add grok:coordinator --profile slim --trust untrusted`). No web UI yet.
 - Server-stamped authorship (§7), plus the inbox for untrusted tokens.
 - The canary leak test suite (§6), run by the pre-push hook and nightly on the deployment server.
 - The sealed record format and a put/list/get store (§8), so nothing written later has to be migrated into it. No companion or key UX yet.
-- Running on the deployment server behind NPM (§14).
+- Running on the deployment server behind a TLS reverse proxy (§14).
 - **Done when:**
   - HUB-DESIGN's §4 test passes with separate tokens: Grok Bot files a fact, and Claude Code and Codex recall it with the correct author stamp.
   - The Grok token can't see a canary in `private`.
@@ -460,7 +460,7 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - Sealed tier (§8): companion with local decrypt and search, plus key recovery.
 - **Done when:**
   - claude.ai and ChatGPT connect through OAuth with no config file, and each client in §11 is tested and marked verified or not.
-  - A sealed memory written on one device is found on a second device, and a disk image of hub shows only ciphertext for it.
+  - A sealed memory written on one device is found on a second device, and a disk image of the server shows only ciphertext for it.
 
 **M2: multi-user self-host (about 3 weeks).**
 
@@ -493,7 +493,7 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - One static page plus connector guides (§11): what it is (the agent control point, with memory shipping first), the one-command self-host, the three privacy tiers, the "built on MemPalace" credit and a hosted waitlist.
 - Developer-tool look (§16): dark, monospace accents, and a terminal hero that shows `docker run` and then a recall result with its author stamp.
 - No analytics, no trackers, no third-party fonts or scripts, so the site keeps the privacy promise too.
-- Runs as `commonplace-site` on the deployment server behind NPM (§14). Deploy is a `git pull` on the deployment server, by hand or from cron.
+- Runs as `commonplace-site` on the deployment server behind a TLS reverse proxy (§14). Deploy is a `git pull` on the deployment server, by hand or from cron.
 - **Done when:** it is live over HTTPS on commonplace.run, cmmn.dev short links resolve to it, and it loads with zero third-party requests.
 
 ## 16. Decisions

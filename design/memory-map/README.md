@@ -10,13 +10,13 @@ The idea comes from Mercury's Brain view (a force graph of notes). The look come
 |---|---|
 | Memory (small square, theme colour) | a drawer, verbatim text |
 | Theme (colour, legend, Themes layout) | a wing |
-| Topic (`family / mila` in the panel) | a room |
+| Topic (`archive / catalogue` in the panel) | a room |
 | Person (ink square, name) | a knowledge-graph entity |
 | Facts in a person's panel, with dates | knowledge-graph triples with `valid_from` / `valid_to`; ended facts stay, struck through |
 | Card (`#145`) | a board card linked to a drawer |
 | Links | mentions, card links, nearby memories in a topic, a few across themes, and facts between people |
 
-UI text never says palace, wing, room or drawer. Sample data is in `data.js` (41 written memories plus generated filler, 329 in total).
+UI text never says palace, wing, room or drawer. Entirely invented sample data is in `data.js` (41 written memories plus generated filler, 329 in total).
 
 ## Interactions
 
@@ -38,10 +38,10 @@ URL state (used by `shot.sh`): `?view=themes|people&open=<id>&hover=<id>&q=<text
 | File | State |
 |---|---|
 | `png/map-1440.png` | Map, nothing selected |
-| `png/hover-1440.png` | Hovering Mila |
+| `png/hover-1440.png` | Hovering Example Editor |
 | `png/memory-1440.png` | A memory open |
 | `png/themes-1440.png` | Themes layout, hovering a memory |
-| `png/people-1440.png` | People layout, Sam open |
-| `png/filter-1440.png` | Filter `oma` |
+| `png/people-1440.png` | People layout, Example Artist open |
+| `png/filter-1440.png` | Filter `poster` |
 | `png/week-1440.png` | One week kept as a filter |
 | `png/map-390.png`, `png/memory-390.png` | Phone, map and open memory |

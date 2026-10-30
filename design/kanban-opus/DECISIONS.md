@@ -21,14 +21,14 @@ Static mockups for the boards in [docs/boards/DESIGN.md](../../docs/boards/DESIG
 - One list, oldest first. The two groups (asks, then agent-filed backlog) are split by a hatched gap, not a header.
 - The selected row shows the key caps (`1`, `2`) and the reply field; other rows show their options without caps. `j`/`k` move the selection, so the caps never lie about which row a key hits.
 - Age turns orange past an hour: oldest-first only helps if old looks old.
-- Untrusted authors are muted (`grok:cos`); §9 flags are a yellow `⚠`. No "untrusted" label.
+- Untrusted authors are muted (`grok:coordinator`); §9 flags are a yellow `⚠`. No "untrusted" label.
 - The panel opens beside the list at 1440, so deciding and reading the context happen without leaving the queue.
 
 ## Board
 
 - **Five columns, backlog as a 40px rail** with its count and a `⚠` when something in it is flagged (DESIGN.md: "narrow strip with only its count"). Agents never take from it, so it should not compete for width.
 - `review` is the only tinted column, and its cards show the ask, so the board answers "what waits on me" without opening anything.
-- **The claim is a 2px line under the card**: full when claimed, empty at expiry, yellow under 20% left. It shows "this agent may be stuck" without a timer or a label. People's holds (`avery`, blue) have no line, because they never expire.
+- **The claim is a 2px line under the card**: full when claimed, empty at expiry, yellow under 20% left. It shows "this agent may be stuck" without a timer or a label. People's holds (`sample`, blue) have no line, because they never expire.
 - `●` before an actor in `todo` means reserved for that agent. Drawer icon + count is linked memories.
 - `done` is quiet: no card chrome, a green check, the last 20.
 - A focused card (keyboard) gets the orange ring; an open card gets a light border.

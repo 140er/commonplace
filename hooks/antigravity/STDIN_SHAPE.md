@@ -129,9 +129,9 @@ contains a `decision` key.
   "error": "",
   "fullyIdle": true,
   "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
-  "workspacePaths": ["/path/to/user/projects/mempalace"],
-  "transcriptPath": "/path/to/user/projects/mempalace/.gemini/jetski/transcript.jsonl",
-  "artifactDirectoryPath": "/path/to/user/projects/mempalace/.gemini/jetski/artifacts"
+  "workspacePaths": ["/home/me/projects/mempalace"],
+  "transcriptPath": "/home/me/projects/mempalace/.gemini/jetski/transcript.jsonl",
+  "artifactDirectoryPath": "/home/me/projects/mempalace/.gemini/jetski/artifacts"
 }
 ```
 
@@ -155,9 +155,9 @@ wing `mempalace`.)
   "invocationNum": 1,
   "initialNumSteps": 0,
   "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
-  "workspacePaths": ["/path/to/user/projects/mempalace"],
-  "transcriptPath": "/path/to/user/projects/mempalace/.gemini/jetski/transcript.jsonl",
-  "artifactDirectoryPath": "/path/to/user/projects/mempalace/.gemini/jetski/artifacts"
+  "workspacePaths": ["/home/me/projects/mempalace"],
+  "transcriptPath": "/home/me/projects/mempalace/.gemini/jetski/transcript.jsonl",
+  "artifactDirectoryPath": "/home/me/projects/mempalace/.gemini/jetski/artifacts"
 }
 ```
 

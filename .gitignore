@@ -50,9 +50,10 @@ target/
 .taste-skill/
 
 # Operator-owned deployment files; commit only the example templates.
-/deploy/compose.edge1.yml
-/deploy/compose.host.yml
+/deploy/compose.*.yml
+/deploy/compose.yml
 /deploy/commonplace.caddy
 /deploy/commonplace-public.caddy
 /deploy/commonplace.env
 /deploy/deploy.local.sh
+!/deploy/*.example

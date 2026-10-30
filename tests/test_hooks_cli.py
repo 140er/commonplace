@@ -972,7 +972,7 @@ def test_precompact_allows(tmp_path):
 
 
 def test_wing_from_transcript_path_extracts_project():
-    path = "/path/to/user/.claude/projects/-home-jp-Projects-memorypalace/session.jsonl"
+    path = "/home/jp/.claude/projects/-home-jp-Projects-memorypalace/session.jsonl"
     assert _wing_from_transcript_path(path) == "memorypalace"
 
 
@@ -986,7 +986,7 @@ def test_wing_from_transcript_path_windows_backslashes():
 
 
 def test_wing_from_transcript_path_lowercases():
-    path = "/path/to/user/.claude/projects/-home-jp-Projects-MyProject/session.jsonl"
+    path = "/home/jp/.claude/projects/-home-jp-Projects-MyProject/session.jsonl"
     assert _wing_from_transcript_path(path) == "myproject"
 
 
@@ -997,7 +997,7 @@ def test_wing_from_transcript_path_non_projects_layout():
     # cwd to disambiguate, we preserve all post-``dev-`` segments rather than silently
     # truncating to the last token (which would drop ``MemPalace`` here and collide
     # with any other ``-mempalace`` leaf elsewhere on the system).
-    path = "/path/to/user/.claude/projects/-home-igor-dev-MemPalace-mempalace/session.jsonl"
+    path = "/home/igor/.claude/projects/-home-igor-dev-MemPalace-mempalace/session.jsonl"
     assert _wing_from_transcript_path(path) == "mempalace_mempalace"
 
 
@@ -1015,7 +1015,7 @@ def test_wing_from_transcript_path_nested_deep():
     # user-home and one common parent (``work-``), then keep the remaining
     # path as the wing — collision-safe even if multiple clients have a
     # ``frontend/`` subdir.
-    path = "/path/to/user/.claude/projects/-home-bob-work-clients-acme-frontend/session.jsonl"
+    path = "/home/bob/.claude/projects/-home-bob-work-clients-acme-frontend/session.jsonl"
     assert _wing_from_transcript_path(path) == "clients_acme_frontend"
 
 
@@ -1052,7 +1052,7 @@ def test_wing_from_transcript_path_no_collision_between_hyphenated_siblings():
 def test_wing_from_transcript_path_strips_parent_dir_with_hyphenated_project():
     """Reporter's example: ``-home-alice-projects-react-native`` should keep
     the full project name after stripping the ``projects-`` parent (#1410)."""
-    path = "/path/to/user/.claude/projects/-home-alice-projects-react-native/abc.jsonl"
+    path = "/home/alice/.claude/projects/-home-alice-projects-react-native/abc.jsonl"
     assert _wing_from_transcript_path(path) == "react_native"
 
 
@@ -1084,7 +1084,7 @@ def test_wing_from_transcript_path_uses_cwd_from_jsonl(tmp_path):
     transcript = project_dir / "session.jsonl"
     transcript.write_text(
         '{"type":"queue-operation","operation":"enqueue","timestamp":"2026-05-09T00:00:00Z"}\n'
-        '{"type":"user","cwd":"/path/to/user/dev/MemPalace/mempalace","content":"hi"}\n',
+        '{"type":"user","cwd":"/home/igor/dev/MemPalace/mempalace","content":"hi"}\n',
         encoding="utf-8",
     )
     assert _wing_from_transcript_path(str(transcript)) == "mempalace"
@@ -2339,7 +2339,7 @@ def test_validate_transcript_rejects_wrong_extension():
     """Only .jsonl and .json extensions are accepted."""
     assert _validate_transcript_path("/tmp/transcript.txt") is None
     assert _validate_transcript_path("/tmp/secret.py") is None
-    assert _validate_transcript_path("/path/to/user/.ssh/id_rsa") is None
+    assert _validate_transcript_path("/home/user/.ssh/id_rsa") is None
 
 
 def test_validate_transcript_accepts_valid_paths(tmp_path):
@@ -2995,5 +2995,5 @@ def test_codex_background_command_notice_is_not_a_user_turn(tmp_path):
 def test_project_wing_collapses_t3_worktrees(tmp_path):
     from mempalace.hooks_cli import _project_wing
 
-    path = _write_transcript_with_cwd(tmp_path, "/path/to/user/.t3/worktrees/acme-app/claude-fix-x")
+    path = _write_transcript_with_cwd(tmp_path, "/home/me/.t3/worktrees/acme-app/claude-fix-x")
     assert _project_wing(path) == "acme_app"

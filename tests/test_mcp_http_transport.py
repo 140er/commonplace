@@ -1034,7 +1034,7 @@ def test_tokenless_loopback_hub_refuses_proxied_requests(monkeypatch, tmp_path):
     try:
         for header in (
             {"X-Forwarded-For": "203.0.113.7"},
-            {"X-Forwarded-Host": "hub.example.com"},
+            {"X-Forwarded-Host": "box.example.ts.net"},
             {"X-Real-IP": "203.0.113.7"},
             {"Forwarded": "for=203.0.113.7"},
             {"Tailscale-User-Login": "someone@example.com"},
@@ -1141,7 +1141,7 @@ def test_proxied_loopback_hub_requires_the_stored_token(monkeypatch, tmp_path):
 
     monkeypatch.delenv("MEMPALACE_MCP_HTTP_ALLOW_INSECURE_NO_TOKEN", raising=False)
     monkeypatch.delenv("MEMPALACE_MCP_HTTP_TOKEN", raising=False)
-    monkeypatch.setenv("MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS", "hub.example.com")
+    monkeypatch.setenv("MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS", "box.example.ts.net")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     palace = str(tmp_path / "palace")
@@ -1712,12 +1712,12 @@ def test_extra_allowed_hosts_extend_the_loopback_pin(monkeypatch):
     receives the public name in Host; the operator allowlists it via env."""
     monkeypatch.setenv(
         "MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS",
-        "hub.example.com, Proxy.Example:8443",
+        "mybox.tail1234.ts.net, Proxy.Example:8443",
     )
     allowed = mcp._http_allowed_host_values("127.0.0.1", 8765)
     # Bare hostname matches with and without the bound port.
-    assert "hub.example.com" in allowed
-    assert "hub.example.com:8765" in allowed
+    assert "mybox.tail1234.ts.net" in allowed
+    assert "mybox.tail1234.ts.net:8765" in allowed
     # host:port entries match exactly (lowercased); no bound-port variant added.
     assert "proxy.example:8443" in allowed
     assert "proxy.example" not in allowed

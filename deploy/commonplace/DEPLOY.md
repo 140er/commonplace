@@ -39,8 +39,9 @@ curl --fail http://127.0.0.1:8765/healthz
 A deployment wrapper must pass the same external env and Compose paths on
 both validation and deployment. `COMPOSE_FILE` must identify the
 operator-owned file, not an example in the checkout. Configure the backup
-job with the same paths. Preserve `COMPOSE_PROJECT_NAME` when relocating an
-existing file so Compose manages the existing container and network.
+job with the same paths. Preserve the top-level `name` in the Compose file
+when relocating it so Compose manages the existing container and network. Leave
+`COMPOSE_PROJECT_NAME` unset in the environment and environment file.
 
 The service publishes only `127.0.0.1:8765`. Caddy terminates TLS and proxies
 requests to that listener. The container runs as `10001:10001`, mounts its
@@ -95,8 +96,10 @@ and retention policy in the host's private configuration.
 By default the hook reads `.env` and `compose.yml` from the parent of its
 source checkout. Override that directory with `COMMONPLACE_DEPLOY_DIR`,
 the environment file with `COMMONPLACE_ENV_FILE`, or the single Compose
-file with `COMPOSE_FILE`. Use absolute paths. The deploy wrapper and backup
-scheduler must agree on these files and the Compose project name.
+file with `COMPOSE_FILE`. Nonempty overrides must be absolute paths;
+relative paths are rejected before the gateway is touched. The deploy
+wrapper and backup scheduler must agree on these files and the Compose
+project name.
 
 The hook locks the backup directory, checks the backup CLI, stops the
 container and its workers, takes a consistent snapshot in a one-off

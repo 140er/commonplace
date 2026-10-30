@@ -1,182 +1,229 @@
-/* Sample memory for the map. Plain names in the UI; the store underneath is mempalace:
-   theme = wing, topic = room, memory = drawer (verbatim text), person = knowledge-graph entity,
-   fact = knowledge-graph triple with valid_from / valid_to, card = board card linked to a drawer. */
+/* Entirely invented sample data for the mockup. The example roles, projects,
+   relationships and notes do not describe real people or installations.
+   Array shapes match the memory-map renderer contract. */
 
 const THEMES = [
-  { id: "commonplace", color: "#a9bdf5" },
-  { id: "computercraft", color: "#7fd18b" },
-  { id: "home", color: "#e5c15d" },
-  { id: "family", color: "#f0a3a3" },
-  { id: "running", color: "#6fcfc4" },
-  { id: "reading", color: "#c6a6f2" },
-  { id: "money", color: "#d9dbd6" },
+  {"id": "atlas", "color": "#a9bdf5"},
+  {"id": "gallery", "color": "#7fd18b"},
+  {"id": "workshop", "color": "#e5c15d"},
+  {"id": "archive", "color": "#f0a3a3"},
+  {"id": "puzzles", "color": "#6fcfc4"},
+  {"id": "library", "color": "#c6a6f2"},
+  {"id": "exhibits", "color": "#d9dbd6"},
 ];
 
 const PEOPLE = [
-  { id: "mila", name: "Mila" },
-  { id: "oma", name: "Oma Rie" },
-  { id: "sam", name: "Sam" },
-  { id: "noor", name: "Noor" },
-  { id: "tim", name: "Tim" },
-  { id: "ayaan", name: "Ayaan" },
-  { id: "visser", name: "Dr. Visser" },
-  { id: "lotte", name: "Lotte" },
+  {"id": "editor", "name": "Example Editor"},
+  {"id": "artist", "name": "Example Artist"},
+  {"id": "maker", "name": "Example Maker"},
+  {"id": "writer", "name": "Example Writer"},
+  {"id": "curator", "name": "Example Curator"},
+  {"id": "printer", "name": "Example Printer"},
+  {"id": "archivist", "name": "Example Archivist"},
+  {"id": "guide", "name": "Example Guide"},
 ];
 
-// Knowledge-graph triples. A fact with `to` has ended and stays in the graph as history.
 const FACTS = [
-  ["mila", "sister of", "avery"],
-  ["mila", "lives in", "Utrecht", "2026-03"],
-  ["mila", "lives in", "Zwolle", "2019-08", "2026-03"],
-  ["mila", "trains with", "sam", "2026-09"],
-  ["oma", "grandmother of", "mila"],
-  ["oma", "birthday", "14 November"],
-  ["oma", "lives in", "Zwolle"],
-  ["sam", "runs with", "avery", "2025-05"],
-  ["noor", "works on", "Commonplace", "2026-08"],
-  ["noor", "works on", "kanzo", "2025-01", "2026-07"],
-  ["tim", "plays on", "the ComputerCraft server", "2024-11"],
-  ["tim", "built with", "ayaan", "2026-10"],
-  ["ayaan", "plays on", "the ComputerCraft server", "2026-02"],
-  ["visser", "GP of", "avery", "2023-04"],
-  ["lotte", "neighbour of", "avery", "2024-09"],
-  ["lotte", "keeps", "the spare key", "2026-07"],
+  ["editor", "works with", "artist"],
+  ["editor", "edits", "The Paper Atlas", "2026-03"],
+  ["editor", "edited", "The Pocket Atlas", "2025-08", "2026-03"],
+  ["artist", "illustrates with", "maker", "2026-09"],
+  ["writer", "collaborates with", "editor"],
+  ["writer", "drafts", "The Sample Catalogue"],
+  ["curator", "curates", "The Imaginary Gallery"],
+  ["printer", "prints with", "artist", "2025-05"],
+  ["maker", "builds", "Paper Orbit", "2026-08"],
+  ["maker", "built", "Cardboard Comet", "2025-01", "2026-07"],
+  ["guide", "presents", "The Sample Exhibition", "2024-11"],
+  ["guide", "collaborates with", "curator", "2026-10"],
+  ["archivist", "indexes with", "writer", "2026-02"],
+  ["archivist", "catalogues", "The Sample Collection", "2023-04"],
+  ["printer", "works with", "maker", "2024-09"],
+  ["curator", "reviews with", "archivist", "2026-07"],
 ];
 
 const CARDS = [
-  { id: 145, board: "commonplace", state: "review", title: "Pick the token expiry default" },
-  { id: 142, board: "commonplace", state: "doing", title: "Fix the Windows lock on repair" },
-  { id: 150, board: "commonplace", state: "review", title: "Phone push for the Decide count" },
-  { id: 154, board: "commonplace", state: "todo", title: "⌘K: tasks and memories in one result list" },
-  { id: 153, board: "home", state: "backlog", title: "Add Grok calendar sync" },
-  { id: 160, board: "computercraft", state: "todo", title: "Turtle refuel route" },
-  { id: 161, board: "home", state: "todo", title: "Book the boiler service" },
+  {"id": 145, "board": "atlas", "state": "review", "title": "Choose the sample atlas cover"},
+  {"id": 142, "board": "gallery", "state": "doing", "title": "Align the sample gallery captions"},
+  {"id": 150, "board": "atlas", "state": "review", "title": "Label the foldout diagram"},
+  {"id": 154, "board": "archive", "state": "todo", "title": "Link the sample catalogue index"},
+  {"id": 153, "board": "puzzles", "state": "backlog", "title": "Draft a sample tile puzzle"},
+  {"id": 160, "board": "workshop", "state": "todo", "title": "Sketch a folding paper display"},
+  {"id": 161, "board": "exhibits", "state": "todo", "title": "Sort the sample exhibit labels"},
 ];
 
-// [theme, topic, date, source, verbatim text, people, cards]
 const WRITTEN = [
-  ["commonplace", "tokens", "2026-10-28 14:02", "claude-code:vm", "Personal tokens default to 90 days. A year felt safe until I pictured one sitting in a leaked dotfile.", [], [145]],
-  ["commonplace", "tokens", "2026-10-21 09:40", "claude-code:vm", "Prefix every token with cmmn_ so secret scanners can spot them.", [], [145]],
-  ["commonplace", "boards", "2026-10-26 22:15", "phone", "The Decide count is the only number I want on my phone. Everything else can wait for the laptop.", [], [150]],
-  ["commonplace", "boards", "2026-10-19 11:03", "codex:vm", "Claims expire after 30 minutes without a write. Long enough for a build, short enough that a dead agent frees the card.", [], []],
-  ["commonplace", "recall", "2026-10-02 16:30", "claude-code:vm", "Recall has to return my words, not a summary of them. If it paraphrases once, I stop trusting it.", [], []],
-  ["commonplace", "boards", "2026-10-12 10:12", "claude-code:vm", "Noor asked whether boards should follow the memory themes. Yes: one theme, one board scope.", ["noor"], []],
-  ["commonplace", "site", "2026-10-24 20:48", "claude-code:vm", "The site should look like a terminal that got a design budget. Orange blocks, square corners, no gradients.", [], []],
-  ["commonplace", "repair", "2026-10-29 08:55", "codex:vm", "Windows keeps the lock on the store after repair. Retry with backoff, then tell me which process holds it.", [], [142]],
-  ["commonplace", "recall", "2026-10-27 13:21", "claude-code:vm", "⌘K should search tasks and memories in one list, ranked together.", [], [154]],
-  ["commonplace", "recall", "2026-09-30 19:07", "claude-code:vm", "Hooks get 500 ms. If saving takes longer it goes to the background and the chat never waits.", [], []],
-  ["computercraft", "turtles", "2026-10-25 23:12", "discord", "Turtle 7 lost its chunk loader again at y=-52. Moving the quarry into the spawn chunks.", ["tim"], []],
-  ["computercraft", "server", "2026-10-18 21:30", "discord", "Tim wants the item network on Create belts instead of wired modems. Belts are slower but you can see them.", ["tim"], []],
-  ["computercraft", "server", "2026-10-09 18:44", "claude-code:vm", "16 MB per computer is plenty. The base OS was the problem, not the scripts.", [], []],
-  ["computercraft", "reactor", "2026-10-14 22:05", "claude-code:vm", "Reactor control: SCRAM above 1200 K, then page me in the in-game chat.", [], []],
-  ["computercraft", "turtles", "2026-10-27 19:50", "discord", "Refuel route: lava from the nether pool, one bucket per thousand blocks.", [], [160]],
-  ["computercraft", "server", "2026-10-03 17:20", "claude-code:vm", "Never test on the live server. Copy the world and run it on the VM.", [], []],
-  ["computercraft", "server", "2026-10-29 00:41", "discord", "Tim and Ayaan built the train station in one night. The schedule script is still mine.", ["tim", "ayaan"], []],
-  ["home", "boiler", "2026-10-22 07:58", "phone", "Boiler pressure dropped to 0.8 bar again. Topped it up to 1.5; book the service before November.", [], [161]],
-  ["home", "flat", "2026-10-11 12:30", "phone", "Lotte says the landlord will pay for new window seals if I send photos first.", ["lotte"], []],
-  ["home", "garden", "2026-09-21 15:10", "phone", "Tomatoes did nothing on the north balcony. Next year: herbs here, tomatoes at Oma's.", ["oma"], []],
-  ["home", "calendar", "2026-10-16 09:02", "grok:cos", "Calendar sync would put bin day on the board. Paper bins every other Thursday.", [], [153]],
-  ["home", "flat", "2026-07-30 18:26", "phone", "Spare key is with Lotte now, not under the mat.", ["lotte"], []],
-  ["family", "mila", "2026-03-14 20:00", "phone", "Mila moved to Utrecht. Her new place is ten minutes from the station.", ["mila"], []],
-  ["family", "oma", "2026-10-20 13:45", "phone", "Oma's birthday is 14 November. She wants photos printed, not a frame.", ["oma"], []],
-  ["family", "oma", "2026-08-02 14:15", "phone", "Call Oma on Sundays after lunch, not before. She naps at one.", ["oma"], []],
-  ["family", "mila", "2026-09-07 10:30", "phone", "Mila is training for the Utrecht half too. We should do the long runs together.", ["mila", "sam"], []],
-  ["family", "recipes", "2026-01-11 17:40", "notes", "Dad's erwtensoep: soak overnight, rookworst in for the last 20 minutes only.", [], []],
-  ["running", "training", "2026-10-07 07:15", "phone", "Sam's rule: the long run is slow enough to talk the whole way.", ["sam"], []],
-  ["running", "knee", "2026-10-13 18:20", "phone", "Left knee hurt after 18 km on the dike. Dr. Visser says it's the IT band, not the joint.", ["visser"], []],
-  ["running", "race", "2026-09-29 21:00", "phone", "Half marathon on 22 March 2027. Goal: under 1:50.", [], []],
-  ["running", "gear", "2026-10-23 19:35", "phone", "New shoes at 640 km on the old pair. Same model, half a size up.", [], []],
-  ["running", "training", "2026-10-28 06:50", "phone", "Intervals on Tuesdays with Sam: 6 × 800 m, 90 s rest.", ["sam"], []],
-  ["reading", "notes", "2026-08-18 23:10", "notes", "Luhmann's slip box worked because every card pointed at another card. That's the whole trick.", [], []],
-  ["reading", "books", "2026-09-12 22:40", "notes", "Finished The Dispossessed. Anarres felt less like a utopia than a place with honest bookkeeping.", [], []],
-  ["reading", "notes", "2026-08-19 08:05", "notes", "Method of loci: put the thing somewhere you'll walk past again.", [], []],
-  ["reading", "books", "2026-10-15 12:12", "claude-code:vm", "Noor recommended How Buildings Learn. The part about low-road buildings fits software too.", ["noor"], []],
-  ["reading", "books", "2026-10-29 16:00", "phone", "Library hold for Piranesi is ready until Friday.", [], []],
-  ["money", "rent", "2026-10-17 11:30", "phone", "Rent goes up to €1,145 from January. Lotte got the same letter.", ["lotte"], []],
-  ["money", "savings", "2026-09-03 20:20", "phone", "Move the buffer to savings at 2.6%. Keep three months of rent in checking.", [], []],
-  ["money", "costs", "2026-10-05 10:45", "claude-code:vm", "The VM costs €18 a month. Worth it while the agents run on it.", [], []],
-  ["money", "costs", "2026-10-21 21:15", "phone", "Split Oma's birthday dinner with Mila: €62 each.", ["mila", "oma"], []],
+  ["atlas", "covers", "2026-09-01 09:15", "sample:editor", "The sample atlas cover uses a blue circle and a wide title.", ["editor"], [145]],
+  ["atlas", "covers", "2026-09-02 10:15", "sample:artist", "The Pocket Atlas draft used a square; the new drawing uses a circle.", ["artist"], [145]],
+  ["atlas", "diagrams", "2026-09-03 11:15", "sample:maker", "The foldout diagram needs three clearly numbered panels.", ["maker"], [150]],
+  ["atlas", "index", "2026-09-04 12:15", "sample:editor", "Put the sample diagram titles in the alphabetical index.", ["editor"], []],
+  ["atlas", "captions", "2026-09-05 13:15", "sample:writer", "Each invented illustration gets a short caption and a page reference.", ["writer"], []],
+  ["atlas", "captions", "2026-09-06 14:15", "sample:editor", "The example editor and artist are comparing two caption drafts.", ["editor", "artist"], []],
+  ["atlas", "diagrams", "2026-09-07 15:15", "sample:artist", "Paper Orbit is an invented drawing of intersecting circles.", ["artist"], []],
+  ["atlas", "covers", "2026-09-08 16:15", "sample:printer", "The sample catalogue includes a monochrome version of the cover.", ["printer"], []],
+  ["atlas", "index", "2026-09-09 09:15", "sample:archivist", "Link the sample atlas index to the fictional exhibition catalogue.", ["archivist"], [154]],
+  ["atlas", "diagrams", "2026-09-10 10:15", "sample:maker", "The reverse side of the foldout holds an invented constellation key.", ["maker"], []],
+  ["gallery", "posters", "2026-09-11 11:15", "sample:curator", "The imaginary gallery has a set of seven abstract posters.", ["curator"], []],
+  ["gallery", "captions", "2026-09-12 12:15", "sample:artist", "Align the sample captions along the lower edge of each poster.", ["artist"], [142]],
+  ["gallery", "shapes", "2026-09-13 13:15", "sample:artist", "The Circle Studies series alternates blue and green paper shapes.", ["artist"], []],
+  ["gallery", "posters", "2026-09-14 14:15", "sample:editor", "The fictional poster catalogue uses the same order as the display.", ["editor"], []],
+  ["gallery", "layouts", "2026-09-15 15:15", "sample:curator", "Try a two-column arrangement for the sample poster wall.", ["curator"], []],
+  ["gallery", "layouts", "2026-09-16 16:15", "sample:artist", "The example artist moved the largest circle drawing to the centre.", ["artist"], []],
+  ["gallery", "captions", "2026-09-17 09:15", "sample:guide", "The sample guide will read the illustration titles during the demo.", ["guide"], []],
+  ["workshop", "paper", "2026-09-18 10:15", "sample:maker", "Fold the sample paper display into three equal sections.", ["maker"], [160]],
+  ["workshop", "models", "2026-09-19 11:15", "sample:coordinator", "The Cardboard Comet is an invented model with removable wings.", ["maker"], []],
+  ["workshop", "tools", "2026-09-20 12:15", "sample:printer", "A sample ruler and paper template are listed in the workshop catalogue.", ["printer"], []],
+  ["workshop", "models", "2026-09-21 13:15", "sample:maker", "The example maker and printer are comparing two model drawings.", ["maker", "printer"], []],
+  ["workshop", "paper", "2026-09-22 14:15", "sample:writer", "The demo folding instructions use dotted lines for hidden edges.", ["writer"], []],
+  ["archive", "catalogue", "2026-09-23 15:15", "sample:archivist", "The sample collection contains invented posters, sketches and paper models.", ["archivist"], []],
+  ["archive", "index", "2026-09-24 16:15", "sample:archivist", "Index the imaginary collection by title and medium.", ["archivist"], [154]],
+  ["archive", "drafts", "2026-09-25 09:15", "sample:writer", "Keep the first sample caption draft alongside the revised version.", ["writer"], []],
+  ["archive", "catalogue", "2026-09-26 10:15", "sample:archivist", "The example archivist added a cross-reference from Paper Orbit to Circle Studies.", ["archivist"], []],
+  ["archive", "drafts", "2026-09-27 11:15", "sample:editor", "The fictional catalogue entry records a pencil sketch and its final print.", ["editor"], []],
+  ["puzzles", "tiles", "2026-09-28 12:15", "sample:maker", "The sample tile puzzle uses five geometric symbols.", ["maker"], [153]],
+  ["puzzles", "patterns", "2026-10-01 13:15", "sample:artist", "Alternate circles and triangles in the fictional pattern exercise.", ["artist"], []],
+  ["puzzles", "clues", "2026-10-02 14:15", "sample:writer", "The demo puzzle clue refers to a drawing, not to a real location.", ["writer"], []],
+  ["puzzles", "tiles", "2026-10-03 15:15", "sample:editor", "The example editor is comparing two invented tile arrangements.", ["editor"], []],
+  ["puzzles", "patterns", "2026-10-04 16:15", "sample:maker", "The final sample pattern repeats after six shapes.", ["maker"], []],
+  ["library", "catalogues", "2026-10-05 09:15", "sample:archivist", "The Imaginary Library is a fictional collection of art catalogues.", ["archivist"], []],
+  ["library", "notes", "2026-10-06 10:15", "sample:writer", "The sample reading card links a drawing technique to an illustration.", ["writer"], []],
+  ["library", "catalogues", "2026-10-07 11:15", "sample:editor", "The Paper Atlas and The Sample Catalogue share an invented subject index.", ["editor"], []],
+  ["library", "notes", "2026-10-08 12:15", "sample:curator", "The example curator wrote a short note about circular compositions.", ["curator"], []],
+  ["library", "sketches", "2026-10-09 13:15", "sample:artist", "The fictional sketchbook contains studies of folded paper and ink lines.", ["artist"], []],
+  ["exhibits", "labels", "2026-10-10 14:15", "sample:guide", "Sort the sample exhibit labels alphabetically before the demo.", ["guide"], [161]],
+  ["exhibits", "models", "2026-10-11 15:15", "sample:curator", "Place the invented Paper Orbit model beside its drawing.", ["curator"], []],
+  ["exhibits", "labels", "2026-10-12 16:15", "sample:guide", "The example guide is checking the spelling of fictional exhibit titles.", ["guide"], []],
+  ["exhibits", "sequence", "2026-10-13 09:15", "sample:archivist", "The demonstration ends with the sample catalogue and its index.", ["archivist"], []],
 ];
 
-// Filler so the map has the density of a year of use. {a|b} picks one; # is a number.
+// Invented filler for a dense map. {a|b} picks a variant; # is a number.
 const FILL = {
-  commonplace: {
-    topics: ["tokens", "boards", "recall", "site", "repair", "hooks"],
-    people: ["noor"],
-    lines: [
-      "Test run on {local-1|win|pc-2}: # passed, {0|1|2} failed in {searcher|miner|boards}.",
-      "Keep {the hook line|the Decide queue|the stamp line} to one line. If it wraps, it's too much.",
-      "{Noor|I} found the {BM25|closet} boost was ranking stale notes first. Fixed by date decay.",
-      "Agents can file into backlog only. Moving a card out of backlog is mine.",
-      "Search shows the original text first, then where it came from. Never the other way round.",
-      "{Split|Merge} the {miner|recall|board} tests; the {slow|flaky} one moves to the nightly run.",
-      "Ask the agent for {one question|two options}, not an essay. The Decide row has room for that.",
+  "atlas": {
+    "topics": [
+      "covers",
+      "diagrams",
+      "index",
+      "captions"
     ],
-  },
-  computercraft: {
-    topics: ["turtles", "server", "reactor", "trains"],
-    people: ["tim", "ayaan"],
-    lines: [
-      "Turtle # stuck at y={-40|-52|12|64}. {Chunk unloaded|Out of fuel|Bedrock}.",
-      "{Tim|Ayaan} logged off with the {farm|smeltery|station} still running.",
-      "Monitor wall needs {4|6|8} more advanced monitors for the train board.",
-      "Pocket computer pings the base every {30|60} s. Range drops past the river.",
-      "Item counts on the storage screen are off by one stack again.",
-      "Rednet channel # is the reactor; never reuse it.",
+    "people": [
+      "editor",
+      "artist"
     ],
+    "lines": [
+      "Sample drawing # uses {circles|triangles|squares} on a plain background.",
+      "The invented atlas has {three|five|seven} foldout diagrams.",
+      "The example editor added a caption to sample page #.",
+      "Compare the {blue|green|orange} versions of the fictional cover.",
+      "The demo index points from the illustration to its paper model."
+    ]
   },
-  home: {
-    topics: ["boiler", "flat", "garden", "calendar", "groceries"],
-    people: ["lotte"],
-    lines: [
-      "Out of {oat milk|coffee|rice|dish soap}. Add it before Saturday.",
-      "{Paper|Plastic|Green} bins {Thursday|Tuesday}.",
-      "Basil on the kitchen sill is doing better than anything outside.",
-      "Radiator in the bedroom needs bleeding again.",
-      "Lotte's parcel is in my hallway.",
-      "Washing machine filter: clean it every {two|three} months.",
+  "gallery": {
+    "topics": [
+      "posters",
+      "captions",
+      "shapes",
+      "layouts"
     ],
-  },
-  family: {
-    topics: ["mila", "oma", "recipes", "visits"],
-    people: ["mila", "oma"],
-    lines: [
-      "{Mila|Oma} called about {Sunday|the birthday|Christmas}.",
-      "Train to Zwolle at {10:14|11:14|13:14}; Oma picks me up.",
-      "Oma's photo album from {1971|1984|1990} needs scanning.",
-      "Mila wants the bike back before {winter|the move|March}.",
-      "Oma's stamppot: more mustard than you think.",
+    "people": [
+      "artist",
+      "curator"
     ],
+    "lines": [
+      "Sample poster # combines {ink lines|paper shapes|pencil marks}.",
+      "The imaginary gallery groups the drawings by {shape|medium|title}.",
+      "The example artist placed {two|four|six} studies in this series.",
+      "Use the fictional catalogue title beneath this sample print.",
+      "The demo layout leaves a wide margin around each poster."
+    ]
   },
-  running: {
-    topics: ["training", "knee", "race", "gear"],
-    people: ["sam", "visser"],
-    lines: [
-      "# km easy, {5:40|5:55|6:10}/km. Knee fine.",
-      "Long run {16|18|21} km with Sam along the {dike|river|canal}.",
-      "Skipped the run: {rain|knee|work}. Doing it tomorrow.",
-      "Physio exercises: {clamshells|step-downs|foam roller}, 3 × 15.",
-      "Tuesday intervals: {5|6|8} × {400|800} m.",
+  "workshop": {
+    "topics": [
+      "paper",
+      "models",
+      "tools"
     ],
-  },
-  reading: {
-    topics: ["books", "notes", "articles"],
-    people: ["noor"],
-    lines: [
-      "Underlined in {Piranesi|The Dispossessed|How Buildings Learn}: page #.",
-      "Notes are only useful if you can find them from {somewhere else|a person|a date}.",
-      "{Noor|Mila} lent me {a Le Guin|a Calvino|a Jemisin}.",
-      "Saved an article on {zettelkasten|spaced repetition|local-first software}.",
+    "people": [
+      "maker",
+      "printer"
     ],
+    "lines": [
+      "Sample model # folds along the {dotted|dashed|solid} line.",
+      "The invented paper sculpture has {three|four|six} panels.",
+      "The example printer is comparing two sample paper textures.",
+      "The demo drawing shows the model before and after folding.",
+      "Label the sample template with its fictional catalogue title."
+    ]
   },
-  money: {
-    topics: ["rent", "savings", "costs"],
-    people: ["lotte", "mila"],
-    lines: [
-      "Paid {€24|€31|€48|€72} for {groceries|the energy bill|the phone|the VM}.",
-      "{Netflix|Spotify|The gym} went up {€1|€2|€3}. Keep it {for now|until March}.",
-      "Transfer € # to savings on the {1st|25th}.",
-      "Tax return {sent|due} {in May|next week}.",
+  "archive": {
+    "topics": [
+      "catalogue",
+      "index",
+      "drafts"
     ],
+    "people": [
+      "archivist",
+      "writer"
+    ],
+    "lines": [
+      "Sample catalogue entry # links a sketch to its final print.",
+      "The fictional archive retains both {pencil|ink|paper} drafts.",
+      "The example archivist grouped the samples by {title|medium|series}.",
+      "An invented cross-reference joins the atlas and the gallery catalogue.",
+      "The demo collection uses a short title for each sample drawing."
+    ]
   },
+  "puzzles": {
+    "topics": [
+      "tiles",
+      "patterns",
+      "clues"
+    ],
+    "people": [
+      "maker",
+      "writer"
+    ],
+    "lines": [
+      "Sample puzzle # repeats {circles|triangles|squares} in a row.",
+      "The fictional clue points to a shape in the illustration.",
+      "The example writer added {two|three|four} invented pattern clues.",
+      "The demo tile arrangement is symmetric around its centre.",
+      "Compare the sample pattern with its reflected version."
+    ]
+  },
+  "library": {
+    "topics": [
+      "catalogues",
+      "notes",
+      "sketches"
+    ],
+    "people": [
+      "editor",
+      "archivist"
+    ],
+    "lines": [
+      "Sample note # refers to the fictional {Paper Atlas|Circle Studies|Sample Catalogue}.",
+      "The imaginary library links each art catalogue to a sample index.",
+      "The example editor annotated a drawing of {folded paper|ink lines|geometric shapes}.",
+      "A fictional sketchbook entry shows three versions of the same shape.",
+      "The demo reading card includes a title and a page reference."
+    ]
+  },
+  "exhibits": {
+    "topics": [
+      "labels",
+      "models",
+      "sequence"
+    ],
+    "people": [
+      "guide",
+      "curator"
+    ],
+    "lines": [
+      "Sample exhibit # has a {blue|green|orange} label.",
+      "The fictional exhibition groups {drawings|models|posters} in a short sequence.",
+      "The example guide introduces the invented catalogue before the model.",
+      "The demo label repeats the title printed beneath the illustration.",
+      "The sample exhibition ends with a view of the catalogue index."
+    ]
+  }
 };

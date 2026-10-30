@@ -200,7 +200,11 @@ def run_hook(tmp_path, fail="", env_overrides=None):
     result = subprocess.run(
         ["bash", str(HOOK), str(backups)], env=env, capture_output=True, text=True, timeout=10
     )
-    calls = [json.loads(line) for line in commands.read_text().splitlines()]
+    calls = (
+        [json.loads(line) for line in commands.read_text().splitlines()]
+        if commands.exists()
+        else []
+    )
     # Failure logs are deliberately preserved by the production hook; clean
     # up this test's log after checking the diagnostic points to a real file.
     log_match = re.search(r"details: (/tmp/commonplace-backup\.[^)]+)", result.stderr)
@@ -242,6 +246,18 @@ def test_hook_uses_external_operator_configuration(tmp_path, individual_paths):
     assert calls
     for call in calls:
         assert call[:5] == ["compose", "--env-file", str(env_file), "-f", str(compose_file)]
+
+
+@pytest.mark.parametrize("name", ["COMMONPLACE_DEPLOY_DIR", "COMMONPLACE_ENV_FILE", "COMPOSE_FILE"])
+@pytest.mark.parametrize("value", ["relative/config", "~/config"])
+def test_hook_rejects_relative_overrides_before_touching_gateway(tmp_path, name, value):
+    result, backups, calls = run_hook(tmp_path, env_overrides={name: value})
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.count("\n") == 1
+    assert f"{name} must be an absolute path" in result.stderr
+    assert calls == []
+    assert list(backups.iterdir()) == []
 
 
 @pytest.mark.parametrize(

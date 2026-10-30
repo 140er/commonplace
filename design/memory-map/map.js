@@ -31,9 +31,9 @@
   WRITTEN.forEach(([theme, topic, date, src, text, people, cards]) =>
     add({ id: "m" + ++n, kind: "memory", theme, topic, date, src, text, people, cards }));
 
-  const COUNTS = { commonplace: 64, computercraft: 52, home: 40, family: 30, running: 46, reading: 30, money: 26 };
+  const COUNTS = { atlas: 64, gallery: 52, workshop: 40, archive: 30, puzzles: 46, library: 30, exhibits: 26 };
   const fill = (line) => line.replace(/\{([^}]+)\}/g, (_, a) => pick(a.split("|"))).replace(/#/g, () => 2 + Math.floor(rnd() * 90));
-  const SRC = ["phone", "claude-code:vm", "codex:vm", "notes", "discord"];
+  const SRC = ["sample:editor", "sample:artist", "sample:maker", "sample:archive", "sample:coordinator"];
   for (const t of THEMES) {
     const f = FILL[t.id];
     for (let i = 0; i < COUNTS[t.id]; i++) {
@@ -79,7 +79,7 @@
   function dominantTheme(x) {
     const c = {};
     x.adj.forEach((id) => { const t = byId[id].theme; if (t) c[t] = (c[t] || 0) + 1; });
-    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "commonplace";
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || "atlas";
   }
 
   // ---------- Layout ----------
@@ -342,7 +342,7 @@
   const sec = (title, count, body) => (count ? `<section class="sec"><h3><b>${title}</b>${count}</h3>${body}</section>` : "");
   const neighbours = (x, kind) => [...x.adj].map((id) => byId[id]).filter((o) => o.kind === kind);
   const name = (id) => byId[id]?.name || id;
-  // One line per fact, read as a sentence about this person: "lives in Utrecht", "Mila trains with Sam".
+  // One line per fact, read as a sentence about this person: "curates the Sample Gallery", "Example Editor works with Example Artist".
   const factRows = (pid) => FACTS.filter((f) => f[0] === pid || f[2] === pid).map(([s, p, o, from, to]) => {
     const line = s === pid
       ? `<span class="p">${esc(p)}</span> <span class="o">${esc(byId[o] ? name(o) : o)}</span>`
@@ -357,7 +357,7 @@
     const close = `<span class="right"><button class="x" data-close aria-label="Close">×</button></span>`;
     if (x.kind === "memory") {
       top = `<div class="bar">${sq(x.theme)}<b>${x.theme}</b>/ ${x.topic}${close}</div>
-        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>avery</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>`;
+        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>sample</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>`;
       const ppl = neighbours(x, "person"), cards = neighbours(x, "card"), rel = neighbours(x, "memory").sort(byDate);
       rest = sec("people", ppl.length, `<ul class="rows">${ppl.map((p) => {
         const f = FACTS.find((f) => f[0] === p.id && !f[4] && f[3]) || FACTS.find((f) => f[0] === p.id);

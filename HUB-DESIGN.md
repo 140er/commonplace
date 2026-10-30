@@ -41,7 +41,7 @@ Two notes:
  │  mempalace serve  --host 127.0.0.1 --port 8765                     │
  │   - one process owns the palace (ChromaDB + SQLite KG)             │
  │   - token -> client identity, allowed wings, allowed tools (new)   │
- │  palace on SSD appdata, nightly backup                             │
+ │  palace on local storage, nightly backup                         │
  └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -108,7 +108,7 @@ Recommendation: B1 to prove it out, because the health-data guarantee comes from
 - Other leaks to close:
   - Cloudflare TLS termination (A2).
   - Hub logs: check they record client metadata only, never drawer text.
-  - At-rest encryption: put appdata on an encrypted pool if the array isn't one already.
+  - At-rest encryption: use encrypted persistent storage.
 
 **Prompt injection through memory.**
 - A bot that reads a web page or email can file attacker text. Later, Claude Code (which has a shell) recalls it as "memory" and acts on it. With multiple bots writing, that's a real path. Mitigations:
@@ -139,11 +139,11 @@ Recommendation: B1 to prove it out, because the health-data guarantee comes from
 
 Goal: a fact Grok Bot's coordinator files is recalled by Claude Code in a fresh session on the VM, and the reverse, with no health data anywhere in the test palace.
 
-1. **Hub on the server.** Build the fork's Docker image and run `mempalace serve --host 127.0.0.1 --port 8765` with a fresh palace at `/path/to/data/mempalace-shared`. Note the auto-generated token. Set `MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS=hub.example.com`, otherwise the loopback Host pin rejects requests that come through `tailscale serve`/`funnel`. Mount only the test palace volume into the container, so `mempalace_mine` can't read anything else on the server. The palace is throwaway, so the delete tools don't matter yet.
+1. **Hub on the server.** Build the fork's Docker image and run `mempalace serve --host 127.0.0.1 --port 8765` with a fresh palace at `/path/to/data/mempalace-shared`. Note the auto-generated token. Set `MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS=yourbox.your-tailnet.ts.net`, otherwise the loopback Host pin rejects requests that come through `tailscale serve`/`funnel`. Mount only the test palace volume into the container, so `mempalace_mine` can't read anything else on the server. The palace is throwaway, so the delete tools don't matter yet.
 2. **Tailnet access.** `tailscale serve` HTTPS on a spare port to `127.0.0.1:8765`.
    - Add the hub to Claude Code on the VM (`claude mcp add --transport http …/mcp --header "Authorization: Bearer …"`).
    - Add it to one Codex session (`url` + `bearer_token_env_var` in a per-run `-c` override, not the global config).
-3. **Cloud access.** Enable Funnel for hub in the tailnet ACL (`funnel` node attribute) and run `tailscale funnel` on a second port to the same hub. Add it to coordinator as a connector using the same token, since per-token scopes don't exist yet.
+3. **Cloud access.** Enable Funnel for the hub in the tailnet ACL (`funnel` node attribute) and run `tailscale funnel` on a second port to the same hub. Add it to the coordinator as a connector using the same token, since per-token scopes don't exist yet.
 4. **Test.**
    - The coordinator files a fact; Claude Code and Codex each recall it in a fresh session.
    - Claude Code files a decision; the coordinator recalls it.

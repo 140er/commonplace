@@ -104,7 +104,7 @@ Decide 4
 │ mempalace  #151  Done?  Split the hook output          codex:vm      40m │
 │ [ ship ]  [ redo ]  [________________________________]  ↩                │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ mempalace  #153  Add Grok calendar sync                grok:cos ⚠    1d  │
+│ mempalace  #153  Add Grok calendar sync                coordinator ⚠ 1d  │
 │ [ todo ]  [ close ]                                                      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```

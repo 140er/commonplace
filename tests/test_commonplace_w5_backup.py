@@ -250,7 +250,7 @@ def test_snapshot_failure_removes_partial_and_unlocks(populated, tmp_path, monke
     [
         (b"/usr/bin/python3\x00-m\x00mempalace.mcp_server\x00", True),
         (b"/opt/mempalace/bin/mempalace\x00serve\x00", True),
-        (b"/path/to/user/My Apps/mempalace\x00serve\x00", True),
+        (b"/home/me/My Apps/mempalace\x00serve\x00", True),
         (b"/usr/lib/systemd/systemd\x00--user\x00", False),
         # Tailscale SSH session child: the remote command is one argument and
         # its environment is unreadable even for the same uid.

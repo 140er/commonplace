@@ -4,7 +4,7 @@ One gateway in front of MemPalace: accounts, workspaces, scoped tokens, verified
 
 ```bash
 commonplace init --admin-email you@example.com
-commonplace token add grok:cos --workspace personal --client grok \
+commonplace token add grok:coordinator --workspace personal --client grok \
   --profile slim --read-wings shared,inbox --write-wing inbox --trust untrusted
 commonplace serve --host 127.0.0.1 --port 8765
 ```

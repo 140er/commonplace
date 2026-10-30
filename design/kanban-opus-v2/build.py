@@ -25,8 +25,8 @@ def links(n):
 
 
 def actor(a, untrusted=False):
-    if a == "avery":
-        return '<span class="actor person">avery</span>'
+    if a == "sample":
+        return '<span class="actor person">sample</span>'
     return f'<span class="actor{" untrusted" if untrusted else ""}">{a}</span>'
 
 
@@ -34,9 +34,9 @@ def actor(a, untrusted=False):
 DECIDE = [
     dict(
         id=145,
-        board="mempalace",
+        board="atlas",
         title="Pick the token expiry default",
-        by="claude-code:vm",
+        by="agent:editor",
         age="2h",
         links=2,
         q="1 year or 90 days for personal tokens?",
@@ -44,19 +44,19 @@ DECIDE = [
     ),
     dict(
         id=150,
-        board="mempalace",
+        board="atlas",
         title="Phone push for the Decide count",
-        by="claude-code:vm",
+        by="agent:editor",
         age="1h",
         links=0,
-        q="Self-hosted ntfy on hub, or only the Decide count for v1?",
+        q="A sample notification service, or only the Decide count for v1?",
         opts=["ntfy", "count only"],
     ),
     dict(
         id=151,
-        board="mempalace",
+        board="atlas",
         title="Split the hook output",
-        by="codex:vm",
+        by="agent:builder",
         age="40m",
         links=0,
         done=True,
@@ -67,9 +67,9 @@ DECIDE = [
 FILED = [
     dict(
         id=153,
-        board="home",
+        board="archive",
         title="Add Grok calendar sync",
-        by="grok:cos",
+        by="grok:coordinator",
         age="1d",
         links=0,
         flag=True,
@@ -80,16 +80,16 @@ FILED = [
 
 TODO = [
     (147, "Canary for board tools", "", 1),
-    (148, "Hook line: say when a card is back", "claude-code:vm", 0),
+    (148, "Hook line: say when a card is back", "agent:editor", 0),
     (149, "Expiry test: one expire event per stale claim", "", 0),
     (152, "Move rules: one test per API.md row, over MCP and HTTP", "", 0),
     (154, "⌘K: tasks and drawers in one result list", "", 2),
     (155, "Done column shows the last 20", "", 0),
 ]
 DOING = [
-    (142, "Fix the Windows lock on repair", "codex:vm", "12m", 0.6, 3),
-    (144, "Race test with real Claude Code and Codex sessions", "avery", "1d", None, 1),
-    (146, "board_repos: normalise git remotes", "claude-code:vm", "27m", 0.1, 0),
+    (142, "Fix the Windows lock on repair", "agent:builder", "12m", 0.6, 3),
+    (144, "Race test with real Claude Code and Codex sessions", "sample", "1d", None, 1),
+    (146, "board_repos: normalise git remotes", "agent:editor", "27m", 0.1, 0),
 ]
 REVIEW = DECIDE
 DONE = [
@@ -113,13 +113,13 @@ DONE = [
 
 # ---------- pieces ----------
 def side(current):
-    boards = ["mempalace", "commonplace-site", "computercraft", "home"]
+    boards = ["atlas", "gallery", "workshop", "archive"]
     b = "".join(
         f'<a href="board.html"{" aria-current" if x == current else ""}>{x}</a>' for x in boards
     )
     dec = " aria-current" if current == "decide" else ""
     return f"""<aside class="side">
-    <div class="ws"><span class="mark">{MARK}</span><span class="name">avery</span></div>
+    <div class="ws"><span class="mark">{MARK}</span><span class="name">sample</span></div>
     <nav class="navs">
       <a href="decide.html"{dec}>Decide<span class="n">4</span></a>
       <a href="#">Search<kbd>⌘K</kbd></a>
@@ -208,15 +208,15 @@ def ev(who, what, time, kind="", said=None):
 
 PANEL_145 = f"""<aside class="panel">
       <div class="tile top">
-        {bar(145, "mempalace")}
+        {bar(145, "atlas")}
         <span><span class="state review">review</span></span>
         <h2>Pick the token expiry default</h2>
         <div class="hit">
           <p class="q">1 year or 90 days for personal tokens?</p>
-          <p class="stamp">claude-code:vm · trusted · 2h ago</p>
+          <p class="stamp">agent:editor · trusted · 2h ago</p>
           <div class="opts"><button class="opt">1y<span class="k">1</span></button><button class="opt go">90d<span class="k">2</span></button></div>
           <label class="field">Go with 90 days, keep 1 year as an option.<kbd>↵</kbd></label>
-          <div class="then"><span class="on">claude-code:vm</span><span>anyone</span><span>done</span><span>backlog</span></div>
+          <div class="then"><span class="on">agent:editor</span><span>anyone</span><span>done</span><span>backlog</span></div>
         </div>
         <p class="prose">PRODUCT-DESIGN §6 says 1 year. Security review asked for 90 days.</p>
         <ul class="drawers">
@@ -225,21 +225,21 @@ PANEL_145 = f"""<aside class="panel">
         </ul>
       </div>
       <ol class="log">
-        {ev("claude-code:vm", "add", "12:48")}
-        {ev("claude-code:vm", "claim", "13:02")}
-        {ev("claude-code:vm", "comment", "13:40", said="Both paths written, tests green on each.")}
-        {ev("claude-code:vm", "ask → avery", "13:41", "hand")}
+        {ev("agent:editor", "add", "12:48")}
+        {ev("agent:editor", "claim", "13:02")}
+        {ev("agent:editor", "comment", "13:40", said="Both paths written, tests green on each.")}
+        {ev("agent:editor", "ask → sample", "13:41", "hand")}
       </ol>
       <div class="composer"><label class="field"><kbd>c</kbd></label><span class="send">↵</span></div>
     </aside>"""
 
 PANEL_142 = f"""<aside class="panel">
       <div class="tile top">
-        {bar(142, "mempalace")}
+        {bar(142, "atlas")}
         <span><span class="state doing">doing</span></span>
         <h2>Fix the Windows lock on repair</h2>
-        <div class="props"><span>{actor("codex:vm")}</span><span>{claim(0.6)}until 14:30Z</span></div>
-        <p class="prose">On Windows, <code>mempalace repair</code> fails with <code>PermissionError: [WinError 32]</code> when ChromaDB still holds <code>chroma.sqlite3</code>. Close the client before the swap, and retry the rename three times with backoff.</p>
+        <div class="props"><span>{actor("agent:builder")}</span><span>{claim(0.6)}until 14:30Z</span></div>
+        <p class="prose">On Windows, <code>atlas repair</code> fails with <code>PermissionError: [WinError 32]</code> when ChromaDB still holds <code>chroma.sqlite3</code>. Close the client before the swap, and retry the rename three times with backoff.</p>
         <ul class="drawers">
           <li>{I_DRAWER}<span>ChromaDB keeps the sqlite handle open until the client is garbage collected</span></li>
           <li>{I_DRAWER}<span>Windows coverage gate is lower because file-lock cleanup leaves lines unexecuted</span></li>
@@ -247,12 +247,12 @@ PANEL_142 = f"""<aside class="panel">
         </ul>
       </div>
       <ol class="log">
-        {ev("avery", "add", "11:20")}
-        {ev("claude-code:vm", "claim", "13:12")}
-        {ev("claude-code:vm", "expire", "13:42", "warn")}
-        {ev("codex:vm", "claim", "13:48")}
-        {ev("codex:vm", "comment", "13:55", said="Reproduced on Windows: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.")}
-        {ev("codex:vm", "comment", "14:00", said="Retry with backoff covers the 10th. Running the full suite on win now.")}
+        {ev("sample", "add", "11:20")}
+        {ev("agent:editor", "claim", "13:12")}
+        {ev("agent:editor", "expire", "13:42", "warn")}
+        {ev("agent:builder", "claim", "13:48")}
+        {ev("agent:builder", "comment", "13:55", said="Reproduced on Windows: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.")}
+        {ev("agent:builder", "comment", "14:00", said="Retry with backoff covers the 10th. Running the full suite on win now.")}
       </ol>
       <div class="composer"><label class="field">Check the coverage gate on Windows too<span class="cursor"></span></label><span class="send go">↵</span></div>
     </aside>"""
@@ -280,15 +280,15 @@ def page(title, side_current, main, main_cls=""):
 """
 
 
-BOARD_HEAD = '<header class="head"><h1>mempalace</h1><div class="right"><button class="blockbtn">New<kbd>c</kbd></button></div></header>'
+BOARD_HEAD = '<header class="head"><h1>atlas</h1><div class="right"><button class="blockbtn">New<kbd>c</kbd></button></div></header>'
 DECIDE_HEAD = '<header class="head"><h1>Decide <span class="n">4</span></h1></header>'
 
 open("decide.html", "w").write(
     page("Decide", "decide", DECIDE_HEAD + queue(narrow=True) + PANEL_145)
 )
-open("board.html", "w").write(page("mempalace", "mempalace", BOARD_HEAD + board_cols(focus=147)))
+open("board.html", "w").write(page("atlas", "atlas", BOARD_HEAD + board_cols(focus=147)))
 open("card.html", "w").write(
-    page("#142", "mempalace", BOARD_HEAD + board_cols(open_=142) + PANEL_142, "dim")
+    page("#142", "atlas", BOARD_HEAD + board_cols(open_=142) + PANEL_142, "dim")
 )
 
 mitems = item(DECIDE[0], sel=True, mobile=True, reply="Keep 1 year as an option", picked="90d")

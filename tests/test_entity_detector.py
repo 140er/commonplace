@@ -997,7 +997,7 @@ def test_zh_tw_candidate_extraction_at_boundaries():
     text = (
         "# 會議紀錄\n"
         "- 朱宜振 主持\n"
-        "朱宜振 跟 Avery 討論。\n"
+        "朱宜振 跟 Jeffrey 討論。\n"
         "朱宜振: 方向正確。\n"
         "朱宜振, 明天 pitch。\n"
     )
@@ -1037,15 +1037,15 @@ def test_zh_tw_stopwords_filter_common_particles():
 
 def test_zh_tw_falls_back_to_english_for_non_cjk_names():
     """English names embedded in Chinese text are still captured via the
-    English pattern — Lman's Chinese notes mix in names like 'Avery Lai'."""
+    English pattern — Lman's Chinese notes mix in names like 'Jeffrey Lai'."""
     text = (
-        "朱宜振 跟 Avery Lai 討論 pitch。\n"
-        "Avery Lai 報告進度。\n"
-        "朱宜振 同意 Avery Lai 的方案。\n"
+        "朱宜振 跟 Jeffrey Lai 討論 pitch。\n"
+        "Jeffrey Lai 報告進度。\n"
+        "朱宜振 同意 Jeffrey Lai 的方案。\n"
         "朱宜振: 確認。\n"
     )
     result = extract_candidates(text, languages=("zh-TW", "en"))
-    assert "Avery Lai" in result or "Avery" in result
+    assert "Jeffrey Lai" in result or "Jeffrey" in result
     assert "朱宜振" in result
 
 

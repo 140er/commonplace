@@ -34,6 +34,13 @@ log_file=$(mktemp /tmp/commonplace-backup.XXXXXXXX.log)
 operator_dir=${COMMONPLACE_DEPLOY_DIR:-$(dirname -- "$repo_dir")}
 env_file=${COMMONPLACE_ENV_FILE:-$operator_dir/.env}
 compose_file=${COMPOSE_FILE:-$operator_dir/compose.yml}
+for config_name in COMMONPLACE_DEPLOY_DIR COMMONPLACE_ENV_FILE COMPOSE_FILE; do
+    config_value=${!config_name-}
+    if [[ -n "$config_value" && "$config_value" != /* ]]; then
+        stage="configuration: $config_name must be an absolute path"
+        exit 2
+    fi
+done
 compose=(docker compose --env-file "$env_file" -f "$compose_file")
 
 run_backup() {

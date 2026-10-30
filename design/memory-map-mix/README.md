@@ -1,6 +1,6 @@
 # Memory map, look B + ctOS info
 
-Look B (`../memory-map`) is unchanged here: same palette, fonts, frames, theme colours, layout and interactions. On top of it sits the information layer from the ctOS preview (PR #11), redrawn in look B's own tokens. `app.css` and `map.css` are copied from look B. `mix.css` holds only the additions. Open `index.html`; nothing loads from the network. `./shot.sh <ctOS folder>` re-renders `png/`, including the three-way comparison.
+Look B (`../memory-map`) is unchanged here: same palette, fonts, frames, theme colours, layout and interactions. On top of it sits the information layer from the ctOS preview (PR #11), redrawn in look B's own tokens. `app.css` and `map.css` are copied from look B. `mix.css` holds only the additions. Open `index.html`; nothing loads from the network. `./shot.sh` re-renders `png/`, including a comparison of the two tracked variants. Both use entirely invented sample data.
 
 ## What came over from ctOS
 
@@ -17,7 +17,7 @@ The cyan grid, scanlines, vignette, glitch and condensed font were left out. `pr
 |---|---|
 | `png/map-1440.png` | Map, nothing selected |
 | `png/memory-1440.png` | A memory open |
-| `png/hover-1440.png` | Hovering Mila, with the pulse and ID tag |
-| `png/person-1440.png` | People layout, Sam open |
+| `png/hover-1440.png` | Hovering Example Editor, with the pulse and ID tag |
+| `png/person-1440.png` | People layout, Example Artist open |
 | `png/map-390.png`, `png/memory-390.png` | Phone: map and an open memory |
-| `png/compare-b-ctos-mix-1440.png` | Look B, ctOS and mix, same memory open |
+| `png/compare-base-mix-1440.png` | Base and mix, same invented memory open |
