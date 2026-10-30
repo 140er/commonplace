@@ -245,8 +245,34 @@ def test_snapshot_failure_removes_partial_and_unlocks(populated, tmp_path, monke
     backup(data, tmp_path / "backup")
 
 
-@pytest.mark.parametrize("candidate", [False, True])
-def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monkeypatch, candidate):
+@pytest.mark.parametrize(
+    ("cmdline", "candidate"),
+    [
+        (b"/usr/bin/python3\x00-m\x00mempalace.mcp_server\x00", True),
+        (b"/opt/mempalace/bin/mempalace\x00serve\x00", True),
+        (b"/home/me/My Apps/mempalace\x00serve\x00", True),
+        (b"/usr/lib/systemd/systemd\x00--user\x00", False),
+        # Tailscale SSH session child: the remote command is one argument and
+        # its environment is unreadable even for the same uid.
+        (
+            b"/usr/sbin/tailscaled\x00be-child\x00ssh\x00--uid=1001\x00"
+            b"--cmd=bash /home/runner/work/.jobs/pr-check-140er__mempalace-22.sh\x00",
+            False,
+        ),
+        (b"/bin/bash\x00-c\x00exec python -m mempalace.mcp_server\x00", False),
+    ],
+    ids=[
+        "python-worker",
+        "named-binary",
+        "named-binary-spaced-path",
+        "systemd",
+        "ssh-session-child",
+        "shell-command-string",
+    ],
+)
+def test_denied_process_environment_only_blocks_worker_candidates(
+    tmp_path, monkeypatch, cmdline, candidate
+):
     import importlib
 
     module = importlib.import_module("commonplace.backup")
@@ -255,11 +281,7 @@ def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monk
     (proc_root / "self" / "environ").write_bytes(b"")
     process = proc_root / str(os.getpid() + 1000000)
     process.mkdir()
-    (process / "cmdline").write_bytes(
-        b"/usr/bin/python3\x00-m\x00mempalace.mcp_server\x00"
-        if candidate
-        else b"/usr/lib/systemd/systemd\x00--user\x00"
-    )
+    (process / "cmdline").write_bytes(cmdline)
     denied = process / "environ"
     read_bytes = Path.read_bytes
 

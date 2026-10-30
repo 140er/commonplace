@@ -78,6 +78,21 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
+def _names_worker(arg: bytes) -> bool:
+    """True for an argument naming our code: a path, script, module or option.
+
+    An argument with whitespace in it is a command string carried for another
+    program: ``bash -c "..."``, or the remote command an SSH server child keeps
+    in its own command line (Tailscale SSH: ``--cmd=...``). The carrier writes
+    nothing; a worker it starts is a process of its own and is checked itself.
+    Tailscale's SSH children can also deny environment access to their own uid,
+    so counting them made a backup fail whenever another SSH session's command
+    merely mentioned commonplace or mempalace. The executable's own name is
+    checked separately, so a path with a space in it still counts.
+    """
+    return (b"mempalace" in arg or b"commonplace" in arg) and len(arg.split()) == 1
+
+
 def _process_path(value: str, proc: Path) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -103,7 +118,9 @@ def _verify_offline(root: Path) -> None:
                 continue
             args = (proc / "cmdline").read_bytes().split(b"\x00")
             executable = Path(os.fsdecode(args[0])).name.lower() if args[0] else ""
-            named_worker = any(b"mempalace" in arg or b"commonplace" in arg for arg in args)
+            named_worker = _names_worker(os.fsencode(executable)) or any(
+                _names_worker(arg) for arg in args
+            )
             if not executable.startswith(("python", "pypy")) and not named_worker:
                 # Services such as systemd --user can deny environment access
                 # even to their own uid; they cannot be our Python workers.
