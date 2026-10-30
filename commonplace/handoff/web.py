@@ -15,6 +15,7 @@ import re
 import secrets
 import ssl
 from dataclasses import replace
+from datetime import datetime
 from html import escape
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -68,13 +69,102 @@ def _field(name, value):
 
 
 def _switch(enabled, *, disabled=False):
+    # The On/Off word is CSS content on .switch-state, so it follows the
+    # checkbox before the form is saved, without script.
     return (
         '<label class="switch"><input type="checkbox" role="switch" '
         'name="enabled" value="on" aria-label="Handoff"'
         + (" checked" if enabled else "")
         + (" disabled" if disabled else "")
-        + '><span aria-hidden="true"></span></label>'
+        + '><span class="track" aria-hidden="true"></span>'
+        '<span class="switch-state" aria-hidden="true"></span></label>'
     )
+
+
+def _on_off(enabled):
+    return "On" if enabled else "Off"
+
+
+def _time(value):
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _stamp(value, *, date=False):
+    moment = _time(value)
+    if moment is None:
+        return ""
+    text = moment.strftime("%d %b %H:%M:%S UTC" if date else "%H:%M:%S")
+    return f'<time datetime="{escape(value)}">{escape(text)}</time>'
+
+
+def _tokens(count):
+    if round(count / 1_000) >= 1_000:
+        return f"{count / 1_000_000:.1f}".removesuffix(".0") + "M"
+    if count >= 1_000:
+        return f"{round(count / 1_000)}k"
+    return str(count)
+
+
+_METER_BLOCKS = 20
+
+
+def _meter(handoff):
+    """Context use when the handoff fired, as blocks; past the threshold in amber."""
+    if handoff.window_tokens <= 0:
+        return ""
+    fraction = handoff.used_tokens / handoff.window_tokens
+    # Any use of a block lights it, so crossing the threshold always shows amber.
+    filled = math.ceil(min(fraction, 1.0) * _METER_BLOCKS)
+    limit = math.floor(handoff.threshold * _METER_BLOCKS) if handoff.threshold else _METER_BLOCKS
+    blocks = ""
+    for index in range(_METER_BLOCKS):
+        if index < filled:
+            kind = "over" if index >= limit else "on"
+        else:
+            kind = "limit" if index == limit else ""
+        blocks += f'<i class="{kind}"></i>' if kind else "<i></i>"
+    reading = (
+        f"{_tokens(handoff.used_tokens)} / {_tokens(handoff.window_tokens)} · {fraction * 100:.0f}%"
+    )
+    threshold = (
+        f'<span class="muted">threshold {handoff.threshold * 100:g}%</span>'
+        if handoff.threshold
+        else ""
+    )
+    return (
+        '<div class="context"><div class="context-row"><span class="label">Context</span>'
+        f"<span>{escape(reading)}</span>{threshold}</div>"
+        f'<div class="meter" role="meter" aria-label="Context" aria-valuemin="0" '
+        f'aria-valuemax="{handoff.window_tokens}" '
+        f'aria-valuenow="{min(handoff.used_tokens, handoff.window_tokens)}">'
+        f"{blocks}</div></div>"
+    )
+
+
+# render_markdown writes Goal, then Status, first; read only from the top, so a
+# section quoted inside a later Note can never stand in for them.
+_OPENING = re.compile(
+    r"(?:## (Goal)\n\n(`{3,})\n(.*?)\n\2(?!`)(?:\n\n|\Z))?"
+    r"(?:## (Status)\n\n(`{3,})\n(.*?)\n\5(?!`)(?:\n\n|\Z))?",
+    re.DOTALL,
+)
+
+
+def _preview(markdown):
+    """Goal and Status, the verbatim quotes the handoff document opens with."""
+    match = _OPENING.match(markdown or "")
+    items = ""
+    for name, text in ((match[1], match[3]), (match[4], match[6])):
+        if name:
+            items += (
+                f"<div><dt>{name}</dt><dd><pre><span>"
+                + escape(text).replace("\r", "&#13;")
+                + "</span></pre></dd></div>"
+            )
+    return f'<dl class="preview">{items}</dl>' if items else ""
 
 
 class _Pages:
@@ -234,19 +324,30 @@ class _Pages:
             f'value="{setting.threshold * 100:g}" required{disabled}><span>%</span></div></div>'
             + ('<div class="actions"><button>Save</button></div>' if owner else "")
             + "</form>"
-            '<section class="overrides"><div class="tile section-title"><h2>Overrides</h2></div>'
         )
         overrides = [
             row for row in rows if row.scope in ("agent", "task") and row.workspace_id == workspace
         ]
+        content += (
+            '<section class="overrides"><div class="tile section-title"><h2>Overrides</h2>'
+            f'<span class="count">{len(overrides)}</span></div>'
+        )
         for row in overrides:
             effective = self.ctx.settings.effective(
                 workspace,
                 agent=row.ref if row.scope == "agent" else "",
                 task_ref=row.ref if row.scope == "task" else "",
             )
-            identity = f"<span>{escape(row.scope.title())}</span><strong>{escape(row.ref)}</strong>"
-            controls = _switch(effective.enabled, disabled=not owner)
+            identity = (
+                f'<span class="scope">{escape(row.scope.title())}</span>'
+                f"<strong>{escape(row.ref)}</strong>"
+            )
+            # What the workspace alone would do, so an override that changes it stands out.
+            changed = " changed" if effective.enabled != setting.enabled else ""
+            controls = (
+                f'<span class="from{changed}">Workspace {_on_off(setting.enabled)}</span>'
+                + _switch(effective.enabled, disabled=not owner)
+            )
             if owner:
                 values = (
                     _field("csrf", session["csrf"])
@@ -297,45 +398,76 @@ class _Pages:
         for handoff in handoffs:
             if handoff.workspace_id != principal.workspace_id or handoff.task_ref != ref:
                 continue
+            stored = None
             if handoff.stored_thread_id:
                 try:
-                    self.ctx.recall.thread(principal, handoff.stored_thread_id)
+                    stored = self.ctx.recall.thread(principal, handoff.stored_thread_id)
                 except ThreadNotFound:
                     continue
             elif principal.role != "owner" and handoff.connection_id != principal.connection_id:
                 continue
-            state = {
-                "done": "handed off",
-                "launched": "handed off",
-                "failed": "handoff failed",
-                "launch_failed": "handoff failed",
-            }.get(handoff.state, handoff.state)
-            content += (
-                '<article class="tile handoff"><div class="setting-row"><h2>'
-                + escape(handoff.agent)
-                + '</h2><span class="state">'
-                + escape(state)
-                + "</span></div>"
-            )
-            if handoff.branch:
-                content += '<p class="branch">' + escape(handoff.branch) + "</p>"
-            if handoff.pr_url:
-                content += "<p>" + _safe_link(handoff.pr_url, handoff.pr_url) + "</p>"
-            if handoff.state in ("failed", "launch_failed"):
-                content += "<p>compacted instead</p>"
-            content += '<div class="thread-links">'
-            if handoff.stored_thread_id:
-                content += (
-                    '<a href="/app/threads/'
-                    + escape(quote(handoff.stored_thread_id, safe=""))
-                    + '">Old thread</a>'
-                )
-            if handoff.successor:
-                content += _safe_link(handoff.successor.url, handoff.successor.agent_ref)
-            content += "</div></article>"
+            content += self._handoff(handoff, stored)
         if not content:
             raise _Missing
         self._page(request, ref, content, session)
+
+    @staticmethod
+    def _handoff(handoff, stored):
+        failed = handoff.state in ("failed", "launch_failed")
+        state, tone = {
+            "done": ("handed off", "ok"),
+            "launched": ("handed off", "ok"),
+            "failed": ("handoff failed", "warn"),
+            "launch_failed": ("handoff failed", "warn"),
+        }.get(handoff.state, (handoff.state, ""))
+        html = (
+            '<article class="tile handoff"><div class="handoff-head"><h2>'
+            + escape(handoff.agent)
+            + f'</h2><span class="state {tone}">'
+            + escape(state)
+            + "</span></div>"
+        )
+        facts = ""
+        if handoff.branch:
+            facts += '<span class="branch">' + escape(handoff.branch) + "</span>"
+        if handoff.pr_url:
+            facts += "<span>" + _safe_link(handoff.pr_url, handoff.pr_url) + "</span>"
+        if facts:
+            html += f'<p class="facts">{facts}</p>'
+        html += _meter(handoff)
+
+        # Old thread → handoff → new thread, each with its time.
+        old = '<li class="step"><span class="label">Old thread</span><span class="what">'
+        if stored is not None:
+            old += (
+                '<a href="/app/threads/'
+                + escape(quote(handoff.stored_thread_id, safe=""))
+                + '">'
+                + escape(handoff.stored_thread_id)
+                + "</a>"
+                + f'<span class="muted">{stored.message_count} messages · in Memory</span>'
+            )
+        else:
+            old += '<span class="muted">not saved</span>'
+        old += "</span>" + _stamp(handoff.created_at, date=True) + "</li>"
+        middle = (
+            '<li class="step via"><span class="label">Handoff</span><span class="what">'
+            f"<code>{escape(handoff.id)}</code></span></li>"
+        )
+        new = '<li class="step"><span class="label">New thread</span><span class="what">'
+        if handoff.successor:
+            new += _safe_link(handoff.successor.url, handoff.successor.agent_ref)
+        if failed:
+            new += '<span class="warn-text">compacted instead</span>'
+        elif not handoff.successor:
+            new += '<span class="muted">waiting</span>'
+        new += "</span>"
+        if handoff.successor and handoff.completed_at:
+            started, finished = _time(handoff.created_at), _time(handoff.completed_at)
+            same_day = started and finished and started.date() == finished.date()
+            new += _stamp(handoff.completed_at, date=not same_day)
+        html += f'<ol class="timeline">{old}{middle}{new}</li></ol>'
+        return html + _preview(handoff.doc_markdown) + "</article>"
 
     def thread(self, request, session, principal):
         parts = urlsplit(request.path)

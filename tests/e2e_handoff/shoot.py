@@ -1,4 +1,4 @@
-"""Capture the five seeded UI states using Chromium, not Lightpanda.
+"""Capture the five seeded UI states, desktop and phone, using Chromium, not Lightpanda.
 
 Run from the repository root: uv run python -m tests.e2e_handoff.shoot
 The authenticated profile is acquired by redeeming a one-use develop login link.
@@ -10,15 +10,17 @@ import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
+from itertools import product
 from pathlib import Path
 
 from tests.e2e_handoff.ui_server import Browser, Devtools, stop_process, ui_server
 
 DEFAULT_OUTPUT = Path.home() / "work/mempalace-notes/handoff-system/png"
+# Name suffix and window size; the phone width is below the 760px breakpoint.
+VIEWPORTS = (("", "1440,900"), ("-phone", "390,844"))
 _FLAGS = [
     "--headless=new",
     "--hide-scrollbars",
-    "--window-size=1440,900",
     "--no-sandbox",
     "--disable-dev-shm-usage",
     "--no-first-run",
@@ -40,6 +42,7 @@ def chromium(binary, directory, profile):
             [
                 binary,
                 *_FLAGS,
+                "--window-size=1440,900",
                 f"--user-data-dir={profile}",
                 "--remote-debugging-port=0",
                 "about:blank",
@@ -93,13 +96,14 @@ def capture(output=DEFAULT_OUTPUT):
                 ("card-failed", "/app/cards/143", True),
                 ("thread", server.old_path, True),
             ]
-            for name, path, enabled in states:
+            for (name, path, enabled), (suffix, size) in product(states, VIEWPORTS):
                 server.settings(enabled, task=enabled)
-                destination = output / f"{name}.png"
+                destination = output / f"{name}{suffix}.png"
                 result = subprocess.run(
                     [
                         binary,
                         *_FLAGS,
+                        f"--window-size={size}",
                         f"--user-data-dir={profile}",
                         "--timeout=10000",
                         "--virtual-time-budget=1000",
@@ -111,7 +115,7 @@ def capture(output=DEFAULT_OUTPUT):
                     timeout=25,
                 )
                 if result.returncode or not destination.is_file():
-                    raise RuntimeError(f"Screenshot {name} failed: {result.stderr}")
+                    raise RuntimeError(f"Screenshot {name}{suffix} failed: {result.stderr}")
                 print(destination)
 
 

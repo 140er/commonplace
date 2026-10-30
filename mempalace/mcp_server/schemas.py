@@ -53,6 +53,19 @@ TOOLS = {
                     "type": "string",
                     "description": "outgoing (entity→?), incoming (?→entity), or both (default: both)",
                 },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
+                },
             },
             "required": ["entity"],
         },
@@ -89,6 +102,37 @@ TOOLS = {
                     "type": "string",
                     "description": "Drawer ID the fact was extracted from (optional, RFC 002 provenance)",
                 },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
+                },
             },
             "required": ["subject", "predicate", "object"],
         },
@@ -105,6 +149,18 @@ TOOLS = {
                 "ended": {
                     "type": "string",
                     "description": "When it stopped being true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, default: today)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "object"],
@@ -126,6 +182,37 @@ TOOLS = {
                 "at": {
                     "type": "string",
                     "description": "Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; defaults to now UTC)",
+                },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "old_object", "new_object"],
@@ -151,6 +238,19 @@ TOOLS = {
                     "type": "integer",
                     "description": "Offset for pagination (default 0)",
                     "minimum": 0,
+                },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
                 },
             },
         },
@@ -406,6 +506,20 @@ TOOLS = {
                 },
                 "source_file": {"type": "string", "description": "Where this came from (optional)"},
                 "added_by": {"type": "string", "description": "Who is filing this (default: mcp)"},
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread these words came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
             },
             "required": ["wing", "room", "content"],
         },

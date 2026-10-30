@@ -527,6 +527,8 @@ def test_handoff_request_maps_every_field_without_changing_text(hub):
         {"usage": {"used_tokens": True, "window_tokens": 100}},
         {"usage": {"used_tokens": -1, "window_tokens": 100}},
         {"usage": {"used_tokens": 1, "window_tokens": 0}},
+        {"usage": {"used_tokens": 2**63, "window_tokens": 100}},
+        {"usage": {"used_tokens": 1, "window_tokens": 10**9 + 1}},
         {"usage": {"used_tokens": 1, "window_tokens": "100"}},
         {"usage": {"used_tokens": 1, "window_tokens": 100, "model": []}},
         {"workspace_id": "forged"},

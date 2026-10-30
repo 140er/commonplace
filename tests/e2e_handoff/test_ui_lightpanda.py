@@ -193,14 +193,23 @@ def test_card_links_failure_and_verbatim_script(app, owner):
     assert owner.evaluate("document.querySelector('h1').textContent") == "#142"
     assert owner.evaluate("document.querySelector('.state').textContent") == "handed off"
     links = owner.evaluate(
-        "Array.from(document.querySelectorAll('.thread-links a')).map(link => "
+        "Array.from(document.querySelectorAll('.timeline a')).map(link => "
         "({text: link.textContent, href: link.href}))"
     )
     assert links == [
-        {"text": "Old thread", "href": app.origin + app.old_path},
+        {"text": app.old_path.rsplit("/", 1)[1], "href": app.origin + app.old_path},
         {"text": "Codex successor", "href": app.origin + app.successor_path},
     ]
-    owner.evaluate("document.querySelector('.thread-links a').click()")
+    assert owner.evaluate("document.querySelector('.meter').getAttribute('aria-valuenow')") == (
+        "162400"
+    )
+    assert owner.evaluate(
+        "Array.from(document.querySelectorAll('.preview dt')).map(node => node.textContent)"
+    ) == ["Goal", "Status"]
+    assert owner.evaluate("document.querySelector('.preview pre span').textContent") == (
+        "Finish #142 with every word preserved."
+    )
+    owner.evaluate("document.querySelector('.timeline a').click()")
     owner.wait(
         f"location.pathname === {json.dumps(app.old_path)} && document.readyState === 'complete'"
     )
@@ -212,7 +221,7 @@ def test_card_links_failure_and_verbatim_script(app, owner):
     assert owner.evaluate("document.querySelectorAll('script').length") == 0
 
     owner.navigate(app.origin + "/app/cards/142")
-    owner.evaluate("document.querySelectorAll('.thread-links a')[1].click()")
+    owner.evaluate("document.querySelectorAll('.timeline a')[1].click()")
     owner.wait(
         f"location.pathname === {json.dumps(app.successor_path)} && document.readyState === 'complete'"
     )
@@ -221,8 +230,9 @@ def test_card_links_failure_and_verbatim_script(app, owner):
     owner.navigate(app.origin + "/app/cards/143")
     assert owner.evaluate("document.querySelector('h1').textContent") == "#143"
     assert owner.evaluate("document.querySelector('.state').textContent") == "handoff failed"
-    assert owner.evaluate("document.querySelector('.handoff p').textContent") == "compacted instead"
-    assert owner.evaluate("document.querySelectorAll('.thread-links a').length") == 0
+    assert owner.evaluate("document.querySelector('.warn-text').textContent") == "compacted instead"
+    assert owner.evaluate("document.querySelectorAll('.timeline a').length") == 0
+    assert owner.evaluate("document.querySelector('.meter') === null")
 
 
 @pytest.mark.parametrize(

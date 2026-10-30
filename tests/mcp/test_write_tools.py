@@ -130,6 +130,65 @@ class TestWriteTools:
         last = kg_add_entries[-1]
         assert last["result"]["success"] is False
 
+    def test_add_drawer_records_the_chat_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        _client, col = _get_collection(palace_path, create=True)
+        del _client
+        from mempalace.mcp_server import tool_add_drawer
+
+        result = tool_add_drawer(
+            wing="w",
+            room="r",
+            content="We switched from npm to pnpm.",
+            source_thread="thread-7",
+            source_seq_start=41,
+            source_seq_end=44,
+        )
+        assert result["success"] is True
+        meta = col.get(ids=[result["drawer_id"]], include=["metadatas"])["metadatas"][0]
+        assert meta["source_thread"] == "thread-7"
+        assert (meta["source_seq_start"], meta["source_seq_end"]) == (41, 44)
+
+        plain = tool_add_drawer(wing="w", room="r", content="No source here.")
+        meta = col.get(ids=[plain["drawer_id"]], include=["metadatas"])["metadatas"][0]
+        assert "source_thread" not in meta and "source_seq_start" not in meta
+
+        thread_only = tool_add_drawer(
+            wing="w", room="r", content="Thread, no range.", source_thread="thread-8"
+        )
+        meta = col.get(ids=[thread_only["drawer_id"]], include=["metadatas"])["metadatas"][0]
+        assert meta["source_thread"] == "thread-8" and "source_seq_start" not in meta
+
+    def test_chunked_drawer_keeps_its_chat_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        _get_collection(palace_path, create=True)
+        from mempalace.mcp_server import tool_add_drawer, tool_get_drawer
+
+        content = "word " * 2000
+        result = tool_add_drawer(
+            wing="w",
+            room="r",
+            content=content,
+            source_thread="thread-7",
+            source_seq_start=1,
+            source_seq_end=9,
+        )
+        assert result["success"] is True
+        assert result["chunks"] > 1
+        got = tool_get_drawer(result["drawer_id"])
+        assert got["content"] == content
+        assert got["metadata"]["source_thread"] == "thread-7"
+        assert (got["metadata"]["source_seq_start"], got["metadata"]["source_seq_end"]) == (1, 9)
+
+    def test_add_drawer_refuses_a_bad_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        _get_collection(palace_path, create=True)
+        from mempalace.mcp_server import tool_add_drawer
+
+        result = tool_add_drawer(wing="w", room="r", content="x", source_seq_start=1)
+        assert result["success"] is False
+        assert "source_thread" in result["error"]
+
     def test_add_drawer(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _client, _col = _get_collection(palace_path, create=True)

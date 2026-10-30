@@ -83,13 +83,25 @@ input, select, button { min-height: 32px; }
 .panel { width: min(520px, 100%); overflow-y: auto; }
 .panel .top { gap: 14px; }
 .panel .tile, .panel .log { flex-shrink: 0; }
-.panel .log { overflow: visible; min-height: 100px; }
+.panel .log { flex: 1 0 auto; overflow: visible; min-height: 100px; }
 .panel .bar { flex-wrap: wrap; }
 .panel .close { margin-left: auto; padding: 2px 10px; background: var(--surface-2); }
 .panel .props { flex-wrap: wrap; }
 .panel .prose, .panel .said, .panel .hit .q { white-space: pre-wrap; overflow-wrap: anywhere; }
 .panel .hit .opts { flex-wrap: wrap; }
 .panel .hit .reply-form { flex-basis: 100%; }
+.ev.ask .hit { grid-column: 2; margin: 4px 0 6px; background: var(--surface); font-size: 13px; line-height: 20px; }
+.ev.ask .v { color: var(--muted); }
+.ev.ask.open { scroll-margin-bottom: 56px; }
+.ev.ask.open .hit { box-shadow: inset 3px 0 0 var(--accent); }
+.ev.ask.open .v { color: var(--accent); }
+.ev.ask.open:focus { outline: none; }
+.ev.ask.open:focus-visible .hit { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ev.ask.answered .q { color: var(--muted); }
+.ev.ask.answered .opt:disabled { opacity: 1; cursor: default; color: var(--quiet); }
+.ev.ask.answered .opt.go { color: var(--bg); }
+.ev.ask .said { margin: 0; background: var(--surface-2); }
+.ev.ask .stamp { margin-top: -4px; }
 .panel .linked { display: flex; flex-direction: column; gap: 4px; }
 .panel .linked a { padding: 10px; background: var(--surface-2); overflow-wrap: anywhere; }
 .panel .linked .gone { text-decoration: line-through; color: var(--muted); }
@@ -135,7 +147,7 @@ input, select, button { min-height: 32px; }
   .side { display: none; }.main { display: flex; min-height: 0; }.head { display: flex; padding: 16px; height: auto; min-height: 70px; }.head h1 { background: none; display: block; height: auto; padding: 0; font-size: 28px; line-height: 34px; }.head .right { display: flex; margin-left: auto; }
   .mtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }.mtabs a { display: flex; justify-content: center; align-items: center; min-height: 50px; font-size: 12px; background: var(--surface); }.mtabs a[aria-current] { color: var(--bg); background: var(--ink); }
   .item { padding: 16px; }.item .top { align-items: start; }.item .id { width: auto; }.trow .tt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }.item .top .meta { width: 100%; margin: 0; }.item .q, .item .opts { margin-left: 0; }.item .q { line-height: 22px; }.item .opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.item .opt { justify-content: center; min-height: 44px; }.reply-form { grid-column: 1 / -1; min-width: 0; }.reply-form input, .reply-form button { min-height: 44px; }
-  .panel { position: fixed; inset: 6px 6px 68px; width: auto; padding: 0; z-index: 10; }.panel .tile { padding: 16px; }.panel .hit { padding: 12px; }.panel .hit .opt { min-height: 44px; }.panel .log { padding: 16px; }.panel .close { min-height: 44px; }
+  .panel { position: fixed; inset: 6px 6px 68px; width: auto; padding: 0; z-index: 10; }.panel .tile { padding: 16px; }.panel .hit { padding: 12px; }.panel .hit .opt { min-height: 44px; }.panel .log { padding: 16px; }.ev.ask .hit { grid-column: 1 / -1; }.ev.ask .reply-form { flex-wrap: wrap; }.ev.ask .reply-form select { flex-basis: 100%; min-height: 44px; }.panel .close { min-height: 44px; }
   .memory-toolbar { padding: 6px; }.memory-toolbar input { min-height: 44px; }.memory-toolbar .views button { padding: 0 10px; }.legend { bottom: 6px; top: auto; flex-direction: row; max-height: none; }.stage .when { bottom: 44px; right: 6px; }.stage .legend { overflow: auto; }.legend button { min-height: 36px; }
   .cols { display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }.col { flex: none; }.col > header { height: 40px; }.cols .stack { flex: none; overflow: visible; }
   .rail { flex-direction: row; }.rail > header { width: 48px; padding: 0; align-items: center; }.rail .stack { flex: 1; flex-direction: row; padding: 0 14px; }.rail .stack button { writing-mode: horizontal-tb; transform: none; }

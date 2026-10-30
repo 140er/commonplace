@@ -146,11 +146,27 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
                 if table == "triples":
                     fact = (row["subject"], row["predicate"], row["object"])
                     window = (row["valid_from"], row["valid_to"])
+                    # A fact is the same fact only within one wing.
+                    wing = (row["wing"] if "wing" in cols else None,)
                     if found(
                         "SELECT 1 FROM triples WHERE subject = ? AND predicate = ? "
-                        "AND object = ? AND valid_from IS ? AND valid_to IS ?",
-                        fact + window,
+                        "AND object = ? AND valid_from IS ? AND valid_to IS ? AND wing IS ?",
+                        fact + window + wing,
                     ):
+                        if "sensitivity" in cols:
+                            # Keep the stricter sensitivity of the two copies.
+                            for found_row in target.execute(
+                                "SELECT id, sensitivity FROM triples WHERE subject = ? "
+                                "AND predicate = ? AND object = ? AND valid_from IS ? "
+                                "AND valid_to IS ? AND wing IS ?",
+                                fact + window + wing,
+                            ).fetchall():
+                                raised = strictest(found_row[1], row["sensitivity"])
+                                if raised != found_row[1]:
+                                    target.execute(
+                                        "UPDATE triples SET sensitivity = ? WHERE id = ?",
+                                        (raised, found_row[0]),
+                                    )
                         numbers["present"] += 1
                         continue
                     if found("SELECT 1 FROM triples WHERE id = ?", (row["id"],)):
@@ -159,8 +175,8 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
                     clash = (
                         target.execute(
                             "SELECT object FROM triples WHERE subject = ? AND predicate = ? "
-                            "AND object != ? AND valid_to IS NULL",
-                            fact,
+                            "AND object != ? AND wing IS ? AND valid_to IS NULL",
+                            fact + wing,
                         ).fetchone()
                         if row["valid_to"] is None
                         else None
@@ -221,6 +237,153 @@ def legacy_entity_id(name: str) -> str:
     """Id written before punctuation was kept. It stripped apostrophes and
     turned spaces into underscores, so distinct names could share one."""
     return (name or "").lower().replace(" ", "_").replace("'", "")
+
+
+# Lifecycle of a fact record. ``status`` says whether a fact was replaced;
+# ``valid_to`` (``current`` on reads) says whether it still holds in time. An
+# invalidated fact ended but was never replaced, so it stays ``active``.
+FACT_STATUSES = ("active", "superseded", "retracted", "expired")
+_MAX_SOURCE_THREAD_LEN = 256
+
+
+def _seq(value, field: str) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        number = value
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str) and value.strip().isdecimal():
+        number = int(value.strip())
+    else:
+        raise ValueError(f"{field} must be a whole message number")
+    if number < 0:
+        raise ValueError(f"{field} must not be negative")
+    return number
+
+
+def source_range(thread=None, seq_start=None, seq_end=None) -> tuple:
+    """Validate a fact's pointer back to the chat it came from.
+
+    Returns ``(thread, seq_start, seq_end)``. A range needs a thread; one
+    message number alone means that single message. All three may be
+    ``None`` (no source).
+    """
+    if thread is not None and not isinstance(thread, str):
+        raise ValueError("source_thread must be a string")
+    thread = (thread or "").strip() or None
+    if thread is not None:
+        if len(thread) > _MAX_SOURCE_THREAD_LEN:
+            raise ValueError("source_thread is too long")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in thread):
+            raise ValueError("source_thread contains control characters")
+    start = _seq(seq_start, "source_seq_start")
+    end = _seq(seq_end, "source_seq_end")
+    if start is None and end is not None:
+        start = end
+    elif end is None and start is not None:
+        end = start
+    if start is not None:
+        if thread is None:
+            raise ValueError("a message range needs source_thread")
+        if end < start:
+            raise ValueError("source_seq_end is before source_seq_start")
+    return thread, start, end
+
+
+# How far a fact may travel, least to most restricted. A reader sees a fact
+# only if it may read the fact's wing and its sensitivity.
+FACT_SENSITIVITIES = ("public", "internal", "private", "secret")
+DEFAULT_SENSITIVITY = "internal"
+
+
+def fact_wing(wing) -> Optional[str]:
+    """A fact's wing, or ``None`` for a fact filed before facts had wings."""
+    if wing is None:
+        return None
+    if not isinstance(wing, str):
+        raise ValueError("wing must be a string")
+    wing = wing.strip()
+    if not wing:
+        return None
+    if len(wing) > 128 or any(ord(ch) < 32 or ord(ch) == 127 for ch in wing):
+        raise ValueError("wing must be a short name without control characters")
+    return wing
+
+
+def fact_sensitivity(value) -> str:
+    if value is None or value == "":
+        return DEFAULT_SENSITIVITY
+    if value not in FACT_SENSITIVITIES:
+        raise ValueError(f"sensitivity must be one of {', '.join(FACT_SENSITIVITIES)}")
+    return value
+
+
+def strictest(*values) -> str:
+    """The most restricted of ``values`` (unset ones count as the default)."""
+    return max((fact_sensitivity(v) for v in values), key=FACT_SENSITIVITIES.index)
+
+
+def visibility(wings=None, sensitivities=None) -> tuple:
+    """Validate a read filter. ``None`` means no filter; an empty list matches nothing."""
+    out = []
+    for value, name, check in (
+        (wings, "wings", fact_wing),
+        (sensitivities, "sensitivities", fact_sensitivity),
+    ):
+        if value is None:
+            out.append(None)
+            continue
+        if isinstance(value, str) or not isinstance(value, (list, tuple)):
+            raise ValueError(f"{name} must be a list")
+        items = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"{name} must be a list of names")
+            items.append(check(item))
+        out.append(sorted(set(items)))
+    return tuple(out)
+
+
+def _sensitivity_rank(column: str) -> str:
+    cases = " ".join(f"WHEN '{name}' THEN {i}" for i, name in enumerate(FACT_SENSITIVITIES))
+    return f"(CASE {column} {cases} ELSE 1 END)"
+
+
+# SQL for an upsert: keep the stricter of the stored and the incoming sensitivity.
+_STRICTER_SENSITIVITY = (
+    f"CASE WHEN {_sensitivity_rank('excluded.sensitivity')} > "
+    f"{_sensitivity_rank('triples.sensitivity')} "
+    "THEN excluded.sensitivity ELSE triples.sensitivity END"
+)
+
+
+def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
+    """``AND`` clauses for a read filter. A fact with no wing passes no wing filter."""
+    sql, params = "", []
+    for column, allowed in (("wing", wings), ("sensitivity", sensitivities)):
+        if allowed is None:
+            continue
+        if not allowed:
+            sql += " AND 0"
+            continue
+        sql += f" AND {alias}.{column} IN ({', '.join('?' for _ in allowed)})"
+        params.extend(allowed)
+    return sql, params
+
+
+def _fact_fields(row) -> dict:
+    """The id, wing, status and chat pointer every fact read returns."""
+    return {
+        "id": row["id"],
+        "wing": row["wing"],
+        "sensitivity": row["sensitivity"] or DEFAULT_SENSITIVITY,
+        "status": row["status"] or "active",
+        "superseded_by": row["superseded_by"],
+        "source_thread": row["source_thread"],
+        "source_seq_start": row["source_seq_start"],
+        "source_seq_end": row["source_seq_end"],
+    }
 
 
 def _drop_none(props: dict) -> dict:
@@ -364,6 +527,13 @@ class KnowledgeGraph:
                 adapter_name TEXT,
                 extracted_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 hub_stamp TEXT,
+                source_thread TEXT,
+                source_seq_start INTEGER,
+                source_seq_end INTEGER,
+                status TEXT NOT NULL DEFAULT 'active',
+                superseded_by TEXT,
+                wing TEXT,
+                sensitivity TEXT NOT NULL DEFAULT 'internal',
                 FOREIGN KEY (subject) REFERENCES entities(id),
                 FOREIGN KEY (object) REFERENCES entities(id)
             );
@@ -393,6 +563,25 @@ class KnowledgeGraph:
             conn.execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT")
         if "hub_stamp" not in existing:
             conn.execute("ALTER TABLE triples ADD COLUMN hub_stamp TEXT")
+        for column, decl in (
+            ("source_thread", "TEXT"),
+            ("source_seq_start", "INTEGER"),
+            ("source_seq_end", "INTEGER"),
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("superseded_by", "TEXT"),
+            ("wing", "TEXT"),
+            ("sensitivity", "TEXT NOT NULL DEFAULT 'internal'"),
+        ):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE triples ADD COLUMN {column} {decl}")
+        # Indexes on migrated columns live here: in the CREATE script above
+        # they would fail on a legacy table that does not have them yet.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_triples_status ON triples(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_triples_wing ON triples(wing)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_triples_source_thread "
+            "ON triples(source_thread, source_seq_start)"
+        )
 
     def _conn(self):
         if self._connection is None:
@@ -476,6 +665,12 @@ class KnowledgeGraph:
         source_file: str = None,
         source_drawer_id: str = None,
         adapter_name: str = None,
+        source_thread: str = None,
+        source_seq_start: int = None,
+        source_seq_end: int = None,
+        wing: str = None,
+        sensitivity: str = None,
+        sensitivities=None,
     ):
         """
         Add a relationship triple: subject → predicate → object.
@@ -485,6 +680,16 @@ class KnowledgeGraph:
         they default to ``None`` so every existing caller stays
         source-compatible.
 
+        ``source_thread`` with ``source_seq_start``/``source_seq_end`` points
+        the fact back at the chat messages it came from (see
+        :func:`source_range`). The chat stays the record; the fact indexes it.
+
+        ``wing`` scopes the fact: a fact is the same fact only within one
+        wing, and wing-filtered reads never return another wing's facts.
+        ``sensitivity`` is one of :data:`FACT_SENSITIVITIES`.
+        ``sensitivities`` limits which stored facts count as the same one, so
+        a caller never merges into (or learns of) a fact it may not read.
+
         Examples:
             add_triple("Max", "child_of", "Alice", valid_from="2015-04-01")
             add_triple("Max", "does", "swimming", valid_from="2025-01-01")
@@ -493,6 +698,13 @@ class KnowledgeGraph:
 
         valid_from = sanitize_iso_temporal(valid_from, "valid_from")
         valid_to = sanitize_iso_temporal(valid_to, "valid_to")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         # Reject inverted intervals. Use temporal comparison keys rather than
         # raw string comparison so legacy date-only values and canonical UTC
@@ -524,10 +736,11 @@ class KnowledgeGraph:
                     (obj_id, obj),
                 )
 
-                # Check for existing identical triple
+                # Check for existing identical triple in the same wing
                 existing = conn.execute(
-                    "SELECT id FROM triples WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (sub_id, pred, obj_id),
+                    "SELECT id FROM triples WHERE subject=? AND predicate=? AND object=? "
+                    "AND wing IS ? AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchone()
                 if existing:
                     return existing["id"]  # Already exists and still valid
@@ -537,8 +750,10 @@ class KnowledgeGraph:
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end,
+                        wing, sensitivity
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -552,14 +767,34 @@ class KnowledgeGraph:
                         source_drawer_id,
                         adapter_name,
                         provenance.stamp_json(),
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
+                        wing,
+                        sensitivity,
                     ),
                 )
                 return triple_id
 
-    def invalidate(self, subject: str, predicate: str, obj: str, ended: str = None):
-        """Mark a relationship as no longer valid (set valid_to date/time)."""
+    def invalidate(
+        self,
+        subject: str,
+        predicate: str,
+        obj: str,
+        ended: str = None,
+        wing: str = None,
+        sensitivities=None,
+    ) -> int:
+        """Mark a relationship in ``wing`` as no longer valid (set valid_to date/time).
+
+        Only facts of ``sensitivities`` (``None``: any) are touched. Returns
+        how many open facts were closed.
+        """
         pred = predicate.lower().replace(" ", "_")
         ended = sanitize_iso_temporal(ended or date.today().isoformat(), "ended")
+        wing = fact_wing(wing)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         with self._lock:
             conn = self._conn()
@@ -568,8 +803,9 @@ class KnowledgeGraph:
                 obj_id = self._resolve_entity_id(conn, obj)
                 rows = conn.execute(
                     "SELECT id, valid_from FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (sub_id, pred, obj_id),
+                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchall()
 
                 for row in rows:
@@ -582,11 +818,12 @@ class KnowledgeGraph:
                             "an inverted interval would be invisible to every KG query"
                         )
 
-                conn.execute(
+                return conn.execute(
                     "UPDATE triples SET valid_to=? "
-                    "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (ended, sub_id, pred, obj_id),
-                )
+                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
+                    "AND valid_to IS NULL" + within_sql,
+                    (ended, sub_id, pred, obj_id, wing, *within_params),
+                ).rowcount
 
     def supersede(
         self,
@@ -600,6 +837,12 @@ class KnowledgeGraph:
         source_file: str = None,
         source_drawer_id: str = None,
         adapter_name: str = None,
+        source_thread: str = None,
+        source_seq_start: int = None,
+        source_seq_end: int = None,
+        wing: str = None,
+        sensitivity: str = None,
+        sensitivities=None,
     ):
         """Atomically replace one fact with another at a single shared boundary.
 
@@ -620,6 +863,13 @@ class KnowledgeGraph:
         normalized to ``<date>T00:00:00Z`` so both sides carry the same precise
         value rather than the asymmetric whole-day expansion.
 
+        The closed fact gets ``status = 'superseded'`` and ``superseded_by`` =
+        the successor's id, so a reader can walk from an old value to the new.
+
+        Only facts in ``wing`` (and of ``sensitivities``, when given) are
+        replaced, and the successor lands there. The successor is at least as
+        sensitive as the fact it replaces.
+
         Returns the new triple's id. If no open ``old_obj`` triple exists the
         successor is still opened, so ``supersede`` degrades to ``add_triple``.
         """
@@ -630,6 +880,13 @@ class KnowledgeGraph:
         else:
             boundary = at
         boundary = sanitize_iso_temporal(boundary, "at")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         pred = predicate.lower().replace(" ", "_")
 
@@ -652,10 +909,12 @@ class KnowledgeGraph:
                 # Reject a boundary that precedes the old fact's start — an
                 # inverted interval would be invisible to every KG query.
                 rows = conn.execute(
-                    "SELECT valid_from FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (sub_id, pred, old_id),
+                    "SELECT id, valid_from, sensitivity FROM triples "
+                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, old_id, wing, *within_params),
                 ).fetchall()
+                sensitivity = strictest(sensitivity, *(r["sensitivity"] for r in rows))
                 for row in rows:
                     valid_from = row["valid_from"]
                     if valid_from is not None and _temporal_end_key(boundary) < _temporal_start_key(
@@ -669,26 +928,37 @@ class KnowledgeGraph:
                 # Close the open old fact at the shared boundary.
                 conn.execute(
                     "UPDATE triples SET valid_to=? "
-                    "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (boundary, sub_id, pred, old_id),
+                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
+                    "AND valid_to IS NULL" + within_sql,
+                    (boundary, sub_id, pred, old_id, wing, *within_params),
                 )
 
                 # Open the successor at the same instant (idempotent if already open).
                 existing = conn.execute(
-                    "SELECT id FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
-                    (sub_id, pred, new_id),
+                    "SELECT id, sensitivity FROM triples "
+                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, new_id, wing, *within_params),
                 ).fetchone()
                 if existing:
-                    return existing["id"]
+                    triple_id = existing["id"]
+                    raised = strictest(sensitivity, existing["sensitivity"])
+                    if raised != existing["sensitivity"]:
+                        conn.execute(
+                            "UPDATE triples SET sensitivity=? WHERE id=?", (raised, triple_id)
+                        )
+                    self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
+                    return triple_id
 
                 triple_id = make_triple_id(sub_id, pred, new_id, boundary, utc_now_iso())
                 conn.execute(
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end,
+                        wing, sensitivity
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -702,9 +972,25 @@ class KnowledgeGraph:
                         source_drawer_id,
                         adapter_name,
                         provenance.stamp_json(),
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
+                        wing,
+                        sensitivity,
                     ),
                 )
+                self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
                 return triple_id
+
+    @staticmethod
+    def _mark_superseded(conn, old_ids, new_id):
+        """Point each replaced fact at its successor. A fact never supersedes itself."""
+        for old in old_ids:
+            if old != new_id:
+                conn.execute(
+                    "UPDATE triples SET status='superseded', superseded_by=? WHERE id=?",
+                    (new_id, old),
+                )
 
     def rewrite(
         self,
@@ -730,7 +1016,7 @@ class KnowledgeGraph:
 
         The successor inherits the original's ``confidence`` and provenance
         (``source_closet``, ``source_file``, ``source_drawer_id``,
-        ``adapter_name``): rewording a predicate is not new evidence, and a
+        ``adapter_name`` and the chat range): rewording a predicate is not new evidence, and a
         normalized fact must still point at the drawer it came from.
         ``source_file`` here is only a fallback for an original carrying none.
         """
@@ -749,7 +1035,8 @@ class KnowledgeGraph:
                 obj_id = self._resolve_entity_id(conn, obj)
                 row = conn.execute(
                     "SELECT subject, valid_from, confidence, source_closet, source_file, "
-                    "source_drawer_id, adapter_name, hub_stamp FROM triples "
+                    "source_drawer_id, adapter_name, hub_stamp, source_thread, "
+                    "source_seq_start, source_seq_end, wing, sensitivity FROM triples "
                     "WHERE id=? AND valid_to IS NULL",
                     (triple_id,),
                 ).fetchone()
@@ -776,7 +1063,9 @@ class KnowledgeGraph:
                     "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL "
                     f"AND (valid_from IS NULL OR {_sql_temporal_start_expr('valid_from')} <= ?) "
                     "AND confidence IS ? AND source_closet IS ? AND source_file IS ? "
-                    "AND source_drawer_id IS ? AND adapter_name IS ?",
+                    "AND source_drawer_id IS ? AND adapter_name IS ? "
+                    "AND source_thread IS ? AND source_seq_start IS ? AND source_seq_end IS ? "
+                    "AND wing IS ? AND sensitivity IS ?",
                     (
                         sub_id,
                         pred,
@@ -787,17 +1076,25 @@ class KnowledgeGraph:
                         row["source_file"] or source_file,
                         row["source_drawer_id"],
                         row["adapter_name"],
+                        row["source_thread"],
+                        row["source_seq_start"],
+                        row["source_seq_end"],
+                        row["wing"],
+                        row["sensitivity"],
                     ),
                 ).fetchone()
                 if existing:
+                    self._mark_superseded(conn, [triple_id], existing["id"])
                     return existing["id"]
                 new_id = make_triple_id(sub_id, pred, obj_id, boundary, utc_now_iso())
                 conn.execute(
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end,
+                        wing, sensitivity
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_id,
                         sub_id,
@@ -811,26 +1108,45 @@ class KnowledgeGraph:
                         row["source_drawer_id"],
                         row["adapter_name"],
                         row["hub_stamp"],
+                        row["source_thread"],
+                        row["source_seq_start"],
+                        row["source_seq_end"],
+                        row["wing"],
+                        row["sensitivity"],
                     ),
                 )
+                self._mark_superseded(conn, [triple_id], new_id)
                 return new_id
 
     # ── Query operations ──────────────────────────────────────────────────
 
-    def query_entity(self, name: str, as_of: str = None, direction: str = "outgoing"):
+    def query_entity(
+        self,
+        name: str,
+        as_of: str = None,
+        direction: str = "outgoing",
+        wings=None,
+        sensitivities=None,
+    ):
         """
         Get all relationships for an entity.
 
         direction: "outgoing" (entity → ?), "incoming" (? → entity), "both"
         as_of: ISO date or canonical UTC datetime — only return facts valid then
+        wings / sensitivities: only facts in these wings and of these
+        sensitivities (see :func:`visibility`); ``None`` means any
         """
         as_of = sanitize_iso_temporal(as_of, "as_of")
+        wings, sensitivities = visibility(wings, sensitivities)
         results = []
 
         temporal_sql = ""
         temporal_params = []
         if as_of:
             temporal_sql, temporal_params = _temporal_filter_sql(as_of)
+        visible_sql, visible_params = _visibility_sql(wings, sensitivities)
+        temporal_sql += visible_sql
+        temporal_params = list(temporal_params) + visible_params
 
         with self._lock:
             conn = self._conn()
@@ -855,6 +1171,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **_fact_fields(row),
                             **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
@@ -878,6 +1195,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **_fact_fields(row),
                             **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
@@ -888,7 +1206,9 @@ class KnowledgeGraph:
                     is not None
                 )
                 if not exact_exists:
-                    candidates = self._lookup_entity_candidates(conn, name, eid)
+                    candidates = self._lookup_entity_candidates(
+                        conn, name, eid, wings, sensitivities
+                    )
                     if len(candidates) == 1:
                         cand_id = candidates[0]["id"]
                         cand_name = candidates[0]["name"]
@@ -905,26 +1225,39 @@ class KnowledgeGraph:
 
         return results
 
-    def find_entity_candidates(self, name: str) -> list:
-        """Return token/prefix entity matches for disambiguation (never substring)."""
+    def find_entity_candidates(self, name: str, wings=None, sensitivities=None) -> list:
+        """Return token/prefix entity matches for disambiguation (never substring).
+
+        With a read filter, only entities that appear in a visible fact.
+        """
         if not name or len(name.strip()) < _MIN_ENTITY_CANDIDATE_LEN:
             return []
+        wings, sensitivities = visibility(wings, sensitivities)
         with self._lock:
             conn = self._conn()
             eid = self._resolve_entity_id(conn, name)
-            return self._lookup_entity_candidates(conn, name, eid)
+            return self._lookup_entity_candidates(conn, name, eid, wings, sensitivities)
 
-    def _lookup_entity_candidates(self, conn, name: str, eid: str) -> list:
+    def _lookup_entity_candidates(
+        self, conn, name: str, eid: str, wings=None, sensitivities=None
+    ) -> list:
         if not name or len(name.strip()) < _MIN_ENTITY_CANDIDATE_LEN:
             return []
         name_esc = _escape_like(name.strip())
         id_esc = _escape_like(eid)
+        visible_sql, visible_params = _visibility_sql(wings, sensitivities)
+        seen_in = ""
+        if wings is not None or sensitivities is not None:
+            seen_in = (
+                f" AND id IN (SELECT subject FROM triples t WHERE 1{visible_sql}"
+                f" UNION SELECT object FROM triples t WHERE 1{visible_sql})"
+            )
         rows = conn.execute(
-            "SELECT id, name FROM entities WHERE "
+            "SELECT id, name FROM entities WHERE ("
             "id = ? OR name = ? OR "
             "name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR "
-            "id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' "
-            "LIMIT 5",
+            "id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')"
+            f"{seen_in} LIMIT 5",
             (
                 eid,
                 name,
@@ -934,6 +1267,8 @@ class KnowledgeGraph:
                 f"{id_esc}\\_%",
                 f"%\\_{id_esc}",
                 f"%\\_{id_esc}\\_%",
+                *visible_params,
+                *visible_params,
             ),
         ).fetchall()
         out = []
@@ -964,6 +1299,7 @@ class KnowledgeGraph:
                         "confidence": row["confidence"],
                         "source_closet": row["source_closet"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         if direction in ("incoming", "both"):
@@ -983,13 +1319,15 @@ class KnowledgeGraph:
                         "confidence": row["confidence"],
                         "source_closet": row["source_closet"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         return results
 
-    def query_relationship(self, predicate: str, as_of: str = None):
+    def query_relationship(self, predicate: str, as_of: str = None, wings=None, sensitivities=None):
         """Get all triples with a given relationship type."""
         as_of = sanitize_iso_temporal(as_of, "as_of")
+        wings, sensitivities = visibility(wings, sensitivities)
         pred = predicate.lower().replace(" ", "_")
 
         query = """
@@ -1005,6 +1343,9 @@ class KnowledgeGraph:
             temporal_sql, temporal_params = _temporal_filter_sql(as_of)
             query += temporal_sql
             params.extend(temporal_params)
+        visible_sql, visible_params = _visibility_sql(wings, sensitivities)
+        query += visible_sql
+        params.extend(visible_params)
 
         results = []
         with self._lock:
@@ -1018,11 +1359,19 @@ class KnowledgeGraph:
                         "valid_from": row["valid_from"],
                         "valid_to": row["valid_to"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         return results
 
-    def timeline(self, entity_name: str = None, limit: int = 100, offset: int = 0):
+    def timeline(
+        self,
+        entity_name: str = None,
+        limit: int = 100,
+        offset: int = 0,
+        wings=None,
+        sensitivities=None,
+    ):
         """Get facts in chronological order, optionally filtered by entity.
 
         Paginated with ``limit``/``offset`` (same convention as drawer
@@ -1032,34 +1381,27 @@ class KnowledgeGraph:
         """
         limit = max(1, int(limit))
         offset = max(0, int(offset))
+        wings, sensitivities = visibility(wings, sensitivities)
+        visible_sql, visible_params = _visibility_sql(wings, sensitivities)
         with self._lock:
             conn = self._conn()
             if entity_name:
                 eid = self._resolve_entity_id(conn, entity_name)
-                rows = conn.execute(
-                    """
-                    SELECT t.*, s.name as sub_name, o.name as obj_name
-                    FROM triples t
-                    JOIN entities s ON t.subject = s.id
-                    JOIN entities o ON t.object = o.id
-                    WHERE (t.subject = ? OR t.object = ?)
-                    ORDER BY t.valid_from ASC NULLS LAST, t.id ASC
-                    LIMIT ? OFFSET ?
-                """,
-                    (eid, eid, limit, offset),
-                ).fetchall()
+                where, params = "(t.subject = ? OR t.object = ?)", [eid, eid]
             else:
-                rows = conn.execute(
-                    """
-                    SELECT t.*, s.name as sub_name, o.name as obj_name
-                    FROM triples t
-                    JOIN entities s ON t.subject = s.id
-                    JOIN entities o ON t.object = o.id
-                    ORDER BY t.valid_from ASC NULLS LAST, t.id ASC
-                    LIMIT ? OFFSET ?
-                """,
-                    (limit, offset),
-                ).fetchall()
+                where, params = "1", []
+            rows = conn.execute(
+                f"""
+                SELECT t.*, s.name as sub_name, o.name as obj_name
+                FROM triples t
+                JOIN entities s ON t.subject = s.id
+                JOIN entities o ON t.object = o.id
+                WHERE {where}{visible_sql}
+                ORDER BY t.valid_from ASC NULLS LAST, t.id ASC
+                LIMIT ? OFFSET ?
+            """,
+                (*params, *visible_params, limit, offset),
+            ).fetchall()
 
         return [
             {
@@ -1069,22 +1411,26 @@ class KnowledgeGraph:
                 "valid_from": r["valid_from"],
                 "valid_to": r["valid_to"],
                 "current": r["valid_to"] is None,
+                **_fact_fields(r),
             }
             for r in rows
         ]
 
-    def timeline_total(self, entity_name: str = None) -> int:
+    def timeline_total(self, entity_name: str = None, wings=None, sensitivities=None) -> int:
         """Total number of facts a :meth:`timeline` query matches (all pages)."""
+        wings, sensitivities = visibility(wings, sensitivities)
+        visible_sql, visible_params = _visibility_sql(wings, sensitivities)
         with self._lock:
             conn = self._conn()
             if entity_name:
                 eid = self._resolve_entity_id(conn, entity_name)
-                row = conn.execute(
-                    "SELECT COUNT(*) FROM triples WHERE subject = ? OR object = ?",
-                    (eid, eid),
-                ).fetchone()
+                where, params = "(t.subject = ? OR t.object = ?)", [eid, eid]
             else:
-                row = conn.execute("SELECT COUNT(*) FROM triples").fetchone()
+                where, params = "1", []
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM triples t WHERE {where}{visible_sql}",
+                (*params, *visible_params),
+            ).fetchone()
         return row[0]
 
     # ── Stats ─────────────────────────────────────────────────────────────
@@ -1106,6 +1452,13 @@ class KnowledgeGraph:
             "source_drawer_id",
             "adapter_name",
             "extracted_at",
+            "source_thread",
+            "source_seq_start",
+            "source_seq_end",
+            "status",
+            "superseded_by",
+            "wing",
+            "sensitivity",
         ),
     }
 
@@ -1139,13 +1492,28 @@ class KnowledgeGraph:
             raise ValueError(f"table must be one of {sorted(self._REPLICATION_TABLES)}")
         if not row.get("id"):
             raise ValueError("replicated row is missing 'id'")
-        values = [row.get(col) for col in columns]
+        # A peer that predates a column sends no key for it. Leave the local
+        # value alone then, so an older replica cannot erase a supersede link.
+        sent = [col for col in columns if col in row]
+        values = [row[col] for col in sent]
+        for col, default in (("status", "active"), ("sensitivity", DEFAULT_SENSITIVITY)):
+            if col in sent and values[sent.index(col)] is None:
+                values[sent.index(col)] = default
+        updates = ", ".join(
+            # A stale peer must not lower how far a fact may travel.
+            f"sensitivity = {_STRICTER_SENSITIVITY}"
+            if col == "sensitivity" and table == "triples"
+            else f"{col} = excluded.{col}"
+            for col in sent
+            if col != "id"
+        )
         with self._lock:
             conn = self._conn()
             with conn:
                 conn.execute(
-                    f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
-                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    f"INSERT INTO {table} ({', '.join(sent)}) "
+                    f"VALUES ({', '.join('?' for _ in sent)}) "
+                    f"ON CONFLICT(id) DO UPDATE SET {updates}",
                     values,
                 )
 
@@ -1164,12 +1532,19 @@ class KnowledgeGraph:
                     "SELECT DISTINCT predicate FROM triples ORDER BY predicate"
                 ).fetchall()
             ]
+            wings = [
+                r["wing"]
+                for r in conn.execute(
+                    "SELECT DISTINCT wing FROM triples WHERE wing IS NOT NULL ORDER BY wing"
+                ).fetchall()
+            ]
         return {
             "entities": entities,
             "triples": triples,
             "current_facts": current,
             "expired_facts": expired,
             "relationship_types": predicates,
+            "wings": wings,
         }
 
     # ── Seed from known facts ─────────────────────────────────────────────
