@@ -20,7 +20,7 @@ HOOK = ROOT / "backup-hook.sh"
 def test_image_installs_repo_and_runs_as_nonroot():
     text = DOCKERFILE.read_text()
     assert text.startswith("FROM python:3.12-slim\n")
-    assert "RUN pip install .\n" in text
+    assert 'RUN pip install ".[commonplace]"\n' in text
     users = re.findall(r"^USER (.+)$", text, re.MULTILINE)
     assert users == ["10001:10001"]
     assert "COMMONPLACE_DATA=/data" in text
