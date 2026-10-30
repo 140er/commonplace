@@ -489,6 +489,7 @@ def test_append_failure_rolls_back_then_retry_mirrors_new_tail(harness, monkeypa
         palace_mirror, "mirror", lambda call, principal, stored, chunks: mirrored.extend(chunks)
     )
     result = harness.ctx.service.run(harness.principal, body)
+    harness.ctx.service.wait_for_mirrors(timeout=10)
     assert result.handoff == first.handoff
     assert not result.launch
     assert any("uniqueaddedfact" in chunk.text for chunk in mirrored)
