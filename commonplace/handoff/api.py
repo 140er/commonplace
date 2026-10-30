@@ -91,8 +91,12 @@ def _text(data: dict, key: str, default="", *, required: bool = False) -> str:
     return value
 
 
-def _integer(value, name: str, minimum: int = 0) -> int:
-    if type(value) is not int or value < minimum:
+# Far past any model's context window; keeps stored counts inside SQLite's int64.
+_MAX_TOKENS = 1_000_000_000
+
+
+def _integer(value, name: str, minimum: int = 0, maximum: int = _MAX_TOKENS) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
         raise _RequestError(400, f"invalid {name}")
     return value
 

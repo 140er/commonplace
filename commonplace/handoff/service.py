@@ -153,6 +153,8 @@ class HandoffService:
                     meta,
                     connection_id=principal.connection_id,
                     lease_token=lease_token,
+                    usage=request.usage,
+                    threshold=settings.threshold,
                 )
                 if not created and not self._can_reuse(principal, handoff):
                     return HandoffResult("compact", reason="in progress")

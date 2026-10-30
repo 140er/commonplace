@@ -18,7 +18,7 @@ def quoted(value):
 
 
 def line(c):
-    result = f"#{c['number']} {c['status']}  {quoted(c['title'])}"
+    result = f"#{c['number']} {c['status']} need:{c['need']}  {quoted(c['title'])}"
     if c["assignee"]:
         result += f"  {c['assignee']}"
     if c["claim_until"]:

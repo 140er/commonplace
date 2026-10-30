@@ -21,8 +21,15 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from commonplace import sessions
-from commonplace.handoff.models import SettingRow, SuccessorRef, ThreadMessage, ThreadMeta
+from commonplace.handoff.models import (
+    ContextUsage,
+    SettingRow,
+    SuccessorRef,
+    ThreadMessage,
+    ThreadMeta,
+)
 from commonplace.handoff.wiring import install
+from commonplace.handoff.writer import build_doc, render_markdown
 from tests._commonplace_helpers import Hub
 
 SCRIPT_MESSAGE = '\n<script>window.handoffExecuted = "ran";</script>\r\n<&> "quoted" — café\n'
@@ -70,15 +77,11 @@ class UIServer:
     def _seed(self):
         principal = self.hub.gateway.authenticate(f"Bearer {self.owner_token}")
         store = self.ctx.store_for(self.hub.workspace)
-        old = store.store(
-            self.hub.workspace,
-            "ui-old-thread",
-            [
-                ThreadMessage(0, "user", "message", "Finish #142 with every word preserved.", "{}"),
-                ThreadMessage(1, "assistant", "message", SCRIPT_MESSAGE, SCRIPT_MESSAGE),
-            ],
-            actor=principal.actor,
-        )
+        messages = [
+            ThreadMessage(0, "user", "message", "Finish #142 with every word preserved.", "{}"),
+            ThreadMessage(1, "assistant", "message", SCRIPT_MESSAGE, SCRIPT_MESSAGE),
+        ]
+        old = store.store(self.hub.workspace, "ui-old-thread", messages, actor=principal.actor)
         successor = store.store(
             self.hub.workspace,
             "ui-successor-thread",
@@ -88,15 +91,21 @@ class UIServer:
         )
         self.old_path = f"/app/threads/{old.id}"
         self.successor_path = f"/app/threads/{successor.id}"
+        meta = ThreadMeta(
+            "ui-old-thread", agent="Codex", task_ref="#142", branch="feat/context-handoff"
+        )
         done, _ = self.ctx.handoff_db.begin(
             self.hub.workspace,
             "ui-done",
-            ThreadMeta(
-                "ui-old-thread", agent="Codex", task_ref="#142", branch="feat/context-handoff"
-            ),
+            meta,
             connection_id=principal.connection_id,
+            usage=ContextUsage(162_400, 200_000),
+            threshold=0.8,
         )
-        self.ctx.handoff_db.mark_stored(done.id, old.id, "Continue #142.")
+        self.doc = render_markdown(
+            build_doc(messages, meta, stored_thread_id=old.id, handoff_id=done.id)
+        )
+        self.ctx.handoff_db.mark_stored(done.id, old.id, self.doc)
         self.ctx.handoff_db.set_successor(
             done.id,
             SuccessorRef("Codex successor", self.origin + self.successor_path, successor.id),
