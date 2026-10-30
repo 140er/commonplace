@@ -110,10 +110,15 @@ def _kg_import_legacy(args, config):
     if conflicts:
         print(
             f"\n  {len(conflicts)} current fact(s) not copied or superseded: a different current value or "
-            "an approved target fact prevents the imported change. Review these facts:"
+            "an approved or already claimed target fact prevents the imported change. Review these facts:"
         )
         for c in conflicts:
-            reason = " (approved target kept open)" if c.get("reason") == "approved_target" else ""
+            reason = " (approved target kept as is)" if c.get("reason") == "approved_target" else ""
+            if c.get("reason") == "target_already_claimed":
+                reason = (
+                    f" (target {c['target_id']} already claimed by {c['claimed_by']}; "
+                    f"skipped {c['id']})"
+                )
             print(
                 f"    {c['subject']} | {c['predicate']} | {c['object']} "
                 f"(here: {c['current_object']}){reason}"

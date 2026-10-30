@@ -188,7 +188,16 @@ def _identical_triples(conn, row, *, allow_superseded_end=False):
         f"SELECT * FROM triples WHERE {where} AND valid_to IS NULL AND status='active' LIMIT 2",
         args,
     ).fetchall()
-    return opened if len(opened) == 1 else []
+    if len(opened) != 1:
+        return []
+    # Equal ids identify the same instance even when its history diverged.
+    # A different open row is a reassertion, not a destination for that history.
+    if (
+        opened[0]["id"] != row.get("id")
+        and conn.execute("SELECT 1 FROM triples WHERE id=?", (row.get("id"),)).fetchone()
+    ):
+        return []
+    return opened
 
 
 def _import_triples(conn, rows):
@@ -204,6 +213,7 @@ def _import_triples(conn, rows):
     }
     by_id = {r["id"]: r for r in rows}
     id_map, links, pending_ends = {}, [], {}
+    claimed = {}
     # Stage history first. A current successor may replace only the open rows
     # waiting for that very successor; carry their ends after it is accepted.
     for raw in sorted(rows, key=lambda r: r.get("valid_to") is None):
@@ -211,6 +221,19 @@ def _import_triples(conn, rows):
         same = _identical_triples(conn, row, allow_superseded_end=True)
         if same:
             existing = same[0]
+            if existing["id"] in claimed:
+                numbers["conflicts"].append(
+                    {
+                        **{k: row[k] for k in ("subject", "predicate", "object")},
+                        "id": row["id"],
+                        "target_id": existing["id"],
+                        "current_object": existing["object"],
+                        "reason": "target_already_claimed",
+                        "claimed_by": claimed[existing["id"]],
+                    }
+                )
+                continue
+            claimed[existing["id"]] = row["id"]
             id_map[row["id"]] = existing["id"]
             _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends)
             _carry_imported_ends(conn, pending_ends, id_map, numbers, row.get("superseded_by"))
@@ -241,6 +264,7 @@ def _import_triples(conn, rows):
         row["superseded_by"] = None
         _insert_import_row(conn, "triples", row)
         id_map[row["id"]] = row["id"]
+        claimed[row["id"]] = row["id"]
         numbers["added"] += 1
         if successor:
             links.append((row["id"], row["id"], successor))
@@ -399,6 +423,21 @@ _REPLICATED_AUTHORSHIP = {
 }
 
 
+def _replicated_lifecycle_regresses(existing, row):
+    if existing is None:
+        return False
+    # Once an end or successor is known it is history, not a peer-editable
+    # field. Missing keys from old peers still leave the stored value alone.
+    for column in ("valid_to", "superseded_by"):
+        if existing[column] is not None and column in row and row[column] != existing[column]:
+            return True
+    return (
+        existing["status"] != "active"
+        and "status" in row
+        and (row["status"] or "active") != existing["status"]
+    )
+
+
 def _prepare_replicated_triple(conn, incoming):
     """Validate peer authority and links against the local row before any write."""
     row = dict(incoming)
@@ -420,6 +459,8 @@ def _prepare_replicated_triple(conn, incoming):
     )
     if successor_id and successor is None:
         report["unresolved_links"].append({"id": row["id"], "superseded_by": successor_id})
+    if _replicated_lifecycle_regresses(existing, row):
+        return row, {**report, "applied": False, "reason": "lifecycle_regression"}
     lifecycle_changed = existing is not None and any(
         c in row and row[c] != existing[c] for c in ("status", "valid_to", "superseded_by")
     )
@@ -2200,7 +2241,9 @@ class KnowledgeGraph:
         """Apply a peer row and return an ``applied`` flag and any skip reason.
 
         Existing fact identity, authorship, first source and approval proof are
-        retained. Only person-approved peer evidence may change an approved
+        retained. Set end dates and successor links are never replaced or
+        cleared, and non-active statuses are not rewritten. Only person-approved
+        peer evidence may advance an approved
         fact's lifecycle. Missing successor links are omitted and reported;
         an open target stays open until its successor resolves. Retry those
         rows after applying their dependencies.

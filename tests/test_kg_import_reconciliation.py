@@ -1,8 +1,10 @@
 """Stale histories and peer snapshots must preserve each local fact instance."""
 
+import argparse
+
 import pytest
 
-from mempalace import fact_provenance, provenance
+from mempalace import fact_provenance, paths, provenance
 from mempalace.knowledge_graph import KnowledgeGraph, import_graph_rows
 
 AGENT = {
@@ -337,3 +339,225 @@ def test_replication_skips_an_orphan_observation_and_continues_to_the_next_row()
         assert reports[1]["applied"] and reports[1]["triple_id"] == known
         assert target.sources([known])[known] == source.sources([known])[known]
         assert len(target.dump_rows("fact_sources")) == 1
+
+
+@pytest.mark.parametrize(
+    "source_person, current_person",
+    [(False, False), (True, True), (True, False)],
+    ids=["divergent-history", "approved-divergence", "no-approval-transfer"],
+)
+def test_import_reports_its_divergent_instance_instead_of_matching_a_reassertion(
+    tmp_path, source_person, current_person
+):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        with provenance.verified(PERSON if source_person else AGENT):
+            old = _save(source)
+        source._conn().backup(target._conn())
+        with provenance.verified(PERSON if source_person else AGENT):
+            target.invalidate("Alice", "works_at", "Acme", ended="2026-02-01", wing="shared")
+        with provenance.verified(PERSON if current_person else AGENT):
+            current = _save(target, thread="mcp:reasserted")
+        before = {tid: _row(target, tid) for tid in (old, current)}
+        observed = target.sources([old, current])
+        with provenance.verified(PERSON if source_person else AGENT):
+            _save(source, "Beta", start="2026-03-01", thread="mcp:beta")
+        source._conn().execute(
+            "INSERT INTO fact_sources (triple_id, source_thread, added_at) VALUES (?, ?, ?)",
+            (old, "mcp:extra-history", "2026-01-01T00:00:00Z"),
+        )
+        source._conn().commit()
+        assert before[current]["valid_from"] == _row(source, old)["valid_from"] is None
+
+    preview = import_graph_rows(src, dst)
+    applied = import_graph_rows(src, dst, apply=True)
+
+    assert applied == preview
+    assert applied["triples"]["id_conflicts"] == [old]
+    assert applied["triples"]["added"] == applied["triples"]["present"] == 0
+    assert applied["triples"]["superseded"] == 0
+    assert applied["fact_sources"]["added"] == 0
+    assert len(applied["fact_sources"]["skipped"]) == 3
+    with KnowledgeGraph(dst) as target:
+        assert {tid: _row(target, tid) for tid in (old, current)} == before
+        assert target.sources([old, current]) == observed
+        assert [f["id"] for f in target.query_entity("Alice") if f["current"]] == [current]
+
+
+def _seed_rows(kg, rows):
+    conn = kg._conn()
+    with conn:
+        for entity in {r[i] for r in rows for i in (1, 3)}:
+            conn.execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)", (entity, entity)
+            )
+        conn.executemany(
+            "INSERT INTO triples (id, subject, predicate, object, valid_from, valid_to, status, "
+            "superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+
+@pytest.mark.parametrize("exact", [False, True], ids=["pending-open-end", "exact-history"])
+def test_import_reports_a_second_source_claim_without_rewriting_the_first(tmp_path, exact):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    # Put both Acme instances before either successor, reproducing snapshots
+    # whose row order differs from the order in which the facts were filed.
+    first = ("t_a1", "alice", "works_at", "acme", None, "2026-03-01", "superseded", "t_b1")
+    beta = ("t_b1", "alice", "works_at", "beta", "2026-03-01", "2026-04-01", "active", None)
+    second_end = "2026-03-01" if exact else "2026-05-01"
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        _seed_rows(
+            source,
+            [
+                first,
+                ("t_a3", "alice", "works_at", "acme", None, second_end, "superseded", "t_g1"),
+                beta,
+                ("t_g1", "alice", "works_at", "gamma", "2026-05-01", None, "active", None),
+            ],
+        )
+        _seed_rows(
+            target,
+            [first, beta]
+            if exact
+            else [
+                ("t_a1", "alice", "works_at", "acme", None, None, "active", None),
+            ],
+        )
+        source._conn().execute(
+            "UPDATE triples SET approval_status='approved', approved_by='person-a', "
+            "approval_link='/app/threads/thr_approval' WHERE id='t_a3'"
+        )
+        source._conn().executemany(
+            "INSERT INTO fact_sources (triple_id, source_thread, added_at, approval_status, "
+            "approved_by, approval_link) VALUES (?, ?, '2026-01-01', ?, ?, ?)",
+            [
+                ("t_a1", "mcp:first", "unknown", None, None),
+                ("t_a3", "mcp:second", "approved", "person-a", "/app/threads/thr_approval"),
+            ],
+        )
+        source._conn().commit()
+
+    preview = import_graph_rows(src, dst)
+    applied = import_graph_rows(src, dst, apply=True)
+
+    assert applied == preview
+    assert applied["triples"]["superseded"] == int(not exact)
+    [conflict] = applied["triples"]["conflicts"]
+    assert conflict["reason"] == "target_already_claimed"
+    assert conflict["id"] == "t_a3" and conflict["target_id"] == conflict["claimed_by"] == "t_a1"
+    assert applied["fact_sources"]["skipped"] == [2]
+    with KnowledgeGraph(dst) as target:
+        old = _row(target, "t_a1")
+        assert old["valid_to"] == "2026-03-01" and old["superseded_by"] == "t_b1"
+        assert old["approval_status"] == "unknown"
+        assert [s["source_thread"] for s in target.sources(["t_a1"])["t_a1"]] == ["mcp:first"]
+        assert not target._conn().execute("SELECT 1 FROM triples WHERE id='t_a3'").fetchone()
+
+
+@pytest.mark.parametrize("approved", [False, True], ids=["proposal", "approved"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "stale",
+        "reopen",
+        "clear-successor",
+        "reactivate",
+        "extend-end",
+        "shorten-end",
+        "replace-successor",
+    ],
+)
+def test_replication_rejects_changes_to_an_established_end_or_successor(approved, change):
+    with KnowledgeGraph.empty() as target:
+        with provenance.verified(PERSON if approved else AGENT):
+            old = _save(target)
+            stale = target.dump_rows("triples")[0]
+            successor = _save(target, "Beta", start="2026-03-01", thread="mcp:beta")
+        before = _row(target, old)
+        peer = next(row for row in target.dump_rows("triples") if row["id"] == old)
+        if change == "stale":
+            peer = stale
+        elif change == "reopen":
+            peer["valid_to"] = None
+        elif change == "clear-successor":
+            peer["superseded_by"] = None
+        elif change == "reactivate":
+            peer["status"] = "active"
+        elif change == "extend-end":
+            peer["valid_to"] = "2026-04-01"
+        elif change == "shorten-end":
+            peer["valid_to"] = "2026-02-01"
+        else:
+            peer["superseded_by"] = "another-successor"
+        report = target.apply_row("triples", peer)
+        assert not report["applied"] and report["reason"] == "lifecycle_regression"
+        assert _row(target, old) == before
+        assert [f["id"] for f in target.query_entity("Alice") if f["current"]] == [successor]
+
+
+def test_replication_can_complete_an_invalidation_without_replacing_its_end():
+    with KnowledgeGraph.empty() as target, provenance.verified(PERSON):
+        old = _save(target)
+        target.invalidate("Alice", "works_at", "Acme", ended="2026-03-01", wing="shared")
+        successor = target.add_triple(
+            "Alice", "works_at", "Beta", wing="shared", source_thread="mcp:beta"
+        )
+        before = _row(target, old)
+        peer = next(row for row in target.dump_rows("triples") if row["id"] == old)
+        peer.update(status="superseded", superseded_by=successor)
+        assert target.apply_row("triples", peer)["applied"]
+        after = _row(target, old)
+        assert after["valid_to"] == before["valid_to"]
+        assert after["status"] == "superseded" and after["superseded_by"] == successor
+        for column in fact_provenance.COLUMNS:
+            assert after[column] == before[column]
+
+
+def test_replication_from_an_old_peer_without_lifecycle_keys_keeps_local_history():
+    with KnowledgeGraph.empty() as target, provenance.verified(PERSON):
+        old = _save(target)
+        _save(target, "Beta", start="2026-03-01", thread="mcp:beta")
+        before = _row(target, old)
+        peer = next(row for row in target.dump_rows("triples") if row["id"] == old)
+        for column in ("status", "valid_to", "superseded_by", *fact_provenance.COLUMNS):
+            peer.pop(column)
+        assert target.apply_row("triples", peer)["applied"]
+        assert _row(target, old) == before
+
+
+@pytest.mark.parametrize("apply", [False, True], ids=["preview", "apply"])
+def test_cli_labels_an_already_closed_approved_conflict_accurately(tmp_path, capsys, apply):
+    from mempalace.cli import cmd_kg
+
+    src = str(tmp_path / "source.db")
+    palace = tmp_path / "palace"
+    dst = str(palace / paths.KNOWLEDGE_GRAPH_FILENAME)
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        with provenance.verified(AGENT):
+            old = _save(source)
+        source._conn().backup(target._conn())
+        with provenance.verified(PERSON):
+            _save(target, thread="mcp:approval")
+            target.invalidate(
+                "Alice",
+                "works_at",
+                "Acme",
+                ended="2026-03-01T00:00:00Z",
+                wing="shared",
+            )
+        with provenance.verified(AGENT):
+            _save(source, "Beta", start="2026-03-01", thread="mcp:beta")
+        before = _row(target, old)
+    cmd_kg(
+        argparse.Namespace(
+            kg_action="import-legacy",
+            palace=str(palace),
+            source=src,
+            yes=apply,
+        )
+    )
+    output = capsys.readouterr().out
+    assert "approved target kept as is" in output and "approved target kept open" not in output
+    with KnowledgeGraph(dst) as target:
+        assert _row(target, old) == before
