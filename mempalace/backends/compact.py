@@ -194,7 +194,7 @@ class CompactCollection(SQLiteExactCollection):
         for row in cur.execute(
             "SELECT document FROM documents WHERE collection_id=? ORDER BY rowid", (cid,)
         ):
-            raw = zstd.ZstdDecompressor().decompress(row[0])[: _SAMPLE_CAP - size]
+            raw = zstd.ZstdDecompressor().decompress(row[0])[: min(8192, _SAMPLE_CAP - size)]
             if raw:
                 samples.append(raw)
                 size += len(raw)

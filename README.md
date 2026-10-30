@@ -216,7 +216,10 @@ passthrough. The reserved `_mempalace_keyword_only` metadata marker belongs to
 the internal write API; marked rows remain available to get and lexical search
 and are skipped by vector search and embedding during updates and rebuilds.
 Config `backend` takes priority over `MEMPALACE_BACKEND`; `--backend` takes
-priority over both. Chroma remains the default.
+priority over both. Chroma remains the default. For compact, `repair` and
+`repair rebuild-index` atomically rebuild derived indexes while preserving
+keyword-only records; `migrate` checks the current schema without writing.
+Chroma-specific recovery and archive options are refused.
 
 ### Native vector search
 

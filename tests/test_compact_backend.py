@@ -368,3 +368,91 @@ def test_recent_hydrates_only_newest_rows(compact, monkeypatch):
     assert got.documents == ["keyword", "new"]
     assert got.embeddings == [None, [0, 1]]
     assert len(seen) == 2
+
+
+@pytest.mark.parametrize("command", [["repair"], ["repair", "rebuild-index"], ["migrate"]])
+def test_compact_cli_maintenance_keeps_keyword_only(compact, monkeypatch, command):
+    from mempalace import cli
+
+    _, ref, col = compact
+    col.add(
+        ids=["k", "v"],
+        documents=["keyword", "vector"],
+        metadatas=[{KEYWORD_ONLY: True}, {}],
+        embeddings=[None, [1, 0]],
+    )
+    seen = []
+
+    def embed(texts, **kwargs):
+        seen.extend(texts)
+        return [[0, 1] for _ in texts]
+
+    monkeypatch.setattr("mempalace.backends.embedding_wrapper._embed_texts", embed)
+    monkeypatch.setenv("MEMPALACE_BACKEND", "")
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", "")
+    monkeypatch.setattr(
+        sys, "argv", ["mempalace", "--palace", ref.local_path, "--backend", "compact", *command]
+    )
+    cli.main()
+    assert seen == ([] if command == ["migrate"] else ["vector"])
+    assert col.get(ids=["k"], include=["embeddings"]).embeddings == [None]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--mode", "from-sqlite"],
+        ["--mode", "max-seq-id"],
+        ["--archive-existing"],
+        ["rebuild-index", "--archive-existing"],
+    ],
+)
+def test_compact_cli_refuses_chroma_recovery_modes(compact, monkeypatch, capsys, options):
+    from mempalace import cli
+
+    _, ref, _ = compact
+    monkeypatch.setenv("MEMPALACE_BACKEND", "")
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mempalace", "--palace", ref.local_path, "--backend", "compact", "repair", *options],
+    )
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    assert error.value.code == 2
+    assert "require Chroma" in capsys.readouterr().err
+
+
+def test_compact_cli_repair_dry_run_never_embeds(compact, monkeypatch):
+    from mempalace import cli
+
+    _, ref, col = compact
+    col.add(ids=["k"], documents=["keyword"], metadatas=[{KEYWORD_ONLY: True}])
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("dry run tried to embed")
+
+    monkeypatch.setattr("mempalace.backends.embedding_wrapper._embed_texts", unexpected)
+    monkeypatch.setenv("MEMPALACE_BACKEND", "")
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", "")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mempalace", "--palace", ref.local_path, "--backend", "compact", "repair", "--dry-run"],
+    )
+    cli.main()
+    assert col.get().documents == ["keyword"]
+
+
+def test_current_schema_migrate_is_read_only(compact, monkeypatch):
+    from mempalace.migrate import migrate
+
+    _, ref, col = compact
+    col.add(ids=["k"], documents=["keyword"], metadatas=[{KEYWORD_ONLY: True}])
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("current compact schema check tried to initialize storage")
+
+    monkeypatch.setattr(CompactBackend, "_init_schema", unexpected)
+    assert migrate(ref.local_path, dry_run=True)

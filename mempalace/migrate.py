@@ -237,11 +237,14 @@ def migrate(palace_path: str, dry_run: bool = False, confirm: bool = False):
     from .backends.compact import CompactBackend
 
     if CompactBackend.detect(palace_path):
+        from .palace import resolve_backend_name
+
+        resolve_backend_name(palace_path)
         # This command upgrades Chroma versions. Compact validates its own
         # schema on open and must never be sent through a Chroma rebuild.
         backend = CompactBackend()
         try:
-            backend._connect(palace_path, create=False)
+            backend._connect(palace_path, create=False, read_only=True)
             print("  Compact schema is current; no migration needed.")
             return True
         finally:
