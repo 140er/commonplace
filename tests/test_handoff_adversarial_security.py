@@ -1,5 +1,7 @@
 """Adversarial security checks against a loopback gateway, without Memory workers."""
 
+import hashlib
+import hmac
 import http.client
 import http.server
 import json
@@ -12,11 +14,11 @@ from urllib.parse import urlencode
 
 import pytest
 
+from commonplace import events as hub_events, sessions, webhooks
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
-from commonplace.handoff import api, events, launchers, writer
+from commonplace.handoff import api, launchers, writer
 from commonplace.handoff.models import (
-    EVENTS,
     HandoffDoc,
     HandoffRequest,
     LauncherConfig,
@@ -58,10 +60,13 @@ class SecurityHub:
             self.token(name, **options)
         self.db.revoke(self.connections["revoked"], actor=self.owner)
         self.gateway = Gateway(self.db, SimpleNamespace())
+        # Drive the hub dispatcher explicitly to keep delivery checks deterministic.
+        webhooks.stop(self.gateway)
+        self.gateway.rate_limits = False
         self.gateway.mediator.workers = SimpleNamespace(
             post=lambda principal, request: {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}
         )
-        self.ctx = install(self.gateway, path, start_outbox=False)
+        self.ctx = install(self.gateway, path)
         self.ctx.service.call_tool = None
         self.ctx.recall._call_tool = None
         self.ctx.settings.set(
@@ -69,10 +74,14 @@ class SecurityHub:
             actor="test",
             is_owner=True,
         )
-        self.ctx.handoff_db.add_webhook(
-            self.workspace, "http://127.0.0.1/wake", SECRET_MARKER, EVENTS, actor="test"
-        )
         self.principal = self.db.authenticate_token(self.tokens["owner"])
+        self.webhook = webhooks.add(
+            self.db,
+            sessions.person_principal(self.db, self.owner, self.workspace),
+            "http://127.0.0.1/wake",
+            kinds="handoff",
+            auth=SECRET_MARKER,
+        )
         self.record = self.create("seed", TEXT_MARKER)
         self.thread_id = self.record.stored_thread_id
         self.hidden = self.create("hidden", "hidden transcript")
@@ -144,27 +153,15 @@ class SecurityHub:
         status, body, _ = self.request("POST", "/mcp", request, token=token)
         return status, json.loads(body)
 
-    def login(self, token="owner", *, headers=None):
+    def login(self, user="owner", *, workspace=None, headers=None):
+        link = sessions.create_login_link(self.db, getattr(self, user), workspace or self.workspace)
         status, body, response_headers = self.request(
-            "GET", "/app/login", token=None, headers=headers
+            "GET", "/app/login?" + urlencode({"t": link}), token=None, headers=headers
         )
-        assert status == 200
-        anonymous = response_headers["Set-Cookie"].split(";", 1)[0]
-        csrf = re.search(r'name="csrf" value="([a-f0-9]+)"', body)[1]
-        status, body, response_headers = self.request(
-            "POST",
-            "/app/login",
-            urlencode({"csrf": csrf, "token": self.tokens[token]}),
-            token=None,
-            headers={
-                "Cookie": anonymous,
-                "Content-Type": "application/x-www-form-urlencoded",
-                **(headers or {}),
-            },
-        )
-        assert status == 303, body
+        assert status == 302, body
         cookie = response_headers["Set-Cookie"].split(";", 1)[0]
-        return anonymous, cookie, response_headers
+        assert cookie.startswith("cmmn_session=")
+        return link, cookie, response_headers
 
     def close(self):
         self.server.shutdown()
@@ -245,19 +242,80 @@ def test_tool_discovery_and_calls(security, token):
 
         found, absent = call(security.thread_id), call("thr_deadbeef")
         if token == "member":
+            assert found[0] == 200 and not found[1]["result"].get("isError")
             assert (
                 TEXT_MARKER in json.dumps(found)
                 if name != "thread_chain"
                 else "threads" in json.dumps(found)
             )
+            assert absent == (
+                200,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "content": [{"type": "text", "text": "no: thread not found"}],
+                        "isError": True,
+                    },
+                },
+            )
+            assert call(security.hidden.stored_thread_id) == absent
         else:
             assert found == absent
             assert TEXT_MARKER not in json.dumps(found)
+            if token == "revoked":
+                assert found == (401, {"error": "unauthorized"})
+            else:
+                assert found == (
+                    200,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": {"code": -32601, "message": f"Unknown tool: {name}"},
+                    },
+                )
 
 
-@pytest.mark.parametrize("token", ["missing", "slim", "untrusted", "foreign", "member"])
-def test_app_reads_honor_token_policy(security, token):
-    _, cookie, _ = security.login(token)
+def test_enabled_foreign_workspace_tools_conceal_source_threads(security):
+    workspace = security.db.create_workspace("foreign-enabled", security.owner)
+    security.token("foreign-enabled", workspace=workspace)
+    security.ctx.settings.set(
+        SettingRow(workspace, "workspace", "", enabled=True), actor="test", is_owner=True
+    )
+    status, reply = security.rpc("foreign-enabled", "tools/list")
+    assert status == 200
+    assert set(TOOLS).issubset({tool["name"] for tool in reply["result"]["tools"]})
+    for name in TOOLS:
+        replies = []
+        for identifier in (security.thread_id, "thr_deadbeef"):
+            arguments = {"thread_id": identifier}
+            if name == "thread_recall":
+                arguments["query"] = TEXT_MARKER
+            replies.append(
+                security.rpc(
+                    "foreign-enabled", "tools/call", {"name": name, "arguments": arguments}
+                )
+            )
+        assert (
+            replies[0]
+            == replies[1]
+            == (
+                200,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "content": [{"type": "text", "text": "no: thread not found"}],
+                        "isError": True,
+                    },
+                },
+            )
+        )
+
+
+@pytest.mark.parametrize("user,foreign", [("owner", False), ("member", False), ("owner", True)])
+def test_app_reads_honor_person_workspace_membership(security, user, foreign):
+    _, cookie, _ = security.login(user, workspace=security.other if foreign else None)
     for route in ("threads", "cards"):
         known = security.thread_id if route == "threads" else "%23142"
         unknown = "thr_deadbeef" if route == "threads" else "%23999"
@@ -267,8 +325,9 @@ def test_app_reads_honor_token_policy(security, token):
         absent = security.request(
             "GET", f"/app/{route}/{unknown}", token=None, headers={"Cookie": cookie}
         )[:2]
-        if token == "member":
+        if not foreign:
             assert found[0] == 200
+            assert absent[0] == 404
         else:
             assert found == absent
             assert found[0] == 404
@@ -390,26 +449,21 @@ def test_handoff_body_limit_has_no_rejected_side_effects(security, monkeypatch):
     )
 
 
-def test_session_rotation_cookie_flags_and_revocation(security):
-    security.token("session-test")
-    old, cookie, headers = security.login("session-test", headers={"X-Forwarded-Proto": "https"})
-    assert old != cookie
+def test_session_login_link_cookie_flags_and_revocation(security, monkeypatch):
+    monkeypatch.setattr(security.gateway, "secure_cookies", True)
+    link, cookie, headers = security.login()
     assert all(
-        flag in headers["Set-Cookie"]
-        for flag in ("HttpOnly", "SameSite=Strict", "Path=/app", "Secure")
+        flag in headers["Set-Cookie"] for flag in ("HttpOnly", "SameSite=Lax", "Path=/", "Secure")
     )
-    assert (
-        security.request("GET", "/app/settings/memory", token=None, headers={"Cookie": old})[0]
-        == 404
-    )
+    assert security.request("GET", "/app/login?" + urlencode({"t": link}), token=None)[0] == 400
     assert (
         security.request("GET", "/app/settings/memory", token=None, headers={"Cookie": cookie})[0]
         == 200
     )
-    security.db.revoke(security.connections["session-test"], actor=security.owner)
+    sessions.end_session(security.db, sessions.cookie_value(cookie))
     assert (
         security.request("GET", "/app/settings/memory", token=None, headers={"Cookie": cookie})[0]
-        == 404
+        == 303
     )
     assert (
         security.request(
@@ -452,16 +506,19 @@ def test_cross_origin_posts_even_with_form_token_are_rejected(security, origin):
     assert security.ctx.handoff_db.list_settings(security.workspace) == before
 
 
-def test_forged_csrf_does_not_write(security):
+@pytest.mark.parametrize("fields", [{}, {"csrf": "0" * 64}])
+def test_missing_or_forged_csrf_does_not_write(security, fields):
     _, cookie, _ = security.login()
+    before = security.ctx.handoff_db.list_settings(security.workspace)
     status, _, _ = security.request(
         "POST",
         "/app/settings/memory",
-        urlencode({"csrf": "0" * 64, "action": "save", "scope": "workspace", "threshold": "80"}),
+        urlencode({**fields, "action": "save", "scope": "workspace", "threshold": "80"}),
         token=None,
         headers={"Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded"},
     )
     assert status == 400
+    assert security.ctx.handoff_db.list_settings(security.workspace) == before
 
 
 def test_html_script_and_unsafe_links_are_escaped(security):
@@ -486,13 +543,13 @@ def test_html_script_and_unsafe_links_are_escaped(security):
 
 @pytest.mark.parametrize("suffix", ["\r\nX-Injected: yes", "%0d%0aX-Injected:%20yes"])
 def test_webhook_crlf_cannot_inject_headers(security, suffix):
-    before = security.ctx.handoff_db.webhooks(security.workspace)
+    before = webhooks.list_webhooks(security.db, security.principal)
     status, body, headers = security.request(
         "POST", "/api/webhooks", {"url": "http://127.0.0.1/wake" + suffix}
     )
     if "\r" in suffix:
         assert status == 400
-        assert security.ctx.handoff_db.webhooks(security.workspace) == before
+        assert webhooks.list_webhooks(security.db, security.principal) == before
     else:
         assert status == 201  # Encoded path bytes stay encoded in HTTP.
     assert "X-Injected" not in headers and SECRET_MARKER not in body
@@ -578,7 +635,9 @@ def test_owner_local_webhooks_never_follow_redirects(security, redirect_server, 
             prompt_dir="",
         )
     assert (
-        events._post(target, b'{"event":"handoff.stored"}', {"Content-Type": "application/json"})
+        webhooks._post(
+            target, b'{"kind":"handoff.stored"}', SECRET_MARKER, "dlv_redirect", "handoff.stored"
+        )
         == code
     )
     assert len(calls) == 2
@@ -586,17 +645,82 @@ def test_owner_local_webhooks_never_follow_redirects(security, redirect_server, 
     assert SECRET_MARKER not in repr(calls)
 
 
-def test_secrets_and_transcripts_do_not_enter_audit_outbox_or_logs(security, caplog):
+def test_secrets_and_transcripts_do_not_enter_audit_events_deliveries_or_logs(security, caplog):
     record = security.create("audit-test", TEXT_MARKER)
     security.ctx.service.report_launch_failure(
         security.principal, record.id, SECRET_MARKER + TEXT_MARKER
     )
     audit = [dict(row) for row in security.db.audit_entries(security.workspace, limit=1000)]
-    pending = security.ctx.handoff_db.due("2999-01-01T00:00:00Z", limit=1000)
-    for output in (json.dumps(audit), json.dumps(pending), caplog.text):
+    security.gateway.webhooks.reconcile()
+    recorded = hub_events.after(security.db, security.workspace, limit=1000)
+    with security.db._lock:
+        pending = [
+            {**dict(row), "payload": bytes(row["payload"]).decode()}
+            for row in security.db._conn.execute(
+                "SELECT * FROM webhook_deliveries WHERE webhook_id = ?",
+                (security.webhook["id"],),
+            )
+        ]
+    assert any(event["kind"] == "handoff.launch_failed" for event in recorded)
+    assert pending
+    assert any(json.loads(row["payload"])["kind"] == "handoff.launch_failed" for row in pending)
+    for output in (json.dumps(audit), json.dumps(recorded), json.dumps(pending), caplog.text):
         assert TEXT_MARKER not in output and SECRET_MARKER not in output
+        assert security.webhook["secret"] not in output
     for path in ("/api/settings/handoff", "/api/webhooks"):
         assert SECRET_MARKER not in security.request("GET", path)[1]
+
+
+def test_hub_webhook_delivery_keeps_handoff_text_and_secrets_private(security, redirect_server):
+    port, calls = redirect_server
+    registration = webhooks.add(
+        security.db,
+        sessions.person_principal(security.db, security.owner, security.workspace),
+        f"http://127.0.0.1:{port}/200",
+        kinds="handoff",
+    )
+    record = security.create("wire-hygiene", TEXT_MARKER)
+    security.ctx.service.report_launch_failure(
+        security.principal, record.id, SECRET_MARKER + TEXT_MARKER
+    )
+    security.gateway.webhooks.reconcile()
+    with security.db._lock:
+        rows = security.db._conn.execute(
+            "SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY event_seq",
+            (registration["id"],),
+        ).fetchall()
+    assert rows
+    for row in rows:
+        security.gateway.webhooks._deliver(row)
+    assert len(calls) == len(rows)
+    assert "handoff.launch_failed" in {json.loads(body)["kind"] for _, body, _ in calls}
+    for path, body, headers in calls:
+        assert path == "/200"
+        payload = json.loads(body)
+        assert payload["data"]["handoff_id"] == record.id
+        if payload["kind"] != "handoff.started":
+            assert payload["data"]["stored_thread_id"] == record.stored_thread_id
+        assert TEXT_MARKER not in body.decode() and SECRET_MARKER not in body.decode()
+        assert registration["secret"] not in body.decode()
+        stamp, signature = headers["X-Commonplace-Signature"].split(",")
+        timestamp = stamp.removeprefix("t=")
+        expected = hmac.new(
+            registration["secret"].encode(), timestamp.encode() + b"." + body, hashlib.sha256
+        ).hexdigest()
+        assert signature == "v1=" + expected
+    assert all(
+        item["status"] == "delivered"
+        for item in webhooks.deliveries(
+            security.db,
+            sessions.person_principal(security.db, security.owner, security.workspace),
+            registration["id"],
+        )
+    )
+    webhooks.remove(
+        security.db,
+        sessions.person_principal(security.db, security.owner, security.workspace),
+        registration["id"],
+    )
 
 
 def test_control_database_never_stores_transcript_text(security):
@@ -649,9 +773,8 @@ def test_parent_pointer_cannot_probe_threads_without_read_scope(security):
     assert attempt(security.record.id) == attempt("hof_missing") == (404, json.dumps(NOT_FOUND))
 
 
-@pytest.mark.parametrize("token", ["member", "untrusted"])
-def test_app_settings_writes_are_denied(security, token):
-    _, cookie, _ = security.login(token)
+def test_app_settings_writes_require_owner_membership(security):
+    _, cookie, _ = security.login("member")
     _, body, _ = security.request(
         "GET", "/app/settings/memory", token=None, headers={"Cookie": cookie}
     )
@@ -676,21 +799,46 @@ def test_app_settings_writes_are_denied(security, token):
     assert security.ctx.handoff_db.list_settings(security.workspace) == before
 
 
-def test_session_credential_rotation_invalidates_old_cookie(security):
-    security.token("rotate-test")
-    _, cookie, _ = security.login("rotate-test")
+def test_session_membership_loss_invalidates_cookie(security):
+    user = security.db.create_user("session-member@example.test")
+    security.db.add_member(security.workspace, user, "member", actor=security.owner)
+    link = sessions.create_login_link(security.db, user, security.workspace)
+    status, _, headers = security.request("GET", "/app/login?" + urlencode({"t": link}), token=None)
+    assert status == 302
+    cookie = headers["Set-Cookie"].split(";", 1)[0]
+    assert (
+        security.request(
+            "GET", f"/app/threads/{security.thread_id}", token=None, headers={"Cookie": cookie}
+        )[0]
+        == 200
+    )
     with security.db._lock:
         security.db._conn.execute(
-            "UPDATE connections SET token_hash = ? WHERE id = ?",
-            ("0" * 64, security.connections["rotate-test"]),
+            "DELETE FROM memberships WHERE workspace_id = ? AND user_id = ?",
+            (security.workspace, user),
         )
-    assert (
-        security.request("GET", "/app/settings/memory", token=None, headers={"Cookie": cookie})[0]
-        == 404
+    for route in ("/app/settings/memory", f"/app/threads/{security.thread_id}"):
+        status, body, headers = security.request(
+            "GET", route, token=None, headers={"Cookie": cookie}
+        )
+        assert status == 303 and headers["Location"] == "/app/login"
+        assert TEXT_MARKER not in body
+
+
+@pytest.mark.parametrize(
+    "route", ["/app/settings/memory", "/app/threads/thr_deadbeef", "/app/cards/%23142"]
+)
+@pytest.mark.parametrize("cookie", [None, "cmmn_session=invalid"])
+def test_app_without_valid_session_redirects_to_login(security, route, cookie):
+    status, body, headers = security.request(
+        "GET", route, headers={"Cookie": cookie} if cookie else None
     )
+    assert status == 303 and headers["Location"] == "/app/login"
+    assert TEXT_MARKER not in body
 
 
-def test_same_origin_setting_form_is_allowed(security):
+@pytest.mark.parametrize("token", [None, "missing", "slim", "untrusted", "revoked"])
+def test_same_origin_setting_form_uses_person_authority(security, token):
     _, cookie, _ = security.login()
     _, body, _ = security.request(
         "GET", "/app/settings/memory", token=None, headers={"Cookie": cookie}
@@ -708,14 +856,14 @@ def test_same_origin_setting_form_is_allowed(security):
                 "threshold": "80",
             }
         ),
-        token=None,
+        token=token,
         headers={
             "Cookie": cookie,
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": f"http://127.0.0.1:{security.port}",
         },
     )
-    assert status == 303
+    assert status == (401 if token == "revoked" else 303)
 
 
 @pytest.mark.parametrize(
@@ -736,7 +884,8 @@ def test_tool_gate_tracks_any_enabled_setting_without_creating_store(security, s
         status, reply = security.rpc(
             name, "tools/call", {"name": tool, "arguments": {"thread_id": "thr_deadbeef"}}
         )
-        assert status == 200 and reply["error"]["code"] == -32601
+        assert status == 200
+        assert reply["error"] == {"code": -32601, "message": f"Unknown tool: {tool}"}
     assert workspace not in security.ctx._stores
     security.ctx.settings.set(
         SettingRow(workspace, scope, ref, enabled=True), actor="test", is_owner=True
@@ -828,8 +977,23 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
     from pathlib import Path
 
     # One real worker test: prove the alternate read through an actual mirror.
-    ctx = install(hub.gateway, Path(hub.db.path).parent, start_outbox=False)
-    writer_token = hub.owner_token("handoff-writer")
+    ctx = install(hub.gateway, Path(hub.db.path).parent)
+    assert ctx is hub.gateway.handoff
+    writer_token = hub.token(
+        "handoff-writer",
+        profile="full",
+        scopes=[
+            "memory:read",
+            "memory:write",
+            "private:read",
+            "private:write",
+            "threads:read",
+            "handoff:write",
+        ],
+        read_wings=["*"],
+        write_wings=["*"],
+        trust="trusted",
+    )
     principal = hub.db.authenticate_token(writer_token)
     token = hub.token(
         "legacy-memory-reader",
@@ -864,6 +1028,8 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
         )
         ctx.service.wait_for_mirrors(timeout=60)
         assert result.action == "handoff" and written
+        _, response = hub.call(writer_token, "mempalace_get_drawer", drawer_id=written[0])
+        assert TEXT_MARKER in response
         _, response = hub.call(token, "mempalace_get_drawer", drawer_id=written[0])
         assert TEXT_MARKER not in response
         _, response = hub.call(token, "mempalace_search", query="security transcript")
@@ -872,3 +1038,4 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
         assert TEXT_MARKER not in response
     finally:
         ctx.close()
+        webhooks.stop(hub.gateway)
