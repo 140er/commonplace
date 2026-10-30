@@ -450,6 +450,9 @@ def _can_receive(db, gateway, row, event):
             return False
         if not principal.policy.has_scope("memory:read"):
             return False
+        if set(event["data"]) == {"webhook_id"} and event["data"]["webhook_id"] == row["id"]:
+            # A test of this very webhook carries nothing but its own id.
+            return True
         if "board" not in event["data"]:
             return principal.policy.sees_all_wings
         board = event["data"]["board"]
@@ -471,8 +474,8 @@ def _can_receive(db, gateway, row, event):
 def test_webhook(db, principal, webhook_id):
     _authorize(principal, "test")
     row = _get(db, principal, webhook_id)
-    if not principal.policy.sees_all_wings or not _can_receive(
-        db, None, row, {"workspace_id": principal.workspace_id, "data": {}}
+    if not _can_receive(
+        db, None, row, {"workspace_id": principal.workspace_id, "data": {"webhook_id": row["id"]}}
     ):
         raise ToolError("no: webhook access refused")
     # A test is deliberately delivered only to the selected registration.

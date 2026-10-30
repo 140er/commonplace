@@ -760,3 +760,24 @@ def test_env_auth_reference_keeps_the_secret_out_of_the_database(live, receiver,
     assert status == 202
     _headers, raw = requests.get(timeout=3)
     assert json.loads(raw)["message"].startswith("test wake ")
+
+
+def test_scoped_owner_can_test_its_own_webhook(live, receiver):
+    hub = live
+    url, requests, _ = receiver
+    token = hub.token(
+        "scoped-hook",
+        profile="full",
+        scopes=["memory:read"],
+        read_wings=["shared"],
+        trust="trusted",
+    )
+    status, hook = rest(hub, "POST", token=token, body={"url": url, "events": ["review_needed"]})
+    assert status == 201
+    status, _ = rest(hub, "POST", f"/api/webhooks/{hook['id']}/test", token)
+    assert status == 202
+    _headers, raw = requests.get(timeout=3)
+    payload = json.loads(raw)
+    assert payload["message"].startswith("test wake ") and payload["data"] == {
+        "webhook_id": hook["id"]
+    }
