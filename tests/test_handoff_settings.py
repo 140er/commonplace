@@ -498,6 +498,45 @@ def test_effective_uses_db_scope_order_and_workspace_isolation():
     assert db.calls[-1] == ("read", "missing", "", "")
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize(
+    ("written_ref", "lookup_ref"), product(("142", "#142", "00142", "#00142"), repeat=2)
+)
+def test_task_ref_aliases_round_trip_through_set_effective_and_clear(
+    written_ref, lookup_ref, enabled
+):
+    db = FakeDB([SettingRow("ws", "workspace", "", enabled=not enabled)])
+    service = SettingsService(db)
+    saved = service.set(
+        SettingRow("ws", "task", written_ref, enabled=enabled), actor="member", is_owner=False
+    )
+    assert saved.ref == "#142"
+    assert service.effective("ws", task_ref=lookup_ref) == HandoffSettings(
+        enabled=enabled, source="task"
+    )
+    assert db.calls[-1] == ("read", "ws", "", "#142")
+    assert service.clear("ws", "task", lookup_ref, actor="owner", is_owner=True) is True
+    assert service.effective("ws", task_ref=written_ref) == HandoffSettings(
+        enabled=not enabled, source="workspace"
+    )
+
+
+@pytest.mark.parametrize("ref", ["release-1", "_task", "#named", "ticket.142"])
+def test_named_task_refs_are_preserved_in_settings_lookups(ref):
+    db = FakeDB()
+    service = SettingsService(db)
+    service.set(SettingRow("ws", "task", ref, enabled=True), actor="member", is_owner=False)
+    assert service.effective("ws", task_ref=ref) == HandoffSettings(enabled=True, source="task")
+    assert db.calls[-1] == ("read", "ws", "", ref)
+
+
+def test_effective_rejects_an_invalid_task_ref_before_reading():
+    db = FakeDB()
+    with pytest.raises(SettingsError, match="task ref"):
+        SettingsService(db).effective("ws", task_ref="##142")
+    assert db.calls == []
+
+
 def test_set_validates_normalizes_and_returns_the_database_stamp():
     db, events = FakeDB(), FakeEvents()
     service = SettingsService(db, events)

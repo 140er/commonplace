@@ -173,6 +173,9 @@ class SettingsService:
         self.events = events
 
     def effective(self, workspace_id: str, agent: str = "", task_ref: str = "") -> HandoffSettings:
+        """Resolve settings with the same task ref normalization used by writes."""
+        if task_ref:
+            task_ref = _normal_ref("task", task_ref)
         return resolve(self.db.setting_rows(workspace_id, agent, task_ref))
 
     def set(self, row: SettingRow, *, actor: str, is_owner: bool) -> SettingRow:
