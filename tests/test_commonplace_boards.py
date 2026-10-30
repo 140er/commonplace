@@ -90,7 +90,7 @@ def test_card_shape_metadata_and_routes(hub, env):
         "/api/boards/work/cards",
         {"title": "Exact\nwords", "body": "  keep all words\n", "labels": ["backend"]},
     )
-    assert status == 201 and set(created) == CARD_KEYS
+    assert status == 201 and set(created) == CARD_KEYS | {"url"}
     assert created["created_by"] == agent.actor
     assert created["repo"] == "github.com/140er/mempalace"
     number = created["number"]
@@ -109,7 +109,7 @@ def test_card_shape_metadata_and_routes(hub, env):
             "status_line": "Testing",
         },
     )
-    assert status == 200 and set(updated) == CARD_KEYS
+    assert status == 200 and set(updated) == CARD_KEYS | {"url"}
     assert updated["pr_url"] == "https://github.com/140er/mempalace/pull/12"
     assert updated["heartbeat_at"] and updated["claim_until"]
     assert updated["body"] == "  keep all words\n" and updated["labels"] == ["backend"]
@@ -321,7 +321,7 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
     assert status == 200 and result["assignee"] == agent.actor and result["ask"] is None
     ok, output = mcp(hub, token, "task_take_next", board="work")
     assert ok and output.startswith(f"#{card['number']}")
-    assert f"decision by {person.actor}: 90d" in output and "Keep the other option." in output
+    assert f"decision by {person.user_email}: 90d" in output and "Keep the other option." in output
     assert owner.task_show(first["number"])["status"] == "todo"
     assert mcp(hub, token, "task_handoff", task=card["number"], to="anyone", note="Return to pool")[
         0
@@ -693,7 +693,9 @@ def test_expired_version_conflict_returns_committed_card(hub, env):
     )
     assert status == 409 and conflict["current"]["status"] == "todo"
     actual = owner.task_show(created["number"])
-    assert {key: actual[key] for key in CARD_KEYS} == conflict["current"]
+    assert {key: actual[key] for key in CARD_KEYS} == {
+        k: v for k, v in conflict["current"].items() if k != "url"
+    }
     assert actual["title"] == "Expired version"
 
 
