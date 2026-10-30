@@ -203,13 +203,13 @@ class BoardService:
             except VersionClash as exc:
                 # System expiries precede the version check; publish that current card.
                 conflict = exc
-        for kind, number, data, actor in self.pending:
+        for kind, subject, data, actor in self.pending:
             try:
                 events.emit(
                     self.ctx.db,
                     self.principal.workspace_id,
                     kind,
-                    subject=f"#{number}",
+                    subject=subject,
                     actor=actor,
                     data=data,
                 )
@@ -231,7 +231,7 @@ class BoardService:
             "actor": actor,
             **extra,
         }
-        self.pending.append((kind, number, data, actor))
+        self.pending.append((kind, f"#{number}", data, actor))
 
     def _log(self, conn, number, kind, **fields):
         append_event(
@@ -457,6 +457,8 @@ class BoardService:
                         "slug": board["slug"],
                         "name": board["name"],
                         "wing": board["wing"],
+                        "coordinator": board["coordinator"],
+                        "can_configure": self.principal.role == "owner",
                         "counts": counts,
                     }
                 )
@@ -469,8 +471,151 @@ class BoardService:
                 "slug": board["slug"],
                 "name": board["name"],
                 "wing": board["wing"],
+                "coordinator": board["coordinator"],
                 "counts": dict.fromkeys(STATUSES, 0),
             }
+
+    def board_set(self, board, coordinator):
+        _owner(self.principal)
+        with self.transaction() as conn:
+            b = self._board(conn, board)
+            self._write(b)
+            actor = None
+            if coordinator is not None:
+                actor = self._actor(coordinator)
+                candidates = [
+                    self.ctx.db.authenticate_connection(c["id"])
+                    for c in self.ctx.db.connections(self.principal.workspace_id)
+                    if c["auth"] == "pat"
+                ]
+                if not any(
+                    p is not None
+                    and p.actor == actor
+                    and not _restricted(p)
+                    and p.policy.has_scope("memory:read")
+                    and p.policy.has_scope("memory:write")
+                    and p.policy.tool_visible("space_read")
+                    and p.policy.tool_visible("space_post")
+                    and p.policy.can_read_wing(b["wing"])
+                    and p.policy.can_write_wing(b["wing"])
+                    for p in candidates
+                ):
+                    raise ToolError(
+                        "no: coordinator must be an active agent with access to this board"
+                    )
+            conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
+            self.pending.append(
+                (
+                    "space_configured",
+                    f"space:{b['slug']}",
+                    {"board": b["slug"]},
+                    self.principal.actor,
+                )
+            )
+            result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None:
+            from commonplace import webhooks
+
+            if not webhooks.has_space_subscription(
+                self.ctx.db, self.ctx.gateway, self.principal.workspace_id, actor, b["slug"]
+            ):
+                result["warning"] = (
+                    "Coordinator has no active webhook matching space_message on this board. "
+                    f"Register webhook_add url=… events=space_message board={b['slug']}."
+                )
+        return result
+
+    @staticmethod
+    def _message(row):
+        return {
+            "id": row["id"],
+            "text": row["text"],
+            "actor": f"conn:{row['stamp_connection']}"
+            if row["stamp_connection"] is not None
+            else f"user:{row['stamp_user']}",
+            "stamp_user": row["stamp_user"],
+            "stamp_connection": row["stamp_connection"],
+            "stamp_trust": row["stamp_trust"],
+            "flags": json.loads(row["flags"]),
+            "at": row["created_at"],
+        }
+
+    def space_read(self, board, after=None, last=None, before=None):
+        if not self.principal.policy.has_scope("memory:read"):
+            raise ToolError("no: this connection cannot read this board")
+        for name, value in (("after", after), ("before", before)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**63
+            ):
+                raise ToolError(f"no: {name} must be a nonnegative message cursor")
+        if last is not None and (type(last) is not int or not 1 <= last <= 100):
+            raise ToolError("no: last must be between 1 and 100")
+        if after is not None and (last is not None or before is not None):
+            raise ToolError("no: after cannot be combined with last or before")
+        with self.store.connection() as conn:
+            b = self._board(conn, board)
+            backward = last is not None or before is not None
+            boundary = before if before is not None else 2**63 - 1
+            window = (
+                ("<?" if before is not None else "<=?") + " ORDER BY id DESC LIMIT ?"
+                if backward
+                else ">? ORDER BY id LIMIT ?"
+            )
+            messages = [
+                self._message(row)
+                for row in conn.execute(
+                    "SELECT * FROM space_messages WHERE board_id=? AND id" + window,
+                    (b["id"], boundary if backward else after or 0, last or 100),
+                )
+            ]
+            if backward:
+                messages.reverse()
+            oldest = messages[0]["id"] if messages else 0
+            return {
+                "board": b["slug"],
+                "coordinator": b["coordinator"],
+                "messages": messages,
+                "cursor": messages[-1]["id"] if messages else after or 0,
+                "oldest": oldest,
+                "has_more": bool(
+                    conn.execute(
+                        "SELECT 1 FROM space_messages WHERE board_id=? AND id<? LIMIT 1",
+                        (b["id"], oldest),
+                    ).fetchone()
+                ),
+            }
+
+    def space_post(self, board, text):
+        text = validate_text(text, "text", required=True)
+        p = self.principal
+        with self.transaction() as conn:
+            b = self._board(conn, board)
+            self._write(b)
+            cur = conn.execute(
+                "INSERT INTO space_messages(board_id,text,stamp_user,stamp_connection,"
+                "stamp_trust,flags,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    b["id"],
+                    text,
+                    p.user_id,
+                    None if p.person else p.connection,
+                    p.policy.trust,
+                    json.dumps(flags_for(text)),
+                    now(),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM space_messages WHERE id=?", (cur.lastrowid,)
+            ).fetchone()
+            self.pending.append(
+                (
+                    "space_message" if p.person else "space_replied",
+                    f"space:{b['slug']}",
+                    {"board": b["slug"], "message_id": row["id"], "coordinator": b["coordinator"]},
+                    p.actor,
+                )
+            )
+            return self._message(row)
 
     def task_list(self, board=None, status=None, mine=False, *, all_statuses=False):
         with self.transaction() as conn:
@@ -547,8 +692,20 @@ class BoardService:
         ask=None,
         options=None,
         target=None,
+        message_id=None,
     ):
         p = self.principal
+        if message_id is not None:
+            if (
+                isinstance(message_id, bool)
+                or not isinstance(message_id, int)
+                or not 1 <= message_id < 2**63
+                or not conn.execute(
+                    "SELECT 1 FROM space_messages WHERE id=? AND board_id=?",
+                    (message_id, board["id"]),
+                ).fetchone()
+            ):
+                raise ToolError("no: message not found in this board")
         title = validate_text(title, "title", required=True, limit=5000)
         body = validate_text(body, "body")
         if labels is None:
@@ -572,8 +729,8 @@ class BoardService:
         at = now()
         cur = conn.execute(
             "INSERT INTO tasks(board_id,title,body,status,position,assignee,ask,ask_options,ask_to,return_to,flags,"
-            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks,message_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 board["id"],
                 title,
@@ -596,6 +753,7 @@ class BoardService:
                 repo[0] if repo else None,
                 json.dumps(labels),
                 "",
+                message_id,
             ),
         )
         number = cur.lastrowid
@@ -614,7 +772,9 @@ class BoardService:
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
         return card(conn, task_row(conn, number), self.principal)
 
-    def task_add(self, title, body="", board=None, status="todo", assignee=None, labels=None):
+    def task_add(
+        self, title, body="", board=None, status="todo", assignee=None, labels=None, message_id=None
+    ):
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -627,6 +787,7 @@ class BoardService:
                 status="backlog" if _restricted(self.principal) else status,
                 assignee=assignee,
                 labels=labels,
+                message_id=message_id,
             )
 
     def task_comment(self, task, text, version=None):

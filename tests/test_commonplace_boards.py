@@ -15,7 +15,7 @@ from commonplace.extensions import ToolContext, ToolError
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
 CARD_KEYS = set(
-    "number board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position need".split()
+    "number board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position need message_id".split()
 )
 
 
