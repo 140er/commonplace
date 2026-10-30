@@ -24,8 +24,8 @@ def stale_before(at=None) -> str:
 def need(card, *, me=None, owner=False, now=None) -> str:
     """One of ``NEEDS`` for a public card dict, seen by actor ``me``.
 
-    An ask with no recipient goes to the workspace owner. ``now`` is a datetime
-    (default: the server clock).
+    An ask with no recipient goes to the workspace owner. A question to someone
+    else is not a plan to approve. ``now`` is a datetime (default: the server clock).
     """
     status = card["status"]
     if status == "done":
@@ -33,7 +33,7 @@ def need(card, *, me=None, owner=False, now=None) -> str:
     ask_to = card.get("ask_to")
     if card.get("ask") and (ask_to == me if ask_to else owner):
         return "you"
-    if status == "review" or "plan" in (card.get("labels") or ()):
+    if "plan" in (card.get("labels") or ()) or (status == "review" and not card.get("ask")):
         return "plan"
     if card.get("pr_url") and card.get("checks") == "passing":
         return "merge"
@@ -42,6 +42,17 @@ def need(card, *, me=None, owner=False, now=None) -> str:
     if status == "doing" and (card.get("heartbeat_at") or card["updated_at"]) >= stale_before(now):
         return "working"
     return "idle"
+
+
+def need_for(card, principal, now=None) -> str:
+    """``need`` as ``principal`` sees it: only a signed-in person is ever ``you``."""
+    person = bool(principal and principal.person)
+    return need(
+        card,
+        me=principal.actor if person else None,
+        owner=person and principal.role == "owner",
+        now=now,
+    )
 
 
 def card_url(ctx, number) -> str:

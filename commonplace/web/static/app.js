@@ -61,11 +61,12 @@ function capture(view) {
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
-  const active = document.activeElement;
+  const active = document.activeElement, cols = root.querySelector(".cols");
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
-    stacks: [...root.querySelectorAll(".stack")].map((stack) => stack.scrollTop),
+    view: root.querySelector("#content")?.dataset.view, cols: cols && [cols.scrollTop, cols.scrollLeft],
+    stacks: Object.fromEntries([...root.querySelectorAll(".col[data-status] .stack")].map((stack) => [stack.parentElement.dataset.status, stack.scrollTop])),
   };
 }
 function restore(saved) {
@@ -80,7 +81,10 @@ function restore(saved) {
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
-  root.querySelectorAll(".stack").forEach((stack, i) => { if (saved?.stacks?.[i]) stack.scrollTop = saved.stacks[i]; });
+  if (saved?.view !== state.base) return; // Board scroll belongs to the board it came from.
+  const cols = root.querySelector(".cols");
+  if (cols && saved.cols) [cols.scrollTop, cols.scrollLeft] = saved.cols;
+  root.querySelectorAll(".col[data-status] .stack").forEach((stack) => { const top = saved.stacks[stack.parentElement.dataset.status]; if (top) stack.scrollTop = top; });
 }
 function signin() {
   state.mapDispose?.(); state.mapDispose = null;
