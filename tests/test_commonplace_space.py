@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from commonplace import events, webhooks
+from commonplace import events, urls, webhooks
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolError
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
@@ -167,11 +167,17 @@ def test_user_request_wakes_only_coordinator_without_sending_text(hub, env, rece
         wake = json.loads(raw)
         assert wake["kind"] == "space_message" and wake["data"]["message_id"] == message["id"]
         assert wake["data"]["coordinator"] == agent.actor
-        assert wake["url"].endswith("/app/#/space/work") and b"SECRET REQUEST" not in raw
+        assert wake["url"] == urls.share_link(hub.db, hub.workspace, "/app/#/space/work")
+        assert b"SECRET REQUEST" not in raw
         assert mcp(hub, token, "space_post", board="work", text="I split it.")[0]
         with pytest.raises(queue.Empty):
             received.get(timeout=0.2)
         assert len(webhooks.deliveries(hub.db, agent, hook["id"])) == 1
+        row = hub.db._conn.execute("SELECT * FROM webhooks WHERE id=?", (hook["id"],)).fetchone()
+        event = next(e for e in events.after(hub.db, hub.workspace) if e["kind"] == "space_message")
+        assert webhooks._can_receive(hub.db, hub.gateway, row, event)
+        owner.board_set("work", None)
+        assert not webhooks._can_receive(hub.db, hub.gateway, row, event)
     finally:
         webhooks.stop(hub.gateway)
 

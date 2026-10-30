@@ -45,9 +45,12 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 |---|---|---|
 | `board_list` | — | |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | trusted_only, WORK_PROFILES |
+| `board_set` | `board`, `coordinator` (connection or null) | owner_only, trusted_only; active PAT agent with chat access to this board |
+| `space_read` | `board`, `after?` (message cursor) | board wing + memory:read; JSON with up to 100 verbatim, author-stamped messages and a cursor |
+| `space_post` | `board`, `text` | trusted_only; board read/write wing + memory:write; append-only, verbatim |
 | `task_list` | `board?`, `status?`, `mine?` | |
 | `task_show` | `task` | includes branch / PR / checks / status line / links |
-| `task_add` | `title`, `body?`, `board?`, `status?`, `assignee?`, `labels?` | untrusted → backlog |
+| `task_add` | `title`, `body?`, `board?`, `status?`, `assignee?`, `labels?`, `message_id?` | untrusted → backlog; message must belong to this board, assignee reserves the task |
 | `task_comment` | `task`, `text` | |
 | `task_take_next` | `board?`, `task?` | |
 | `task_update` | `task`, `title?`, `body?`, `status?`, `before?`, `after?`, `link?`, `unlink?`, `lesson?`, `repo?`, `branch?`, `pr?` (URL or number), `checks?`, `status_line?` | `status_line` also renews the claim and sets `heartbeat_at` |
@@ -70,7 +73,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
  "repo": "github.com/140er/mempalace", "branch": "feat/x", "pr_url": "…", "pr_number": 12,
  "checks": "passing", "status_line": "Fixing the two failing tests", "heartbeat_at": "…",
  "labels": [], "links": 2, "version": 3, "created_by": "conn:…", "created_at": "…", "updated_at": "…",
- "position": 1.0}
+ "position": 1.0, "message_id": null}
 ```
 
 Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
@@ -80,8 +83,11 @@ REST (people via cookie, agents via Bearer; same service, same rules):
 ```
 GET    /api/boards                                  -> {"boards":[{"slug","name","wing","counts":{status:n}}]}
 POST   /api/boards                                  {"slug","name?","wing?","repo?"}
+PATCH  /api/boards/<slug>                           {"coordinator": connection or null} -> {"board","coordinator"}
+GET    /api/boards/<slug>/chat?after=0               -> {"board","coordinator","messages":[message…],"cursor"}
+POST   /api/boards/<slug>/chat                      {"text"} -> message (verified author stamps)
 GET    /api/boards/<slug>/cards?status=             -> {"cards":[card…]}
-POST   /api/boards/<slug>/cards                     {"title","body?","status?","assignee?","labels?"} -> card
+POST   /api/boards/<slug>/cards                     {"title","body?","status?","assignee?","labels?","message_id?"} -> card
 GET    /api/cards/<n>                               -> card + {"events":[{"kind","actor","text","at","choice","target"}],"linked":[{"drawer_id","title","invalidated"}]}
 PATCH  /api/cards/<n>                               {"version", any task_update field} -> card (409 + current card on version clash)
 POST   /api/cards/<n>/comments                      {"text"}
@@ -115,6 +121,12 @@ GET  /api/memory/map?limit=400             -> {"nodes":[{"id","kind":"memory|per
 Map links are stored links only: knowledge-graph facts (person↔person, person↔memory via the fact's source), memory↔card links, and memory→theme. Weeks in Europe/Amsterdam.
 
 ## Webhooks (W3): `commonplace/webhooks.py`
+
+Space chat: a person posting emits `space_message` with board/message IDs and the
+registered coordinator actor, never chat text. Existing subscriptions to this kind
+(or `*`) route to that coordinator's current connection authority; agent replies
+emit `space_replied` for app polling only. The URL is the shared link to
+`/app/#/space/<board>`. The hub never invokes an LLM or launches an agent.
 
 Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor, url, secret_hash?, secret (stored to sign; never returned), kinds JSON, board, waiting_on, active, created_at)`, `webhook_deliveries(id, webhook_id, event_seq, attempt, status, http_status, error, next_at, delivered_at)`.
 

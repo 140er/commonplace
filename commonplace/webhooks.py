@@ -678,7 +678,11 @@ class Dispatcher:
             if current is None or current["status"] not in ("pending", "retry"):
                 return
             payload = json.loads(bytes(current["payload"]))
-            event = {"workspace_id": current["workspace_id"], "data": payload["data"]}
+            event = {
+                "workspace_id": current["workspace_id"],
+                "kind": payload["kind"],
+                "data": payload["data"],
+            }
             if not _can_receive(self.db, self.gateway, current, event):
                 self.db._conn.execute(
                     "UPDATE webhook_deliveries SET status='cancelled' WHERE id=?", (current["id"],)
