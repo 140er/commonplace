@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import plans
 from ..control_db import ControlError
 from ..oauth.store import iso
 from .providers import Profile, SignInError
@@ -57,7 +58,8 @@ def resolve(db, provider: str, profile: Profile, *, signup: bool) -> str:
                 raise SignInError("account")
             try:
                 uid = db.create_user(profile.emails[0], profile.name)
-                db.create_workspace(profile.emails[0], uid, personal=True)
+                workspace_id = db.create_workspace(profile.emails[0], uid, personal=True)
+                plans.assign_signup_plan(db, uid, workspace_id, via=provider)
             except ControlError:
                 raise SignInError("failed") from None
             db.audit(action="user.create", decision="ok", user_id=uid, reason=provider)

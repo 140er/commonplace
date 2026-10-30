@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -14,6 +15,7 @@ from ..oauth.store import digest
 from . import accounts
 from .providers import SignInError, configured
 
+logger = logging.getLogger(__name__)
 COOKIE = "cmmn_signin"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signin_flows (
@@ -194,9 +196,12 @@ def install(gateway):
     accounts.ensure_schema(gateway.db)
     with gateway.db._lock:
         gateway.db._conn.executescript(SCHEMA)
+    signup = os.environ.get("COMMONPLACE_SIGNUP", "").strip().lower()
+    if signup not in ("", "open", "closed"):
+        logger.warning("COMMONPLACE_SIGNUP accepts open or closed; sign-up is closed")
     gateway.sign_in = SignIn(
         providers=configured(),
-        signup=os.environ.get("COMMONPLACE_SIGNUP", "").strip().lower() == "open",
+        signup=signup in ("", "open"),
     )
     for method in ("GET", "POST"):
         gateway.add_prefix_route(method, "/app/auth/", lambda h: gateway.sign_in.handle(gateway, h))
