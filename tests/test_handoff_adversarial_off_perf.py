@@ -13,7 +13,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -413,25 +412,32 @@ def _token(local, policy, name="review"):
 # this branch's own history, so any clone of the branch can read it.
 DEVELOP_BASELINE = "c07bb354"
 
+# Optional arguments tools gained after the baseline (the chat range on saves
+# and facts), plus the additive space API. Everything else must still match.
+_RANGE = {"source_thread", "source_seq_start", "source_seq_end"}
+ADDED_SINCE_BASELINE = {
+    "memory_save": {"source"},
+    "mempalace_add_drawer": _RANGE,
+    "mempalace_kg_add": _RANGE,
+    "mempalace_kg_supersede": _RANGE,
+    "task_add": {"message_id"},
+}
+ADDED_TOOLS = {"board_set", "space_read", "space_post"}
 
-def _legacy_mcp_surface(response):
-    """Compare the pinned API, excluding only the approved additive space API.
 
-    Unknown additions, removed tools, required arguments and every other schema
-    or response change still fail parity. Space tools have their own integration tests.
-    """
-    status, body = response
-    if "tools" not in body.get("result", {}):
-        return response
-    body = deepcopy(body)
-    tools = body["result"]["tools"] = [
-        tool
-        for tool in body["result"]["tools"]
-        if tool["name"] not in {"board_set", "space_read", "space_post"}
-    ]
+def _as_baseline(reply):
+    """Drop only approved additions; unknown tools and required args stay strict."""
+    status, body = reply
+    body = json.loads(json.dumps(body))
+    tools = body.get("result", {}).get("tools", []) if isinstance(body, dict) else []
+    if tools:
+        tools = body["result"]["tools"] = [
+            tool for tool in tools if tool["name"] not in ADDED_TOOLS
+        ]
     for tool in tools:
-        if tool["name"] == "task_add":
-            tool["inputSchema"]["properties"].pop("message_id", None)
+        properties = tool.get("inputSchema", {}).get("properties", {})
+        for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
+            properties.pop(name, None)
     return status, body
 
 
@@ -588,9 +594,9 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             initial = len(gateway.db.audit_entries(limit=10_000))
             expected = _http(before, token, "POST", "/mcp", request)
             middle = gateway.db.audit_entries(limit=10_000)
-            actual = _http(after, token, "POST", "/mcp", request)
+            actual = _as_baseline(_http(after, token, "POST", "/mcp", request))
             final = gateway.db.audit_entries(limit=10_000)
-            assert _legacy_mcp_surface(actual) == expected
+            assert actual == expected
             count = len(middle) - initial
             assert len(final) - len(middle) == count
             keys = (
@@ -714,7 +720,7 @@ def test_new_token_has_legacy_tool_list_when_workspace_off(gateway, legacy, prof
     )
     request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
-        assert _legacy_mcp_surface(_http(after, token, "POST", "/mcp", request)) == _http(
+        assert _as_baseline(_http(after, token, "POST", "/mcp", request)) == _http(
             before, before_token, "POST", "/mcp", request
         )
     assert not gateway.ctx._stores

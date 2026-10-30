@@ -102,7 +102,7 @@ MCP tools (aliases over the `mempalace_*` tools through `ctx.memory`, so policy 
 
 | Tool | Args | Maps to |
 |---|---|---|
-| `memory_save` | `text`, `theme?` (wing; default: the token's write wing, else `shared`), `topic?` (room, default `general`), `task?` | `mempalace_add_drawer`; then `link_drawer` when `task` given. Returns `saved <id>` (+ `linked to #n`) |
+| `memory_save` | `text`, `theme?` (wing; default: the token's write wing, else `shared`), `topic?` (room, default `general`), `task?`, `source?` (`{thread, seq_start?, seq_end?}`: the chat messages the words came from) | `mempalace_add_drawer`; then `link_drawer` when `task` given. Returns `saved <id>` (+ `linked to #n`) |
 | `memory_search` | `query`, `theme?`, `limit?` (default 5) | `mempalace_search`; text: one hit per block: id, theme, author stamp, date, then the verbatim text quoted |
 | `memory_get` | `id` | `mempalace_get_drawer` |
 | `memory_link` | `id`, `task` | `link_drawer` |

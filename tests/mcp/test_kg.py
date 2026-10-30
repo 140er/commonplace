@@ -586,3 +586,76 @@ class TestKGLazyCache:
 
 
 # ── Structured error codes + MineAlreadyRunning (#1552) ─────────────────
+
+
+class TestKGChatSource:
+    def test_kg_add_stores_the_chat_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_add
+
+        result = tool_kg_add(
+            subject="Jeffrey",
+            predicate="uses",
+            object="pnpm",
+            source_thread="thread-7",
+            source_seq_start=41,
+            source_seq_end=44,
+        )
+        assert result["success"] is True
+        (fact,) = kg.query_entity("Jeffrey")
+        assert fact["id"] == result["triple_id"]
+        assert (fact["source_thread"], fact["source_seq_start"], fact["source_seq_end"]) == (
+            "thread-7",
+            41,
+            44,
+        )
+
+    def test_kg_add_refuses_a_range_without_a_thread(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_add
+
+        result = tool_kg_add(subject="A", predicate="b", object="C", source_seq_start=3)
+        assert result["success"] is False
+        assert "source_thread" in result["error"]
+        assert kg.stats()["triples"] == 0
+
+    def test_kg_supersede_links_old_to_new(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_supersede
+
+        old = kg.add_triple("Bot", "uses_model", "old")
+        result = tool_kg_supersede(
+            subject="Bot",
+            predicate="uses_model",
+            old_object="old",
+            new_object="new",
+            source_thread="thread-9",
+            source_seq_start=2,
+        )
+        assert result["success"] is True
+        by_id = {f["id"]: f for f in kg.query_entity("Bot")}
+        assert by_id[old]["status"] == "superseded"
+        assert by_id[old]["superseded_by"] == result["triple_id"]
+        new = by_id[result["triple_id"]]
+        assert (new["source_thread"], new["source_seq_start"], new["source_seq_end"]) == (
+            "thread-9",
+            2,
+            2,
+        )
+
+    def test_kg_supersede_refuses_a_bad_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        from mempalace.mcp_server import tool_kg_supersede
+
+        kg.add_triple("Bot", "uses_model", "old")
+        result = tool_kg_supersede(
+            subject="Bot",
+            predicate="uses_model",
+            old_object="old",
+            new_object="new",
+            source_thread="t",
+            source_seq_start=5,
+            source_seq_end=1,
+        )
+        assert result["success"] is False
+        assert [f["status"] for f in kg.query_entity("Bot")] == ["active"]
