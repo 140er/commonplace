@@ -290,6 +290,8 @@ class BoardService:
         value = validate_text(value, "recipient", required=True, limit=200)
         if value == "anyone":
             return None
+        if value.casefold() == "owner":
+            return self._owner_actor()
         members = self.ctx.db.members(self.principal.workspace_id)
         matches = [
             m
@@ -299,6 +301,7 @@ class BoardService:
                 f"user:{m['id']}".casefold(),
                 m["email"].casefold(),
                 m["email"].split("@", 1)[0].casefold(),
+                (self.ctx.db.user(m["id"])["name"] or "").casefold() or None,
             )
         ]
         if len(matches) == 1:

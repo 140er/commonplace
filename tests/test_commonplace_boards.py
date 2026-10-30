@@ -770,3 +770,22 @@ def test_cards_carry_short_links_and_people_read_as_names(hub, env):
     assert status == 200 and "/s/" in card["url"]
     status, needs = api(hub, cookie, "GET", "/api/needs-me")
     assert all("url" in c for c in needs["asks"])
+
+
+def test_handoff_to_a_person_by_name_or_owner(hub, env):
+    token, _agent, _person, _cookie, owner = env
+    hub.db._conn.execute("UPDATE users SET name='Jeffrey' WHERE id=?", (hub.admin,))
+    for to in ("jeffrey", "owner"):
+        card = owner.task_add(title=f"hand to {to}", board="work")
+        assert mcp(hub, token, "task_take_next", task=card["number"])[0]
+        ok, text = mcp(
+            hub,
+            token,
+            "task_handoff",
+            task=card["number"],
+            to=to,
+            note="Pick one",
+            options=["a", "b"],
+        )
+        assert ok, text
+        assert owner.task_show(card["number"])["status"] == "review"
