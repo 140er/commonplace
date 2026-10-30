@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from commonplace.handoff.t3 import T3Error, Target
+from commonplace.handoff.t3 import T3Error, Target, UnsupportedLaunch
 from tests.e2e_handoff.fake_t3 import source_fixture
 
 
@@ -55,7 +55,7 @@ def test_root_launch_passes_explicit_target_and_stdin_in_source_cwd(tmp_path, mo
     assert source.log.with_suffix(".prompt").read_text() == "prompt with 'quotes' and $shell\n"
 
 
-def test_existing_worktree_uses_scoped_bridge_then_revokes_session(tmp_path, monkeypatch):
+def test_existing_worktree_uses_own_grant_and_preserves_permission_mode(tmp_path, monkeypatch):
     source = source_fixture(tmp_path, monkeypatch, worktree=True)
     resolved = source.adapter.resolve("mcp:source")
     ref = source.adapter.start(
@@ -63,14 +63,7 @@ def test_existing_worktree_uses_scoped_bridge_then_revokes_session(tmp_path, mon
     )
     assert ref.agent_ref == "t3:mcp:successor"
     log = calls(source)
-    issue, launch, revoke = log[-3:]
-    assert issue["argv"][:3] == ["auth", "session", "issue"]
-    assert issue["argv"][3:7] == [
-        "--scope",
-        "orchestration:read",
-        "--scope",
-        "orchestration:operate",
-    ]
+    launch = log[-1]
     assert launch["argv"][:2] == ["acp-mcp-call", "t3_thread_launch"]
     args = json.loads(launch["argv"][2])
     assert args["workspaceStrategy"] == {
@@ -79,32 +72,39 @@ def test_existing_worktree_uses_scoped_bridge_then_revokes_session(tmp_path, mon
     }
     assert args["modelSelection"] == {"instanceId": "claudeAgent", "model": "claude-opus-5-5"}
     assert args["effort"] == "high" and args["message"] == "short handoff"
-    assert revoke["argv"] == ["auth", "session", "revoke", "fake-session"]
-    assert "fake-token" not in source.log.read_text()
+    assert args["runtimeMode"] == "full-access"
+    assert not any(row["argv"][0] == "auth" for row in log)
+    assert "fake.commonplace-grant" not in source.log.read_text()
 
 
 @pytest.mark.parametrize("setting", ["start_fails", "invalid_reply"])
-def test_unconfirmed_worktree_launch_still_revokes_and_never_settles(
-    tmp_path, monkeypatch, setting
-):
+def test_unconfirmed_worktree_launch_never_settles(tmp_path, monkeypatch, setting):
     source = source_fixture(tmp_path, monkeypatch, worktree=True)
     configure(source, **{setting: True})
     with pytest.raises(T3Error):
         source.adapter.start(source.adapter.resolve("mcp:source"), "prompt", Target("codex", "sol"))
     log = calls(source)
-    assert log[-1]["argv"][:3] == ["auth", "session", "revoke"]
+    assert not any(row["argv"][0] == "auth" for row in log)
     assert not any(row["argv"][:2] == ["thread", "settle"] for row in log)
 
 
-def test_revoke_failure_does_not_hide_confirmed_successor(tmp_path, monkeypatch):
+def test_missing_own_grant_does_not_reuse_a_provider_credential(tmp_path, monkeypatch):
     source = source_fixture(tmp_path, monkeypatch, worktree=True)
-    configure(source, revoke_fails=True)
-    assert (
-        source.adapter.start(
-            source.adapter.resolve("mcp:source"), "prompt", Target("codex", "sol")
-        ).thread_id
-        == "mcp:successor"
-    )
+    monkeypatch.delenv("COMMONPLACE_T3_MCP_TOKEN")
+    monkeypatch.setenv("T3_ACP_MCP_AUTHORIZATION", "Bearer another-agents-credential")
+    with pytest.raises(UnsupportedLaunch, match="own approved"):
+        source.adapter.start(source.adapter.resolve("mcp:source"), "prompt", Target("codex", "sol"))
+    assert len(calls(source)) == 1  # Resolving the source only.
+
+
+def test_insufficient_own_grant_is_unsupported_without_lowering_permissions(tmp_path, monkeypatch):
+    source = source_fixture(tmp_path, monkeypatch, worktree=True)
+    configure(source, insufficient_grant=True)
+    with pytest.raises(UnsupportedLaunch, match="source permission mode"):
+        source.adapter.start(source.adapter.resolve("mcp:source"), "prompt", Target("codex", "sol"))
+    launch = calls(source)[-1]
+    assert json.loads(launch["argv"][2])["runtimeMode"] == "full-access"
+    assert not source.log.with_suffix(".prompt").exists()
 
 
 @pytest.mark.parametrize(

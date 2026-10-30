@@ -7,6 +7,7 @@ import pytest
 
 from commonplace import cli
 from commonplace.handoff import manual
+from commonplace.handoff.db import HandoffDB
 from tests.e2e_handoff.fake_t3 import source_fixture
 from tests.e2e_handoff.sample import FACT, HERE
 
@@ -90,3 +91,70 @@ def test_manual_cross_provider_successor_recalls_buried_fact(
         next(args for args in log if args[:2] == ["acp-mcp-call", "t3_thread_launch"])
     )
     assert Path(fake.cwd).is_dir()
+
+
+def test_missing_worktree_grant_refuses_before_storage_or_launch(scenario, monkeypatch, capsys):
+    scenario.setting(True)
+    fake = source_fixture(
+        scenario.root / "manual-t3", monkeypatch, worktree=True, transcript=scenario.transcript
+    )
+    monkeypatch.setattr(manual, "T3", lambda: fake.adapter)
+    monkeypatch.delenv("COMMONPLACE_T3_MCP_TOKEN")
+    monkeypatch.setenv("T3_ACP_MCP_AUTHORIZATION", "Bearer another-agents-credential")
+    assert (
+        cli.main(
+            [
+                "--data",
+                str(scenario.data),
+                "handoff",
+                "start",
+                "--thread",
+                "mcp:source",
+                "--to",
+                "codex/gpt-6.1-sol",
+                "--workspace",
+                "home",
+            ]
+        )
+        == 2
+    )
+    assert "unsupported existing-worktree launch" in capsys.readouterr().err
+    assert scenario.context.handoff_db.list(scenario.hub.workspace) == []
+    assert len(fake.log.read_text().splitlines()) == 1
+
+
+def test_insufficient_worktree_grant_records_failure_without_settling(
+    scenario, monkeypatch, capsys
+):
+    scenario.setting(True)
+    fake = source_fixture(
+        scenario.root / "manual-t3", monkeypatch, worktree=True, transcript=scenario.transcript
+    )
+    configuration = json.loads(fake.config.read_text())
+    configuration["insufficient_grant"] = True
+    fake.config.write_text(json.dumps(configuration))
+    monkeypatch.setattr(manual, "T3", lambda: fake.adapter)
+    assert (
+        cli.main(
+            [
+                "--data",
+                str(scenario.data),
+                "handoff",
+                "start",
+                "--thread",
+                "mcp:source",
+                "--to",
+                "codex/gpt-6.1-sol",
+                "--workspace",
+                "home",
+            ]
+        )
+        == 2
+    )
+    assert "source permission mode" in capsys.readouterr().err
+    record = HandoffDB(scenario.hub.db).list(scenario.hub.workspace)[0]
+    assert record.state == "launch_failed" and record.successor is None and record.stored_thread_id
+    assert not any(
+        json.loads(line)["argv"][:2] == ["thread", "settle"]
+        for line in fake.log.read_text().splitlines()
+    )

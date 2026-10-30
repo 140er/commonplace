@@ -24,6 +24,10 @@ class T3Error(ValueError):
     pass
 
 
+class UnsupportedLaunch(T3Error):
+    pass
+
+
 @dataclass(frozen=True)
 class Target:
     provider: str
@@ -56,6 +60,7 @@ class SourceThread:
     branch: str = ""
     pr_url: str = ""
     workspace_root: str = ""
+    runtime_mode: str = "approval-required"
 
     def transcript(self) -> str:
         # newline="" retains CR/LF in raw records.
@@ -149,6 +154,7 @@ class T3:
             branch=thread.get("branch") or "",
             pr_url=pr.get("url", ""),
             workspace_root=project[0],
+            runtime_mode=thread.get("runtimeMode") or "approval-required",
         )
 
     @staticmethod
@@ -214,61 +220,58 @@ class T3:
             raise T3Error("T3 did not confirm a new successor thread")
         return SuccessorRef(agent_ref=f"t3:{identifier}", thread_id=identifier)
 
+    def validate_launch(self, source):
+        if source.worktree:
+            self._bridge_environment()
+
+    def _bridge_environment(self):
+        # Only an explicitly configured grant belonging to Commonplace. Never
+        # copy an agent's T3_ACP credential or mint a generic CLI session: the
+        # latter cannot carry the managed MCP runtime-mode ceiling.
+        token = os.environ.get("COMMONPLACE_T3_MCP_TOKEN", "")
+        if not token or "." not in token or any(char.isspace() for char in token):
+            raise UnsupportedLaunch(
+                "unsupported existing-worktree launch: configure Commonplace's own approved "
+                "OAuth MCP grant in COMMONPLACE_T3_MCP_TOKEN; source is still running"
+            )
+        try:
+            runtime = json.loads((self.state_dir / "server-runtime.json").read_text())
+            origin = runtime["origin"]
+            if not isinstance(origin, str) or not origin:
+                raise ValueError
+        except (OSError, ValueError, KeyError, TypeError):
+            raise T3Error("T3's local server address is unavailable") from None
+        environment = os.environ.copy()
+        environment.update(
+            T3_ACP_MCP_ENDPOINT=origin.rstrip("/") + "/mcp",
+            T3_ACP_MCP_AUTHORIZATION="Bearer " + token,
+        )
+        return environment
+
     def _start_worktree(self, source, prompt, target):
         # The installed CLI has no existing-worktree flag. Its MCP bridge is
         # the supported route to bind the checkout BEFORE the agent starts.
-        issued = self._json(
-            [
-                "auth",
-                "session",
-                "issue",
-                "--scope",
-                "orchestration:read",
-                "--scope",
-                "orchestration:operate",
-                "--ttl",
-                "5m",
-                "--label",
-                "commonplace handoff",
-                "--json",
-            ]
+        arguments = {
+            "title": "Context handoff",
+            "projectId": source.project_id,
+            "message": prompt,
+            "modelSelection": {"instanceId": target.provider, "model": target.model},
+            "workspaceStrategy": {"type": "existing_worktree", "worktreePath": source.cwd},
+            "runtimeMode": source.runtime_mode,
+        }
+        if target.effort:
+            arguments["effort"] = target.effort
+        result = self._json(
+            ["acp-mcp-call", "t3_thread_launch", json.dumps(arguments)],
+            cwd=source.cwd,
+            environment=self._bridge_environment(),
         )
-        if not all(
-            isinstance(issued.get(key), str) and issued[key] for key in ("token", "sessionId")
-        ):
-            raise T3Error("T3 did not issue a bridge session")
-        try:
-            runtime = json.loads((self.state_dir / "server-runtime.json").read_text())
-            if not isinstance(runtime, dict) or not isinstance(runtime.get("origin"), str):
-                raise T3Error("T3's local server address is unavailable")
-            environment = os.environ.copy()
-            environment.update(
-                T3_ACP_MCP_ENDPOINT=runtime["origin"].rstrip("/") + "/mcp",
-                T3_ACP_MCP_AUTHORIZATION="Bearer " + issued["token"],
+        if result.get("isError") or not isinstance(result.get("structuredContent"), dict):
+            raise UnsupportedLaunch(
+                "unsupported existing-worktree launch: the Commonplace MCP grant could not "
+                "start the successor with the source permission mode; source is still running"
             )
-            arguments = {
-                "title": "Context handoff",
-                "projectId": source.project_id,
-                "message": prompt,
-                "modelSelection": {"instanceId": target.provider, "model": target.model},
-                "workspaceStrategy": {"type": "existing_worktree", "worktreePath": source.cwd},
-            }
-            if target.effort:
-                arguments["effort"] = target.effort
-            result = self._json(
-                ["acp-mcp-call", "t3_thread_launch", json.dumps(arguments)],
-                cwd=source.cwd,
-                environment=environment,
-            )
-            if result.get("isError") or not isinstance(result.get("structuredContent"), dict):
-                raise T3Error("T3 could not start the successor in the existing worktree")
-            return result["structuredContent"]
-        finally:
-            # Tokens never reach a file, prompt, log, result, or successor env.
-            try:
-                self._run(["auth", "session", "revoke", issued["sessionId"]])
-            except T3Error:
-                pass  # The short TTL still applies; never hide a confirmed launch.
+        return result["structuredContent"]
 
     def settle(self, thread_id):
         self._json(["thread", "settle", thread_id, "--json"])

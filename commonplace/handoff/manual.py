@@ -12,7 +12,7 @@ from pathlib import Path
 from .hook import _atomic_text, _private_dir
 from .launchers import _write_prompt
 from .models import HandoffRequest, SuccessorRef, ThreadMeta
-from .t3 import T3, T3Error, Target
+from .t3 import T3, T3Error, Target, UnsupportedLaunch
 
 
 class ManualHandoffError(ValueError):
@@ -122,6 +122,7 @@ class ManualHandoff:
                 "task_ref": task,
                 "settings_source": setting.source,
             }
+        self.t3.validate_launch(source)
         request = HandoffRequest(
             meta=ThreadMeta(
                 thread_id=source.thread_id,
@@ -155,6 +156,8 @@ class ManualHandoff:
                 successor = self.t3.start(source, result.prompt, target)
             except (OSError, ValueError) as error:
                 self.service.report_launch_failure(principal, handoff.id, str(error))
+                if isinstance(error, UnsupportedLaunch):
+                    raise ManualHandoffError(str(error)) from None
                 raise ManualHandoffError(
                     "successor launch failed; source is still running"
                 ) from None

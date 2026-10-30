@@ -10,6 +10,7 @@ from wire import ThreadClient
 
 prompt = Path(sys.argv[1]).read_text()
 assert "COMMONPLACE_HANDOFF_ID" not in os.environ  # T3 cannot pass this environment on.
+assert "COMMONPLACE_T3_MCP_TOKEN" not in os.environ
 assert os.environ["HANDOFF_FAKE_PROVIDER"] == "codex"
 thread_id = re.search(r"^Thread: (thr_[0-9a-f]+)$", prompt, re.MULTILINE)[1]
 handoff_id = re.search(r"commonplace-handoff-id: (hof_[0-9a-f]+)", prompt)[1]

@@ -37,6 +37,7 @@ def source_fixture(root, monkeypatch, *, provider="claudeAgent", worktree=False,
             "providerInstanceId": provider,
             "model": "old-model",
             "branch": "feat/source",
+            "runtimeMode": "full-access",
         }
     }
     native = {
@@ -63,6 +64,7 @@ def source_fixture(root, monkeypatch, *, provider="claudeAgent", worktree=False,
     config = root / "fake.json"
     config.write_text(json.dumps({"view": view, "log": str(root / "calls.jsonl")}))
     monkeypatch.setenv("HANDOFF_FAKE_T3", str(config))
+    monkeypatch.setenv("COMMONPLACE_T3_MCP_TOKEN", "fake.commonplace-grant")
     adapter = T3(root / "t3", executable=(sys.executable, str(Path(__file__).resolve())))
     return SimpleNamespace(
         adapter=adapter,
@@ -85,11 +87,6 @@ def main():
     if arguments[:2] == ["thread", "show"]:
         print(json.dumps(config["view"]))
         return 0
-    if arguments[:3] == ["auth", "session", "issue"]:
-        print(json.dumps({"sessionId": "fake-session", "token": "fake-token"}))
-        return 0
-    if arguments[:3] == ["auth", "session", "revoke"]:
-        return 1 if config.get("revoke_fails") else 0
     if arguments[:2] == ["thread", "settle"]:
         if config.get("settle_fails"):
             return 1
@@ -97,12 +94,20 @@ def main():
         return 0
     bridge = arguments[:2] == ["acp-mcp-call", "t3_thread_launch"]
     if bridge:
-        assert os.environ["T3_ACP_MCP_AUTHORIZATION"] == "Bearer fake-token"
+        assert os.environ["T3_ACP_MCP_AUTHORIZATION"] == "Bearer fake.commonplace-grant"
         options = json.loads(arguments[2])
         assert options["workspaceStrategy"] == {
             "type": "existing_worktree",
             "worktreePath": os.getcwd(),
         }
+        assert options["runtimeMode"] == config["view"]["thread"]["runtimeMode"]
+        if config.get("insufficient_grant"):
+            print(
+                json.dumps(
+                    {"isError": True, "content": [{"type": "text", "text": "runtime_mode_refused"}]}
+                )
+            )
+            return 0
         prompt = options["message"]
         provider = options["modelSelection"]["instanceId"]
     else:
@@ -121,7 +126,8 @@ def main():
         environment = {
             key: value
             for key, value in os.environ.items()
-            if key not in ("COMMONPLACE_HANDOFF_ID", "COMMONPLACE_THREAD_ID")
+            if key
+            not in ("COMMONPLACE_HANDOFF_ID", "COMMONPLACE_THREAD_ID", "COMMONPLACE_T3_MCP_TOKEN")
             and not key.startswith("T3_ACP_MCP_")
         }
         environment["HANDOFF_FAKE_PROVIDER"] = provider

@@ -77,6 +77,9 @@ def manual(tmp_path, monkeypatch):
             assert thread_id == source.thread_id
             return source
 
+        def validate_launch(self, source):
+            pass
+
         def start(self, old, prompt, target):
             assert old == source
             with self.lock:

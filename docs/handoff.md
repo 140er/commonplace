@@ -129,10 +129,16 @@ CLI cannot bind that checkout: its path argument selects a project and
 otherwise starts at the root. The adapter uses T3's `acp-mcp-call`
 bridge to `t3_thread_launch` with
 `workspaceStrategy={"type":"existing_worktree","worktreePath":"…"}`.
-It issues a five-minute local session restricted to
-`orchestration:read` / `orchestration:operate`, keeps its bearer in the
-bridge process environment, and revokes it after the call. It never creates
-another worktree. The prompt ends with `commonplace-handoff-id: hof_…`,
+The bridge requires Commonplace's own explicitly approved OAuth MCP grant
+in `COMMONPLACE_T3_MCP_TOKEN`. It requests the source's `runtimeMode` so T3
+refuses an insufficient grant instead of lowering permissions. There is no
+public headless auth CLI flag for a managed MCP runtime ceiling; generic
+`t3 auth session issue` tokens are not a substitute. No provider credential
+is read or reused, and the grant never enters the prompt, journal or
+successor environment. Without a grant, the command reports an unsupported
+launch before storage or launch; an attempted launch refused by T3 records
+`launch_failed` and leaves the source running. It never creates another
+worktree. The prompt ends with `commonplace-handoff-id: hof_…`,
 which the successor's existing hook uses to recover its chain ID without
 needing T3 to pass environment variables.
 
@@ -196,6 +202,13 @@ any existing `successor_argv`):
 
 The deepest mapped checkout wins. T3 worktrees inherit their source
 project's mapping. Manual CLI starts need no hook or `successor_argv`.
+Existing-worktree starts also need a dedicated Commonplace MCP client grant,
+created through T3's supported OAuth authorize/approval/exchange flow, with
+access sufficient for the source permission mode. Set its bearer as
+`COMMONPLACE_T3_MCP_TOKEN` in the local CLI/gateway environment. This recipe
+does not mint that grant or enable it on the machine. Until the owner
+configures it, worktree starts refuse cleanly and the source keeps working;
+project-root starts use the supported thread CLI without this extra grant.
 The `handoff_start` MCP tool runs on the gateway machine and requires this
 map to bind the source checkout to the token's workspace. It accepts
 `thread_id`, `to`, and optional `effort`, `note`, `agent`, `task`, `dry_run`;
