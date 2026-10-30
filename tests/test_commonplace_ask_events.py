@@ -1,12 +1,14 @@
 """Asks in the card's event log keep the choices offered, so the app can show them inline."""
 
+import http.client
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from commonplace import boards, sessions
-from commonplace.boards.service import BoardService
+from commonplace.boards.service import BoardService, VersionClash
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext
 from commonplace.web import STATIC
@@ -25,6 +27,33 @@ def owner(hub):
 def agent(hub):
     principal = hub.gateway.authenticate(f"Bearer {hub.owner_token('agent')}")
     return BoardService(ToolContext(principal=principal, gateway=hub.gateway))
+
+
+def post(hub, path, body):
+    session = sessions.redeem_login_link(
+        hub.db, sessions.create_login_link(hub.db, "owner@example.com")
+    )
+    conn = http.client.HTTPConnection("127.0.0.1", hub.port, timeout=10)
+    try:
+        conn.request(
+            "POST",
+            path,
+            json.dumps(body).encode(),
+            {"Content-Type": "application/json", "Cookie": f"{sessions.COOKIE}={session}"},
+        )
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        conn.close()
+
+
+def reasked(owner, agent):
+    """A answered elsewhere, then the agent asks B: returns the card as it was during A."""
+    first = agent.ask("Ship it?", options=["yes", "no"], board="work")
+    owner.decide(first["number"], choice="no", version=first["version"])
+    agent.task_take_next(task=first["number"])
+    agent.ask("Delete the branch?", options=["yes", "keep"], task=first["number"])
+    return first
 
 
 def asks(service, number):
@@ -95,3 +124,47 @@ def test_app_renders_asks_inline_with_one_live_place():
     # The panel header no longer repeats the open ask: the conversation holds it.
     assert '<p class="stamp">${e(actor(card.return_to))}</p>' not in app
     assert 'data-ask="${card.number}"' in app
+
+
+def test_a_stale_decide_never_answers_a_newer_ask(owner, agent):
+    first = reasked(owner, agent)
+    with pytest.raises(VersionClash) as clash:
+        owner.decide(first["number"], choice="yes", version=first["version"])
+    assert clash.value.current["ask"] == "Delete the branch?"
+    current = owner.task_show(first["number"])
+    assert current["status"] == "review" and current["ask"] == "Delete the branch?"
+
+
+def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
+    first = reasked(owner, agent)
+    path = f"/api/cards/{first['number']}/decide"
+    assert post(hub, path, {"choice": "yes"}) == (400, {"error": "version is required"})
+    assert post(hub, path, {"choice": "yes", "version": None})[0] == 400
+    status, body = post(hub, path, {"choice": "yes", "version": first["version"]})
+    assert status == 409 and body["current"]["ask"] == "Delete the branch?"
+    assert owner.task_show(first["number"])["status"] == "review"
+    current = owner.task_show(first["number"])
+    status, body = post(hub, path, {"choice": "keep", "version": current["version"]})
+    assert status == 200 and body["status"] == "todo"
+    decides = [e for e in owner.task_show(first["number"])["events"] if e["kind"] == "decide"]
+    assert [d["choice"] for d in decides] == ["no", "keep"]
+
+
+def test_mcp_decide_without_a_version_still_works(hub, owner, agent):
+    created = agent.ask("Proceed?", options=["yes"], board="work")
+    token = hub.owner_token("chief")
+    response = hub.rpc(
+        token,
+        "tools/call",
+        {"name": "decide", "arguments": {"task": created["number"], "choice": "yes"}},
+    )
+    assert not response["result"].get("isError"), response
+    assert owner.task_show(created["number"])["status"] == "todo"
+
+
+def test_app_sends_the_rendered_version_and_keeps_one_live_place():
+    app = (Path(STATIC) / "app.js").read_text()
+    assert 'data-version="${e(card.version)}"' in app
+    assert "body: { ...payload, version }" in app
+    # Needs you draws no controls for the card open in the panel.
+    assert 'card.number === open ? ""' in app

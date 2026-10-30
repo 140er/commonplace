@@ -4,7 +4,7 @@ import { mountMap } from "./map.js";
 const root = document.querySelector("#root");
 const state = {
   me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
-  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0,
+  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
 };
@@ -62,10 +62,11 @@ function capture(view) {
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
-  const active = document.activeElement;
+  const active = document.activeElement, ask = active?.closest?.("[data-ask]");
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
-    ask: active?.closest?.("[data-ask]") && !active.dataset.draft ? active.dataset.option ?? "" : null,
+    scope: active?.closest?.("#card-panel, #content")?.id,
+    ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
     stacks: [...root.querySelectorAll(".stack")].map((stack) => stack.scrollTop),
     chat: root.querySelector(".space-stream")?.scrollTop,
@@ -76,14 +77,15 @@ function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
-    const input = root.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
+    const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
     input?.focus({ preventScroll: true });
     if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
   }
-  if (saved?.ask != null) {
-    const ask = root.querySelector("[data-ask]");
-    (saved.ask === "" ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask)}"]`))?.focus({ preventScroll: true });
+  if (saved?.ask) {
+    const ask = scope.querySelector(`[data-ask="${CSS.escape(saved.ask.card)}"]`);
+    (saved.ask.option == null ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask.option)}"]`))?.focus({ preventScroll: true });
   }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
@@ -122,18 +124,18 @@ function title(text, actions = "") {
 function decision(card, panel = false, answered = null) {
   if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
-  return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+  return `<div class="opts" data-decisions="${card.number}" data-version="${e(card.version)}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" data-choice="${e(choice)}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
 }
 const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
 // An ask inside the conversation: the question verbatim and its choices. Answered asks keep
 // their place in time with the pick marked and who answered when; only the open ask is live.
-function askCard(card, ask, { answer = null, open = false, compact = false } = {}) {
+function askCard(card, ask, { answer = null, open = false, compact = false, controls = true } = {}) {
   const offered = [...(open ? card.ask_options || [] : ask.options || [])];
   if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
   const question = ask.text ?? (open ? card.ask : null);
-  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, !compact) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open && controls ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? (controls ? decision(card, !compact) : "") : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
 }
-function conversation(card, { compact = false } = {}) {
+function conversation(card, { compact = false, controls = true } = {}) {
   const items = [];
   let ask = null;
   for (const event of card.events || []) {
@@ -145,7 +147,7 @@ function conversation(card, { compact = false } = {}) {
     if (ask) ask.open = true;
     else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
   }
-  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, { ...item, compact })).join("");
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, { ...item, compact, controls })).join("");
 }
 function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
@@ -155,7 +157,8 @@ function needsView() {
   const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
   const cards = needsCards();
   if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="0">${taskRow(card, `<a href="#/board/${enc(card.board)}">${e(card.board)}</a><span class="actor">${e(actor(card.return_to || card.assignee || card.created_by))}</span>`)}${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${rowFoot(card)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
+  const open = state.route.startsWith("#/card/") ? Number(state.route.slice(7)) : null; // its controls live in the panel
+  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="0">${taskRow(card, `<a href="#/board/${enc(card.board)}">${e(card.board)}</a><span class="actor">${e(actor(card.return_to || card.assignee || card.created_by))}</span>`)}${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${card.number === open ? "" : ["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${rowFoot(card)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
 }
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
@@ -172,7 +175,7 @@ function spaceView() {
   const board = state.boards.find((b) => b.slug === slug);
   title(board?.name || slug, `<a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
   const row = (card) => `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
-  const inline = (card) => `${row(card)}<ol class="space-asks">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true })}</ol>`;
+  const inline = (card) => `${row(card)}<ol class="space-asks">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls: state.route !== `#/card/${card.number}` })}</ol>`;
   root.querySelector("#content").innerHTML = `<section class="space" data-tab="${state.spaceTab}"><nav class="space-tabs" aria-label="Space view"><button data-action="space-tab" data-tab="chat" aria-pressed="${state.spaceTab === "chat"}">Chat</button><button data-action="space-tab" data-tab="tasks" aria-pressed="${state.spaceTab === "tasks"}">Tasks <span>${state.cards.length}</span></button></nav><section class="space-chat" aria-label="Space chat"><header class="space-bar"><h2>Chat</h2><span>${e(board?.coordinator ? actor(board.coordinator) : "No coordinator")}</span></header><ol class="space-stream" aria-label="Messages">${state.chat.length ? state.chat.map((m) => `<li class="space-message ${m.actor.startsWith("user:") ? "from-person" : "from-agent"}"><div class="space-stamp"><span class="actor">${e(actor(m.actor))}</span>${clock(m.at)}${m.flags.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</div><p class="space-text">${e(m.text)}</p>${state.cards.filter((c) => c.message_id === m.id).map(inline).join("")}</li>`).join("") : message("No messages")}</ol><form class="space-composer" data-form="space-message" data-board="${e(slug)}"><textarea name="text" rows="2" aria-label="Message" data-draft="space-${e(slug)}" required></textarea><button class="blockbtn">Send</button></form></section><section class="space-tasks" aria-label="Tasks"><header class="space-bar"><h2>Tasks <span>${state.cards.length}</span></h2><button class="opt" data-action="new-card">New card</button></header><div class="stack">${state.cards.map(row).join("") || message("No tasks")}</div></section></section>`;
 }
 function boardsView() {
@@ -184,16 +187,17 @@ async function cardPanel(number, epoch) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   if (opening) panel.innerHTML = message("Loading card…");
+  const request = ++state.panelRequest;
   try {
     const card = await api(`/api/cards/${number}`);
-    if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
+    if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
     panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
     if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
-    if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
+    if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
 function newCardForm(edit = null) {
@@ -346,9 +350,11 @@ async function mutate(key, action) {
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
   }
 }
-async function decide(number, payload) {
+async function decide(number, payload, from) {
+  // The version the person saw: if the card was re-asked since, the server answers 409.
+  const version = Number(from.closest("[data-version]")?.dataset.version);
   await mutate(`card-${number}`, async () => {
-    await api(`/api/cards/${number}/decide`, { method: "POST", body: payload });
+    await api(`/api/cards/${number}/decide`, { method: "POST", body: { ...payload, version } });
     state.drafts.delete(`reply-${number}`);
     root.querySelectorAll(`[data-draft="reply-${number}"]`).forEach((input) => { input.value = ""; });
   });
@@ -377,9 +383,8 @@ root.addEventListener("click", async (event) => {
   const number = Number(b.dataset.card), action = b.dataset.action;
   try {
     if (action === "decide") {
-      const card = findCard(number);
       const reply = state.drafts.get(`reply-${number}`);
-      await decide(number, { choice: card.ask_options[Number(b.dataset.option)], ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" });
+      await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
     else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
@@ -430,7 +435,7 @@ root.addEventListener("submit", async (event) => {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
-    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" });
+    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
       state.drafts.delete(`comment-${state.card.number}`); form.reset();
@@ -499,8 +504,9 @@ document.addEventListener("keydown", (event) => {
     root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
     root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
   } else if (/^[1-6]$/.test(event.key)) {
-    const card = findCard(state.selected), choice = card?.ask_options?.[Number(event.key) - 1];
-    if (choice != null) { event.preventDefault(); decide(card.number, { choice, then: "return", ...(state.drafts.get(`reply-${card.number}`) ? { reply: state.drafts.get(`reply-${card.number}`) } : {}) }); }
+    const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
+    const button = root.querySelector(`[data-row="${state.selected}"] ${option}, [data-ask="${state.selected}"] ${option}`);
+    if (button) { event.preventDefault(); button.click(); }
   } else if (event.key === "o" && state.selected) location.hash = `#/card/${state.selected}`;
   else if (event.key === "Enter" && state.selected && !(event.target instanceof Element && event.target.closest("button,a"))) { event.preventDefault(); root.querySelector(`[data-draft="reply-${state.selected}"]`)?.focus(); }
 });
