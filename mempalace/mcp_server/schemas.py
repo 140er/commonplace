@@ -37,7 +37,7 @@ TOOLS = {
         "handler": tool_get_aaak_spec,
     },
     "mempalace_kg_query": {
-        "description": "Query the knowledge graph for an entity's relationships. Returns typed facts with temporal validity. E.g. 'Max' → child_of Alice, loves chess, does swimming. Filter by date with as_of to see what was true at a point in time.",
+        "description": "Query an entity's facts with temporal validity, deciding source and approval evidence. Check origin_kind, approval_status and approval_link before treating a fact as a user rule; agent proposals and unknown legacy facts are not user-approved. Filter by date with as_of.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -102,6 +102,10 @@ TOOLS = {
                     "type": "string",
                     "description": "Drawer ID the fact was extracted from (optional, RFC 002 provenance)",
                 },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
                 "source_thread": {
                     "type": "string",
                     "description": "Chat thread the fact came from (optional)",
@@ -151,6 +155,10 @@ TOOLS = {
                     "description": "When this became true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; a replacement happens at this instant, default now)",
                 },
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
                 "source_thread": {
                     "type": "string",
                     "description": "Chat thread the fact came from (optional)",
@@ -228,6 +236,10 @@ TOOLS = {
                 "at": {
                     "type": "string",
                     "description": "Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; defaults to now UTC)",
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
                 },
                 "source_thread": {
                     "type": "string",

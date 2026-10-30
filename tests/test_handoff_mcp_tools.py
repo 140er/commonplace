@@ -27,6 +27,15 @@ THREAD = StoredThread(
 )
 
 
+PROVENANCE = {
+    "origin_kind": "thread",
+    "origin_id": THREAD.source_thread_id,
+    "origin_link": "/app/threads/" + THREAD.id,
+    "filed_by": "unknown",
+    "approval_status": "unknown",
+}
+
+
 class FakeRecall:
     def __init__(self, workspace_id):
         self.workspace_id = workspace_id
@@ -40,6 +49,11 @@ class FakeRecall:
             raise self.failure
         if thread_id != THREAD.id or principal.workspace_id != self.workspace_id:
             raise ThreadNotFound("private details must not escape")
+
+    def thread(self, principal, thread_id):
+        if thread_id != THREAD.id or principal.workspace_id != self.workspace_id:
+            raise ThreadNotFound("thread not found")
+        return THREAD
 
     def recall(self, principal, thread_id, query, **kwargs):
         self._record("recall", principal, thread_id, query, **kwargs)
@@ -272,6 +286,7 @@ def test_recall_shape_and_omitted_defaults(setup_tools):
                 "seq_end": 4,
                 "score": 0.75,
                 "text": TEXT,
+                "provenance": PROVENANCE,
             }
         ],
     }
@@ -312,6 +327,7 @@ def test_get_shape_and_raw_opt_in(setup_tools, include_raw):
     assert _value(hub.invoke("thread_get", args)) == {
         "thread_id": THREAD.id,
         "messages": [expected],
+        "provenance": PROVENANCE,
     }
     assert hub.recall.calls == [("get", hub.principal, THREAD.id, (), {})]
     assert MESSAGE.raw == RAW
@@ -327,7 +343,14 @@ def test_get_forwards_ranges_without_inventing_end_constraints(setup_tools, opti
 def test_chain_shape(setup_tools):
     hub = setup_tools
     assert _value(hub.invoke("thread_chain", _args("thread_chain"))) == {
-        "threads": [{"thread_id": THREAD.id, "created_at": THREAD.created_at, "message_count": 5}]
+        "threads": [
+            {
+                "thread_id": THREAD.id,
+                "created_at": THREAD.created_at,
+                "message_count": 5,
+                "provenance": PROVENANCE,
+            }
+        ]
     }
     assert hub.recall.calls == [("chain", hub.principal, THREAD.id, (), {})]
 
@@ -338,7 +361,7 @@ def test_empty_results(setup_tools, name):
     hub.recall.empty = True
     expected = {
         "thread_recall": {"thread_id": THREAD.id, "hits": []},
-        "thread_get": {"thread_id": THREAD.id, "messages": []},
+        "thread_get": {"thread_id": THREAD.id, "messages": [], "provenance": PROVENANCE},
         "thread_chain": {"threads": []},
     }
     assert _value(hub.invoke(name, _args(name))) == expected[name]

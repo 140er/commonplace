@@ -10,6 +10,7 @@ them.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import threading
 from dataclasses import dataclass, field
@@ -48,9 +49,13 @@ class HandoffContext:
         return self.gateway.mediator.workers.call_tool(principal, name, arguments)
 
     def save_fact(self, principal, arguments: dict):
-        """Use the public fact-save gate, including scope, trust and privacy."""
+        """Use the public fact-save gate, including scope, trust and privacy.
+
+        Extraction is automatic, so its facts stay proposals even when a person
+        uploaded the transcript: uploading is not approving what was parsed out.
+        """
         response = self.gateway.mediator.handle(
-            principal,
+            dataclasses.replace(principal, person=False),
             {
                 "jsonrpc": "2.0",
                 "id": "handoff-fact",
