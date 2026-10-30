@@ -257,8 +257,11 @@ def tool_kg_save(
             "source_seq_start": source_seq_start,
             "source_seq_end": source_seq_end,
             "source_drawer_id": source_drawer_id,
+            "source_file": source_file,
+            "confidence": confidence,
             "wing": wing,
             "sensitivity": sensitivity,
+            "sensitivities": sensitivities,
             "single_valued": single_valued,
         },
     )

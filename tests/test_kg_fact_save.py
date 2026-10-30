@@ -93,7 +93,7 @@ def test_older_news_is_filed_as_history(kg):
     )
     assert old["action"] == "historical" and old["current"] == current["triple_id"]
     row = _row(kg, old["triple_id"])
-    assert (row["valid_from"], row["valid_to"]) == ("2024-01-01", "2026-02-01")
+    assert (row["valid_from"], row["valid_to"]) == ("2024-01-01", "2026-02-01T00:00:00Z")
     assert _row(kg, current["triple_id"])["valid_to"] is None
     (then,) = kg.query_entity("Jeffrey", as_of="2025-01-01")
     assert then["object"] == "Acme"
@@ -168,3 +168,84 @@ def test_a_legacy_graph_gains_the_sources_table(tmp_path):
         out = kg.save_fact("Max", "loves", "chess", source_thread="t", source_seq_start=1)
         assert out == {"action": "merged", "triple_id": "t_old", "source_added": True}
         assert kg.sources(["t_old"])["t_old"][0]["source_thread"] == "t"
+
+
+def test_a_retried_history_save_merges(kg):
+    kg.save_fact("Alice", "works_at", "Beta", wing="w", valid_from="2026-03-01")
+    first = kg.save_fact(
+        "Alice",
+        "works_at",
+        "Acme",
+        wing="w",
+        valid_from="2025-01-01",
+        single_valued=True,
+        source_thread="t1",
+        source_seq_start=1,
+    )
+    again = kg.save_fact(
+        "Alice",
+        "works_at",
+        "Acme",
+        wing="w",
+        valid_from="2025-01-01",
+        single_valued=True,
+        source_thread="t2",
+        source_seq_start=4,
+    )
+    assert first["action"] == "historical"
+    assert again == {"action": "merged", "triple_id": first["triple_id"], "source_added": True}
+    assert _count(kg) == 2
+
+
+def test_history_ends_exactly_where_a_date_only_value_starts(kg):
+    kg.save_fact("Alice", "works_at", "Beta", wing="w", valid_from="2026-03-01")
+    kg.save_fact("Alice", "works_at", "Acme", wing="w", valid_from="2025-01-01", single_valued=True)
+    on_the_day = kg.query_entity("Alice", as_of="2026-03-01T12:00:00Z")
+    assert [f["object"] for f in on_the_day] == ["Beta"]
+    day_before = kg.query_entity("Alice", as_of="2026-02-28T23:00:00Z")
+    assert [f["object"] for f in day_before] == ["Acme"]
+
+
+def test_rivals_with_no_start_or_the_same_start_are_replaced(kg):
+    no_start = kg.save_fact("Bot", "uses_model", "a", wing="w")
+    out = kg.save_fact("Bot", "uses_model", "b", wing="w", single_valued=True)
+    assert out["superseded"] == [no_start["triple_id"]]
+    same = kg.save_fact(
+        "Bot", "uses_model", "c", wing="w", valid_from="2030-01-01T00:00:00Z", single_valued=True
+    )
+    assert same["action"] == "superseded"
+    tie = kg.save_fact(
+        "Bot", "uses_model", "d", wing="w", valid_from="2030-01-01T00:00:00Z", single_valued=True
+    )
+    assert tie["action"] == "superseded" and tie["previous"] == ["c"]
+
+
+def test_facts_from_before_sources_keep_their_first_source(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "step2.sqlite3")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE entities (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            type TEXT DEFAULT 'unknown', properties TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE triples (id TEXT PRIMARY KEY, subject TEXT NOT NULL,
+            predicate TEXT NOT NULL, object TEXT NOT NULL, valid_from TEXT,
+            valid_to TEXT, confidence REAL DEFAULT 1.0, source_closet TEXT,
+            source_file TEXT, source_thread TEXT, source_seq_start INTEGER,
+            source_seq_end INTEGER, extracted_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        INSERT INTO entities (id, name) VALUES ('max', 'Max'), ('chess', 'chess');
+        INSERT INTO triples (id, subject, predicate, object, source_thread,
+            source_seq_start, source_seq_end)
+            VALUES ('t_old', 'max', 'loves', 'chess', 'first', 1, 2);
+        """
+    )
+    conn.commit()
+    conn.close()
+    with KnowledgeGraph(db_path=path) as kg:
+        kg.save_fact("Max", "loves", "chess", source_thread="second", source_seq_start=5)
+        threads = [s["source_thread"] for s in kg.sources(["t_old"])["t_old"]]
+        assert threads == ["first", "second"]
+    with KnowledgeGraph(db_path=path) as kg:  # reopening does not backfill twice
+        assert len(kg.sources(["t_old"])["t_old"]) == 2

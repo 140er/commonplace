@@ -502,7 +502,7 @@ def install(gateway):
     gateway.add_prefix_route("POST", "/api/memory/", handle)
 
 
-def _register(name, description, handler, properties, required, scope, kind="read"):
+def _register(name, description, handler, properties, required, scope, kind="read", **extra):
     register(
         LocalTool(
             name=name,
@@ -516,6 +516,7 @@ def _register(name, description, handler, properties, required, scope, kind="rea
             },
             scope=scope,
             kind=kind,
+            **extra,
         )
     )
 
@@ -556,6 +557,10 @@ _register(
     ["subject", "predicate", "object"],
     "kg:write",
     "write",
+    # The worker tool it calls is not in the slim profile and refuses
+    # untrusted tokens; list fact_save only where it can work.
+    profiles=frozenset({"standard", "full"}),
+    trusted_only=True,
 )
 _register(
     "memory_search",

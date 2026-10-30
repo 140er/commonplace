@@ -509,6 +509,12 @@ class KnowledgeGraph:
 
     def _init_db(self):
         conn = self._conn()
+        had_sources = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sources'"
+            ).fetchone()
+            is not None
+        )
         conn.executescript("""
             PRAGMA journal_mode=WAL;
 
@@ -576,6 +582,18 @@ class KnowledgeGraph:
             );
         """)
         self._migrate_schema(conn)
+        if not had_sources:
+            # Facts filed before fact_sources existed keep their first source.
+            conn.execute(
+                "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
+                "source_seq_start, source_seq_end, source_drawer_id, source_file, "
+                "added_at, hub_stamp) SELECT id, source_thread, source_seq_start, "
+                "source_seq_end, source_drawer_id, source_file, "
+                "COALESCE(extracted_at, ?), hub_stamp FROM triples WHERE "
+                "source_thread IS NOT NULL OR source_drawer_id IS NOT NULL "
+                "OR source_file IS NOT NULL",
+                (utc_now_iso(),),
+            )
         conn.commit()
 
     def _migrate_schema(self, conn):
@@ -1181,12 +1199,35 @@ class KnowledgeGraph:
                     if _temporal_start_key(r["valid_from"]) > _temporal_start_key(boundary)
                 ]
                 if later:
-                    action, start, end, closing = (
-                        "historical",
-                        valid_from,
-                        later[0]["valid_from"],
-                        [],
-                    )
+                    # End exactly where the open value starts: a date-only end
+                    # would read as the whole day and overlap it.
+                    action, start, closing = "historical", valid_from, []
+                    end = _temporal_start_key(later[0]["valid_from"])
+                    same_history = conn.execute(
+                        "SELECT id, sensitivity FROM triples WHERE subject=? AND predicate=? "
+                        "AND object=? AND wing IS ? AND valid_from IS ? AND valid_to = ?"
+                        + within_sql,
+                        (sub_id, pred, obj_id, wing, start, end, *within_params),
+                    ).fetchone()
+                    if same_history:
+                        # A retry of the same history merges like an open fact.
+                        conn.execute(
+                            "UPDATE triples SET seen_count = seen_count + 1, last_seen_at = ?, "
+                            "sensitivity = ?, confidence = MAX(COALESCE(confidence, 0), ?) "
+                            "WHERE id = ?",
+                            (
+                                now,
+                                strictest(sensitivity, same_history["sensitivity"]),
+                                confidence,
+                                same_history["id"],
+                            ),
+                        )
+                        added = self._add_source(conn, same_history["id"], *source)
+                        return {
+                            "action": "merged",
+                            "triple_id": same_history["id"],
+                            "source_added": added,
+                        }
                 else:
                     closing = rivals
                     action = "superseded" if rivals else "added"
