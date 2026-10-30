@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +69,13 @@ class FakeStore:
 
     def cards_for_drawer(self, drawer_id, *, principal):
         return [
-            {"number": number, "title": "Ship memory", "status": "doing", "board": "work"}
+            {
+                "number": number,
+                "title": "Ship memory",
+                "status": "doing",
+                "board": "work",
+                "wing": self.themes[number],
+            }
             for number in sorted({link[0] for link in self.links if link[1] == drawer_id})
             if principal.policy.can_read_wing(self.themes[number])
         ]
@@ -120,7 +127,8 @@ def test_save_search_get_verbatim_and_verified_stamp(hub, monkeypatch):
     ]
     assert _http(hub, owner, f"/api/memory/{memory_id}") == (200, body["results"][0])
     saved = events.after(hub.db, hub.workspace)
-    assert [(e["kind"], e["data"]) for e in saved] == [("memory.saved", {"id": memory_id})]
+    assert [(e["kind"], e["data"]["id"]) for e in saved] == [("memory.saved", memory_id)]
+    assert isinstance(saved[0]["data"]["flags"], list)
     assert "Kettle" not in json.dumps(saved)
 
 
@@ -213,7 +221,7 @@ def test_map_is_recent_and_groups_amsterdam_iso_week_year(hub, monkeypatch):
     assert body["weeks"] == [{"week": "2024-W52", "count": 1}, {"week": "2025-W01", "count": 1}]
 
 
-def test_map_people_and_facts_are_stored_relationships_only(hub):
+def test_map_people_and_facts_are_stored_relationships_only(hub, monkeypatch):
     owner = hub.owner_token()
     memory_id = _save(hub, owner, "Alice and Bob mention the kettle")
     path = Path(hub.gateway.workspace_dir(hub.workspace)) / "palace" / KNOWLEDGE_GRAPH_FILENAME
@@ -224,8 +232,24 @@ def test_map_people_and_facts_are_stored_relationships_only(hub):
         graph.add_entity("Kettle", "object")
         graph.add_triple("Alice", "knows", "Bob", source_drawer_id=memory_id)
         graph.add_triple("Bob", "owns", "Kettle")
+
+    from mempalace import knowledge_graph
+
+    original_read = knowledge_graph._read_only
+    opened = []
+
+    def read_only(path):
+        connection = original_read(path)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("INSERT INTO entities(id, name) VALUES ('canary', 'No write')")
+        connection.rollback()
+        opened.append(path)
+        return connection
+
+    monkeypatch.setattr(knowledge_graph, "_read_only", read_only)
     status, body = _http(hub, owner, "/api/memory/map")
     assert status == 200
+    assert opened == [str(path)]
     people = {n["label"]: n["id"] for n in body["nodes"] if n["kind"] == "person"}
     assert people == {"Alice": "person:Alice", "Bob": "person:Bob"}
     facts = [link for link in body["links"] if link["kind"] == "fact"]
@@ -236,8 +260,13 @@ def test_map_people_and_facts_are_stored_relationships_only(hub):
     }
 
 
-def test_link_and_save_to_card_emit_ids_and_appear_in_rest_and_map(hub, board_store):
+def test_link_and_save_to_card_emit_ids_and_appear_in_rest_and_map(hub, board_store, monkeypatch):
     store, paths = board_store
+    monkeypatch.setitem(
+        sys.modules,
+        "commonplace.urls",
+        SimpleNamespace(share_link=lambda db, ws, path: "https://agents.example/s/card7"),
+    )
     owner = hub.owner_token()
     memory_id = _save(hub, owner, "card link text\r\nSecond line stays in memory", task="#7")
     assert store.links == [(7, memory_id, "conn:owner", "card link text")]
@@ -247,9 +276,15 @@ def test_link_and_save_to_card_emit_ids_and_appear_in_rest_and_map(hub, board_st
     assert result["content"][0]["text"] == f"linked {memory_id} to #7"
     assert store.links[-1] == (7, memory_id, "conn:owner", "card link text")
     status, memory = _http(hub, owner, f"/api/memory/{memory_id}")
-    assert status == 200 and memory["cards"] == store.cards_for_drawer(
-        memory_id, principal=hub.db.authenticate_token(owner)
-    )
+    assert status == 200 and memory["cards"] == [
+        {
+            "number": 7,
+            "title": "Ship memory",
+            "status": "doing",
+            "board": "work",
+            "url": "https://agents.example/s/card7",
+        }
+    ]
     body = _http(hub, owner, "/api/memory/map")[1]
     assert [n["id"] for n in body["nodes"] if n["kind"] == "card"] == ["card:7"]
     assert {"source": memory_id, "target": "card:7", "kind": "card", "label": ""} in body["links"]
@@ -422,3 +457,130 @@ def test_empty_workspace_map_and_search_are_empty(hub):
         {"nodes": [], "links": [], "themes": [], "weeks": []},
     )
     assert _http(hub, owner, "/api/memory/search?q=anything") == (200, {"results": []})
+
+
+@pytest.mark.parametrize(
+    ("access", "flags", "expected_theme"),
+    [
+        ("owner", ["health", "secret:password_url"], "private"),
+        ("scoped", ["health"], "shared"),
+        ("untrusted", ["health"], "inbox"),
+        ("owner", ["secret:password_url"], "shared"),
+        ("owner", [], "shared"),
+    ],
+)
+def test_privacy_routes_only_with_permission_and_preserves_text(
+    hub, monkeypatch, access, flags, expected_theme
+):
+    scanned = []
+
+    def scan(text):
+        scanned.append(text)
+        return list(flags)
+
+    monkeypatch.setitem(sys.modules, "commonplace.privacy", SimpleNamespace(scan=scan))
+    owner = hub.owner_token()
+    if access == "owner":
+        token = owner
+    elif access == "scoped":
+        token = _scoped(hub)
+    else:
+        token = hub.token(
+            "bot", profile="slim", read_wings=["inbox"], write_wing="inbox", trust="untrusted"
+        )
+    text = "  Mijn medicatie\r\nVerbatim α and a trailing newline.\n"
+    if access == "owner":
+        status, saved = _http(hub, token, "/api/memory", {"text": text, "theme": "shared"})
+        assert status == 201
+        memory_id = saved["id"]
+    else:
+        memory_id = _save(hub, token, text, theme="shared")
+    status, memory = _http(hub, owner, f"/api/memory/{memory_id}")
+    assert status == 200
+    assert memory["theme"] == expected_theme and memory["text"] == text
+    assert scanned == [text]
+    assert "flags" not in memory
+    log = events.after(hub.db, hub.workspace)
+    assert len(log) == 1 and log[0]["kind"] == "memory.saved"
+    assert log[0]["data"] == {"id": memory_id, "flags": flags}
+    assert "Mijn medicatie" not in json.dumps(log)
+
+
+def test_missing_optional_integrations_use_empty_flags_and_app_url(hub, monkeypatch, board_store):
+    original = importlib.import_module
+
+    def unavailable(name, *args, **kwargs):
+        if name in ("commonplace.privacy", "commonplace.urls"):
+            raise ModuleNotFoundError(name, name=name)
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", unavailable)
+    monkeypatch.setattr(memory_tools, "_APP_URL", "https://app.example")
+    owner = hub.owner_token()
+    text = "Health text is unchanged when the optional scanner is absent."
+    memory_id = _save(hub, owner, text, task=7)
+    assert events.after(hub.db, hub.workspace)[0]["data"] == {"id": memory_id, "flags": []}
+    status, memory = _http(hub, owner, f"/api/memory/{memory_id}")
+    assert status == 200 and memory["text"] == text and memory["theme"] == "shared"
+    assert memory["cards"][0]["url"] == "https://app.example/app/#/card/7"
+
+
+def test_linked_cards_filter_wings_before_generating_short_links(hub, monkeypatch, board_store):
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "visible source")
+    scoped = _scoped(hub)
+    ctx = ToolContext(hub.db.authenticate_token(scoped), hub.gateway)
+    cards = [
+        {"number": 7, "title": "Visible", "status": "doing", "board": "work", "wing": "shared"},
+        {"number": 8, "title": "FORBIDDEN", "status": "todo", "board": "secret", "wing": "private"},
+        {"number": 9, "title": "MISSING_WING", "status": "todo", "board": "work"},
+    ]
+    monkeypatch.setattr(board_store[0], "cards_for_drawer", lambda *args, **kwargs: cards)
+    requested = []
+
+    def share_link(db, workspace_id, path):
+        requested.append((db, workspace_id, path))
+        return "https://agents.example/s/abc1234"
+
+    monkeypatch.setitem(sys.modules, "commonplace.urls", SimpleNamespace(share_link=share_link))
+    status, memory = _http(hub, scoped, f"/api/memory/{memory_id}")
+    assert status == 200 and memory["cards"] == [
+        {
+            "number": 7,
+            "title": "Visible",
+            "status": "doing",
+            "board": "work",
+            "url": "https://agents.example/s/abc1234",
+        }
+    ]
+    assert requested == [(ctx.db, hub.workspace, "/app/#/card/7")]
+    body = _http(hub, scoped, "/api/memory/map")[1]
+    assert [n["id"] for n in body["nodes"] if n["kind"] == "card"] == ["card:7"]
+    assert "FORBIDDEN" not in json.dumps(body) and "MISSING_WING" not in json.dumps(body)
+    owner_ctx = ToolContext(hub.db.authenticate_token(owner), hub.gateway)
+    assert [
+        card["number"] for card in memory_tools._cards(owner_ctx, memory_id, board_store[0])
+    ] == [7, 8]
+
+
+@pytest.mark.parametrize("module_name", ["commonplace.privacy", "commonplace.urls"])
+def test_broken_optional_module_import_does_not_silently_fall_back(monkeypatch, module_name):
+    def broken_import(name):
+        raise ModuleNotFoundError("missing dependency", name="missing_dependency")
+
+    monkeypatch.setattr(importlib, "import_module", broken_import)
+    with pytest.raises(ModuleNotFoundError, match="missing dependency"):
+        memory_tools._optional_module(module_name)
+
+
+def test_optional_helper_errors_are_not_hidden(monkeypatch):
+    def broken(*args):
+        raise ValueError("helper bug")
+
+    monkeypatch.setitem(sys.modules, "commonplace.privacy", SimpleNamespace(scan=broken))
+    with pytest.raises(ValueError, match="helper bug"):
+        memory_tools._privacy_flags("verbatim")
+    monkeypatch.setitem(sys.modules, "commonplace.urls", SimpleNamespace(share_link=broken))
+    ctx = SimpleNamespace(db=object(), principal=SimpleNamespace(workspace_id="ws_test"))
+    with pytest.raises(ValueError, match="helper bug"):
+        memory_tools._share_link(ctx, "/app/#/card/7")
