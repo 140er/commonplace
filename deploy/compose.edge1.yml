@@ -1,0 +1,29 @@
+services:
+  commonplace:
+    image: commonplace:${COMMONPLACE_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/commonplace/Dockerfile
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    env_file:
+      - /srv/commonplace/.env
+    environment:
+      COMMONPLACE_DATA: /data
+      COMMONPLACE_BASE_URL: ${COMMONPLACE_BASE_URL:-https://edge1.tail6cee8c.ts.net}
+    volumes:
+      - /srv/commonplace/data:/data
+    mem_limit: 3g
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; r = urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=5); assert r.status == 200"
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
