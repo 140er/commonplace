@@ -5,8 +5,54 @@ person by name (or email) and every card carries its short link.
 """
 
 import re
+from datetime import datetime, timedelta, timezone
 
 _USER = re.compile(r"\buser:(usr_[0-9a-f]+)\b")
+
+# What a card needs from the person reading it, strongest first. ``done`` is
+# terminal and wins over everything; the rest apply in this order.
+NEEDS = ("you", "plan", "merge", "checks", "working", "idle", "done")
+STALE_MINUTES = 30
+
+
+def stale_before(at=None) -> str:
+    """ISO cutoff: a doing card last seen before this has a stale heartbeat."""
+    at = at or datetime.now(timezone.utc)
+    return (at - timedelta(minutes=STALE_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def need(card, *, me=None, owner=False, now=None) -> str:
+    """One of ``NEEDS`` for a public card dict, seen by actor ``me``.
+
+    An ask with no recipient goes to the workspace owner. A question to someone
+    else is not a plan to approve. ``now`` is a datetime (default: the server clock).
+    """
+    status = card["status"]
+    if status == "done":
+        return "done"
+    ask_to = card.get("ask_to")
+    if card.get("ask") and (ask_to == me if ask_to else owner):
+        return "you"
+    if "plan" in (card.get("labels") or ()) or (status == "review" and not card.get("ask")):
+        return "plan"
+    if card.get("pr_url") and card.get("checks") == "passing":
+        return "merge"
+    if card.get("checks") == "pending":
+        return "checks"
+    if status == "doing" and (card.get("heartbeat_at") or card["updated_at"]) >= stale_before(now):
+        return "working"
+    return "idle"
+
+
+def need_for(card, principal, now=None) -> str:
+    """``need`` as ``principal`` sees it: only a signed-in person is ever ``you``."""
+    person = bool(principal and principal.person)
+    return need(
+        card,
+        me=principal.actor if person else None,
+        owner=person and principal.role == "owner",
+        now=now,
+    )
 
 
 def card_url(ctx, number) -> str:

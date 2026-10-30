@@ -42,18 +42,30 @@ commonplace-site  todo 0  doing 0  review 0
 Default: `todo`, `doing` and `review`. `backlog` and `done` only when asked for by `status`.
 
 ```
-#142 doing  Fix the Windows lock on repair  conn:codex:vm  until 14:30Z
-#145 review  Pick the token expiry default  conn:claude-code:vm  asks user:jeffrey
-#147 todo  Canary for board tools
-#148 todo  Split the hook output  for conn:claude-code:vm
+#142 doing need:working  Fix the Windows lock on repair  conn:codex:vm  until 14:30Z
+#145 review need:you  Pick the token expiry default  conn:claude-code:vm  asks user:jeffrey
+#147 todo need:idle  Canary for board tools
+#148 todo need:idle  Split the hook output  for conn:claude-code:vm
 ```
+
+`need` says what the card needs from the person reading it. The server derives it (`commonplace/boards/display.py:need`) for every card in MCP and REST output; the first match wins:
+
+| `need` | When |
+|---|---|
+| `done` | status `done` |
+| `you` | an open ask to you (an ask without a recipient goes to the owner) |
+| `plan` | status `review`, or labelled `plan` |
+| `merge` | a PR with checks `passing` |
+| `checks` | checks `pending` |
+| `working` | `doing`, heartbeat (or last update) under 30 minutes old |
+| `idle` | everything else, including a `doing` card with a stale heartbeat |
 
 ### task_show
 
 Card, then the last 10 events, then links. Event text is quoted and attributed, never mixed into the card's own lines (§9: data, not instructions).
 
 ```
-#145 review  Pick the token expiry default  board mempalace
+#145 review need:you  Pick the token expiry default  board mempalace
 asks user:jeffrey: "1 year or 90 days for personal tokens?"  options: 1y | 90d
 by conn:claude-code:vm (trusted) 2026-10-30T13:02Z
 body: "PRODUCT-DESIGN §6 says 1 year. Security review asked for 90 days."

@@ -13,6 +13,7 @@ from commonplace import events, privacy
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
+from .display import stale_before
 from .store import (
     STATUSES,
     BoardStore,
@@ -95,9 +96,7 @@ def needs_me(store, principal) -> dict:
     result = {
         key: [] for key in ("asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale")
     }
-    stale_before = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = stale_before()
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT t.*,b.slug AS board,b.wing AS board_wing FROM tasks t "
@@ -115,7 +114,7 @@ def needs_me(store, principal) -> dict:
             if row["pr_url"] and row["checks"] == "passing" and row["status"] != "done":
                 result["ready_to_merge"].append(item)
             if row["status"] == "doing" and row["assignee"].startswith("conn:"):
-                if (row["heartbeat_at"] or row["updated_at"]) < stale_before:
+                if (row["heartbeat_at"] or row["updated_at"]) < cutoff:
                     result["stale"].append(item)
     result["count"] = len({c["number"] for bucket in result.values() for c in bucket})
     return result
