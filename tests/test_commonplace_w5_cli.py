@@ -244,27 +244,20 @@ def test_login_rejects_nonmember_disabled_and_bad_base(initialized, capsys, monk
     assert not output.out and "Traceback" not in output.err
 
 
-def test_login_delegates_canonical_share_link(initialized, monkeypatch, capsys):
+def test_login_link_is_never_a_short_link(initialized, monkeypatch, capsys):
     calls = []
-
-    def share_link(db, workspace, path):
-        calls.append((workspace, path))
-        token = parse_qs(urlsplit(path).query)["t"][0]
-        assert sessions.redeem_login_link(db, token)
-        return "https://agents.example/s/code"
-
     monkeypatch.setitem(
         sys.modules,
         "commonplace.urls",
-        SimpleNamespace(APP_URL="https://app.example", share_link=share_link),
+        SimpleNamespace(APP_URL="https://app.example", share_link=lambda *a: calls.append(a)),
     )
     prefix = ["--data", str(initialized), "login-link", "owner@example.com"]
     assert cli.main(prefix) == 0
-    assert capsys.readouterr().out == "https://agents.example/s/code\n"
-    assert len(calls) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("https://app.example/app/login?t=")
+    assert calls == []
     assert cli.main(prefix + ["--base-url", "https://override.example"]) == 0
     assert capsys.readouterr().out.startswith("https://override.example/app/login?t=")
-    assert len(calls) == 1
 
 
 def test_connect_delegates_without_touching_data(tmp_path, monkeypatch):

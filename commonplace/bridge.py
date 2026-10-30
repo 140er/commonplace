@@ -36,17 +36,16 @@ CLIENT_PRESETS = {
 def create_login_url(db, email, workspace_ref=None, base_url=None) -> str:
     """Create a one-use sign-in URL for an active workspace member.
 
-    Explicit bases produce direct app links. When installed, the canonical URL
-    module supplies short links; until then local installations use the app URL.
+    The link is always a direct app URL. A short link would keep the one-time
+    token in the short-link table in the clear.
     """
     from . import sessions
     from .control_db import ControlError
 
-    share_link = None
     base = base_url
     if base is None:
         try:
-            from .urls import APP_URL, share_link
+            from .urls import APP_URL
 
             base = APP_URL
         except ModuleNotFoundError as exc:
@@ -85,7 +84,8 @@ def create_login_url(db, email, workspace_ref=None, base_url=None) -> str:
         raise ControlError("user is not a workspace member")
     token = sessions.create_login_link(db, user["email"], workspace["id"])
     path = f"/app/login?t={token}"
-    return share_link(db, workspace["id"], path) if share_link else base + path
+    # Never a short link: that would store the one-time token in the clear.
+    return base + path
 
 
 class BridgeError(Exception):
