@@ -203,6 +203,7 @@ input, select, button { min-height: 32px; }
 }
 @media (max-width: 640px) {
   .space { display: flex; flex-direction: column; }
+  .app:has(.space) .mtabs { grid-template-columns: 1.25fr repeat(3, minmax(0, 1fr)); }
   .space-tabs { display: flex; flex: none; background: var(--surface); gap: 6px; padding: 4px 12px; }
   .space-tabs button { flex: 1; min-height: 44px; color: var(--muted); }
   .space-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); }
