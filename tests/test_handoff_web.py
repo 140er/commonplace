@@ -536,6 +536,91 @@ def test_card_states_and_links(app, state):
         assert "handoff failed" in response.body and "compacted instead" in response.body
 
 
+def test_card_shows_context_timeline_and_verbatim_preview(app):
+    app.add_thread(count=42)
+    doc = (
+        "## Goal\n\n```\nShip <b>#142</b>\r\n```\n\n"
+        "## Status\n\n````\nRan ``` once\n````\n\n## Note\n\n```\nnot shown\n```"
+    )
+    app.add_handoff(
+        used_tokens=162_400,
+        window_tokens=200_000,
+        threshold=0.8,
+        doc_markdown=doc,
+        created_at="2026-10-30T12:20:41Z",
+        completed_at="2026-10-30T12:22:46Z",
+    )
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert 'role="meter"' in body and 'aria-valuenow="162400"' in body
+    assert "162k / 200k · 81%" in body and "threshold 80%" in body
+    # 16 blocks reach the threshold; the 17th, partly used, shows it was crossed.
+    assert body.count('<i class="on">') == 16 and body.count('<i class="over">') == 1
+    assert "<code>hof_one</code>" in body and "42 messages" in body
+    assert '<time datetime="2026-10-30T12:20:41Z">30 Oct 12:20:41 UTC</time>' in body
+    assert '<time datetime="2026-10-30T12:22:46Z">12:22:46</time>' in body
+    assert Forms(body).texts == ["Ship <b>#142</b>\r", "Ran ``` once"]
+    assert "<b>" not in body and "not shown" not in body
+
+
+def test_preview_reads_only_the_opening_sections(app):
+    app.add_thread()
+    note = "## Goal\n\n```\nFAKE GOAL\n```"
+    app.add_handoff(
+        doc_markdown="## Status\n\n```\nreal status\n```\n\n## Note\n\n````\n" + note + "\n````"
+    )
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert Forms(body).texts == ["real status"] and "FAKE GOAL" not in body
+
+
+def test_meter_over_window_and_unit_rounding(app):
+    app.add_thread()
+    app.add_handoff(used_tokens=250_000, window_tokens=999_999, threshold=0.2)
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert "250k / 1M · 25%" in body
+    app.handoff_db.handoffs.clear()
+    app.add_handoff(used_tokens=250_000, window_tokens=200_000)
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert "250k / 200k · 125%" in body and 'aria-valuenow="200000"' in body
+    assert body.count('<i class="on">') == 20
+
+
+def test_card_meter_marks_blocks_past_the_threshold(app):
+    app.add_thread()
+    app.add_handoff(used_tokens=950_000, window_tokens=1_000_000, threshold=0.5)
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert "950k / 1M · 95%" in body
+    assert body.count('<i class="on">') == 10 and body.count('<i class="over">') == 9
+    assert '<i class="limit">' not in body
+
+
+def test_card_without_usage_or_successor(app):
+    app.add_thread()
+    app.add_handoff(state="stored", successor=None)
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert 'role="meter"' not in body and "waiting" in body and '<dl class="preview">' not in body
+
+
+def test_settings_show_on_off_and_what_overrides_change(app):
+    app.settings.rows[(app.workspace, "workspace", "")] = SettingRow(
+        app.workspace, "workspace", "", True
+    )
+    for ref, enabled in (("#142", False), ("#143", True)):
+        app.settings.rows[(app.workspace, "task", ref)] = SettingRow(
+            app.workspace, "task", ref, enabled
+        )
+    app.browser.login()
+    body = app.browser.request("GET", "/app/settings/memory").body
+    assert body.count('class="switch-state"') == 4
+    assert '<span class="count">2</span>' in body
+    assert body.count('<span class="from changed">Workspace On</span>') == 1
+    assert body.count('<span class="from">Workspace On</span>') == 1
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -703,7 +788,8 @@ def test_failed_unstored_handoff_visibility(app):
     app.add_handoff(state="failed", stored_thread_id="", successor=None)
     app.browser.login()
     response = app.browser.request("GET", "/app/cards/142")
-    assert response.status == 200 and "Old thread" not in response.body
+    assert response.status == 200 and 'href="/app/threads/' not in response.body
+    assert "not saved" in response.body and "compacted instead" in response.body
     user = app.db.create_user("member@example.com")
     app.db.add_member(app.workspace, user, "member", actor=app.owner)
     browser = Browser(app)

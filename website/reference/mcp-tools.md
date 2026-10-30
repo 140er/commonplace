@@ -312,6 +312,8 @@ Query entity relationships with time filtering.
 | `entity` | string | **Yes** | Entity to query (e.g. "Max", "MyProject") |
 | `as_of` | string | No | Date filter — only facts valid at this date (YYYY-MM-DD) |
 | `direction` | string | No | `outgoing`, `incoming`, or `both` (default: `both`) |
+| `wings` | string[] | No | Only facts in these wings (facts with no wing match none) |
+| `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, as_of, facts: [{ direction, subject, predicate, object, valid_from, valid_to, current }], count }`
 
@@ -331,6 +333,8 @@ Add a fact to the knowledge graph.
 | `source_thread` | string | No | Chat thread the fact came from |
 | `source_seq_start` | integer | No | First message number in `source_thread` |
 | `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `wing` | string | No | Wing the fact belongs to. The same words in two wings are two facts |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
 
 **Returns:** `{ success, triple_id, fact }`
 
@@ -346,6 +350,7 @@ Mark a fact as no longer true.
 | `predicate` | string | **Yes** | Relationship |
 | `object` | string | **Yes** | Connected entity |
 | `ended` | string | No | When it stopped being true (default: today) |
+| `wing` | string | No | Wing of the fact to end |
 
 **Returns:** `{ success, fact, ended }`
 
@@ -365,6 +370,8 @@ Atomically replace a fact with its successor at a single shared boundary. Use wh
 | `source_thread` | string | No | Chat thread the new fact came from |
 | `source_seq_start` | integer | No | First message number in `source_thread` |
 | `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `wing` | string | No | Wing the fact belongs to. The same words in two wings are two facts |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
 
 The replaced fact keeps its row with `status: "superseded"` and `superseded_by` set to the new fact's id.
 
@@ -379,6 +386,8 @@ Chronological timeline of facts.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `entity` | string | No | Entity to get timeline for (omit for full timeline) |
+| `wings` | string[] | No | Only facts in these wings (facts with no wing match none) |
+| `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, timeline: [{ subject, predicate, object, valid_from, valid_to, current }], count }`
 
