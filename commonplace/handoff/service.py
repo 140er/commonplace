@@ -215,7 +215,7 @@ class HandoffService:
                 messages,
                 meta,
                 note=request.note,
-                source_actor=principal.actor,
+                source_actor=stored.created_by,
                 stored_thread_id=stored.id,
                 handoff_id=handoff.id,
                 chain=self._chain(store, parent_id, workspace_id, exclude=stored.id),

@@ -18,10 +18,9 @@ from __future__ import annotations
 import sqlite3
 
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
-from mempalace.fact_provenance import source_link
 
 from .models import SCOPE_THREADS_READ
-from .recall import ThreadNotFound
+from .recall import ThreadNotFound, thread_provenance
 
 TOOL_NAMES = ("thread_recall", "thread_get", "thread_chain")
 
@@ -114,13 +113,7 @@ def _argument_error(args, schema):
 
 def _provenance(ctx, principal, thread_id):
     stored = ctx.recall.thread(principal, thread_id)
-    return {
-        "origin_kind": "thread",
-        "origin_id": stored.source_thread_id,
-        "origin_link": source_link(stored.id),
-        "filed_by": stored.created_by or "unknown",
-        "approval_status": "proposal" if stored.created_by else "unknown",
-    }
+    return thread_provenance(stored)
 
 
 def _recall(ctx, principal, args):
