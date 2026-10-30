@@ -50,7 +50,10 @@ def _static(h):
         if Path(relative).suffix or relative.startswith(("api/", "fonts/")):
             _response(h, 404, b"Not found")
             return
-        target = STATIC / "index.html"
+        target = (STATIC / "index.html").resolve()
+        if not target.is_relative_to(STATIC.resolve()):
+            _response(h, 404, b"Not found")
+            return
     mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     if target.suffix == ".js":
         mime = "text/javascript"
@@ -75,6 +78,8 @@ def install(gateway):
         )
 
     def logout(h):
+        if require_principal(gateway, h) is None:
+            return
         # SameSite=Lax cookies and the origin check prevent cross-site sign-out.
         origin = h.headers.get("Origin")
         if origin and urlsplit(origin).netloc != h.headers.get("Host"):

@@ -17,10 +17,13 @@ Every write and every refusal goes to the audit log (ids only, never text).
 from __future__ import annotations
 
 import copy
+import hashlib
 import http.client
+import ipaddress
 import json
 import logging
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
@@ -30,9 +33,10 @@ from mempalace import provenance
 from mempalace.config import normalize_wing_name
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, sessions
+from . import events, extensions, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
+from .http_util import log_failure
 from .policy import TOOL_RULES, Policy
 from .workers import Worker, WorkerSupervisor
 
@@ -99,7 +103,7 @@ class WorkerClient:
         try:
             worker = self.supervisor.get(principal.workspace_id)
         except Exception as exc:
-            logger.error("worker start failed for %s: %s", principal.workspace_id, exc)
+            log_failure(logger, "worker start failed", exc)
             raise WorkerUnavailable() from exc
         return self._post(worker, principal, request)
 
@@ -620,6 +624,59 @@ def _filter_drawer_batch(result, policy: Policy):
 RouteHandler = Callable[[BaseHTTPRequestHandler], None]
 
 
+def _host_name(authority: str) -> str:
+    """Normalize a Host's name, validating (but ignoring) its optional port."""
+    if not authority or any(ord(c) <= 32 or ord(c) >= 127 for c in authority):
+        raise ValueError("invalid host")
+    parts = urlparse("//" + authority)
+    if (
+        parts.username is not None
+        or parts.password is not None
+        or parts.path
+        or parts.params
+        or parts.query
+        or parts.fragment
+        or authority.endswith(":")
+        or "?" in authority
+        or "#" in authority
+        or "\\" in authority
+        or "%" in authority
+        or (parts.port is not None and not 0 < parts.port <= 65535)
+    ):
+        raise ValueError("invalid host")
+    host = (parts.hostname or "").lower().removesuffix(".")
+    if authority.startswith("["):
+        if not re.fullmatch(r"\[[0-9a-fA-F:.]+\](?::[0-9]+)?", authority):
+            raise ValueError("invalid host")
+        return str(ipaddress.IPv6Address(host))
+    if len(host) > 253 or not all(
+        re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split(".")
+    ):
+        raise ValueError("invalid host")
+    return host
+
+
+def _public_route(method: str, path: str) -> bool:
+    if method == "GET":
+        return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
+            ("/app/", "/s/", "/.well-known/")
+        )
+    return method == "POST" and path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+
+
+def _write_request(method: str, path: str, request) -> bool:
+    if path != "/mcp":
+        return method in ("POST", "PATCH", "DELETE")
+    if not isinstance(request, dict) or request.get("method") != "tools/call":
+        return False
+    params = request.get("params")
+    name = params.get("name") if isinstance(params, dict) else None
+    if not isinstance(name, str):
+        return False
+    local = extensions.get(name)
+    return local.kind == "write" if local else classify_tool(name) in ("write", "maintenance")
+
+
 class Gateway:
     """The HTTP front. ``routes`` is the seam OAuth plugs its endpoints into."""
 
@@ -636,6 +693,12 @@ class Gateway:
         self.mediator.gateway = self
         self.routes: dict = {}
         self.prefix_routes: list = []
+        self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
+        self.limiter = ratelimit.TokenBuckets()
+        allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
+        self.allowed_hosts = (
+            {_host_name(host.strip()) for host in allowed.split(",")} if allowed else None
+        )
         app_url = os.environ.get("COMMONPLACE_APP_URL") or os.environ.get(
             "COMMONPLACE_BASE_URL", ""
         )
@@ -669,6 +732,8 @@ class Gateway:
 
     def principal_for(self, handler) -> Optional[Principal]:
         """A route's caller: a bearer token, else the web session cookie."""
+        if hasattr(handler, "_commonplace_principal"):
+            return handler._commonplace_principal
         header = handler.headers.get("Authorization")
         if header:
             return self.authenticate(header)
@@ -710,101 +775,8 @@ class Gateway:
         return None
 
     def build_server(self, host: str, port: int) -> ThreadingHTTPServer:
-        gateway = self
-
-        class _Handler(BaseHTTPRequestHandler):
-            server_version = "commonplace"
-            sys_version = ""
-            protocol_version = "HTTP/1.1"
-
-            def log_message(self, fmt, *args):
-                logger.debug("%s - %s", self.address_string(), fmt % args)
-
-            def _send_json(self, status: int, payload, extra_headers=None) -> None:
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                for key, value in (extra_headers or {}).items():
-                    self.send_header(key, value)
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _route(self, method: str) -> bool:
-                handler = gateway.find_route(method, urlparse(self.path).path)
-                if handler is None:
-                    return False
-                handler(self)
-                return True
-
-            def _other(self):
-                if not self._route(self.command):
-                    self._send_json(404, {"error": "not found"})
-
-            do_PUT = do_PATCH = do_DELETE = _other
-
-            def do_GET(self):
-                path = urlparse(self.path).path
-                if self._route("GET"):
-                    return
-                if path in ("/health", "/healthz"):
-                    self._send_json(200, {"ok": True})
-                    return
-                if path == "/mcp":
-                    self._send_json(405, {"error": "use POST"}, {"Allow": "POST"})
-                    return
-                self._send_json(404, {"error": "not found"})
-
-            def do_POST(self):
-                path = urlparse(self.path).path
-                if path != "/mcp":
-                    if not self._route("POST"):
-                        self._send_json(404, {"error": "not found"})
-                    return
-                principal = gateway.authenticate(self.headers.get("Authorization"))
-                if principal is None:
-                    self._send_json(
-                        401,
-                        {"error": "unauthorized"},
-                        {
-                            "WWW-Authenticate": getattr(
-                                gateway, "www_authenticate", 'Bearer realm="commonplace"'
-                            )
-                        },
-                    )
-                    return
-                media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-                if media != "application/json":
-                    self._send_json(415, {"error": "POST /mcp needs application/json"})
-                    return
-                try:
-                    length = int(self.headers.get("Content-Length") or "0")
-                except ValueError:
-                    length = -1
-                if length < 0 or length > MAX_REQUEST_BYTES:
-                    self._send_json(413, _rpc_error(None, -32600, "Request too large"))
-                    return
-                try:
-                    request = json.loads(self.rfile.read(length).decode("utf-8"))
-                except Exception:
-                    self._send_json(400, _rpc_error(None, -32700, "Parse error"))
-                    return
-                try:
-                    response = gateway.mediator.handle(principal, request)
-                except Exception:
-                    logger.exception("gateway error")
-                    req_id = request.get("id") if isinstance(request, dict) else None
-                    self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
-                    return
-                if response is None:
-                    self.send_response(202)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
-                self._send_json(200, response)
-
-        server = ThreadingHTTPServer((host, port), _Handler)
+        server = ThreadingHTTPServer((host, port), _GatewayHandler)
+        server.gateway = self
         server.daemon_threads = True
         return server
 
@@ -832,3 +804,216 @@ class Gateway:
             stop.set()
             server.server_close()
             self.supervisor.stop_all()
+
+
+class _GatewayHandler(BaseHTTPRequestHandler):
+    server_version = "commonplace"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        # Targets contain login tokens and memory-search text. Do not
+        # log targets, headers, or the stdlib's raw request line.
+        return
+
+    def send_response(self, code, message=None):
+        self._response_started = True
+        self._connection_header = False
+        self.send_response_only(code, message)
+        self.send_header("Date", self.date_time_string())
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == "connection":
+            self._connection_header = True
+        if keyword.lower() not in ("server", "x-content-type-options"):
+            super().send_header(keyword, value)
+
+    def end_headers(self):
+        if self.close_connection and not getattr(self, "_connection_header", False):
+            super().send_header("Connection", "close")
+        super().send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def send_error(self, code, message=None, explain=None):
+        self.close_connection = True
+        self._send_json(code, {"error": "request refused"})
+
+    def _send_json(self, status: int, payload, extra_headers=None) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body_length(self, path):
+        lengths = self.headers.get_all("Content-Length", [])
+        try:
+            if len(lengths) > 1 or self.headers.get("Transfer-Encoding"):
+                raise ValueError
+            text = lengths[0] if lengths else "0"
+            if not text.isascii() or not text.isdecimal():
+                raise ValueError
+            length = int(text)
+        except ValueError:
+            self.close_connection = True
+            self._send_json(400, {"error": "invalid request body"})
+            return None
+        cap = (
+            MAX_REQUEST_BYTES
+            if path == "/mcp"
+            else 65536
+            if path.startswith("/oauth/")
+            else 1024 * 1024
+        )
+        if length > cap:
+            self.close_connection = True
+            self._send_json(413, {"error": "request too large"})
+            return None
+        return length
+
+    def _rate_limit(self, path, principal, request=None):
+        if not self.server.gateway.rate_limits:
+            return False
+        forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
+        ip = ratelimit.client_ip(self.client_address[0], forwarded)
+        policies = []
+        if path == "/app/login" or (
+            self.command == "POST"
+            and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
+        ):
+            policies.append((ratelimit.CREDENTIALS, ip))
+        if principal is not None:
+            if principal.person:
+                session = sessions.cookie_value(self.headers.get("Cookie")) or ""
+                identity = "session:" + hashlib.sha256(session.encode()).hexdigest()
+            else:
+                identity = "connection:" + principal.connection_id
+            untrusted = principal.policy.trust == "untrusted"
+            policies.append(
+                (ratelimit.UNTRUSTED if untrusted else ratelimit.AUTHENTICATED, identity)
+            )
+            if untrusted and _write_request(self.command, path, request):
+                policies.append((ratelimit.WRITES, identity))
+        # Short links replace the anonymous policy with their own budget.
+        if self.command == "GET" and path.startswith("/s/"):
+            policies.append((ratelimit.SHORT_LINKS, ip))
+        elif principal is None:
+            policies.append((ratelimit.ANONYMOUS, ip))
+        retry = self.server.gateway.limiter.check(policies)
+        if not retry:
+            return False
+        self.close_connection = True
+        self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
+        return True
+
+    def _dispatch(self):
+        self._response_started = False
+        # The stdlib reuses this object for keepalive requests.
+        self.__dict__.pop("_commonplace_principal", None)
+        try:
+            self._handle()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+        except Exception as exc:
+            log_failure(logger, "gateway request failed", exc)
+            self.close_connection = True
+            if not self._response_started:
+                self._send_json(500, {"error": "internal error"})
+
+    def _handle(self):
+        path = urlparse(self.path).path
+        if path in ("/health", "/healthz"):
+            self.close_connection = True
+            if self._body_length(path) is not None:
+                self._send_json(200, {"ok": True})
+            return
+        if self.server.gateway.allowed_hosts is not None:
+            try:
+                hosts = self.headers.get_all("Host", [])
+                valid = (
+                    len(hosts) == 1 and _host_name(hosts[0]) in self.server.gateway.allowed_hosts
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                self.close_connection = True
+                self._send_json(421, {"error": "host refused"})
+                return
+        length = self._body_length(path)
+        if length is None:
+            return
+        principal = self.server.gateway.principal_for(self)
+        self._commonplace_principal = principal
+        handler = self.server.gateway.find_route(self.command, path)
+        request, parse_error = None, None
+        if path == "/mcp" and self.command == "POST" and principal is not None:
+            media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if media != "application/json":
+                parse_error = (415, {"error": "POST /mcp needs application/json"})
+            else:
+                try:
+                    raw = self.rfile.read(length)
+                    if len(raw) != length:
+                        raise ValueError
+                    request = json.loads(raw.decode("utf-8"))
+                except (ValueError, UnicodeError, RecursionError):
+                    parse_error = (400, _rpc_error(None, -32700, "Parse error"))
+        if self._rate_limit(path, principal, request):
+            return
+        # OAuth POST has a browser-bound login-token stage. Its handler
+        # checks sign-in before validating the authorization form.
+        oauth_login = self.command == "POST" and path == "/oauth/authorize"
+        if (
+            principal is None
+            and (handler is not None or path == "/mcp")
+            and not _public_route(self.command, path)
+            and not oauth_login
+        ):
+            self.close_connection = True
+            challenge = (
+                'Bearer resource_metadata="'
+                + urls.AGENT_URL
+                + '/.well-known/oauth-protected-resource"'
+            )
+            self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
+            return
+        if path == "/mcp":
+            if self.command != "POST":
+                self.close_connection = True
+                self._send_json(405, {"error": "use POST"}, {"Allow": "POST"})
+            elif parse_error:
+                self.close_connection = True
+                self._send_json(*parse_error)
+            else:
+                self._mcp(principal, request)
+            return
+        if handler is None:
+            self.close_connection = True
+            self._send_json(404, {"error": "not found"})
+            return
+        # A route can reject a body before reading it. Close so its
+        # remaining bytes cannot become another HTTP request.
+        self.close_connection = True
+        handler(self)
+
+    def _mcp(self, principal, request):
+        try:
+            response = self.server.gateway.mediator.handle(principal, request)
+        except Exception as exc:
+            log_failure(logger, "gateway MCP request failed", exc)
+            self.close_connection = True
+            req_id = request.get("id") if isinstance(request, dict) else None
+            self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
+            return
+        if response is None:
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._send_json(200, response)
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch

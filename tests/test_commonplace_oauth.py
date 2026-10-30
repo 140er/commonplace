@@ -287,7 +287,7 @@ def test_login_token_form_preserves_authorization_without_leaking_credentials(cl
             "POST", path, {"request": request, "login_token": login_token}, cookies=False
         ),
         "invalid_request",
-        403,
+        401,
     )
     status, headers, _ = client.request(
         "POST", path, {"request": request, "login_token": login_token}
@@ -315,7 +315,7 @@ def test_consent_csrf_session_binding_deny_and_replay(client):
     assert_error(
         client.request("POST", path, {"request": request, "decision": "allow"}, cookies=False),
         "invalid_request",
-        403,
+        401,
     )
     client.login()
     assert_error(

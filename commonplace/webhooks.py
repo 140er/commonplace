@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from . import events
 from .extensions import WORK_PROFILES, LocalTool, ToolError, register
+from .http_util import log_failure
 
 logger = logging.getLogger(__name__)
 BACKOFF = (10, 60, 300, 1800, 7200, 21600)
@@ -511,8 +512,8 @@ class Dispatcher:
         except sqlite3.ProgrammingError:
             # A test or embedding application may close its ControlDB first.
             pass
-        except Exception:
-            logger.exception("webhook dispatcher stopped")
+        except Exception as exc:
+            log_failure(logger, "webhook dispatcher stopped", exc)
         finally:
             events.remove_listener(self.on_event)
 

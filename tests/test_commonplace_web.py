@@ -182,9 +182,14 @@ def test_shared_helpers_and_contract_fake_api(hub):
 
     hub.gateway.add_route("GET", "/api/boards", fake)
     hub.gateway.add_route("POST", "/api/boards", fake)
-    assert json.loads(request(hub, "/api/boards")[2])["boards"][0]["slug"] == "work"
+    auth = {"Authorization": "Bearer " + hub.owner_token()}
+    assert json.loads(request(hub, "/api/boards", headers=auth)[2])["boards"][0]["slug"] == "work"
     status, _, body = request(
-        hub, "/api/boards", "POST", '{"name":"café"}'.encode(), {"Content-Type": "application/json"}
+        hub,
+        "/api/boards",
+        "POST",
+        '{"name":"café"}'.encode(),
+        {**auth, "Content-Type": "application/json"},
     )
     assert status == 201 and json.loads(body)["name"] == "café"
     for raw in (
@@ -195,9 +200,20 @@ def test_shared_helpers_and_contract_fake_api(hub):
         b'{"value": NaN}',
         b"1",
         b"\xff",
-        b"x" * (1024 * 1024 + 1),
     ):
-        assert request(hub, "/api/boards", "POST", raw)[0] == 400
+        assert request(hub, "/api/boards", "POST", raw, headers=auth)[0] == 400
+    # The gateway rejects the declared size before reading; don't race its
+    # connection close by continuing to upload an oversized body.
+    assert (
+        request(
+            hub,
+            "/api/boards",
+            "POST",
+            b"",
+            headers={**auth, "Content-Length": str(1024 * 1024 + 1)},
+        )[0]
+        == 413
+    )
     h = SimpleNamespace(path="/api/boards/a%20b/cards/7?q=a+b&empty=&q=last")
     assert path_parts(h, "/api/") == ["boards", "a b", "cards", "7"]
     assert path_parts(h, "/other/") == []
