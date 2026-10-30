@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -78,7 +79,8 @@ def recall(root, n=5000):
     options.inter_op_num_threads = 1
     embedder.model = embedder.ort.InferenceSession(
         str(Path(embedder.DOWNLOAD_PATH) / embedder.EXTRACTED_FOLDER_NAME / "model.onnx"),
-        sess_options=options, providers=["CPUExecutionProvider"],
+        sess_options=options,
+        providers=["CPUExecutionProvider"],
     )
     vectors = []
     for start in range(0, n, 256):
@@ -103,7 +105,7 @@ def recall(root, n=5000):
     }
 
 
-def storage_and_latency(root, size, *, chroma=False):
+def storage_and_latency(root, size, *, chroma=False, progress=None):
     generator = PalaceDataGenerator(seed=42)
     # Reuse the same 10k synthetic templates with a unique drawer prefix.
     templates = [generator._random_text(800, 800)[:780] for _ in range(10000)]
@@ -189,6 +191,10 @@ def storage_and_latency(root, size, *, chroma=False):
             )
         results[backend.name] = entry
         backend.close()
+        del col
+        shutil.rmtree(path)
+        if progress is not None:
+            progress(results)
         print(json.dumps({"drawers": size, "backend": backend.name, "result": entry}), flush=True)
     return results
 
@@ -198,11 +204,18 @@ def main():
     parser.add_argument("--sizes", type=int, nargs="*", default=[100000, 1000000])
     parser.add_argument("--output", type=Path)
     parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=Path(".analysis/compact-benchmark-work"),
+        help="On-disk directory for isolated temporary benchmark stores",
+    )
+    parser.add_argument(
         "--chroma", action="store_true", help="Measure Chroma at the smallest requested size"
     )
     parser.add_argument("--skip-recall", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="compact-gates-") as tmp:
+    args.work_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="compact-gates-", dir=args.work_dir) as tmp:
         root = Path(tmp)
         result = {"dictionary": dictionary_sizes()}
         print(json.dumps(result), flush=True)
@@ -210,8 +223,17 @@ def main():
             result["recall"] = recall(root / "recall")
             print(json.dumps({"recall": result["recall"]}), flush=True)
         for size in args.sizes:
+
+            def save_progress(entries, size=size):
+                result[str(size)] = dict(entries)
+                if args.output:
+                    args.output.write_text(json.dumps(result, indent=2) + "\n")
+
             result[str(size)] = storage_and_latency(
-                root / str(size), size, chroma=args.chroma and size == min(args.sizes)
+                root / str(size),
+                size,
+                chroma=args.chroma and size == min(args.sizes),
+                progress=save_progress,
             )
             if args.output:
                 args.output.write_text(json.dumps(result, indent=2) + "\n")

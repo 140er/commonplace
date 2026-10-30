@@ -370,7 +370,10 @@ class CompactCollection(SQLiteExactCollection):
         if spec.embeddings:
             cols.extend(["d.embedding", "d.scale"])
         cid = self._collection_id(cur)
-        sql = f"SELECT {','.join(cols)} FROM documents d WHERE d.collection_id=? AND ({sql}) ORDER BY {order}"
+        # Parent UNION masks must drive physical rowid lookups. Otherwise
+        # SQLite may prefer a collection-wide covering index and sort it.
+        hint = " NOT INDEXED" if "d.rowid IN (" in sql else ""
+        sql = f"SELECT {','.join(cols)} FROM documents d{hint} WHERE d.collection_id=? AND ({sql}) ORDER BY {order}"
         params = [cid, *params]
         if limit is not None or offset:
             sql += " LIMIT ? OFFSET ?"
@@ -560,17 +563,30 @@ class CompactCollection(SQLiteExactCollection):
             cid = self._collection_id(cur)
             # Contentless UNINDEXED columns are NULL: all identity and filter
             # data comes from documents, joined on its physical rowid.
-            rows = cur.execute(
-                "SELECT d.rowid, bm25(docs_fts) AS score FROM "
-                + (
-                    "documents d CROSS JOIN docs_fts ON d.rowid=docs_fts.rowid "
-                    if where
-                    else "docs_fts JOIN documents d ON d.rowid=docs_fts.rowid "
+            if where:
+                # Keep one FTS cursor for the whole search. A metadata-first
+                # join restarts FTS/BM25 for each row and scales quadratically.
+                # The materialized mask gets an automatic covering rowid index;
+                # EXISTS probes it without reading/decompressing document rows.
+                mask_hint = " NOT INDEXED" if "d.rowid IN (" in sql else ""
+                query_sql = (
+                    "WITH allowed AS MATERIALIZED ("
+                    f"SELECT d.rowid FROM documents d{mask_hint} WHERE d.collection_id=? AND ({sql})) "
+                    "SELECT docs_fts.rowid, bm25(docs_fts) AS score FROM docs_fts "
+                    "WHERE docs_fts MATCH ? AND EXISTS ("
+                    "SELECT 1 FROM allowed WHERE allowed.rowid=docs_fts.rowid) "
+                    "ORDER BY score,docs_fts.rowid LIMIT ?"
                 )
-                + f"WHERE docs_fts MATCH ? AND d.collection_id=? AND ({sql}) "
-                "ORDER BY score,d.rowid LIMIT ?",
-                (match, cid, *params, int(n_results)),
-            ).fetchall()
+                query_params = (cid, *params, match, int(n_results))
+            else:
+                query_sql = (
+                    "SELECT d.rowid, bm25(docs_fts) AS score FROM docs_fts "
+                    "JOIN documents d ON d.rowid=docs_fts.rowid "
+                    "WHERE docs_fts MATCH ? AND d.collection_id=? "
+                    "ORDER BY score,d.rowid LIMIT ?"
+                )
+                query_params = (match, cid, int(n_results))
+            rows = cur.execute(query_sql, query_params).fetchall()
             result = self._hydrate_rowids(
                 cur, [r[0] for r in rows], _IncludeSpec(True, True, False, False)
             )

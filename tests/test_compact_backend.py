@@ -21,7 +21,6 @@ from mempalace.backends.compact import (
     _APPLICATION_ID,
     KEYWORD_ONLY,
     CompactBackend,
-    _where_sql,
 )
 from mempalace.backends.embedding_wrapper import EmbeddingCollection
 
@@ -206,12 +205,16 @@ def test_filters_hydrate_only_returned_rows_and_fts_mutation(compact, monkeypatc
     seen.clear()
     assert col.get(where={"wing": "w"}, limit=2, include=["metadatas"]).ids == ["1", "3"]
     assert not seen
-    sql, params = _where_sql(where)
-    plan = col._handle.conn.execute(
-        "EXPLAIN QUERY PLAN SELECT d.rowid FROM documents d WHERE d.collection_id=1 AND " + sql,
-        params,
-    ).fetchall()
-    assert any("compact_parent" in row[3] for row in plan)
+    statements = []
+    col._handle.conn.set_trace_callback(statements.append)
+    col.get(where=where, limit=2, include=[])
+    col._handle.conn.set_trace_callback(None)
+    selected_sql = next(sql for sql in statements if "FROM documents d NOT INDEXED" in sql)
+    plan = [row[3] for row in col._handle.conn.execute("EXPLAIN QUERY PLAN " + selected_sql)]
+    assert any("SEARCH d USING INTEGER PRIMARY KEY (rowid=?)" in part for part in plan)
+    assert any("compact_parent_drawer" in part for part in plan)
+    assert any("compact_parent_entry" in part for part in plan)
+    assert not any("SEARCH d USING COVERING INDEX" in part for part in plan)
     col.upsert(ids=["28"], documents=["replacement uniqueterm"], embeddings=[[1, 1]])
     assert [h.id for h in col.lexical_search(query="uniqueterm").hits] == ["28"]
     assert "28" not in {h.id for h in col.lexical_search(query="searchable", n_results=200).hits}
@@ -456,3 +459,70 @@ def test_current_schema_migrate_is_read_only(compact, monkeypatch):
 
     monkeypatch.setattr(CompactBackend, "_init_schema", unexpected)
     assert migrate(ref.local_path, dry_run=True)
+
+
+def test_filtered_lexical_mask_plan_and_randomized_ranking_parity(compact):
+    import random
+
+    from mempalace.backends._filters import matches_where
+
+    _, _, col = compact
+    rng = random.Random(42)
+    words = ["alpha", "beta", "gamma", "delta"]
+    documents = [" ".join(rng.choices(words, k=rng.randint(5, 30))) for _ in range(200)]
+    metadata = [
+        {
+            "wing": f"w{rng.randrange(4)}",
+            "room": f"r{rng.randrange(5)}",
+            "parent_drawer_id": f"p{i // 4}",
+            "value": i,
+        }
+        for i in range(200)
+    ]
+    col.add(
+        ids=[str(i) for i in range(200)],
+        documents=documents,
+        metadatas=metadata,
+        embeddings=[[1, 0]] * 200,
+    )
+    conn = col._handle.conn
+    statements = []
+    conn.set_trace_callback(statements.append)
+    col.lexical_search(query="alpha beta", where={"wing": "w1", "room": "r2"}, n_results=7)
+    conn.set_trace_callback(None)
+    mask_sql = next(sql for sql in statements if sql.startswith("WITH allowed AS MATERIALIZED"))
+    assert "LIMIT 7" in mask_sql
+    plan = [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + mask_sql)]
+    assert sum("SCAN docs_fts VIRTUAL TABLE" in part for part in plan) == 1
+    assert any("MATERIALIZE allowed" in part for part in plan)
+    assert any("SEARCH allowed USING AUTOMATIC COVERING INDEX (rowid=?)" in part for part in plan)
+    assert not any(part == "SCAN allowed" for part in plan)
+    # Oracle: the original single FTS scan/join, filtered in Python, then
+    # limited. This checks result identity and BM25 ordering independently
+    # of the new SQL mask construction across randomized predicates.
+    baseline = conn.execute(
+        "SELECT d.id,bm25(docs_fts) AS score FROM docs_fts JOIN documents d "
+        "ON d.rowid=docs_fts.rowid WHERE docs_fts MATCH ? AND d.collection_id=1 "
+        "ORDER BY score,d.rowid",
+        ('"alpha" OR "beta"',),
+    ).fetchall()
+    for _ in range(30):
+        wing, room = f"w{rng.randrange(4)}", f"r{rng.randrange(5)}"
+        where = rng.choice(
+            [
+                {"wing": wing},
+                {"$and": [{"wing": wing}, {"room": room}]},
+                {"$or": [{"wing": wing}, {"room": room}]},
+                {"$and": [{"wing": {"$ne": wing}}, {"value": {"$gte": rng.randrange(200)}}]},
+                {
+                    "$or": [
+                        {"parent_drawer_id": f"p{rng.randrange(50)}"},
+                        {"parent_entry_id": "missing"},
+                    ]
+                },
+            ]
+        )
+        expected = [row for row in baseline if matches_where(metadata[int(row[0])], where)][:7]
+        actual = col.lexical_search(query="alpha beta", where=where, n_results=7).hits
+        assert [hit.id for hit in actual] == [row[0] for row in expected]
+        assert [hit.score for hit in actual] == pytest.approx([-row[1] for row in expected])
