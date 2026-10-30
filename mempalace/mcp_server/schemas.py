@@ -89,6 +89,20 @@ TOOLS = {
                     "type": "string",
                     "description": "Drawer ID the fact was extracted from (optional, RFC 002 provenance)",
                 },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
             },
             "required": ["subject", "predicate", "object"],
         },
@@ -126,6 +140,20 @@ TOOLS = {
                 "at": {
                     "type": "string",
                     "description": "Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; defaults to now UTC)",
+                },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
                 },
             },
             "required": ["subject", "predicate", "old_object", "new_object"],
@@ -406,6 +434,20 @@ TOOLS = {
                 },
                 "source_file": {"type": "string", "description": "Where this came from (optional)"},
                 "added_by": {"type": "string", "description": "Who is filing this (default: mcp)"},
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread these words came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
             },
             "required": ["wing", "room", "content"],
         },

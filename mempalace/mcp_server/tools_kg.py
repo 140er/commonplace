@@ -92,6 +92,9 @@ def tool_kg_add(
     source_closet: str = None,
     source_file: str = None,
     source_drawer_id: str = None,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
 ):
     """Add a relationship to the knowledge graph.
 
@@ -101,6 +104,9 @@ def tool_kg_add(
 
     Temporal values accept either ``YYYY-MM-DD`` or canonical UTC datetimes in
     the form ``YYYY-MM-DDTHH:MM:SSZ``.
+
+    ``source_thread`` plus ``source_seq_start``/``source_seq_end`` name the
+    chat messages the fact came from.
     """
     try:
         subject = sanitize_kg_value(subject, "subject")
@@ -108,6 +114,9 @@ def tool_kg_add(
         object = sanitize_kg_value(object, "object")
         valid_from = sanitize_iso_temporal(valid_from, "valid_from")
         valid_to = sanitize_iso_temporal(valid_to, "valid_to")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -122,6 +131,9 @@ def tool_kg_add(
             "source_closet": source_closet,
             "source_file": source_file,
             "source_drawer_id": source_drawer_id,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
         },
     )
 
@@ -136,6 +148,9 @@ def tool_kg_add(
                 source_closet=source_closet,
                 source_file=source_file,
                 source_drawer_id=source_drawer_id,
+                source_thread=source_thread,
+                source_seq_start=source_seq_start,
+                source_seq_end=source_seq_end,
             )
         )
     except Exception as e:
@@ -201,6 +216,9 @@ def tool_kg_supersede(
     old_object: str,
     new_object: str,
     at: str = None,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
 ):
     """Atomically replace one fact with another at a single shared boundary.
 
@@ -219,6 +237,9 @@ def tool_kg_supersede(
         old_object = sanitize_kg_value(old_object, "old_object")
         new_object = sanitize_kg_value(new_object, "new_object")
         at = sanitize_iso_temporal(at, "at")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -230,6 +251,9 @@ def tool_kg_supersede(
             "old_object": old_object,
             "new_object": new_object,
             "at": at,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
         },
     )
 
@@ -237,7 +261,18 @@ def tool_kg_supersede(
     # bubble to the dispatcher, matching tool_kg_add / tool_kg_invalidate: the
     # -32000 response carries error_class + message in error.data. Only input
     # sanitization above returns the {success: False} envelope.
-    triple_id = _call_kg(lambda kg: kg.supersede(subject, predicate, old_object, new_object, at=at))
+    triple_id = _call_kg(
+        lambda kg: kg.supersede(
+            subject,
+            predicate,
+            old_object,
+            new_object,
+            at=at,
+            source_thread=source_thread,
+            source_seq_start=source_seq_start,
+            source_seq_end=source_seq_end,
+        )
+    )
     return _with_kg_notice(
         {
             "success": True,
