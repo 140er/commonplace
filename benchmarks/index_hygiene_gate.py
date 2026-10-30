@@ -28,7 +28,7 @@ import re
 import sqlite3
 import tempfile
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -300,7 +300,7 @@ def index_chat(corpus: Corpus, *, policy: bool, embedder=None):
                 embeddings=embeddings,
             )
             # No query has loaded the backend's vector cache yet.
-            with sqlite3.connect(backend._db_path(directory)) as connection:
+            with closing(sqlite3.connect(backend._db_path(directory))) as connection, connection:
                 for message, text in zip(corpus.messages, indexed):
                     connection.execute(
                         "UPDATE docs_fts SET document = ? WHERE doc_id = ?", (text, message.id)

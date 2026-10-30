@@ -114,7 +114,7 @@ def test_union_recovers_keyword_only_output_through_default_tool_path(reports):
 
 def test_benchmark_seam_retains_verbatim_storage_and_keyword_only_rows():
     corpus = gate.synthetic_corpus(noise=1)
-    with gate.index_chat(corpus, policy=True) as (_, collection):
+    with gate.index_chat(corpus, policy=True) as (directory, collection):
         stored = collection.get(include=["documents", "embeddings"])
         rows = dict(zip(stored.ids, zip(stored.documents, stored.embeddings)))
         for message in corpus.messages:
@@ -130,6 +130,7 @@ def test_benchmark_seam_retains_verbatim_storage_and_keyword_only_rows():
         # in stored drawers. Surrounding path words remain searchable.
         lexical = collection.lexical_search(query="long component", n_results=5)
         assert {"claude-code-5", "codex-5"} <= {hit.id for hit in lexical.hits}
+    assert not Path(directory).exists()
 
 
 def test_synthetic_paraphrase_uses_fixed_synonyms_and_keyword_anchor():
