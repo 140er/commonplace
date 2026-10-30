@@ -217,6 +217,7 @@ class Handoff:
     connection_id: str = ""
     created_at: str = ""
     updated_at: str = ""
+    cwd: str = ""  # the old agent's working directory, from ThreadMeta.cwd
 
 
 @dataclass(frozen=True)
