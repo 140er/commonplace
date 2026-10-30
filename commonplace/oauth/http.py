@@ -1,4 +1,4 @@
-"""Small, bounded HTTP helpers private to the OAuth endpoints."""
+"""Small, bounded HTTP helpers for the OAuth and sign-in endpoints."""
 
 from __future__ import annotations
 
