@@ -571,21 +571,82 @@ def test_unrelated_event_ignored(local, api, monkeypatch, capsys):
     assert api.calls == []
 
 
+def _handoff_posts(api):
+    return [call for call in api.calls if call["route"] == "/api/handoff"]
+
+
 @pytest.mark.parametrize("aliases", [False, True])
-def test_codex_payload_and_notification(local, api, monkeypatch, capsys, aliases):
+def test_codex_marks_pending_then_hands_off_at_next_turn(local, api, monkeypatch, capsys, aliases):
     local.usage = ContextUsage(180_000, 200_000, "gpt-test")
     local.data["hook_event_name"] = "Stop"
     if aliases:
         local.data["thread_id"] = local.data.pop("session_id")
         local.data["rollout_path"] = local.data.pop("transcript_path")
+    # Over the threshold mid-turn: only a notice, nothing stored yet.
     out, err = run_hook(local, monkeypatch, capsys, client="codex")
     assert err == ""
-    assert set(json.loads(out)) == {"systemMessage"}
-    request = api.calls[1]["body"]
+    assert json.loads(out) == {"systemMessage": hook.PENDING_NOTICE}
+    assert _handoff_posts(api) == []
+    # Notice once; later hooks in the same turn stay quiet.
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    assert _handoff_posts(api) == []
+    # The next turn starts: hand off now and pass the new message on.
+    message = "Now ship it.\n```py\nprint('x')\n```"
+    local.data.update(hook_event_name="UserPromptSubmit", prompt=message)
+    out, err = run_hook(local, monkeypatch, capsys, client="codex")
+    assert err == ""
+    result = json.loads(out)
+    assert result["decision"] == "block"
+    assert result["reason"].startswith("Context handed off. Successor: ")
+    [post] = _handoff_posts(api)
+    request = post["body"]
     assert request["meta"]["client"] == "codex"
     assert request["meta"]["thread_id"] == "session-one"
     assert request["meta"]["model"] == "gpt-test"
     assert request["transcript_format"] == "codex"
+    prompt_file = Path(result["reason"].removeprefix("Context handed off. Successor: "))
+    prompt = prompt_file.read_bytes().decode()
+    assert prompt.startswith(api.reply["prompt"])
+    assert "````\n" + message + "\n````" in prompt
+    # Nothing pending any more; the same session keeps pointing at the successor.
+    local.data["prompt"] = "another"
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
+    assert len(_handoff_posts(api)) == 1
+
+
+def test_codex_turn_start_without_pending_does_nothing(local, api, monkeypatch, capsys):
+    local.usage = ContextUsage(180_000, 200_000, "gpt-test")
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    assert _handoff_posts(api) == []
+
+
+def test_claude_ignores_turn_start(local, api, monkeypatch, capsys):
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    assert run_hook(local, monkeypatch, capsys) == ("", "")
+    assert _handoff_posts(api) == []
+
+
+def test_codex_pending_cleared_when_handoff_is_off(local, api, monkeypatch, capsys):
+    local.usage = ContextUsage(180_000, 200_000, "gpt-test")
+    local.data["hook_event_name"] = "PostToolUse"
+    run_hook(local, monkeypatch, capsys, client="codex")
+    api.reply = {"action": "compact", "reason": "off"}
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    assert not list((local.home / ".commonplace" / "handoff-cache").glob("*.pending.json"))
+
+
+def test_codex_pending_kept_when_the_hub_is_down(local, api, monkeypatch, capsys):
+    local.usage = ContextUsage(180_000, 200_000, "gpt-test")
+    local.data["hook_event_name"] = "PostToolUse"
+    run_hook(local, monkeypatch, capsys, client="codex")
+    api.statuses["/api/handoff"] = 500
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    out, err = run_hook(local, monkeypatch, capsys, client="codex")
+    assert out == "" and err
+    assert list((local.home / ".commonplace" / "handoff-cache").glob("*.pending.json"))
 
 
 def test_unsafe_session_id_cannot_escape_cache_directory(local, api, monkeypatch, capsys):

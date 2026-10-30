@@ -8,10 +8,12 @@ for 60 seconds; a warm below-threshold call does no HTTP or full file read.
 
 The repository's Codex adapter (``mempalace.hooks_cli._parse_harness_input``)
 uses the same ``session_id`` / ``transcript_path`` fields as Claude Code.
-Codex's ``thread_id`` / ``rollout_path`` aliases are also accepted. Its
-documented repository integration establishes ``systemMessage`` output,
-but no hook output that terminates the old agent. Codex therefore gets a
-notification only: stopping the old run still needs harness support.
+Codex's ``thread_id`` / ``rollout_path`` aliases are also accepted. A Codex
+hook can't stop a running turn, so for Codex the threshold only marks the
+session pending (with a ``systemMessage`` notice), and the handoff runs at
+the start of the next turn (``UserPromptSubmit``): the thread is stored, the
+handoff written, the successor started with the user's new message passed
+on verbatim, and that prompt is blocked in the old session.
 
 A private launch journal prevents repeated local launches, including after
 registration fails. A crash between spawning and recording the PID leaves
@@ -194,11 +196,29 @@ def _branch(cwd: str) -> str:
         return ""
 
 
+PENDING_NOTICE = "Context is nearly full. It hands off at the start of the next turn."
+
+
 def _output(client: str, successor: str) -> dict:
     reason = f"Context handed off. Successor: {successor}"
     if client == "codex":
-        return {"systemMessage": reason}
+        # Only the start of a turn can refuse work: the old session must not
+        # answer a message its successor is now handling.
+        return {"decision": "block", "reason": reason, "systemMessage": reason}
     return {"continue": False, "stopReason": reason}
+
+
+def _fence(text: str) -> str:
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
+def _with_next_message(prompt: str, message: str) -> str:
+    """The successor also gets the message the old session won't answer."""
+    if not message:
+        return prompt
+    return prompt + "\n\nThe user's next message, not yet answered:\n\n" + _fence(message)
 
 
 def _register(server: str, token: str, record: dict, journal: Path) -> None:
@@ -236,12 +256,20 @@ def _resume(record: dict, journal: Path, client: str, server: str, token: str):
 
 
 def _launch(
-    reply: dict, journal: Path, context: str, cwd: str, client: str, server: str, token: str
+    reply: dict,
+    journal: Path,
+    context: str,
+    cwd: str,
+    client: str,
+    server: str,
+    token: str,
+    next_message: str = "",
 ):
     handoff = reply["handoff"]
     prompt = reply.get("prompt")
     if not isinstance(prompt, str) or not prompt:
         raise ValueError("Missing prompt")
+    prompt = _with_next_message(prompt, next_message)
     config_path = Path.home() / ".commonplace" / "handoff-client.json"
     if config_path.exists():
         with config_path.open(encoding="utf-8") as stream:
@@ -314,7 +342,15 @@ def _launch(
     return _output(client, record["agent_ref"])
 
 
-def _handoff(reply: dict, journal: Path, context: str, meta: ThreadMeta, server: str, token: str):
+def _handoff(
+    reply: dict,
+    journal: Path,
+    context: str,
+    meta: ThreadMeta,
+    server: str,
+    token: str,
+    next_message: str = "",
+):
     if reply.get("action") != "handoff":
         return None
     handoff = reply.get("handoff")
@@ -329,7 +365,7 @@ def _handoff(reply: dict, journal: Path, context: str, meta: ThreadMeta, server:
     ):
         raise ValueError("Invalid handoff")
     if reply["launch"]:
-        return _launch(reply, journal, context, meta.cwd, meta.client, server, token)
+        return _launch(reply, journal, context, meta.cwd, meta.client, server, token, next_message)
     successor = handoff.get("successor")
     if (
         isinstance(successor, dict)
@@ -376,7 +412,10 @@ def _run(argv, server: str, token: str):
         or not isinstance(cwd, str)
     ):
         raise ValueError("Missing hook metadata")
-    if event not in ("", "PostToolUse", "Stop", "PreCompact"):
+    if event not in ("", "PostToolUse", "Stop", "PreCompact", "UserPromptSubmit"):
+        return None
+    turn_start = event == "UserPromptSubmit"
+    if turn_start and client != "codex":
         return None
     transcript_path = Path(transcript).expanduser()
     if not transcript_path.is_file():
@@ -409,14 +448,28 @@ def _run(argv, server: str, token: str):
                 raise ValueError("Invalid launch record")
             if record.get("context") == context:
                 return _resume(record, journal, client, server, token)
+        pending = cache_dir / f"{key}.pending.json"
         usage = trigger.usage_from_tail(
             str(transcript_path),
             fmt=client,
             override_window=settings.context_window,
             configured=trigger.configured_model(cwd) if client == "claude-code" else "",
         )
-        if event != "PreCompact" and not trigger.should_handoff(usage, settings):
-            return None
+        if turn_start:
+            # Codex: hand off now only if an earlier hook marked this session.
+            marked = _read_json(pending) if pending.exists() else None
+            if not isinstance(marked, dict) or marked.get("context") != context:
+                return None
+        else:
+            if event != "PreCompact" and not trigger.should_handoff(usage, settings):
+                return None
+            if client == "codex":
+                # A Codex hook can't stop the running turn: mark it, hand off
+                # when the next one starts. Notice once.
+                if pending.exists():
+                    return None
+                _write_json(pending, {"context": context, "event": event})
+                return {"systemMessage": PENDING_NOTICE}
         with transcript_path.open(encoding="utf-8", newline="") as stream:
             transcript_text = stream.read()
         meta = ThreadMeta(
@@ -434,7 +487,20 @@ def _run(argv, server: str, token: str):
             meta=meta, transcript=transcript_text, transcript_format=client, usage=usage
         )
         reply = _request(server, token, "/api/handoff", asdict(request))
-        return _handoff(reply, journal, context, meta, server, token)
+        next_message = data.get("prompt", "") if turn_start else ""
+        output = _handoff(
+            reply,
+            journal,
+            context,
+            meta,
+            server,
+            token,
+            next_message if isinstance(next_message, str) else "",
+        )
+        if turn_start and (output is not None or reply.get("reason") == "off"):
+            # Handed off, or handoff was turned off: nothing is pending now.
+            pending.unlink(missing_ok=True)
+        return output
 
 
 def main(argv=None) -> int:
