@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -19,6 +20,9 @@ from .models import MIRROR_WING
 from .writer import _is_user_message
 
 VERSION = 1
+# Background parsing gives the GIL back this often, then rests as long: a large
+# backlog must not slow the gateway's request threads (thread reads stay < 100 ms).
+PACE_SECONDS = 0.002
 _NAME = r"(?P<subject>[^\W\d_][\w .’'-]{0,79}?)"
 _VALUE = r"(?P<object>[^\n,;!?]{1,180}?)"
 _PREFIX = re.compile(r"^(?:[A-Za-z]+(?: [A-Za-z]+){0,2}:|FYI,)\s*", re.I)
@@ -280,6 +284,16 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
     return list(dict.fromkeys(out))
 
 
+def _paced(messages):
+    """Yield messages, resting after every ``PACE_SECONDS`` of parsing."""
+    started = time.perf_counter()
+    for message in messages:
+        if time.perf_counter() - started >= PACE_SECONDS:
+            time.sleep(PACE_SECONDS)
+            started = time.perf_counter()
+        yield message
+
+
 def file_pending(store, stored, save_fact, *, user="") -> int:
     """Resume bounded batches from a durable cursor; failed messages are retried.
 
@@ -294,7 +308,7 @@ def file_pending(store, stored, save_fact, *, user="") -> int:
         pending = [m for m in messages if m.seq >= cursor]
         if not pending:
             return filed
-        facts = extract(messages, user=user, fallback_at=stored.created_at)
+        facts = extract(_paced(messages), user=user, fallback_at=stored.created_at)
         by_end = {}
         for fact in facts:
             if fact.seq_end >= cursor:

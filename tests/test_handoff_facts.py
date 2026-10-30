@@ -365,3 +365,13 @@ def test_dated_past_employer_without_current_employer_stays_in_verbatim_store(tm
         assert facts.file_pending(store, stored, lambda args: _save(kg, args)) == 0
         assert kg.query_entity("Jeffrey") == []
         assert store.messages(stored.id) == source
+
+
+def test_background_parsing_rests_so_request_threads_keep_the_gil(monkeypatch):
+    clock = iter(range(100))
+    rests = []
+    monkeypatch.setattr(facts.time, "perf_counter", lambda: next(clock) * facts.PACE_SECONDS)
+    monkeypatch.setattr(facts.time, "sleep", rests.append)
+    messages = [message(f"line {seq}", seq=seq) for seq in range(4)]
+    assert list(facts._paced(messages)) == messages
+    assert rests == [facts.PACE_SECONDS] * 4
