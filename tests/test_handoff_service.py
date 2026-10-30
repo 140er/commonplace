@@ -17,6 +17,7 @@ from commonplace.handoff.models import (
     EVENT_LAUNCH_FAILED,
     EVENT_STARTED,
     EVENT_STORED,
+    ContextUsage,
     Handoff,
     HandoffDoc,
     HandoffRequest,
@@ -48,7 +49,17 @@ class FakeDB:
             found = self.keys.get((workspace_id, idempotency_key))
             return self.rows[found] if found else None
 
-    def begin(self, workspace_id, idempotency_key, meta, *, connection_id, lease_token=""):
+    def begin(
+        self,
+        workspace_id,
+        idempotency_key,
+        meta,
+        *,
+        connection_id,
+        lease_token="",
+        usage=None,
+        threshold=0.0,
+    ):
         with self.lock:
             self.trace.append("begin")
             key = workspace_id, idempotency_key
@@ -71,6 +82,9 @@ class FakeDB:
                 cwd=meta.cwd,
                 parent_handoff_id=meta.parent_handoff_id,
                 connection_id=connection_id,
+                used_tokens=usage.used_tokens if usage else 0,
+                window_tokens=usage.window_tokens if usage else 0,
+                threshold=threshold,
             )
             self.rows[row.id] = row
             self.keys[key] = row.id
@@ -457,6 +471,18 @@ def test_enabled_pipeline_in_order_and_verbatim(rig, agent, key):
         "mark_launched",
         "launch",
     ]
+
+
+def test_handoff_records_context_usage_and_threshold(rig):
+    rig.settings.current = HandoffSettings(enabled=True, threshold=0.7)
+    handoff = rig.service.run(rig.principal, make_request(usage=ContextUsage(170_000, 200_000)))
+    handoff = handoff.handoff
+    threshold = 0.7
+    assert (handoff.used_tokens, handoff.window_tokens, handoff.threshold) == (
+        170_000,
+        200_000,
+        threshold,
+    )
 
 
 @pytest.mark.parametrize("state", ["launched", "done", "launch_failed"])
