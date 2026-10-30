@@ -114,11 +114,15 @@ def _range_value(query: dict, key: str, default):
     return int(value)
 
 
-def _read_json(handler, limit: int = MAX_BODY_BYTES) -> dict:
+def _read_json(handler, limit: int = MAX_BODY_BYTES, *, allow_empty: bool = False) -> dict:
+    lengths = [value.strip() for value in handler.headers.get_all("Content-Length", [])]
+    if allow_empty and handler.headers.get("Transfer-Encoding") is None:
+        if not lengths or (len(lengths) == 1 and lengths[0] and not lengths[0].lstrip("0")):
+            handler._handoff_body_read = True
+            return {}
     media = (handler.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
     if media != "application/json":
         raise _RequestError(415, "application/json required")
-    lengths = [value.strip() for value in handler.headers.get_all("Content-Length", [])]
     if (
         handler.headers.get("Transfer-Encoding") is not None
         or len(lengths) != 1
@@ -338,6 +342,7 @@ class _API:
                 if parts[1] == "relaunch":
                     self.require(principal, owner=True)
                     self.handoff(principal, record_id)
+                    _object(_read_json(handler, allow_empty=True), set())
                     return 200, self.result(
                         principal, self.ctx.service.relaunch(principal, record_id)
                     )

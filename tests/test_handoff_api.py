@@ -988,8 +988,33 @@ def test_content_length_allows_leading_zeros_and_outer_whitespace(hub):
 
 
 def test_bodyless_routes_close_connection_when_body_is_unread(hub):
-    status, _, headers = hub.request("POST", "/api/handoffs/hof_local/relaunch", b"ignored")
+    status, _, headers = hub.request("GET", "/api/webhooks", b"ignored")
     assert status == 200 and headers["Connection"] == "close"
+
+
+@pytest.mark.parametrize(
+    "body,headers,expected",
+    [
+        (None, {}, 200),
+        (b"", {}, 200),
+        (b"{}", {}, 200),
+        (b"ignored", {}, 400),
+        (b"[]", {}, 400),
+        (b'{"unused":true}', {}, 400),
+        (b"{}", {"Content-Type": "text/plain"}, 415),
+        (b"{}", {"Content-Length": str(api.MAX_BODY_BYTES + 1)}, 413),
+        (b"{}", {"Content-Length": "-1"}, 400),
+        (b"{}", {"Transfer-Encoding": "chunked"}, 400),
+    ],
+)
+def test_relaunch_allows_no_body_and_validates_any_supplied_body(hub, body, headers, expected):
+    status, _, response_headers = hub.request(
+        "POST", "/api/handoffs/hof_local/relaunch", body, headers=headers
+    )
+    assert status == expected
+    if expected >= 400:
+        assert response_headers["Connection"] == "close"
+        assert not any(call[0] == "relaunch" for call in hub.calls)
 
 
 def test_json_routes_keep_connection_usable_after_consuming_body(hub):
