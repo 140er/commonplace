@@ -84,8 +84,6 @@ Unknown usage does not trigger a threshold handoff. `PreCompact` is the
 backstop: when handoff is enabled, it requests a handoff even if the
 threshold has not been reached or usage is unavailable.
 
-<!-- verify -->
-<!-- T15: reconcile hook.py's no-network fast path with the brief's effective-settings cache, refreshed every 60 seconds. -->
 The hook caches effective settings. A saved setting change may take up to
 60 seconds to reach a running hook. `COMMONPLACE_HANDOFF=off` takes effect
 locally without a settings request.
@@ -180,8 +178,10 @@ either JSON or TOML in a config layer so hooks do not run twice. See the
 existing configuration and trust flow. `mempalace status` checks project
 trust; it cannot confirm that each definition was reviewed.
 
-<!-- verify -->
-<!-- T15: confirm Codex stop/compaction suppression. Its brief allows systemMessage if no stop mechanism exists. -->
+Codex hooks have no output that stops a running turn, so for Codex the
+hook only shows `Context handed off. Successor: …` as a system message.
+The thread is stored and the successor runs; end the old Codex session
+yourself.
 The Codex stop mechanism still needs verification. A `systemMessage`
 alone does not establish that the old agent stops or compaction is
 cancelled. Do not rely on automatic replacement until that is confirmed.
@@ -233,8 +233,15 @@ an argument array without a shell. A webhook launcher receives the prompt
 and must return an `agent_ref`, with optional `url` and `thread_id`.
 Event webhooks, described below, do not receive the prompt.
 
-<!-- verify -->
-<!-- T15: confirm missing-command fallback, T3 thread ID/URL capture, forwarding COMMONPLACE_HANDOFF_ID into the actual T3 agent, and branch/worktree selection. -->
+Without `successor_argv`, the hook starts nothing and names the prompt
+file in its stop message, so you can start the successor yourself.
+
+The hook registers the successor as `pid:<pid>` of the command it ran.
+For `t3 thread start` that is the CLI, not the T3 thread, and T3 does not
+pass `COMMONPLACE_HANDOFF_ID` to the thread's agent. The chain still
+links when the successor's thread id is registered
+(`POST /api/handoffs/<id>/successor` with `thread_id`), and the prompt
+always names the old thread, so recall works either way.
 Configure the command before enabling handoff. With no command, the client
 hook's planned fallback is to show the prompt file path for manual startup.
 For T3, thread ID and URL capture, forwarding the handoff ID into the new
@@ -288,9 +295,6 @@ Message numbers start at zero. Each call returns at most 200 messages.
 Request further ranges to read a longer thread. For example, `start=20,
 end=24` reads five messages.
 
-<!-- verify -->
-<!-- T12 adds include_raw in its brief, but mcp_tools.py's shared signature omits it. Confirm schema and default after merge. -->
-
 `thread_chain` returns the requested thread followed by its predecessors.
 
 | Argument | Type | Default | Meaning |
@@ -312,6 +316,7 @@ access return `404` with `{"error":"not found"}`, just like missing IDs.
 | GET | `/api/handoffs?task=%23142` | `threads:read` | Handoffs for the task; task filter is optional |
 | GET | `/api/handoffs/<id>` | `threads:read` | Handoff record |
 | POST | `/api/handoffs/<id>/successor` | `handoff:write` | `{agent_ref, url?, thread_id?}` |
+| POST | `/api/handoffs/<id>/launch-failed` | `handoff:write` | `{error}` |
 | POST | `/api/handoffs/<id>/relaunch` | owner | Retry a failed launch |
 | GET | `/api/threads/<id>` | `threads:read` | Stored thread metadata |
 | GET | `/api/threads/<id>/messages?start=0&end=99` | `threads:read` | Verbatim messages in the inclusive range |
@@ -428,8 +433,10 @@ Owners can retry a recorded launch failure with
 `commonplace handoff relaunch <handoff_id>`. Inspect the saved handoff
 before starting a successor manually.
 
-<!-- verify -->
-<!-- T10/T15: define how a client-side launch failure reaches launch_failed; no reporting endpoint is specified. -->
+When the hook's own successor command fails, it reports
+`POST /api/handoffs/<id>/launch-failed`, which records `launch_failed`
+and sends `handoff.launch_failed`; the old agent keeps working and
+compacts as usual.
 The contract does not yet define how the client reports a local launch
 failure. Do not assume that such a failure is recorded as `launch_failed`
 or is eligible for `relaunch`.

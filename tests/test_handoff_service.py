@@ -114,6 +114,17 @@ class FakeDB:
             self.claims.discard(handoff_id)
             return self.update(handoff_id, state="stored", error="")
 
+    def by_successor_thread(self, workspace_id, thread_id):
+        with self.lock:
+            for row in self.rows.values():
+                if (
+                    row.workspace_id == workspace_id
+                    and row.successor is not None
+                    and row.successor.thread_id == thread_id
+                ):
+                    return row
+            return None
+
     def set_successor(self, handoff_id, ref):
         with self.lock:
             self.trace.append("set_successor")
@@ -790,6 +801,16 @@ def test_chain_of_three_handoffs(rig):
         results.append(rig.service.run(rig.principal, request))
     assert [call[-1] for call in rig.doc_calls] == [(), ("thr_1",), ("thr_2", "thr_1")]
     assert [write[-1] for write in rig.store.writes] == ["", "thr_1", "thr_2"]
+
+
+def test_chain_links_a_registered_successor_without_the_env_pointer(rig):
+    first = rig.service.run(rig.principal, make_request("source-0"))
+    rig.service.register_successor(
+        rig.principal, first.handoff.id, SuccessorRef("t3:thread-b", thread_id="thread-b")
+    )
+    rig.service.run(rig.principal, make_request("thread-b"))
+    assert rig.store.writes[-1][-1] == first.handoff.stored_thread_id
+    assert rig.doc_calls[-1][-1] == (first.handoff.stored_thread_id,)
 
 
 @pytest.mark.parametrize("parent_kind", ["missing", "foreign", "pending"])

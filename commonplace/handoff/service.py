@@ -143,8 +143,12 @@ class HandoffService:
             parent_id = ""
             if meta.parent_handoff_id:
                 parent = self.db.get(meta.parent_handoff_id)
-                if parent and parent.workspace_id == workspace_id:
-                    parent_id = parent.stored_thread_id
+            else:
+                # A successor that didn't inherit COMMONPLACE_HANDOFF_ID is still
+                # linked when its own thread id was registered as the successor.
+                parent = self.db.by_successor_thread(workspace_id, meta.thread_id)
+            if parent and parent.workspace_id == workspace_id:
+                parent_id = parent.stored_thread_id
             stored = store.store(
                 workspace_id,
                 meta.thread_id,
