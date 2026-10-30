@@ -78,5 +78,6 @@ def install(gateway, data_dir, *, start_outbox: bool = True) -> HandoffContext:
     web.register(ctx)
     if start_outbox:
         ctx.outbox = Outbox(ctx.handoff_db)
+        ctx.events.outbox = ctx.outbox
         ctx.outbox.start()
     return ctx
