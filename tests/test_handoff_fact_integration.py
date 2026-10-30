@@ -213,11 +213,11 @@ def test_private_fact_values_never_enter_events_or_default_webhook_deliveries(hu
     webhooks.add(hub.db, person, "https://example.invalid/sink")  # default kinds=["*"]
     result = context.service.run(
         principal,
-        request(lines=[{"role": "user", "content": "Jeffrey is allergic to penicillin."}]),
+        request(lines=[{"role": "user", "content": "Avery is allergic to penicillin."}]),
     )
     assert result.action == "handoff"
     context.service.wait_for_facts(timeout=10)
-    (fact,) = query(hub, token, "Jeffrey")
+    (fact,) = query(hub, token, "Avery")
     saved = [
         event for event in events.after(hub.db, hub.workspace) if event["kind"] == "fact.saved"
     ]
@@ -234,7 +234,7 @@ def test_private_fact_values_never_enter_events_or_default_webhook_deliveries(hu
     for payload in [json.dumps(saved), *payloads]:
         assert all(
             value not in payload.lower()
-            for value in ("jeffrey", "penicillin", "allergic_to", fact["id"])
+            for value in ("avery", "penicillin", "allergic_to", fact["id"])
         )
     assert json.loads(payloads[0])["task"] == saved[0]["subject"]
 

@@ -260,7 +260,7 @@ def test_concurrent_existing_handoff_table_upgrade(open_control):
     assert _begin(databases[0]).cwd == META.cwd
 
 
-@pytest.mark.parametrize("cwd", ["", "/work/Memory café/雪", r"C:\Users\labadmin\work\Memory"])
+@pytest.mark.parametrize("cwd", ["", "/work/Memory café/雪", r"C:\Users\developer\work\Memory"])
 def test_cwd_is_persisted_and_hydrated_on_all_reads(db, control, open_control, cwd):
     meta = replace(META, cwd=cwd)
     handoff = _begin(db, meta=meta)

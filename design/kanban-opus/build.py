@@ -18,7 +18,7 @@ def side(current):
         for b, c, n in boards
     )
     return f"""<aside class="side">
-    <div class="ws">{LOGO}jeffrey</div>
+    <div class="ws">{LOGO}avery</div>
     <nav class="nav">
       <a href="decide.html"><svg class="glyph" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></svg>Decide <span class="n hot">4</span></a>
       <a href="#"><svg class="glyph" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 6.5h12"/></svg>Memory</a>
@@ -42,7 +42,7 @@ TODO = [
 ]
 DOING = [
     (142, "Fix the Windows lock on repair", "codex:vm", "12m", 60, 3),
-    (144, "Race test with real Claude Code and Codex sessions", "jeffrey", "1d", None, 1),
+    (144, "Race test with real Claude Code and Codex sessions", "avery", "1d", None, 1),
     (146, "board_repos: normalise git remotes", "claude-code:vm", "27m", 10, 0),
 ]
 REVIEW = [
@@ -59,7 +59,7 @@ REVIEW = [
         "Phone push for the Decide count",
         "claude-code:vm",
         "1h",
-        "Self-hosted ntfy on zurvur, or only the Decide count for v1?",
+        "Self-hosted ntfy on hub, or only the Decide count for v1?",
         2,
     ),
     (151, "Split the hook output", "codex:vm", "40m", None, 0),
@@ -70,10 +70,10 @@ DONE = [
     (140, "Change counter triggers on every table", "claude-code:vm", "6h"),
     (139, "boards.sqlite3 next to the knowledge graph", "codex:vm", "8h"),
     (138, "Stamp columns filled from the verified token", "claude-code:vm", "1d"),
-    (137, "Read kanzo's claim logic, keep none of its code", "jeffrey", "1d"),
-    (136, "Fifth column: review", "jeffrey", "1d"),
+    (137, "Read kanzo's claim logic, keep none of its code", "avery", "1d"),
+    (136, "Fifth column: review", "avery", "1d"),
     (135, "Race check: 4 processes, 2,001 cards", "codex:vm", "2d"),
-    (134, "Claims expire after 30 minutes without a write", "jeffrey", "2d"),
+    (134, "Claims expire after 30 minutes without a write", "avery", "2d"),
     (133, "Decide queue: one query across boards", "claude-code:vm", "2d"),
     (132, "Inbox tokens land in backlog only", "codex:vm", "3d"),
     (131, "§9 flags on titles, bodies and asks", "claude-code:vm", "3d"),
@@ -81,7 +81,7 @@ DONE = [
 
 
 def actor(a):
-    cls = "actor person" if a == "jeffrey" else "actor"
+    cls = "actor person" if a == "avery" else "actor"
     return f'<span class="{cls}">{a}</span>'
 
 
@@ -170,12 +170,12 @@ PANEL = f"""<aside class="panel">
         </ul>
 
         <ol class="log">
-          <li class="ev"><span class="dot"></span><span class="line"><span class="actor person">jeffrey</span>added to <b>todo</b></span><time>11:20Z</time></li>
+          <li class="ev"><span class="dot"></span><span class="line"><span class="actor person">avery</span>added to <b>todo</b></span><time>11:20Z</time></li>
           <li class="ev"><span class="dot"></span><span class="line"><span class="actor">claude-code:vm</span>claimed</span><time>13:12Z</time></li>
           <li class="ev k-expire"><span class="dot"></span><span class="line"><span class="actor">claude-code:vm</span>lost the claim</span><time>13:42Z</time></li>
           <li class="ev"><span class="dot"></span><span class="line"><span class="actor">codex:vm</span>claimed</span><time>13:48Z</time></li>
           <li class="ev k-comment"><span class="dot"></span><span class="line"><span class="actor">codex:vm</span></span><time>13:55Z</time>
-            <p class="said">Reproduced on t3-win: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.</p></li>
+            <p class="said">Reproduced on Windows: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.</p></li>
           <li class="ev k-comment"><span class="dot"></span><span class="line"><span class="actor">codex:vm</span></span><time>14:00Z</time>
             <p class="said">Retry with backoff covers the 10th. Running the full suite on win now.</p></li>
         </ol>

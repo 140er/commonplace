@@ -139,10 +139,10 @@ def test_format_tool_use_read():
         "type": "tool_use",
         "id": "t1",
         "name": "Read",
-        "input": {"file_path": "/home/jp/file.py"},
+        "input": {"file_path": "/path/to/user/file.py"},
     }
     result = _format_tool_use(block)
-    assert result == "[Read /home/jp/file.py]"
+    assert result == "[Read /path/to/user/file.py]"
 
 
 def test_format_tool_use_read_with_range():
@@ -150,10 +150,10 @@ def test_format_tool_use_read_with_range():
         "type": "tool_use",
         "id": "t1",
         "name": "Read",
-        "input": {"file_path": "/home/jp/file.py", "offset": 10, "limit": 50},
+        "input": {"file_path": "/path/to/user/file.py", "offset": 10, "limit": 50},
     }
     result = _format_tool_use(block)
-    assert result == "[Read /home/jp/file.py:10-60]"
+    assert result == "[Read /path/to/user/file.py:10-60]"
 
 
 def test_format_tool_use_grep():
@@ -161,10 +161,10 @@ def test_format_tool_use_grep():
         "type": "tool_use",
         "id": "t1",
         "name": "Grep",
-        "input": {"pattern": "firmware", "path": "/home/jp/proj"},
+        "input": {"pattern": "firmware", "path": "/path/to/user/proj"},
     }
     result = _format_tool_use(block)
-    assert result == "[Grep] firmware in /home/jp/proj"
+    assert result == "[Grep] firmware in /path/to/user/proj"
 
 
 def test_format_tool_use_grep_with_glob():
@@ -183,10 +183,10 @@ def test_format_tool_use_glob():
         "type": "tool_use",
         "id": "t1",
         "name": "Glob",
-        "input": {"pattern": "/home/jp/proj/**/*.py"},
+        "input": {"pattern": "/path/to/user/proj/**/*.py"},
     }
     result = _format_tool_use(block)
-    assert result == "[Glob] /home/jp/proj/**/*.py"
+    assert result == "[Glob] /path/to/user/proj/**/*.py"
 
 
 def test_format_tool_use_edit():
@@ -194,10 +194,10 @@ def test_format_tool_use_edit():
         "type": "tool_use",
         "id": "t1",
         "name": "Edit",
-        "input": {"file_path": "/home/jp/file.py", "old_string": "x", "new_string": "y"},
+        "input": {"file_path": "/path/to/user/file.py", "old_string": "x", "new_string": "y"},
     }
     result = _format_tool_use(block)
-    assert result == "[Edit /home/jp/file.py]"
+    assert result == "[Edit /path/to/user/file.py]"
 
 
 def test_format_tool_use_write():
@@ -205,10 +205,10 @@ def test_format_tool_use_write():
         "type": "tool_use",
         "id": "t1",
         "name": "Write",
-        "input": {"file_path": "/home/jp/file.py", "content": "..."},
+        "input": {"file_path": "/path/to/user/file.py", "content": "..."},
     }
     result = _format_tool_use(block)
-    assert result == "[Write /home/jp/file.py]"
+    assert result == "[Write /path/to/user/file.py]"
 
 
 def test_format_tool_use_unknown_tool():
@@ -1902,7 +1902,7 @@ def test_claude_code_jsonl_read_result_omitted():
                             "type": "tool_use",
                             "id": "t1",
                             "name": "Read",
-                            "input": {"file_path": "/home/jp/file.py"},
+                            "input": {"file_path": "/path/to/user/file.py"},
                         },
                     ]
                 },
@@ -1926,7 +1926,7 @@ def test_claude_code_jsonl_read_result_omitted():
     ]
     result = _try_claude_code_jsonl("\n".join(lines))
     assert result is not None
-    assert "[Read /home/jp/file.py]" in result
+    assert "[Read /path/to/user/file.py]" in result
     assert "entire file contents here" not in result
 
 

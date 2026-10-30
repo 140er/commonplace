@@ -194,7 +194,7 @@ def test_chroma_keyed_metadata_scans_decode(tmp_path):
     assert list(col.iter_metadata(["note"])) == [{"note": "foo\x00bar"}]
     assert SURROGATE_PATH in prefetch_mined_set(col)
 
-    transcript = "/home/u/.claude/projects/p/s\x00.jsonl"
+    transcript = "/path/to/user/.claude/projects/p/s\x00.jsonl"
     col.add(documents=["t"], ids=["k3"], metadatas=[{"wing": "w", "source_file": transcript}])
     assert sqlite_wing_source_counts(str(tmp_path), "mempalace_drawers") == [("w", transcript, 1)]
 

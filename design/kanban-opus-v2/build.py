@@ -25,8 +25,8 @@ def links(n):
 
 
 def actor(a, untrusted=False):
-    if a == "jeffrey":
-        return '<span class="actor person">jeffrey</span>'
+    if a == "avery":
+        return '<span class="actor person">avery</span>'
     return f'<span class="actor{" untrusted" if untrusted else ""}">{a}</span>'
 
 
@@ -49,7 +49,7 @@ DECIDE = [
         by="claude-code:vm",
         age="1h",
         links=0,
-        q="Self-hosted ntfy on zurvur, or only the Decide count for v1?",
+        q="Self-hosted ntfy on hub, or only the Decide count for v1?",
         opts=["ntfy", "count only"],
     ),
     dict(
@@ -88,7 +88,7 @@ TODO = [
 ]
 DOING = [
     (142, "Fix the Windows lock on repair", "codex:vm", "12m", 0.6, 3),
-    (144, "Race test with real Claude Code and Codex sessions", "jeffrey", "1d", None, 1),
+    (144, "Race test with real Claude Code and Codex sessions", "avery", "1d", None, 1),
     (146, "board_repos: normalise git remotes", "claude-code:vm", "27m", 0.1, 0),
 ]
 REVIEW = DECIDE
@@ -119,7 +119,7 @@ def side(current):
     )
     dec = " aria-current" if current == "decide" else ""
     return f"""<aside class="side">
-    <div class="ws"><span class="mark">{MARK}</span><span class="name">jeffrey</span></div>
+    <div class="ws"><span class="mark">{MARK}</span><span class="name">avery</span></div>
     <nav class="navs">
       <a href="decide.html"{dec}>Decide<span class="n">4</span></a>
       <a href="#">Search<kbd>⌘K</kbd></a>
@@ -228,7 +228,7 @@ PANEL_145 = f"""<aside class="panel">
         {ev("claude-code:vm", "add", "12:48")}
         {ev("claude-code:vm", "claim", "13:02")}
         {ev("claude-code:vm", "comment", "13:40", said="Both paths written, tests green on each.")}
-        {ev("claude-code:vm", "ask → jeffrey", "13:41", "hand")}
+        {ev("claude-code:vm", "ask → avery", "13:41", "hand")}
       </ol>
       <div class="composer"><label class="field"><kbd>c</kbd></label><span class="send">↵</span></div>
     </aside>"""
@@ -247,11 +247,11 @@ PANEL_142 = f"""<aside class="panel">
         </ul>
       </div>
       <ol class="log">
-        {ev("jeffrey", "add", "11:20")}
+        {ev("avery", "add", "11:20")}
         {ev("claude-code:vm", "claim", "13:12")}
         {ev("claude-code:vm", "expire", "13:42", "warn")}
         {ev("codex:vm", "claim", "13:48")}
-        {ev("codex:vm", "comment", "13:55", said="Reproduced on t3-win: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.")}
+        {ev("codex:vm", "comment", "13:55", said="Reproduced on Windows: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.")}
         {ev("codex:vm", "comment", "14:00", said="Retry with backoff covers the 10th. Running the full suite on win now.")}
       </ol>
       <div class="composer"><label class="field">Check the coverage gate on Windows too<span class="cursor"></span></label><span class="send go">↵</span></div>

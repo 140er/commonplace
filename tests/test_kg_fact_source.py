@@ -13,7 +13,7 @@ def _row(kg, triple_id):
 
 def test_add_triple_stores_the_message_range(kg):
     tid = kg.add_triple(
-        "Jeffrey",
+        "Avery",
         "uses",
         "pnpm",
         source_thread="thread-41",
@@ -29,7 +29,7 @@ def test_add_triple_stores_the_message_range(kg):
     assert row["status"] == "active"
     assert row["superseded_by"] is None
 
-    (fact,) = kg.query_entity("Jeffrey")
+    (fact,) = kg.query_entity("Avery")
     assert fact["id"] == tid
     assert fact["source_thread"] == "thread-41"
     assert (fact["source_seq_start"], fact["source_seq_end"]) == (41, 44)
@@ -81,9 +81,9 @@ def test_range_accepts_decimal_strings():
 
 
 def test_supersede_marks_the_old_fact_and_links_the_new(kg):
-    old = kg.add_triple("Jeffrey", "uses", "npm", source_thread="old", source_seq_start=3)
+    old = kg.add_triple("Avery", "uses", "npm", source_thread="old", source_seq_start=3)
     new = kg.supersede(
-        "Jeffrey",
+        "Avery",
         "uses",
         "npm",
         "pnpm",
@@ -103,30 +103,30 @@ def test_supersede_marks_the_old_fact_and_links_the_new(kg):
         10,
         12,
     )
-    by_id = {f["id"]: f for f in kg.query_entity("Jeffrey")}
+    by_id = {f["id"]: f for f in kg.query_entity("Avery")}
     assert by_id[old]["superseded_by"] == new
     assert by_id[old]["source_thread"] == "old"
 
 
 def test_supersede_onto_an_already_open_successor_links_to_it(kg):
-    old = kg.add_triple("Jeffrey", "uses", "npm")
-    existing = kg.add_triple("Jeffrey", "uses", "pnpm")
-    assert kg.supersede("Jeffrey", "uses", "npm", "pnpm") == existing
+    old = kg.add_triple("Avery", "uses", "npm")
+    existing = kg.add_triple("Avery", "uses", "pnpm")
+    assert kg.supersede("Avery", "uses", "npm", "pnpm") == existing
     assert _row(kg, old)["superseded_by"] == existing
     assert _row(kg, existing)["status"] == "active"
 
 
 def test_supersede_with_no_open_old_fact_marks_nothing(kg):
-    new = kg.supersede("Jeffrey", "uses", "npm", "pnpm")
+    new = kg.supersede("Avery", "uses", "npm", "pnpm")
     assert _row(kg, new)["status"] == "active"
     statuses = kg._conn().execute("SELECT status FROM triples").fetchall()
     assert [r["status"] for r in statuses] == ["active"]
 
 
 def test_supersede_with_a_bad_range_writes_nothing(kg):
-    old = kg.add_triple("Jeffrey", "uses", "npm")
+    old = kg.add_triple("Avery", "uses", "npm")
     with pytest.raises(ValueError):
-        kg.supersede("Jeffrey", "uses", "npm", "pnpm", source_seq_start=3)
+        kg.supersede("Avery", "uses", "npm", "pnpm", source_seq_start=3)
     row = _row(kg, old)
     assert row["valid_to"] is None
     assert row["status"] == "active"

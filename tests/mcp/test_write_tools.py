@@ -796,7 +796,7 @@ class TestWriteTools:
         client-side use. Basename is enough for citation."""
         _patch_mcp_server(monkeypatch, config, kg)
 
-        secret_dir = "/private/home/alice/secret-research/2026"
+        secret_dir = "/private/path/to/user/secret-research/2026"
         absolute_source = f"{secret_dir}/notes.md"
         collection.add(
             ids=["drawer_leak_probe"],

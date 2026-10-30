@@ -240,12 +240,12 @@ messages between machines.
 
   ```bash
   MEMPALACE_MCP_HTTP_TOKEN="$(cat ~/.mempalace/server/<key>/token)" \
-  MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS="yourbox.your-tailnet.ts.net" \
+  MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS="hub.example.com" \
     mempalace serve --host 127.0.0.1 --port 8765
   tailscale serve --bg --https=443 http://127.0.0.1:8765
   ```
 
-  Clients connect to `https://yourbox.your-tailnet.ts.net/mcp` with the same
+  Clients connect to `https://hub.example.com/mcp` with the same
   bearer token. `MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS` (comma-separated `host`
   or `host:port` values) lists the public names a proxy may pass through in
   the `Host` header (`tailscale serve` and many nginx setups do), which the

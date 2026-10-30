@@ -1,6 +1,6 @@
 # Going public: checklist
 
-Gate: hub-core PR #13 reviewed, the integrated test run on feat/mvp green, and Jeffrey's go. Until then everything stays tailnet-only.
+Enable public access only after the operator verifies authentication, backups, DNS and TLS.
 
 ## Hosts
 
@@ -10,30 +10,30 @@ Gate: hub-core PR #13 reviewed, the integrated test run on feat/mvp green, and J
 | app.cmmn.dev | The app | `/app*`, `/api/*`, `/health*` |
 | cmmn.dev | MCP, OAuth, short links, short-name redirects | `/mcp`, `/oauth/*`, `/.well-known/*`, `/s/*`, `/health*` |
 
-Caddy file: `deploy/commonplace-public.caddy`, bound to 168.119.13.136 and 2a01:4f8:242:4404::2 (the tailnet site stays on 100.76.209.1). TLS: Caddy's automatic ACME; ports 80 and 443 are already open on edge1.
+Caddy template: `deploy/commonplace-public.caddy.example`. Copy it to an operator-owned file, replace documentation bind addresses and the static root, and validate the host configuration before reloading Caddy. The private site is configured separately.
 
 ## DNS (Cloudflare, DNS only: grey cloud, so Cloudflare never sees plaintext)
 
 | Zone | Name | Type | Value |
 |---|---|---|---|
-| commonplace.run | @ | A | 168.119.13.136 |
-| commonplace.run | @ | AAAA | 2a01:4f8:242:4404::2 |
+| commonplace.run | @ | A | 192.0.2.30 |
+| commonplace.run | @ | AAAA | 2001:db8::30 |
 | commonplace.run | www | CNAME | commonplace.run |
-| cmmn.dev | @ | A | 168.119.13.136 |
-| cmmn.dev | @ | AAAA | 2a01:4f8:242:4404::2 |
-| cmmn.dev | app | A | 168.119.13.136 |
-| cmmn.dev | app | AAAA | 2a01:4f8:242:4404::2 |
+| cmmn.dev | @ | A | 192.0.2.30 |
+| cmmn.dev | @ | AAAA | 2001:db8::30 |
+| cmmn.dev | app | A | 192.0.2.30 |
+| cmmn.dev | app | AAAA | 2001:db8::30 |
 
-Keep the existing `140er.cmmn.dev`. Add CAA `0 issue "letsencrypt.org"` on both zones (optional).
+Preserve unrelated DNS records. Add CAA `0 issue "letsencrypt.org"` on both zones (optional).
 
-## edge1 `.env` at go time
+## Operator environment
 
 ```
 COMMONPLACE_SITE_URL=https://commonplace.run
 COMMONPLACE_APP_URL=https://app.cmmn.dev
 COMMONPLACE_AGENT_URL=https://cmmn.dev
 COMMONPLACE_COOKIE_DOMAIN=cmmn.dev
-COMMONPLACE_ALLOWED_HOSTS=app.cmmn.dev,cmmn.dev,edge1.tail6cee8c.ts.net,100.76.209.1,127.0.0.1:8765
+COMMONPLACE_ALLOWED_HOSTS=app.cmmn.dev,cmmn.dev,hub.example.com,192.0.2.10,127.0.0.1:8765
 ```
 
 OAuth issuer and every metadata URL then come from `https://cmmn.dev`; sign-in and app links from `https://app.cmmn.dev`. Existing tokens keep working. Short links made before the switch point at the tailnet host: they still resolve inside the tailnet only.
@@ -54,9 +54,9 @@ OAuth issuer and every metadata URL then come from `https://cmmn.dev`; sign-in a
 ## Go steps
 
 1. DNS records above (Cloudflare API token or by hand).
-2. Add the `.env` lines, `COMPOSE_FILE=deploy/compose.edge1.yml /srv/commonplace/deploy.sh`.
-3. `sudo cp deploy/commonplace-public.caddy /etc/caddy/sites/ && sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy`.
+2. Add the environment lines to the operator-owned `.env`; deploy with the external `COMPOSE_FILE` and env paths described in `commonplace/DEPLOY.md`.
+3. Install the filled-in Caddy site in the operator-owned configuration, validate the full configuration and reload the host service.
 4. Check: `curl -I https://commonplace.run`, `curl https://cmmn.dev/.well-known/oauth-protected-resource`, `curl -i https://cmmn.dev/mcp` (401 with `resource_metadata`), sign in on `https://app.cmmn.dev/app/`.
 5. claude.ai: Settings → Connectors → Add custom connector → `https://cmmn.dev/mcp`. ChatGPT: same URL as a developer-mode connector.
 
-Rollback: remove `/etc/caddy/sites/commonplace-public.caddy`, reload Caddy. DNS can stay.
+Rollback: restore the previous operator-owned public Caddy site and reload Caddy. DNS can stay.

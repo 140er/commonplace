@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# edge1-backup calls this hook before running host-managed restic.
+# The host backup job calls this hook before running host-managed restic.
 set -Eeuo pipefail
 umask 077
 # Keep diagnostics visible even when errexit fires inside the logged function.
@@ -31,7 +31,10 @@ backup_dir=$(realpath -- "$1")
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd -- "$repo_dir"
 log_file=$(mktemp /tmp/commonplace-backup.XXXXXXXX.log)
-compose=(docker compose --env-file /srv/commonplace/.env -f "$repo_dir/deploy/compose.edge1.yml")
+operator_dir=${COMMONPLACE_DEPLOY_DIR:-$(dirname -- "$repo_dir")}
+env_file=${COMMONPLACE_ENV_FILE:-$operator_dir/.env}
+compose_file=${COMPOSE_FILE:-$operator_dir/compose.yml}
+compose=(docker compose --env-file "$env_file" -f "$compose_file")
 
 run_backup() {
     stage="lock"

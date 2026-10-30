@@ -1,6 +1,5 @@
-# Public hosts. NOT installed until Jeffrey's go (hub-core reviewed, integrated
-# tests green, DNS in place). Install: sudo cp to /etc/caddy/sites/, reload.
-# Bound to edge1's public IPv4 and IPv6 so it never collides with the tailnet site.
+# Example public sites. Replace the documentation addresses and static root
+# before installing in an operator-owned Caddy configuration.
 
 (commonplace_headers) {
 	header {
@@ -21,18 +20,18 @@
 
 # Website.
 commonplace.run, www.commonplace.run {
-	bind 168.119.13.136 2a01:4f8:242:4404::2
+	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
 	@www host www.commonplace.run
 	redir @www https://commonplace.run{uri} 308
-	root * /srv/commonplace/app/landing/public
+	root * /path/to/commonplace/app/landing/public
 	header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 	file_server
 }
 
 # The app: people sign in here.
 app.cmmn.dev {
-	bind 168.119.13.136 2a01:4f8:242:4404::2
+	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
 	@app path /app /app/* /api/* /health /healthz
 	handle @app {
@@ -45,7 +44,7 @@ app.cmmn.dev {
 
 # Agents: MCP, OAuth, short links, and the short-name redirects from PR #8.
 cmmn.dev {
-	bind 168.119.13.136 2a01:4f8:242:4404::2
+	bind 192.0.2.30 2001:db8::30
 	import commonplace_headers
 	@agent path /mcp /oauth/* /.well-known/* /s/* /health /healthz
 	handle @agent {

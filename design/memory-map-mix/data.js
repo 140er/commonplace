@@ -25,21 +25,21 @@ const PEOPLE = [
 
 // Knowledge-graph triples. A fact with `to` has ended and stays in the graph as history.
 const FACTS = [
-  ["mila", "sister of", "jeffrey"],
+  ["mila", "sister of", "avery"],
   ["mila", "lives in", "Utrecht", "2026-03"],
   ["mila", "lives in", "Zwolle", "2019-08", "2026-03"],
   ["mila", "trains with", "sam", "2026-09"],
   ["oma", "grandmother of", "mila"],
   ["oma", "birthday", "14 November"],
   ["oma", "lives in", "Zwolle"],
-  ["sam", "runs with", "jeffrey", "2025-05"],
+  ["sam", "runs with", "avery", "2025-05"],
   ["noor", "works on", "Commonplace", "2026-08"],
   ["noor", "works on", "kanzo", "2025-01", "2026-07"],
   ["tim", "plays on", "the ComputerCraft server", "2024-11"],
   ["tim", "built with", "ayaan", "2026-10"],
   ["ayaan", "plays on", "the ComputerCraft server", "2026-02"],
-  ["visser", "GP of", "jeffrey", "2023-04"],
-  ["lotte", "neighbour of", "jeffrey", "2024-09"],
+  ["visser", "GP of", "avery", "2023-04"],
+  ["lotte", "neighbour of", "avery", "2024-09"],
   ["lotte", "keeps", "the spare key", "2026-07"],
 ];
 

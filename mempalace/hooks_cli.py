@@ -1480,7 +1480,7 @@ def _wing_from_transcript_path(transcript_path: str) -> str:
         if _wt_marker in encoded:
             encoded = encoded.split(_wt_marker, 1)[0]
         # Strip platform user-home prefix so the wing isn't dominated by
-        # /Users/<user>/ or /home/<user>/.
+        # a platform's home directory and account name.
         m = re.match(r"(?:Users|home)-[^-]+-(.+)", encoded)
         if m:
             encoded = m.group(1)

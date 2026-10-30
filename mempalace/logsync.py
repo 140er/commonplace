@@ -13,7 +13,7 @@ hub bearer token. Peers are configured in ``peers.json`` in the palace dir:
 
     {
       "peers": [
-        {"name": "windows", "url": "https://host.example.ts.net", "token": "..."}
+        {"name": "windows", "url": "https://hub.example.com", "token": "..."}
       ]
     }
 

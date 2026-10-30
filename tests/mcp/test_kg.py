@@ -594,7 +594,7 @@ class TestKGChatSource:
         from mempalace.mcp_server import tool_kg_add
 
         result = tool_kg_add(
-            subject="Jeffrey",
+            subject="Avery",
             predicate="uses",
             object="pnpm",
             source_thread="thread-7",
@@ -602,7 +602,7 @@ class TestKGChatSource:
             source_seq_end=44,
         )
         assert result["success"] is True
-        (fact,) = kg.query_entity("Jeffrey")
+        (fact,) = kg.query_entity("Avery")
         assert fact["id"] == result["triple_id"]
         assert (fact["source_thread"], fact["source_seq_start"], fact["source_seq_end"]) == (
             "thread-7",

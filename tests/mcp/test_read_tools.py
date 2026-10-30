@@ -981,7 +981,7 @@ class TestNoneMetadataSafety:
         safe = _response_safe_meta(
             {
                 "wing": "demo",
-                "source_file": "/home/someone/project/notes.md",
+                "source_file": "/path/to/user/project/notes.md",
                 "source_dir_ino": "1515983",
             }
         )
@@ -1001,14 +1001,14 @@ class TestNoneMetadataSafety:
 
         record = {
             "wing": "demo",
-            "source_file": "/home/someone/project/notes.md",
+            "source_file": "/path/to/user/project/notes.md",
             "source_dir_ino": "1515983",
         }
         safe = _response_safe_meta(record)
 
         assert safe is not record
         assert record["source_dir_ino"] == "1515983"
-        assert record["source_file"] == "/home/someone/project/notes.md"
+        assert record["source_file"] == "/path/to/user/project/notes.md"
 
     def test_get_drawer_tolerates_none_metadata(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)

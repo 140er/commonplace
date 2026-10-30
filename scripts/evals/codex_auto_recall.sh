@@ -20,7 +20,7 @@ PROJECT=$(cd "$1" && pwd); shift
 # Codex refuses to put helper binaries under /tmp, so the throwaway home lives in the cache dir.
 mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"
 WORK=$(mktemp -d "${XDG_CACHE_HOME:-$HOME/.cache}/mempalace-codex-eval.XXXXXX"); trap 'rm -rf "$WORK"' EXIT
-export CODEX_HOME=$WORK/codex-home ASK_CHIEF_DISABLE=1
+export CODEX_HOME=$WORK/codex-home
 mkdir -p "$CODEX_HOME" "$WORK/plugin" && cp "$HOME/.codex/auth.json" "$CODEX_HOME/"
 (cd "$REPO" && git ls-files -z | tar --null -T - -cf -) | tar -xf - -C "$WORK/plugin"
 echo '{"hooks": {}}' >"$WORK/plugin/.codex-plugin/hooks.json"

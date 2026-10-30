@@ -224,16 +224,16 @@ def test_filters_and_presets(live, receiver):
         webhooks.add(hub.db, p, url, kinds=["card_changed"], board="work"),
         webhooks.add(hub.db, p, url, kinds=["review_needed"]),
         webhooks.add(hub.db, p, url, kinds=["waiting_on_me"]),
-        webhooks.add(hub.db, p, url, waiting_on="user:jeffrey"),
+        webhooks.add(hub.db, p, url, waiting_on="user:avery"),
     ]
     listener = hub.gateway.webhooks.on_event
     cases = [
         ("card.updated", {}, [0]),
-        ("card.review_needed", {"ask_to": "user:jeffrey"}, [0, 1, 3]),
+        ("card.review_needed", {"ask_to": "user:avery"}, [0, 1, 3]),
         ("card.handoff", {"assignee": p.actor}, [0, 2]),
         ("card.decided", {"return_to": p.actor}, [0, 2]),
-        ("card.handoff", {"ask_to": "user:jeffrey"}, [0, 3]),
-        ("memory.saved", {"assignee": "user:jeffrey"}, []),
+        ("card.handoff", {"ask_to": "user:avery"}, [0, 3]),
+        ("memory.saved", {"assignee": "user:avery"}, []),
         ("card.updated", {"board": "other"}, []),
     ]
     counts = [0] * len(hooks)
@@ -718,18 +718,18 @@ def test_auth_header_is_sent_and_never_shown(live, receiver):
         hub,
         "POST",
         token=token,
-        body={"url": url, "events": ["review_needed"], "auth": "Bearer chief-wake-key"},
+        body={"url": url, "events": ["review_needed"], "auth": "Bearer coordinator-wake-key"},
     )
     assert status == 201
     emit(hub, kind="card.review_needed", title="Pick one", ask_to="user:usr_x")
     headers, raw = requests.get(timeout=3)
-    assert headers["Authorization"] == "Bearer chief-wake-key"
+    assert headers["Authorization"] == "Bearer coordinator-wake-key"
     payload = json.loads(raw)
     assert payload["need"] == "decision" and payload["message"].startswith(
         '#7 "Pick one" waits on you'
     )
     listed = json.dumps(rest(hub, "GET", token=token)[1])
-    assert "chief-wake-key" not in listed
+    assert "coordinator-wake-key" not in listed
     status, _ = rest(hub, "POST", token=token, body={"url": url, "auth": "X-Bad\r\nInjected: yes"})
     assert status == 403 or status == 400
 
@@ -737,7 +737,7 @@ def test_auth_header_is_sent_and_never_shown(live, receiver):
 def test_env_auth_reference_keeps_the_secret_out_of_the_database(live, receiver, monkeypatch):
     hub = live
     url, requests, _ = receiver
-    monkeypatch.setenv("COMMONPLACE_WEBHOOK_AUTH_CHIEF", "Bearer from-env-only")
+    monkeypatch.setenv("COMMONPLACE_WEBHOOK_AUTH_COORDINATOR", "Bearer from-env-only")
     token = hub.owner_token()
     status, hook = rest(
         hub,
@@ -746,7 +746,7 @@ def test_env_auth_reference_keeps_the_secret_out_of_the_database(live, receiver,
         body={
             "url": url,
             "events": ["review_needed"],
-            "auth": "env:COMMONPLACE_WEBHOOK_AUTH_CHIEF",
+            "auth": "env:COMMONPLACE_WEBHOOK_AUTH_COORDINATOR",
         },
     )
     assert status == 201

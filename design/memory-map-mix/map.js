@@ -431,7 +431,7 @@
     if (x.kind === "memory") {
       const ppl = neighbours(x, "person"), cards = neighbours(x, "card"), rel = neighbours(x, "memory").sort(byDate);
       top = `${bar("Memory", `<span class="where">${sq(x.theme)}<b>${x.theme}</b>/ ${x.topic}</span>`)}
-        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>jeffrey</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>
+        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>avery</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>
         <dl class="pf">${field("last seen", fmtDate(x.date))}${field("people", ppl.length ? ppl.map((p) => esc(p.name)).join(", ") : "—")}
           ${field("links", `${meter(x.deg / maxDeg("memory"))}${x.deg}`)}${field("recent", meter(recency(x.date), "ok"))}</dl>`;
       rest = sec("people", ppl.length, `<ul class="rows">${ppl.map((p) => {

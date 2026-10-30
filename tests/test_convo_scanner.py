@@ -51,18 +51,18 @@ def test_extract_cwd_from_session(tmp_path):
     f = tmp_path / "session.jsonl"
     lines = [
         json.dumps({"type": "file-history-snapshot", "messageId": "x"}),
-        json.dumps({"type": "user", "cwd": "/home/user/dev/myproj", "content": "hi"}),
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/myproj", "content": "hi"}),
     ]
     f.write_text("\n".join(lines) + "\n")
-    assert _extract_cwd_from_session(f) == "/home/user/dev/myproj"
+    assert _extract_cwd_from_session(f) == "/path/to/user/dev/myproj"
 
 
 def test_extract_cwd_from_session_skips_malformed(tmp_path):
     f = tmp_path / "session.jsonl"
     f.write_text(
-        "{not valid json\n" + json.dumps({"type": "user", "cwd": "/home/user/dev/good"}) + "\n"
+        "{not valid json\n" + json.dumps({"type": "user", "cwd": "/path/to/user/dev/good"}) + "\n"
     )
-    assert _extract_cwd_from_session(f) == "/home/user/dev/good"
+    assert _extract_cwd_from_session(f) == "/path/to/user/dev/good"
 
 
 def test_extract_cwd_from_session_none_if_absent(tmp_path):
@@ -118,7 +118,9 @@ def test_resolve_project_name_uses_cwd(tmp_path):
     pdir = tmp_path / "-home-user-dev-coolproj"
     pdir.mkdir()
     session = pdir / "a.jsonl"
-    session.write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/cool-proj-real"}) + "\n")
+    session.write_text(
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/cool-proj-real"}) + "\n"
+    )
     assert _resolve_project_name(pdir) == "cool-proj-real"
 
 
@@ -136,7 +138,7 @@ def test_resolve_project_name_prefers_newer_session(tmp_path):
     pdir = tmp_path / "-home-user-dev-old"
     pdir.mkdir()
     old = pdir / "old.jsonl"
-    old.write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/old"}) + "\n")
+    old.write_text(json.dumps({"type": "user", "cwd": "/path/to/user/dev/old"}) + "\n")
     # Ensure distinguishable mtimes
     old_mtime = old.stat().st_mtime - 100
     import os
@@ -144,7 +146,7 @@ def test_resolve_project_name_prefers_newer_session(tmp_path):
     os.utime(old, (old_mtime, old_mtime))
 
     new = pdir / "new.jsonl"
-    new.write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/new-name"}) + "\n")
+    new.write_text(json.dumps({"type": "user", "cwd": "/path/to/user/dev/new-name"}) + "\n")
     assert _resolve_project_name(pdir) == "new-name"
 
 
@@ -165,12 +167,18 @@ def test_scan_claude_projects_not_a_projects_root(tmp_path):
 def test_scan_claude_projects_finds_projects(tmp_path):
     p1 = tmp_path / "-home-user-dev-alpha"
     p1.mkdir()
-    (p1 / "a.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/alpha"}) + "\n")
-    (p1 / "b.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/alpha"}) + "\n")
+    (p1 / "a.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/alpha"}) + "\n"
+    )
+    (p1 / "b.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/alpha"}) + "\n"
+    )
 
     p2 = tmp_path / "-home-user-dev-beta"
     p2.mkdir()
-    (p2 / "x.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/beta"}) + "\n")
+    (p2 / "x.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/beta"}) + "\n"
+    )
 
     result = scan_claude_projects(tmp_path)
     names = [p.name for p in result]
@@ -193,7 +201,9 @@ def test_scan_claude_projects_ignores_dirs_without_jsonl(tmp_path):
 def test_scan_claude_projects_marks_as_mine(tmp_path):
     p = tmp_path / "-home-user-dev-owned"
     p.mkdir()
-    (p / "s.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/dev/owned"}) + "\n")
+    (p / "s.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": "/path/to/user/dev/owned"}) + "\n"
+    )
     result = scan_claude_projects(tmp_path)
     assert len(result) == 1
     assert result[0].is_mine is True
@@ -203,12 +213,12 @@ def test_scan_claude_projects_dedup_by_name(tmp_path):
     """Two encoded dirs resolving to the same project name collapse to one."""
     p1 = tmp_path / "-home-user-a-proj"
     p1.mkdir()
-    (p1 / "s.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/a/proj"}) + "\n")
-    (p1 / "t.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/a/proj"}) + "\n")
+    (p1 / "s.jsonl").write_text(json.dumps({"type": "user", "cwd": "/path/to/user/a/proj"}) + "\n")
+    (p1 / "t.jsonl").write_text(json.dumps({"type": "user", "cwd": "/path/to/user/a/proj"}) + "\n")
 
     p2 = tmp_path / "-home-user-b-proj"
     p2.mkdir()
-    (p2 / "u.jsonl").write_text(json.dumps({"type": "user", "cwd": "/home/user/b/proj"}) + "\n")
+    (p2 / "u.jsonl").write_text(json.dumps({"type": "user", "cwd": "/path/to/user/b/proj"}) + "\n")
 
     result = scan_claude_projects(tmp_path)
     # Both decode to "proj"; only one remains — the one with more sessions wins

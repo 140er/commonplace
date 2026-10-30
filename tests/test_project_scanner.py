@@ -702,10 +702,10 @@ def test_discover_entities_collapses_case_variants_between_manifest_and_convo(tm
     _init_git_repo(repo)
 
     # Entry 2: same root ALSO looks like a Claude Code `.claude/projects/` dir;
-    # the convo_scanner inside will resolve `cwd` to `/home/u/src/MyProj`
+    # the convo_scanner inside will resolve `cwd` to `/path/to/user/src/MyProj`
     # (CamelCase variant of the same project).
     session = repo / "abc.jsonl"
-    session.write_text(json.dumps({"type": "user", "cwd": "/home/u/src/MyProj"}) + "\n")
+    session.write_text(json.dumps({"type": "user", "cwd": "/path/to/user/src/MyProj"}) + "\n")
 
     d = discover_entities(str(root))
 

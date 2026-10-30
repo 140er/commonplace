@@ -63,7 +63,7 @@ existing `hooks.json` without clobbering unrelated hooks. See
    - User scope: `~/.cursor/hooks.json`
    - Project scope: `<your-repo>/.cursor/hooks.json`
 2. Replace every `$HOME` with the absolute path to your home
-   directory (e.g., `/Users/you` or `/home/you`).
+   directory (e.g., `/Users/you` or `/path/to/user`).
 3. Make sure each hook script is executable
    (`chmod +x ~/.mempalace/hooks/cursor/mempal_*_hook_cursor.sh`).
 4. Restart Cursor, or wait for it to auto-reload the file.

@@ -2,13 +2,13 @@
 
 Product design, 2026-10-29. Design only, nothing built yet.
 
-This follows [HUB-DESIGN.md](HUB-DESIGN.md), which designed a hub for Jeffrey alone. That document still holds: its client table, wing scoping, risks and first test all carry over. This one widens it to a product anyone can run. Where they differ, this one wins:
+This follows [HUB-DESIGN.md](HUB-DESIGN.md), which designed a hub for Avery alone. That document still holds: its client table, wing scoping, risks and first test all carry over. This one widens it to a product anyone can run. Where they differ, this one wins:
 
 - HUB-DESIGN's **B2 (per-token scopes)** is no longer "later". Every user of the product needs it, so it ships in the first milestone.
 - HUB-DESIGN's **A3 (self-hosted OAuth)** becomes the built-in way cloud clients connect, not an extra container.
 - The working name **"hub"** gets a product name: **Commonplace** (see §12).
 
-Decisions recorded 2026-10-29 (§16): name Commonplace, MIT for our layer, sealed tier from day one, hosted pricing open, first host is Jeffrey's Unraid server zurvur, a developer-tool-style product website, shared kanban boards (§10), and memory as the first module of a wider agent control point (Vision). Domains: commonplace.run, plus cmmn.dev for short links, both registered. **No GitHub Actions anywhere** (no subscription): tests, builds and deploys run locally or on zurvur.
+Decisions recorded 2026-10-29 (§16): name Commonplace, MIT for our layer, sealed tier from day one, hosted pricing open, first host is an operator-managed server, a developer-tool-style product website, shared kanban boards (§10), and memory as the first module of a wider agent control point (Vision). Domains: commonplace.run, plus cmmn.dev for short links, both registered. **No GitHub Actions anywhere** (no subscription): tests, builds and deploys run locally or on a deployment server.
 
 Items marked **(verify)** are things I'm unsure about, like provider details that change often or prices. Facts about the code were checked in this repo at `84582fb0`.
 
@@ -18,7 +18,7 @@ Long term, Commonplace is the **one control point for all your AI agents, wherev
 
 1. **Memory** (M0–M3): verbatim shared memory. Most of this doc.
 2. **Boards** (B, §10): one task board that agents and people share.
-3. **Agent control** (A, later): see every running agent across machines and providers, then start, steer and stop them and hand them tasks from a board. T3 Code does this today for coding agents. Commonplace does it for agents from any provider, under the same tokens, scopes and audit log as memory.
+3. **Agent control** (A, later): see every running agent across machines and providers, then start, steer and stop them and hand them tasks from a board. Commonplace does it for agents from any provider, under the same tokens, scopes and audit log as memory.
 
 The shared core is the gateway's accounts, tokens, scopes, server-stamped authorship, audit log and web UI (§4–§7). Each module plugs into it. That core is why memory comes first: every agent needs memory, MemPalace already does the hard part, and the trust layer built for it is the one boards and agent control reuse.
 
@@ -93,7 +93,7 @@ One fact about the code drives the architecture. **The MCP server holds one pala
 
 **Keeping in sync.** Keep `upstream` as a git remote and merge upstream into the fork weekly. Keep a written "patch budget" listing every upstream file we touch, and aim for zero once the seams land. The product repo pins a tested MemPalace version and runs its own policy test suite (§6) against every bump.
 
-**Testing and releases without CI.** No GitHub Actions. The test suite (canary tests included) runs in a pre-push git hook and as a nightly cron job on zurvur against `develop`. Docker images are built on zurvur by a release script and pushed by hand to `ghcr.io` (pushing needs only a token, not Actions).
+**Testing and releases without CI.** No GitHub Actions. The test suite (canary tests included) runs in a pre-push git hook and as a nightly cron job on the deployment server against `develop`. Docker images are built on the deployment server by a release script and pushed by hand to `ghcr.io` (pushing needs only a token, not Actions).
 
 Upstream's CONTRIBUTING says it won't accept cloud storage or sync features. That's fine: the hosted version lives only in our layer and is never proposed upstream.
 
@@ -134,7 +134,7 @@ user ──< membership >── workspace (= one palace) ──< connection/toke
 - **User:** email plus a passkey or password. Self-hosters can also sign in through their own OIDC provider (Authentik, Authelia, Google, GitHub).
 - **Workspace:** one palace. Every user gets a personal workspace. Shared workspaces (family, small team) come in M2 (§15).
 - **Membership:** two roles only, `owner` and `member`. An owner manages tokens, invites and deletion. A member reads and writes within their own tokens' scopes.
-- **Connection:** one per client the user connects ("claude.ai", "Grok: Chief of Staff", "Claude Code on laptop"). Each connection holds one token and its policy (§6).
+- **Connection:** one per client the user connects ("claude.ai", "Grok: coordinator", "Claude Code on laptop"). Each connection holds one token and its policy (§6).
 - **Isolation:** every row in the control DB has a `workspace_id`. Palace data is separated physically, by directory and by process. A tenant can't query another tenant's palace because no shared index exists.
 - **Invites:** an owner creates a one-time link, valid for 7 days.
 - **First run (self-host):** the container prints a one-time setup URL to its log. The first person to open it becomes the admin. After that, sign-up is closed unless the admin opens it.
@@ -145,9 +145,9 @@ Every request carries exactly one token. The gateway turns it into this policy a
 
 ```json
 {
-  "connection": "grok:chief-of-staff",
+  "connection": "grok:coordinator",
   "workspace": "ws_7f3a",
-  "user": "usr_jeffrey",
+  "user": "usr_avery",
   "scopes": ["memory:read", "memory:write", "kg:write"],
   "tools": "standard",
   "read_wings": ["shared", "project_*", "inbox"],
@@ -193,15 +193,15 @@ On every write (drawer, diary, KG fact, tunnel), the worker writes this metadata
 
 | Field | Example | Source |
 |---|---|---|
-| `hub_user` | `usr_jeffrey` | token |
-| `hub_connection` | `grok:chief-of-staff` | token (connection name, editable only by the owner) |
+| `hub_user` | `usr_avery` | token |
+| `hub_connection` | `grok:coordinator` | token (connection name, editable only by the owner) |
 | `hub_client` | `grok`, `claude.ai`, `claude-code`, `codex` | client type chosen when the connection was made |
 | `hub_auth` | `oauth` / `pat` | gateway |
 | `hub_trust` | `trusted` / `standard` / `untrusted` | token |
 | `hub_written_at` | `2026-10-29T14:03:11Z` | server clock |
 | `claimed_by` | whatever the client passed as `added_by` | client, kept verbatim, labelled as unverified |
 
-- Every recall result carries these fields, so the reading agent sees "written by Grok Chief of Staff, untrusted, 3 days ago" next to the verbatim text.
+- Every recall result carries these fields, so the reading agent sees "written by Grok coordinator, untrusted, 3 days ago" next to the verbatim text.
 - An append-only **audit log** in the control DB records every write and delete: who, which tool, which drawer ID, and when. It never stores drawer text, so logs stay safe to share for debugging.
 - Coding agents' `host:agent:project` identity (RFC 005) goes in `hub_connection` when one token is shared across sessions. The token decides the user and trust. The client can only add detail inside that.
 
@@ -394,13 +394,13 @@ MemPalace stays MIT; we can't and won't change that. The question is only what l
 
 ## 14. Hosting and cost
 
-**First host: zurvur.** Jeffrey's Unraid server runs everything until hosted outgrows it.
+**Initial deployment.** Run the gateway and static website on an operator-managed server.
 
-- **Containers:** `commonplace` (gateway plus workers, §4; control DB is SQLite) and `commonplace-site` (static website, nginx or Caddy). No Postgres or Qdrant on a single box.
-- **Data:** `/mnt/cache/appdata/commonplace` and `/mnt/cache/appdata/commonplace-site`. Set the appdata share to cache-only so the mover never moves live SQLite or Chroma files mid-write. The pool must be LUKS-encrypted for the Standard tier's at-rest promise (§8) to hold **(verify current pool)**; sealed records are ciphertext regardless.
-- **Public access:** both get a proxy host in the existing Nginx Proxy Manager with its Let's Encrypt TLS. Streamed MCP responses need proxy buffering off **(verify)**. Tailscale Funnel is a fallback for the hub in M0 only (bearer tokens). OAuth binds tokens to the hub's URL (§11), so the hub must be on its final domain (under commonplace.run, §16) before M1, or every connection breaks on the move. The site always goes through NPM.
-- **Backups:** include both folders in the Unraid appdata backup, and send an encrypted off-box copy (restic), because a cache-pool failure would otherwise lose everything.
-- **Trade-off:** one home server means no failover, a residential uplink and Jeffrey on call. Fine for M0–M3 with invited users; move to rented boxes (below) once paying users depend on it.
+- **Containers:** `commonplace` (gateway plus workers, §4; control DB is SQLite) and `commonplace-site` (static website, nginx or Caddy). No Postgres or Qdrant is needed on a single host.
+- **Data:** choose persistent local directories outside the source checkout. Use storage with reliable SQLite/Chroma locks and encryption for the Standard tier's at-rest promise (§8); sealed records are ciphertext regardless.
+- **Public access:** configure the operator's reverse proxy and TLS certificates locally. Streamed MCP responses need buffering disabled. OAuth binds tokens to the hub's URL (§11), so choose a stable domain before connecting clients.
+- **Backups:** retain consistent snapshots and an encrypted off-host copy. Verify recovery.
+- **Trade-off:** one server has no failover. Move to redundant hosting when availability requirements demand it.
 
 **Later: rented boxes.** All numbers are order-of-magnitude **estimates** to check before pricing.
 
@@ -440,14 +440,14 @@ Each milestone ends with something people can use. Effort estimates assume one p
 
 **M0: single-user hub you can actually share (about 2–3 weeks).** This is HUB-DESIGN's "code needed before real use", items 1–2, packaged as a product.
 
-- Rename and repo setup: new repo, `NOTICE`, Docker image `ghcr.io/<org>/commonplace` (org name open, §16), built on zurvur and pushed by hand (§3).
+- Rename and repo setup: new repo, `NOTICE`, Docker image `ghcr.io/<org>/commonplace` (org name open, §16), built on the deployment server and pushed by hand (§3).
 - One command: `docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/<org>/commonplace`. It prints a setup URL, and there is no Qdrant by default (Chroma inside the container).
 - `commonplace doctor`: a preflight check that reports what is set up and what isn't, such as a writable data volume, a free port, HTTPS reachable from outside, encryption on `/data`, and the tokens that exist (astro-conversion-kit's `preflight.mjs` idea). The setup URL page shows the same checks.
 - Several named bearer tokens, each with a tool profile, wing scopes, trust level and write wing (§6). Managed by CLI (`commonplace token add grok-cos --profile slim --trust untrusted`). No web UI yet.
 - Server-stamped authorship (§7), plus the inbox for untrusted tokens.
-- The canary leak test suite (§6), run by the pre-push hook and nightly on zurvur.
+- The canary leak test suite (§6), run by the pre-push hook and nightly on the deployment server.
 - The sealed record format and a put/list/get store (§8), so nothing written later has to be migrated into it. No companion or key UX yet.
-- Running on zurvur behind NPM (§14).
+- Running on the deployment server behind NPM (§14).
 - **Done when:**
   - HUB-DESIGN's §4 test passes with separate tokens: Grok Bot files a fact, and Claude Code and Codex recall it with the correct author stamp.
   - The Grok token can't see a canary in `private`.
@@ -460,7 +460,7 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - Sealed tier (§8): companion with local decrypt and search, plus key recovery.
 - **Done when:**
   - claude.ai and ChatGPT connect through OAuth with no config file, and each client in §11 is tested and marked verified or not.
-  - A sealed memory written on one device is found on a second device, and a disk image of zurvur shows only ciphertext for it.
+  - A sealed memory written on one device is found on a second device, and a disk image of hub shows only ciphertext for it.
 
 **M2: multi-user self-host (about 3 weeks).**
 
@@ -480,9 +480,9 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - `boards.sqlite3` with tables and the `changes` counter, plus the 7 tools and their profile entries (§10).
 - Task and drawer links, and filing a lesson on `done`.
 - The kanban page with drag and drop, live polling and ⌘K across tasks and memories.
-- Board canaries added to the leak suite, plus a two-agent `task_take_next` race test, both in the pre-push hook and the nightly run on zurvur.
+- Board canaries added to the leak suite, plus a two-agent `task_take_next` race test, both in the pre-push hook and the nightly run on the deployment server.
 - **Done when:**
-  - Grok Bot (untrusted) files a task that lands in `backlog`. Jeffrey moves it to `todo`, Claude Code and Codex call `task_take_next` at the same moment, and exactly one gets it.
+  - Grok Bot (untrusted) files a task that lands in `backlog`. Avery moves it to `todo`, Claude Code and Codex call `task_take_next` at the same moment, and exactly one gets it.
   - The winner comments, links a drawer and moves the task to `done`, and every step shows the right author stamp in the web UI within seconds.
   - A token without the board's wing sees no trace of it.
 
@@ -493,7 +493,7 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - One static page plus connector guides (§11): what it is (the agent control point, with memory shipping first), the one-command self-host, the three privacy tiers, the "built on MemPalace" credit and a hosted waitlist.
 - Developer-tool look (§16): dark, monospace accents, and a terminal hero that shows `docker run` and then a recall result with its author stamp.
 - No analytics, no trackers, no third-party fonts or scripts, so the site keeps the privacy promise too.
-- Runs as `commonplace-site` on zurvur behind NPM (§14). Deploy is a `git pull` on zurvur, by hand or from cron.
+- Runs as `commonplace-site` on the deployment server behind NPM (§14). Deploy is a `git pull` on the deployment server, by hand or from cron.
 - **Done when:** it is live over HTTPS on commonplace.run, cmmn.dev short links resolve to it, and it loads with zero third-party requests.
 
 ## 16. Decisions
@@ -503,11 +503,11 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - [x] **L. License for our layer:** MIT, with private billing glue (§13).
 - [x] **C. Sensitive memories:** sealed tier from day one (§8). Key recovery still open.
 - [ ] **P. Hosted pricing:** open (§14).
-- [x] **Hosting:** zurvur, Docker, `/mnt/cache/appdata`, public through NPM (§14).
-- [x] **Website:** static, on zurvur (§15, W).
+- [x] **Hosting:** Docker on an operator-managed host with a TLS reverse proxy (§14).
+- [x] **Website:** static, on the deployment server (§15, W).
 - [x] **Website look:** B, developer tool. Dark, monospace accents, a terminal hero showing `docker run` and a recall result. Rejected: A (commonplace book: serif, off-white paper) and C (index cards: warm editorial, drawings of linked cards).
-- [x] **Domain:** commonplace.run as the main domain, and cmmn.dev for short links. Decided and registered on 2026-10-29 on Jeffrey's Cloudflare account, paid until 2027-10-29 with auto-renew on. Must be live before M1, because OAuth binds tokens to the hub's URL (§11, §14).
-  - **Rule:** no name may put "c" and "p" next to each other (no cp, cplace, cpmem), and "cp" is never used as an abbreviation. This covers domains, URLs and short names, and also internal identifiers: the token prefix is `cmmn_` (decided by Jeffrey 2026-10-30).
+- [x] **Domain:** commonplace.run as the main domain, and cmmn.dev for short links. Must be live before M1, because OAuth binds tokens to the hub's URL (§11, §14).
+  - **Rule:** no name may put "c" and "p" next to each other (no cp, cplace, cpmem), and "cp" is never used as an abbreviation. This covers domains, URLs and short names, and also internal identifiers: the token prefix is `cmmn_`.
   - Rejected: commonplacememory.com (says "memory"), commonplacehub.app/.dev (generic), parked commonplace.io/.eu (unknown price), and commonplace.com, .app, .dev, .ai, .org, .me plus the get-/use-/-hq variants (all registered).
 - [x] **Boards:** shared kanban in the same workspace store and scopes as memories, design from kanzo, our own MIT code (§10, §15 B).
 

@@ -1,10 +1,10 @@
-{"timestamp": "2026-10-29T14:56:34.000Z", "type": "session_meta", "payload": {"id": "01a18829-ac97", "timestamp": "2026-10-29T14:56:34Z", "cwd": "/home/me/work/acme-app", "originator": "codex_exec", "cli_version": "0.163.0", "source": "exec"}}
+{"timestamp": "2026-10-29T14:56:34.000Z", "type": "session_meta", "payload": {"id": "01a18829-ac97", "timestamp": "2026-10-29T14:56:34Z", "cwd": "/path/to/user/work/acme-app", "originator": "codex_exec", "cli_version": "0.163.0", "source": "exec"}}
 {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t1"}}
 {"type": "response_item", "payload": {"type": "message", "id": "m0", "role": "developer", "content": [{"type": "input_text", "text": "<skills_instructions>...</skills_instructions>"}]}}
-{"type": "response_item", "payload": {"type": "message", "id": "m1", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions for /home/me/work/acme-app\n\n<INSTRUCTIONS>never file me</INSTRUCTIONS>"}]}}
+{"type": "response_item", "payload": {"type": "message", "id": "m1", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions for /path/to/user/work/acme-app\n\n<INSTRUCTIONS>never file me</INSTRUCTIONS>"}]}}
 {"type": "response_item", "payload": {"type": "message", "id": "m2", "role": "user", "content": [{"type": "input_text", "text": "Store pin state as pinnedAt, not isPinned."}]}}
 {"type": "world_state", "payload": {}}
-{"type": "turn_context", "payload": {"cwd": "/home/me/work/acme-app"}}
+{"type": "turn_context", "payload": {"cwd": "/path/to/user/work/acme-app"}}
 {"type": "event_msg", "payload": {"type": "item_completed", "thread_id": "01a18829-ac97", "turn_id": "t1", "item": {"type": "UserMessage", "id": "u1", "content": [{"type": "text", "text": "Store pin state as pinnedAt, not isPinned.", "text_elements": []}]}}}
 {"type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{}"}}
 {"type": "response_item", "payload": {"type": "function_call_output", "output": "ok"}}

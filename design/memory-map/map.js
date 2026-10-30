@@ -357,7 +357,7 @@
     const close = `<span class="right"><button class="x" data-close aria-label="Close">×</button></span>`;
     if (x.kind === "memory") {
       top = `<div class="bar">${sq(x.theme)}<b>${x.theme}</b>/ ${x.topic}${close}</div>
-        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>jeffrey</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>`;
+        <div class="hit"><p class="q">${esc(x.text)}</p><p class="stamp"><span>avery</span> · <span>${fmtDate(x.date)}</span> · <span>${x.src}</span></p></div>`;
       const ppl = neighbours(x, "person"), cards = neighbours(x, "card"), rel = neighbours(x, "memory").sort(byDate);
       rest = sec("people", ppl.length, `<ul class="rows">${ppl.map((p) => {
         const f = FACTS.find((f) => f[0] === p.id && !f[4] && f[3]) || FACTS.find((f) => f[0] === p.id);

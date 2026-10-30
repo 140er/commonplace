@@ -28,7 +28,7 @@ Static mockups for the boards in [docs/boards/DESIGN.md](../../docs/boards/DESIG
 
 - **Five columns, backlog as a 40px rail** with its count and a `⚠` when something in it is flagged (DESIGN.md: "narrow strip with only its count"). Agents never take from it, so it should not compete for width.
 - `review` is the only tinted column, and its cards show the ask, so the board answers "what waits on me" without opening anything.
-- **The claim is a 2px line under the card**: full when claimed, empty at expiry, yellow under 20% left. It shows "this agent may be stuck" without a timer or a label. People's holds (`jeffrey`, blue) have no line, because they never expire.
+- **The claim is a 2px line under the card**: full when claimed, empty at expiry, yellow under 20% left. It shows "this agent may be stuck" without a timer or a label. People's holds (`avery`, blue) have no line, because they never expire.
 - `●` before an actor in `todo` means reserved for that agent. Drawer icon + count is linked memories.
 - `done` is quiet: no card chrome, a green check, the last 20.
 - A focused card (keyboard) gets the orange ring; an open card gets a light border.
