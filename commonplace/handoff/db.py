@@ -357,6 +357,15 @@ class HandoffDB:
             ).fetchone()
         return _handoff(row) if row is not None else None
 
+    def by_key(self, workspace_id: str, idempotency_key: str) -> Optional[Handoff]:
+        """Read-only lookup by idempotency key; never creates a row."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM handoffs WHERE workspace_id = ? AND idempotency_key = ?",
+                (workspace_id, idempotency_key),
+            ).fetchone()
+        return _handoff(row) if row is not None else None
+
     def by_stored_thread(self, stored_thread_id: str) -> Optional[Handoff]:
         if not stored_thread_id:
             return None

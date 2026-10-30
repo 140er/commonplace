@@ -107,7 +107,12 @@ class HandoffService:
             snapshot = self._snapshots.get((workspace_id, key))
         settings = snapshot.settings if snapshot else current
         if not settings.enabled:
-            return HandoffResult("compact", reason="off")
+            # Turning handoff off later never strands a handoff already under way:
+            # a stored thread still gets its one successor.
+            existing = self.db.by_key(workspace_id, key)
+            if existing is None or existing.state in ("failed", "pending"):
+                return HandoffResult("compact", reason="off")
+            settings = replace(current, enabled=True)
 
         try:
             handoff, created = self.db.begin(

@@ -704,3 +704,16 @@ def test_database_operations_do_not_write_audit_entries(db, control):
     db.mark_delivered(outbox_id)
     db.remove_webhook(webhook_id, actor="owner")
     assert control.audit_entries() == []
+
+
+def test_by_key_is_read_only(tmp_path):
+    from commonplace.control_db import ControlDB
+    from commonplace.handoff.db import HandoffDB
+    from commonplace.handoff.models import ThreadMeta
+
+    db = HandoffDB(ControlDB(str(tmp_path / "control.sqlite3")))
+    assert db.by_key("ws", "thread:a") is None
+    assert db.list("ws") == []
+    made, created = db.begin("ws", "thread:a", ThreadMeta(thread_id="a"), connection_id="c")
+    assert created and db.by_key("ws", "thread:a") == made
+    assert db.by_key("other", "thread:a") is None

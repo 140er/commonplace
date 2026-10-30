@@ -39,6 +39,11 @@ class FakeDB:
         self.claims = set()
         self.created = 0
 
+    def by_key(self, workspace_id, idempotency_key):
+        with self.lock:
+            found = self.keys.get((workspace_id, idempotency_key))
+            return self.rows[found] if found else None
+
     def begin(self, workspace_id, idempotency_key, meta, *, connection_id):
         with self.lock:
             self.trace.append("begin")
@@ -1058,10 +1063,6 @@ def test_restart_relaunch_reconstructs_doc_and_ignores_disabled_toggle(rig):
     assert len(rig.store.writes) == 1 and len(rig.doc_calls) == 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DB needs persisted snapshots and read-only key lookup: a new instance returns compact/off",
-)
 def test_cross_instance_stored_retry_honors_settings_captured_before_disable(rig, monkeypatch):
     claim = rig.db.claim_launch
     monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
@@ -1070,7 +1071,7 @@ def test_cross_instance_stored_retry_honors_settings_captured_before_disable(rig
     monkeypatch.setattr(rig.db, "claim_launch", claim)
     rig.settings.current = HandoffSettings(enabled=False)
     result = rig.new_service().run(rig.principal, make_request())
-    assert rig.db.get(first.handoff.id).state == "stored"
+    assert rig.db.get(first.handoff.id).state == "launched"
     assert len(rig.store.writes) == 1
     assert (result.action, result.launch) == ("handoff", True)
 
