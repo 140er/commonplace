@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -420,7 +421,6 @@ _FACT = {"wing", "sensitivity"}
 _FILTER = {"wings", "sensitivities"}
 ADDED_SINCE_BASELINE = {
     "memory_save": {"source"},
-    "task_add": {"message_id"},
     "mempalace_add_drawer": _RANGE,
     "mempalace_kg_add": _RANGE | _FACT | {"sensitivities"},
     "mempalace_kg_supersede": _RANGE | _FACT | {"sensitivities"},
@@ -450,8 +450,7 @@ def _as_baseline(reply, baseline):
     tools[:] = [
         t
         for t in tools
-        if t.get("name") not in {"board_set", "space_read", "space_post"}
-        and (t.get("name") in known or t.get("name") not in WING_SCOPED_SINCE_BASELINE)
+        if t.get("name") in known or t.get("name") not in WING_SCOPED_SINCE_BASELINE
     ]
     for tool in tools:
         properties = tool.get("inputSchema", {}).get("properties", {})
@@ -468,6 +467,15 @@ def legacy(tmp_path_factory):
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as source:
         source.extractall(snapshot, filter="data")
+    # Boards and the PR call tree are not part of handoff and keep changing on
+    # develop: take them from this tree, so only handoff's surface stays pinned.
+    shutil.rmtree(snapshot / "commonplace" / "boards")
+    shutil.copytree(
+        ROOT / "commonplace" / "boards",
+        snapshot / "commonplace" / "boards",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
     # A separate interpreter keeps relative and dynamic imports, policies and
     # extension registrations entirely on the pinned source tree.
     script = (
