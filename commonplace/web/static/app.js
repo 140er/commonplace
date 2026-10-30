@@ -5,7 +5,7 @@ const root = document.querySelector("#root");
 const state = {
   me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0,
-  mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
+  mapDispose: null, screen: 0, error: "", pollError: false, loading: false, toggled: new Set(),
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -58,6 +58,27 @@ function capture(view) {
     });
   };
 }
+const changes = ["new", "changed", "unchanged", "deleted"];
+const csDot = (change) => { const kind = changes.includes(change) ? change : "unchanged"; return `<i class="cs-dot ${kind}" role="img" aria-label="${kind}"></i>`; };
+const csSize = (n) => (n.children || []).reduce((sum, child) => sum + 1 + csSize(child), n.more || 0);
+// The PR as a call tree (from the agent's `python -m commonplace.callstack`); nodes fold, files start folded.
+function callTree(card) {
+  const stack = card.callstack;
+  if (!stack || !(card.pr_url || card.pr_number)) return "";
+  const open = (path, folded = false) => folded === state.toggled.has(`${card.number}:${path}`);
+  const node = (n, path, parent) => {
+    const kids = n.children || [], expanded = open(path), cut = n.name.lastIndexOf(".");
+    const where = `${n.file && n.file !== parent ? n.file.split("/").pop() : ""}${n.line ? `:${n.line}` : ""}`;
+    const row = `${csDot(n.change)}<span class="cs-name">${cut > 0 ? `<span class="cs-q">${e(n.name.slice(0, cut + 1))}</span>` : ""}<b>${e(n.name.slice(cut + 1))}</b><span class="cs-q">(${e(n.params || "")})${n.seen ? " …" : ""}${kids.length && !expanded ? ` +${csSize(n)}` : ""}</span></span><span class="cs-loc" title="${e(n.file || "")}${n.line ? `:${n.line}` : ""}">${e(where)}</span>`;
+    const more = n.more ? `<li><span class="cs-row cs-q">+${n.more}</span></li>` : "";
+    return `<li>${kids.length ? `<button class="cs-row" data-action="cs-toggle" data-path="${path}" aria-expanded="${expanded}">${row}</button>` : `<div class="cs-row">${row}</div>`}${expanded && (kids.length || more) ? `<ul>${kids.map((k, i) => node(k, `${path}.${i}`, n.file)).join("")}${more}</ul>` : ""}</li>`;
+  };
+  const stats = stack.stats || {}, files = stack.files || [], filesOpen = open("files", true);
+  const head = `${stats.new ? `<span>${csDot("new")}${e(stats.new)} new</span>` : ""}${stats.changed ? `<span>${csDot("changed")}${e(stats.changed)} changed</span>` : ""}<span>${e(stats.files ?? files.length)} files</span>${stack.head ? `<span class="cs-sha" title="Head commit">${e(stack.head)}</span>` : ""}`;
+  const rest = files.length ? `<li><button class="cs-row" data-action="cs-toggle" data-path="files" aria-expanded="${filesOpen}"><span class="cs-name cs-q">${e(files.length)} other files${filesOpen ? "" : " +"}</span></button>${filesOpen ? `<ul>${files.map((f) => `<li><div class="cs-row">${csDot(f.change)}<span class="cs-name ${f.change === "deleted" ? "cs-gone" : ""}" title="${e(f.file)}">${e(f.file)}</span></div></li>`).join("")}</ul>` : ""}</li>` : "";
+  const cut = stack.truncated || stack.more ? `<li><span class="cs-row cs-q">${stack.more ? `+${e(stack.more)}` : "…"}</span></li>` : "";
+  return `<section class="cs" aria-label="Call tree"><div class="cs-head">${head}</div><div class="cs-body"><ul class="cs-tree">${(stack.roots || []).map((n, i) => node(n, String(i), "")).join("")}${cut}${rest}</ul></div></section>`;
+}
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
@@ -67,6 +88,7 @@ function remember() {
     scope: active?.closest?.("#card-panel, #content")?.id,
     ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
+    tree: root.querySelector(".cs-body")?.scrollTop,
     view: root.querySelector("#content")?.dataset.view, cols: cols && [cols.scrollTop, cols.scrollLeft],
     stacks: Object.fromEntries([...root.querySelectorAll(".col[data-status] .stack")].map((stack) => [stack.parentElement.dataset.status, stack.scrollTop])),
   };
@@ -88,6 +110,8 @@ function restore(saved) {
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
+  const tree = root.querySelector(".cs-body");
+  if (tree && saved?.tree != null) tree.scrollTop = saved.tree;
   if (saved?.view !== state.base) return; // Board scroll belongs to the board it came from.
   const cols = root.querySelector(".cols");
   if (cols && saved.cols) [cols.scrollTop, cols.scrollLeft] = saved.cols;
@@ -183,7 +207,7 @@ async function cardPanel(number, epoch) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}${callTree(card)}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
     if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
@@ -358,7 +382,13 @@ root.addEventListener("click", async (event) => {
       await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
-    else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
+    else if (action === "cs-toggle") {
+      const key = `${state.card.number}:${b.dataset.path}`, saved = remember();
+      if (!state.toggled.delete(key)) state.toggled.add(key);
+      b.closest(".cs").outerHTML = callTree(state.card);
+      restore(saved);
+      root.querySelector(`.cs [data-path="${CSS.escape(b.dataset.path)}"]`)?.focus({ preventScroll: true });
+    } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh();
     else if (action === "close-panel") {
       if (state.route.startsWith("#/card/")) location.hash = state.base;
