@@ -97,6 +97,7 @@ def install(gateway):
                     "email": principal.user_email,
                     "workspace": principal.workspace_id,
                     "actor": principal.actor,
+                    "people": _people(gateway.db, principal.workspace_id),
                 },
             )
 
@@ -152,3 +153,13 @@ def install(gateway):
     gateway.add_route("GET", "/api/events", feed)
     gateway.add_route("GET", "/api/connections", connections)
     gateway.add_prefix_route("GET", "/app/", _static)
+
+
+def _people(db, workspace_id) -> dict:
+    """``user:<id>`` -> the name the app shows: the user's name, else the
+    part of the email before the @."""
+    people = {}
+    for member in db.members(workspace_id):
+        name = db.user(member["id"])["name"] or member["email"].split("@", 1)[0]
+        people[f"user:{member['id']}"] = name
+    return people

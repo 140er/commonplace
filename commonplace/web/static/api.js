@@ -23,7 +23,9 @@ export async function api(path, options = {}) {
 }
 
 export const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-export const actor = (value) => String(value || "—").replace(/^(conn:|user:)/, "");
+const people = new Map();
+export function setPeople(map) { people.clear(); for (const [ref, name] of Object.entries(map || {})) people.set(ref, name); }
+export const actor = (value) => people.get(String(value)) || String(value || "—").replace(/^(conn:|user:)/, "");
 export function elapsed(value) {
   const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
   if (!Number.isFinite(minutes)) return "—";

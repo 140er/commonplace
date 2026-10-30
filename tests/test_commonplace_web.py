@@ -43,6 +43,7 @@ def test_login_cookie_identity_replay_and_logout(hub):
         "email": "owner@example.com",
         "workspace": hub.workspace,
         "actor": f"user:{hub.admin}",
+        "people": {f"user:{hub.admin}": "owner"},
     }
     assert request(hub, f"/app/login?t={token}")[0] == 400
     status, headers, _ = request(hub, "/app/logout", "POST", headers=cookie)

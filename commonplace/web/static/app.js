@@ -1,4 +1,4 @@
-import { api, escape as e, actor, elapsed, safeLink } from "./api.js";
+import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
 
 const root = document.querySelector("#root");
@@ -423,7 +423,7 @@ setInterval(() => {
   });
 }, 30000);
 async function boot() {
-  try { state.me = await api("/api/me"); }
+  try { state.me = await api("/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; signin(); return; }
   shell(); await route(); schedule(0);
 }
