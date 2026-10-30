@@ -87,6 +87,8 @@ def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
     }
     assert "handle_path" not in active
     backend, fallback = active.split("handle @backend {", 1)[1].split("\n\thandle {", 1)
+    fallback = fallback.split("\n}\n", 1)[0]
+    assert "bind 100.76.209.1" in active
     assert "reverse_proxy 127.0.0.1:8765" in backend
     assert "flush_interval -1" in backend
     assert "Content-Security-Policy" not in backend
