@@ -151,7 +151,11 @@ def test_append_boundaries_hash_check_and_runs(store, monkeypatch):
         with pytest.raises(ThreadConflict):
             store.append(thread.id, [replace(items[0], text="changed"), *items[1:]])
     before = tuple(store._conn.execute("SELECT * FROM block WHERE idx=0").fetchone())
+    store._conn.execute(
+        "CREATE TEMP TRIGGER unchanged_tail BEFORE UPDATE ON block WHEN old.idx=0 BEGIN SELECT RAISE(ABORT, 'unchanged block rewritten'); END"
+    )
     updated = store.append(thread.id, items)
+    store._conn.execute("DROP TRIGGER unchanged_tail")
     assert store.messages(thread.id) == items
     assert store.chunks(thread.id)[: len(original)] == original
     assert tuple(store._conn.execute("SELECT * FROM block WHERE idx=0").fetchone()) == before
@@ -523,3 +527,263 @@ def test_mixed_workspace_files_preserve_api_but_never_share_dictionaries(store):
     # The dictionary stays immutable even after its final reference is replaced.
     with pytest.raises(sqlite3.IntegrityError, match="immutable"):
         store._conn.execute("UPDATE dict SET data=x'00' WHERE id=?", (original[0],))
+
+
+def test_large_message_decodes_each_block_once_per_operation(store, monkeypatch):
+    from collections import Counter
+
+    unit = "needle large payload \0 "
+    items = simple([(unit * (4 * 1024 * 1024 // len(unit) + 1))[: 4 * 1024 * 1024]])
+    original = store._frame
+    calls = Counter()
+
+    def counted(block, frame):
+        calls[block["first_seq"], frame] += 1
+        return original(block, frame)
+
+    monkeypatch.setattr(store, "_frame", counted)
+    thread = store.store("workspace", "source", items, actor="actor")
+    assert max(calls.values()) == 1
+    expected = chunk_messages(items)
+    for operation in (
+        lambda: store.chunks(thread.id),
+        lambda: store.search([thread.id], "needle"),
+        lambda: store.search([thread.id], "payload \0"),
+        store.reindex,
+    ):
+        calls.clear()
+        result = operation()
+        assert max(calls.values()) == 1
+        assert not any(frame == "raw" for _, frame in calls)
+        if result and hasattr(result[0], "index"):
+            assert result == expected
+
+
+def test_text_reads_do_not_fetch_raw_columns(store):
+    items = simple(["needle " * 1000])
+    thread = store.store("workspace", "source", items, actor="actor")
+    statements = []
+
+    def authorize(action, table, column, database, source):
+        if action == sqlite3.SQLITE_READ and table == "block" and column in {"zraw", "raw_dict"}:
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    store._conn.set_trace_callback(statements.append)
+    store._conn.set_authorizer(authorize)
+    try:
+        assert store._messages(thread.id, 0, None, raw=False)[0].text == items[0].text
+        assert store.chunks(thread.id) == chunk_messages(items)
+        assert store.search([thread.id], "needle")
+    finally:
+        store._conn.set_authorizer(None)
+        store._conn.set_trace_callback(None)
+    block_reads = [sql.lower() for sql in statements if "from block" in sql.lower()]
+    assert block_reads and all("zraw" not in sql and "select *" not in sql for sql in block_reads)
+    columns = [row[1] for row in store._conn.execute("PRAGMA table_info(block)")]
+    assert columns.index("ztext") < columns.index("zraw")
+
+
+def test_frame_checksum_rejects_corruption_before_append(store):
+    import zstandard as zstd
+
+    items = simple(["needle payload " * 100])
+    thread = store.store("workspace", "source", items, actor="actor")
+    frame = store._conn.execute(
+        "SELECT ztext FROM block WHERE thread_id=?", (thread.id,)
+    ).fetchone()[0]
+    assert zstd.get_frame_parameters(frame).has_checksum
+    corrupt = frame[:-1] + bytes([frame[-1] ^ 1])
+    store._conn.execute("UPDATE block SET ztext=? WHERE thread_id=?", (corrupt, thread.id))
+    for operation in (
+        lambda: store.messages(thread.id),
+        lambda: store.append(thread.id, simple([items[0].text, "new message"])),
+    ):
+        with pytest.raises(zstd.ZstdError):
+            operation()
+    assert store.get(thread.id) == thread
+    assert (
+        store._conn.execute("SELECT ztext FROM block WHERE thread_id=?", (thread.id,)).fetchone()[0]
+        == corrupt
+    )
+
+
+@pytest.mark.parametrize("mix_workspaces", [False, True])
+def test_dictionary_training_does_not_block_writers_and_rechecks_workspace(
+    store, tmp_path, monkeypatch, mix_workspaces
+):
+    import zstandard as zstd
+
+    texts = [" ".join(f"token-{i}-{j} word-{j % 17}" for j in range(200)) for i in range(250)]
+    store.store("workspace", "source", simple(texts), actor="actor")
+    other = ThreadStoreV2(str(tmp_path / FILENAME))
+    other._conn.execute("PRAGMA busy_timeout=50")
+    original = zstd.train_dictionary
+    inserted = []
+
+    def train(size, samples):
+        assert not store._conn.in_transaction
+        assert sum(map(len, samples)) <= 100 * size
+        if not inserted:
+            inserted.append(
+                other.store(
+                    "other" if mix_workspaces else "workspace",
+                    "concurrent",
+                    simple(["concurrent write"]),
+                    actor="actor",
+                )
+            )
+        return original(size, samples)
+
+    monkeypatch.setattr(zstd, "train_dictionary", train)
+    try:
+        if mix_workspaces:
+            with pytest.raises(ValueError, match="single-workspace"):
+                store.train_dictionaries()
+            assert store._conn.execute("SELECT count(*) FROM dict").fetchone()[0] == 0
+        else:
+            assert len(store.train_dictionaries()) == 2
+        assert other.messages(inserted[0].id) == simple(["concurrent write"])
+    finally:
+        other.close()
+
+
+def test_training_sample_excludes_blob_keys():
+    from commonplace.handoff import thread_frames
+
+    blobs = {}
+    text = "prefix " + base64.b64encode(bytes(range(256)) * 2).decode() + " suffix"
+    frame = thread_frames.encode_frame(
+        [text], lambda key, kind, data: blobs.setdefault(key, (kind, data))
+    )
+    sample = thread_frames.training_sample(thread_frames.compress(frame, None), None, 10000)
+    assert blobs and all(key not in sample for key in blobs)
+    assert b"prefix " in sample and b" suffix" in sample
+    assert len(thread_frames.training_sample(thread_frames.compress(frame, None), None, 5)) == 5
+
+
+def test_replace_cannot_bypass_dictionary_and_sealed_block_immutability(store):
+    thread = store.store("workspace", "source", simple(["first " * 20000, "second"]), actor="actor")
+    store._conn.execute("INSERT INTO dict(frame, data) VALUES ('raw', x'0102')")
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        store._conn.execute(
+            "INSERT OR REPLACE INTO dict(id, frame, data) VALUES (1, 'raw', x'0304')"
+        )
+    row = store._conn.execute(
+        "SELECT * FROM block WHERE thread_id=? AND idx=0", (thread.id,)
+    ).fetchone()
+    with pytest.raises(sqlite3.IntegrityError, match="last"):
+        store._conn.execute(
+            "INSERT OR REPLACE INTO block VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", tuple(row)
+        )
+
+
+@st.composite
+def random_thread(draw):
+    from commonplace.handoff.models import ThreadMessage
+
+    base64_runs = [
+        base64.b64encode(bytes(range(256)) * 2).decode(),
+        "A" * 257 + "===",
+        "a" * 256 + "=" + "b" * 256,
+        base64.urlsafe_b64encode(b"\xfb\xff" * 160).decode(),
+    ]
+    alphabet = "ab zé🧠\0\n" + ("\ud800\udcff" if draw(st.booleans()) else "")
+    short = st.text(alphabet=alphabet, max_size=70)
+    content = st.one_of(short, st.sampled_from(base64_runs + ["long needle \0 " * 6000]))
+    items = []
+    for seq in range(draw(st.integers(1, 9))):
+        raw = (
+            items[-1].raw
+            if items and draw(st.booleans())
+            else draw(st.one_of(short, st.sampled_from(base64_runs + ["source line " * 6000])))
+        )
+        items.append(
+            ThreadMessage(
+                seq,
+                draw(st.sampled_from(["user", "assistant", "tool"])),
+                draw(st.sampled_from(["message", "tool_result", "other"])),
+                draw(content),
+                raw,
+                draw(short),
+                draw(short),
+                draw(short),
+            )
+        )
+    cuts = sorted(
+        set(draw(st.lists(st.integers(1, len(items)), min_size=1, max_size=5)) + [len(items)])
+    )
+    stale = draw(st.integers(0, len(items)))
+    start = draw(st.integers(-1, len(items) + 1))
+    end = draw(st.one_of(st.none(), st.integers(-1, len(items) + 1)))
+    return items, cuts, stale, start, end
+
+
+@settings(max_examples=35, deadline=None)
+@given(random_thread())
+def test_random_messages_append_ranges_and_v1_parity(case):
+    items, cuts, stale, start, end = case
+    new = ThreadStoreV2(":memory:")
+    eligible = not any(
+        0xD800 <= ord(char) <= 0xDFFF
+        for item in items
+        for field in (item.role, item.kind, item.text, item.raw, item.name, item.call_id, item.at)
+        for char in field
+    )
+    old = ThreadStore(":memory:") if eligible else None
+    try:
+        expected_chunks = []
+        previous = 0
+        thread = None
+        old_thread = None
+        for cut in cuts:
+            if thread is None:
+                thread = new.store("workspace", "source", items[:cut], actor="actor")
+                if old:
+                    old_thread = old.store("workspace", "source", items[:cut], actor="actor")
+            else:
+                thread = new.append(thread.id, items[:cut])
+                if old:
+                    old_thread = old.append(old_thread.id, items[:cut])
+            base = len(expected_chunks)
+            expected_chunks.extend(
+                replace(chunk, index=base + chunk.index)
+                for chunk in chunk_messages(items[previous:cut])
+            )
+            previous = cut
+            assert new.messages(thread.id) == items[:cut]
+            assert new.chunks(thread.id) == expected_chunks
+            assert thread.sha256 == canonical_sha256(items[:cut])
+            if old:
+                assert old.messages(old_thread.id) == new.messages(thread.id)
+                assert old.chunks(old_thread.id) == expected_chunks
+                assert old_thread.sha256 == thread.sha256
+        assert new.append(thread.id, items[:stale]) == thread
+        expected_range = (
+            []
+            if start < 0 or end is not None and (end < 0 or end < start)
+            else items[start : None if end is None else end + 1]
+        )
+        assert new.messages(thread.id, start, end) == expected_range
+    finally:
+        new.close()
+        if old:
+            old.close()
+
+
+def test_migration_reads_back_thread_metadata_rows(tmp_path):
+    source = tmp_path / "threads.sqlite3"
+    old, _, _ = make_v1(source)
+    old.close()
+    new = ThreadStoreV2(str(tmp_path / FILENAME))
+    new._conn.execute(
+        "CREATE TRIGGER corrupt_thread AFTER INSERT ON threads BEGIN UPDATE threads SET created_by='corrupt' WHERE id=new.id; END"
+    )
+    new.close()
+    with pytest.raises(MigrationMismatch, match="thread rows"):
+        migrate_v1(str(source))
+    new = ThreadStoreV2(str(tmp_path / FILENAME))
+    try:
+        assert new._conn.execute("SELECT count(*) FROM threads").fetchone()[0] == 0
+    finally:
+        new.close()

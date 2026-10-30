@@ -28,6 +28,9 @@ from .thread_store import (
 )
 from .thread_store_v2_schema import APPLICATION_ID, FILENAME, SCHEMA, USER_VERSION
 
+_BLOCK_COLUMNS = (
+    "thread_id, idx, first_line, n_lines, first_seq, last_seq, text_dict, ztext, raw_dict, zraw"
+)
 _SURROGATES = re.compile(r"[\ud800-\udfff]")
 
 
@@ -83,6 +86,7 @@ class ThreadStoreV2(V1ThreadStore):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA recursive_triggers=ON")
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             # Recheck after the writer lock: another opener may have created
@@ -135,10 +139,11 @@ class ThreadStoreV2(V1ThreadStore):
     def _reindex(self, version):
         self._conn.execute("INSERT INTO chunk_fts(chunk_fts) VALUES ('delete-all')")
         rows = self._conn.execute("SELECT rowid, * FROM chunk ORDER BY rowid").fetchall()
+        cache = {}
         for row in rows:
             self._conn.execute(
                 "INSERT INTO chunk_fts(rowid, text) VALUES (?, ?)",
-                (row["rowid"], _index_text(self._chunk_text(row), version)),
+                (row["rowid"], _index_text(self._chunk_text(row, cache), version)),
             )
         self._conn.execute(
             "UPDATE index_meta SET index_version=?, indexed_chunks=?", (version, len(rows))
@@ -179,30 +184,48 @@ class ThreadStoreV2(V1ThreadStore):
         """
         if dictionary_size < 256 or dictionary_size > frames.MIN_TRAIN_BYTES // 4:
             raise ValueError("Dictionary size must be between 256 and 32768 bytes")
+        # The read snapshot permits concurrent writers in WAL mode. Sampling
+        # stops at a fixed budget and omits the random blob-key span header.
+        budget = max(frames.MIN_TRAIN_BYTES, dictionary_size * 100)
+        samples = {"raw": [], "text": []}
+        sizes = {"raw": 0, "text": 0}
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN")
+            if not self._single_workspace():
+                raise ValueError("Dictionary training requires a single-workspace file")
+            rows = self._conn.execute(
+                "SELECT text_dict, ztext, raw_dict, zraw FROM block ORDER BY rowid DESC"
+            )
+            for block in rows:
+                for frame in ("raw", "text"):
+                    if sizes[frame] >= budget:
+                        continue
+                    data = frames.training_sample(
+                        block["zraw" if frame == "raw" else "ztext"],
+                        self._dict(block[frame + "_dict"]),
+                        budget - sizes[frame],
+                    )
+                    samples[frame].extend(
+                        data[offset : offset + 8192] for offset in range(0, len(data), 8192)
+                    )
+                    sizes[frame] += len(data)
+                if all(size >= budget for size in sizes.values()):
+                    break
+            rows.close()
+        # Training holds neither the connection lock nor a SQLite transaction.
+        trained = [
+            (frame, zstd.train_dictionary(dictionary_size, values).as_bytes())
+            for frame, values in samples.items()
+            if sizes[frame] >= frames.MIN_TRAIN_BYTES
+        ]
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             if not self._single_workspace():
                 raise ValueError("Dictionary training requires a single-workspace file")
-            result = []
-            blocks = self._conn.execute("SELECT * FROM block ORDER BY thread_id, idx").fetchall()
-            for frame in ("raw", "text"):
-                samples = []
-                for block in blocks:
-                    data = frames.decompress(
-                        block["zraw" if frame == "raw" else "ztext"],
-                        self._dict(block[frame + "_dict"]),
-                    )
-                    samples.extend(
-                        data[offset : offset + 8192] for offset in range(0, len(data), 8192)
-                    )
-                if sum(map(len, samples)) < frames.MIN_TRAIN_BYTES:
-                    continue
-                dictionary = zstd.train_dictionary(dictionary_size, samples).as_bytes()
-                cursor = self._conn.execute(
-                    "INSERT INTO dict(frame, data) VALUES (?, ?)", (frame, dictionary)
-                )
-                result.append(cursor.lastrowid)
-            return result
+            return [
+                self._conn.execute("INSERT INTO dict(frame, data) VALUES (?, ?)", value).lastrowid
+                for value in trained
+            ]
 
     def store(self, workspace_id, source_thread_id, messages, *, actor, parent_stored_id=""):
         messages = list(messages)
@@ -234,8 +257,8 @@ class ThreadStoreV2(V1ThreadStore):
                     actor,
                 ),
             )
-            self._write_messages(stored_id, messages)
-            self._write_chunks(stored_id, chunks)
+            cache = self._write_messages(stored_id, messages)
+            self._write_chunks(stored_id, chunks, messages, cache=cache)
             return self.get(stored_id)
 
     @staticmethod
@@ -263,8 +286,10 @@ class ThreadStoreV2(V1ThreadStore):
             if len(messages) <= stored.message_count:
                 return stored
             added = messages[stored.message_count :]
-            self._write_messages(stored_id, added)
-            self._write_chunks(stored_id, chunk_messages(added), stored.chunk_count)
+            cache = self._write_messages(stored_id, added)
+            self._write_chunks(
+                stored_id, chunk_messages(added), added, stored.chunk_count, cache=cache
+            )
             self._conn.execute(
                 "UPDATE threads SET message_count=?, chunk_count=?, sha256=? WHERE id=?",
                 (
@@ -280,10 +305,18 @@ class ThreadStoreV2(V1ThreadStore):
 
     def _write_messages(self, stored_id, added):
         last = self._conn.execute(
-            "SELECT * FROM block WHERE thread_id=? ORDER BY idx DESC LIMIT 1", (stored_id,)
+            f"SELECT {_BLOCK_COLUMNS} FROM block WHERE thread_id=? ORDER BY idx DESC LIMIT 1",
+            (stored_id,),
         ).fetchone()
+        cache = {}
+        if last is not None:
+            cache[stored_id, last["idx"]] = (
+                last,
+                self._frame(last, "text"),
+                self._frame(last, "raw"),
+            )
         existing = (
-            self.messages(stored_id, last["first_seq"], last["last_seq"])
+            self._messages(stored_id, last["first_seq"], last["last_seq"], raw=True, cache=cache)
             if last is not None
             else []
         )
@@ -307,7 +340,10 @@ class ThreadStoreV2(V1ThreadStore):
             raw_length = len(frames.utf8(message.raw))
             text_length = len(frames.utf8(message.text)) + 8
             if pending and max(raw_size + raw_length, text_size + text_length) > frames.BLOCK_BYTES:
-                self._write_block(stored_id, block_idx, first_line, pending, added[0].seq)
+                if pending[-1][-1].seq >= added[0].seq:
+                    self._write_block(
+                        stored_id, block_idx, first_line, pending, added[0].seq, cache
+                    )
                 first_line += len(pending)
                 block_idx += 1
                 pending = []
@@ -316,7 +352,8 @@ class ThreadStoreV2(V1ThreadStore):
             raw_size += raw_length
             text_size += text_length
         if pending:
-            self._write_block(stored_id, block_idx, first_line, pending, added[0].seq)
+            self._write_block(stored_id, block_idx, first_line, pending, added[0].seq, cache)
+        return cache
 
     def _single_workspace(self):
         return (
@@ -326,7 +363,7 @@ class ThreadStoreV2(V1ThreadStore):
             < 2
         )
 
-    def _write_block(self, stored_id, idx, first_line, groups, new_start):
+    def _write_block(self, stored_id, idx, first_line, groups, new_start, cache):
         items = [message for group in groups for message in group]
         raw = [group[0].raw for group in groups]
         text = [message.text for message in items]
@@ -350,7 +387,7 @@ class ThreadStoreV2(V1ThreadStore):
                 )
             )
         self._conn.execute(
-            "INSERT INTO block VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO block (thread_id, idx, first_line, n_lines, first_seq, last_seq, raw_dict, zraw, text_dict, ztext) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(thread_id, idx) DO UPDATE SET n_lines=excluded.n_lines, "
             "last_seq=excluded.last_seq, raw_dict=excluded.raw_dict, zraw=excluded.zraw, "
             "text_dict=excluded.text_dict, ztext=excluded.ztext",
@@ -378,22 +415,31 @@ class ThreadStoreV2(V1ThreadStore):
                 ],
             )
         block = self._conn.execute(
-            "SELECT * FROM block WHERE thread_id=? AND idx=?", (stored_id, idx)
+            f"SELECT {_BLOCK_COLUMNS} FROM block WHERE thread_id=? AND idx=?", (stored_id, idx)
         ).fetchone()
-        if self._frame(block, "raw") != raw or self._frame(block, "text") != text:
+        actual_raw, actual_text = self._frame(block, "raw"), self._frame(block, "text")
+        if actual_raw != raw or actual_text != text:
             raise ValueError("Thread block read-back mismatch")
-        if self.messages(stored_id, items[0].seq, items[-1].seq) != items:
+        cache[stored_id, idx] = (block, actual_text, actual_raw)
+        if self._messages(stored_id, items[0].seq, items[-1].seq, raw=True, cache=cache) != items:
             raise ValueError("Thread message read-back mismatch")
 
-    def _write_chunks(self, stored_id, chunks, start=0):
+    def _write_chunks(self, stored_id, chunks, messages, start=0, *, cache=None):
         # A split piece repeats its message prefix: off/len address its
         # message text, in Python characters. Multi-message chunks address
         # the rendered lines (off=0), retaining NUL and surrogate positions.
         offsets = {}
         version = self.index_version
+        originals = {message.seq: message for message in messages}
+        verified = {
+            message.seq: message
+            for message in self._messages(
+                stored_id, messages[0].seq, messages[-1].seq, raw=False, cache=cache
+            )
+        }
         for chunk in chunks:
             if chunk.seq_start == chunk.seq_end:
-                message = self._messages(stored_id, chunk.seq_start, chunk.seq_end, raw=False)[0]
+                message = originals[chunk.seq_start]
                 off = offsets.get(chunk.seq_start, 0)
                 length = len(chunk.text) - len(_prefix(message))
                 offsets[chunk.seq_start] = off + length
@@ -406,7 +452,8 @@ class ThreadStoreV2(V1ThreadStore):
             row = self._conn.execute(
                 "SELECT * FROM chunk WHERE rowid=?", (cursor.lastrowid,)
             ).fetchone()
-            if self._chunk_text(row) != chunk.text:
+            items = [verified[seq] for seq in range(row["seq_start"], row["seq_end"] + 1)]
+            if self._render_chunk(row, items) != chunk.text:
                 raise ValueError("Thread chunk read-back mismatch")
             if self._fts_enabled:
                 self._conn.execute(
@@ -419,7 +466,7 @@ class ThreadStoreV2(V1ThreadStore):
         with self._lock:
             return self._messages(stored_id, start, end, raw=True)
 
-    def _messages(self, stored_id, start, end, *, raw):
+    def _messages(self, stored_id, start, end, *, raw, cache=None):
         if start < 0 or (end is not None and (end < 0 or end < start)):
             return []
         rows = self._conn.execute(
@@ -429,19 +476,22 @@ class ThreadStoreV2(V1ThreadStore):
             (stored_id, start, end, end),
         ).fetchall()
         result = []
-        cache = {}
+        if cache is None:
+            cache = {}
         for row in rows:
             idx = row["block_idx"]
-            if idx not in cache:
+            key = (stored_id, idx)
+            if key not in cache:
+                columns = _BLOCK_COLUMNS if raw else "first_seq, first_line, text_dict, ztext"
                 block = self._conn.execute(
-                    "SELECT * FROM block WHERE thread_id=? AND idx=?", (stored_id, idx)
+                    f"SELECT {columns} FROM block WHERE thread_id=? AND idx=?", (stored_id, idx)
                 ).fetchone()
-                cache[idx] = (
+                cache[key] = (
                     block,
                     self._frame(block, "text"),
                     self._frame(block, "raw") if raw else None,
                 )
-            block, texts, raws = cache[idx]
+            block, texts, raws = cache[key]
             result.append(
                 ThreadMessage(
                     seq=row["seq"],
@@ -455,8 +505,14 @@ class ThreadStoreV2(V1ThreadStore):
             )
         return result
 
-    def _chunk_text(self, row):
-        items = self._messages(row["thread_id"], row["seq_start"], row["seq_end"], raw=False)
+    def _chunk_text(self, row, cache):
+        items = self._messages(
+            row["thread_id"], row["seq_start"], row["seq_end"], raw=False, cache=cache
+        )
+        return self._render_chunk(row, items)
+
+    @staticmethod
+    def _render_chunk(row, items):
         if len(items) == 1:
             return _prefix(items[0]) + items[0].text[row["off"] : row["off"] + row["len"]]
         rendered = "\n".join(_prefix(item) + item.text for item in items)
@@ -467,8 +523,9 @@ class ThreadStoreV2(V1ThreadStore):
             rows = self._conn.execute(
                 "SELECT * FROM chunk WHERE thread_id=? ORDER BY idx", (stored_id,)
             ).fetchall()
+            cache = {}
             return [
-                Chunk(row["idx"], row["seq_start"], row["seq_end"], self._chunk_text(row))
+                Chunk(row["idx"], row["seq_start"], row["seq_end"], self._chunk_text(row, cache))
                 for row in rows
             ]
 
@@ -484,6 +541,7 @@ class ThreadStoreV2(V1ThreadStore):
                 else self._search_literal(ids, tokens)
             )
             rows.sort(key=lambda row: (-row["score"], row["thread_id"], row["idx"]))
+            cache = {}
             return [
                 RecallHit(
                     row["thread_id"],
@@ -491,7 +549,7 @@ class ThreadStoreV2(V1ThreadStore):
                     row["seq_start"],
                     row["seq_end"],
                     row["score"],
-                    row.get("text") if "text" in row else self._chunk_text(row),
+                    row["text"] if "text" in row else self._chunk_text(row, cache),
                 )
                 for row in rows[:limit]
             ]

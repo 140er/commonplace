@@ -30,10 +30,10 @@ CREATE TABLE block (
     n_lines INTEGER NOT NULL,
     first_seq INTEGER NOT NULL,
     last_seq INTEGER NOT NULL,
-    raw_dict INTEGER REFERENCES dict(id),
-    zraw BLOB NOT NULL,
     text_dict INTEGER REFERENCES dict(id),
     ztext BLOB NOT NULL,
+    raw_dict INTEGER REFERENCES dict(id),
+    zraw BLOB NOT NULL,
     PRIMARY KEY(thread_id, idx)
 );
 CREATE TABLE line (
@@ -77,6 +77,13 @@ CREATE TABLE fact_extraction (
     version INTEGER NOT NULL,
     next_seq INTEGER NOT NULL CHECK(next_seq >= 0)
 );
+CREATE TRIGGER dict_replace BEFORE INSERT ON dict
+WHEN EXISTS(SELECT 1 FROM dict WHERE id=new.id)
+BEGIN SELECT RAISE(ABORT, 'Thread dictionaries are immutable'); END;
+CREATE TRIGGER sealed_block_replace BEFORE INSERT ON block
+WHEN EXISTS(SELECT 1 FROM block WHERE thread_id=new.thread_id AND idx=new.idx)
+ AND new.idx < (SELECT MAX(idx) FROM block WHERE thread_id=new.thread_id)
+BEGIN SELECT RAISE(ABORT, 'Only the last thread block may be extended'); END;
 CREATE TRIGGER used_dict_update BEFORE UPDATE ON dict
 BEGIN SELECT RAISE(ABORT, 'A used thread dictionary is immutable'); END;
 CREATE TRIGGER used_dict_delete BEFORE DELETE ON dict

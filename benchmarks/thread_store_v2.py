@@ -66,6 +66,7 @@ def size(store, path):
 
 def main():
     sources = chats()
+    parsed = [parse(source) for source in sources]
     source_bytes = sum(len(source.encode()) for source in sources)
     result = {
         "source_bytes": source_bytes,
@@ -81,12 +82,15 @@ def main():
             path = root / label / filename
             store = cls(str(path))
             try:
+                started = time.perf_counter()
                 ids = [
-                    store.store("workspace", str(i), parse(source), actor="benchmark").id
-                    for i, source in enumerate(sources)
+                    store.store("workspace", str(i), items, actor="benchmark").id
+                    for i, items in enumerate(parsed)
                 ]
+                store_ms = (time.perf_counter() - started) * 1000
                 bytes_used = size(store, path)
                 row = {
+                    "store_ms": round(store_ms, 2),
                     "bytes": bytes_used,
                     "bytes_per_source_byte": round(bytes_used / source_bytes, 4),
                     "read_50_ms": latency(lambda: store.messages(ids[0], 250, 299)),
@@ -137,6 +141,41 @@ def main():
                 store.close()
         overhead["extra_bytes"] = overhead["per_turn"]["bytes"] - overhead["batch"]["bytes"]
         result["append_overhead"] = overhead
+        large = {}
+        for case, count, length in (
+            ("one_4mb_message", 1, 4 * 1024 * 1024),
+            ("eight_300kb_tool_outputs", 8, 300 * 1024),
+        ):
+            unit = "needle payload words \0 "
+            text = (unit * (length // len(unit) + 1))[:length]
+            items = parse(
+                json.dumps(
+                    [
+                        {"role": "tool", "content": text, "name": "read", "tool_call_id": str(i)}
+                        for i in range(count)
+                    ]
+                )
+            )
+            large[case] = {}
+            for label, cls, filename in (
+                ("v1", ThreadStore, "threads.sqlite3"),
+                ("v2", ThreadStoreV2, "threads.v2.sqlite3"),
+            ):
+                store = cls(str(root / case / label / filename))
+                try:
+                    started = time.perf_counter()
+                    thread = store.store("workspace", case, items, actor="benchmark")
+                    store_ms = (time.perf_counter() - started) * 1000
+                    large[case][label] = {
+                        "store_ms": round(store_ms, 2),
+                        "chunks_ms": latency(lambda: store.chunks(thread.id), 5),
+                        "search_top_8_ms": latency(lambda: store.search([thread.id], "needle"), 5),
+                        "nul_query_ms": latency(lambda: store.search([thread.id], "words \0"), 5),
+                    }
+                    assert store.messages(thread.id) == items
+                finally:
+                    store.close()
+        result["large_messages"] = large
     print(json.dumps(result, indent=2))
 
 

@@ -12,6 +12,7 @@ import base64
 import hashlib
 import re
 import struct
+from io import BytesIO
 
 import zstandard as zstd
 
@@ -112,9 +113,25 @@ def decode_frame(frame: bytes, get_blob) -> list[str]:
 
 def compress(frame: bytes, dictionary: bytes | None) -> bytes:
     value = zstd.ZstdCompressionDict(dictionary) if dictionary is not None else None
-    return zstd.ZstdCompressor(level=3, dict_data=value).compress(frame)
+    return zstd.ZstdCompressor(level=3, dict_data=value, write_checksum=True).compress(frame)
 
 
 def decompress(frame: bytes, dictionary: bytes | None) -> bytes:
     value = zstd.ZstdCompressionDict(dictionary) if dictionary is not None else None
     return zstd.ZstdDecompressor(dict_data=value).decompress(frame)
+
+
+def training_sample(frame: bytes, dictionary: bytes | None, limit: int) -> bytes:
+    """A bounded sample of frame data, excluding its random blob-key header."""
+    value = zstd.ZstdCompressionDict(dictionary) if dictionary is not None else None
+    with zstd.ZstdDecompressor(dict_data=value).stream_reader(BytesIO(frame)) as reader:
+        header = reader.read(_U64.size)
+        if len(header) != _U64.size:
+            raise ValueError("Truncated thread frame")
+        remaining = _U64.unpack(header)[0] * _SPAN.size
+        while remaining:
+            part = reader.read(min(8192, remaining))
+            if not part:
+                raise ValueError("Truncated thread spans")
+            remaining -= len(part)
+        return reader.read(limit)

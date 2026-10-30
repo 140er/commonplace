@@ -74,9 +74,9 @@ def _copy(old, new):
                 or canonical_sha256(items) != row["sha256"]
             ):
                 raise MigrationMismatch("Source thread metadata or digest mismatch")
-            new._write_messages(row["id"], items)
+            cache = new._write_messages(row["id"], items)
             try:
-                new._write_chunks(row["id"], chunks)
+                new._write_chunks(row["id"], chunks, items, cache=cache)
             except (ValueError, IndexError) as error:
                 raise MigrationMismatch("Copied chunk text mismatch") from error
             rebuilt = new.messages(row["id"])
@@ -86,6 +86,10 @@ def _copy(old, new):
                 raise MigrationMismatch("Copied chunk boundaries or text mismatch")
             if canonical_sha256(rebuilt) != row["sha256"]:
                 raise MigrationMismatch("Copied thread digest mismatch")
+        copied_threads = new._conn.execute("SELECT * FROM threads ORDER BY id").fetchall()
+        original_threads = old._conn.execute("SELECT * FROM threads ORDER BY id").fetchall()
+        if list(map(tuple, copied_threads)) != list(map(tuple, original_threads)):
+            raise MigrationMismatch("Copied thread rows mismatch")
         for table in ("handoff_docs", "fact_extraction"):
             rows = old._conn.execute(f"SELECT * FROM {table}").fetchall()
             if rows:
