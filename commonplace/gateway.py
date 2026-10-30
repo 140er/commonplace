@@ -44,6 +44,8 @@ from .workers import Worker, WorkerSupervisor
 logger = logging.getLogger("commonplace.gateway")
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
+# A whole agent transcript (context handoff); the handoff API checks it again.
+HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 MAX_FANOUT_WINGS = 64
 _FORWARDED_METHODS = ("initialize", "ping")
@@ -197,14 +199,14 @@ class Mediator:
         visible = [t for t in tools if policy.tool_visible(t.get("name"))]
         for name in sorted(extensions.names()):
             tool = extensions.get(name)
-            if policy.tool_visible(name) and (not tool.owner_only or principal.role == "owner"):
+            if policy.tool_visible(name) and tool.usable_by(principal, self.gateway):
                 visible.append(tool.schema())
         response["result"]["tools"] = visible
         return response
 
     def _local_call(self, principal: Principal, tool, req_id, args: dict) -> dict:
-        if tool.owner_only and principal.role != "owner":
-            self._audit(principal, tool.name, "deny", "owner only")
+        if not tool.usable_by(principal, self.gateway):
+            self._audit(principal, tool.name, "deny", "owner only" if tool.owner_only else "off")
             return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
         ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
         try:
@@ -982,6 +984,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         cap = (
             MAX_REQUEST_BYTES
             if path == "/mcp"
+            else HANDOFF_REQUEST_BYTES
+            if path == "/api/handoff"
             else 65536
             if path.startswith("/oauth/")
             else 1024 * 1024

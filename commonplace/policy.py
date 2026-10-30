@@ -34,6 +34,8 @@ SCOPES = (
     "events:write",
     "private:read",
     "private:write",
+    "threads:read",
+    "handoff:write",
     "admin",
 )
 
@@ -160,7 +162,7 @@ DEFAULT_SCOPES = {
     # The knowledge graph has no wings, so kg:read sees all of it: never a default.
     # It only works for a token that reads every wing anyway.
     "slim": ("memory:read", "memory:write"),
-    "standard": ("memory:read", "memory:write"),
+    "standard": ("memory:read", "memory:write", "threads:read", "handoff:write"),
     "full": (
         "memory:read",
         "memory:write",
@@ -168,12 +170,17 @@ DEFAULT_SCOPES = {
         "kg:write",
         "events:read",
         "events:write",
+        "threads:read",
+        "handoff:write",
     ),
 }
 
 # Trust caps what scopes can do, whatever the token holds.
 # Untrusted writes go to the inbox for review; the graph has no inbox yet.
-_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "kg:write", "admin"})
+# Untrusted tokens never read stored agent threads nor hand off.
+_UNTRUSTED_BLOCKED = frozenset(
+    {"memory:delete", "private:write", "kg:write", "threads:read", "handoff:write", "admin"}
+)
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
 # Tools that change what someone else wrote. Untrusted tokens only add.
 _UPDATES = frozenset(

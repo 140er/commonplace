@@ -1,0 +1,10 @@
+{
+  "meta": { "synthetic": true },
+  "messages": [
+    { "role" : "user", "content" : "  caf\u00e9 ☕\n  " },
+    {"role":"assistant", "content":[{"type":"text","text":"Reading."},{"type":"tool_use","id":"call_a","name":"read_file","input":{"path":"雪.txt"}}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"call_a","content":" Original result\n"}]},
+    {"role":"assistant","content":null,"tool_calls":[{"id":"call_b","type":"function","function":{"name":"lookup","arguments":"{  \"term\": \"🌍\" }"}}]},
+    {"role":"tool","tool_call_id":"call_b","name":"lookup","content":"  Found\n"}
+  ]
+}
