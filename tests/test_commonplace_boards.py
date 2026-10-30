@@ -576,7 +576,13 @@ def test_link_api_and_seed_all_statuses(hub, env):
         {"drawer_id": "memory_a", "title": "Exact title", "invalidated": False}
     ]
     assert owner.store.cards_for_drawer("memory_a", principal=person) == [
-        {"number": card["number"], "title": "Linked", "status": "todo", "board": "work"}
+        {
+            "number": card["number"],
+            "title": "Linked",
+            "status": "todo",
+            "board": "work",
+            "wing": "shared",
+        }
     ]
     readonly = replace(agent, policy=replace(agent.policy, write_wings=(), write_wing=""))
     with pytest.raises(ToolError, match="cannot change"):
@@ -722,3 +728,32 @@ def test_an_agent_never_answers_its_own_question(hub, env):
     ok, text = mcp(hub, token, "decide", task=number, choice="yes")
     assert not ok and "only Jeffrey" in text
     assert owner.task_show(number)["status"] == "review"
+
+
+def test_reverse_links_include_authoritative_board_and_wing(hub, env):
+    _token, agent, person, _cookie, owner = env
+    owner.board_add(slug="restricted", wing="private.reverse-links")
+    owner.board_add(slug="invalid-theme", wing="shared")
+    allowed = owner.task_add(title="Allowed link", board="work")
+    denied = owner.task_add(title="Restricted link", board="restricted")
+    invalid = owner.task_add(title="Missing theme", board="invalid-theme")
+    for item in (allowed, denied, invalid):
+        owner.store.link_drawer(item["number"], "reverse-link-memory", person.actor)
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE boards SET wing='' WHERE slug='invalid-theme'")
+    raw = owner.store.cards_for_drawer("reverse-link-memory")
+    assert {item["number"]: (item["board"], item["wing"]) for item in raw} == {
+        allowed["number"]: ("work", "shared"),
+        denied["number"]: ("restricted", "private.reverse-links"),
+        invalid["number"]: ("invalid-theme", ""),
+    }
+    scoped = replace(agent, policy=replace(agent.policy, read_wings=("shared",)))
+    scoped_cards = owner.store.cards_for_drawer("reverse-link-memory", principal=scoped)
+    assert [item["number"] for item in scoped_cards] == [allowed["number"]]
+    owner_cards = owner.store.cards_for_drawer("reverse-link-memory", principal=person)
+    assert {item["number"] for item in owner_cards} == {allowed["number"], denied["number"]}
+    # Match the memory producer's fail-closed filter, including for owners.
+    assert owner_cards == [
+        item for item in raw if person.policy.can_read_wing(item.get("wing", ""))
+    ]
+    assert not person.policy.can_read_wing({}.get("wing", ""))
