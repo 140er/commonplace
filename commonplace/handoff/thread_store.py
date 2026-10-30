@@ -103,7 +103,9 @@ def chunk_messages(messages: list, max_chars: int = CHUNK_MAX_CHARS) -> list[Chu
 def canonical_sha256(messages: list) -> str:
     """SHA-256 over the messages' (seq, role, kind, name, call_id, text, raw)."""
     canonical = [(m.seq, m.role, m.kind, m.name, m.call_id, m.text, m.raw) for m in messages]
-    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8", "surrogatepass"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -551,3 +553,11 @@ class ThreadStore:
         # Equal scores have the same stable ordering in every batch; each
         # batch's first `limit` rows suffice for the final first `limit`.
         return list(found.values())
+
+
+def __getattr__(name):
+    if name == "ThreadStoreV2":
+        from .thread_store_v2 import ThreadStoreV2
+
+        return ThreadStoreV2
+    raise AttributeError(name)
