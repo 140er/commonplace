@@ -19,7 +19,7 @@ import sqlite3
 
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
 
-from .models import SCOPE_THREADS_READ
+from .models import SCOPE_HANDOFF, SCOPE_THREADS_READ
 from .recall import ThreadNotFound
 
 TOOL_NAMES = ("thread_recall", "thread_get", "thread_chain")
@@ -195,3 +195,49 @@ for _name, _action in zip(TOOL_NAMES, (_recall, _get, _chain)):
             available=_available,
         )
     )
+
+
+_START_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thread_id": {"type": "string"},
+        "to": {"type": "string"},
+        "effort": {"type": "string"},
+        "note": {"type": "string"},
+        "agent": {"type": "string"},
+        "task": {"type": "string"},
+        "dry_run": {"type": "boolean"},
+    },
+    "required": ["thread_id", "to"],
+    "additionalProperties": False,
+}
+
+
+def _start(tool_ctx, args):
+    from .manual import ManualHandoff, ManualHandoffError
+    from .t3 import T3Error
+
+    error = _argument_error(args, _START_SCHEMA)
+    if error is not None:
+        raise ToolError(f"invalid arguments: {error}")
+    try:
+        return ManualHandoff(tool_ctx.gateway.handoff.service).start(
+            tool_ctx.principal, require_binding=True, **args
+        )
+    except (ManualHandoffError, T3Error) as error:
+        raise ToolError(str(error)) from None
+
+
+register(
+    LocalTool(
+        name="handoff_start",
+        description="Save a chosen local T3 thread and start its successor on a provider/model.",
+        input_schema=_START_SCHEMA,
+        handler=_start,
+        scope=SCOPE_HANDOFF,
+        kind="write",
+        profiles=WORK_PROFILES,
+        trusted_only=True,
+        available=_available,
+    )
+)
