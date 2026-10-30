@@ -1,0 +1,40 @@
+export class ApiError extends Error {
+  constructor(status, payload) {
+    super(payload?.error || `Request failed (${status})`);
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    cache: "no-store",
+    ...options,
+    headers: { "Accept": "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const payload = response.status === 204 ? null : await response.json();
+  if (!response.ok) {
+    if (response.status === 401) document.dispatchEvent(new Event("session-expired"));
+    throw new ApiError(response.status, payload);
+  }
+  return payload;
+}
+
+export const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+export const actor = (value) => String(value || "—").replace(/^(conn:|user:)/, "");
+export function elapsed(value) {
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
+  if (!Number.isFinite(minutes)) return "—";
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+  return `${Math.floor(minutes / 1440)}d`;
+}
+export function safeLink(value) {
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+}
