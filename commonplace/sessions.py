@@ -11,6 +11,7 @@ scopes limit agents, not owners).
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -201,8 +202,16 @@ def set_cookie(session: str, secure: bool) -> str:
     ]
     if secure:
         attrs.append("Secure")
+    attrs.extend(_domain())
     return "; ".join(attrs)
 
 
 def clear_cookie() -> str:
-    return f"{COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    return "; ".join([f"{COOKIE}=", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0", *_domain()])
+
+
+def _domain() -> list:
+    """``COMMONPLACE_COOKIE_DOMAIN=cmmn.dev`` shares the session between
+    app.cmmn.dev and cmmn.dev (OAuth consent). Unset: host-only cookie."""
+    domain = os.environ.get("COMMONPLACE_COOKIE_DOMAIN", "").strip().lstrip(".")
+    return [f"Domain={domain}"] if domain else []
