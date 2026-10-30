@@ -2,6 +2,16 @@ import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js"
 import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { homeView, needItems } from "./home.js";
+import { signinView, signinMessage } from "./signin.js";
+
+const signinParams = new URLSearchParams(location.search);
+const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
+if (signinParams.has("signin") || signinParams.has("next")) {
+  signinParams.delete("signin"); signinParams.delete("next");
+  const search = signinParams.toString();
+  history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+}
+let providersPromise;
 
 const root = document.querySelector("#root");
 const state = {
@@ -141,12 +151,20 @@ function restore(saved) {
   const tasks = root.querySelector(".space-tasks .stack");
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
-function signin() {
+async function signin(code = null) {
   speech.stop();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
-  root.innerHTML = `<main class="signin"><h1>Sign in</h1><form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${state.error ? message(state.error) : ""}</main>`;
+  providersPromise ||= api("/app/auth/providers").catch(() => ({}));
+  const { providers = [], paused = [] } = await providersPromise;
+  if (state.me) return;
+  const cookie = (document.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("cmmn_via="));
+  const value = cookie ? cookie.slice("cmmn_via=".length) : "";
+  const via = /^[a-z]{1,20}$/.test(value) ? value : "";
+  if (code !== null) state.error = signinMessage(code, paused, via);
+  const path = location.pathname + location.hash;
+  root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
 function shell() {
   root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
@@ -720,7 +738,7 @@ setInterval(() => {
 }, 15000);
 async function boot() {
   try { state.me = await api("/api/me"); setPeople(state.me.people); }
-  catch (error) { state.error = error.status === 401 ? "" : error.message; signin(); return; }
+  catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   shell(); await route(); schedule(0);
 }
 boot();
