@@ -4,6 +4,7 @@ import base64
 import random
 
 import pytest
+from hypothesis import given, settings, strategies as st
 
 from mempalace.index_hygiene import find_base64_spans, index_text
 
@@ -33,13 +34,13 @@ def test_magic_offsets_and_verbatim(prefix, mime, urlsafe):
     original = f"前文 🐈\nimage='{encoded}'; after needle"
     [span] = find_base64_spans(original)
     assert original[span.start : span.end] == encoded
-    assert span.mime == mime
+    assert span.media_type == mime
     assert span.decoded_bytes == len(data)
     assert index_text(original) == f"前文 🐈\nimage='[base64 {mime} 300 B]'; after needle"
     assert encoded in original
 
 
-@pytest.mark.parametrize("size", [150, 151, 152, 153, 299, 300, 301])
+@pytest.mark.parametrize("size", [147, 148, 149, 150, 151, 152, 153, 299, 300, 301])
 def test_padding_and_threshold(size):
     _, encoded = payload(size)
     assert bool(find_base64_spans(encoded)) == (len(encoded.rstrip("=")) >= 200)
@@ -97,7 +98,7 @@ def test_data_uri_and_long_jwt_segments_follow_the_encoding_rule():
     text = f"data:image/png;base64,{encoded} short.{encoded}.signature"
     spans = find_base64_spans(text)
     assert len(spans) == 2
-    assert all(span.mime == "application/pdf" for span in spans)
+    assert all(span.media_type == "application/pdf" for span in spans)
     assert index_text(text).startswith("data:image/png;base64,[base64 application/pdf 300 B]")
 
 
@@ -130,3 +131,112 @@ def test_random_canonical_payloads_round_trip_across_padding_sizes(urlsafe):
         data, encoded = payload(size, urlsafe=urlsafe)
         [span] = find_base64_spans(encoded)
         assert (span.start, span.end, span.decoded_bytes) == (0, len(encoded), len(data))
+
+
+@pytest.mark.parametrize("shape", ["IMG={}", "?image={}&", "--data={}"])
+def test_assignment_delimiters_do_not_hide_payloads(shape):
+    _, encoded = payload(prefix=b"\x89PNG\r\n\x1a\n")
+    text = shape.format(encoded)
+    [span] = find_base64_spans(text)
+    assert text[span.start : span.end] == encoded
+    assert index_text(text) == shape.format("[base64 image/png 300 B]")
+
+
+@pytest.mark.parametrize(
+    ("prefix", "media_type"),
+    [
+        (b"wOF2", "font/woff2"),
+        (b'<svg xmlns="http://www.w3.org/2000/svg">', "image/svg+xml"),
+        (b'<?xml version="1.0"?>\n<svg>', "image/svg+xml"),
+        (b"PK\x03\x04", "application/zip"),
+        (b"PK\x05\x06", "application/zip"),
+        (b"PK\x07\x08", "application/zip"),
+        (b"\x1f\x8b\x08", "application/gzip"),
+        (b"<svgish>", "binary"),
+        (b'<?xml version="1.0"?><html>', "binary"),
+    ],
+)
+def test_additional_media_headers(prefix, media_type):
+    _, encoded = payload(prefix=prefix)
+    [span] = find_base64_spans(encoded)
+    assert span.media_type == media_type
+
+
+def test_public_placeholder_format_and_parser():
+    from mempalace.index_hygiene import PLACEHOLDER_FORMAT, PLACEHOLDER_RE, Base64Span
+
+    for media_type in (
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/svg+xml",
+        "application/pdf",
+        "application/zip",
+        "application/gzip",
+        "font/woff2",
+        "binary",
+    ):
+        expected = f"[base64 {media_type} 245760 B]"
+        assert PLACEHOLDER_FORMAT.format(media_type=media_type, decoded_bytes=245760) == expected
+        assert Base64Span(0, 327680, media_type, 245760).placeholder == expected
+        assert PLACEHOLDER_RE.fullmatch(expected).groupdict() == {
+            "media_type": media_type,
+            "decoded_bytes": "245760",
+        }
+    for invalid in (
+        "[base64 binary -1 B]",
+        "[base64 binary 01 B]",
+        "[base64 unknown 10 B]",
+        "[base64 binary 10 bytes]",
+    ):
+        assert PLACEHOLDER_RE.fullmatch(invalid) is None
+
+
+@pytest.mark.parametrize("width", [64, 76])
+def test_short_line_wrapping_is_deliberately_retained(width):
+    _, encoded = payload()
+    wrapped = "\n".join(encoded[i : i + width] for i in range(0, len(encoded), width))
+    assert index_text(wrapped) == wrapped
+
+
+def test_alphabetic_word_glued_to_run_is_indistinguishable_from_base64():
+    _, encoded = payload()
+    text = "word" + encoded
+    [span] = find_base64_spans(text)
+    assert (span.start, span.end, span.decoded_bytes) == (0, len(text), 303)
+
+
+def test_base32_and_high_entropy_camel_case_can_meet_the_encoding_rule():
+    base32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" * 8
+    camel = (
+        "AlphaBravoCharlieDeltaEchoFoxtrotGolfHotelIndiaJulietKiloLimaMikeNovemberOscarPapaQuebecRomeoSierraTangoUniformVictorWhiskeyXrayYankeeZulu"
+        * 4
+    )
+    camel = camel[: len(camel) // 4 * 4]
+    assert len(find_base64_spans(base32)) == 1
+    assert len(find_base64_spans(camel)) == 1
+    assert find_base64_spans("RepeatedCamelCaseIdentifier" * 20) == []
+
+
+@settings(max_examples=60, derandomize=True, deadline=None)
+@given(
+    seed=st.integers(min_value=0, max_value=2**32 - 1),
+    size=st.integers(min_value=150, max_value=1200),
+    prefix=st.text(max_size=60),
+    suffix=st.text(max_size=60),
+    urlsafe=st.booleans(),
+)
+def test_payload_insertion_changes_only_payload_and_is_idempotent(
+    seed, size, prefix, suffix, urlsafe
+):
+    # A fixed non-magic prefix keeps this property about span preservation.
+    data = b"\x00\x01\x02" + random.Random(seed).randbytes(size - 3)
+    encode = base64.urlsafe_b64encode if urlsafe else base64.b64encode
+    encoded = encode(data).decode()
+    text = prefix + "\n" + encoded + "\n" + suffix
+    [span] = find_base64_spans(text)
+    assert (span.start, span.end) == (len(prefix) + 1, len(prefix) + 1 + len(encoded))
+    expected = prefix + f"\n[base64 binary {size} B]\n" + suffix
+    assert index_text(text) == expected
+    assert index_text(expected) == expected

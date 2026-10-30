@@ -2,6 +2,8 @@
 
 import importlib.util
 import inspect
+import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -46,16 +48,35 @@ def test_transcript_shapes_are_deterministic_and_keep_raw_sources():
             "other",
         }
     payloads = Counter(payload for message in corpus.messages for payload in message.payloads)
-    assert max(payloads.values()) == 8
+    assert max(payloads.values()) > len(corpus.transcripts)
+    records = [json.loads(line) for line in corpus.transcripts["claude-code"].splitlines()]
+    parsed = parse(corpus.transcripts["claude-code"], "claude-code")
+    for record, message in zip(records, parsed):
+        block = record["message"]["content"][0]
+        if block["type"] == "tool_result":
+            assert record["type"] == record["message"]["role"] == "user"
+            assert (message.role, message.kind) == ("tool", "tool_result")
+            assert message.text.startswith(block["content"][0]["text"])
+    assert parsed[4].kind == "tool_result"
+    assert "amber-cache" in parsed[4].text
+    assert any(block["type"] == "image" for block in records[4]["message"]["content"][0]["content"])
 
 
 def test_token_diff_counts_independently_annotated_runs():
-    result = gate.token_diff(gate.synthetic_corpus(noise=4))
+    corpus = gate.synthetic_corpus(noise=4)
+    result = gate.token_diff(corpus)
+    outside_tokens = base64_chars = 0
+    for message in corpus.messages:
+        outside = message.text
+        for payload in message.payloads:
+            base64_chars += len(payload) * outside.count(payload)
+            outside = outside.replace(payload, " ")
+        outside_tokens += len(tokenize(outside))
     assert result == {
         "pass": True,
-        "outside_tokens": 443,
+        "outside_tokens": outside_tokens,
         "lost_tokens": 0,
-        "base64_chars": 17184,
+        "base64_chars": base64_chars,
         "exact_spans_and_text": True,
     }
 
@@ -86,8 +107,9 @@ def test_vector_policy_blocks_tool_output_needles(reports):
     for case in report["policy"]["needles"]:
         assert case["top5"] == (case["kind"] == "conversation")
     assert report["checks"]["recall_at_10"] == {"pass": False, "today": 1.0, "policy": 0.4}
-    assert report["checks"]["vector_tool_share"]["today_hits"] == [44, 100]
-    assert report["checks"]["vector_tool_share"]["policy_hits"] == [0, 100]
+    tool_hits, total_hits = report["checks"]["vector_tool_share"]["today_hits"]
+    assert 0 < tool_hits < total_hits == 10 * len(report["today"]["needles"])
+    assert report["checks"]["vector_tool_share"]["policy_hits"] == [0, total_hits]
     assert "BLOCKED" in gate.format_report(report)
     assert "feat/search-union-default" in gate.format_report(report)
 
@@ -102,14 +124,16 @@ def test_default_strategy_is_measured_without_overriding_handler(reports):
     assert reports["default"]["checks"] == reports[effective]["checks"]
 
 
-def test_union_recovers_keyword_only_output_through_default_tool_path(reports):
+def test_union_recovers_keywords_but_exposes_paraphrase_competition(reports):
     report = reports["union"]
-    assert report["pass"] is True
-    assert report["checks"]["needles_top5"]["found"] == 10
+    assert report["pass"] is False
+    assert report["checks"]["needles_top5"]["found"] == 8
     assert report["checks"]["recall_at_10"] == {"pass": True, "today": 1.0, "policy": 1.0}
     assert report["checks"]["token_diff"]["lost_tokens"] == 0
     assert report["checks"]["vector_tool_share"]["policy"] == 0
-    assert all(case["top5"] for case in report["policy"]["needles"])
+    for case in report["policy"]["needles"]:
+        assert case["top5"] == (case["kind"] != "tool_output" or case["match"] != "paraphrase")
+    assert report["hybrid_weights"] == {"vector": 0.6, "bm25": 0.4}
 
 
 def test_benchmark_seam_retains_verbatim_storage_and_keyword_only_rows():
@@ -156,6 +180,9 @@ def test_cli_reports_all_checks_and_returns_gate_status(monkeypatch, capsys, rep
     assert "FAIL recall_at_10" in output
     assert "PASS token_diff" in output
     assert "PASS vector_tool_share" in output
+    assert gate.main(["--strategy", "union", "--json"]) == 1
+    assert '"pass": false' in capsys.readouterr().out
+    monkeypatch.setattr(gate, "run_gate", lambda **kwargs: {**reports["union"], "pass": True})
     assert gate.main(["--strategy", "union", "--json"]) == 0
     assert '"pass": true' in capsys.readouterr().out
 
@@ -184,3 +211,57 @@ def test_policy_never_embeds_tool_output_but_does_embed_calls():
         if message.kind in {"message", "tool_call"}
     ]
     assert any('"command"' in text for text in embedded)
+
+
+def test_operator_config_and_environment_cannot_change_the_gate(monkeypatch, tmp_path, reports):
+    from mempalace import config as config_module
+
+    operator = tmp_path / "operator"
+    operator.mkdir()
+    hostile = {"hybrid_rank_vector_weight": 1, "hybrid_rank_bm25_weight": 0, "lang": "nl"}
+    config_file = operator / "config.json"
+    config_file.write_text(json.dumps(hostile))
+    monkeypatch.setattr(config_module, "_default_config_dir", lambda: operator)
+    values = {
+        "MEMPALACE_HYBRID_VECTOR_WEIGHT": "1",
+        "MEMPALACE_HYBRID_BM25_WEIGHT": "0",
+        "MEMPALACE_LANG": "nl",
+        "MEMPAL_LANG": "de",
+        "MEMPALACE_CONFIG_DIR": str(operator),
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    actual = gate.run_gate(strategy="union", noise=4)
+    assert actual == reports["union"]
+    assert all(os.environ[key] == value for key, value in values.items())
+    assert json.loads(config_file.read_text()) == hostile
+
+
+def test_corpus_has_competing_tool_and_conversation_vocabulary():
+    corpus = gate.synthetic_corpus(noise=0)
+    targets = {needle.target for needle in corpus.needles}
+    for word in ("archive", "backup", "password", "cache"):
+        matches = [
+            message
+            for message in corpus.messages
+            if message.id not in targets and word in tokenize(message.text)
+        ]
+        assert any(message.kind == "message" for message in matches)
+        assert any(message.kind == "tool_result" for message in matches)
+    image_needle = next(message for message in corpus.messages if message.id == "claude-code-4")
+    assert image_needle.payloads
+    assert image_needle.kind == "tool_result"
+
+
+def test_vector_share_check_detects_a_leaking_policy_seam(monkeypatch):
+    original = gate.index_chat
+
+    def leaking_index(corpus, *, policy, embedder=None):
+        return original(corpus, policy=False, embedder=embedder)
+
+    monkeypatch.setattr(gate, "index_chat", leaking_index)
+    report = gate.run_gate(strategy="union", noise=0)
+    check = report["checks"]["vector_tool_share"]
+    assert check["pass"] is False
+    assert check["today_hits"][0] > 0
+    assert check["policy_hits"][0] > 0

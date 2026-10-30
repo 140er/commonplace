@@ -23,6 +23,7 @@ import hashlib
 import inspect
 import json
 import math
+import os
 import random
 import re
 import sqlite3
@@ -30,6 +31,8 @@ import tempfile
 from collections import Counter
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -81,10 +84,23 @@ def synthetic_corpus(*, seed: int = 38, noise: int = 24) -> Corpus:
         ("message", "assistant", "The greenhouse watering schedule starts at sunrise.", ""),
         ("tool_call", "assistant", '{"command":"inspect archive backup status"}', ""),
         ("tool_result", "tool", "The archive backup password is in the copper vault.", ""),
-        ("tool_result", "tool", "The compiler cache directory is amber-cache.", ""),
+        ("tool_result", "tool", "The compiler cache directory is amber-cache.", image),
         ("message", "user", f"Keep the source path {path} and id {'abcdef0123456789' * 20}.", ""),
         ("other", "assistant", signature, signature),
     ]
+    # Shared vocabulary competes for both vector and lexical slots. These
+    # passages discuss different facts, rather than restating the answers.
+    for role, text in (
+        ("tool", "Archive inventory check: twelve bundles passed integrity validation."),
+        ("assistant", "The archive contains release notes; old bundles are retained for audits."),
+        ("tool", "Backup transfer finished: copied two bundles; no integrity errors."),
+        ("assistant", "The backup retention schedule keeps weekly bundles for a month."),
+        ("tool", "Password rotation check: the next scheduled rotation is next month."),
+        ("assistant", "Password rotation requires approval and a recorded maintenance window."),
+        ("tool", "Cache eviction check: four expired entries were removed successfully."),
+        ("assistant", "Cache eviction runs after a successful build to remove obsolete artifacts."),
+    ):
+        examples.append(("tool_result" if role == "tool" else "message", role, text, ""))
     for number in range(noise):
         examples.append(
             ("tool_result", "tool", f"Routine build screenshot number {number}.", image)
@@ -130,7 +146,7 @@ def synthetic_corpus(*, seed: int = 38, noise: int = 24) -> Corpus:
                 records.append(
                     {
                         "type": "user" if role in {"user", "tool"} else "assistant",
-                        "message": {"role": role, "content": [block]},
+                        "message": {"role": "user" if role == "tool" else role, "content": [block]},
                     }
                 )
             else:
@@ -300,7 +316,8 @@ def index_chat(corpus: Corpus, *, policy: bool, embedder=None):
                 embeddings=embeddings,
             )
             # No query has loaded the backend's vector cache yet.
-            with closing(sqlite3.connect(backend._db_path(directory))) as connection, connection:
+            (database,) = Path(directory).glob("*.sqlite3")
+            with closing(sqlite3.connect(database)) as connection, connection:
                 for message, text in zip(corpus.messages, indexed):
                     connection.execute(
                         "UPDATE docs_fts SET document = ? WHERE doc_id = ?", (text, message.id)
@@ -317,22 +334,36 @@ def index_chat(corpus: Corpus, *, policy: bool, embedder=None):
 
 @contextmanager
 def product_search(directory, collection):
-    """Call the real default MCP handler; patch only isolated storage plumbing."""
-    from mempalace import mcp_server, searcher
+    """Call the real default MCP handler with isolated storage and configuration."""
+    from mempalace.config import MempalaceConfig
 
     config = SimpleNamespace(palace_path=directory, collection_name="gate_drawers")
-    with (
-        patch.object(mcp_server, "_config", config),
-        patch.object(mcp_server, "_refresh_vector_disabled_flag", lambda: None),
-        patch.object(mcp_server, "_vector_disabled", False),
-        patch.object(searcher, "get_collection", lambda *args, **kwargs: collection),
-        patch.object(
-            searcher,
-            "get_closets_collection",
-            side_effect=LookupError("synthetic corpus has no closets"),
-        ),
-    ):
-        yield mcp_server.tool_search
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("MEMPALACE_", "MEMPAL_"))
+    }
+    with patch.dict(os.environ, environment, clear=True):
+        # Also isolate the server's initial default config construction if it
+        # has not been imported yet. No operator config is needed by this gate.
+        with patch.dict(os.environ, {"MEMPALACE_CONFIG_DIR": directory}):
+            from mempalace import mcp_server, searcher
+
+        with (
+            patch.object(
+                searcher, "MempalaceConfig", partial(MempalaceConfig, config_dir=directory)
+            ),
+            patch.object(mcp_server, "_config", config),
+            patch.object(mcp_server, "_refresh_vector_disabled_flag", lambda: None),
+            patch.object(mcp_server, "_vector_disabled", False),
+            patch.object(searcher, "get_collection", lambda *args, **kwargs: collection),
+            patch.object(
+                searcher,
+                "get_closets_collection",
+                side_effect=LookupError("synthetic corpus has no closets"),
+            ),
+        ):
+            yield mcp_server.tool_search
 
 
 def token_diff(corpus: Corpus) -> dict:
@@ -389,6 +420,9 @@ def run_gate(
         vector_tools = vector_total = 0
         with index_chat(corpus, policy=policy, embedder=embedder) as (directory, collection):
             with product_search(directory, collection) as search:
+                from mempalace import searcher
+
+                vector_weight, bm25_weight = searcher._resolve_hybrid_rank_weights()
                 effective = (
                     inspect.signature(search).parameters["candidate_strategy"].default
                     if strategy == "default"
@@ -441,7 +475,7 @@ def run_gate(
             "cases": policy["needles"],
         },
         "vector_tool_share": {
-            "pass": policy["vector_tool_share"] <= today["vector_tool_share"],
+            "pass": today["vector_tool_hits"] > 0 and policy["vector_tool_hits"] == 0,
             "today": today["vector_tool_share"],
             "policy": policy["vector_tool_share"],
             "today_hits": [today["vector_tool_hits"], today["vector_hits"]],
@@ -458,6 +492,8 @@ def run_gate(
         "requested_strategy": strategy,
         "effective_strategy": effective,
         "embedding": embedder.label,
+        "hybrid_weights": {"vector": vector_weight, "bm25": bm25_weight},
+        "backend": "sqlite_exact",
         "seed": seed,
         "messages": len(corpus.messages),
         "checks": checks,
@@ -471,6 +507,7 @@ def format_report(report: dict) -> str:
     lines = [
         f"Index hygiene gate: {'PASS' if report['pass'] else 'FAIL'} (strategy={report['requested_strategy']}, effective={report['effective_strategy']}, messages={report['messages']}, seed={report['seed']})",
         f"Embedding: {report['embedding']}",
+        f"Backend: {report['backend']}; hybrid weights: {json.dumps(report['hybrid_weights'], sort_keys=True)}",
     ]
     for name, check in checks.items():
         numbers = {key: value for key, value in check.items() if key not in {"pass", "cases"}}
@@ -484,6 +521,10 @@ def format_report(report: dict) -> str:
     if not checks["needles_top5"]["pass"] and report["effective_strategy"] == "vector":
         lines.append(
             "BLOCKED: default vector-only candidates cannot retrieve keyword-only tool output. Requires feat/search-union-default; rerun with --strategy union to measure the proposed candidate path."
+        )
+    elif not checks["needles_top5"]["pass"]:
+        lines.append(
+            "BLOCKED: union candidates still miss planted top-5 needles. Keep the policy disabled until ranking and recall pass the gate."
         )
     return "\n".join(lines)
 
