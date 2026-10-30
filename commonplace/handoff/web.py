@@ -100,7 +100,9 @@ class _Pages:
             "Content-Length": str(len(body)),
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer",
+            # same-origin, not no-referrer: with no-referrer browsers send `Origin: null`
+            # on our own form posts, and the origin check refuses them.
+            "Referrer-Policy": "same-origin",
             "Content-Security-Policy": "default-src 'none'; style-src 'self'; font-src 'self'; "
             "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
             "Connection": "close",

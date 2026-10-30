@@ -677,6 +677,8 @@ def test_verbatim_thread_text_roles_kind_names_and_headers(app):
     assert "&lt;tool&gt;&quot;" in response.body and "tool_result" in response.body
     assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["X-Content-Type-Options"] == "nosniff"
+    # no-referrer would make browsers send `Origin: null` on our own forms.
+    assert response.headers["Referrer-Policy"] == "same-origin"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
 
 
