@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import json
 import os
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -103,6 +104,7 @@ def test_token_gate_fails_on_reordering_even_without_lost_tokens(monkeypatch):
 def test_vector_policy_blocks_tool_output_needles(reports):
     report = reports["vector"]
     assert report["pass"] is False
+    assert all(case["top5"] for case in report["today"]["needles"])
     assert report["checks"]["needles_top5"]["found"] == 4
     for case in report["policy"]["needles"]:
         assert case["top5"] == (case["kind"] == "conversation")
@@ -124,15 +126,27 @@ def test_default_strategy_is_measured_without_overriding_handler(reports):
     assert reports["default"]["checks"] == reports[effective]["checks"]
 
 
-def test_union_recovers_keywords_but_exposes_paraphrase_competition(reports):
+def test_union_recovers_every_needle_per_format_and_exposes_rank_cost(reports):
     report = reports["union"]
-    assert report["pass"] is False
-    assert report["checks"]["needles_top5"]["found"] == 8
+    assert report["pass"] is True
+    assert all(case["top5"] for case in report["today"]["needles"])
+    assert report["checks"]["needles_top5"]["found"] == len(report["policy"]["needles"])
     assert report["checks"]["recall_at_10"] == {"pass": True, "today": 1.0, "policy": 1.0}
     assert report["checks"]["token_diff"]["lost_tokens"] == 0
     assert report["checks"]["vector_tool_share"]["policy"] == 0
-    for case in report["policy"]["needles"]:
-        assert case["top5"] == (case["kind"] != "tool_output" or case["match"] != "paraphrase")
+    for fmt in ("claude-code", "codex"):
+        cases = [case for case in report["policy"]["needles"] if case["format"] == fmt]
+        assert len(cases) == 5
+        assert all(case["top5"] for case in cases)
+    for today, policy in zip(report["today"]["needles"], report["policy"]["needles"]):
+        if policy["query"] == "archive backup password":
+            assert (today["rank_at_5"], policy["rank_at_5"]) == (1, 2)
+        elif policy["kind"] == "tool_output" and policy["match"] == "paraphrase":
+            assert (today["rank_at_5"], policy["rank_at_5"]) == (2, 4)
+    output = gate.format_report(report)
+    assert "rank@5=1->2" in output
+    assert "rank@5=2->4" in output
+    assert "Separate collection claude-code: top5 today=5/5, policy=5/5" in output
     assert report["hybrid_weights"] == {"vector": 0.6, "bm25": 0.4}
 
 
@@ -172,19 +186,16 @@ def test_synthetic_paraphrase_uses_fixed_synonyms_and_keyword_anchor():
     )
 
 
-def test_cli_reports_all_checks_and_returns_gate_status(monkeypatch, capsys, reports):
+def test_cli_reports_all_checks_and_returns_gate_status(monkeypatch, capfd, reports):
     monkeypatch.setattr(gate, "run_gate", lambda **kwargs: reports[kwargs["strategy"]])
     assert gate.main(["--strategy", "vector", "--noise", "4"]) == 1
-    output = capsys.readouterr().out
+    output = capfd.readouterr().out
     assert "FAIL needles_top5" in output
     assert "FAIL recall_at_10" in output
     assert "PASS token_diff" in output
     assert "PASS vector_tool_share" in output
-    assert gate.main(["--strategy", "union", "--json"]) == 1
-    assert '"pass": false' in capsys.readouterr().out
-    monkeypatch.setattr(gate, "run_gate", lambda **kwargs: {**reports["union"], "pass": True})
     assert gate.main(["--strategy", "union", "--json"]) == 0
-    assert '"pass": true' in capsys.readouterr().out
+    assert '"pass": true' in capfd.readouterr().out
 
 
 def test_invalid_arguments_fail_before_building_indexes():
@@ -265,3 +276,40 @@ def test_vector_share_check_detects_a_leaking_policy_seam(monkeypatch):
     assert check["pass"] is False
     assert check["today_hits"][0] > 0
     assert check["policy_hits"][0] > 0
+
+
+def test_cli_json_uses_stdout_after_real_mcp_import():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.index_hygiene_gate",
+            "--strategy",
+            "union",
+            "--noise",
+            "0",
+            "--json",
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["pass"] is True
+
+
+def test_gate_sandboxes_writer_locks(monkeypatch, tmp_path):
+    from mempalace import paths
+
+    operator_locks = tmp_path / "operator-locks"
+    monkeypatch.setattr(paths, "lock_dir", lambda: operator_locks)
+    original = paths.lock_dir
+    with gate.index_chat(gate.synthetic_corpus(noise=0), policy=True) as (directory, _):
+        assert paths.lock_dir() == Path(directory) / "locks"
+        assert list(paths.lock_dir().glob("mine_palace_*.lock"))
+        assert not operator_locks.exists()
+    assert paths.lock_dir is original
+    assert not Path(directory).exists()
+    assert not operator_locks.exists()

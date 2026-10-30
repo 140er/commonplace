@@ -27,6 +27,7 @@ import os
 import random
 import re
 import sqlite3
+import sys
 import tempfile
 from collections import Counter
 from contextlib import closing, contextmanager
@@ -280,10 +281,14 @@ def index_chat(corpus: Corpus, *, policy: bool, embedder=None):
     blob simulates keyword-only rows after writing, before any query/cache.
     This deliberate fixture-only SQL is not a production ingestion feature.
     """
+    from mempalace import paths
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
     embedder = embedder or GateEmbedder()
-    with tempfile.TemporaryDirectory(prefix="index-hygiene-") as directory:
+    with (
+        tempfile.TemporaryDirectory(prefix="index-hygiene-") as directory,
+        patch.object(paths, "lock_dir", return_value=Path(directory) / "locks"),
+    ):
         backend = SQLiteExactBackend()
         try:
             inner = backend.create_collection(directory, "gate_drawers")
@@ -346,8 +351,18 @@ def product_search(directory, collection):
     with patch.dict(os.environ, environment, clear=True):
         # Also isolate the server's initial default config construction if it
         # has not been imported yet. No operator config is needed by this gate.
-        with patch.dict(os.environ, {"MEMPALACE_CONFIG_DIR": directory}):
-            from mempalace import mcp_server, searcher
+        # The server protects its protocol by redirecting Python stdout and
+        # fd 1 during import. Restore both for this benchmark's CLI/caller.
+        stdout_fd = os.dup(1)
+        try:
+            with (
+                patch.dict(os.environ, {"MEMPALACE_CONFIG_DIR": directory}),
+                patch.object(sys, "stdout", sys.stdout),
+            ):
+                from mempalace import mcp_server, searcher
+        finally:
+            os.dup2(stdout_fd, 1)
+            os.close(stdout_fd)
 
         with (
             patch.object(
@@ -413,51 +428,68 @@ def run_gate(
         raise ValueError("strategy must be default, vector or union")
     corpus = synthetic_corpus(seed=seed, noise=noise)
     embedder = GateEmbedder(embedding)
+    # Each transcript format represents the same facts. Index them separately
+    # so duplicate copies cannot crowd distinct facts out of the top five.
+    formats = {
+        fmt: Corpus(
+            {fmt: source},
+            tuple(message for message in corpus.messages if message.id.startswith(fmt + "-")),
+            tuple(needle for needle in corpus.needles if needle.target.startswith(fmt + "-")),
+        )
+        for fmt, source in corpus.transcripts.items()
+    }
     outcomes = {}
-    kinds = {message.id: message.kind for message in corpus.messages}
     for policy in (False, True):
         rows = []
         vector_tools = vector_total = 0
-        with index_chat(corpus, policy=policy, embedder=embedder) as (directory, collection):
-            with product_search(directory, collection) as search:
-                from mempalace import searcher
+        for fmt, chat in formats.items():
+            kinds = {message.id: message.kind for message in chat.messages}
+            with index_chat(chat, policy=policy, embedder=embedder) as (directory, collection):
+                with product_search(directory, collection) as search:
+                    from mempalace import searcher
 
-                vector_weight, bm25_weight = searcher._resolve_hybrid_rank_weights()
-                effective = (
-                    inspect.signature(search).parameters["candidate_strategy"].default
-                    if strategy == "default"
-                    else strategy
-                )
-                for needle in corpus.needles:
-                    controls = {} if strategy == "default" else {"candidate_strategy": strategy}
-                    # Measure each cutoff separately: product candidate pools
-                    # depend on limit; slicing top-10 would not test top-5.
-                    rankings = {}
-                    for limit in (5, 10):
-                        result = search(query=needle.query, limit=limit, **controls)
-                        if result.get("error") or result.get("candidate_strategy_fallback"):
-                            raise RuntimeError(f"product search failed: {result}")
-                        rankings[limit] = [hit["drawer_id"] for hit in result["results"]]
-                    rows.append(
-                        {
-                            "query": needle.query,
-                            "target": needle.target,
-                            "kind": needle.kind,
-                            "match": needle.match,
-                            "top5": needle.target in rankings[5],
-                            "top10": needle.target in rankings[10],
-                        }
+                    vector_weight, bm25_weight = searcher._resolve_hybrid_rank_weights()
+                    effective = (
+                        inspect.signature(search).parameters["candidate_strategy"].default
+                        if strategy == "default"
+                        else strategy
                     )
-                    vectors = collection.query(
-                        query_texts=[needle.query], n_results=10, include=["metadatas"]
-                    )
-                    ids = vectors.ids[0]
-                    vector_total += len(ids)
-                    vector_tools += sum(kinds[drawer_id] == "tool_result" for drawer_id in ids)
-                stored = collection.get(include=["documents"])
-                assert dict(zip(stored.ids, stored.documents)) == {
-                    message.id: message.text for message in corpus.messages
-                }
+                    for needle in chat.needles:
+                        controls = {} if strategy == "default" else {"candidate_strategy": strategy}
+                        # Measure each cutoff separately: product candidate pools
+                        # depend on limit; slicing top-10 would not test top-5.
+                        ranks = {}
+                        for limit in (5, 10):
+                            result = search(query=needle.query, limit=limit, **controls)
+                            if result.get("error") or result.get("candidate_strategy_fallback"):
+                                raise RuntimeError(f"product search failed: {result}")
+                            ids = [hit["drawer_id"] for hit in result["results"]]
+                            ranks[limit] = (
+                                ids.index(needle.target) + 1 if needle.target in ids else None
+                            )
+                        rows.append(
+                            {
+                                "format": fmt,
+                                "query": needle.query,
+                                "target": needle.target,
+                                "kind": needle.kind,
+                                "match": needle.match,
+                                "top5": ranks[5] is not None,
+                                "top10": ranks[10] is not None,
+                                "rank_at_5": ranks[5],
+                                "rank_at_10": ranks[10],
+                            }
+                        )
+                        vectors = collection.query(
+                            query_texts=[needle.query], n_results=10, include=["metadatas"]
+                        )
+                        ids = vectors.ids[0]
+                        vector_total += len(ids)
+                        vector_tools += sum(kinds[drawer_id] == "tool_result" for drawer_id in ids)
+                    stored = collection.get(include=["documents"])
+                    assert dict(zip(stored.ids, stored.documents)) == {
+                        message.id: message.text for message in chat.messages
+                    }
         outcomes["policy" if policy else "today"] = {
             "needles": rows,
             "recall_at_10": sum(row["top10"] for row in rows) / len(rows),
@@ -514,9 +546,19 @@ def format_report(report: dict) -> str:
         lines.append(
             f"{'PASS' if check['pass'] else 'FAIL'} {name}: {json.dumps(numbers, sort_keys=True)}"
         )
-    for case in checks["needles_top5"]["cases"]:
+    for fmt in dict.fromkeys(case["format"] for case in report["today"]["needles"]):
+        counts = []
+        for mode in ("today", "policy"):
+            cases = [case for case in report[mode]["needles"] if case["format"] == fmt]
+            counts.append(f"{mode}={sum(case['top5'] for case in cases)}/{len(cases)}")
+        lines.append(f"Separate collection {fmt}: top5 " + ", ".join(counts))
+    for today, case in zip(report["today"]["needles"], checks["needles_top5"]["cases"]):
+        ranks = " ".join(
+            f"rank@{cutoff}={today[f'rank_at_{cutoff}'] or 'miss'}->{case[f'rank_at_{cutoff}'] or 'miss'}"
+            for cutoff in (5, 10)
+        )
         lines.append(
-            f"{'PASS' if case['top5'] else 'FAIL'} top5 {case['kind']}/{case['match']}: {case['target']} query={case['query']!r}"
+            f"{'PASS' if case['top5'] else 'FAIL'} top5 {case['kind']}/{case['match']}: {case['target']} {ranks} query={case['query']!r}"
         )
     if not checks["needles_top5"]["pass"] and report["effective_strategy"] == "vector":
         lines.append(
@@ -540,7 +582,13 @@ def main(argv=None) -> int:
     report = run_gate(
         strategy=args.strategy, seed=args.seed, noise=args.noise, embedding=args.embedding
     )
-    print(json.dumps(report, indent=2) if args.json else format_report(report))
+    # The MCP server redirects sys.stdout on import; CLI reports still belong
+    # on the original stdout stream, including machine-readable JSON.
+    print(
+        json.dumps(report, indent=2) if args.json else format_report(report),
+        file=sys.__stdout__,
+        flush=True,
+    )
     return 0 if report["pass"] else 1
 
 
