@@ -8,7 +8,12 @@ in particular, another request's pending handoff is not safe to stop for.
 1. settings off → ``HandoffResult("compact", reason="off")``; nothing stored.
 2. ``HandoffDB.begin`` by idempotency key (default ``thread:<thread_id>``);
    an existing non-failed handoff is returned as-is with ``launch=False``
-   (unless this is the first launch claim, see 6).
+   (unless this is the first launch claim, see 6). Stored snapshots are
+   immutable: even a longer transcript on retry returns the original handoff,
+   without appending messages or launching a second successor. The calling
+   agent stops; the successor recalls the original snapshot.
+   A pending writer keeps its lease for 600 seconds; an expired pending row
+   may be taken over atomically and its idempotent storage resumed.
 3. parse transcript, store it (``ThreadStore.store``). Any failure →
    ``mark_failed`` + ``EVENT_FAILED`` + ``HandoffResult("compact",
    reason=...)``: no successor ever starts without a stored thread.
@@ -21,26 +26,30 @@ in particular, another request's pending handoff is not safe to stop for.
    ``EVENT_LAUNCH_FAILED`` (the thread stays stored; the agent is told to
    stop anyway, since its work is safe in Memory).
 
-The current DB contract does not persist settings or launch metadata. Keep
-the begin-time settings, metadata and doc for retries in this service's
-lifetime. A different instance or restarted process with settings now off
-returns compact/off even for an existing stored handoff: it cannot look up
-the saved setting before the off gate. When settings remain on, retries
-reconstruct the doc and use the current launcher; explicit owner relaunch
-also reconstructs it regardless of the toggle. Durable snapshots and a
-read-only lookup by workspace/key are required for correct retry behavior.
+The DB does not persist the begin-time launcher settings. Keep these and
+the doc for retries in this service's lifetime. After restart, ``by_key``
+still finds stored handoffs even with the toggle off; an unclaimed launch
+reconstructs the doc and uses the current launcher. Explicit owner relaunch
+also reconstructs it regardless of the toggle. A claimed launch without a
+registered successor is ambiguous and never automatically starts again.
+After verifying that no successor started, the owner can report a launch
+failure and explicitly relaunch. If external launch succeeded but registering
+its result failed, preserve ``launched`` and its claim; registration can be
+retried, whereas relaunch could create a duplicate external successor.
 
 Successor registration uses the control DB's shared lock around read,
 set_successor and event emission. This deduplicates completion events for
 services sharing that ControlDB, but does not guarantee delivery: if emit
 fails after set_successor, an idempotent repeat does not retry the event.
-An atomic transition indicator prevents duplicates across processes;
-transactional audit/outbox writes are needed for durable delivery.
+Separate gateways do not share this lock. Cross-process completion event
+deduplication and durable delivery would require an atomic transition
+indicator and transactional audit/outbox writes. Queued outbox deliveries
+survive restart; a webhook accepted before its acknowledgement was saved
+may be delivered again with the same delivery id for receiver deduplication.
 
 Launch transitions use the same shared lock to preserve a concurrently
-completed handoff. The DB stubs cannot enforce that guard across processes:
-mark_launched and mark_launch_failed need conditional updates checking the
-expected state, claim identity and absence of a successor.
+completed handoff, and the database validates state changes in transactions.
+External launch calls never hold a database transaction.
 """
 
 from __future__ import annotations
@@ -200,8 +209,12 @@ class HandoffService:
     def register_successor(self, principal, handoff_id: str, ref: SuccessorRef) -> Handoff:
         with self.control_db._lock:
             handoff = self._authorized(principal, handoff_id)
-            if handoff.state == "done" and handoff.successor == ref:
-                return handoff
+            if handoff.state == "done":
+                if handoff.successor == ref:
+                    return handoff
+                # Let the database validate retries and fill missing metadata;
+                # enriching an existing successor is not another completion.
+                return self.db.set_successor(handoff_id, ref)
             if handoff.state not in ("stored", "launched"):
                 raise HandoffDBError("handoff is not ready for a successor")
             handoff = self.db.set_successor(handoff_id, ref)
@@ -274,7 +287,21 @@ class HandoffService:
                 snapshot.settings.launcher, handoff, prompt, prompt_dir=self.prompt_dir
             )
             if successor is not None:
-                handoff = self.register_successor(principal, handoff.id, successor)
+                try:
+                    handoff = self.register_successor(principal, handoff.id, successor)
+                except Exception:
+                    # The launcher already succeeded. A registration failure
+                    # must not release its claim via a launch_failed relaunch:
+                    # that would start a duplicate external successor.
+                    try:
+                        handoff = self.db.get(handoff.id) or handoff
+                    except Exception:
+                        pass
+                    return HandoffResult(
+                        "handoff",
+                        handoff,
+                        reason="" if handoff.state == "done" else "successor registration failed",
+                    )
             else:
                 with self.control_db._lock:
                     handoff = self.db.get(handoff.id) or handoff

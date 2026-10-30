@@ -28,11 +28,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Optional
 
-from commonplace.control_db import ControlDB, _iso, _new_id, _now
+from commonplace.control_db import ControlDB, _iso, _new_id, _now, _parse
 
 from .models import SETTING_SCOPES, Handoff, LauncherConfig, SettingRow, SuccessorRef, ThreadMeta
+
+PENDING_LEASE_S = 600
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS handoff_settings (
@@ -251,22 +254,30 @@ class HandoffDB:
         """Create the ``pending`` row, or return the existing one. ``(handoff, created)``.
         Two concurrent calls with one key: exactly one gets ``created=True``.
         A row in state ``failed`` is reused (reset to pending, created=True) so
-        a retry after a store failure can try again."""
+        a retry after a store failure can try again. A pending writer leases
+        its row for ``PENDING_LEASE_S``; an older row can be resumed after a
+        crash. The lease refresh and ownership decision share one transaction.
+        ``_now`` is the injectable UTC clock used for lease checks.
+        """
         with self._lock, self._control._tx() as conn:
+            now = _now()
             row = conn.execute(
                 "SELECT * FROM handoffs WHERE workspace_id = ? AND idempotency_key = ?",
                 (workspace_id, idempotency_key),
             ).fetchone()
             if row is not None:
-                if row["state"] != "failed":
+                expired = row["state"] == "pending" and (
+                    now - _parse(row["updated_at"]) > timedelta(seconds=PENDING_LEASE_S)
+                )
+                if row["state"] != "failed" and not expired:
                     return _handoff(row), False
                 conn.execute(
                     "UPDATE handoffs SET state = 'pending', error = '', updated_at = ? WHERE id = ?",
-                    (_iso(_now()), row["id"]),
+                    (_iso(now), row["id"]),
                 )
                 return _handoff(self._required(row["id"])), True
             handoff_id = _new_id("hof")
-            now = _iso(_now())
+            now = _iso(now)
             conn.execute(
                 "INSERT INTO handoffs(id, workspace_id, idempotency_key, source_thread_id, state, "
                 "agent, task_ref, branch, pr_url, cwd, parent_handoff_id, connection_id, created_at, "
@@ -329,15 +340,31 @@ class HandoffDB:
 
     def set_successor(self, handoff_id: str, ref: SuccessorRef) -> Handoff:
         """Record the successor, state ``done``. Same ref again: no-op.
-        A different ref when one is set: ``HandoffDBError``."""
+        Empty URL/thread fields may be filled once. Conflicting populated
+        fields, including the agent reference, raise ``HandoffDBError``.
+        """
         if not ref.agent_ref:
             raise HandoffDBError("successor not found")
         with self._lock, self._control._tx() as conn:
             row = self._required(handoff_id)
             if row["successor_agent_ref"]:
-                if row["successor_agent_ref"] != ref.agent_ref:
+                if row["successor_agent_ref"] != ref.agent_ref or any(
+                    row[column] and value and row[column] != value
+                    for column, value in (
+                        ("successor_url", ref.url),
+                        ("successor_thread_id", ref.thread_id),
+                    )
+                ):
                     raise HandoffDBError("handoff already has a different successor")
-                return _handoff(row)
+                url = row["successor_url"] or ref.url
+                thread_id = row["successor_thread_id"] or ref.thread_id
+                if url != row["successor_url"] or thread_id != row["successor_thread_id"]:
+                    conn.execute(
+                        "UPDATE handoffs SET successor_url = ?, successor_thread_id = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (url, thread_id, _iso(_now()), handoff_id),
+                    )
+                return _handoff(self._required(handoff_id))
             if row["state"] not in ("stored", "launched"):
                 raise HandoffDBError(f"cannot register a successor for {row['state']} handoff")
             if row["state"] == "stored":
