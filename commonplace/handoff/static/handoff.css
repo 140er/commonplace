@@ -70,10 +70,11 @@ header { height: 96px; background: var(--surface); padding: 24px; display: flex;
 .override strong { font-weight: 400; overflow-wrap: anywhere; }
 .scope { justify-self: start; background: var(--surface-2); color: var(--muted); padding: 0 8px; font-size: 12px; line-height: 22px; }
 .from { color: var(--quiet); font-size: 12px; }
-.from.changed { text-decoration: line-through; }
+.from.changed::after { content: " →"; color: var(--ink); }
 .override button { background: var(--surface-2); color: var(--ink); }
 .add-override { display: grid; grid-template-columns: 160px minmax(120px, 1fr) auto auto; gap: 18px; align-items: end; }
-.add-override label { display: grid; gap: 8px; }
+.add-override label:not(.switch) { display: grid; gap: 8px; }
+.add-override .switch { align-self: end; }
 .empty { color: var(--muted); }
 .handoff { display: grid; gap: 20px; }
 .handoff h2 { font-size: 20px; letter-spacing: -.035em; overflow-wrap: anywhere; }
@@ -94,7 +95,7 @@ header { height: 96px; background: var(--surface); padding: 24px; display: flex;
 .meter i.over { background: var(--flag); }
 .meter i.limit { box-shadow: inset 2px 0 var(--flag); }
 .timeline { list-style: none; margin: 0; padding: 4px 20px; background: var(--term); }
-.step { position: relative; display: grid; grid-template-columns: 112px minmax(0, 1fr) auto auto; align-items: baseline; gap: 4px 16px; padding: 14px 0 14px 24px; font-size: 13px; }
+.step { position: relative; display: grid; grid-template-columns: 112px minmax(0, 1fr) auto 7ch; align-items: baseline; gap: 4px 16px; padding: 14px 0 14px 24px; font-size: 13px; }
 .step::before { content: ""; position: absolute; left: 0; top: 19px; width: 10px; height: 10px; background: var(--ink); }
 .step::after { content: ""; position: absolute; left: 4px; top: 29px; bottom: -19px; width: 2px; background: var(--surface-3); }
 .step:last-child::after { display: none; }
@@ -104,10 +105,12 @@ header { height: 96px; background: var(--surface); padding: 24px; display: flex;
 .step.via::after { top: 21px; }
 .what { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; overflow-wrap: anywhere; }
 code { font: inherit; color: var(--muted); }
-time { color: var(--muted); white-space: nowrap; }
+time { color: var(--muted); white-space: nowrap; grid-column: 3; justify-self: end; }
+.step > .muted { grid-column: 4; justify-self: end; }
 .warn-text { color: var(--flag); }
-.preview { display: grid; gap: var(--gap); margin: 0; }
-.preview > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; background: var(--term); padding: 14px 20px 14px 44px; }
+.preview { display: grid; margin: 0; background: var(--term); padding: 4px 20px 4px 44px; }
+.preview > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; padding: 12px 0; }
+.preview > div + div { border-top: 1px solid var(--surface-2); }
 .preview dt { color: var(--quiet); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; line-height: 22px; }
 .preview dd { margin: 0; min-width: 0; }
 .preview pre { padding: 0; font-size: 13px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
@@ -132,13 +135,16 @@ pre { background: var(--term); padding: 24px; font: inherit; white-space: pre-wr
   .override .from { display: none; }
   .override button { min-height: 44px; }
   .add-override { grid-template-columns: minmax(0, 1fr) auto; gap: 16px; }
-  .add-override label { grid-column: 1 / -1; }
+  .add-override label:not(.switch) { grid-column: 1 / -1; }
   .setting-row { gap: 12px; }
   .handoff-head { flex-wrap: wrap; }
   .timeline { padding: 4px 16px; }
   .step { grid-template-columns: minmax(0, 1fr) auto; }
   .step .what { grid-column: 1 / -1; }
-  .preview > div { grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 14px 16px; }
+  .step time { grid-column: 1; justify-self: start; }
+  .step > .muted { grid-column: 2; }
+  .preview { padding: 4px 16px; }
+  .preview > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .message { padding: 0; }
   .message-meta, pre { padding: 20px; }
 }
