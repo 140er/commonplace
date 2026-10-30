@@ -12,9 +12,20 @@
 Handoff is off by default. With it off, existing behaviour and normal
 compaction stay unchanged.
 
-Open `/app/login` on your Commonplace gateway and sign in with a `cmmn_…`
-token. Open `/app/settings/memory` and turn on **Handoff**. Workspace owners
-can change the switch, threshold and agent or task overrides.
+Create a web sign-in link for an existing workspace member:
+
+```bash
+commonplace login-link you@example.com --workspace personal --base-url http://127.0.0.1:8765
+```
+
+Open the printed `/app/login?t=…` link, then `/app/settings/memory`.
+The link works once and expires after 15 minutes by default. Sign-in sets
+the web app's `cmmn_session` cookie. Forms require a CSRF token derived
+from that session and reject cross-site submissions.
+
+Workspace owners can turn on **Handoff** and change the threshold and
+agent or task overrides. Other members can view the settings. Signed-in
+people can read stored threads in their workspace.
 
 From the CLI, use your workspace and connection names:
 
@@ -242,8 +253,6 @@ pass `COMMONPLACE_HANDOFF_ID` to the thread's agent. The chain still
 links when the successor's thread id is registered
 (`POST /api/handoffs/<id>/successor` with `thread_id`), and the prompt
 always names the old thread, so recall works either way.
-Configure the command before enabling handoff. With no command, the client
-hook's planned fallback is to show the prompt file path for manual startup.
 For T3, thread ID and URL capture, forwarding the handoff ID into the new
 agent, and selection of the working branch or worktree need verification.
 
@@ -262,11 +271,17 @@ remain verbatim.
 
 ### Thread tools
 
-The MCP tools require `threads:read`, an allowed tool name, and permission
-to read the stored thread. The `standard` and `full` profiles include the
-tool names; explicit `--tools` lists can name them too. The profile does
-not replace the scope or data-access checks. An inaccessible thread looks
-like a missing thread.
+The three tools are gateway extension tools. They stay hidden until a
+workspace enables handoff at any scope or has stored threads. Turning
+handoff off keeps the tools available for threads already stored.
+
+Tokens need `threads:read`, an allowed tool name, and permission to read
+the stored thread. The `standard` and `full` profiles include the names;
+explicit `--tools` lists can name them too. Untrusted tokens cannot use
+them. Hidden tools are absent from `tools/list` and answer `Unknown tool`.
+
+Handler errors return `isError: true` with text starting `no:`. Missing
+and inaccessible threads both return `no: thread not found`.
 
 Use the stored ID (`thr_…`) as `thread_id` in all three tools.
 
@@ -288,7 +303,7 @@ a score and verbatim text. Use the range to fetch more context.
 |---|---|---|---|
 | `thread_id` | string | required | Stored thread to read |
 | `start` | integer | `0` | First message number, inclusive |
-| `end` | integer or null | `null` | Last message number, inclusive; null means the end |
+| `end` | integer | omitted | Last message number, inclusive; omit to read up to the call limit |
 | `include_raw` | boolean | `false` | Include each message's original source record |
 
 Message numbers start at zero. Each call returns at most 200 messages.
@@ -325,9 +340,6 @@ access return `404` with `{"error":"not found"}`, just like missing IDs.
 | GET | `/api/settings/handoff?agent=&task=` | authenticated token | Saved rows and effective settings |
 | PUT | `/api/settings/handoff` | owner; members: task `enabled` only | `{scope, ref, enabled?, threshold?, context_window?, launcher?}` |
 | DELETE | `/api/settings/handoff?scope=&ref=` | owner | Remove an override |
-| GET | `/api/webhooks` | owner | Webhook registrations, without secrets |
-| POST | `/api/webhooks` | owner | Register a webhook; secret returned once |
-| DELETE | `/api/webhooks/<id>` | owner | Remove a webhook |
 
 Encode `#` as `%23` in URL query values. An unencoded `#` starts a URL
 fragment and never reaches the server.
@@ -352,14 +364,26 @@ the client to start a successor; other launchers start it on the server.
 
 ## Events and webhooks
 
-Handoffs write audit entries and enqueue events for configured webhooks.
-Delivery runs in the background. Register your own receiver with:
+Handoffs write audit entries and append to the hub's event log. The hub's
+existing webhook service delivers matching events in the background.
+As a workspace owner, subscribe to the `handoff` preset:
 
 ```bash
-commonplace webhook add http://127.0.0.1:9000/handoff --workspace personal
+commonplace webhook add http://127.0.0.1:9000/handoff --workspace personal --events handoff
 ```
 
-The command prints the signing secret once. Store it at the receiver.
+Or call the `webhook_add` extension tool with:
+
+```json
+{"url":"http://127.0.0.1:9000/handoff","events":["handoff"]}
+```
+
+The tool needs `memory:read`, an allowed tool name and a connection that
+is not untrusted. Both methods return the signing secret once; store it
+at the receiver. The hub also accepts these arguments at
+`POST /api/webhooks`; its existing list, remove, test and delivery routes
+manage subscriptions. Without an event filter, a subscription receives
+all permitted event kinds.
 
 | Event | Meaning |
 |---|---|
@@ -370,54 +394,74 @@ The command prints the signing secret once. Store it at the receiver.
 | `handoff.launch_failed` | The thread is saved but successor launch failed |
 | `handoff.settings_changed` | A saved setting changed |
 
-The event payload contains references, never thread text:
+The hub wraps each event in this envelope (example values):
 
 ```json
 {
-  "event": "handoff.completed",
+  "agent": "commonplace",
+  "task": "#142",
+  "need": "info",
+  "message": "#142 context handed off http://127.0.0.1:8765/s/A1b2C3d",
+  "id": "evt_42",
+  "seq": 42,
+  "kind": "handoff.completed",
+  "at": "2026-10-30T12:00:00Z",
   "workspace": "ws_example",
-  "handoff_id": "hof_example",
-  "stored_thread_id": "thr_example",
-  "task_ref": "#142",
-  "successor_agent_ref": "t3:example",
-  "at": "2026-10-30T12:00:00+00:00"
+  "subject": "#142",
+  "actor": "conn:example",
+  "data": {
+    "handoff_id": "hof_example",
+    "stored_thread_id": "thr_example",
+    "task_ref": "#142",
+    "successor_agent_ref": "t3:example",
+    "number": 142
+  },
+  "url": "http://127.0.0.1:8765/s/A1b2C3d"
 }
 ```
 
-Failure payloads may also contain `decision` and a short `reason` without
-thread text. References that are not yet available may be empty.
+Handoff `data` contains available IDs and references only, plus `number`
+for a numeric task reference and `decision` on failures. Empty references
+are omitted. The webhook filter excludes `reason`, thread text and the
+handoff prompt. `subject` is the task reference, or the handoff ID when
+there is no task. `url` links to the app; `id` identifies the hub event.
 
 The receiver gets a JSON POST with `X-Commonplace-Event`,
-`X-Commonplace-Delivery` (the outbox ID), and
-`X-Commonplace-Signature: sha256=<hex digest>`. The signature is
-HMAC-SHA256 using the UTF-8 secret and the exact request body bytes.
-The sender uses sorted JSON keys without spaces. Do not parse and
-re-serialize the body before checking it.
+`X-Commonplace-Delivery` (the hub delivery ID), and
+`X-Commonplace-Signature: t=<unix seconds>,v1=<hex digest>`. The digest is
+HMAC-SHA256 with the UTF-8 secret over the timestamp, a dot and the exact
+body bytes: `timestamp + b"." + body`. Verify those bytes before parsing
+the JSON. For example, with a receiver-chosen five-minute age limit:
 
 ```python
 import hashlib
 import hmac
 import json
+import time
 
 
 def verify_handoff(body: bytes, signature: str, secret: str) -> dict:
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"), body, hashlib.sha256
+    fields = dict(part.split("=", 1) for part in signature.split(","))
+    timestamp = fields["t"]
+    expected = hmac.new(
+        secret.encode("utf-8"), timestamp.encode("ascii") + b"." + body, hashlib.sha256
     ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
+    if not hmac.compare_digest(fields["v1"], expected):
         raise ValueError("invalid signature")
+    if abs(time.time() - int(timestamp)) > 300:
+        raise ValueError("stale signature")
     return json.loads(body)
 ```
 
 Pass the unmodified body and the `X-Commonplace-Signature` header to this
-function. Read the event from the verified body: the other headers are
-not covered by the signature. The contract defines no timestamp tolerance
-or replay window. Verification alone does not reject replays.
+function. Read `kind` and `id` from the verified body; the event and
+delivery headers are not signed. Deduplicate by event `id` to avoid
+repeating an action, including replays within the age limit. Each delivery
+attempt gets a fresh signature timestamp.
 
-Handle repeated deliveries without repeating your action. Delivery retries
-after 1 second, 5 seconds, 30 seconds, 2 minutes and 10 minutes, then gives
-up. A `2xx` response succeeds; `410` gives up immediately. Delivery does
-not follow redirects.
+Delivery makes at most six attempts, with retry delays of 10 seconds,
+1 minute, 5 minutes, 30 minutes and 2 hours. A `2xx` response succeeds;
+other responses retry until the limit. Redirects are not followed.
 
 ## Failure behaviour
 
@@ -437,9 +481,6 @@ When the hook's own successor command fails, it reports
 `POST /api/handoffs/<id>/launch-failed`, which records `launch_failed`
 and sends `handoff.launch_failed`; the old agent keeps working and
 compacts as usual.
-The contract does not yet define how the client reports a local launch
-failure. Do not assume that such a failure is recorded as `launch_failed`
-or is eligible for `relaunch`.
 
 Thread storage stays local. Requests go to your configured Commonplace
 gateway and your configured webhook or launcher URLs. Event webhooks
@@ -473,8 +514,7 @@ threads. `thread_chain` lists the current thread and then older ones;
 document's earlier-thread pointers are also newest first.
 
 The card view at `/app/cards/142` shows handoff state for `#142`, with the
-old thread and the successor reference or URL. It does not require a full
-board implementation.
+old thread and the successor reference or URL.
 
 ## Limits and open questions
 
@@ -494,6 +534,3 @@ board implementation.
 - If the gateway crashes between recording a successor and sending
   `handoff.completed`, that one event is lost. Run one gateway per
   control database.
-- Webhook signatures do not define replay protection or an expiry policy.
-- Board task events remain future work; the handoff record and task view
-  carry the references for now.

@@ -16,7 +16,7 @@ class ThreadClient:
 
     def request(self, method, path, body=None, *, headers=None, expected=200):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
-        fields = {"Authorization": f"Bearer {self.token}"}
+        fields = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         if isinstance(body, dict):
             body = json.dumps(body).encode("utf-8")
             fields["Content-Type"] = "application/json"

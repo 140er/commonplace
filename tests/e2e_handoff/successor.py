@@ -39,6 +39,8 @@ def main():
         assert os.environ["COMMONPLACE_THREAD_ID"] == thread_id
         client = ThreadClient(os.environ["COMMONPLACE_URL"], os.environ["COMMONPLACE_TOKEN"])
         client.initialize()
+        tools = client.rpc("tools/list")["tools"]
+        assert {"thread_recall", "thread_get", "thread_chain"} <= {tool["name"] for tool in tools}
         hits = client.tool(
             "thread_recall", thread_id=thread_id, query="staging database port", follow_chain=True
         )["hits"]

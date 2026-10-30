@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import Counter
 from contextlib import ExitStack
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ from urllib.parse import urlencode
 
 import pytest
 
+from commonplace import events, sessions
 from commonplace.handoff.wiring import install
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.e2e_handoff.sample import FACT, HERE, TASK, transcript
@@ -26,14 +28,8 @@ from tests.e2e_handoff.wire import ThreadClient
 class Markup(HTMLParser):
     def __init__(self, text):
         super().__init__()
-        self.fields = {}
         self.visible = []
         self.feed(text)
-
-    def handle_starttag(self, tag, attrs):
-        fields = dict(attrs)
-        if tag == "input" and "name" in fields:
-            self.fields[fields["name"]] = fields.get("value", "")
 
     def handle_data(self, data):
         self.visible.append(data)
@@ -89,7 +85,7 @@ class Scenario:
             "handoff-e2e",
             client="claude-code",
             profile="full",
-            scopes=["memory:read", "memory:write", "threads:read", "handoff:write"],
+            scopes=["memory:read", "memory:write", "private:read", "threads:read", "handoff:write"],
             read_wings=["*"],
             write_wings=["*"],
             trust="trusted",
@@ -97,11 +93,12 @@ class Scenario:
         self.url = f"http://127.0.0.1:{hub.port}"
         self.client = ThreadClient(self.url, self.token)
         self.client.initialize()
-        self.secret = "local-e2e-signing-key"
         registered = self.client.json(
-            "POST", "/api/webhooks", {"url": receiver.url, "secret": self.secret}, expected=201
+            "POST", "/api/webhooks", {"url": receiver.url, "events": ["handoff"]}, expected=201
         )
-        assert registered["secret"] == self.secret
+        self.webhook_id = registered["id"]
+        self.secret = registered["secret"]
+        assert self.secret
         self.environment = {
             key: value for key, value in os.environ.items() if not key.startswith("COMMONPLACE_")
         }
@@ -184,13 +181,24 @@ class Scenario:
             if row["action"].startswith("handoff.")
         ]
 
+    def event_rows(self):
+        return [
+            row
+            for row in events.after(self.hub.db, self.hub.workspace)
+            if row["kind"].startswith("handoff.")
+        ]
+
+    def deliveries(self):
+        return self.client.json("GET", f"/api/webhooks/{self.webhook_id}/deliveries")["deliveries"]
+
     def diagnostics(self):
         return {
             "hooks": self.hooks,
             "errors": self.log("errors.jsonl"),
             "launches": self.log("launches.jsonl"),
             "records": [{"id": row["id"], "state": row["state"]} for row in self.records()],
-            "events": [json.loads(raw)["event"] for raw, _ in self.receiver.received()],
+            "events": [json.loads(raw)["kind"] for raw, _ in self.receiver.received()],
+            "deliveries": self.deliveries(),
         }
 
     def wait(self, observe, *, timeout=20):
@@ -227,60 +235,89 @@ class Scenario:
             connection.row_factory = sqlite3.Row
             return [dict(row) for row in connection.execute("SELECT * FROM threads")]
 
-    def drained(self):
-        # A committed delivery acknowledgement is stronger than a fixed delay.
-        with self.hub.db._lock:
-            pending = self.hub.db._conn.execute(
-                "SELECT count(*) FROM handoff_outbox WHERE delivered_at IS NULL AND gave_up_at IS NULL"
-            ).fetchone()[0]
-        return not pending
+    def deliveries_complete(self):
+        # Match every handoff event to a committed hub delivery acknowledgement.
+        expected = {row["seq"] for row in self.event_rows()}
+        delivered = self.deliveries()
+        return expected == {row["event_seq"] for row in delivered} and all(
+            row["status"] == "delivered" and row["http_status"] == 204 and row["delivered_at"]
+            for row in delivered
+        )
 
     def signed_events(self, names):
-        self.wait(
-            lambda: names <= {json.loads(raw)["event"] for raw, _ in self.receiver.received()}
-        )
-        self.wait(self.drained)
+        self.wait(lambda: names <= {json.loads(raw)["kind"] for raw, _ in self.receiver.received()})
+        self.wait(self.deliveries_complete)
         payloads = []
-        allowed = {
-            "event",
+        envelope = {
+            "agent",
+            "task",
+            "need",
+            "message",
+            "id",
+            "seq",
+            "kind",
+            "at",
             "workspace",
+            "subject",
+            "actor",
+            "data",
+            "url",
+        }
+        allowed = {
             "handoff_id",
             "stored_thread_id",
             "task_ref",
             "successor_agent_ref",
-            "at",
+            "number",
             "decision",
-            "reason",
         }
+        stored = {row["seq"]: row for row in self.event_rows()}
+        delivered = {row["id"]: row for row in self.deliveries()}
         for raw, headers in self.receiver.received():
-            expected = "sha256=" + hmac.new(self.secret.encode(), raw, hashlib.sha256).hexdigest()
-            assert hmac.compare_digest(headers["X-Commonplace-Signature"], expected)
+            signature = dict(
+                part.split("=", 1) for part in headers["X-Commonplace-Signature"].split(",")
+            )
+            assert signature.keys() == {"t", "v1"} and signature["t"].isdecimal()
+            expected = hmac.new(
+                self.secret.encode(), signature["t"].encode() + b"." + raw, hashlib.sha256
+            ).hexdigest()
+            assert hmac.compare_digest(signature["v1"], expected)
             payload = json.loads(raw)
-            assert payload.keys() <= allowed
+            assert payload.keys() == envelope
+            event = stored[payload["seq"]]
+            assert payload["agent"] == "commonplace"
+            assert payload["id"] == f"evt_{event['seq']}"
+            assert payload["task"] == payload["subject"] == event["subject"]
+            assert payload["kind"] == event["kind"]
+            assert payload["actor"] == event["actor"]
+            assert payload["at"] == event["at"]
+            assert payload["need"] == "info"
+            assert payload["data"].keys() <= allowed
+            assert payload["data"] == {
+                key: value for key, value in event["data"].items() if key in allowed
+            }
             assert payload["workspace"] == self.hub.workspace
-            assert headers["X-Commonplace-Event"] == payload["event"]
-            assert headers["X-Commonplace-Delivery"].isdecimal()
+            assert headers["X-Commonplace-Event"] == payload["kind"]
+            delivery_id = headers["X-Commonplace-Delivery"]
+            assert delivery_id.startswith("dlv_")
+            assert delivered[delivery_id]["event_seq"] == payload["seq"]
             assert all(
                 value not in raw.decode()
                 for value in (FACT, "54329", "HELIOTROPE-7", "validation finished")
             )
             payloads.append(payload)
+        assert Counter(row["seq"] for row in payloads) == Counter(dict.fromkeys(stored, 1))
         return payloads
 
     def card(self):
-        raw, headers = self.client.request("GET", "/app/login")
+        browser = ThreadClient(self.url, None)
+        _, headers = browser.request("GET", "/app/cards/1701", expected=303)
+        assert headers["Location"] == "/app/login"
+        token = sessions.create_login_link(self.hub.db, "owner@example.com", self.hub.workspace)
+        _, headers = browser.request("GET", "/app/login?" + urlencode({"t": token}), expected=302)
         cookie = headers["Set-Cookie"].split(";", 1)[0]
-        csrf = Markup(raw.decode()).fields["csrf"]
-        _, headers = self.client.request(
-            "POST",
-            "/app/login",
-            urlencode({"csrf": csrf, "token": self.token}).encode(),
-            headers={"Cookie": cookie, "Content-Type": "application/x-www-form-urlencoded"},
-            expected=303,
-        )
-        raw, _ = self.client.request(
-            "GET", "/app/cards/1701", headers={"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
-        )
+        assert cookie.startswith("cmmn_session=")
+        raw, _ = browser.request("GET", "/app/cards/1701", headers={"Cookie": cookie})
         return raw.decode(), " ".join(Markup(raw.decode()).visible)
 
     def stop_children(self):
@@ -303,7 +340,10 @@ def scenario(hub, tmp_path):
     with ExitStack() as cleanup:
         receiver = Receiver()
         cleanup.callback(receiver.close)
-        context = install(hub.gateway, tmp_path / "data", start_outbox=True)
+        cleanup.callback(hub.gateway.webhooks.stop)
+        context = install(hub.gateway, tmp_path / "data")
+        assert context is hub.gateway.handoff
+        assert install(hub.gateway, tmp_path / "data") is context
         cleanup.callback(context.close)
         run = Scenario(hub, tmp_path / "handoff", receiver, context)
         cleanup.callback(run.stop_children)

@@ -27,8 +27,8 @@ def assert_events(scenario, count=1):
     payloads = scenario.signed_events(SUCCESS)
     audit = [row for row in scenario.audit() if row["action"] != "handoff.settings_changed"]
     assert Counter(row["action"] for row in audit) == Counter(dict.fromkeys(SUCCESS, count))
-    events = [row for row in payloads if row["event"] != "handoff.settings_changed"]
-    assert Counter(row["event"] for row in events) == Counter(dict.fromkeys(SUCCESS, count))
+    events = [row for row in payloads if row["kind"] != "handoff.settings_changed"]
+    assert Counter(row["kind"] for row in events) == Counter(dict.fromkeys(SUCCESS, count))
     assert FACT not in json.dumps(audit)
     return events
 
@@ -58,9 +58,9 @@ def test_successor_recalls_middle_tool_result(scenario):
     assert fetched == [message.to_dict() for message in scenario.messages]
     assert "".join(message["raw"] for message in fetched) == scenario.transcript.read_text()
     events = assert_events(scenario)
-    assert {event["handoff_id"] for event in events} == {row["id"]}
-    completed = next(event for event in events if event["event"] == "handoff.completed")
-    assert completed["successor_agent_ref"] == row["successor"]["agent_ref"]
+    assert {event["data"]["handoff_id"] for event in events} == {row["id"]}
+    completed = next(event for event in events if event["kind"] == "handoff.completed")
+    assert completed["data"]["successor_agent_ref"] == row["successor"]["agent_ref"]
     html, visible = scenario.card()
     assert "handed off" in visible
     assert f"/app/threads/{row['stored_thread_id']}" in html
@@ -128,6 +128,8 @@ def test_successor_hands_off_again_and_generation_two_recalls_ancestor(scenario)
 
 def test_off_is_silent_without_storage_launches_or_handoff_events(scenario):
     assert scenario.client.json("GET", "/api/settings/handoff")["effective"]["enabled"] is False
+    tools = scenario.client.rpc("tools/list")["tools"]
+    assert not {"thread_recall", "thread_get", "thread_chain"} & {tool["name"] for tool in tools}
     scenario.setting(False)  # Explicit REST disable, rather than a local environment override.
     scenario.signed_events({"handoff.settings_changed"})
     before = scenario.receiver.received()
@@ -138,8 +140,9 @@ def test_off_is_silent_without_storage_launches_or_handoff_events(scenario):
     assert scenario.context._stores == {}
     assert scenario.log("launches.jsonl") == []
     assert scenario.log("errors.jsonl") == []
-    scenario.wait(scenario.drained)
+    scenario.wait(scenario.deliveries_complete)
     assert scenario.receiver.received() == before
+    assert {row["kind"] for row in scenario.event_rows()} == {"handoff.settings_changed"}
     assert {row["action"] for row in scenario.audit()} == {"handoff.settings_changed"}
 
 
@@ -164,13 +167,19 @@ def test_unwritable_store_falls_back_without_starting_successor(scenario):
         assert scenario.context._stores == {}
         assert scenario.log("launches.jsonl") == []
         events = scenario.signed_events({"handoff.started", "handoff.failed"})
-        assert {event["event"] for event in events} == {
+        assert {event["kind"] for event in events} == {
             "handoff.settings_changed",
             "handoff.started",
             "handoff.failed",
         }
-        error = next(event for event in events if event["event"] == "handoff.failed")
-        assert error["reason"] == "thread storage failed" and error["decision"] == "error"
+        error = next(event for event in events if event["kind"] == "handoff.failed")
+        assert error["data"]["decision"] == "error"
+        assert "reason" not in error["data"]  # The hub webhook filters diagnostics out.
+        failed_event = next(
+            event for event in scenario.event_rows() if event["kind"] == "handoff.failed"
+        )
+        assert failed_event["data"]["reason"] == "thread storage failed"
+        assert failed_event["data"]["decision"] == "error"
         assert {row["action"] for row in scenario.audit()} == {
             "handoff.settings_changed",
             "handoff.started",
