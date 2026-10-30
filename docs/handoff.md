@@ -454,9 +454,17 @@ right to launch the successor. Registering the same successor twice is
 a no-op; registering a different successor for that handoff is rejected.
 
 Saving the same source thread and content returns the existing stored
-thread. Different content under the same source ID is a conflict. A
-failed storage attempt can be retried. A recorded launch failure needs an
-explicit owner relaunch to release its launch claim.
+thread. When a retry carries the same thread with more messages at the
+end (the agent kept working), only the new messages are appended to the
+stored thread; the handoff and its successor stay the same. Other
+different content under the same source ID is a conflict. A failed
+storage attempt can be retried. A handoff stuck mid-store after a crash
+is taken over by the next retry once its 10-minute lease runs out. A
+recorded launch failure needs an explicit owner relaunch to release its
+launch claim.
+
+When a successor's own thread ID was registered with its handoff, its
+next handoff links into the chain even without `COMMONPLACE_HANDOFF_ID`.
 
 When the successor later hands off, its hook sends
 `COMMONPLACE_HANDOFF_ID` as `parent_handoff_id`. This links the stored
@@ -476,11 +484,16 @@ board implementation.
   decision quotes. Use their full-range pointers for the rest.
 - The planned request limits are 64 MB for `/api/handoff` and 1 MB for
   other JSON requests.
-- Model windows must match the model you run. Use an explicit override
-  when the model-name table is insufficient.
-- Codex stop behaviour, T3 successor identity and context, client
-  launch-failure reporting and the `include_raw` tool argument need
-  integration checks at the verification markers above.
+- Model windows must match the model you run. Claude Code transcripts
+  don't say whether a model runs with a 1M window, so set `--window
+  1000000` for those agents.
+- Codex hooks can't stop a running turn; see the Codex section.
+- Each stored thread is also written into Memory search in the background,
+  in a private section: ordinary Memory tools show it only to tokens with
+  `private:read`. The thread tools need `threads:read`.
+- If the gateway crashes between recording a successor and sending
+  `handoff.completed`, that one event is lost. Run one gateway per
+  control database.
 - Webhook signatures do not define replay protection or an expiry policy.
 - Board task events remain future work; the handoff record and task view
   carry the references for now.
