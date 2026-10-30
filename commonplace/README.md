@@ -13,6 +13,8 @@ commonplace serve --host 127.0.0.1 --port 8765
 
 Social sign-in: [provider setup](SETUP.md).
 
+Claude Code: [local setup and repeatable fresh-install check](../docs/commonplace-client-setup.md).
+
 ## Hosted plans
 
 Set `COMMONPLACE_PLANS=on` to enable hosted plans. New social sign-ups receive Free:

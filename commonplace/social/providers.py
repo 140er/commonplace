@@ -146,6 +146,7 @@ class Provider:
     issuers: tuple = ()
     credentials: dict = field(default_factory=dict, repr=False)
     private_key: object = field(default=None, repr=False)
+    daily_cap: int | None = None
 
     @property
     def pkce(self):
@@ -367,6 +368,20 @@ _SPECS = (
 )
 
 
+def _x_daily_cap() -> int:
+    value = os.environ.get("COMMONPLACE_X_DAILY_CAP", "").strip()
+    if not value:
+        return 6
+    try:
+        cap = int(value)
+        if cap >= 0:
+            return cap
+    except ValueError:
+        pass
+    logger.warning("COMMONPLACE_X_DAILY_CAP accepts an integer >= 0; using 6")
+    return 6
+
+
 def configured() -> list[Provider]:
     result = []
     for spec in _SPECS:
@@ -390,5 +405,12 @@ def configured() -> list[Provider]:
             except Exception:
                 logger.warning("sign-in apple: ES256 key or cryptography unavailable")
                 continue
-        result.append(Provider(*spec, credentials=credentials, private_key=key))
+        result.append(
+            Provider(
+                *spec,
+                credentials=credentials,
+                private_key=key,
+                daily_cap=_x_daily_cap() if provider_id == "x" else None,
+            )
+        )
     return result

@@ -151,16 +151,20 @@ function restore(saved) {
   const tasks = root.querySelector(".space-tasks .stack");
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
-async function signin() {
+async function signin(code = null) {
   speech.stop();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
-  providersPromise ||= api("/app/auth/providers").then((result) => result.providers || []).catch(() => []);
-  const providers = await providersPromise;
+  providersPromise ||= api("/app/auth/providers").catch(() => ({}));
+  const { providers = [], paused = [] } = await providersPromise;
   if (state.me) return;
+  const cookie = (document.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("cmmn_via="));
+  const value = cookie ? cookie.slice("cmmn_via=".length) : "";
+  const via = /^[a-z]{1,20}$/.test(value) ? value : "";
+  if (code !== null) state.error = signinMessage(code, paused, via);
   const path = location.pathname + location.hash;
-  root.innerHTML = signinView({ providers, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
+  root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
 function shell() {
   root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
@@ -735,7 +739,7 @@ setInterval(() => {
 }, 15000);
 async function boot() {
   try { state.me = await api("/api/me"); setPeople(state.me.people); }
-  catch (error) { state.error = signinCode !== null ? signinMessage(signinCode) : error.status === 401 ? "" : error.message; await signin(); return; }
+  catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   shell(); await route(); schedule(0);
 }
 boot();
