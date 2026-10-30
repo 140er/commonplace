@@ -593,14 +593,6 @@ class _AuditDifference(AssertionError):
     pass
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=_AuditDifference,
-    reason=(
-        "commonplace/gateway.py audits unavailable thread_get as a policy denial "
-        "instead of c07bb354's unknown tool; fix belongs to the gateway"
-    ),
-)
 @pytest.mark.parametrize("profile", ["slim", "standard", "full"])
 @pytest.mark.parametrize("explicit_off", [False, True])
 def test_unavailable_thread_audit_matches_develop(gateway, legacy, profile, explicit_off):

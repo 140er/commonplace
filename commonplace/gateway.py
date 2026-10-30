@@ -246,13 +246,18 @@ class Mediator:
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
 
+        local = extensions.get(name)
         refusal = policy.refusal(name)
+        if local is not None and local.available is not None:
+            # A feature a workspace doesn't use is audited like a tool that
+            # doesn't exist, whatever the token holds.
+            if not local.usable_by(principal, self.gateway):
+                refusal = "unknown tool"
         if refusal is not None:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
 
-        local = extensions.get(name)
         if local is not None:
             return self._local_call(principal, local, req_id, args)
 
