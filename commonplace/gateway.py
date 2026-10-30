@@ -817,6 +817,14 @@ class Gateway:
                 self.supervisor.stop_idle()
 
         threading.Thread(target=reap, daemon=True).start()
+        if threading.current_thread() is threading.main_thread():
+            import signal
+
+            def _terminate(signum, frame):
+                # Unwind through serve_forever so the finally block stops every worker.
+                raise SystemExit(0)
+
+            signal.signal(signal.SIGTERM, _terminate)
         logger.info("commonplace gateway on %s:%s", host, server.server_address[1])
         try:
             server.serve_forever()

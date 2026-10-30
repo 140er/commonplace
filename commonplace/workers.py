@@ -251,3 +251,4 @@ class WorkerSupervisor:
             self._workers.clear()
         for worker in workers:
             worker.stop()
+
