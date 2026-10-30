@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory · Commonplace</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="map.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="ws"><span class="mark"><svg viewBox="0 0 32 32"><rect x="4" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="17" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="4" y="17" width="11" height="11" fill="#0b0c0b"/></svg></span><span class="name">jeffrey</span></div>
+    <nav class="navs">
+      <a href="#">Decide<span class="n">4</span></a>
+      <a href="#">Search<kbd>⌘K</kbd></a>
+      <a href="index.html" aria-current>Memory</a>
+    </nav>
+    <nav class="navs fill"><a href="#">commonplace</a><a href="#">computercraft</a><a href="#">home</a></nav>
+  </aside>
+
+  <main class="main">
+    <header class="head">
+      <h1>Memory<span class="n" id="count"></span></h1>
+      <span class="mmark"><svg viewBox="0 0 32 32"><rect x="4" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="17" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="4" y="17" width="11" height="11" fill="#0b0c0b"/></svg></span>
+      <div class="right">
+        <label class="field filter">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="6" cy="6" r="4"/><path d="M9 9l3.5 3.5"/></svg>
+          <input id="q" type="search" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="Filter memories">
+          <span id="hits" class="hits"></span><kbd>/</kbd>
+        </label>
+        <div class="views" role="tablist" aria-label="Layout">
+          <button role="tab" data-view="map" aria-selected="true">Map</button>
+          <button role="tab" data-view="themes">Themes</button>
+          <button role="tab" data-view="people">People</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="stage" id="stage">
+      <canvas id="map"></canvas>
+      <ul class="legend" id="legend" aria-label="Themes"></ul>
+      <div class="when" id="when" aria-label="Memories per week"></div>
+      <div class="zoom">
+        <button data-zoom="in" aria-label="Zoom in">+</button>
+        <span id="pct">100%</span>
+        <button data-zoom="out" aria-label="Zoom out">−</button>
+        <button data-zoom="fit" aria-label="Fit"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"><path d="M2 5V2h3M9 2h3v3M12 9v3H9M5 12H2V9"/></svg></button>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+    </section>
+
+    <aside class="panel" id="panel" hidden></aside>
+  </main>
+
+  <nav class="mtabs"><a href="#">Decide<b>4</b></a><a href="#">Boards</a><a href="index.html" aria-current>Memory</a></nav>
+</div>
+<script src="data.js"></script>
+<script src="map.js"></script>
+</body>
+</html>
