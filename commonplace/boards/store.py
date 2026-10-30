@@ -261,7 +261,13 @@ class BoardStore:
                 (drawer_id,),
             )
             return [
-                {"number": r["id"], "title": r["title"], "status": r["status"], "board": r["slug"]}
+                {
+                    "number": r["id"],
+                    "title": r["title"],
+                    "status": r["status"],
+                    "board": r["slug"],
+                    "wing": r["wing"],
+                }
                 for r in rows
                 if principal is None or principal.policy.can_read_wing(r["wing"])
             ]
