@@ -102,6 +102,10 @@ TOOLS = {
                     "type": "string",
                     "description": "Drawer ID the fact was extracted from (optional, RFC 002 provenance)",
                 },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
                 "source_thread": {
                     "type": "string",
                     "description": "Chat thread the fact came from (optional)",
@@ -151,6 +155,10 @@ TOOLS = {
                     "description": "When this became true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; a replacement happens at this instant, default now)",
                 },
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
                 "source_thread": {
                     "type": "string",
                     "description": "Chat thread the fact came from (optional)",
@@ -228,6 +236,10 @@ TOOLS = {
                 "at": {
                     "type": "string",
                     "description": "Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; defaults to now UTC)",
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
                 },
                 "source_thread": {
                     "type": "string",

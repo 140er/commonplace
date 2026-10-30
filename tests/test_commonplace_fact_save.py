@@ -16,6 +16,7 @@ SCOPED = dict(
 
 
 def _save(hub, token, **args):
+    args.setdefault("source", {"thread": "mcp:test-fact-save"})
     response = hub.rpc(token, "tools/call", {"name": "fact_save", "arguments": args})
     assert "error" not in response, response
     result = response["result"]

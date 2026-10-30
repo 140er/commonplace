@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
+from mempalace.fact_provenance import source_link
 
 from .models import SCOPE_THREADS_READ
 from .recall import ThreadNotFound
@@ -111,6 +112,17 @@ def _argument_error(args, schema):
     return None
 
 
+def _provenance(ctx, principal, thread_id):
+    stored = ctx.recall.thread(principal, thread_id)
+    return {
+        "origin_kind": "thread",
+        "origin_id": stored.source_thread_id,
+        "origin_link": source_link(stored.id),
+        "filed_by": stored.created_by or "unknown",
+        "approval_status": "proposal" if stored.created_by else "unknown",
+    }
+
+
 def _recall(ctx, principal, args):
     hits = ctx.recall.recall(
         principal,
@@ -128,6 +140,7 @@ def _recall(ctx, principal, args):
                 "seq_end": hit.seq_end,
                 "score": hit.score,
                 "text": hit.text,
+                "provenance": _provenance(ctx, principal, hit.stored_thread_id),
             }
             for hit in hits
         ],
@@ -146,7 +159,11 @@ def _get(ctx, principal, args):
         if not args.get("include_raw", False):
             value.pop("raw", None)
         values.append(value)
-    return {"thread_id": args["thread_id"], "messages": values}
+    return {
+        "thread_id": args["thread_id"],
+        "messages": values,
+        "provenance": _provenance(ctx, principal, args["thread_id"]),
+    }
 
 
 def _chain(ctx, principal, args):
@@ -157,6 +174,7 @@ def _chain(ctx, principal, args):
                 "thread_id": thread.id,
                 "created_at": thread.created_at,
                 "message_count": thread.message_count,
+                "provenance": _provenance(ctx, principal, thread.id),
             }
             for thread in threads
         ]
