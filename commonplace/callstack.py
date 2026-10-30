@@ -7,9 +7,10 @@ Reads ``git diff base...head`` in the current repository and prints JSON, or sto
 on a card (``callstack``). Python is parsed with ``ast``. JS/TS uses a masked-source
 regex and brace matcher, so unusual syntax can be missed. Other files are listed flat.
 
-Calls resolve by name: ``self.x``/``this.x`` to the caller's class, a bare name to the
-caller's file or one unique function, ``mod.x`` only when the name is unique. Ambiguous
-calls are dropped, never guessed. Unchanged callers are added only when they are entry
+Nested helper functions fold into the function around them. A call links two functions
+only with evidence: ``self.x``/``this.x`` in the caller's class, a bare name in the
+caller's file or imported by it, ``mod.x`` through an import, ``Class.x`` by class name.
+Anything else is dropped, never guessed. Unchanged callers are added only when they are entry
 points: ``main``, ``cmd_*``, ``handle_*``, ``do_*``, route/command/tool decorators, and
 exported JS functions. Test files are listed flat, never in the tree.
 """
@@ -114,10 +115,11 @@ def _py_params(fn) -> str:
 
 
 def _py_calls(fn):
+    """Calls in the body, nested helper functions included."""
     calls, stack = [], list(fn.body)
     while stack:
         node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, ast.ClassDef):
             continue
         if isinstance(node, ast.Call):
             target = node.func
@@ -171,7 +173,6 @@ def python_functions(path: str, source: str) -> list[Func]:
                         imports=imports,
                     )
                 )
-                visit(child, f"{prefix}{child.name}.", None)
             else:
                 visit(child, prefix, cls)
 
@@ -332,7 +333,7 @@ def js_functions(path: str, source: str) -> list[Func]:
         if m and "{" in masked[offsets[k] :]:
             open_at = masked.index("{", offsets[k])
             classes.append((m["name"], open_at, _match_brace(masked, open_at)))
-    found = []
+    found, bodies = [], []
     for k, text in enumerate(lines):
         pos = offsets[k]
         owner = next((c for c in reversed(classes) if c[1] < pos <= c[2]), None)
@@ -355,9 +356,10 @@ def js_functions(path: str, source: str) -> list[Func]:
         else:
             continue
         name = m["name"]
-        if owner and not cls:
-            continue  # a local binding inside a method body
+        if (owner and not cls) or any(a < pos <= b for a, b in bodies):
+            continue  # a local helper folds into the function around it
         body_start, body_end = _body(masked, pos + m.start("name"), arrow)
+        bodies.append((body_start, body_end))
         body = masked[body_start : body_end + 1]
         calls = []
         for call in JS_CALL.finditer(body):
