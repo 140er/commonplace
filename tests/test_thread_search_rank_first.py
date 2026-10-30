@@ -160,7 +160,7 @@ def test_ties_use_thread_and_chunk_order_across_id_batches():
             store.store(
                 "test",
                 str(i),
-                [ThreadMessage(j, "user", "message", "alpha " * 300, raw="") for j in range(3)],
+                [ThreadMessage(j, "user", "message", "alpha " * 600, raw="") for j in range(3)],
                 actor="test",
             ).id
             for i in range(8)
