@@ -80,11 +80,6 @@ def install(gateway):
     def logout(h):
         if require_principal(gateway, h) is None:
             return
-        # SameSite=Lax cookies and the origin check prevent cross-site sign-out.
-        origin = h.headers.get("Origin")
-        if origin and urlsplit(origin).netloc != h.headers.get("Host"):
-            send_json(h, 403, {"error": "Origin refused"})
-            return
         session = sessions.cookie_value(h.headers.get("Cookie"))
         if session:
             sessions.end_session(gateway.db, session)

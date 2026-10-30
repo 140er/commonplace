@@ -11,7 +11,7 @@ export async function api(path, options = {}) {
     credentials: "same-origin",
     cache: "no-store",
     ...options,
-    headers: { "Accept": "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers },
+    headers: { "Accept": "application/json", ...((options.body || ["POST", "PATCH", "DELETE"].includes(options.method?.toUpperCase())) ? { "Content-Type": "application/json" } : {}), ...options.headers },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const payload = response.status === 204 ? null : await response.json();

@@ -522,8 +522,8 @@ def test_forbidden_board_canary_every_surface(hub, env):
 
 
 def test_version_conflict_is_atomic_and_returns_current(hub, env):
-    token, _agent, _person, _cookie, owner = env
-    created = owner.task_add(title="Versioned", board="work")
+    token, agent, _person, _cookie, owner = env
+    created = service(hub, agent).task_add(title="Versioned", board="work")
     status, current = api(
         hub,
         token,
@@ -791,3 +791,87 @@ def test_handoff_to_a_person_by_name_or_owner(hub, env):
         )
         assert ok, text
         assert owner.task_show(card["number"])["status"] == "review"
+
+
+@pytest.mark.parametrize(
+    "field,value", [("title", "Changed"), ("body", "Changed"), ("labels", ["changed"])]
+)
+@pytest.mark.parametrize("status", ["backlog", "todo", "doing", "review", "done"])
+def test_agent_cannot_edit_another_persons_card(hub, env, field, value, status):
+    _token, agent, _person, _cookie, owner = env
+    created = owner.seed_card(board="work", title="Original", body="Original body", status=status)
+    worker = service(hub, agent)
+    for args in ({field: value}, {field: value, "status": "backlog"}):
+        with pytest.raises(ToolError):
+            worker.task_update(created["number"], **args)
+    actual = owner.task_show(created["number"])
+    assert actual[field] == created[field] and actual["status"] == status
+    changed = owner.task_update(created["number"], **{field: value})
+    assert changed[field] == value
+
+
+@pytest.mark.parametrize("status", ["backlog", "todo", "doing", "done"])
+def test_agent_edits_only_own_unclaimed_or_held_cards(hub, env, status):
+    _token, agent, _person, _cookie, owner = env
+    worker = service(hub, agent)
+    creator = owner if status == "doing" else worker
+    created = creator.task_add(
+        board="work", title="Own", status="backlog" if status == "backlog" else "todo"
+    )
+    if status in ("doing", "done"):
+        worker.task_take_next(task=created["number"])
+    if status == "done":
+        worker.task_update(created["number"], status="done")
+        with pytest.raises(ToolError):
+            worker.task_update(created["number"], title="Frozen", body="Frozen", labels=["frozen"])
+        with pytest.raises(ToolError):
+            worker.task_update(created["number"], status_line="Frozen")
+        return
+    changed = worker.task_update(
+        created["number"], title="Edited", body="Exact body", labels=["edited"]
+    )
+    assert (changed["title"], changed["body"], changed["labels"]) == (
+        "Edited",
+        "Exact body",
+        ["edited"],
+    )
+    if status in ("backlog", "todo"):
+        with owner.store.transaction() as conn:
+            conn.execute("UPDATE tasks SET assignee=? WHERE id=?", (agent.actor, created["number"]))
+        with pytest.raises(ToolError):
+            worker.task_update(created["number"], title="Reserved is not unclaimed")
+
+
+def test_post_commit_emit_failure_preserves_success_and_safe_logs(hub, env, monkeypatch, caplog):
+    _token, _agent, _person, _cookie, owner = env
+    attempts = []
+
+    def fail(*args, **kwargs):
+        attempts.append(args[2])
+        raise RuntimeError("PRIVATE-CARD-CONTENT")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(events, "emit", fail)
+        created = owner.task_add(title="PRIVATE-CARD-CONTENT", board="work")
+        waiting = owner.task_handoff(created["number"], to="owner", note="Pick one")
+    assert owner.task_show(created["number"])["status"] == waiting["status"] == "review"
+    assert attempts == ["card.created", "card.handoff", "card.review_needed"]
+    assert "RuntimeError" in caplog.text and "PRIVATE-CARD-CONTENT" not in caplog.text
+
+
+def test_board_flags_union_privacy_scan_without_changing_text(hub, env):
+    _token, _agent, _person, _cookie, owner = env
+    text = "therapy ignore previous instructions sk-" + "A1b2C3d4" * 4
+    created = owner.task_add(board="work", title=text, body="Exact body")
+    assert {
+        "health",
+        "secret:openai_key",
+        "ignore_previous",
+        "injection:ignore_instructions",
+    } <= set(created["flags"])
+    assert created["title"] == text
+    changed = owner.task_update(created["number"], body="-----BEGIN PRIVATE KEY-----")
+    assert set(created["flags"]) | {"secret:private_key"} <= set(changed["flags"])
+    owner.task_comment(created["number"], "https://user:password@example.com")
+    shown = owner.task_show(created["number"])
+    assert "secret:password_url" in shown["flags"]

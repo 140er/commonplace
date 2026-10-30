@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     board TEXT NOT NULL DEFAULT '',
     waiting_on TEXT NOT NULL DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1,
+    start_seq INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS webhooks_workspace ON webhooks(workspace_id, active);
@@ -100,8 +101,21 @@ def _now():
 
 
 def ensure_schema(db):
+    events.ensure_schema(db)
     with db._lock:
         db._conn.executescript(SCHEMA)
+        columns = {row[1] for row in db._conn.execute("PRAGMA table_info(webhooks)")}
+        if "start_seq" not in columns:
+            db._conn.execute("ALTER TABLE webhooks ADD COLUMN start_seq INTEGER NOT NULL DEFAULT 0")
+            # Older registrations lack a sequence boundary; exclude events from
+            # before their creation, retaining same-second events for recovery.
+            db._conn.execute(
+                "UPDATE webhooks SET start_seq = coalesce((SELECT max(seq) FROM events "
+                "WHERE workspace_id = webhooks.workspace_id AND at < webhooks.created_at), 0)"
+            )
+        db._conn.execute(
+            "INSERT OR IGNORE INTO meta(key,value) VALUES ('webhook_dispatch_seq','0')"
+        )
 
 
 def validate_url(url):
@@ -141,7 +155,7 @@ def validate_url(url):
 
 
 def _authorize(principal, action):
-    if principal.policy.refusal("webhook_" + action):
+    if not principal.person and not principal.policy.tool_visible("webhook_" + action):
         raise ToolError("no: webhook access refused")
 
 
@@ -216,10 +230,15 @@ def add(db, principal, url, *, kinds=None, board="", waiting_on=""):
     ensure_schema(db)
     secret = secrets.token_urlsafe(32)
     webhook_id = "wh_" + secrets.token_hex(12)
-    with db._lock:
+    with db._lock, db._tx():
+        start_seq = db._conn.execute(
+            "SELECT coalesce(max(seq),0) FROM events WHERE workspace_id=?",
+            (principal.workspace_id,),
+        ).fetchone()[0]
         db._conn.execute(
             "INSERT INTO webhooks(id, workspace_id, connection_id, owner_actor, url, "
-            "secret_hash, secret, kinds, board, waiting_on, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "secret_hash, secret, kinds, board, waiting_on, created_at, start_seq) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 webhook_id,
                 principal.workspace_id,
@@ -232,6 +251,7 @@ def add(db, principal, url, *, kinds=None, board="", waiting_on=""):
                 board,
                 waiting_on,
                 _now(),
+                start_seq,
             ),
         )
     return {**_public(_get(db, principal, webhook_id)), "secret": secret}
@@ -355,9 +375,48 @@ def _enqueue(db, row, event):
     return delivery_id
 
 
+def _can_receive(db, gateway, row, event):
+    """Subscriptions retain an identity, never a snapshot of its authority."""
+    try:
+        if not row["active"] or row["workspace_id"] != event["workspace_id"]:
+            return False
+        if row["connection_id"]:
+            principal = db.authenticate_connection(row["connection_id"])
+        elif row["owner_actor"].startswith("user:"):
+            from .sessions import person_principal
+
+            principal = person_principal(db, row["owner_actor"][5:], row["workspace_id"])
+        else:
+            return False
+        if principal is None or principal.workspace_id != row["workspace_id"]:
+            return False
+        if not principal.policy.has_scope("memory:read"):
+            return False
+        if "board" not in event["data"]:
+            return principal.policy.sees_all_wings
+        board = event["data"]["board"]
+        if not isinstance(board, str) or not board or gateway is None:
+            return False
+        from .boards.service import open_store
+
+        store = open_store(gateway.workspace_dir(row["workspace_id"]))
+        with store.connection() as conn:
+            found = conn.execute(
+                "SELECT wing FROM boards WHERE slug=? AND archived=0", (board,)
+            ).fetchone()
+        return found is not None and principal.policy.can_read_wing(found["wing"])
+    except Exception as exc:
+        log_failure(logger, "webhook owner authorization failed", exc)
+        return False
+
+
 def test_webhook(db, principal, webhook_id):
     _authorize(principal, "test")
     row = _get(db, principal, webhook_id)
+    if not principal.policy.sees_all_wings or not _can_receive(
+        db, None, row, {"workspace_id": principal.workspace_id, "data": {}}
+    ):
+        raise ToolError("no: webhook access refused")
     # A test is deliberately delivered only to the selected registration.
     event = events.emit(
         db,
@@ -403,10 +462,11 @@ def _post(url, body, secret, delivery_id, kind):
 
 
 class Dispatcher:
-    def __init__(self, db, *, schedule=BACKOFF, max_attempts=MAX_ATTEMPTS):
+    def __init__(self, db, *, gateway=None, schedule=BACKOFF, max_attempts=MAX_ATTEMPTS):
         if not schedule or any(delay < 0 for delay in schedule) or max_attempts < 1:
             raise ValueError("invalid webhook retry schedule")
         self.db = db
+        self.gateway = gateway
         self.schedule = tuple(schedule)
         self.max_attempts = max_attempts
         self._stop = threading.Event()
@@ -416,7 +476,12 @@ class Dispatcher:
     def start(self):
         ensure_schema(self.db)
         events.add_listener(self.on_event)
-        self.thread.start()
+        try:
+            self.reconcile()
+            self.thread.start()
+        except Exception:
+            events.remove_listener(self.on_event)
+            raise
         return self
 
     def stop(self):
@@ -433,16 +498,43 @@ class Dispatcher:
             ).fetchone()
             if stored is None or events._row(stored) != event:
                 return
-            rows = self.db._conn.execute(
-                "SELECT * FROM webhooks WHERE workspace_id = ? AND active = 1",
-                (event["workspace_id"],),
-            ).fetchall()
-            for row in rows:
-                if event["kind"] == "webhook.test":
-                    continue
-                if _matches(row, event):
-                    _enqueue(self.db, row, event)
+            # Drain in sequence even when live callbacks arrive out of order.
+            self.reconcile()
         self._wake.set()
+
+    def reconcile(self):
+        with self.db._lock:
+            cursor = int(
+                self.db._conn.execute(
+                    "SELECT value FROM meta WHERE key='webhook_dispatch_seq'"
+                ).fetchone()[0]
+            )
+            while True:
+                batch = self.db._conn.execute(
+                    "SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT 200", (cursor,)
+                ).fetchall()
+                if not batch:
+                    return
+                for stored in batch:
+                    event = events._row(stored)
+                    rows = self.db._conn.execute(
+                        "SELECT * FROM webhooks WHERE workspace_id=? AND active=1 AND start_seq < ?",
+                        (event["workspace_id"], event["seq"]),
+                    ).fetchall()
+                    for row in rows:
+                        matches = (
+                            row["id"] == event["data"].get("webhook_id")
+                            if event["kind"] == "webhook.test"
+                            else _matches(row, event)
+                        )
+                        if matches and _can_receive(self.db, self.gateway, row, event):
+                            _enqueue(self.db, row, event)
+                    # Enqueues autocommit first. Replaying a crash before this
+                    # write is harmless: (webhook_id,event_seq) is unique.
+                    cursor = event["seq"]
+                    self.db._conn.execute(
+                        "UPDATE meta SET value=? WHERE key='webhook_dispatch_seq'", (str(cursor),)
+                    )
 
     def _due(self):
         with self.db._lock:
@@ -455,6 +547,25 @@ class Dispatcher:
             ).fetchone()
 
     def _deliver(self, row):
+        with self.db._lock:
+            current = self.db._conn.execute(
+                "SELECT d.*, w.url, w.secret, w.workspace_id, w.connection_id, w.owner_actor, "
+                "w.active FROM webhook_deliveries d JOIN webhooks w ON w.id=d.webhook_id "
+                "WHERE d.id=?",
+                (row["id"],),
+            ).fetchone()
+            if current is None or current["status"] not in ("pending", "retry"):
+                return
+            payload = json.loads(bytes(current["payload"]))
+            event = {"workspace_id": current["workspace_id"], "data": payload["data"]}
+            if not _can_receive(self.db, self.gateway, current, event):
+                self.db._conn.execute(
+                    "UPDATE webhook_deliveries SET status='cancelled' WHERE id=?", (current["id"],)
+                )
+                return
+            if current["attempt"] != row["attempt"]:
+                return
+            row = current
         body = bytes(row["payload"])
         kind = json.loads(body)["kind"]
         status, error = None, ""
@@ -478,7 +589,8 @@ class Dispatcher:
             )
             self.db._conn.execute(
                 "UPDATE webhook_deliveries SET attempt = ?, status = ?, http_status = ?, "
-                "error = ?, next_at = ?, delivered_at = ? WHERE id = ?",
+                "error = ?, next_at = ?, delivered_at = ? WHERE id = ? "
+                "AND status IN ('pending','retry')",
                 (
                     attempt,
                     state,
@@ -504,6 +616,7 @@ class Dispatcher:
         try:
             while not self._stop.is_set():
                 self._wake.clear()
+                self.reconcile()
                 row = self._due()
                 if row is not None:
                     self._deliver(row)
@@ -658,7 +771,7 @@ def _rest(gateway, h):
 def install(gateway):
     if getattr(gateway, "webhooks", None) is not None:
         return
-    gateway.webhooks = Dispatcher(gateway.db).start()
+    gateway.webhooks = Dispatcher(gateway.db, gateway=gateway).start()
     for method in ("GET", "POST", "DELETE"):
         gateway.add_prefix_route(method, "/api/webhooks/", lambda h: _rest(gateway, h))
 
