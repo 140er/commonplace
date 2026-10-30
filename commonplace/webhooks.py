@@ -450,7 +450,9 @@ def _can_receive(db, gateway, row, event):
             return False
         if not principal.policy.has_scope("memory:read"):
             return False
-        if set(event["data"]) == {"webhook_id"} and event["data"]["webhook_id"] == row["id"]:
+        # Delivery rows carry webhook_id; registration rows are the webhook.
+        own_id = row["webhook_id"] if "webhook_id" in row.keys() else row["id"]
+        if set(event["data"]) == {"webhook_id"} and event["data"]["webhook_id"] == own_id:
             # A test of this very webhook carries nothing but its own id.
             return True
         if "board" not in event["data"]:
