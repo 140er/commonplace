@@ -393,7 +393,10 @@ def _run(argv, server: str, token: str):
             if record.get("context") == context:
                 return _resume(record, journal, client, server, token)
         usage = trigger.usage_from_tail(
-            str(transcript_path), fmt=client, override_window=settings.context_window
+            str(transcript_path),
+            fmt=client,
+            override_window=settings.context_window,
+            configured=trigger.configured_model(cwd) if client == "claude-code" else "",
         )
         if event != "PreCompact" and not trigger.should_handoff(usage, settings):
             return None

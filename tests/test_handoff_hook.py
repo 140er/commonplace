@@ -22,6 +22,7 @@ from commonplace.handoff.models import ContextUsage
 @pytest.fixture
 def local(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     for name in (
         "COMMONPLACE_URL",
         "COMMONPLACE_TOKEN",
@@ -528,7 +529,10 @@ def test_settings_window_and_threshold_used(local, api, monkeypatch, capsys):
     local.usage = ContextUsage(450_000, 500_000, "override-model")
     assert run_hook(local, monkeypatch, capsys) == ("", "")
     assert local.tail_calls == [
-        (local.data["transcript_path"], {"fmt": "claude-code", "override_window": 500_000})
+        (
+            local.data["transcript_path"],
+            {"fmt": "claude-code", "override_window": 500_000, "configured": ""},
+        )
     ]
     assert len(api.calls) == 1
 

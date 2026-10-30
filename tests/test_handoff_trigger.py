@@ -402,3 +402,72 @@ def test_fifty_megabyte_transcript_stays_fast_and_bounded(
     else:
         assert usage is None
         assert reads == [262_145, 1_048_577]
+
+
+# ── 1M-context Claude models ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-opus-5-5[1m]", "claude-sonnet-5-5-1m", "opus[1m]", "claude-opus-5-5-1m-20261001"],
+)
+def test_one_million_models_by_name(model):
+    assert trigger.window_for_model(model) == 1_000_000
+
+
+def test_configured_model_marks_one_million_and_override_wins():
+    assert trigger.window_for_model("claude-opus-5-5", configured="opus[1m]") == 1_000_000
+    assert trigger.window_for_model("claude-opus-5-5", configured="opus") == 200_000
+    assert trigger.window_for_model("claude-opus-5-5[1m]", 300_000) == 300_000
+    assert trigger.window_for_model("claude-opus-5-5", 300_000, configured="opus[1m]") == 300_000
+
+
+def test_extra_one_million_models_from_env(monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_1M_MODELS", "claude-fable-5-1, other")
+    assert trigger.window_for_model("claude-fable-5-1") == 1_000_000
+    assert trigger.window_for_model("claude-haiku-5-5") == 200_000
+
+
+def test_configured_model_reads_env_then_project_then_user(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    (home / ".claude").mkdir(parents=True)
+    (project / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    assert trigger.configured_model(str(project)) == ""
+    (home / ".claude" / "settings.json").write_text('{"model": "sonnet"}')
+    assert trigger.configured_model(str(project)) == "sonnet"
+    (project / ".claude" / "settings.json").write_text('{"model": "opus[1m]"}')
+    assert trigger.configured_model(str(project)) == "opus[1m]"
+    (project / ".claude" / "settings.local.json").write_text("not json")
+    assert trigger.configured_model(str(project)) == "opus[1m]"
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+    assert trigger.configured_model(str(project)) == "claude-haiku-5-5"
+
+
+def _claude_line(used, model="claude-opus-5-5"):
+    return json.dumps(
+        {
+            "type": "assistant",
+            "message": {"model": model, "usage": {"input_tokens": used, "output_tokens": 0}},
+        }
+    )
+
+
+def test_usage_above_the_table_window_means_one_million(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(_claude_line(250_000) + "\n")
+    usage = trigger.usage_from_tail(str(path))
+    assert usage.window_tokens == 1_000_000 and usage.used_tokens == 250_000
+    assert trigger.usage_from_tail(str(path), override_window=200_000).window_tokens == 200_000
+
+
+def test_configured_one_million_changes_the_trigger(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(_claude_line(170_000) + "\n")
+    on = HandoffSettings(enabled=True)
+    assert trigger.should_handoff(trigger.usage_from_tail(str(path)), on)
+    usage = trigger.usage_from_tail(str(path), configured="opus[1m]")
+    assert usage.window_tokens == 1_000_000
+    assert not trigger.should_handoff(usage, on)

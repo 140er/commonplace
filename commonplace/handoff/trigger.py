@@ -30,13 +30,63 @@ _CLAUDE_TOKEN_FIELDS = (
 )
 
 
-def window_for_model(model: str, override: Optional[int] = None) -> int:
-    """Resolve an explicit override, a 1M marker, then a known model prefix."""
+ONE_MILLION = 1_000_000
+# Model names (prefixes) that run with a 1M window. Claude Code doesn't write
+# the "[1m]" alias into transcripts, so the hook also checks the configured
+# model (see ``configured_model``). Extend with COMMONPLACE_1M_MODELS=a,b.
+ONE_MILLION_MODELS: tuple = ("claude-sonnet-4-5-1m", "claude-opus-5-5-1m")
+
+
+def _one_million(name: str) -> bool:
+    name = name.strip().lower()
+    if not name:
+        return False
+    if "[1m]" in name or name.endswith("-1m"):
+        return True
+    extra = tuple(
+        item.strip().lower()
+        for item in os.environ.get("COMMONPLACE_1M_MODELS", "").split(",")
+        if item.strip()
+    )
+    return name.startswith(ONE_MILLION_MODELS + extra)
+
+
+def configured_model(cwd: str = "") -> str:
+    """The model Claude Code was told to use: ``ANTHROPIC_MODEL``, else the
+    ``model`` field of the project's or the user's ``.claude/settings.json``.
+    Empty if none. Small files only; never raises."""
+    value = os.environ.get("ANTHROPIC_MODEL", "")
+    if value:
+        return value
+    places = []
+    if cwd:
+        places += [
+            os.path.join(cwd, ".claude", "settings.local.json"),
+            os.path.join(cwd, ".claude", "settings.json"),
+        ]
+    places.append(os.path.join(os.path.expanduser("~"), ".claude", "settings.json"))
+    for place in places:
+        try:
+            if os.path.getsize(place) > 1_000_000:
+                continue
+            with open(place, encoding="utf-8") as stream:
+                data = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        model = data.get("model") if isinstance(data, dict) else None
+        if isinstance(model, str) and model:
+            return model
+    return ""
+
+
+def window_for_model(model: str, override: Optional[int] = None, *, configured: str = "") -> int:
+    """An explicit override wins; then a 1M model (by name or the configured
+    model); then a known model prefix; else the default."""
     if override is not None:
         return override
     name = model.strip().lower()
-    if "[1m]" in name or name.endswith("-1m"):
-        return 1_000_000
+    if _one_million(name) or _one_million(configured):
+        return ONE_MILLION
     for prefix, window in MODEL_WINDOWS.items():
         if name.startswith(prefix):
             return window
@@ -68,7 +118,17 @@ def _codex_usage(payload: dict) -> Optional[tuple[int, Optional[int]]]:
     return used, window
 
 
-def _scan_usage(data: bytes, fmt: str, override: Optional[int]) -> Optional[ContextUsage]:
+def _claude_usage(used: int, name: str, override: Optional[int], configured: str) -> ContextUsage:
+    window = window_for_model(name, override, configured=configured)
+    # More context in use than the table allows: the model runs with 1M.
+    if override is None and used > window and window < ONE_MILLION:
+        window = ONE_MILLION
+    return ContextUsage(used, window, name)
+
+
+def _scan_usage(
+    data: bytes, fmt: str, override: Optional[int], configured: str = ""
+) -> Optional[ContextUsage]:
     latest_codex: Optional[tuple[int, Optional[int]]] = None
     model: Optional[str] = None
     for line in reversed(data.split(b"\n")):
@@ -98,7 +158,7 @@ def _scan_usage(data: bytes, fmt: str, override: Optional[int]) -> Optional[Cont
             if used is not None:
                 name = message.get("model")
                 name = name if isinstance(name, str) else ""
-                return ContextUsage(used, window_for_model(name, override), name)
+                return _claude_usage(used, name, override, configured)
         elif (
             fmt != "claude-code"
             and kind == "event_msg"
@@ -121,10 +181,12 @@ def usage_from_tail(
     fmt: str = "auto",
     override_window: Optional[int] = None,
     tail_bytes: int = 262_144,
+    configured: str = "",
 ) -> Optional[ContextUsage]:
     """The last model call's context size: Claude Code ``message.usage``
     (input + cache_read + cache_creation + output tokens), Codex
     ``token_count`` events. Retry once at 4x the tail size if none are found.
+    ``configured`` is the model Claude Code was told to use (``configured_model``).
     Missing, unreadable or malformed transcripts return ``None``.
     """
     if fmt not in ("auto", "claude-code", "codex"):
@@ -143,7 +205,7 @@ def usage_from_tail(
                     previous, data = data[:1], data[1:]
                     if previous != b"\n":
                         data = data.partition(b"\n")[2]
-                usage = _scan_usage(data, fmt, override_window)
+                usage = _scan_usage(data, fmt, override_window, configured)
                 if usage is not None:
                     return usage
                 if not start:
