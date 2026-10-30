@@ -13,6 +13,7 @@ from commonplace import events, privacy
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
+from .display import stale_before
 from .store import (
     STATUSES,
     BoardStore,
@@ -95,9 +96,7 @@ def needs_me(store, principal) -> dict:
     result = {
         key: [] for key in ("asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale")
     }
-    stale_before = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = stale_before()
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT t.*,b.slug AS board,b.wing AS board_wing FROM tasks t "
@@ -115,7 +114,7 @@ def needs_me(store, principal) -> dict:
             if row["pr_url"] and row["checks"] == "passing" and row["status"] != "done":
                 result["ready_to_merge"].append(item)
             if row["status"] == "doing" and row["assignee"].startswith("conn:"):
-                if (row["heartbeat_at"] or row["updated_at"]) < stale_before:
+                if (row["heartbeat_at"] or row["updated_at"]) < cutoff:
                     result["stale"].append(item)
     result["count"] = len({c["number"] for bucket in result.values() for c in bucket})
     return result
@@ -453,6 +452,12 @@ class BoardService:
                     "at": r["created_at"],
                     "choice": r["choice"],
                     "target": r["target"],
+                    # Events that opened an ask carry the choices offered, verbatim.
+                    **(
+                        {"options": json.loads(r["options"] or "[]")}
+                        if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
+                        else {}
+                    ),
                 }
                 for r in conn.execute(
                     "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
@@ -530,7 +535,15 @@ class BoardService:
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
         if status == "review":
-            self._log(conn, number, "ask", text=ask, target=target, to_status="review")
+            self._log(
+                conn,
+                number,
+                "ask",
+                text=ask,
+                target=target,
+                to_status="review",
+                options=options or [],
+            )
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
         return card(conn, task_row(conn, number), self.principal)
 
@@ -824,12 +837,22 @@ class BoardService:
                 return card(conn, row, self.principal)
             self._set(conn, row, updates)
             moved = updates.get("status", row["status"]) != row["status"]
+            ask = (
+                {
+                    "text": updates["ask"],
+                    "target": updates["ask_to"],
+                    "options": json.loads(updates["ask_options"]),
+                }
+                if moved and updates["status"] == "review"
+                else {}
+            )
             self._log(
                 conn,
                 row["id"],
                 "move" if moved else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
+                **ask,
             )
             self._emit(
                 conn,
@@ -878,6 +901,7 @@ class BoardService:
             from_status=row["status"],
             to_status=status,
             flags=flags_for(note),
+            options=options if person else None,
         )
         self._emit(
             conn,
@@ -1057,7 +1081,14 @@ class BoardService:
             row = task_row(conn, created["number"])
             self._set(conn, row, updates)
             if status != row["status"]:
-                self._log(conn, row["id"], "move", from_status=row["status"], to_status=status)
+                ask = (
+                    {"text": updates["ask"], "target": updates["ask_to"], "options": []}
+                    if status == "review"
+                    else {}
+                )
+                self._log(
+                    conn, row["id"], "move", from_status=row["status"], to_status=status, **ask
+                )
                 self._emit(conn, row["id"], "card.moved", **{"from": row["status"], "to": status})
             if status == "review":
                 self._emit(conn, row["id"], "card.review_needed")

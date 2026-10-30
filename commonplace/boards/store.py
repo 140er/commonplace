@@ -10,6 +10,8 @@ from pathlib import Path
 
 from commonplace.extensions import ToolError
 
+from .display import need
+
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
     "repo": "TEXT",
@@ -66,7 +68,7 @@ def require_visible(row, principal) -> None:
 
 def card(conn, row, principal=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
-    return {
+    result = {
         "number": row["id"],
         "board": row["board"],
         "title": row["title"],
@@ -88,13 +90,19 @@ def card(conn, row, principal=None) -> dict:
         "updated_at": row["updated_at"],
         "position": row["position"],
     }
+    result["need"] = need(
+        result,
+        me=principal and f"user:{principal.user_id}",
+        owner=bool(principal and principal.role == "owner"),
+    )
+    return result
 
 
 def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
     conn.execute(
-        "INSERT INTO task_events(task_id,kind,text,from_status,to_status,target,choice,"
+        "INSERT INTO task_events(task_id,kind,text,from_status,to_status,target,choice,options,"
         "stamp_user,stamp_connection,stamp_trust,flags,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             number,
             kind,
@@ -103,6 +111,7 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
             fields.get("to_status"),
             fields.get("target"),
             fields.get("choice"),
+            None if fields.get("options") is None else json.dumps(fields["options"]),
             fields.get("user_id", actor),
             actor.removeprefix("conn:") if actor.startswith("conn:") else None,
             trust,
@@ -159,6 +168,9 @@ class BoardStore:
                     "THEN 'conn:' || stamp_connection ELSE 'user:' || stamp_user END "
                     "WHERE created_by IS NULL"
                 )
+                event_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_events)")}
+                if "options" not in event_columns:
+                    conn.execute("ALTER TABLE task_events ADD COLUMN options TEXT")
                 link_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_links)")}
                 if "title" not in link_columns:
                     conn.execute("ALTER TABLE task_links ADD COLUMN title TEXT NOT NULL DEFAULT ''")

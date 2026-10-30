@@ -7,7 +7,7 @@
 .item h3 { font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .item h3 .pre { color: var(--quiet); }
 .item .top .meta { margin-left: auto; }
-.item .q, .item .opts { margin-left: 54px; }
+.item .q, .item .opts, .item .task-meta, .item .status-line { margin-left: 18px; }
 .item .q { color: var(--muted); }
 .item .q::before { content: "\201C"; } .item .q::after { content: "\201D"; }
 .item.filed h3 { color: var(--muted); }

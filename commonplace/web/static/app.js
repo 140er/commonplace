@@ -16,29 +16,57 @@ const prLink = (card) => {
   const href = safeLink(card.pr_url);
   return href ? `<a href="${e(href)}" target="_blank" rel="noopener noreferrer">PR #${e(card.pr_number || "↗")}</a>` : card.pr_number ? `<span>PR #${e(card.pr_number)}</span>` : "";
 };
+const needLabels = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", checks: "Checks running", working: "Working", idle: "Idle", done: "Done" };
 function dot(card) {
-  const ready = (state.needs.ready_to_merge || []).some((c) => c.number === card.number);
-  const kind = card.ask && (!card.ask_to || card.ask_to === state.me.actor) ? "ask" : card.checks === "pending" ? "pending" : ready ? "ready" : card.status === "review" || card.labels?.includes("plan") ? "review" : "";
-  const label = { ask: "Needs you", pending: "Checks pending", ready: "Ready to merge", review: "Review or plan" }[kind] || card.status;
-  return `<i class="status-dot ${kind}" role="img" aria-label="${e(label)}"></i>`;
+  const need = needLabels[card.need] ? card.need : "idle";
+  return `<i class="status-dot ${need}" data-need="${need}" role="img" aria-label="${needLabels[need]}"></i>`;
 }
+// One task row: dot, title, elapsed; then #N, context, branch and PR.
+const taskRow = (card, context = "") => `<div class="trow">${dot(card)}<a class="tt" href="#/card/${card.number}">${e(card.title)}</a><time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time><div class="tm"><a href="#/card/${card.number}">#${card.number}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}${context}${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}</div></div>`;
+const rowFoot = (card) => `${card.claim_until ? `<div class="task-meta">${claim(card)}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
 function claim(card) {
   if (!card.claim_until) return "";
   const end = Date.parse(card.claim_until), start = Date.parse(card.heartbeat_at || card.updated_at);
   const ratio = Math.max(0, Math.min(1, (end - Date.now()) / (end - start || 1800000)));
   return `<span class="claim ${ratio < .2 ? "low" : ""}" data-claim-until="${e(card.claim_until)}" data-claim-start="${e(card.heartbeat_at || card.updated_at)}" role="img" aria-label="Claim ${Math.round(ratio * 100)}% remaining">${Array.from({ length: 6 }, (_, i) => `<i class="${i < Math.ceil(ratio * 6) ? "on" : ""}"></i>`).join("")}</span>`;
 }
-const cardMeta = (card, full = true) => {
-  const fields = `${full ? `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>` : ""}${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}${full ? `<time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time>` : ""}${claim(card)}`;
-  return `${fields ? `<div class="task-meta">${fields}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
-};
+const cardMeta = (card) => `<div class="task-meta"><span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}<time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time>${claim(card)}</div>${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
+// Live transitions: rows keep their identity across a re-render, so a row that changed
+// group slides there and a dot whose need changed pops into its new state.
+function capture(view) {
+  const content = root.querySelector("#content");
+  const before = new Map();
+  if (content.dataset.view === view) content.querySelectorAll("[data-key]").forEach((row) => {
+    const d = row.querySelector(".status-dot");
+    if (!before.has(row.dataset.key)) before.set(row.dataset.key, { rect: row.getBoundingClientRect(), need: d?.dataset.need, color: d && getComputedStyle(d).backgroundColor });
+  });
+  return () => {
+    content.dataset.view = view;
+    const phase = `${-(Date.now() % 1000)}ms`;
+    content.querySelectorAll(".status-dot.checks").forEach((d) => { d.style.animationDelay = phase; });
+    if (!before.size || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const seen = new Set();
+    content.querySelectorAll("[data-key]").forEach((row) => {
+      const key = row.dataset.key, old = before.get(key);
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!old) { row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" }); return; }
+      const rect = row.getBoundingClientRect(), dx = old.rect.left - rect.left, dy = old.rect.top - rect.top;
+      if (Math.abs(dx) + Math.abs(dy) > 1) row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 240, easing: "cubic-bezier(.2, .7, .3, 1)" });
+      const d = row.querySelector(".status-dot");
+      if (d && old.need && old.need !== d.dataset.need) d.animate([{ transform: "scale(1.75)", backgroundColor: old.color }, { transform: "scale(1)" }], { duration: 240, easing: "ease-out" });
+    });
+  };
+}
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
   const active = document.activeElement;
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
+    ask: active?.closest?.("[data-ask]") && !active.dataset.draft ? active.dataset.option ?? "" : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
+    stacks: [...root.querySelectorAll(".stack")].map((stack) => stack.scrollTop),
   };
 }
 function restore(saved) {
@@ -50,9 +78,14 @@ function restore(saved) {
     input?.focus({ preventScroll: true });
     if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
   }
+  if (saved?.ask != null) {
+    const ask = root.querySelector("[data-ask]");
+    (saved.ask === "" ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask)}"]`))?.focus({ preventScroll: true });
+  }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
+  root.querySelectorAll(".stack").forEach((stack, i) => { if (saved?.stacks?.[i]) stack.scrollTop = saved.stacks[i]; });
 }
 function signin() {
   state.mapDispose?.(); state.mapDispose = null;
@@ -80,9 +113,33 @@ function title(text, actions = "") {
   root.querySelector("#head-actions").innerHTML = actions;
   document.title = `${text} · Commonplace`;
 }
-function decision(card, panel = false) {
+function decision(card, panel = false, answered = null) {
+  if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
   return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+}
+const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
+// An ask inside the conversation: the question verbatim and its choices. Answered asks keep
+// their place in time with the pick marked and who answered when; only the open ask is live.
+function askCard(card, ask, { answer = null, open = false } = {}) {
+  const offered = [...(open ? card.ask_options || [] : ask.options || [])];
+  if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
+  const question = ask.text ?? (open ? card.ask : null);
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, true) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+}
+function conversation(card) {
+  const items = [];
+  let ask = null;
+  for (const event of card.events || []) {
+    if (event.options) items.push(ask = { ask: event });
+    else if (event.kind === "decide" && ask) { ask.answer = event; ask = null; }
+    else items.push({ event });
+  }
+  if (card.ask != null) {
+    if (ask) ask.open = true;
+    else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
+  }
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, item)).join("");
 }
 function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
@@ -92,7 +149,7 @@ function needsView() {
   const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
   const cards = needsCards();
   if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" tabindex="0"><div class="top"><a class="id" href="#/card/${card.number}">#${card.number}</a><h3>${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</h3><div class="meta"><a href="#/board/${enc(card.board)}">${e(card.board)}</a><span>${e(actor(card.return_to || card.assignee || card.created_by))}</span><time data-elapsed="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></div></div>${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${cardMeta(card, false)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="0">${taskRow(card, `<a href="#/board/${enc(card.board)}">${e(card.board)}</a><span class="actor">${e(actor(card.return_to || card.assignee || card.created_by))}</span>`)}${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${rowFoot(card)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
 }
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
@@ -101,7 +158,7 @@ function boardView() {
   root.querySelector("#content").innerHTML = `<div class="cols ${state.backlog ? "expanded" : ""}">${statuses.map((status) => {
     const all = state.cards.filter((c) => c.status === status);
     const list = status === "done" ? [...all].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 20) : all;
-    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}"><p class="ct">${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a></p><div class="meta"><a href="#/card/${card.number}">#${card.number}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}${card.links ? `<span>${card.links} memories</span>` : ""}</div>${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${cardMeta(card)}</article>`).join("")}</div></section>`;
+    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}</article>`).join("")}</div></section>`;
   }).join("")}</div>`;
 }
 function boardsView() {
@@ -111,14 +168,16 @@ function boardsView() {
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  if (state.card?.number !== number) panel.innerHTML = message("Loading card…");
+  const opening = state.card?.number !== number;
+  if (opening) panel.innerHTML = message("Loading card…");
   try {
     const card = await api(`/api/cards/${number}`);
     if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}${card.ask ? `<div class="hit"><p class="q">${e(card.ask)}</p><p class="stamp">${e(actor(card.return_to))}</p>${decision(card, true)}</div>` : ""}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${(card.events || []).map((event) => `<li class="ev"><time title="${e(event.at)}">${e(event.at?.slice(11, 16) || "")}</time><span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>`).join("")}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
+    if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
     if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
@@ -203,7 +262,7 @@ async function refresh({ background = false, events = [] } = {}) {
       if (epoch !== state.screen) return;
       state.cards = result.cards;
     }
-    const saved = remember();
+    const saved = remember(), play = capture(state.base);
     navigation();
     if (state.base.startsWith("#/board/")) boardView();
     else if (state.base === "#/boards") boardsView();
@@ -213,7 +272,7 @@ async function refresh({ background = false, events = [] } = {}) {
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
     } else needsView();
-    restore(saved);
+    restore(saved); play();
     if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
     showError("");
     return true;
@@ -377,6 +436,11 @@ root.addEventListener("drop", async (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
   if (event.key === "Escape") { root.querySelector('[data-action="close-panel"]')?.click(); return; }
+  const ask = event.target instanceof Element && event.target.closest("[data-ask]");
+  if (ask && /^[1-6]$/.test(event.key)) {
+    ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
+    event.preventDefault(); return;
+  }
   if (state.base !== "#/" || !state.me) return;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
   const index = cards.findIndex((c) => c.number === state.selected);
@@ -421,7 +485,7 @@ setInterval(() => {
     bar.setAttribute("aria-label", `Claim ${Math.round(ratio * 100)}% remaining`);
     [...bar.children].forEach((block, i) => block.classList.toggle("on", i < Math.ceil(ratio * 6)));
   });
-}, 30000);
+}, 15000);
 async function boot() {
   try { state.me = await api("/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; signin(); return; }
