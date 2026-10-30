@@ -150,4 +150,4 @@ button.cs-row:hover { filter: none; background: var(--surface); }
 .cs-dot { display: inline-block; width: 8px; height: 8px; flex: none; background: var(--ok); }
 .cs-dot.changed { background: none; box-shadow: inset 0 0 0 2px var(--ok); }
 .cs-dot.unchanged, .cs-dot.deleted { background: none; box-shadow: inset 0 0 0 1px var(--quiet); }
-@media (max-width: 640px) { .cs { --row: 30px; } .cs-head { padding: 12px 12px 6px; } .cs-body { max-height: 45vh; padding: 4px 12px 12px; } }
+@media (max-width: 640px) { .cs { --row: 28px; } .cs-head { padding: 12px 12px 6px; } .cs-body { max-height: 30vh; padding: 4px 12px 12px; } }
