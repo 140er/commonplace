@@ -12,7 +12,10 @@ from typing import Optional
 # ── Defaults ──────────────────────────────────────────────────────────────
 DEFAULT_THRESHOLD = 0.80
 DEFAULT_CONTEXT_WINDOW = 200_000
-THREADS_WING = "threads"  # palace wing the mirror writes drawers into
+THREADS_WING = "threads"  # the stored threads' wing for access checks
+# Wing the mirror writes drawers into. A ``private_`` wing, so ordinary Memory
+# tools show it only to tokens with ``private:read``, even under ``*``.
+MIRROR_WING = "private_threads"
 CHUNK_MAX_CHARS = 4_000  # chunks group whole messages up to this size
 
 # ── Handoff states ───────────────────────────────────────────────────────

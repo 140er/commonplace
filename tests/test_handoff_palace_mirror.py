@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from commonplace.gateway import WorkerUnavailable
-from commonplace.handoff.models import THREADS_WING, StoredThread
+from commonplace.handoff.models import MIRROR_WING, StoredThread
 from commonplace.handoff.palace_mirror import MirrorError, mirror, palace_search
 from commonplace.handoff.thread_store import Chunk
 from mempalace.ids import make_drawer_id_from_content
@@ -27,7 +27,7 @@ def chunks():
 
 def _hit(stored_id="thr_first", index=0, text="[0] user message: exact text", **extra):
     return {
-        "wing": THREADS_WING,
+        "wing": MIRROR_WING,
         "room": stored_id,
         "source_file": f"handoff:{stored_id}#{index}",
         "text": text,
@@ -85,7 +85,7 @@ def test_mirror_preserves_chunks_identity_origin_and_order(stored, chunks):
             principal,
             "mempalace_add_drawer",
             {
-                "wing": THREADS_WING,
+                "wing": MIRROR_WING,
                 "room": stored.id,
                 "content": chunk.text,
                 "source_file": f"handoff:{stored.id}#{chunk.index}",
@@ -212,7 +212,7 @@ def test_search_scopes_each_thread_and_globally_orders_and_limits():
         (
             principal,
             "mempalace_search",
-            {"query": "raw?\nquery", "wing": THREADS_WING, "room": room, "limit": 8},
+            {"query": "raw?\nquery", "wing": MIRROR_WING, "room": room, "limit": 8},
         )
         for room in ("thr_first", "thr_other")
     ]
@@ -438,7 +438,7 @@ def test_real_worker_mirrors_three_chunks_and_recalls_the_matching_chunk(
     assert len(set(ids)) == 3
     assert mirror(call_tool, principal, stored, chunks) == ids
     listed = call_tool(
-        principal, "mempalace_list_drawers", {"wing": THREADS_WING, "room": stored.id}
+        principal, "mempalace_list_drawers", {"wing": MIRROR_WING, "room": stored.id}
     )
     assert len(listed["drawers"]) == 3
     for chunk, entry_id in zip(chunks, ids):

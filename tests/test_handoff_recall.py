@@ -51,7 +51,7 @@ def reader(*, scopes=("threads:read", "memory:read"), wings=("threads",)):
         client="test",
         auth="token",
         role="member",
-        policy=Policy.build(scopes=scopes, read_wings=wings),
+        policy=Policy.build(scopes=scopes, read_wings=wings, trust="standard"),
     )
 
 

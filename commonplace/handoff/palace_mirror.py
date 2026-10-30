@@ -1,6 +1,6 @@
 """Mirror stored threads into the workspace palace. Owner: part T03.
 
-Each chunk becomes one drawer in wing ``THREADS_WING`` (``threads``), room
+Each chunk becomes one drawer in wing ``MIRROR_WING`` (``private_threads``), room
 ``<stored thread id>``, verbatim chunk text, so normal Memory search finds
 old threads too. Written through the gateway's own worker client
 (``call_tool(principal, "mempalace_add_drawer", args)``), so authorship is
@@ -16,7 +16,7 @@ import math
 import re
 from typing import Callable
 
-from .models import THREADS_WING, RecallHit, StoredThread
+from .models import MIRROR_WING, RecallHit, StoredThread
 
 CallTool = Callable  # (principal, tool_name, arguments) -> parsed result dict
 
@@ -61,7 +61,7 @@ def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -
             principal,
             "mempalace_add_drawer",
             {
-                "wing": THREADS_WING,
+                "wing": MIRROR_WING,
                 "room": stored.id,
                 "content": chunk.text,
                 "source_file": f"handoff:{stored.id}#{chunk.index}",
@@ -124,7 +124,7 @@ def _chunk_text(call_tool: CallTool, principal, hit: dict, label, hydrated: dict
     if not isinstance(metadata, dict):
         raise MirrorError("Memory entry has no origin")
     if (
-        result.get("wing") != THREADS_WING
+        result.get("wing") != MIRROR_WING
         or result.get("room") != hit["room"]
         or metadata.get("source_file") != (hit.get("source_path") or hit.get("source_file"))
     ):
@@ -149,7 +149,7 @@ def palace_search(
             call_tool,
             principal,
             "mempalace_search",
-            {"query": query, "wing": THREADS_WING, "room": stored_id, "limit": fetch_limit},
+            {"query": query, "wing": MIRROR_WING, "room": stored_id, "limit": fetch_limit},
         )
         results = result.get("results")
         if not isinstance(results, list):
@@ -160,7 +160,7 @@ def palace_search(
                 raise MirrorError("Memory worker returned an invalid search entry")
             # WorkerClient bypasses token policy: never return another room's
             # content, even if a backend accidentally ignores a search filter.
-            if hit.get("wing") != THREADS_WING or hit.get("room") != stored_id:
+            if hit.get("wing") != MIRROR_WING or hit.get("room") != stored_id:
                 continue
             source = hit.get("source_path") or hit.get("source_file")
             match = origin.fullmatch(source) if isinstance(source, str) else None
