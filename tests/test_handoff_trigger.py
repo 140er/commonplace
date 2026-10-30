@@ -164,9 +164,18 @@ def test_codex_total_is_not_cumulative_and_zero_is_valid(tmp_path):
     assert trigger.usage_from_tail(path) == ContextUsage(0, 475_000, "gpt-6.1-codex")
 
 
-def test_codex_model_from_last_turn_context_even_after_usage(tmp_path):
-    path = _transcript(tmp_path, _turn("gpt-5-codex"), _codex(10, window=None), _turn())
-    assert trigger.usage_from_tail(path) == ContextUsage(10, 400_000, "gpt-6.1-codex")
+@pytest.mark.parametrize(
+    ("earlier_model", "latest_model", "expected_window"),
+    [
+        ("gpt-6-codex", "gpt-6-codex-1m", 1_000_000),
+        ("gpt-6-codex-1m", "gpt-6-codex", 400_000),
+    ],
+)
+def test_codex_model_from_last_turn_context_even_after_usage(
+    tmp_path, earlier_model, latest_model, expected_window
+):
+    path = _transcript(tmp_path, _turn(earlier_model), _codex(10, window=None), _turn(latest_model))
+    assert trigger.usage_from_tail(path) == ContextUsage(10, expected_window, latest_model)
 
 
 @pytest.mark.parametrize("payload", [{}, {"model": None}, {"model": []}])

@@ -80,6 +80,7 @@ def _scan_usage(data: bytes, fmt: str, override: Optional[int]) -> Optional[Cont
             continue
         kind = record.get("type")
         payload = record.get("payload")
+        # T06 uses the latest turn context even if no usage follows it yet.
         if fmt != "claude-code" and kind == "turn_context" and isinstance(payload, dict):
             if model is None:
                 name = payload.get("model")
