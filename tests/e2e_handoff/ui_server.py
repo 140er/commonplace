@@ -43,7 +43,10 @@ class UIServer:
             member = self.hub.db.create_user("member@example.com")
             self.hub.db.add_member(self.hub.workspace, member, "member", actor=self.hub.admin)
             policy = dict(
-                profile="full", scopes=["memory:read", "threads:read"], read_wings=["threads"]
+                profile="full",
+                scopes=["memory:read", "threads:read"],
+                read_wings=["threads"],
+                trust="standard",
             )
             self.owner_token = self.hub.token("ui-owner", **policy)
             self.member_token = self.hub.token("ui-member", user=member, **policy)

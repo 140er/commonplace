@@ -62,6 +62,8 @@ External launch calls never hold a database transaction.
 from __future__ import annotations
 
 import secrets
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -111,6 +113,9 @@ class HandoffService:
         self.call_tool = call_tool
         self.prompt_dir = prompt_dir
         self.db.set_document_store(store_for)
+        self._mirror_lock = threading.Lock()
+        self._mirror_pool = None
+        self._mirror_jobs: list = []
         self._snapshots: dict[tuple[str, str], _Snapshot] = {}
 
     def run(self, principal, request: HandoffRequest) -> HandoffResult:
@@ -194,17 +199,7 @@ class HandoffService:
                 parent_stored_id=parent_id,
             )
 
-            if self.call_tool is not None:
-                try:
-                    palace_mirror.mirror(
-                        self.call_tool,
-                        principal,
-                        stored,
-                        thread_store.chunk_messages(messages),
-                    )
-                except Exception:
-                    # The full thread is already safe in the lossless store.
-                    pass
+            self._mirror_later(principal, stored, lambda: thread_store.chunk_messages(messages))
 
             doc = writer.build_doc(
                 messages,
@@ -252,14 +247,39 @@ class HandoffService:
             reason = "thread storage failed"
             self._emit(EVENT_FAILED, principal, handoff, decision="error", reason=reason)
             return HandoffResult("compact", handoff, reason=reason)
-        if self.call_tool is not None:
+        # Mirroring all durable chunks also repairs a previous mirror failure;
+        # immutable chunk ids make these retries idempotent.
+        self._mirror_later(principal, stored, lambda: store.chunks(stored.id))
+        return None
+
+    def _mirror_later(self, principal, stored, chunks) -> None:
+        """Mirror into Memory search in the background, one job at a time.
+
+        Best effort and off the request path: the full thread is already safe
+        in the lossless store, and embedding a large thread takes far longer
+        than a hook may wait."""
+        if self.call_tool is None:
+            return
+
+        def job():
             try:
-                # Mirroring all durable chunks also repairs a previous mirror
-                # failure; immutable chunk ids make these retries idempotent.
-                palace_mirror.mirror(self.call_tool, principal, stored, store.chunks(stored.id))
+                palace_mirror.mirror(self.call_tool, principal, stored, chunks())
             except Exception:
                 pass
-        return None
+
+        with self._mirror_lock:
+            if self._mirror_pool is None:
+                self._mirror_pool = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="handoff-mirror"
+                )
+            self._mirror_jobs.append(self._mirror_pool.submit(job))
+            self._mirror_jobs = [f for f in self._mirror_jobs if not f.done()]
+
+    def wait_for_mirrors(self, timeout: Optional[float] = None) -> None:
+        """Block until queued mirror jobs finish (tests and shutdown)."""
+        with self._mirror_lock:
+            jobs = list(self._mirror_jobs)
+        futures_wait(jobs, timeout=timeout)
 
     def _superseded(self, workspace_id: str, key: str, lease_token: str, handoff: Handoff):
         with self.control_db._lock:

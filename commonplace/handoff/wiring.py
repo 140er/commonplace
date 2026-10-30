@@ -43,6 +43,8 @@ class HandoffContext:
         return self.gateway.mediator.workers.call_tool(principal, name, arguments)
 
     def close(self) -> None:
+        if self.service is not None:
+            self.service.wait_for_mirrors(timeout=30)
         if self.outbox is not None:
             self.outbox.stop()
         with self._lock:

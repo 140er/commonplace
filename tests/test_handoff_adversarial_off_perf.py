@@ -541,7 +541,6 @@ def test_legacy_cli_outputs_match(gateway, legacy, monkeypatch, capsys):
         assert capsys.readouterr() == expected
 
 
-@pytest.mark.xfail(strict=True, raises=TimeoutError, reason="mirror runs in the request")
 def test_service_returns_before_slow_mirror_finishes(gateway, monkeypatch):
     gateway.ctx.settings.set(
         SettingRow(gateway.workspace, "workspace", "", enabled=True),
