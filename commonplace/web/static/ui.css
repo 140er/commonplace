@@ -133,6 +133,7 @@ input, select, button { min-height: 32px; }
 .cs { --row: 22px; background: var(--term); display: flex; flex-direction: column; min-width: 0; }
 .cs-head { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 12px 16px 6px; font-size: 12px; color: var(--muted); }
 .cs-head span { display: inline-flex; align-items: center; gap: 8px; }
+.cs-head .cs-sha { margin-left: auto; color: var(--quiet); }
 .cs-body { max-height: 360px; overflow: auto; padding: 4px 16px 12px; font-size: 12px; line-height: 20px; overscroll-behavior: contain; }
 .cs li { position: relative; }
 .cs-tree > li + li { margin-top: 8px; }

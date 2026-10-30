@@ -134,7 +134,7 @@ Only the holder of a `doing` card, or a person, may change it. Anyone else gets 
 - `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
 - `link` / `unlink` take a drawer ID.
-- `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear). The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
+- `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear; `--card N --hub URL` uploads it directly). The web card shows its head commit, so a stale tree is visible. The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
 - Any update by the holder renews the claim.
 
 ```

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from commonplace import events, privacy
+from commonplace.callstack import LIMITS
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
@@ -43,7 +44,6 @@ def validate_text(value, name, *, required=False, limit=100_000):
     return value
 
 
-CALLSTACK_BYTES = 64_000
 CALLSTACK_KEYS = {"base", "head", "stats", "roots", "files", "truncated", "more"}
 CALLSTACK_NODE = {"name", "file", "line", "change", "params", "children", "more", "seen"}
 
@@ -71,11 +71,13 @@ def callstack_json(value):
         nodes += 1
         check(isinstance(item, dict) and not set(item) - CALLSTACK_NODE)
         check(
-            depth <= 16 and nodes <= 500 and item.get("change") in ("new", "changed", "unchanged")
+            depth < LIMITS["depth"]
+            and nodes <= LIMITS["nodes"]
+            and item.get("change") in ("new", "changed", "unchanged")
         )
-        text(item, "name", 300, required=True)
-        text(item, "file", 500)
-        text(item, "params", 300)
+        text(item, "name", LIMITS["name"], required=True)
+        text(item, "file", LIMITS["file"])
+        text(item, "params", LIMITS["params"])
         count(item, "line")
         count(item, "more")
         check(isinstance(item.get("seen", False), bool))
@@ -84,8 +86,8 @@ def callstack_json(value):
             node(child, depth + 1)
 
     check(isinstance(value, dict) and not set(value) - CALLSTACK_KEYS)
-    text(value, "base", 300)
-    text(value, "head", 100)
+    text(value, "base", LIMITS["base"])
+    text(value, "head", LIMITS["head"])
     count(value, "more")
     check(isinstance(value.get("truncated", False), bool))
     stats = value.get("stats", {})
@@ -95,13 +97,13 @@ def callstack_json(value):
     check(isinstance(value.get("roots", []), list) and isinstance(value.get("files", []), list))
     for root in value.get("roots", []):
         node(root, 0)
-    check(len(value.get("files", [])) <= 200)
+    check(len(value.get("files", [])) <= LIMITS["files"])
     for item in value.get("files", []):
         check(isinstance(item, dict) and set(item) == {"file", "change"})
-        text(item, "file", 500, required=True)
+        text(item, "file", LIMITS["file"], required=True)
         check(item["change"] in ("new", "changed", "deleted"))
     stored = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if len(stored.encode()) > CALLSTACK_BYTES:
+    if len(stored.encode()) > LIMITS["bytes"]:
         raise ToolError("no: callstack is too large")
     return stored
 

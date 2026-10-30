@@ -1,9 +1,12 @@
 """PR call tree: git analysis on a fixture repo, the card field, REST and MCP."""
 
 import http.client
+import http.server
 import json
 import sqlite3
 import subprocess
+import threading
+import time
 
 import pytest
 
@@ -320,12 +323,234 @@ def test_rest_mcp_round_trip_and_upload(hub, repo, monkeypatch):
 
 
 def test_cli_prints_json_and_reports_errors(repo, monkeypatch, capsys):
-    monkeypatch.chdir(repo)
+    monkeypatch.chdir(repo / "web")  # a subdirectory: git runs from the top level
     assert callstack.main(["--base", "main", "--head", "feature"]) == 0
     assert json.loads(capsys.readouterr().out)["stats"]["new"] == 4
     assert callstack.main(["--base", "nope"]) == 2
     monkeypatch.delenv("COMMONPLACE_TOKEN", raising=False)
-    assert callstack.main(["--base", "main", "--card", "1"]) == 2
-    down = ["--base", "main", "--card", "1", "--hub", "http://127.0.0.1:9", "--token", "t"]
-    assert callstack.main(down) == 2
-    assert "cannot reach" in capsys.readouterr().err
+    monkeypatch.delenv("COMMONPLACE_URL", raising=False)
+    assert callstack.main(["--base", "main", "--card", "1", "--token", "t"]) == 2
+    assert "needs --hub" in capsys.readouterr().err  # no default hub
+    down = ["--base", "main", "--card", "1", "--token", "t", "--hub"]
+    assert callstack.main([*down, "http://127.0.0.1:9"]) == 2
+    assert callstack.main([*down, "ftp://127.0.0.1/x"]) == 2
+    monkeypatch.setattr(callstack, "upload", lambda *a: (_ for _ in ()).throw(TimeoutError()))
+    assert callstack.main([*down, "http://127.0.0.1:9"]) == 2
+    err = capsys.readouterr().err
+    assert "Connection refused" in err and "http(s)" in err and "Traceback" not in err
+
+
+def serve(handler):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_upload_refuses_redirects(repo, monkeypatch, capsys):
+    seen = []
+
+    class Elsewhere(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"version": 1}')
+
+        def log_message(self, *args):
+            pass
+
+    other = serve(Elsewhere)
+
+    class Hub(Elsewhere):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{other.server_port}/steal")
+            self.end_headers()
+
+    class Garbled(Elsewhere):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"<html>")
+
+    hub, garbled = serve(Hub), serve(Garbled)
+    try:
+        monkeypatch.chdir(repo)
+        args = ["--base", "main", "--head", "feature", "--card", "1", "--token", "secret"]
+        assert callstack.main([*args, "--hub", f"http://127.0.0.1:{hub.server_port}"]) == 2
+        assert "refused redirect" in capsys.readouterr().err and seen == []
+        assert callstack.main([*args, "--hub", f"http://127.0.0.1:{garbled.server_port}"]) == 2
+        assert "Traceback" not in capsys.readouterr().err
+    finally:
+        for server in (hub, garbled, other):
+            server.shutdown()
+
+
+def build(tmp_path, base, head, name="r"):
+    repo = tmp_path / name
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.com")
+    git(repo, "config", "user.name", "t")
+    write(repo, base)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base", "--allow-empty")
+    git(repo, "checkout", "-qb", "feature")
+    write(repo, head)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "feature")
+    return repo
+
+
+def edges(result):
+    out = set()
+    for _depth, node in flatten(result["roots"]):
+        out |= {(node["name"], child["name"]) for child in node.get("children", [])}
+    return out
+
+
+def test_no_invented_edges(tmp_path):
+    head = {
+        "web/chain.js": """\
+function save(x) {
+  return x;
+}
+
+export function run(o) {
+  return o.store.save(1) + o?.save(2);
+}
+
+function render(y) {
+  return y;
+}
+
+function make() {
+  return { render(y) { return y; } };
+}
+
+function scan(text) {
+  const r = /[{]+\\/}/g;
+  return pick(text.match(r));
+}
+
+function pick(m) {
+  return m;
+}
+""",
+        "parse.py": """\
+class Parser:
+    def parse(self):
+        return 1
+
+
+def go(parser):
+    return parser.parse()
+
+
+def direct():
+    return Parser.parse(None)
+""",
+        "pkg/__init__.py": "",
+        "pkg/core.py": "def search():\n    return 1\n",
+        "pkg2/__init__.py": "from .core import find\n",
+        "pkg2/core.py": "def find():\n    return 2\n",
+        "use.py": """\
+from pkg import search
+from pkg2 import find
+
+
+def both():
+    return search() + find()
+""",
+    }
+    result = callstack.analyse("main", "feature", cwd=build(tmp_path, {"x.txt": "x"}, head))
+    found = edges(result)
+    assert ("run", "save") not in found  # o.store.save(), o?.save(): receivers unknown
+    assert ("make", "render") not in found  # an object-literal method definition
+    assert ("scan", "pick") in found  # braces inside the regex literal stay masked
+    assert ("go", "Parser.parse") not in found  # a variable named like the class
+    assert ("direct", "Parser.parse") in found  # the class itself, from this file
+    assert ("both", "search") not in found  # pkg/__init__.py does not re-export it
+    assert ("both", "find") in found  # pkg2/__init__.py does
+
+
+def test_unbalanced_braces_drop_calls():
+    funcs = callstack.js_functions("a.js", "function a() {\n  b();\n\nfunction b() {}\n")
+    assert [f.name for f in funcs] == ["a"] and funcs[0].calls == []
+    masked = callstack.mask_js("x = /}/.test(y) ? a / b : c;\nreturn /{/;\n")
+    assert "{" not in masked and "}" not in masked and "a / b" in masked
+
+
+def test_hostile_file_names(tmp_path):
+    base = {"x.py": "def plain():\n    return 0\n", "[x].py": "def odd():\n    return 0\n"}
+    head = {
+        "x.py": base["x.py"],
+        "[x].py": "def odd():\n    return 1\n",
+        'sp ace "q" é.py': "def spaced():\n    return 2\n",
+    }
+    repo = build(tmp_path, base, head)
+    git(repo, "config", "diff.external", "false")
+    result = callstack.analyse("main", "feature", cwd=repo)
+    assert shape(result["roots"]) == [(0, "odd", "changed"), (0, "spaced", "new")]
+    assert {n["file"] for _d, n in flatten(result["roots"])} == {"[x].py", 'sp ace "q" é.py'}
+
+
+def test_entry_scan_reads_only_files_naming_a_change(tmp_path, monkeypatch):
+    base = {f"lib/m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(150)}
+    base["app.py"] = "def target():\n    return 0\n"
+    base["cli.py"] = "from app import target\n\n\ndef main():\n    return target()\n"
+    head = {"app.py": "def target():\n    return 1\n"}
+    repo = build(tmp_path, base, head)
+    parsed = []
+    original = callstack.functions
+    monkeypatch.setattr(
+        callstack, "functions", lambda path, source: parsed.append(path) or original(path, source)
+    )
+    result = callstack.analyse("main", "feature", cwd=repo)
+    assert shape(result["roots"]) == [(0, "main", "unchanged"), (1, "target", "changed")]
+    assert not [p for p in parsed if p.startswith("lib/")]
+
+
+PATHOLOGICAL = (
+    "import {" + " a," * 20000 + "\n"
+    + "class A\n" * 4000
+    + "function f(\n" * 4000
+    + "const g = (x) =>\n" * 4000
+    + "(/[" + " /" * 20000 + "\n"
+    + "q" * 100000 + "\n"
+    + "export function h() {\n" + "  o.p.q(r(s(t())));\n" * 3000 + "}\n"
+)  # fmt: skip
+
+
+def test_pathological_source_is_fast(tmp_path):
+    started = time.monotonic()
+    funcs = callstack.js_functions("evil.js", PATHOLOGICAL)
+    assert time.monotonic() - started < 5
+    assert "h" in [f.name for f in funcs]
+    repo = build(tmp_path, {"a.js": "export const a = 1;\n"}, {"evil.js": PATHOLOGICAL})
+    started = time.monotonic()
+    result = callstack.analyse("main", "feature", cwd=repo)
+    assert time.monotonic() - started < 10
+    assert callstack_json(result)
+
+
+def test_deadline_lists_files_flat(repo):
+    result = callstack.analyse("main", "feature", cwd=repo, timeout=0)
+    assert result["truncated"] is True and result["roots"] == []
+    assert {f["file"] for f in result["files"]} >= {"app.py", "web/app.js", "cli/cmd_go.py"}
+
+
+def test_output_always_fits_the_hub():
+    node = {"name": "n" * 300, "file": "f" * 500, "line": 1, "change": "new", "params": "p" * 80}
+    result = {
+        "base": "main",
+        "head": "abc",
+        "stats": {"new": 400, "changed": 0, "files": 300},
+        "roots": [{**node, "name": f"{i}" + "n" * 290, "children": []} for i in range(400)],
+        "files": [{"file": f"{i}" + "x" * 490, "change": "changed"} for i in range(200)],
+        "truncated": False,
+    }
+    fitted = callstack.fit(result)
+    assert fitted["truncated"] is True and fitted["files"] == []
+    assert fitted["more"] == 400 - len(fitted["roots"]) > 0
+    assert len(callstack_json(fitted).encode()) <= callstack.LIMITS["bytes"]
