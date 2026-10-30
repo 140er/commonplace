@@ -862,6 +862,7 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
                 "messages",
             ),
         )
+        ctx.service.wait_for_mirrors(timeout=60)
         assert result.action == "handoff" and written
         _, response = hub.call(token, "mempalace_get_drawer", drawer_id=written[0])
         assert TEXT_MARKER not in response

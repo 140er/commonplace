@@ -385,14 +385,24 @@ def _token(local, policy, name="review"):
     return token
 
 
+# hub-core (PR #13) as reviewed: the baseline "off" must match. A commit in
+# this branch's own history, so any clone of the branch can read it.
+HUB_CORE = "a14761ec2b26bc8f75320af051ca433f4859b552"
+
+
 @pytest.fixture(scope="module")
 def legacy():
     modules = []
     for area in ("policy", "gateway", "cli"):
         name = "commonplace._handoff_review_legacy_" + area
-        source = subprocess.check_output(
-            ["git", "show", f"feat/hub-core:commonplace/{area}.py"], cwd=ROOT
-        )
+        try:
+            source = subprocess.check_output(
+                ["git", "show", f"{HUB_CORE}:commonplace/{area}.py"],
+                cwd=ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip("hub-core baseline commit is not in this clone")
         module = ModuleType(name)
         module.__file__ = str(ROOT / "commonplace" / f"{area}.py")
         sys.modules[name] = module
