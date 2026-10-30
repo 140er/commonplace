@@ -42,7 +42,7 @@ input = field("hello world", 5); insertTranscript(input, "say"); assert.equal(in
 
 // Exercise the real controller with replaceable inputs and a deterministic
 // capture graph, timer, permission prompt, and HTTP response. No model download.
-function fixture() {
+function fixture({ owner = true } = {}) {
   const handlers = {}, timers = new Map(), errors = [], requests = [];
   let nextTimer = 0, current = field("helloWORLD", 5), control = null, stopped = 0, closed = 0, node, permission, response;
   const document = { activeElement: null, createElement: () => ({ dataset: {}, setAttribute(name, value) { this[name] = value; }, remove() { control = null; } }), dispatchEvent(event) { this.event = event; } };
@@ -54,7 +54,17 @@ function fixture() {
   } };
   const bind = (f) => { f.form = form; f.closest = (selector) => selector === "#card-panel, #content" ? { id: "content" } : form; return f; };
   bind(current);
-  const root = { querySelectorAll(selector) { return selector.startsWith("form[") ? [current] : []; }, addEventListener(name, callback) { handlers[name] = callback; } };
+  let settingsRow = null;
+  const settingsButton = { setAttribute(name, value) { this[name] = value; } };
+  const settingsPage = {
+    querySelector: () => settingsRow,
+    insertAdjacentHTML(position, markup) { assert.equal(position, "afterbegin"); assert.match(markup, /data-voice-settings/); settingsRow = { remove() { settingsRow = null; } }; },
+  };
+  const root = {
+    querySelector: (selector) => selector === ".settings" ? settingsPage : null,
+    querySelectorAll(selector) { return selector.startsWith("form[") ? [current] : settingsRow ? [settingsButton] : []; },
+    addEventListener(name, callback) { handlers[name] = callback; },
+  };
   const browser = {
     document, localStorage: storage, Event, AbortController,
     setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
@@ -73,20 +83,35 @@ function fixture() {
     async fetch(path, options) { requests.push({ path, ...options }); return response ? response : { ok: true, status: 200, json: async () => ({ text: "said  verbatim" }) }; },
   };
   const configs = [];
-  const api = async (path, options) => { configs.push([path, options]); return { available: true, enabled: true, languages: ["en", "nl"] }; };
+  const api = async (path, options) => {
+    configs.push([path, options]);
+    // A partial PATCH response must retain availability, languages and ownership.
+    return options ? { enabled: options.body.enabled } : { available: true, enabled: true, languages: ["en", "nl"], owner };
+  };
   const voice = voiceInput(root, api, (text) => errors.push(text), browser);
   const press = async (action, language) => handlers.click({ preventDefault() {}, target: { closest: () => ({ dataset: { voice: action, language }, closest: () => form }) } });
   return {
-    voice, press, errors, requests, configs, timers, browser,
+    voice, press, errors, requests, configs, timers, browser, root, settingsButton,
+    get settingsRow() { return settingsRow; },
     get input() { return current; }, get control() { return control; }, get stopped() { return stopped; }, get closed() { return closed; }, get node() { return node; },
     rerender() { voice.remember(); current = bind(field(current.value, 0)); control = null; voice.view(); },
     permission(promise) { permission = promise; }, response(promise) { response = promise; },
   };
 }
 const f = fixture();
-assert.equal(f.voice.settings(true), "");
+assert.equal(f.voice.settings(), "");
+assert.equal(f.settingsRow, null);
 await f.voice.load(); assert.equal(f.configs.length, 1);
-assert.match(f.voice.settings(true), /<span>Voice<\/span>/); assert.equal(f.voice.settings(false), "");
+assert.match(f.voice.settings(), /<span>Voice<\/span>/);
+assert.ok(f.settingsRow); // A late status response installs the row in Settings.
+await f.press("enabled");
+assert.ok(f.settingsRow); assert.equal(f.settingsButton.textContent, "Off");
+assert.match(f.voice.settings(), /aria-pressed="false"/);
+await f.press("enabled");
+assert.ok(f.settingsRow); assert.equal(f.settingsButton.textContent, "On");
+assert.match(f.voice.settings(), /aria-pressed="true"/);
+const member = fixture({ owner: false }); await member.voice.load();
+assert.equal(member.voice.settings(), ""); assert.equal(member.settingsRow, null);
 assert.equal(f.control.dataset.state, "idle");
 await f.press("language"); assert.match(f.control.innerHTML, /role="menu"/);
 await f.press("choose", "en"); assert.equal(languagePicker(storage).get(), "en");
@@ -155,4 +180,42 @@ assert.match(app, /voice\.view\(\);\s*if \(saved\?\.view/);
 assert.match(app, /if \(hash !== state\.route\) voice\.stop\(\)/);
 assert.match(app, /function signin\(\)[\s\S]*?voice\.reset\(\)/);
 assert.doesNotMatch(source, /SpeechRecognition|createObjectURL|\.submit\(|requestSubmit\(/);
-console.log("voice picker, PCM, worklet and capture lifecycle passed");
+// Boot must display the app without waiting for voice status. The real API's
+// session-expired event must still replace that shell with sign-in on a late 401.
+const apiSource = await readFile(new URL("../commonplace/web/static/api.js", import.meta.url), "utf8");
+const bootSource = app.slice(app.indexOf("async function boot()"), app.lastIndexOf("\nboot();"));
+const expiredSource = app.split("\n").find((line) => line.startsWith('document.addEventListener("session-expired"'));
+function bootFixture() {
+  const calls = [], document = new EventTarget(), state = { me: null, drafts: new Map(), error: "", people: {} };
+  let resolveStatus;
+  const pendingStatus = new Promise((resolve) => { resolveStatus = resolve; });
+  const context = {
+    document, state, Event, timer: null, clearTimeout() {},
+    fetch: async (path) => path === "/api/voice" ? pendingStatus : { ok: true, status: 200, json: async () => ({ people: {} }) },
+    shell() { calls.push("shell"); },
+    async route() { calls.push("route"); },
+    schedule() { calls.push("schedule"); },
+    signin() { calls.push("signin"); context.voice.reset(); },
+  };
+  const { boot, api } = runInNewContext([apiSource.replace(/export /g, ""), expiredSource, bootSource, "({ boot, api })"].join("\n"), context);
+  const root = { querySelector: () => null, querySelectorAll: () => [], addEventListener() {} };
+  context.voice = voiceInput(root, api, assert.fail, { document });
+  return { boot, context, calls, state, resolveStatus };
+}
+const booting = bootFixture();
+await booting.boot();
+assert.deepEqual(booting.calls, ["shell", "route", "schedule"]);
+booting.resolveStatus({ ok: false, status: 401, json: async () => ({ error: "Sign in" }) });
+await new Promise(setImmediate);
+assert.equal(booting.state.me, null);
+assert.equal(booting.calls.at(-1), "signin");
+const expiredAtLoad = bootFixture();
+expiredAtLoad.context.voice = { load() { expiredAtLoad.state.me = null; } };
+await expiredAtLoad.boot(); assert.deepEqual(expiredAtLoad.calls, ["shell"]);
+const expiredAtRoute = bootFixture();
+expiredAtRoute.context.voice = { load() {} };
+expiredAtRoute.context.route = async () => { expiredAtRoute.calls.push("route"); expiredAtRoute.state.me = null; };
+await expiredAtRoute.boot(); assert.deepEqual(expiredAtRoute.calls, ["shell", "route"]);
+assert.match(app, /voice\.settings\(\)/);
+assert.doesNotMatch(app, /voice\.settings\(connections/);
+console.log("voice picker, PCM, capture, settings and sign-in lifecycle passed");

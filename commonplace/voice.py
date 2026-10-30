@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import gc
-import importlib
+import importlib.util
+import logging
 import os
 import threading
 import time
@@ -12,16 +14,26 @@ from commonplace.http_util import query, read_json, require_principal, send_json
 
 MAX_PCM_BYTES = 60 * 16000 * 2
 LANGUAGES = ("en", "nl")
+logger = logging.getLogger(__name__)
 
 
 def available():
-    # Importing the extra does not load or download either model.
+    # Inspect the extra without loading its native libraries during sign-in.
     try:
-        importlib.import_module("moonshine_onnx")
-        importlib.import_module("faster_whisper")
-    except Exception:
+        return all(
+            importlib.util.find_spec(name) is not None
+            for name in ("moonshine_onnx", "faster_whisper")
+        )
+    except (ImportError, ValueError):
         return False
-    return True
+
+
+def _trim():
+    """Return freed model allocations to the OS when glibc supports it."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 def _load_model(language, threads):
@@ -55,8 +67,6 @@ def _load_model(language, threads):
             )[0]
 
     else:
-        import logging
-
         from faster_whisper import WhisperModel
 
         model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=threads)
@@ -86,8 +96,8 @@ class VoiceEngine:
     The short-idle environment override is also useful for deployment smoke tests.
     """
 
-    def __init__(self, loader=_load_model, clock=time.monotonic, idle_seconds=None):
-        self.loader, self.clock = loader, clock
+    def __init__(self, loader=_load_model, clock=time.monotonic, idle_seconds=None, trim=_trim):
+        self.loader, self.clock, self.trim = loader, clock, trim
         self.idle_seconds = (
             float(os.environ.get("COMMONPLACE_VOICE_IDLE_SECONDS", "600"))
             if idle_seconds is None
@@ -123,6 +133,7 @@ class VoiceEngine:
                 del self._models[lang], self._used[lang]
             if expired:
                 gc.collect()
+                self.trim()
             self._schedule()
 
     def transcribe(self, language, pcm):
@@ -143,8 +154,12 @@ class VoiceEngine:
             if self._timer:
                 self._timer.cancel()
             self._timer = None
+            loaded = bool(self._models)
             self._models.clear()
             self._used.clear()
+            if loaded:
+                gc.collect()
+                self.trim()
 
 
 _engine = None
@@ -196,6 +211,7 @@ def install(gateway):
                     "available": status(),
                     "enabled": enabled(gateway.db, principal.workspace_id),
                     "languages": list(LANGUAGES),
+                    "owner": principal.role == "owner",
                 },
             )
 
@@ -223,7 +239,14 @@ def install(gateway):
                 (principal.workspace_id, int(body["enabled"])),
             )
         send_json(
-            h, 200, {"available": True, "enabled": body["enabled"], "languages": list(LANGUAGES)}
+            h,
+            200,
+            {
+                "available": True,
+                "enabled": body["enabled"],
+                "languages": list(LANGUAGES),
+                "owner": principal.role == "owner",
+            },
         )
 
     def transcribe(h):
@@ -257,8 +280,9 @@ def install(gateway):
             return
         try:
             text = gateway.voice_engine.transcribe(language, pcm)
-        except Exception:
-            # Even model exceptions may contain user content; never log them.
+        except Exception as exc:
+            # Exception messages and args may contain user content.
+            logger.warning("voice transcription failed: %s (%s)", type(exc).__name__, language)
             send_json(h, 503, {"error": "Could not transcribe. Voice model is unavailable."})
             return
         send_json(h, 200, {"text": text})

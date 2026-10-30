@@ -42,7 +42,7 @@ export function insertTranscript(input, text, EventType = Event) {
 export function voiceInput(root, api, failed, browser = window) {
   let storage; try { storage = browser.localStorage; } catch { /* Private browsing. */ }
   const picker = languagePicker(storage), jobs = new Map(), carets = new Map();
-  let config = { available: false, enabled: false }, menu = null, generation = 0, saving = false;
+  let config = { available: false, enabled: false, owner: false }, menu = null, generation = 0, saving = false;
   const scope = (input) => input.closest("#card-panel, #content")?.id || "";
   const identity = (input) => `${scope(input)}:${input.dataset.draft}`;
   const find = (job) => [...root.querySelectorAll(inputs)].find((input) => input.dataset.draft === job.key && scope(input) === job.scope);
@@ -50,6 +50,9 @@ export function voiceInput(root, api, failed, browser = window) {
     root.querySelectorAll(inputs).forEach((input) => carets.set(identity(input), [input.selectionStart, input.selectionEnd]));
   }
   function view() {
+    const page = root.querySelector(".settings"), row = page?.querySelector("[data-voice-settings]");
+    if (page && !row && config.owner && config.available) page.insertAdjacentHTML("afterbegin", settings());
+    if (row && !(config.owner && config.available)) row.remove();
     for (const [key, job] of jobs) if (!find(job)) { job.controller?.abort(); job.flushed?.(); release(job); jobs.delete(key); }
     root.querySelectorAll(inputs).forEach((input) => {
       const form = input.form, key = input.dataset.draft, job = jobs.get(key);
@@ -68,12 +71,12 @@ export function voiceInput(root, api, failed, browser = window) {
     });
     root.querySelectorAll('[data-voice="enabled"]').forEach((button) => { button.textContent = config.enabled ? "On" : "Off"; button.setAttribute("aria-pressed", String(config.enabled)); button.disabled = saving; });
   }
-  function settings(owner) {
-    return owner && config.available ? `<section class="settings-section"><div class="setting-row"><span>Voice</span><button type="button" data-voice="enabled" aria-label="Voice" aria-pressed="${config.enabled}">${config.enabled ? "On" : "Off"}</button></div></section>` : "";
+  function settings() {
+    return config.owner && config.available ? `<section class="settings-section" data-voice-settings><div class="setting-row"><span>Voice</span><button type="button" data-voice="enabled" aria-label="Voice" aria-pressed="${config.enabled}">${config.enabled ? "On" : "Off"}</button></div></section>` : "";
   }
   async function load() {
     const current = ++generation;
-    try { const next = await api("/api/voice"); if (current === generation) { config = next; view(); } }
+    try { const next = await api("/api/voice"); if (current === generation) { config = { ...config, ...next }; view(); } }
     catch (error) { if (current === generation) failed(error.message); }
   }
   function release(job) {
@@ -89,7 +92,7 @@ export function voiceInput(root, api, failed, browser = window) {
     for (const job of jobs.values()) { job.controller?.abort(); job.flushed?.(); release(job); }
     jobs.clear(); menu = null; view();
   }
-  function reset() { generation++; stop(); config = { available: false, enabled: false }; carets.clear(); view(); }
+  function reset() { generation++; stop(); config = { available: false, enabled: false, owner: false }; carets.clear(); view(); }
   function fail(job, message) {
     if (jobs.get(job.key) !== job) return;
     release(job); jobs.delete(job.key); view(); failed(message);
@@ -165,7 +168,7 @@ export function voiceInput(root, api, failed, browser = window) {
     else if (action === "enabled" && !saving) {
       const current = generation;
       saving = true; view();
-      try { const next = await api("/api/voice", { method: "PATCH", body: { enabled: !config.enabled } }); if (current === generation) { config = next; if (!config.enabled) stop(); } }
+      try { const next = await api("/api/voice", { method: "PATCH", body: { enabled: !config.enabled } }); if (current === generation) { config = { ...config, ...next }; if (!config.enabled) stop(); } }
       catch (error) { if (current === generation) failed(error.message); }
       finally { saving = false; view(); }
     }

@@ -1,6 +1,7 @@
 """Dictation through the real gateway; no optional models or downloads in tests."""
 
 import http.client
+import importlib
 import json
 import logging
 import tempfile
@@ -62,12 +63,18 @@ def call(app, method="GET", path="/api/voice", body=None, headers=None):
 
 
 def enable(app):
-    assert call(app, "PATCH", body={"enabled": True})[0] == 200
+    assert call(app, "PATCH", body={"enabled": True}) == (
+        200,
+        {"available": True, "enabled": True, "languages": ["en", "nl"], "owner": True},
+    )
 
 
 def test_default_owner_toggle_persists_and_workspace_isolated(app):
     hub, _cookie = app
-    assert call(app) == (200, {"available": True, "enabled": False, "languages": ["en", "nl"]})
+    assert call(app) == (
+        200,
+        {"available": True, "enabled": False, "languages": ["en", "nl"], "owner": True},
+    )
     assert hub.gateway.voice_engine.calls == []
     enable(app)
     assert call(app)[1]["enabled"] is True
@@ -98,7 +105,10 @@ def test_people_only_and_owner_only(app):
         hub.db, sessions.create_login_link(hub.db, "member@example.com", hub.workspace)
     )
     member_app = hub, {"Cookie": f"{sessions.COOKIE}={session}"}
-    assert call(member_app)[0] == 200
+    assert call(member_app) == (
+        200,
+        {"available": True, "enabled": False, "languages": ["en", "nl"], "owner": False},
+    )
     assert call(member_app, "PATCH", body={"enabled": True})[0] == 403
     enable(app)
     assert call(member_app, "POST", "/api/voice/transcribe?lang=nl", b"\0\0")[0] == 200
@@ -121,6 +131,9 @@ def test_disabled_unavailable_and_model_failures(app, caplog):
     assert status == 503
     assert engine.text not in json.dumps(result, ensure_ascii=False) + caplog.text
     assert "PRIVATE_AUDIO" not in caplog.text
+    assert repr(b"PRIVATE_AUDIO_") not in caplog.text
+    assert "voice transcription failed: RuntimeError (en)" in caplog.text
+    assert caplog.records[-1].args == ("RuntimeError", "en")
 
 
 @pytest.mark.parametrize(
@@ -304,16 +317,75 @@ def test_engine_serializes_loading_and_transcription():
         engine.close()
 
 
-def test_extra_unavailable_without_importing_models(monkeypatch):
+@pytest.mark.parametrize("missing", ["moonshine_onnx", "faster_whisper", None])
+def test_extra_unavailable_without_importing_models(monkeypatch, missing):
     calls = []
 
-    def missing(name):
+    def find(name):
         calls.append(name)
-        raise ImportError("not installed")
+        return None if name == missing else object()
 
-    monkeypatch.setattr(voice.importlib, "import_module", missing)
-    assert not voice.available()
-    assert calls == ["moonshine_onnx"]
+    def unexpected_import(name):
+        pytest.fail(f"availability imported {name}")
+
+    monkeypatch.setattr(voice.importlib.util, "find_spec", find)
+    monkeypatch.setattr(importlib, "import_module", unexpected_import)
+    assert voice.available() is (missing is None)
+    assert calls == (
+        ["moonshine_onnx"] if missing == "moonshine_onnx" else ["moonshine_onnx", "faster_whisper"]
+    )
+
+
+def test_engine_trims_only_after_unloading_models():
+    now, trimmed = [0.0], []
+
+    def trim():
+        assert engine._lock.locked()
+        assert not engine._models
+        trimmed.append(now[0])
+
+    engine = voice.VoiceEngine(lambda lang, threads: lambda pcm: "yes", lambda: now[0], trim=trim)
+    try:
+        engine.unload_idle()
+        engine.close()
+        assert trimmed == []
+        engine.transcribe("en", b"\0\0")
+        now[0] = 599
+        engine.unload_idle()
+        assert trimmed == []
+        now[0] = 600
+        engine.unload_idle()
+        assert trimmed == [600]
+        engine.unload_idle()
+        engine.close()
+        assert trimmed == [600]
+        engine.transcribe("nl", b"\0\0")
+        engine.close()
+        assert trimmed == [600, 600]
+        engine.close()
+        assert trimmed == [600, 600]
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("failure", [OSError, AttributeError])
+def test_trim_is_optional_without_glibc(monkeypatch, failure):
+    def unavailable(name):
+        raise failure("unavailable")
+
+    monkeypatch.setattr(voice.ctypes, "CDLL", unavailable)
+    voice._trim()
+
+
+def test_installed_moonshine_model_exposes_weight_loader():
+    if importlib.util.find_spec("moonshine_onnx") is None:
+        pytest.skip("voice extra is not installed")
+    from moonshine_onnx import MoonshineOnnxModel
+
+    assert callable(getattr(MoonshineOnnxModel, "_load_weights_from_hf_hub", None)), (
+        "Moonshine adapter requires MoonshineOnnxModel._load_weights_from_hf_hub; "
+        "update the adapter before changing the supported version range"
+    )
 
 
 def test_static_worklet_uses_existing_csp(app):
