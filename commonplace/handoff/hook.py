@@ -195,6 +195,19 @@ def _register(server: str, token: str, record: dict, journal: Path) -> None:
     _write_json(journal, record)
 
 
+def _report_launch_failure(server: str, token: str, handoff_id: str, error: str) -> None:
+    """Tell the hub the local successor didn't start; the agent then compacts."""
+    try:
+        _request(
+            server,
+            token,
+            "/api/handoffs/" + quote(handoff_id, safe="") + "/launch-failed",
+            {"error": f"successor command failed: {error}"},
+        )
+    except Exception:
+        pass
+
+
 def _resume(record: dict, journal: Path, client: str, server: str, token: str):
     if record.get("state") == "manual" and isinstance(record.get("prompt_file"), str):
         return _output(client, record["prompt_file"])
@@ -259,21 +272,25 @@ def _launch(
     environment.update(
         COMMONPLACE_HANDOFF_ID=handoff["id"], COMMONPLACE_THREAD_ID=handoff["stored_thread_id"]
     )
-    process = subprocess.Popen(
-        argv,
-        cwd=cwd if cwd and Path(cwd).is_dir() else prompt_dir,
-        env=environment,
-        start_new_session=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-    )
     try:
-        if process.wait(timeout=0.05) != 0:
-            raise RuntimeError("Successor exited")
-    except subprocess.TimeoutExpired:
-        pass
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd if cwd and Path(cwd).is_dir() else prompt_dir,
+            env=environment,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        try:
+            if process.wait(timeout=0.05) != 0:
+                raise RuntimeError("Successor exited")
+        except subprocess.TimeoutExpired:
+            pass
+    except (OSError, RuntimeError) as exc:
+        _report_launch_failure(server, token, handoff["id"], type(exc).__name__)
+        raise
     record.update(state="launched", agent_ref=f"pid:{process.pid}", registered=False)
     _write_json(journal, record)
     _register(server, token, record, journal)

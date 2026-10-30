@@ -643,6 +643,8 @@ def test_launch_failure_does_not_stop_or_retry(local, api, monkeypatch, capsys, 
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
     assert err
+    reports = [c for c in api.calls if c["route"] == "/api/handoffs/hof_one/launch-failed"]
+    assert len(reports) == 1 and reports[0]["body"]["error"].startswith("successor command failed")
     calls = len(api.calls)
     assert run_hook(local, monkeypatch, capsys) == ("", "")
     assert len(api.calls) == calls
