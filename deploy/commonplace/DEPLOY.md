@@ -4,11 +4,20 @@ Tailnet URL: `https://edge1.tail6cee8c.ts.net`. Public hosts remain disabled
 until Jeffrey approves them. These are operator instructions, not a record of
 a completed deployment. No edge1 connection was made while writing them.
 
+The coordinator's edge1 update supersedes the generic W7 layout: use
+`deploy/compose.edge1.yml`, `deploy/commonplace.caddy`, the fixed tailnet
+hostname, `/srv/commonplace/app/landing/public`, `/healthz`, and the root
+`backup-hook.sh` with host-managed restic. The same update requires public
+blocks to remain commented. Accordingly, PR #8's cmmn.dev redirects are
+converted but inactive until public exposure is approved; their tests check
+the future configuration, not live redirects.
+
 ## Prerequisites
 
-Have Hetzner Admin confirm that `/srv` is LUKS-encrypted **and mounted** before
-copying anything there. The 2026-10-30 03:27 CET edge1 notes say it is not yet
-mounted. Do not create directories on the underlying root filesystem.
+The 2026-10-30 03:33 CET edge1 notes report `/srv` LUKS2-encrypted and mounted,
+with clevis/tang auto-unlock through `srv-unlock.service`. Verify the mount
+before each deployment. Do not create directories on the underlying root
+filesystem when `/srv` is locked or unmounted.
 
 The admin supplies Docker Compose, Caddy's existing Tailscale TLS setup,
 `/srv/commonplace/deploy.sh`, `/srv/commonplace/.env` (owner `jeffrey`, mode
@@ -223,6 +232,13 @@ Compose. The administrator owns repository initialization and credentials
 in `/root/.config/restic/`, and must confirm the parent job aborts on a
 nonzero hook exit. Retention/prune runs on zurvur (append-only on edge1):
 request/verify **30 daily and 12 weekly** there.
+
+These host settings have not been inspected by W7. The notes document the
+zurvur endpoint (`100.91.208.60:8000`), nightly schedule and host-managed
+credentials, but do not establish the actual `RESTIC_REPOSITORY`, readable
+`RESTIC_PASSWORD_FILE`, 30-daily/12-weekly retention, or parent-job failure
+propagation. The administrator must verify those settings and a successful
+off-host restore before backup integration can be considered complete.
 
 The hook uses the deployed image tag from `/srv/commonplace/.env`, checks
 that `backup` exists, obtains a lock, stops the gateway container and all
