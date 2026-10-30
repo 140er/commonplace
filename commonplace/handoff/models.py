@@ -243,5 +243,5 @@ class RecallHit:
     chunk_index: int
     seq_start: int
     seq_end: int
-    score: float
+    score: float  # higher is better (FTS: the negated SQLite bm25)
     text: str  # verbatim chunk text
