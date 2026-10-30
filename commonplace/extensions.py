@@ -34,6 +34,7 @@ MODULES = (
     "commonplace.webhooks",
     "commonplace.oauth",
     "commonplace.web",
+    "commonplace.handoff.extension",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
@@ -55,6 +56,19 @@ class LocalTool:
     profiles: frozenset = ALL_PROFILES
     trusted_only: bool = False  # refused to untrusted tokens
     owner_only: bool = False  # only workspace owners
+    # Optional live gate, e.g. "only while this workspace uses the feature".
+    # False hides the tool exactly like a tool the token can't use.
+    available: Optional[Callable[[Any, Any], bool]] = None  # (principal, gateway)
+
+    def usable_by(self, principal, gateway=None) -> bool:
+        if self.owner_only and principal.role != "owner":
+            return False
+        if self.available is None:
+            return True
+        try:
+            return bool(self.available(principal, gateway))
+        except Exception:
+            return False
 
     def schema(self) -> dict:
         return {

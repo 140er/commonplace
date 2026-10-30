@@ -44,6 +44,8 @@ from .workers import Worker, WorkerSupervisor
 logger = logging.getLogger("commonplace.gateway")
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
+# A whole agent transcript (context handoff); the handoff API checks it again.
+HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 MAX_FANOUT_WINGS = 64
 _FORWARDED_METHODS = ("initialize", "ping")
@@ -194,17 +196,24 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        visible = [t for t in tools if policy.tool_visible(t.get("name"))]
-        for name in sorted(extensions.names()):
+        local_names = extensions.names()
+        # The gateway's own tools win over a worker tool of the same name, so a
+        # gated extension tool can't slip through as a worker tool.
+        visible = [
+            t
+            for t in tools
+            if t.get("name") not in local_names and policy.tool_visible(t.get("name"))
+        ]
+        for name in sorted(local_names):
             tool = extensions.get(name)
-            if policy.tool_visible(name) and (not tool.owner_only or principal.role == "owner"):
+            if policy.tool_visible(name) and tool.usable_by(principal, self.gateway):
                 visible.append(tool.schema())
         response["result"]["tools"] = visible
         return response
 
     def _local_call(self, principal: Principal, tool, req_id, args: dict) -> dict:
-        if tool.owner_only and principal.role != "owner":
-            self._audit(principal, tool.name, "deny", "owner only")
+        if not tool.usable_by(principal, self.gateway):
+            self._audit(principal, tool.name, "deny", "owner only" if tool.owner_only else "off")
             return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
         ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
         try:
@@ -244,13 +253,18 @@ class Mediator:
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
 
+        local = extensions.get(name)
         refusal = policy.refusal(name)
+        if local is not None and local.available is not None:
+            # A feature a workspace doesn't use is audited like a tool that
+            # doesn't exist, whatever the token holds.
+            if not local.usable_by(principal, self.gateway):
+                refusal = "unknown tool"
         if refusal is not None:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
 
-        local = extensions.get(name)
         if local is not None:
             return self._local_call(principal, local, req_id, args)
 
@@ -982,6 +996,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         cap = (
             MAX_REQUEST_BYTES
             if path == "/mcp"
+            else HANDOFF_REQUEST_BYTES
+            if path == "/api/handoff"
             else 65536
             if path.startswith("/oauth/")
             else 1024 * 1024

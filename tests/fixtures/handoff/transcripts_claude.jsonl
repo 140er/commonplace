@@ -1,0 +1,10 @@
+{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"  Café ☕\n第二行  "}}
+
+{"type":"assistant","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"I will read it."},{"type":"thinking","thinking":"Keep the exact words."},{"type":"tool_use","id":"call_a","name":"read_file","input":{"z":"雪","a":1}}]}}
+{"type":"user","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_a","is_error":true,"content":[{"type":"text","text":"line one\nline two"},{"type":"image","source":{"type":"base64","data":"AAAA"}},{"type":"text","text":"❌  "}]}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"image","source":{"type":"base64","data":"AAAA"}}]}}
+{"type":"summary","summary":"Synthetic context"}
+{"type":"system","timestamp":"2026-01-01T00:00:03Z","content":"Synthetic event"}
+{"type":"file-history-snapshot","snapshot":{"messageId":"synthetic"}}
+{"type":"future-record","data":{"preserve":true}}
+{"type":"assistant","message":{"role":"assistant","content":"partial
