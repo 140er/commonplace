@@ -744,7 +744,7 @@ class Gateway:
                 path = urlparse(self.path).path
                 if self._route("GET"):
                     return
-                if path == "/health":
+                if path in ("/health", "/healthz"):
                     self._send_json(200, {"ok": True})
                     return
                 if path == "/mcp":
@@ -763,7 +763,11 @@ class Gateway:
                     self._send_json(
                         401,
                         {"error": "unauthorized"},
-                        {"WWW-Authenticate": 'Bearer realm="commonplace"'},
+                        {
+                            "WWW-Authenticate": getattr(
+                                gateway, "www_authenticate", 'Bearer realm="commonplace"'
+                            )
+                        },
                     )
                     return
                 media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()

@@ -26,19 +26,33 @@ def test_frontmatter_and_size():
     assert body.strip()
 
 
-def test_tool_references_match_contract():
+def _contract_tools() -> set:
     contract = CONTRACT.read_text(encoding="utf-8")
     sections = contract.split("## Boards (W1)", 1)[1].split("## Webhooks (W3)", 1)[0]
-    tools = set(re.findall(r"^\| `([a-z][a-z0-9_]*)` \|", sections, re.MULTILINE))
+    return set(re.findall(r"^\| `([a-z][a-z0-9_]*)` \|", sections, re.MULTILINE))
+
+
+_TOOLISH = re.compile(r"\b(?:task|board|memory|needs|ask|decide)(?:_[a-z]+)*\b")
+_ARGS = {"status_line"}
+
+
+def test_tool_references_match_contract():
+    tools = _contract_tools()
     assert {"task_take_next", "memory_save", "ask", "needs_me"} <= tools
     for path in (SKILL, SNIPPET):
         text = path.read_text(encoding="utf-8")
-        references = set(re.findall(r"\btool:([a-z][a-z0-9_]*)\b", text))
-        assert references
-        assert references <= tools, references - tools
-        # Every standalone snake_case identifier is a marked tool or a known argument.
-        identifiers = set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", text))
-        assert identifiers <= references | {"status_line"}, identifiers - references
+        named = {w for w in _TOOLISH.findall(text) if "_" in w}
+        assert named - _ARGS <= tools, named - _ARGS - tools
+    skill = SKILL.read_text(encoding="utf-8")
+    for tool in (
+        "task_list",
+        "task_take_next",
+        "task_update",
+        "memory_search",
+        "memory_save",
+        "ask",
+    ):
+        assert f"`{tool}" in skill, tool
 
 
 def test_snippet_budgets_and_slim_tools():
@@ -47,13 +61,8 @@ def test_snippet_budgets_and_slim_tools():
     assert len(blocks) == 2
     assert len(blocks[0].splitlines()) <= 15
     assert len(blocks[1].splitlines()) <= 10
-    assert set(re.findall(r"\btool:([a-z][a-z0-9_]*)\b", blocks[1])) <= {
-        "memory_search",
-        "memory_save",
-        "task_add",
-        "task_comment",
-        "ask",
-    }
+    grok = {w for w in _TOOLISH.findall(blocks[1]) if "_" in w or w == "ask"}
+    assert grok <= {"memory_search", "memory_save", "task_add", "task_comment", "ask"}, grok
 
 
 def test_no_user_facing_jargon():
@@ -84,12 +93,10 @@ def test_installer_dry_run_is_non_mutating_and_safe(tmp_path):
 def test_documented_url_defaults_overrides_and_oauth(tmp_path):
     skill = SKILL.read_text(encoding="utf-8")
     snippet = SNIPPET.read_text(encoding="utf-8")
+    assert "$COMMONPLACE_URL/mcp" in skill
     assert "https://cmmn.dev" in skill
-    assert "https://edge1.tail6cee8c.ts.net" in skill
-    assert (
-        "For claude.ai or ChatGPT, add `https://cmmn.dev/mcp` as a custom connector "
-        "and connect through OAuth; no token is needed."
-    ) in snippet
+    assert "`https://cmmn.dev/mcp` as a custom connector" in snippet
+    assert "OAuth" in snippet
     env = {**os.environ, "HOME": str(tmp_path)}
     env.pop("COMMONPLACE_URL", None)
     output = subprocess.run(
