@@ -23,14 +23,24 @@ in particular, another request's pending handoff is not safe to stop for.
 
 The current DB contract does not persist settings or launch metadata. Keep
 the begin-time settings, metadata and doc for retries in this service's
-lifetime. After a restart, an unclaimed stored handoff or explicit relaunch
-uses the current launcher and reconstructs its doc from stored messages.
-Persisting these snapshots requires a shared DB contract change.
+lifetime. A different instance or restarted process with settings now off
+returns compact/off even for an existing stored handoff: it cannot look up
+the saved setting before the off gate. When settings remain on, retries
+reconstruct the doc and use the current launcher; explicit owner relaunch
+also reconstructs it regardless of the toggle. Durable snapshots and a
+read-only lookup by workspace/key are required for correct retry behavior.
 
 Successor registration uses the control DB's shared lock around read,
 set_successor and event emission. This deduplicates completion events for
-services sharing that ControlDB; exactly-once events across processes need
-an atomic transition indicator from set_successor.
+services sharing that ControlDB, but does not guarantee delivery: if emit
+fails after set_successor, an idempotent repeat does not retry the event.
+An atomic transition indicator prevents duplicates across processes;
+transactional audit/outbox writes are needed for durable delivery.
+
+Launch transitions use the same shared lock to preserve a concurrently
+completed handoff. The DB stubs cannot enforce that guard across processes:
+mark_launched and mark_launch_failed need conditional updates checking the
+expected state, claim identity and absence of a successor.
 """
 
 from __future__ import annotations
@@ -208,9 +218,11 @@ class HandoffService:
         return self._launch(principal, handoff, snapshot)
 
     def _launch(self, principal, handoff: Handoff, snapshot: _Snapshot) -> HandoffResult:
+        claimed = False
         try:
             if not self.db.claim_launch(handoff.id):
                 return HandoffResult("handoff", handoff)
+            claimed = True
             doc = snapshot.doc
             if doc is None:
                 store = self.store_for(handoff.workspace_id)
@@ -227,26 +239,54 @@ class HandoffService:
                     ),
                 )
             prompt = writer.successor_prompt(doc)
-            handoff = self.db.mark_launched(handoff.id)
+            with self.control_db._lock:
+                current = self.db.get(handoff.id)
+                if current is None or current.state != "stored" or current.successor is not None:
+                    return HandoffResult("handoff", current or handoff)
+                handoff = self.db.mark_launched(handoff.id)
             successor = launchers.launch(
                 snapshot.settings.launcher, handoff, prompt, prompt_dir=self.prompt_dir
             )
             if successor is not None:
                 handoff = self.register_successor(principal, handoff.id, successor)
+            else:
+                with self.control_db._lock:
+                    handoff = self.db.get(handoff.id) or handoff
+            client_launch = (
+                snapshot.settings.launcher.kind == "client"
+                and handoff.state == "launched"
+                and handoff.successor is None
+            )
             return HandoffResult(
                 "handoff",
                 handoff,
-                launch=snapshot.settings.launcher.kind == "client",
-                prompt=prompt if snapshot.settings.launcher.kind == "client" else "",
+                launch=client_launch,
+                prompt=prompt if client_launch else "",
             )
         except Exception:
-            reason = "successor launch failed"
-            try:
+            return self._launch_failure(principal, handoff, claimed=claimed)
+
+    def _launch_failure(self, principal, handoff: Handoff, *, claimed: bool) -> HandoffResult:
+        reason = "successor launch failed"
+        try:
+            with self.control_db._lock:
+                current = self.db.get(handoff.id)
+                if current is not None:
+                    handoff = current
+                if (
+                    not claimed
+                    or current is None
+                    or current.state not in ("stored", "launched")
+                    or current.successor is not None
+                ):
+                    return HandoffResult(
+                        "handoff", handoff, reason="" if handoff.state == "done" else reason
+                    )
                 handoff = self.db.mark_launch_failed(handoff.id, reason)
-            except Exception:
-                pass
-            self._emit(EVENT_LAUNCH_FAILED, principal, handoff, decision="error", reason=reason)
-            return HandoffResult("handoff", handoff, reason=reason)
+                self._emit(EVENT_LAUNCH_FAILED, principal, handoff, decision="error", reason=reason)
+        except Exception:
+            pass
+        return HandoffResult("handoff", handoff, reason=reason)
 
     def _authorized(self, principal, handoff_id: str, *, owner_only: bool = False) -> Handoff:
         handoff = self.db.get(handoff_id)

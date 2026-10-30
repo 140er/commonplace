@@ -190,6 +190,7 @@ class FakeEvents:
     def __init__(self, trace):
         self.trace = trace
         self.calls = []
+        self.delivered = []
         self.fail_on = ""
 
     def emit(
@@ -199,6 +200,7 @@ class FakeEvents:
         self.calls.append((event, workspace_id, handoff, principal, decision, reason, ids))
         if event == self.fail_on:
             raise RuntimeError("private event content")
+        self.delivered.append(event)
 
     def count(self, event):
         return sum(call[0] == event for call in self.calls)
@@ -624,9 +626,7 @@ def test_detached_command_without_ref_stays_launched(rig):
     assert rig.events.count(EVENT_COMPLETED) == 0
 
 
-@pytest.mark.parametrize(
-    "stage", ["claim_launch", "prompt", "mark_launched", "launch", "set_successor"]
-)
+@pytest.mark.parametrize("stage", ["prompt", "mark_launched", "launch", "set_successor"])
 def test_launch_errors_keep_stored_thread_and_stop_old_agent(rig, monkeypatch, stage):
     def fail(*args, **kwargs):
         raise service.launchers.LaunchError("PRIVATE TRANSCRIPT")
@@ -657,6 +657,120 @@ def test_launch_failure_reporting_errors_still_stop_old_agent(rig, monkeypatch):
     monkeypatch.setattr(rig.db, "mark_launch_failed", fail)
     result = rig.service.run(rig.principal, make_request())
     assert result.action == "handoff" and result.handoff.stored_thread_id and not result.launch
+
+
+@pytest.mark.parametrize(
+    ("kind", "outcome"),
+    [
+        ("command", "error"),
+        ("command", "different_ref"),
+        ("command", "no_ref"),
+        ("client", "no_ref"),
+    ],
+)
+def test_registered_successor_survives_late_launcher_result(rig, monkeypatch, kind, outcome):
+    entered = threading.Event()
+    release = threading.Event()
+    rig.settings.current = HandoffSettings(enabled=True, launcher=LauncherConfig(kind=kind))
+
+    def launch(config, handoff, prompt, *, prompt_dir):
+        entered.set()
+        assert release.wait(10)
+        if outcome == "error":
+            raise service.launchers.LaunchError("private launcher error")
+        return SuccessorRef("different") if outcome == "different_ref" else None
+
+    monkeypatch.setattr(service.launchers, "launch", launch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(rig.service.run, rig.principal, make_request())
+        try:
+            assert entered.wait(10)
+            row = rig.db.get("hof_1")
+            assert row.state == "launched"
+            completed = rig.new_service().register_successor(
+                rig.principal, row.id, SuccessorRef("registered")
+            )
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert result.handoff == rig.db.get(completed.id) == completed
+    assert result.action == "handoff" and not result.launch and not result.prompt
+    assert rig.events.count(EVENT_COMPLETED) == 1
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+    assert "mark_launch_failed" not in rig.trace
+
+
+def test_completion_during_prompt_skips_launcher_and_preserves_done(rig, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def successor_prompt(doc):
+        entered.set()
+        assert release.wait(10)
+        return "continue"
+
+    monkeypatch.setattr(service.writer, "successor_prompt", successor_prompt)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(rig.service.run, rig.principal, make_request())
+        try:
+            assert entered.wait(10)
+            row = rig.db.get("hof_1")
+            assert row.state == "stored"
+            completed = rig.new_service().register_successor(
+                rig.principal, row.id, SuccessorRef("registered")
+            )
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert result.handoff == rig.db.get(completed.id) == completed
+    assert not result.launch and not rig.launch_calls
+    assert "mark_launched" not in rig.trace and "mark_launch_failed" not in rig.trace
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+
+
+def test_stale_stored_caller_does_not_fail_completed_row_when_claim_raises(rig, monkeypatch):
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    first = rig.service.run(rig.principal, make_request())
+    entered = threading.Event()
+    release = threading.Event()
+
+    def claim_launch(handoff_id):
+        entered.set()
+        assert release.wait(10)
+        raise sqlite3.OperationalError("private claim error")
+
+    monkeypatch.setattr(rig.db, "claim_launch", claim_launch)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(rig.new_service().run, rig.principal, make_request())
+        try:
+            assert entered.wait(10)
+            completed = rig.service.register_successor(
+                rig.principal, first.handoff.id, SuccessorRef("registered")
+            )
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert result.handoff == rig.db.get(first.handoff.id) == completed
+    assert result.action == "handoff" and not result.launch
+    assert "mark_launch_failed" not in rig.trace
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+
+
+def test_claim_error_leaves_unowned_stored_row_retryable(rig, monkeypatch):
+    claim = rig.db.claim_launch
+
+    def fail(handoff_id):
+        raise sqlite3.OperationalError("private claim value")
+
+    monkeypatch.setattr(rig.db, "claim_launch", fail)
+    first = rig.service.run(rig.principal, make_request())
+    assert first.action == "handoff" and first.handoff.state == "stored" and not first.launch
+    assert not rig.db.claims and "mark_launch_failed" not in rig.trace
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+    monkeypatch.setattr(rig.db, "claim_launch", claim)
+    second = rig.service.run(rig.principal, make_request())
+    assert second.launch and second.handoff.id == first.handoff.id
+    assert len(rig.store.writes) == 1
 
 
 def test_chain_of_three_handoffs(rig):
@@ -833,3 +947,37 @@ def test_restart_relaunch_reconstructs_doc_and_ignores_disabled_toggle(rig):
     result = rig.new_service().relaunch(owner, first.handoff.id)
     assert result.launch and result.handoff.id == first.handoff.id
     assert len(rig.store.writes) == 1 and len(rig.doc_calls) == 2
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="DB needs persisted snapshots and read-only key lookup: a new instance returns compact/off",
+)
+def test_cross_instance_stored_retry_honors_settings_captured_before_disable(rig, monkeypatch):
+    claim = rig.db.claim_launch
+    monkeypatch.setattr(rig.db, "claim_launch", lambda handoff_id: False)
+    first = rig.service.run(rig.principal, make_request())
+    assert first.handoff.state == "stored" and not rig.db.claims
+    monkeypatch.setattr(rig.db, "claim_launch", claim)
+    rig.settings.current = HandoffSettings(enabled=False)
+    result = rig.new_service().run(rig.principal, make_request())
+    assert rig.db.get(first.handoff.id).state == "stored"
+    assert len(rig.store.writes) == 1
+    assert (result.action, result.launch) == ("handoff", True)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Completion transition and audit/outbox must commit atomically for guaranteed event delivery",
+)
+def test_completed_event_is_not_lost_when_emit_fails_before_idempotent_retry(rig):
+    first = rig.service.run(rig.principal, make_request())
+    ref = SuccessorRef("registered")
+    rig.events.fail_on = EVENT_COMPLETED
+    completed = rig.service.register_successor(rig.principal, first.handoff.id, ref)
+    assert completed.state == "done"
+    assert EVENT_COMPLETED not in rig.events.delivered
+    rig.events.fail_on = ""
+    repeated = rig.service.register_successor(rig.principal, completed.id, ref)
+    assert repeated == completed
+    assert rig.events.delivered.count(EVENT_COMPLETED) == 1
