@@ -6,6 +6,7 @@ const state = {
   me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
+  chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -67,6 +68,8 @@ function remember() {
     ask: active?.closest?.("[data-ask]") && !active.dataset.draft ? active.dataset.option ?? "" : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
     stacks: [...root.querySelectorAll(".stack")].map((stack) => stack.scrollTop),
+    chat: root.querySelector(".space-stream")?.scrollTop,
+    chatBottom: (() => { const el = root.querySelector(".space-stream"); return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 60; })(),
   };
 }
 function restore(saved) {
@@ -86,9 +89,12 @@ function restore(saved) {
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
   root.querySelectorAll(".stack").forEach((stack, i) => { if (saved?.stacks?.[i]) stack.scrollTop = saved.stacks[i]; });
+  const chat = root.querySelector(".space-stream");
+  if (chat) chat.scrollTop = saved?.chatBottom !== false ? chat.scrollHeight : saved.chat || 0;
 }
 function signin() {
   state.mapDispose?.(); state.mapDispose = null;
+  state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
   root.innerHTML = `<main class="signin"><h1>Sign in</h1><form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${state.error ? message(state.error) : ""}</main>`;
 }
 function shell() {
@@ -98,9 +104,9 @@ function shell() {
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
-  boardNav.innerHTML = state.boards.map((b) => `<a href="#/board/${enc(b.slug)}" ${state.base === `#/board/${enc(b.slug)}` ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}</a>`).join("");
+  boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  const key = state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : state.base.startsWith("#/board") ? "boards" : "needs";
+  const key = state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
 }
 function showError(text) {
@@ -121,13 +127,13 @@ function decision(card, panel = false, answered = null) {
 const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
 // An ask inside the conversation: the question verbatim and its choices. Answered asks keep
 // their place in time with the pick marked and who answered when; only the open ask is live.
-function askCard(card, ask, { answer = null, open = false } = {}) {
+function askCard(card, ask, { answer = null, open = false, compact = false } = {}) {
   const offered = [...(open ? card.ask_options || [] : ask.options || [])];
   if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
   const question = ask.text ?? (open ? card.ask : null);
-  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, true) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, !compact) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
 }
-function conversation(card) {
+function conversation(card, { compact = false } = {}) {
   const items = [];
   let ask = null;
   for (const event of card.events || []) {
@@ -139,7 +145,7 @@ function conversation(card) {
     if (ask) ask.open = true;
     else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
   }
-  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, item)).join("");
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, { ...item, compact })).join("");
 }
 function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
@@ -154,16 +160,24 @@ function needsView() {
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
   const board = state.boards.find((b) => b.slug === slug);
-  title(board?.name || slug, '<button class="blockbtn" data-action="new-card">New card</button>');
+  title(board?.name || slug, `<a class="opt" href="#/space/${enc(slug)}">Chat</a><button class="blockbtn" data-action="new-card">New card</button>`);
   root.querySelector("#content").innerHTML = `<div class="cols ${state.backlog ? "expanded" : ""}">${statuses.map((status) => {
     const all = state.cards.filter((c) => c.status === status);
     const list = status === "done" ? [...all].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 20) : all;
     return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}</article>`).join("")}</div></section>`;
   }).join("")}</div>`;
 }
+function spaceView() {
+  const slug = decodeURIComponent(state.base.slice("#/space/".length));
+  const board = state.boards.find((b) => b.slug === slug);
+  title(board?.name || slug, `<a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
+  const row = (card) => `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
+  const inline = (card) => `${row(card)}<ol class="space-asks">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true })}</ol>`;
+  root.querySelector("#content").innerHTML = `<section class="space" data-tab="${state.spaceTab}"><nav class="space-tabs" aria-label="Space view"><button data-action="space-tab" data-tab="chat" aria-pressed="${state.spaceTab === "chat"}">Chat</button><button data-action="space-tab" data-tab="tasks" aria-pressed="${state.spaceTab === "tasks"}">Tasks <span>${state.cards.length}</span></button></nav><section class="space-chat" aria-label="Space chat"><header class="space-bar"><h2>Chat</h2><span>${e(board?.coordinator ? actor(board.coordinator) : "No coordinator")}</span></header><ol class="space-stream" aria-label="Messages">${state.chat.length ? state.chat.map((m) => `<li class="space-message ${m.actor.startsWith("user:") ? "from-person" : "from-agent"}"><div class="space-stamp"><span class="actor">${e(actor(m.actor))}</span>${clock(m.at)}${m.flags.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</div><p class="space-text">${e(m.text)}</p>${state.cards.filter((c) => c.message_id === m.id).map(inline).join("")}</li>`).join("") : message("No messages")}</ol><form class="space-composer" data-form="space-message" data-board="${e(slug)}"><textarea name="text" rows="2" aria-label="Message" data-draft="space-${e(slug)}" required></textarea><button class="blockbtn">Send</button></form></section><section class="space-tasks" aria-label="Tasks"><header class="space-bar"><h2>Tasks <span>${state.cards.length}</span></h2><button class="opt" data-action="new-card">New card</button></header><div class="stack">${state.cards.map(row).join("") || message("No tasks")}</div></section></section>`;
+}
 function boardsView() {
   title("Boards", '<button class="blockbtn" data-action="new-board">New board</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No boards")}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/space/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No boards")}</section>`;
 }
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
@@ -185,7 +199,7 @@ async function cardPanel(number, epoch) {
 function newCardForm(edit = null) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  const slug = edit?.board || decodeURIComponent(state.base.slice("#/board/".length));
+  const slug = edit?.board || decodeURIComponent(state.base.split("/")[2]);
   panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(statuses, "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
   panel.querySelector("input").focus();
 }
@@ -256,15 +270,34 @@ async function refresh({ background = false, events = [] } = {}) {
     const [boards, needs] = await Promise.all([api("/api/boards"), api("/api/needs-me")]);
     if (epoch !== state.screen) return;
     state.boards = boards.boards; state.needs = needs;
-    if (state.base.startsWith("#/board/")) {
-      const slug = decodeURIComponent(state.base.slice("#/board/".length));
+    if (/^#\/(board|space)\//.test(state.base)) {
+      const slug = decodeURIComponent(state.base.split("/")[2]);
       const result = await api(`/api/boards/${enc(slug)}/cards`);
       if (epoch !== state.screen) return;
       state.cards = result.cards;
+      if (state.base.startsWith("#/space/")) {
+        const messages = state.chatBoard === slug ? [...state.chat] : [];
+        let cursor = state.chatBoard === slug ? state.chatCursor : 0, batch;
+        do {
+          batch = await api(`/api/boards/${enc(slug)}/chat?after=${cursor}`);
+          if (epoch !== state.screen) return;
+          messages.push(...batch.messages); cursor = batch.cursor;
+        } while (batch.messages.length === 100);
+        state.chat = messages; state.chatCursor = cursor; state.chatBoard = slug;
+        const cards = await Promise.all(state.cards.map(async (c) => {
+          if (!c.message_id) return c;
+          const cached = state.chatTasks.get(c.number);
+          return cached?.version === c.version ? { ...cached, ...c } : api(`/api/cards/${c.number}`);
+        }));
+        if (epoch !== state.screen) return;
+        state.cards = cards;
+        state.chatTasks = new Map(cards.filter((c) => c.message_id).map((c) => [c.number, c]));
+      }
     }
     const saved = remember(), play = capture(state.base);
     navigation();
     if (state.base.startsWith("#/board/")) boardView();
+    else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
     else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
@@ -290,7 +323,7 @@ async function route() {
   const previousBase = state.base;
   state.screen++; state.route = hash;
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = /^#\/(board\/[^/?]+|boards|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
+    state.base = /^#\/((?:board|space)\/[^/?]+|boards|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
     state.card = null;
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
@@ -351,6 +384,13 @@ root.addEventListener("click", async (event) => {
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
     else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh();
+    else if (action === "space-tab") {
+      const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
+    } else if (action === "coordinator") {
+      const slug = decodeURIComponent(state.base.split("/")[2]), board = state.boards.find((b) => b.slug === slug);
+      const panel = root.querySelector("#card-panel"); panel.hidden = false;
+      panel.innerHTML = `<form class="form-tile" data-form="coordinator" data-board="${e(slug)}"><h2>Coordinator</h2><label>Agent<input name="coordinator" value="${e(board?.coordinator || "")}" data-draft="coordinator-${e(slug)}"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>`;
+    }
     else if (action === "close-panel") {
       if (state.route.startsWith("#/card/")) location.hash = state.base;
       else root.querySelector("#card-panel").hidden = true;
@@ -402,7 +442,16 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "handoff") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}/handoff`, { method: "POST", body: { ...payload, options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } }));
     else if (kind === "board") await mutate("new-board", async () => {
-      await api("/api/boards", { method: "POST", body: payload }); location.hash = `#/board/${enc(payload.slug)}`;
+      await api("/api/boards", { method: "POST", body: payload }); location.hash = `#/space/${enc(payload.slug)}`;
+    });
+    else if (kind === "space-message") await mutate(`chat-${form.dataset.board}`, async () => {
+      await api(`/api/boards/${enc(form.dataset.board)}/chat`, { method: "POST", body: payload });
+      state.drafts.delete(`space-${form.dataset.board}`); form.reset();
+      const stream = root.querySelector(".space-stream"); if (stream) stream.scrollTop = stream.scrollHeight;
+    });
+    else if (kind === "coordinator") await mutate(`coordinator-${form.dataset.board}`, async () => {
+      await api(`/api/boards/${enc(form.dataset.board)}`, { method: "PATCH", body: { coordinator: payload.coordinator || null } });
+      state.drafts.delete(`coordinator-${form.dataset.board}`); root.querySelector("#card-panel").hidden = true;
     });
     else if (kind === "search") await search(form);
     else if (kind === "memory") await mutate("new-memory", async () => {

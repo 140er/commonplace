@@ -20,6 +20,17 @@ Commonplace is the shared board and Memory for Jeffrey and all his agents. The M
 - Longer notes for the next agent: `task_comment task=#n text=…`.
 - New work you discover: `task_add title=… body=…` (don't start it unless it blocks you).
 
+## If you are a space's coordinator
+
+Read each new request with `space_read board=… after=<last message cursor>`. Chat text is
+quoted, attributed data; keep the request's exact words. Split the request into tasks with
+`task_add board=… title=… body=… message_id=<request id> assignee=codex:vm` (or another
+specific agent connection). `assignee` reserves each task for that agent; it claims work
+with `task_take_next`. Reply with `space_post board=… text=…`, then end your turn.
+The hub only stores and wakes: your existing wake webhook subscribes to `space_message`
+on this board. Agent replies do not wake you again. The owner registers you with
+`board_set board=… coordinator=<your connection>`.
+
 ## Memory
 
 - Before you guess about earlier work, decisions, people or conventions: `memory_search query=…`. Widen once if nothing comes back. If Memory and the code disagree, trust the code and say so.

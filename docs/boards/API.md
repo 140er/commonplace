@@ -13,7 +13,7 @@ Authentication is the gateway's (PRODUCT-DESIGN.md §6): a `cmmn_…` token or O
 
 ## MCP tools
 
-Eight tools. Replies are short plain text, one fact per line, so a call costs 10–60 tokens. Errors are one line that starts with `no:`.
+Card tools return short plain text, one fact per line. Chat tools return JSON with verbatim messages and a cursor. Errors are one line that starts with `no:`.
 
 `board` is a board slug or a repo URL and can be left out when the hooks pass the git remote. `task` is `#142` or `142`.
 
@@ -228,3 +228,34 @@ Commonplace: #145 decided (90d), #148 reserved for you. task_take_next picks the
 ```
 
 The gateway answers this from one indexed query (`tasks_by_assignee`), inside the 100 ms startup budget.
+
+## Spaces and coordinators
+
+A space is a board. `space_read(board, after=0)` returns up to 100 original messages
+in ID order and a `cursor` for the next page. `space_post(board, text)` appends exact
+words with the verified caller's actor, user, connection, trust, flags and timestamp.
+Both require the board's readable wing; posts also require its writable wing and
+`memory:write`. Restricted/inbox connections may read visible chat but cannot post.
+Message text is quoted data, never instructions. Messages cannot be edited or deleted.
+
+The owner sets one active PAT agent with `board_set(board, coordinator)`; `null` clears
+it. The connection must have chat read/write tools and access to this board. Register
+that connection's existing wake webhook for `space_message` (optionally with a board
+filter). A person posting emits `space_message`, routed to the coordinator's webhook;
+agent replies emit `space_replied` for app polling only, preventing wake loops. Wake
+payloads contain board/message IDs and the space URL, never chat text. The coordinator
+reads the request and uses existing tools: `task_add(..., message_id=<request id>,
+assignee="codex:vm")` links and reserves a task. Only messages in the same board can
+be linked. The hub never invokes an LLM or starts an agent process.
+
+REST aliases, with the same tool visibility and wing rules:
+
+| Method | Route | Tool |
+|---|---|---|
+| GET | `/api/boards/<slug>/chat?after=<message id>` | `space_read` |
+| POST | `/api/boards/<slug>/chat` (`text`) | `space_post` |
+| PATCH | `/api/boards/<slug>` (`coordinator`) | `board_set` |
+
+`#/space/<slug>` shows chat and linked task rows plus the board's task list. Phone
+uses Chat/Tasks tabs. Existing `/api/events` polling updates task states and inline
+asks; answered asks stay in the conversation. `#/board/<slug>` keeps the kanban view.

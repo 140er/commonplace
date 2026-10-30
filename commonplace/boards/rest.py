@@ -44,6 +44,28 @@ def install(gateway):
 
 
 def dispatch(service, h, parts, method):
+    if len(parts) in (2, 3) and parts[0] == "boards":
+        tool = None
+        if len(parts) == 2 and method == "PATCH":
+            tool = "board_set"
+        elif len(parts) == 3 and parts[2] == "chat":
+            tool = {"GET": "space_read", "POST": "space_post"}.get(method)
+        if tool:
+            # These new aliases enforce MCP visibility here, keeping gateway/handoff untouched.
+            p = service.principal
+            if not p.person and not p.policy.tool_visible(tool):
+                raise HTTPError(403, "tool not allowed for this connection")
+            if tool == "space_read":
+                try:
+                    after = int(query(h).get("after", "0"))
+                except ValueError:
+                    raise HTTPError(400, "invalid cursor") from None
+                return 200, service.space_read(parts[1], after=after)
+            body = read_json(h)
+            body.pop("board", None)
+            if tool == "board_set":
+                return 200, service.board_set(parts[1], **body)
+            return 201, service.space_post(parts[1], **body)
     if parts == ["boards"]:
         if method == "GET":
             return 200, {"boards": service.board_list()}

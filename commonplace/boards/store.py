@@ -14,6 +14,7 @@ from .display import need
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
+    "message_id": "INTEGER REFERENCES space_messages(id)",
     "repo": "TEXT",
     "branch": "TEXT",
     "pr_url": "TEXT",
@@ -159,6 +160,9 @@ class BoardStore:
             conn.executescript(Path(__file__).with_name("schema.sql").read_text())
             conn.execute("BEGIN IMMEDIATE")
             try:
+                board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
+                if "coordinator" not in board_columns:
+                    conn.execute("ALTER TABLE boards ADD COLUMN coordinator TEXT")
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
                 for name, datatype in {**TASK_COLUMNS, "created_by": "TEXT"}.items():
                     if name not in columns:
