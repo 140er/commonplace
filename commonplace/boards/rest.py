@@ -63,6 +63,8 @@ def dispatch(service, h, parts, method):
             body = read_json(h)
             body.pop("board", None)
             return 201, service.task_add(board=parts[1], **body)
+    if parts == ["cards"] and method == "GET":
+        return 200, {"cards": service.task_list()}
     if parts == ["needs-me"] and method == "GET":
         return 200, service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":
