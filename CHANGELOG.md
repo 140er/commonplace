@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Commonplace gateway, milestone 1 (`commonplace/`): accounts, workspaces with owner/member roles, `cmmn_` personal access tokens stored as SHA-256, per-token policy (scopes, tool profiles, wing scopes, trust levels, fail closed), an append-only audit log, and one `mempalace` worker per workspace behind it. Workers started with `MEMPALACE_MCP_TRUSTED_IDENTITY=1` stamp the gateway's verified author (`hub_user`, `hub_connection`, `hub_client`, `hub_auth`, `hub_trust`, `hub_workspace`, `hub_written_at`) on drawers, diary entries and KG facts, keep the client's `added_by` as `claimed_by`, and return the stamp in search, get_drawer and kg_query results.
 - An optional `recall` command in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`) and `mempalace instructions recall`. Recall never needs it: the `mempalace-recall` skill fires on its own in Claude Code and in Codex, whose plugin loads the repo-root `skills/`. `scripts/evals/codex_auto_recall.sh` checks the Codex half against a real `codex exec`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
 
 ### Fixed

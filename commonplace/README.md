@@ -1,0 +1,32 @@
+# Commonplace gateway
+
+One gateway in front of MemPalace: accounts, workspaces, scoped tokens, verified authorship and an audit log. Each workspace gets its own `mempalace` worker on loopback, started on first use and stopped when idle. Design: [PRODUCT-DESIGN.md](../PRODUCT-DESIGN.md) §4–7.
+
+```bash
+commonplace init --admin-email you@example.com
+commonplace token add grok:cos --workspace personal --client grok \
+  --profile slim --read-wings shared,inbox --write-wing inbox --trust untrusted
+commonplace serve --host 127.0.0.1 --port 8765
+```
+
+`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus `workspaces/<id>/palace`.
+
+## Policy
+
+| Field | Meaning |
+|---|---|
+| `--profile` | `slim`, `standard` or `full`; or `--tools` with an explicit list |
+| `--scopes` | `memory:read`, `memory:write`, `memory:delete`, `kg:read`, `kg:write`, `events:read`, `events:write`, `private:read`, `private:write`, `admin` |
+| `--read-wings` / `--write-wings` | wing names or patterns (`project_*`, `*`) |
+| `--write-wing` | where an `untrusted` token's writes always land |
+| `--trust` | `untrusted` (inbox writes only, no update, delete or graph writes), `standard` (no delete), `trusted` |
+
+- `mine`, `sync`, `hook_settings` and `reconnect` are never served through the gateway.
+- Wings named `private` or `private_*` also need `private:read` / `private:write`, even under `*`.
+- Tools that read or change data across wings (status, graph, tunnels, events) need every wing.
+- The knowledge graph has no wings, so reading it, or invalidating or superseding a fact, needs every wing. `kg:write` alone allows adding facts. Untrusted tokens never write the graph.
+- A hidden drawer answers exactly like a missing one in every tool.
+- A tool the token can't use is missing from `tools/list` and answers `Unknown tool`. A drawer it can't read answers `Drawer not found`.
+- Searches without a wing run once per readable wing and merge by score.
+
+The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
