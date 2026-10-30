@@ -186,7 +186,7 @@ def add_webhook_commands(sub):
 def cmd_login_link(args) -> int:
     from .bridge import create_login_url
 
-    print(create_login_url(_db(args), args.email, args.workspace, args.base_url))
+    print(create_login_url(_db(args), args.email, args.workspace, args.base_url, args.minutes))
     return 0
 
 
@@ -287,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("email")
     s.add_argument("--workspace")
     s.add_argument("--base-url")
+    s.add_argument("--minutes", type=int, default=15, help="valid for (max 1440); works once")
     s.set_defaults(func=cmd_login_link)
 
     s = sub.add_parser("connect")

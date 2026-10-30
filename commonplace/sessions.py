@@ -89,7 +89,9 @@ def person_principal(db: ControlDB, user_id: str, workspace_id: str) -> Optional
     )
 
 
-def create_login_link(db: ControlDB, email: str, workspace_ref: Optional[str] = None) -> str:
+def create_login_link(
+    db: ControlDB, email: str, workspace_ref: Optional[str] = None, *, minutes: Optional[int] = None
+) -> str:
     """A one-time login token for ``email``. Build the URL with ``/app/login?t=``."""
     ensure_schema(db)
     user = db.user(email)
@@ -112,13 +114,19 @@ def create_login_link(db: ControlDB, email: str, workspace_ref: Optional[str] = 
                 user["id"],
                 workspace_id,
                 now.strftime(_FMT),
-                (now + timedelta(minutes=LINK_MINUTES)).strftime(_FMT),
+                (now + timedelta(minutes=_link_minutes(minutes))).strftime(_FMT),
             ),
         )
     db.audit(
         action="login_link.create", decision="ok", workspace_id=workspace_id, user_id=user["id"]
     )
     return token
+
+
+def _link_minutes(minutes: Optional[int]) -> int:
+    if minutes is None:
+        return LINK_MINUTES
+    return max(1, min(int(minutes), 24 * 60))
 
 
 def redeem_login_link(db: ControlDB, token: str) -> Optional[str]:

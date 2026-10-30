@@ -33,7 +33,7 @@ CLIENT_PRESETS = {
 }
 
 
-def create_login_url(db, email, workspace_ref=None, base_url=None) -> str:
+def create_login_url(db, email, workspace_ref=None, base_url=None, minutes=None) -> str:
     """Create a one-use sign-in URL for an active workspace member.
 
     The link is always a direct app URL. A short link would keep the one-time
@@ -82,7 +82,7 @@ def create_login_url(db, email, workspace_ref=None, base_url=None) -> str:
         workspace = (personal or members)[0]
     if db.role(workspace["id"], user["id"]) is None:
         raise ControlError("user is not a workspace member")
-    token = sessions.create_login_link(db, user["email"], workspace["id"])
+    token = sessions.create_login_link(db, user["email"], workspace["id"], minutes=minutes)
     path = f"/app/login?t={token}"
     # Never a short link: that would store the one-time token in the clear.
     return base + path
