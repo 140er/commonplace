@@ -4,7 +4,7 @@ import { mountMap } from "./map.js";
 const root = document.querySelector("#root");
 const state = {
   me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
-  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0,
+  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
@@ -35,10 +35,11 @@ const cardMeta = (card, full = true) => {
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
-  const active = document.activeElement;
+  const active = document.activeElement, ask = active?.closest?.("[data-ask]");
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
-    ask: active?.closest?.("[data-ask]") && !active.dataset.draft ? active.dataset.option ?? "" : null,
+    scope: active?.closest?.("#card-panel, #content")?.id,
+    ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
   };
 }
@@ -46,14 +47,15 @@ function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
-    const input = root.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
+    const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
     input?.focus({ preventScroll: true });
     if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
   }
-  if (saved?.ask != null) {
-    const ask = root.querySelector("[data-ask]");
-    (saved.ask === "" ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask)}"]`))?.focus({ preventScroll: true });
+  if (saved?.ask) {
+    const ask = scope.querySelector(`[data-ask="${CSS.escape(saved.ask.card)}"]`);
+    (saved.ask.option == null ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask.option)}"]`))?.focus({ preventScroll: true });
   }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
@@ -88,7 +90,7 @@ function title(text, actions = "") {
 function decision(card, panel = false, answered = null) {
   if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
-  return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+  return `<div class="opts" data-decisions="${card.number}" data-version="${e(card.version)}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" data-choice="${e(choice)}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
 }
 const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
 // An ask inside the conversation: the question verbatim and its choices. Answered asks keep
@@ -121,7 +123,8 @@ function needsView() {
   const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
   const cards = needsCards();
   if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" tabindex="0"><div class="top"><a class="id" href="#/card/${card.number}">#${card.number}</a><h3>${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</h3><div class="meta"><a href="#/board/${enc(card.board)}">${e(card.board)}</a><span>${e(actor(card.return_to || card.assignee || card.created_by))}</span><time data-elapsed="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></div></div>${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${cardMeta(card, false)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
+  const open = state.route.startsWith("#/card/") ? Number(state.route.slice(7)) : null; // its controls live in the panel
+  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" tabindex="0"><div class="top"><a class="id" href="#/card/${card.number}">#${card.number}</a><h3>${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</h3><div class="meta"><a href="#/board/${enc(card.board)}">${e(card.board)}</a><span>${e(actor(card.return_to || card.assignee || card.created_by))}</span><time data-elapsed="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></div></div>${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${card.number === open ? "" : ["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${cardMeta(card, false)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
 }
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
@@ -142,16 +145,17 @@ async function cardPanel(number, epoch) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   if (opening) panel.innerHTML = message("Loading card…");
+  const request = ++state.panelRequest;
   try {
     const card = await api(`/api/cards/${number}`);
-    if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
+    if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
     panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
     if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
-    if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
+    if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
 function newCardForm(edit = null) {
@@ -285,9 +289,11 @@ async function mutate(key, action) {
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
   }
 }
-async function decide(number, payload) {
+async function decide(number, payload, from) {
+  // The version the person saw: if the card was re-asked since, the server answers 409.
+  const version = Number(from.closest("[data-version]")?.dataset.version);
   await mutate(`card-${number}`, async () => {
-    await api(`/api/cards/${number}/decide`, { method: "POST", body: payload });
+    await api(`/api/cards/${number}/decide`, { method: "POST", body: { ...payload, version } });
     state.drafts.delete(`reply-${number}`);
     root.querySelectorAll(`[data-draft="reply-${number}"]`).forEach((input) => { input.value = ""; });
   });
@@ -316,9 +322,8 @@ root.addEventListener("click", async (event) => {
   const number = Number(b.dataset.card), action = b.dataset.action;
   try {
     if (action === "decide") {
-      const card = findCard(number);
       const reply = state.drafts.get(`reply-${number}`);
-      await decide(number, { choice: card.ask_options[Number(b.dataset.option)], ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" });
+      await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
     else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
@@ -362,7 +367,7 @@ root.addEventListener("submit", async (event) => {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
-    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" });
+    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
       state.drafts.delete(`comment-${state.card.number}`); form.reset();
@@ -422,8 +427,9 @@ document.addEventListener("keydown", (event) => {
     root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
     root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
   } else if (/^[1-6]$/.test(event.key)) {
-    const card = findCard(state.selected), choice = card?.ask_options?.[Number(event.key) - 1];
-    if (choice != null) { event.preventDefault(); decide(card.number, { choice, then: "return", ...(state.drafts.get(`reply-${card.number}`) ? { reply: state.drafts.get(`reply-${card.number}`) } : {}) }); }
+    const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
+    const button = root.querySelector(`[data-row="${state.selected}"] ${option}, [data-ask="${state.selected}"] ${option}`);
+    if (button) { event.preventDefault(); button.click(); }
   } else if (event.key === "o" && state.selected) location.hash = `#/card/${state.selected}`;
   else if (event.key === "Enter" && state.selected && !(event.target instanceof Element && event.target.closest("button,a"))) { event.preventDefault(); root.querySelector(`[data-draft="reply-${state.selected}"]`)?.focus(); }
 });
