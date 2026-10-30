@@ -426,6 +426,8 @@ class BoardService:
                     p is not None
                     and p.actor == actor
                     and not _restricted(p)
+                    and p.policy.has_scope("memory:read")
+                    and p.policy.has_scope("memory:write")
                     and p.policy.tool_visible("space_read")
                     and p.policy.tool_visible("space_post")
                     and p.policy.can_read_wing(b["wing"])
@@ -444,7 +446,18 @@ class BoardService:
                     self.principal.actor,
                 )
             )
-            return {"board": b["slug"], "coordinator": actor}
+            result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None:
+            from commonplace import webhooks
+
+            if not webhooks.has_space_subscription(
+                self.ctx.db, self.ctx.gateway, self.principal.workspace_id, actor, b["slug"]
+            ):
+                result["warning"] = (
+                    "Coordinator has no active webhook matching space_message on this board. "
+                    f"Register webhook_add url=… events=space_message board={b['slug']}."
+                )
+        return result
 
     @staticmethod
     def _message(row):
@@ -461,25 +474,49 @@ class BoardService:
             "at": row["created_at"],
         }
 
-    def space_read(self, board, after=0):
+    def space_read(self, board, after=None, last=None, before=None):
         if not self.principal.policy.has_scope("memory:read"):
             raise ToolError("no: this connection cannot read this board")
-        if isinstance(after, bool) or not isinstance(after, int) or not 0 <= after < 2**63:
-            raise ToolError("no: after must be a nonnegative message cursor")
+        for name, value in (("after", after), ("before", before)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**63
+            ):
+                raise ToolError(f"no: {name} must be a nonnegative message cursor")
+        if last is not None and (type(last) is not int or not 1 <= last <= 100):
+            raise ToolError("no: last must be between 1 and 100")
+        if after is not None and (last is not None or before is not None):
+            raise ToolError("no: after cannot be combined with last or before")
         with self.store.connection() as conn:
             b = self._board(conn, board)
+            backward = last is not None or before is not None
+            boundary = before if before is not None else 2**63 - 1
+            window = (
+                ("<?" if before is not None else "<=?") + " ORDER BY id DESC LIMIT ?"
+                if backward
+                else ">? ORDER BY id LIMIT ?"
+            )
             messages = [
                 self._message(row)
                 for row in conn.execute(
-                    "SELECT * FROM space_messages WHERE board_id=? AND id>? ORDER BY id LIMIT 100",
-                    (b["id"], after),
+                    "SELECT * FROM space_messages WHERE board_id=? AND id" + window,
+                    (b["id"], boundary if backward else after or 0, last or 100),
                 )
             ]
+            if backward:
+                messages.reverse()
+            oldest = messages[0]["id"] if messages else 0
             return {
                 "board": b["slug"],
                 "coordinator": b["coordinator"],
                 "messages": messages,
-                "cursor": messages[-1]["id"] if messages else after,
+                "cursor": messages[-1]["id"] if messages else after or 0,
+                "oldest": oldest,
+                "has_more": bool(
+                    conn.execute(
+                        "SELECT 1 FROM space_messages WHERE board_id=? AND id<? LIMIT 1",
+                        (b["id"], oldest),
+                    ).fetchone()
+                ),
             }
 
     def space_post(self, board, text):

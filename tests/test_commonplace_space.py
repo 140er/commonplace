@@ -101,10 +101,11 @@ def test_scopes_tool_allowlists_and_untrusted_chat(hub, env):
 
 def test_coordinator_setting_owner_only_and_validated(hub, env):
     token, agent, person, cookie, owner = env
-    assert api(hub, cookie, "PATCH", "/api/boards/work", {"coordinator": agent.connection}) == (
-        200,
-        {"board": "work", "coordinator": agent.actor},
+    status, result = api(
+        hub, cookie, "PATCH", "/api/boards/work", {"coordinator": agent.connection}
     )
+    assert status == 200 and result["coordinator"] == agent.actor
+    assert "webhook_add" in result["warning"] and "events=space_message" in result["warning"]
     assert owner.board_list()[0]["coordinator"] == agent.actor
     nonowner = service(hub, replace(person, role="member"))
     with pytest.raises(ToolError, match="only a workspace owner"):
@@ -154,8 +155,8 @@ def test_linked_tasks_reuse_reservations_and_keep_board_boundaries(hub, env):
 def test_user_request_wakes_only_coordinator_without_sending_text(hub, env, receiver):
     token, agent, _person, cookie, owner = env
     url, received, _ = receiver
-    hook = webhooks.add(hub.db, agent, url, kinds=["*"], board="work", waiting_on=agent.actor)
-    owner.board_set("work", agent.connection)
+    hook = webhooks.add(hub.db, agent, url, kinds=["space_message"], board="work")
+    assert "warning" not in owner.board_set("work", agent.connection)
     observer = hub.gateway.authenticate(f"Bearer {hub.owner_token('observer')}")
     webhooks.add(hub.db, observer, url, kinds=["space_message"], board="work")
     try:
@@ -169,10 +170,20 @@ def test_user_request_wakes_only_coordinator_without_sending_text(hub, env, rece
         assert wake["data"]["coordinator"] == agent.actor
         assert wake["url"] == urls.share_link(hub.db, hub.workspace, "/app/#/space/work")
         assert b"SECRET REQUEST" not in raw
+        ok, output = mcp(hub, token, "space_read", board="work", after=message["id"] - 1)
+        assert ok and json.loads(output)["messages"][0]["text"] == "SECRET REQUEST"
+        assert mcp(
+            hub, token, "task_add", title="Split request", board="work", message_id=message["id"]
+        )[0]
         assert mcp(hub, token, "space_post", board="work", text="I split it.")[0]
         with pytest.raises(queue.Empty):
             received.get(timeout=0.2)
         assert len(webhooks.deliveries(hub.db, agent, hook["id"])) == 1
+        # A wildcard subscription *does* wake on the coordinator's own task_add.
+        wildcard = webhooks.add(hub.db, agent, url, kinds=["*"], board="work")
+        assert mcp(hub, token, "task_add", title="Another task", board="work")[0]
+        assert json.loads(received.get(timeout=3)[1])["kind"] == "card.created"
+        assert len(webhooks.deliveries(hub.db, agent, wildcard["id"])) == 1
         row = hub.db._conn.execute("SELECT * FROM webhooks WHERE id=?", (hook["id"],)).fetchone()
         event = next(e for e in events.after(hub.db, hub.workspace) if e["kind"] == "space_message")
         assert webhooks._can_receive(hub.db, hub.gateway, row, event)
@@ -200,3 +211,108 @@ def test_chat_pagination_and_additive_migration(hub, env):
     assert second["messages"][-1]["text"] == " 101\n"
     assert owner.space_read("work", after=second["cursor"])["messages"] == []
     assert owner.store.changes > 102
+    tail = owner.space_read("work", last=3)
+    assert [m["text"] for m in tail["messages"]] == [" 99\n", " 100\n", " 101\n"]
+    assert tail["oldest"] == tail["messages"][0]["id"] and tail["has_more"]
+    previous = owner.space_read("work", before=tail["oldest"], last=3)
+    assert [m["text"] for m in previous["messages"]] == [" 96\n", " 97\n", " 98\n"]
+
+
+def test_tail_rest_mcp_round_trip_boundaries_and_validation(hub, env):
+    token, _agent, _person, cookie, owner = env
+    assert owner.space_read("work", last=10) == {
+        "board": "work",
+        "coordinator": None,
+        "messages": [],
+        "cursor": 0,
+        "oldest": 0,
+        "has_more": False,
+    }
+    owner.board_add(slug="other", wing="shared")
+    messages = []
+    for text in (" first\n", "second", "third", "last "):
+        messages.append(owner.space_post("work", text))
+        owner.space_post("other", "Not this board")
+    for args, query in (
+        ({"last": 2}, "last=2"),
+        ({"last": 2, "before": messages[2]["id"]}, f"last=2&before={messages[2]['id']}"),
+        ({"before": messages[0]["id"]}, f"before={messages[0]['id']}"),
+    ):
+        expected = owner.space_read("work", **args)
+        assert api(hub, cookie, "GET", f"/api/boards/work/chat?{query}") == (200, expected)
+        ok, output = mcp(hub, token, "space_read", board="work", **args)
+        assert ok and json.loads(output) == expected
+        assert all(m["text"] != "Not this board" for m in expected["messages"])
+    for args in (
+        {"last": 0},
+        {"last": 101},
+        {"last": True},
+        {"before": -1},
+        {"before": 2**80},
+        {"after": 0, "last": 1},
+        {"after": 0, "before": 1},
+    ):
+        with pytest.raises(ToolError):
+            owner.space_read("work", **args)
+    assert api(hub, cookie, "GET", "/api/boards/work/chat?last=oops")[0] == 400
+    assert api(hub, cookie, "GET", "/api/boards/work/chat?after=0&last=1")[0] == 403
+
+
+def test_coordinator_warns_only_without_a_live_matching_subscription(hub, env):
+    _token, agent, _person, _cookie, owner = env
+    url = "http://127.0.0.1:9/wake"
+    for kinds, board in ((["card.*"], "work"), (["space_message"], "other")):
+        hook = webhooks.add(hub.db, agent, url, kinds=kinds, board=board)
+        assert "warning" in owner.board_set("work", agent.connection)
+        webhooks.remove(hub.db, agent, hook["id"])
+    hook = webhooks.add(hub.db, agent, url, kinds=["space_message"], board="work")
+    assert "warning" not in owner.board_set("work", agent.connection)
+    webhooks.remove(hub.db, agent, hook["id"])
+    assert "warning" in owner.board_set("work", agent.connection)
+    # An active registration whose connection was revoked cannot receive a wake.
+    hook = webhooks.add(hub.db, agent, url, kinds=["space_message"], board="work")
+    with hub.db._lock, hub.db._tx():
+        hub.db._conn.execute(
+            "UPDATE connections SET revoked_at='now' WHERE id=?", (agent.connection_id,)
+        )
+    assert not webhooks.has_space_subscription(
+        hub.db, hub.gateway, hub.workspace, agent.actor, "work"
+    )
+    with pytest.raises(ToolError, match="active agent"):
+        owner.board_set("work", agent.connection)
+    with hub.db._lock, hub.db._tx():
+        hub.db._conn.execute(
+            "UPDATE connections SET revoked_at=NULL WHERE id=?", (agent.connection_id,)
+        )
+    webhooks.remove(hub.db, agent, hook["id"])
+    webhooks.add(hub.db, agent, url, kinds=["*"], board="")
+    assert "warning" not in owner.board_set("work", agent.connection)
+    assert owner.board_set("work", None) == {"board": "work", "coordinator": None}
+
+
+@pytest.mark.parametrize("profile", ["slim", "standard", "full"])
+def test_space_tools_are_work_profile_only(hub, env, profile):
+    _token, _agent, _person, _cookie, owner = env
+    token = hub.token(
+        f"space-{profile}",
+        profile=profile,
+        trust="trusted",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+    )
+    names = hub.tool_names(token)
+    tools = {"space_read", "space_post", "board_set"}
+    assert (tools <= names) if profile != "slim" else not tools & names
+    for tool, args in (
+        ("space_read", {"last": 1}),
+        ("space_post", {"text": "reply"}),
+        ("board_set", {"coordinator": None}),
+    ):
+        assert mcp(hub, token, tool, board="work", **args)[0] == (profile != "slim")
+    if profile == "slim":
+        assert api(hub, token, "GET", "/api/boards/work/chat?last=1")[0] == 403
+        assert api(hub, token, "POST", "/api/boards/work/chat", {"text": "x"})[0] == 403
+        assert api(hub, token, "PATCH", "/api/boards/work", {"coordinator": None})[0] == 403
+        with pytest.raises(ToolError, match="active agent"):
+            owner.board_set("work", f"space-{profile}")

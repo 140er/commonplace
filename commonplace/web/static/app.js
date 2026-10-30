@@ -7,6 +7,7 @@ const state = {
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
+  chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -103,6 +104,7 @@ function restore(saved) {
 }
 function signin() {
   state.mapDispose?.(); state.mapDispose = null;
+  state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
   root.innerHTML = `<main class="signin"><h1>Sign in</h1><form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${state.error ? message(state.error) : ""}</main>`;
 }
@@ -177,13 +179,108 @@ function boardView() {
     return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}</article>`).join("")}</div></section>`;
   }).join("")}</div>`;
 }
+function spaceTask(card) {
+  return `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
+}
+function syncSpaceTasks(parent, cards, inline = false) {
+  const nodes = new Map([...parent.children].filter((n) => n.dataset.task).map((n) => [Number(n.dataset.task), n]));
+  let next = parent.firstElementChild;
+  for (const card of cards) {
+    let node = nodes.get(card.number);
+    if (!node) { node = document.createElement("div"); node.dataset.task = card.number; }
+    nodes.delete(card.number);
+    const cached = state.chatTasks.get(card.number), detail = cached?.version === card.version;
+    const controls = state.route !== `#/card/${card.number}`;
+    const signature = JSON.stringify([card.version, card.need, inline && detail, inline && controls, state.pending.has(`card-${card.number}`)]);
+    if (node.dataset.signature !== signature) {
+      const full = inline && detail ? { ...cached, ...card } : card;
+      node.innerHTML = spaceTask(full) + (inline ? `<ol class="space-asks">${conversation({ ...full, events: (full.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls })}</ol>` : "");
+      node.dataset.signature = signature;
+    }
+    if (node !== next) parent.insertBefore(node, next);
+    next = node.nextElementSibling;
+  }
+  nodes.forEach((node) => node.remove());
+}
+async function hydrateSpaceTasks() {
+  const epoch = state.screen, board = state.chatBoard;
+  const current = () => epoch === state.screen && state.chatBoard === board && state.base === `#/space/${enc(board)}`;
+  const changed = await Promise.all(state.cards.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
+    if (state.chatTasks.get(card.number)?.version === card.version) return false;
+    const pending = state.chatTaskRequests.get(card.number);
+    if (pending?.version === card.version && pending.epoch === epoch) return false;
+    const request = { version: card.version, epoch };
+    state.chatTaskRequests.set(card.number, request);
+    try {
+      const detail = await api(`/api/cards/${card.number}`);
+      if (!current() || state.cards.find((c) => c.number === card.number)?.version !== detail.version) return false;
+      state.chatTasks.set(card.number, detail);
+      return true;
+    } catch (error) { if (current()) showError(error.message); return false; }
+    finally { if (state.chatTaskRequests.get(card.number) === request) state.chatTaskRequests.delete(card.number); }
+  }));
+  if (current() && changed.some(Boolean)) {
+    const saved = remember(), play = capture(state.base);
+    spaceView(); restore(saved); play();
+  }
+}
+function mergeChat(messages) {
+  state.chat = [...new Map([...state.chat, ...messages].map((m) => [m.id, m])).values()].sort((a, b) => a.id - b.id);
+}
+async function olderMessages() {
+  if (!state.chatHasMore || state.chatLoading || !state.chat.length) return;
+  const epoch = state.screen, board = state.chatBoard, before = state.chat[0].id;
+  state.chatLoading = true;
+  try {
+    const page = await api(`/api/boards/${enc(board)}/chat?before=${before}&last=50`);
+    if (epoch !== state.screen || board !== state.chatBoard) return;
+    const saved = remember(), stream = root.querySelector(".space-stream"), height = stream.scrollHeight, top = stream.scrollTop;
+    mergeChat(page.messages); state.chatHasMore = page.has_more;
+    spaceView(); restore(saved);
+    stream.scrollTop = top + stream.scrollHeight - height;
+  } catch (error) { if (epoch === state.screen) showError(error.message); }
+  finally { if (board === state.chatBoard) state.chatLoading = false; }
+}
 function spaceView() {
   const slug = decodeURIComponent(state.base.slice("#/space/".length));
   const board = state.boards.find((b) => b.slug === slug);
   title(board?.name || slug, `<a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
-  const row = (card) => `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
-  const inline = (card) => `${row(card)}<ol class="space-asks">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls: state.route !== `#/card/${card.number}` })}</ol>`;
-  root.querySelector("#content").innerHTML = `<section class="space" data-tab="${state.spaceTab}"><nav class="space-tabs" aria-label="Space view"><button data-action="space-tab" data-tab="chat" aria-pressed="${state.spaceTab === "chat"}">Chat</button><button data-action="space-tab" data-tab="tasks" aria-pressed="${state.spaceTab === "tasks"}">Tasks <span>${state.cards.length}</span></button></nav><section class="space-chat" aria-label="Space chat"><header class="space-bar"><h2>Chat</h2><span>${e(board?.coordinator ? actor(board.coordinator) : "No coordinator")}</span></header><ol class="space-stream" aria-label="Messages">${state.chat.length ? state.chat.map((m) => `<li class="space-message ${m.actor.startsWith("user:") ? "from-person" : "from-agent"}"><div class="space-stamp"><span class="actor">${e(actor(m.actor))}</span>${clock(m.at)}${m.flags.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</div><p class="space-text">${e(m.text)}</p>${state.cards.filter((c) => c.message_id === m.id).map(inline).join("")}</li>`).join("") : message("No messages")}</ol><form class="space-composer" data-form="space-message" data-board="${e(slug)}"><textarea name="text" rows="2" aria-label="Message" data-draft="space-${e(slug)}" required></textarea><button class="blockbtn">Send</button></form></section><section class="space-tasks" aria-label="Tasks"><header class="space-bar"><h2>Tasks <span>${state.cards.length}</span></h2><button class="opt" data-action="new-card">New card</button></header><div class="stack">${state.cards.map(row).join("") || message("No tasks")}</div></section></section>`;
+  const content = root.querySelector("#content");
+  if (content.querySelector(".space")?.dataset.board !== slug) {
+    state.chatObserver?.disconnect(); state.chatVisible.clear();
+    content.innerHTML = `<section class="space" data-board="${e(slug)}"><nav class="space-tabs" aria-label="Space view"><button data-action="space-tab" data-tab="chat">Chat</button><button data-action="space-tab" data-tab="tasks">Tasks <span data-task-count></span></button></nav><section class="space-chat" aria-label="Space chat"><header class="space-bar"><h2>Chat</h2><span data-coordinator></span></header><ol class="space-stream" aria-label="Messages"><li data-older hidden><button class="opt" data-action="older-messages">Older messages</button></li></ol><form class="space-composer" data-form="space-message" data-board="${e(slug)}"><textarea name="text" rows="2" aria-label="Message" data-draft="space-${e(slug)}" required></textarea><button class="blockbtn">Send</button></form></section><section class="space-tasks" aria-label="Tasks"><header class="space-bar"><h2>Tasks <span data-task-count></span></h2><button class="opt" data-action="new-card">New card</button></header><div class="stack"></div></section></section>`;
+    const stream = content.querySelector(".space-stream");
+    stream.addEventListener("scroll", () => { if (stream.clientHeight && stream.scrollTop < 40) void olderMessages(); });
+    state.chatObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const id = Number(entry.target.dataset.message);
+        if (entry.isIntersecting) state.chatVisible.add(id); else state.chatVisible.delete(id);
+      }
+      void hydrateSpaceTasks();
+    }, { root: stream, rootMargin: "100px" });
+  }
+  content.querySelector(".space").dataset.tab = state.spaceTab;
+  content.querySelectorAll(".space-tabs button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === state.spaceTab));
+  content.querySelectorAll("[data-task-count]").forEach((n) => { n.textContent = state.cards.length; });
+  content.querySelector("[data-coordinator]").textContent = board?.coordinator ? actor(board.coordinator) : "No coordinator";
+  const stream = content.querySelector(".space-stream"), older = stream.querySelector("[data-older]");
+  older.hidden = !state.chatHasMore;
+  const linked = new Map();
+  state.cards.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
+  let next = older.nextElementSibling;
+  for (const m of state.chat) {
+    let node = stream.querySelector(`[data-message="${m.id}"]`);
+    if (!node) {
+      node = document.createElement("li"); node.dataset.message = m.id;
+      node.className = `space-message ${m.actor.startsWith("user:") ? "from-person" : "from-agent"}`;
+      node.innerHTML = `<div class="space-stamp"><span class="actor">${e(actor(m.actor))}</span>${clock(m.at)}${m.flags.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</div><p class="space-text">${e(m.text)}</p><div class="space-linked-tasks"></div>`;
+      state.chatObserver.observe(node);
+    }
+    syncSpaceTasks(node.querySelector(".space-linked-tasks"), linked.get(m.id) || [], true);
+    if (node !== next) stream.insertBefore(node, next);
+    next = node.nextElementSibling;
+  }
+  syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
   title("Boards", '<button class="blockbtn" data-action="new-board">New board</button>');
@@ -288,22 +385,21 @@ async function refresh({ background = false, events = [] } = {}) {
       if (!current()) return;
       state.cards = result.cards;
       if (state.base.startsWith("#/space/")) {
-        const messages = state.chatBoard === slug ? [...state.chat] : [];
-        let cursor = state.chatBoard === slug ? state.chatCursor : 0, batch;
-        do {
-          batch = await api(`/api/boards/${enc(slug)}/chat?after=${cursor}`);
+        if (state.chatBoard !== slug) {
+          const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
           if (!current()) return;
-          messages.push(...batch.messages); cursor = batch.cursor;
-        } while (batch.messages.length === 100);
-        state.chat = messages; state.chatCursor = cursor; state.chatBoard = slug;
-        const cards = await Promise.all(state.cards.map(async (c) => {
-          if (!c.message_id) return c;
-          const cached = state.chatTasks.get(c.number);
-          return cached?.version === c.version ? { ...cached, ...c } : api(`/api/cards/${c.number}`);
-        }));
-        if (!current()) return;
-        state.cards = cards;
-        state.chatTasks = new Map(cards.filter((c) => c.message_id).map((c) => [c.number, c]));
+          state.chat = page.messages; state.chatCursor = page.cursor; state.chatHasMore = page.has_more;
+          state.chatBoard = slug; state.chatLoading = false; state.chatTasks.clear(); state.chatTaskRequests.clear();
+        } else {
+          let cursor = state.chatCursor, batch;
+          const messages = [];
+          do {
+            batch = await api(`/api/boards/${enc(slug)}/chat?after=${cursor}`);
+            if (!current()) return;
+            messages.push(...batch.messages); cursor = batch.cursor;
+          } while (batch.messages.length === 100);
+          mergeChat(messages); state.chatCursor = cursor;
+        }
       }
     }
     const saved = remember(), play = capture(state.base);
@@ -318,6 +414,7 @@ async function refresh({ background = false, events = [] } = {}) {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
     } else needsView();
     restore(saved); play();
+    if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
     showError("");
     return true;
@@ -339,6 +436,7 @@ async function route() {
     state.card = null;
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
+  if (state.base !== previousBase) { state.chatObserver?.disconnect(); state.chatVisible.clear(); }
   root.querySelector("#card-panel").hidden = !hash.startsWith("#/card/");
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
@@ -397,6 +495,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
     else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh();
+    else if (action === "older-messages") await olderMessages();
     else if (action === "space-tab") {
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
     } else if (action === "coordinator") {
@@ -463,8 +562,13 @@ root.addEventListener("submit", async (event) => {
       const stream = root.querySelector(".space-stream"); if (stream) stream.scrollTop = stream.scrollHeight;
     });
     else if (kind === "coordinator") await mutate(`coordinator-${form.dataset.board}`, async () => {
-      await api(`/api/boards/${enc(form.dataset.board)}`, { method: "PATCH", body: { coordinator: payload.coordinator || null } });
-      state.drafts.delete(`coordinator-${form.dataset.board}`); root.querySelector("#card-panel").hidden = true;
+      const result = await api(`/api/boards/${enc(form.dataset.board)}`, { method: "PATCH", body: { coordinator: payload.coordinator || null } });
+      state.drafts.delete(`coordinator-${form.dataset.board}`);
+      form.querySelector("[data-hook-warning]")?.remove();
+      if (result.warning) {
+        const warning = document.createElement("p"); warning.dataset.hookWarning = ""; warning.className = "message"; warning.setAttribute("role", "alert");
+        warning.textContent = result.warning; form.append(warning);
+      } else root.querySelector("#card-panel").hidden = true;
     });
     else if (kind === "search") await search(form);
     else if (kind === "memory") await mutate("new-memory", async () => {

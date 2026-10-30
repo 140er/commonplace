@@ -57,10 +57,14 @@ def dispatch(service, h, parts, method):
                 raise HTTPError(403, "tool not allowed for this connection")
             if tool == "space_read":
                 try:
-                    after = int(query(h).get("after", "0"))
+                    cursors = {
+                        key: int(value)
+                        for key, value in query(h).items()
+                        if key in ("after", "last", "before")
+                    }
                 except ValueError:
                     raise HTTPError(400, "invalid cursor") from None
-                return 200, service.space_read(parts[1], after=after)
+                return 200, service.space_read(parts[1], **cursors)
             body = read_json(h)
             body.pop("board", None)
             if tool == "board_set":

@@ -45,9 +45,9 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 |---|---|---|
 | `board_list` | — | |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | trusted_only, WORK_PROFILES |
-| `board_set` | `board`, `coordinator` (connection or null) | owner_only, trusted_only; active PAT agent with chat access to this board |
-| `space_read` | `board`, `after?` (message cursor) | board wing + memory:read; JSON with up to 100 verbatim, author-stamped messages and a cursor |
-| `space_post` | `board`, `text` | trusted_only; board read/write wing + memory:write; append-only, verbatim |
+| `board_set` | `board`, `coordinator` (connection or null) | standard/full, owner_only, trusted_only; active PAT agent with chat access; warns without a matching active webhook |
+| `space_read` | `board`, `after?` or `last?` (1–100), `before?` | standard/full; board wing + memory:read; JSON with chronological verbatim messages, cursor, oldest and has_more |
+| `space_post` | `board`, `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
 | `task_list` | `board?`, `status?`, `mine?` | |
 | `task_show` | `task` | includes branch / PR / checks / status line / links |
 | `task_add` | `title`, `body?`, `board?`, `status?`, `assignee?`, `labels?`, `message_id?` | untrusted → backlog; message must belong to this board, assignee reserves the task |

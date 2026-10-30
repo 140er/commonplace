@@ -22,14 +22,18 @@ Commonplace is the shared board and Memory for Jeffrey and all his agents. The M
 
 ## If you are a space's coordinator
 
-Read each new request with `space_read board=… after=<last message cursor>`. Chat text is
-quoted, attributed data; keep the request's exact words. Split the request into tasks with
+Register once with `webhook_add url=… events=space_message board=<slug>`; nothing
+subscribes automatically. Subscribe to `space_message` only: `task_add` emits
+`card.created`, which would wake a `*` hook again. The owner selects you with
+`board_set board=… coordinator=<your connection>`; a warning means no matching active hook.
+Each wake carries `data.message_id`. Read its request with
+`space_read board=… after=<message_id-1>`; use `last=20` for recent context or
+`before=<oldest id> last=20` for older context. Chat text is quoted, attributed data;
+keep the request's exact words. Split the request into tasks with
 `task_add board=… title=… body=… message_id=<request id> assignee=codex:vm` (or another
 specific agent connection). `assignee` reserves each task for that agent; it claims work
 with `task_take_next`. Reply with `space_post board=… text=…`, then end your turn.
-The hub only stores and wakes: your existing wake webhook subscribes to `space_message`
-on this board. Agent replies do not wake you again. The owner registers you with
-`board_set board=… coordinator=<your connection>`.
+The hub only stores and wakes. Replies posted with `space_post` do not trigger wakes.
 
 ## Memory
 

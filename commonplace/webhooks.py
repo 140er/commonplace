@@ -506,6 +506,22 @@ def _can_receive(db, gateway, row, event):
         return False
 
 
+def has_space_subscription(db, gateway, workspace_id, actor, board):
+    """Whether a coordinator can currently receive this board's request wakes."""
+    ensure_schema(db)
+    event = {
+        "workspace_id": workspace_id,
+        "kind": "space_message",
+        "data": {"board": board, "coordinator": actor},
+    }
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT * FROM webhooks WHERE workspace_id=? AND owner_actor=? AND active=1",
+            (workspace_id, actor),
+        ).fetchall()
+    return any(_matches(row, event) and _can_receive(db, gateway, row, event) for row in rows)
+
+
 def test_webhook(db, principal, webhook_id):
     _authorize(principal, "test")
     row = _get(db, principal, webhook_id)

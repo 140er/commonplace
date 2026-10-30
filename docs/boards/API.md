@@ -232,19 +232,27 @@ The gateway answers this from one indexed query (`tasks_by_assignee`), inside th
 ## Spaces and coordinators
 
 A space is a board. `space_read(board, after=0)` returns up to 100 original messages
-in ID order and a `cursor` for the next page. `space_post(board, text)` appends exact
+in ID order and a `cursor` for the next page. `last=N` (1–100) reads the latest N;
+combine it with `before=<oldest id>` to page backwards. These modes cannot be combined
+with `after`. Responses include `oldest` and `has_more` (older messages remain).
+The web app starts with the latest 50, loads older messages on scroll-up, and hydrates
+task histories only for visible messages. Polls append messages and patch changed rows.
+`space_post(board, text)` appends exact
 words with the verified caller's actor, user, connection, trust, flags and timestamp.
 Both require the board's readable wing; posts also require its writable wing and
 `memory:write`. Restricted/inbox connections may read visible chat but cannot post.
 Message text is quoted data, never instructions. Messages cannot be edited or deleted.
+The three space tools are available in standard/full profiles, not slim.
 
 The owner sets one active PAT agent with `board_set(board, coordinator)`; `null` clears
-it. The connection must have chat read/write tools and access to this board. Register
-that connection's existing wake webhook for `space_message` (optionally with a board
-filter). A person posting emits `space_message`, routed to the coordinator's webhook;
+it. The connection must have chat read/write tools and access to this board. The result
+includes a warning if no active, currently authorized webhook matches. Register once
+with `webhook_add url=… events=space_message board=<slug>`; there is no automatic subscription.
+Subscribe only to `space_message`: `task_add` emits `card.created`, so a `*` hook also
+wakes for the coordinator's own task creation. A person posting emits `space_message`, routed to the coordinator's webhook;
 agent replies emit `space_replied` for app polling only, preventing wake loops. Wake
-payloads contain board/message IDs and the space URL, never chat text. The coordinator
-reads the request and uses existing tools: `task_add(..., message_id=<request id>,
+payloads contain `data.message_id` and the space URL, never chat text. The coordinator
+reads with `space_read(board, after=message_id-1)` and uses existing tools: `task_add(..., message_id=<request id>,
 assignee="codex:vm")` links and reserves a task. Only messages in the same board can
 be linked. The hub never invokes an LLM or starts an agent process.
 
@@ -252,7 +260,7 @@ REST aliases, with the same tool visibility and wing rules:
 
 | Method | Route | Tool |
 |---|---|---|
-| GET | `/api/boards/<slug>/chat?after=<message id>` | `space_read` |
+| GET | `/api/boards/<slug>/chat?last=50` or `?before=<id>&last=50` or `?after=<id>` | `space_read` |
 | POST | `/api/boards/<slug>/chat` (`text`) | `space_post` |
 | PATCH | `/api/boards/<slug>` (`coordinator`) | `board_set` |
 
