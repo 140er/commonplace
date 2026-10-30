@@ -180,6 +180,22 @@ class TestWriteTools:
         assert got["metadata"]["source_thread"] == "thread-7"
         assert (got["metadata"]["source_seq_start"], got["metadata"]["source_seq_end"]) == (1, 9)
 
+    def test_add_drawer_retry_reports_the_source_it_kept(
+        self, monkeypatch, config, palace_path, kg
+    ):
+        _patch_mcp_server(monkeypatch, config, kg)
+        _get_collection(palace_path, create=True)
+        from mempalace.mcp_server import tool_add_drawer
+
+        args = {"wing": "w", "room": "r", "content": "Same words twice."}
+        tool_add_drawer(**args, source_thread="t1", source_seq_start=2)
+        again = tool_add_drawer(**args, source_thread="t2", source_seq_start=9)
+        assert again["reason"] == "already_exists"
+        assert again["source_kept"] == {"thread": "t1", "seq_start": 2, "seq_end": 2}
+        plain = tool_add_drawer(wing="w", room="r", content="No source.")
+        assert "source_kept" not in tool_add_drawer(wing="w", room="r", content="No source.")
+        assert plain["success"]
+
     def test_add_drawer_refuses_a_bad_range(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _get_collection(palace_path, create=True)

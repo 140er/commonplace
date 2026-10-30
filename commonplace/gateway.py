@@ -463,9 +463,18 @@ class Mediator:
             # only such a token can read one back.
             self._pin_write_wing(policy, args, wing, notes)
         if not policy.sees_all_wings:
+            # A fact write answers about what is stored (merged, replaced,
+            # closed), so it needs the wing to be readable as well.
+            if not policy.can_read_wing(args["wing"]):
+                raise Denied(f"this connection can't read facts in wing {args['wing']!r}")
             # Only facts this token could read count as the same fact or can
             # be changed, so a write never reveals or touches a hidden one.
             args["sensitivities"] = policy.fact_sensitivities()
+            drawer_id = args.get("source_drawer_id")
+            if drawer_id:
+                drawer_wing = self._drawer_wings(principal, [drawer_id]).get(drawer_id)
+                if drawer_wing is None or not policy.can_read_wing(drawer_wing):
+                    raise Hidden({"success": False, "error": f"Drawer not found: {drawer_id}"})
         if name == "mempalace_kg_invalidate":
             return None
         floor = _fact_floor(args)
@@ -497,6 +506,14 @@ class Mediator:
     def _after(self, principal, name, rule, args, response):
         policy = principal.policy
         if not isinstance(response, dict) or "result" not in response or policy.sees_all_wings:
+            return response
+        if rule == "add_drawer" and not policy.can_read_wing(args.get("wing") or ""):
+            # A retry into a wing the caller can't read must not show whose
+            # chat the first copy came from.
+            result = _tool_result(response)
+            if isinstance(result, dict) and "source_kept" in result:
+                result = {k: v for k, v in result.items() if k != "source_kept"}
+                return _replace_result(response, result)
             return response
         if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
             return response

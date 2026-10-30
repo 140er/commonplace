@@ -88,6 +88,7 @@ TOOL_RULES = {
     "mempalace_kg_add": ("kg:write", "kg_write"),
     "mempalace_kg_invalidate": ("kg:write", "kg_write"),
     "mempalace_kg_supersede": ("kg:write", "kg_write"),
+    "mempalace_kg_save": ("kg:write", "kg_write"),
     "mempalace_kg_timeline": ("kg:read", "kg_read"),
     "mempalace_kg_stats": ("kg:read", "all_wings"),
     "mempalace_traverse": ("memory:read", "all_wings"),
@@ -153,6 +154,7 @@ _STANDARD = _SLIM | frozenset(
         "mempalace_check_duplicate",
         "mempalace_kg_add",
         "mempalace_kg_supersede",
+        "mempalace_kg_save",
         "mempalace_kg_invalidate",
         "mempalace_kg_timeline",
         "mempalace_traverse",
@@ -189,7 +191,12 @@ _UNTRUSTED_BLOCKED = frozenset(
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
 # Tools that change what someone else wrote. Untrusted tokens only add.
 _UPDATES = frozenset(
-    {"mempalace_update_drawer", "mempalace_kg_invalidate", "mempalace_kg_supersede"}
+    {
+        "mempalace_update_drawer",
+        "mempalace_kg_invalidate",
+        "mempalace_kg_supersede",
+        "mempalace_kg_save",
+    }
 )
 
 

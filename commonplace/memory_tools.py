@@ -275,6 +275,39 @@ def memory_save(ctx, args):
     return f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
 
 
+def fact_save(ctx, args):
+    """File one fact (subject, predicate, object), folded into what is known."""
+    fact = {key: _string(args, key) for key in ("subject", "predicate", "object")}
+    flags = _privacy_flags(" ".join(fact.values()))
+    if any(flag.startswith("secret:") for flag in flags):
+        # The chat copy stays private; a fact is an index and travels further.
+        raise ToolError("no: that looks like a secret; facts never hold secrets")
+    call = dict(fact)
+    if args.get("theme") is not None:
+        call["wing"] = _string(args, "theme")
+    for key in ("valid_from", "sensitivity"):
+        if args.get(key) is not None:
+            call[key] = _string(args, key)
+    if args.get("single_valued") is not None:
+        if not isinstance(args["single_valued"], bool):
+            raise ToolError("no: single_valued must be true or false")
+        call["single_valued"] = args["single_valued"]
+    call.update(_source(args))
+    result = _memory(ctx, "mempalace_kg_save", call)
+    triple_id, action = result.get("triple_id"), result.get("action")
+    _emit(ctx, "fact.saved", triple_id, action=action, flags=flags)
+    if action == "merged":
+        return f"merged into {triple_id}" + (
+            "" if result.get("source_added") else " (source known)"
+        )
+    if action == "superseded":
+        previous = ", ".join(json.dumps(p, ensure_ascii=False) for p in result.get("previous", []))
+        return f"saved {triple_id}, replacing {previous}"
+    if action == "historical":
+        return f"saved {triple_id} as history: {result.get('current')} is newer"
+    return f"saved {triple_id}"
+
+
 def memory_search(ctx, args):
     return "\n\n".join(_quote(m) for m in _search(ctx, args)) or "no memories"
 
@@ -469,7 +502,7 @@ def install(gateway):
     gateway.add_prefix_route("POST", "/api/memory/", handle)
 
 
-def _register(name, description, handler, properties, required, scope, kind="read"):
+def _register(name, description, handler, properties, required, scope, kind="read", **extra):
     register(
         LocalTool(
             name=name,
@@ -483,6 +516,7 @@ def _register(name, description, handler, properties, required, scope, kind="rea
             },
             scope=scope,
             kind=kind,
+            **extra,
         )
     )
 
@@ -504,6 +538,29 @@ _register(
     ["text"],
     "memory:write",
     "write",
+)
+_register(
+    "fact_save",
+    "Save one fact as subject, predicate, object. The same fact gains a source"
+    " instead of a copy; a new value of a single-valued predicate replaces the old.",
+    fact_save,
+    {
+        "subject": _STRING,
+        "predicate": _STRING,
+        "object": _STRING,
+        "theme": _STRING,
+        "source": _SOURCE,
+        "valid_from": _STRING,
+        "sensitivity": {"type": "string", "enum": ["public", "internal", "private", "secret"]},
+        "single_valued": {"type": "boolean"},
+    },
+    ["subject", "predicate", "object"],
+    "kg:write",
+    "write",
+    # The worker tool it calls is not in the slim profile and refuses
+    # untrusted tokens; list fact_save only where it can work.
+    profiles=frozenset({"standard", "full"}),
+    trusted_only=True,
 )
 _register(
     "memory_search",

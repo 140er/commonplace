@@ -97,6 +97,7 @@ MCP tools (aliases over the `mempalace_*` tools through `ctx.memory`, so policy 
 | Tool | Args | Maps to |
 |---|---|---|
 | `memory_save` | `text`, `theme?` (wing; default: the token's write wing, else `shared`), `topic?` (room, default `general`), `task?`, `source?` (`{thread, seq_start?, seq_end?}`: the chat messages the words came from) | `mempalace_add_drawer`; then `link_drawer` when `task` given. Returns `saved <id>` (+ `linked to #n`) |
+| `fact_save` | `subject`, `predicate`, `object`, `theme?` (wing), `source?`, `valid_from?`, `sensitivity?`, `single_valued?` | `mempalace_kg_save` under the token's KG wing rules; refuses text the privacy scan flags as a secret. Returns `saved <id>`, `merged into <id>`, `saved <id>, replacing "<old>"` or `saved <id> as history: <id> is newer` |
 | `memory_search` | `query`, `theme?`, `limit?` (default 5) | `mempalace_search`; text: one hit per block: id, theme, author stamp, date, then the verbatim text quoted |
 | `memory_get` | `id` | `mempalace_get_drawer` |
 | `memory_link` | `id`, `task` | `link_drawer` |

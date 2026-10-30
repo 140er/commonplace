@@ -74,6 +74,10 @@ def tool_kg_query(
         active = results
         historical = []
         future = []
+    if results:
+        found = _call_kg(lambda kg: kg.sources([r["id"] for r in results]), read=True)
+        for row in results:
+            row["sources"] = found.get(row["id"], [])
     payload = {
         "entity": entity,
         "as_of": as_of,
@@ -200,6 +204,97 @@ def tool_kg_add(
         "wing": wing,
     }
     _wal_result("kg_add", outcome)
+    return _with_kg_notice(outcome)
+
+
+def tool_kg_save(
+    subject: str,
+    predicate: str,
+    object: str,
+    valid_from: str = None,
+    confidence: float = 1.0,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    source_drawer_id: str = None,
+    source_file: str = None,
+    wing: str = None,
+    sensitivity: str = None,
+    sensitivities: list = None,
+    single_valued: bool = None,
+):
+    """Save a fact, merging it into the same open fact or replacing a single value.
+
+    See :meth:`KnowledgeGraph.save_fact`. ``single_valued`` defaults to whether
+    the predicate is in ``single_valued_predicates``.
+    """
+    try:
+        subject = sanitize_kg_value(subject, "subject")
+        predicate = sanitize_name(predicate, "predicate")
+        object = sanitize_kg_value(object, "object")
+        valid_from = sanitize_iso_temporal(valid_from, "valid_from")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        if single_valued is not None and not isinstance(single_valued, bool):
+            raise ValueError("single_valued must be true or false")
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if single_valued is None:
+        single_valued = predicate.lower().replace(" ", "_") in _config.single_valued_predicates
+
+    _wal_log(
+        "kg_save",
+        {
+            "subject": subject,
+            "predicate": predicate,
+            "object": object,
+            "valid_from": valid_from,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
+            "source_drawer_id": source_drawer_id,
+            "source_file": source_file,
+            "confidence": confidence,
+            "wing": wing,
+            "sensitivity": sensitivity,
+            "sensitivities": sensitivities,
+            "single_valued": single_valued,
+        },
+    )
+    try:
+        outcome = _call_kg(
+            lambda kg: kg.save_fact(
+                subject,
+                predicate,
+                object,
+                valid_from=valid_from,
+                confidence=confidence,
+                source_thread=source_thread,
+                source_seq_start=source_seq_start,
+                source_seq_end=source_seq_end,
+                source_drawer_id=source_drawer_id,
+                source_file=source_file,
+                wing=wing,
+                sensitivity=sensitivity,
+                sensitivities=sensitivities,
+                single_valued=single_valued,
+            )
+        )
+    except ValueError as e:
+        outcome = {"success": False, "error": str(e)}
+        _wal_result("kg_save", outcome)
+        return outcome
+    outcome = {
+        "success": True,
+        **outcome,
+        "fact": f"{subject} → {predicate} → {object}",
+        "wing": wing,
+    }
+    _wal_result("kg_save", outcome)
     return _with_kg_notice(outcome)
 
 
