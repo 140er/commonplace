@@ -130,7 +130,7 @@ MOVES = [
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
-    ("review", "done", "decide", False),
+    ("review", "done", "decide", True),  # a trusted owner agent relays Jeffrey's answer
     ("todo", "review", "handoff", True),
     ("done", "todo", "update", False),
     ("todo", "backlog", "update", True),
@@ -163,7 +163,7 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
                 note="Verbatim note",
             )
         elif operation == "decide":
-            ok, _text = mcp(hub, token, "decide", task=number, choice="yes")
+            ok, _text = mcp(hub, token, "decide", task=number, choice="yes", then="done")
         else:
             ok, _text = mcp(hub, token, "task_update", task=number, status=new)
     else:
@@ -181,7 +181,7 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
             )
         elif operation == "decide":
             status, _body = api(
-                hub, token, "POST", f"/api/cards/{number}/decide", {"choice": "yes"}
+                hub, token, "POST", f"/api/cards/{number}/decide", {"choice": "yes", "then": "done"}
             )
         else:
             status, _body = api(
@@ -710,3 +710,15 @@ def test_memory_link_renews_holder_and_refuses_other_holder(hub, env):
         )
     owner.store.link_drawer(created["number"], "memory-after-expiry", other.actor, principal=other)
     assert owner.task_show(created["number"])["status"] == "todo"
+
+
+def test_an_agent_never_answers_its_own_question(hub, env):
+    token, _agent, _person, _cookie, owner = env
+    ok, text = mcp(hub, token, "ask", question="Ship it?", options=["yes", "no"], board="work")
+    assert ok, text
+    number = int(text.split()[0].lstrip("#"))
+    card = owner.task_show(number)
+    assert card["status"] == "review"
+    ok, text = mcp(hub, token, "decide", task=number, choice="yes")
+    assert not ok and "only Jeffrey" in text
+    assert owner.task_show(number)["status"] == "review"
