@@ -216,7 +216,13 @@ def _save(ctx, args):
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
     if task is not None:
-        _link(ctx, memory_id, task, store)
+        try:
+            _link(ctx, memory_id, task, store)
+        except ToolError as exc:
+            # The memory is stored: say so, so the agent doesn't save it again.
+            raise ToolError(
+                f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
+            ) from None
     return memory_id, task
 
 

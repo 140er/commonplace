@@ -342,7 +342,11 @@ def test_unknown_card_errors_from_link_are_refusals(hub, board_store, monkeypatc
     ):
         result = _call(hub, owner, tool, **arguments)
         assert result["isError"]
-        assert result["content"][0]["text"] == "no: no such card"
+        text = result["content"][0]["text"]
+        if tool == "memory_link":
+            assert text == "no: no such card"
+        else:
+            assert text.startswith("no: saved ") and text.endswith(", not linked: no such card")
     assert all(e["kind"] == "memory.saved" for e in events.after(hub.db, hub.workspace))
 
 

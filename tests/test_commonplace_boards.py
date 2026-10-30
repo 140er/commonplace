@@ -697,7 +697,7 @@ def test_expired_version_conflict_returns_committed_card(hub, env):
     assert actual["title"] == "Expired version"
 
 
-def test_memory_link_renews_holder_and_refuses_other_holder(hub, env):
+def test_memory_link_renews_holder_and_never_needs_the_hold(hub, env):
     token, agent, _person, _cookie, owner = env
     created = owner.task_add(title="Linked while doing", board="work")
     assert mcp(hub, token, "task_take_next", task=created["number"])[0]
@@ -708,8 +708,8 @@ def test_memory_link_renews_holder_and_refuses_other_holder(hub, env):
     owner.store.link_drawer(created["number"], "memory-holder", agent.actor, principal=agent)
     assert owner.task_show(created["number"])["claim_until"] != "2099-01-01T00:00:00Z"
     other = hub.gateway.authenticate(f"Bearer {hub.owner_token('other-linker')}")
-    with pytest.raises(ToolError, match="held by another"):
-        owner.store.link_drawer(created["number"], "memory-other", other.actor, principal=other)
+    owner.store.link_drawer(created["number"], "memory-other", other.actor, principal=other)
+    assert owner.task_show(created["number"])["status"] == "doing"
     with owner.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (created["number"],)

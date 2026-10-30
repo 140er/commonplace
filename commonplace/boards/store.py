@@ -210,9 +210,8 @@ class BoardStore:
             expire_claims(conn, row["board_id"])
             row = task_row(conn, row["id"])
             if principal is not None:
+                # Linking only adds; it never needs the card's hold.
                 actor = principal.actor
-                if row["status"] == "doing" and not principal.person and row["assignee"] != actor:
-                    raise ToolError("no: card is held by another connection")
             user = principal.user_id if principal is not None else actor
             connection = actor.removeprefix("conn:") if actor.startswith("conn:") else None
             added = conn.execute(
