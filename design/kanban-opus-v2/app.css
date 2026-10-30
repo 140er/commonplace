@@ -1,0 +1,162 @@
+/* Commonplace boards v2. Static mockup. Geist ships in ./fonts (OFL); nothing loads from the network. */
+
+@font-face { font-family: "Geist"; src: url("fonts/geist-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("fonts/geist-mono-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+:root {
+  /* Surfaces: Look B's green-black, stepped. Depth comes from these, not from borders. */
+  --s0: #0b0c0b;   /* sidebar */
+  --s1: #0f100f;   /* canvas */
+  --s2: #161816;   /* cards, panel */
+  --s3: #1c1e1c;   /* hover, fields, buttons */
+  --s4: #242624;   /* selected nav, pressed */
+  --hair: rgba(255, 255, 255, 0.06);
+
+  /* Text: four steps, all but the last pass 4.5:1 on --s1. */
+  --t1: #ecede9;
+  --t2: #b3b6ae;
+  --t3: #8b8f86;
+  --t4: #5c6059;   /* icons and rules only */
+  --t-untrusted: #73776f;
+
+  --accent: #f7941d;
+  --accent-t: #f6a447;
+  --amber: #c9a24a;
+  --person: #a9bdf5;
+
+  --sans: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* Type scale */
+  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-20: 20px;
+  /* Spacing scale: 4 8 12 16 20 24 32 */
+  --r-sm: 5px; --r: 7px; --r-lg: 10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; overflow: hidden;
+  background: var(--s0); color: var(--t1);
+  font: 400 var(--fs-13)/20px var(--sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.003em;
+}
+h1, h2, h3, p, ul, ol, blockquote { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; }
+svg { display: block; flex: none; }
+
+.t2 { color: var(--t2); } .t3 { color: var(--t3); } .t4 { color: var(--t4); }
+
+/* ---------- Shell ---------- */
+.app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
+
+.side { padding: 12px 8px; display: flex; flex-direction: column; gap: 1px; }
+.ws { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; margin-bottom: 12px; font-weight: 600; font-size: var(--fs-13); }
+.ws .mark { width: 18px; height: 18px; }
+.side a {
+  display: flex; align-items: center; gap: 10px;
+  height: 28px; padding: 0 8px; border-radius: var(--r-sm);
+  color: var(--t2); text-decoration: none; font-weight: 450;
+}
+.side a svg { width: 15px; height: 15px; color: var(--t3); }
+.side a[aria-current] { background: var(--s4); color: var(--t1); }
+.side a[aria-current] svg { color: var(--t1); }
+.side a .n { margin-left: auto; font-size: var(--fs-12); color: var(--accent-t); font-weight: 500; }
+.side a kbd { margin-left: auto; }
+.side .group { margin-top: 20px; }
+
+.main { min-width: 0; display: flex; flex-direction: column; background: var(--s1); border-radius: var(--r-lg) 0 0 var(--r-lg); margin: 8px 0 8px 0; overflow: hidden; position: relative; box-shadow: 0 0 0 1px var(--hair); }
+.head { height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 20px; }
+.head h1 { font-size: var(--fs-13); font-weight: 500; display: flex; gap: 8px; }
+.head h1 .n { color: var(--t3); font-weight: 400; }
+.head .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--t3); }
+.icon-btn svg { width: 15px; height: 15px; }
+
+kbd {
+  display: inline-grid; place-items: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  font: 500 var(--fs-11)/1 var(--sans);
+  color: var(--t3); background: var(--s3); border-radius: 4px;
+}
+
+/* ---------- Shared bits ---------- */
+.actor { color: var(--t3); white-space: nowrap; font-size: var(--fs-12); }
+.actor.person { color: var(--person); }
+.actor.untrusted { color: var(--t-untrusted); }
+.meta { display: flex; align-items: center; gap: 12px; font-size: var(--fs-12); color: var(--t3); line-height: 16px; }
+.meta .push { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.ic { width: 14px; height: 14px; color: var(--t4); }
+.links { display: inline-flex; align-items: center; gap: 4px; }
+.links svg { width: 12px; height: 12px; color: var(--t4); }
+.flag svg { width: 13px; height: 13px; color: var(--amber); }
+.pie { width: 12px; height: 12px; }
+
+/* Options: one fill, no outline. The picked one is the only orange on the screen. */
+.opts { display: flex; align-items: center; gap: 6px; }
+.opt {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 12px; border-radius: var(--r-sm);
+  background: var(--s3); color: var(--t1); font-weight: 500;
+}
+.opt .k { color: var(--t4); font-size: var(--fs-11); margin-right: -2px; }
+.opt.go { background: var(--accent); color: #140b00; }
+.opt.go .k { color: rgba(20, 11, 0, 0.55); }
+.field {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 6px 0 12px; border-radius: var(--r-sm);
+  background: var(--s3); color: var(--t1); white-space: nowrap; overflow: hidden;
+}
+.field .caret { width: 1.5px; height: 15px; background: var(--accent); margin-left: -6px; }
+.field kbd { margin-left: auto; background: var(--s4); }
+
+/* ---------- Panel ---------- */
+.panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 480px; z-index: 5;
+  background: var(--s2);
+  box-shadow: -1px 0 0 var(--hair), -32px 0 64px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column;
+}
+.panel .bar { height: 44px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 24px; font-size: var(--fs-12); color: var(--t3); }
+.panel .bar .sep { color: var(--t4); }
+.panel .bar .right { margin-left: auto; display: flex; gap: 4px; }
+.panel .body { flex: 1; overflow: hidden; padding: 12px 24px 0; display: flex; flex-direction: column; }
+.panel .state { display: flex; align-items: center; gap: 8px; font-size: var(--fs-12); color: var(--t2); font-weight: 500; }
+.panel .state svg { width: 14px; height: 14px; }
+.panel h2 { margin-top: 8px; font-size: var(--fs-20); line-height: 28px; font-weight: 600; letter-spacing: -0.018em; }
+.props { margin-top: 16px; display: flex; gap: 20px; font-size: var(--fs-12); color: var(--t2); }
+.props > span { display: inline-flex; align-items: center; gap: 8px; }
+.prose { margin-top: 20px; color: var(--t2); font-size: var(--fs-13); line-height: 21px; }
+.prose code { font: 12px var(--mono); color: var(--t1); background: var(--s3); padding: 1px 5px; border-radius: 4px; }
+
+.ask { margin-top: 20px; background: var(--s3); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.ask .q { font-size: var(--fs-14); line-height: 20px; color: var(--t1); }
+.ask .opt { background: var(--s4); }
+.ask .opt.go { background: var(--accent); }
+.ask .field { background: var(--s1); }
+.ask .then { display: flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--t3); }
+.ask .then b { color: var(--t2); font-weight: 500; }
+.ask .then svg { width: 12px; height: 12px; color: var(--t4); }
+
+.drawers { margin-top: 20px; margin-left: -8px; margin-right: -8px; }
+.drawers li { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: var(--r-sm); color: var(--t2); min-width: 0; }
+.drawers li svg { width: 14px; height: 14px; color: var(--t4); }
+.drawers li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawers li.gone span { color: var(--t4); text-decoration: line-through; }
+
+.rule { height: 1px; background: var(--hair); margin: 20px 0 16px; }
+.log { display: flex; flex-direction: column; gap: 10px; }
+.ev { display: grid; grid-template-columns: 16px 1fr auto; column-gap: 10px; align-items: center; font-size: var(--fs-12); color: var(--t3); line-height: 18px; }
+.ev .d { width: 5px; height: 5px; border-radius: 50%; background: var(--t4); justify-self: center; }
+.ev.warn .d { background: var(--amber); }
+.ev.hand .d { background: var(--accent); }
+.ev b { font-weight: 500; color: var(--t2); }
+.ev time { color: var(--t4); font-size: var(--fs-11); }
+.ev .said { grid-column: 2 / 4; margin-top: 4px; font-size: var(--fs-13); line-height: 20px; color: var(--t1); }
+
+.composer { margin-top: auto; padding: 16px 0 20px; }
+.composer .field { height: 36px; border-radius: var(--r); background: var(--s3); }
