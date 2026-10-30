@@ -653,9 +653,9 @@ def upload(tree: dict, card: int, hub: str, token: str) -> dict:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read())
 
-    for attempt in range(3):
-        current = call("GET")
+    for attempt in range(3):  # a 409 means the card moved on between read and write
         try:
+            current = call("GET")
             return call("PATCH", {"version": current["version"], "callstack": tree})
         except urllib.error.HTTPError as exc:
             if exc.code != 409 or attempt == 2:
@@ -685,7 +685,11 @@ def main(argv=None) -> int:
     if not args.token:
         print("callstack: set COMMONPLACE_TOKEN or pass --token", file=sys.stderr)
         return 2
-    upload(tree, args.card, args.hub, args.token)
+    try:
+        upload(tree, args.card, args.hub, args.token)
+    except urllib.error.URLError as exc:
+        print(f"callstack: cannot reach {args.hub}: {exc.reason}", file=sys.stderr)
+        return 2
     stats = tree["stats"]
     print(f"#{args.card} {stats['new']} new, {stats['changed']} changed, {stats['files']} files")
     return 0

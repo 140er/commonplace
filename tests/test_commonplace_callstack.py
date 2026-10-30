@@ -317,3 +317,15 @@ def test_rest_mcp_round_trip_and_upload(hub, repo, monkeypatch):
     assert not ok and "waiting on a person" in refused
     assert mcp(hub, token, "task_update", task=number, callstack=None)[0]
     assert api(hub, token, "GET", f"/api/cards/{number}")[1]["callstack"] is None
+
+
+def test_cli_prints_json_and_reports_errors(repo, monkeypatch, capsys):
+    monkeypatch.chdir(repo)
+    assert callstack.main(["--base", "main", "--head", "feature"]) == 0
+    assert json.loads(capsys.readouterr().out)["stats"]["new"] == 4
+    assert callstack.main(["--base", "nope"]) == 2
+    monkeypatch.delenv("COMMONPLACE_TOKEN", raising=False)
+    assert callstack.main(["--base", "main", "--card", "1"]) == 2
+    down = ["--base", "main", "--card", "1", "--hub", "http://127.0.0.1:9", "--token", "t"]
+    assert callstack.main(down) == 2
+    assert "cannot reach" in capsys.readouterr().err
