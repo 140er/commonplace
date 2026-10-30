@@ -275,3 +275,21 @@ def test_denied_process_environment_only_blocks_worker_candidates(tmp_path, monk
             module._verify_offline(tmp_path / "data")
     else:
         module._verify_offline(tmp_path / "data")
+
+
+def test_parent_that_looks_like_a_worker_is_not_one(populated, tmp_path):
+    # docker-init under compose `init: true` (or any wrapper) runs with our
+    # command line and COMMONPLACE_DATA; it is an ancestor, not a writer.
+    data = populated[0]
+    dest = tmp_path / "snap"
+    wrapper = (
+        "import subprocess, sys; "
+        f"sys.exit(subprocess.call([sys.executable, '-m', 'commonplace', '--data', {str(data)!r}, "
+        f"'backup', {str(dest)!r}]))"
+    )
+    env = {**os.environ, "COMMONPLACE_DATA": str(data)}
+    result = subprocess.run(
+        [sys.executable, "-c", wrapper, "commonplace"], env=env, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert (dest / "manifest.json").exists()

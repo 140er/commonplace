@@ -90,8 +90,11 @@ def _verify_offline(root: Path) -> None:
     proc_root = _PROC_ROOT
     if not sys.platform.startswith("linux") or not (proc_root / "self" / "environ").exists():
         raise BackupError("offline worker verification requires Linux /proc")
+    # This process and its ancestors (a shell, sudo, docker-init under
+    # ``init: true``) carry our command line and environment but write nothing.
+    own = _ancestors(proc_root)
     for proc in proc_root.iterdir():
-        if not proc.name.isdigit() or int(proc.name) == os.getpid():
+        if not proc.name.isdigit() or int(proc.name) in own:
             continue
         try:
             # Workers inherit the gateway's uid. Other users' private process
@@ -275,3 +278,17 @@ def backup(data_dir, dest_dir) -> dict:
         finally:
             if partial is not None:
                 shutil.rmtree(partial)
+
+
+def _ancestors(proc_root) -> set:
+    """This process's pid and every parent pid up to init."""
+    pids = set()
+    pid = os.getpid()
+    while pid > 0 and pid not in pids:
+        pids.add(pid)
+        try:
+            stat = (proc_root / str(pid) / "stat").read_text()
+            pid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return pids
