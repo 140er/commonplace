@@ -83,6 +83,10 @@ def test_assignment_variety_and_overlap():
     assert "secret:generic_assignment" not in scan("secret=replace_with_your_token")
     assert "secret:generic_assignment" not in scan("token=AAAAAAAAAAAAAAAA")
     assert "secret:generic_assignment" in scan("password=Ab3dEf9Gh2Jk7LmQ")
+    assert "secret:generic_assignment" in scan("api_key=9f0c2a7e81d34b65")
+    assert "secret:generic_assignment" in scan("secret=9F0C2A7E81D34B65")
+    assert "secret:generic_assignment" not in scan("api_key=abcdefabcdefabcd")
+    assert "secret:generic_assignment" not in scan("api_key=0123012301230123")
     flags = scan("token=ghp_Ab3dEf9Gh2Jk7LmQ12345678901234567890")
     assert "secret:github_token" in flags
     assert "secret:generic_assignment" in flags
@@ -130,6 +134,7 @@ def test_speed_on_10kb_and_delimiter_heavy_near_misses():
     samples = [
         ("A normal engineering note about token handling and builds. " * 180)[:10240],
         ("curl " + "x|" * 100 + " api_key=" + "a" * 199 + " ") * 45,
+        (("doctor token akia ghp_ sk-ant- cmmn_ xox eyJ :// " * 205) + "diagnose")[:10240],
     ]
     for text in samples:
         scan(text)
