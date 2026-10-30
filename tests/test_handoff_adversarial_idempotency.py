@@ -876,10 +876,15 @@ def test_three_generations_recall_original_and_reject_invalid_parents(harness):
     foreign, _ = harness.ctx.handoff_db.begin(
         other, "foreign", ThreadMeta("foreign"), connection_id=harness.principal.connection_id
     )
+    # A forged parent is dropped, never linked: the handoff itself goes through.
+    for index, parent in enumerate(("hof_nonexistent", foreign.id)):
+        status, body = harness.request(body=asdict(request(f"forged-{index}", parent=parent)))
+        assert status == 200, body
+        stored = body["handoff"]["stored_thread_id"]
+        store = harness.ctx.store_for(harness.workspace)
+        assert store.parent_of(stored) in (None, "")
+        assert body["handoff"]["parent_handoff_id"] == ""
     baseline = harness.rows("threads")
-    for parent in ("hof_nonexistent", foreign.id):
-        status, body = harness.request(body=asdict(request("forged", parent=parent)))
-        assert (status, body) == (404, {"error": "not found"})
     # A retry that forges its own parent cannot mutate the existing immutable chain.
     status, retried = harness.request(body=asdict(request("generation-2", parent=previous)))
     assert status == 200
