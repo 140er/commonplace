@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 const source = await readFile(new URL("../commonplace/web/static/digest.js", import.meta.url), "utf8");
 const { digestSpeech } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 let spoken, cancelled = 0, state, error, resolve;
@@ -61,3 +62,52 @@ const missing = digestSpeech(assert.fail, () => {}, assert.fail, {});
 assert.equal(missing.supported, false);
 await missing.toggle();
 missing.stop();
+
+// Exercise the app's actual render functions: a live refresh must retain the
+// focused Stop node, while speechView updates its action label and captions.
+const app = await readFile(new URL("../commonplace/web/static/app.js", import.meta.url), "utf8");
+const functionSource = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
+const document = { activeElement: null, title: "" };
+let button = null, buttonsCreated = 0;
+const elements = { "#title": {}, "#content": {}, "#digest-captions": {}, ".queue": { insertAdjacentHTML() {} } };
+elements["#head-actions"] = {
+  set innerHTML(markup) {
+    if (document.activeElement === button) document.activeElement = null;
+    button = markup.includes('data-action="speak-digest"') ? {
+      dataset: {}, attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; },
+      focus() { document.activeElement = this; },
+    } : null;
+    if (button) buttonsCreated++;
+  },
+};
+const context = {
+  document, root: { querySelector: (selector) => selector === '[data-action="speak-digest"]' ? button : elements[selector] },
+  speech: { supported: true }, speechState: { active: false, text: "" },
+  state: { needs: {}, route: "#/" }, needsCards: () => [], message: () => "Nothing needs you",
+};
+const view = runInNewContext([
+  functionSource("function speechView()", "\nconst prLink"),
+  functionSource("function title(", "\nfunction decision("),
+  functionSource("function needsView()", "\nfunction boardView()"),
+  "({ needsView, speechView })",
+].join("\n"), context);
+view.needsView();
+const focused = button;
+focused.focus();
+context.speechState = { active: true, text: "Three things need you." };
+view.speechView();
+view.needsView();
+assert.equal(buttonsCreated, 1);
+assert.equal(button, focused);
+assert.equal(document.activeElement, focused);
+assert.equal(button.textContent, "Stop");
+assert.equal(button.attributes["aria-label"], "Stop speaking");
+assert.equal(button.dataset.active, "true");
+assert.equal(Object.hasOwn(button.attributes, "aria-pressed"), false);
+assert.equal(elements["#digest-captions"].textContent, "Three things need you.");
+context.speechState = { active: false, text: "" };
+view.speechView();
+assert.equal(button.textContent, "Speak");
+assert.equal(button.dataset.active, "false");
+assert.equal(elements["#digest-captions"].hidden, true);

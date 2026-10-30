@@ -4,10 +4,11 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
-from commonplace.boards.digest import digest
+from commonplace.boards.digest import digest, ssml
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
 from tests.test_commonplace_web import request
@@ -73,6 +74,21 @@ def test_owner_token_questions_lead_without_changing_their_derived_need():
     assert result["items"][0]["need"] == "idle"
 
 
+@pytest.mark.parametrize("count", [0, 1, 9])
+def test_ssml_keeps_titles_and_boards_as_xml_text(count):
+    title = 'a</s><break time="10s"/>&'
+    board = "b <room> & \"quotes\" and 'apostrophes'"
+    result = digest({"asks": [item(n, title, board=board) for n in range(count)]})
+    encoded = ssml(result)
+    root = ElementTree.fromstring(encoded)
+    assert root.tag == "speak" and list(root) == []
+    assert root.text == result["text"]
+    if count:
+        assert title in root.text and board in root.text
+        assert "&quot;" in encoded and "&apos;" in encoded
+        assert "&lt;break" in encoded and "&amp;" in encoded
+
+
 def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     worker = service(hub, agent)
@@ -118,6 +134,12 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     assert status == 200 and headers["Content-Type"] == "text/plain; charset=utf-8"
     assert headers["Cache-Control"] == "no-store"
     assert text.decode() == payload["text"]
+    status, headers, encoded = request(
+        hub, "/api/needs-me/digest?format=ssml", headers={"Authorization": f"Bearer {scoped}"}
+    )
+    assert status == 200 and headers["Content-Type"] == "application/ssml+xml; charset=utf-8"
+    assert headers["Cache-Control"] == "no-store"
+    assert ElementTree.fromstring(encoded).text == payload["text"]
     assert api(hub, None, "GET", "/api/needs-me/digest")[0] == 401
     assert api(hub, cookie, "GET", "/api/needs-me/digest?format=oops")[0] == 400
     assert not mcp(hub, scoped, "needs_me", format="oops")[0]
@@ -126,6 +148,17 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     )
     assert api(hub, member, "GET", "/api/needs-me/digest")[0] == 403
     assert not mcp(hub, member, "needs_me", format="digest")[0]
+
+
+def test_ssml_endpoint_does_not_execute_title_markup(hub, env):  # noqa: F811
+    token, agent, _person, cookie, _owner = env
+    title = 'a</s><break time="10s"/>&'
+    service(hub, agent).ask(title, board="work")
+    for auth in (cookie, {"Authorization": f"Bearer {token}"}):
+        status, _headers, encoded = request(hub, "/api/needs-me/digest?format=ssml", headers=auth)
+        root = ElementTree.fromstring(encoded)
+        assert status == 200 and root.tag == "speak" and list(root) == []
+        assert root.text == f"One thing needs you.\n{title} on work."
 
 
 def test_speech_lifecycle():

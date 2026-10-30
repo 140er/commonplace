@@ -19,7 +19,7 @@ function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
     button.textContent = speechState.active ? "Stop" : "Speak";
-    button.setAttribute("aria-pressed", String(speechState.active));
+    button.dataset.active = String(speechState.active);
     button.setAttribute("aria-label", speechState.active ? "Stop speaking" : "Speak what needs you today");
   }
   const captions = root.querySelector("#digest-captions");
@@ -165,7 +165,8 @@ function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
 }
 function needsView() {
-  title("Needs you", speech.supported ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "");
+  // Keep the focused Speak/Stop node through live refreshes.
+  if (!root.querySelector('[data-action="speak-digest"]')) title("Needs you", speech.supported ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "");
   const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
   const cards = needsCards();
   if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;

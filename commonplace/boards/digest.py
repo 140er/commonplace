@@ -1,5 +1,7 @@
 """Deterministic speech from the already scoped Needs you queue."""
 
+from xml.sax.saxutils import escape
+
 from .display import NEEDS
 
 _COUNTS = (
@@ -26,13 +28,26 @@ def digest(groups):
     count = len(ordered)
     items = [{k: c[k] for k in ("number", "title", "need", "board")} for c in ordered[:5]]
     remaining = count - len(items)
-    if not count:
-        text = "Nothing needs you today."
-    else:
-        total = _COUNTS[count] if count < len(_COUNTS) else str(count)
-        lines = ["One thing needs you." if count == 1 else f"{total} things need you."]
-        lines.extend(f"{item['title']} on {item['board']}." for item in items)
-        if remaining:
-            lines.append(f"And {remaining} more.")
-        text = "\n".join(lines)
+    text = _text(count, items, remaining)
     return {"text": text, "count": count, "items": items, "remaining": remaining}
+
+
+def _text(count, items, remaining, encode=str):
+    if not count:
+        return "Nothing needs you today."
+    total = _COUNTS[count] if count < len(_COUNTS) else str(count)
+    lines = ["One thing needs you." if count == 1 else f"{total} things need you."]
+    lines.extend(f"{encode(item['title'])} on {encode(item['board'])}." for item in items)
+    if remaining:
+        lines.append(f"And {remaining} more.")
+    return "\n".join(lines)
+
+
+def ssml(result):
+    """The same words as plain text, with user content escaped as XML text."""
+
+    def xml(value):
+        return escape(value, {'"': "&quot;", "'": "&apos;"})
+
+    text = _text(result["count"], result["items"], result["remaining"], encode=xml)
+    return f"<speak>{text}</speak>"
