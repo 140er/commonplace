@@ -487,7 +487,14 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
 
 
 def tool_add_drawer(
-    wing: str, room: str, content: str, source_file: str = None, added_by: str = "mcp"
+    wing: str,
+    room: str,
+    content: str,
+    source_file: str = None,
+    added_by: str = "mcp",
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
 ):
     """File verbatim content into a wing/room. Checks for duplicates first.
 
@@ -499,9 +506,16 @@ def tool_add_drawer(
     ``tool_get_drawer(drawer_id)`` automatically hydrates and reassembles all
     chunks, and ``tool_delete_drawer(drawer_id)`` removes both the logical group
     and all constituent physical chunks.
+
+    ``source_thread`` plus ``source_seq_start``/``source_seq_end`` record the
+    chat messages these words came from. A retry of identical content keeps
+    the first write's source.
     """
     global _metadata_cache
     try:
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
         wing = sanitize_name(wing, "wing")
         room = sanitize_name(room, "room")
         content = sanitize_content(content)
@@ -524,6 +538,9 @@ def tool_add_drawer(
             "wing": wing,
             "room": room,
             "added_by": added_by,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
             "content_length": len(content),
             "content_preview": content[:200],
         },
@@ -538,6 +555,11 @@ def tool_add_drawer(
         "filed_at": utc_now_iso(),
         "id_recipe": ID_RECIPE,
     }
+    if source_thread:
+        base_meta["source_thread"] = source_thread
+        if source_seq_start is not None:
+            base_meta["source_seq_start"] = source_seq_start
+            base_meta["source_seq_end"] = source_seq_end
     if source_file:
         # A drawer filed here names a source file the same way a mined one
         # does, and ``sync`` decides both by the same rule, so it records the

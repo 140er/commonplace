@@ -5,8 +5,8 @@ import { homeView, needItems } from "./home.js";
 
 const root = document.querySelector("#root");
 const state = {
-  me: null, boards: [], needs: {}, cards: [], open: [], card: null, route: "#/", base: "#/",
-  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0,
+  me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
+  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
@@ -75,9 +75,11 @@ function capture(view) {
 
 function remember() {
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
-  const active = document.activeElement, cols = root.querySelector(".cols");
+  const active = document.activeElement, ask = active?.closest?.("[data-ask]"), cols = root.querySelector(".cols");
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
+    scope: active?.closest?.("#card-panel, #content")?.id,
+    ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
     view: root.querySelector("#content")?.dataset.view, cols: cols && [cols.scrollTop, cols.scrollLeft],
     stacks: Object.fromEntries([...root.querySelectorAll(".col[data-status] .stack")].map((stack) => [stack.parentElement.dataset.status, stack.scrollTop])),
@@ -87,10 +89,15 @@ function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
-    const input = root.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
+    const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
     input?.focus({ preventScroll: true });
     if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
+  }
+  if (saved?.ask) {
+    const ask = scope.querySelector(`[data-ask="${CSS.escape(saved.ask.card)}"]`);
+    (saved.ask.option == null ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask.option)}"]`))?.focus({ preventScroll: true });
   }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
@@ -127,9 +134,33 @@ function title(text, actions = "") {
   root.querySelector("#head-actions").innerHTML = actions;
   document.title = `${text} · Commonplace`;
 }
-function decision(card, panel = false) {
+function decision(card, panel = false, answered = null) {
+  if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
-  return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+  return `<div class="opts" data-decisions="${card.number}" data-version="${e(card.version)}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" data-choice="${e(choice)}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+}
+const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
+// An ask inside the conversation: the question verbatim and its choices. Answered asks keep
+// their place in time with the pick marked and who answered when; only the open ask is live.
+function askCard(card, ask, { answer = null, open = false } = {}) {
+  const offered = [...(open ? card.ask_options || [] : ask.options || [])];
+  if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
+  const question = ask.text ?? (open ? card.ask : null);
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, true) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+}
+function conversation(card) {
+  const items = [];
+  let ask = null;
+  for (const event of card.events || []) {
+    if (event.options) items.push(ask = { ask: event });
+    else if (event.kind === "decide" && ask) { ask.answer = event; ask = null; }
+    else items.push({ event });
+  }
+  if (card.ask != null) {
+    if (ask) ask.open = true;
+    else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
+  }
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, item)).join("");
 }
 function needsCards() {
   return needItems(state.needs).map((item) => item.card);
@@ -137,8 +168,8 @@ function needsCards() {
 function needsView() {
   title("Home");
   const cards = needsCards();
-  if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, selected: state.selected, speak: speech.supported }, { dot, taskRow });
+  if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
+  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow });
   speechView();
 }
 function boardView() {
@@ -158,16 +189,19 @@ function boardsView() {
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  if (state.card?.number !== number) panel.innerHTML = message("Loading card…");
+  const opening = state.card?.number !== number;
+  if (opening) panel.innerHTML = message("Loading card…");
+  const request = ++state.panelRequest;
   try {
     const card = await api(`/api/cards/${number}`);
-    if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
+    if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}${card.ask ? `<div class="hit"><p class="q">${e(card.ask)}</p><p class="stamp">${e(actor(card.return_to))}</p>${decision(card, true)}</div>` : ""}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${(card.events || []).map((event) => `<li class="ev"><time title="${e(event.at)}">${e(event.at?.slice(11, 16) || "")}</time><span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>`).join("")}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
+    if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
-    if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
+    if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
 function newCardForm(edit = null) {
@@ -245,7 +279,7 @@ async function refresh({ background = false, events = [] } = {}) {
     const [boards, needs, open] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null]);
     if (epoch !== state.screen) return;
     state.boards = boards.boards; state.needs = needs;
-    if (open) state.open = open.cards;
+    if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (state.base.startsWith("#/board/")) {
       const slug = decodeURIComponent(state.base.slice("#/board/".length));
       const result = await api(`/api/boards/${enc(slug)}/cards`);
@@ -290,7 +324,12 @@ async function route() {
   showError("");
   await refresh();
 }
-function findCard(number) { return state.card?.number === number ? state.card : [...state.cards, ...state.open, ...needsCards()].find((c) => c.number === number); }
+// The current view's list first, so a write never sends a version left over from another view.
+function findCard(number) {
+  if (state.card?.number === number) return state.card;
+  const lists = state.base.startsWith("#/board/") ? [state.cards, state.open, needsCards()] : [state.open, needsCards(), state.cards];
+  return lists.flat().find((c) => c.number === number);
+}
 async function mutate(key, action) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
@@ -304,9 +343,11 @@ async function mutate(key, action) {
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
   }
 }
-async function decide(number, payload) {
+async function decide(number, payload, from) {
+  // The version the person saw: if the card was re-asked since, the server answers 409.
+  const version = Number(from.closest("[data-version]")?.dataset.version);
   await mutate(`card-${number}`, async () => {
-    await api(`/api/cards/${number}/decide`, { method: "POST", body: payload });
+    await api(`/api/cards/${number}/decide`, { method: "POST", body: { ...payload, version } });
     state.drafts.delete(`reply-${number}`);
     root.querySelectorAll(`[data-draft="reply-${number}"]`).forEach((input) => { input.value = ""; });
   });
@@ -336,9 +377,8 @@ root.addEventListener("click", async (event) => {
   try {
     if (action === "speak-digest") await speech.toggle();
     else if (action === "decide") {
-      const card = findCard(number);
       const reply = state.drafts.get(`reply-${number}`);
-      await decide(number, { choice: card.ask_options[Number(b.dataset.option)], ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" });
+      await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
     else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
@@ -382,7 +422,7 @@ root.addEventListener("submit", async (event) => {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
-    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" });
+    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
       state.drafts.delete(`comment-${state.card.number}`); form.reset();
@@ -428,7 +468,14 @@ root.addEventListener("drop", async (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
   if (event.key === "Escape") { root.querySelector('[data-action="close-panel"]')?.click(); return; }
+  const ask = event.target instanceof Element && event.target.closest("[data-ask]");
+  if (ask && /^[1-6]$/.test(event.key)) {
+    ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
+    event.preventDefault(); return;
+  }
   if (state.base !== "#/" || !state.me) return;
+  // With a card open, its keys answer and open that card, not the row selected behind it.
+  const target = /^#\/card\/\d+$/.test(state.route) ? Number(state.route.slice(7)) : state.selected;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
   const index = cards.findIndex((c) => c.number === state.selected);
   if (["j", "k"].includes(event.key) && cards.length) {
@@ -437,13 +484,15 @@ document.addEventListener("keydown", (event) => {
     root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
     root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
   } else if (/^[1-6]$/.test(event.key)) {
-    const card = state.route === `#/card/${state.selected}` && findCard(state.selected), choice = card?.ask_options?.[Number(event.key) - 1];
-    if (choice != null) { event.preventDefault(); decide(card.number, { choice, then: "return", ...(state.drafts.get(`reply-${card.number}`) ? { reply: state.drafts.get(`reply-${card.number}`) } : {}) }); }
-  } else if (event.key === "o" && state.selected) location.hash = `#/card/${state.selected}`;
-  else if (event.key === "Enter" && state.selected && !(event.target instanceof Element && event.target.closest("button,a"))) {
+    // Answer through the open card's own buttons, so its "After decision" select applies.
+    const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
+    const button = root.querySelector(`[data-ask="${target}"] ${option}`);
+    if (button) { event.preventDefault(); button.click(); }
+  } else if (event.key === "o" && target) location.hash = `#/card/${target}`;
+  else if (event.key === "Enter" && target && !(event.target instanceof Element && event.target.closest("button,a"))) {
     event.preventDefault();
-    const reply = root.querySelector(`[data-draft="reply-${state.selected}"]`);
-    if (reply) reply.focus(); else location.hash = `#/card/${state.selected}`;
+    const reply = root.querySelector(`[data-draft="reply-${target}"]`);
+    if (reply) reply.focus(); else location.hash = `#/card/${target}`;
   }
 });
 let timer = null, polling = false, retryDelay = 2000;

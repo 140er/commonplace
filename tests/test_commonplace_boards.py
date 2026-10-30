@@ -181,7 +181,11 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
             )
         elif operation == "decide":
             status, _body = api(
-                hub, token, "POST", f"/api/cards/{number}/decide", {"choice": "yes", "then": "done"}
+                hub,
+                token,
+                "POST",
+                f"/api/cards/{number}/decide",
+                {"version": current["version"], "choice": "yes", "then": "done"},
             )
         else:
             status, _body = api(
@@ -244,7 +248,7 @@ def test_review_only_decide_and_done_is_never_deleted(hub, env):
         cookie,
         "POST",
         f"/api/cards/{created['number']}/decide",
-        {"choice": "yes", "then": "done"},
+        {"version": created["version"], "choice": "yes", "then": "done"},
     )
     assert status == 200 and current["status"] == "done"
     assert api(hub, cookie, "DELETE", f"/api/cards/{created['number']}")[0] == 404
@@ -316,7 +320,7 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
         cookie,
         "POST",
         f"/api/cards/{card['number']}/decide",
-        {"choice": "90d", "reply": "Keep the other option."},
+        {"version": current["version"], "choice": "90d", "reply": "Keep the other option."},
     )
     assert status == 200 and result["assignee"] == agent.actor and result["ask"] is None
     ok, output = mcp(hub, token, "task_take_next", board="work")
@@ -501,7 +505,7 @@ def test_forbidden_board_canary_every_surface(hub, env):
         ("PATCH", f"/api/cards/{n}", {"version": -1, "status": "done"}),
         ("POST", f"/api/cards/{n}/comments", {"text": "attempt"}),
         ("POST", f"/api/cards/{n}/handoff", {"to": "owner@example.com", "note": "attempt"}),
-        ("POST", f"/api/cards/{n}/decide", {"reply": "attempt"}),
+        ("POST", f"/api/cards/{n}/decide", {"version": -1, "reply": "attempt"}),
     ]
     for method, path, body in requests:
         status, result = api(hub, scoped, method, path, body)

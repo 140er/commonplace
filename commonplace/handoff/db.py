@@ -40,6 +40,7 @@ from commonplace.control_db import ControlDB, _iso, _new_id, _now, _parse
 from .models import (
     EVENT_COMPLETED,
     SETTING_SCOPES,
+    ContextUsage,
     Handoff,
     LauncherConfig,
     SettingRow,
@@ -77,6 +78,10 @@ CREATE TABLE IF NOT EXISTS handoffs (
     branch TEXT NOT NULL DEFAULT '',
     pr_url TEXT NOT NULL DEFAULT '',
     cwd TEXT NOT NULL DEFAULT '',
+    used_tokens INTEGER NOT NULL DEFAULT 0,
+    window_tokens INTEGER NOT NULL DEFAULT 0,
+    threshold REAL NOT NULL DEFAULT 0,
+    completed_at TEXT NOT NULL DEFAULT '',
     stored_thread_id TEXT NOT NULL DEFAULT '',
     parent_handoff_id TEXT NOT NULL DEFAULT '',
     doc_markdown TEXT NOT NULL DEFAULT '',
@@ -167,6 +172,14 @@ class HandoffDB:
                     conn.execute(
                         "ALTER TABLE handoffs ADD COLUMN lease_token TEXT NOT NULL DEFAULT ''"
                     )
+                for column, kind in (
+                    ("used_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                    ("window_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                    ("threshold", "REAL NOT NULL DEFAULT 0"),
+                    ("completed_at", "TEXT NOT NULL DEFAULT ''"),
+                ):
+                    if column not in columns:
+                        conn.execute(f"ALTER TABLE handoffs ADD COLUMN {column} {kind}")
         if document_store_for is not None:
             self.set_document_store(document_store_for)
 
@@ -323,6 +336,8 @@ class HandoffDB:
         *,
         connection_id: str,
         lease_token: str = "",
+        usage: Optional[ContextUsage] = None,
+        threshold: float = 0.0,
     ) -> tuple[Handoff, bool]:
         """Create the ``pending`` row, or return the existing one. ``(handoff, created)``.
         Two concurrent calls with one key: exactly one gets ``created=True``.
@@ -334,6 +349,8 @@ class HandoffDB:
         to storage transitions and launch claims. Legacy empty-token rows
         acquire a token on takeover, fencing their original unowned writer.
         ``_now`` is the injectable UTC clock used for lease checks.
+        ``usage`` and ``threshold`` record how full the context was and the
+        threshold that applied; a retry that takes the row over records its own.
         """
         with self._lock, self._control._tx() as conn:
             now = _now()
@@ -356,13 +373,20 @@ class HandoffDB:
                         row["id"],
                     ),
                 )
+                if usage is not None:
+                    conn.execute(
+                        "UPDATE handoffs SET used_tokens = ?, window_tokens = ?, threshold = ? "
+                        "WHERE id = ?",
+                        (usage.used_tokens, usage.window_tokens, threshold, row["id"]),
+                    )
                 return self._handoff(self._required(row["id"])), True
             handoff_id = _new_id("hof")
             now = _iso(now)
             conn.execute(
                 "INSERT INTO handoffs(id, workspace_id, idempotency_key, source_thread_id, state, "
                 "agent, task_ref, branch, pr_url, cwd, parent_handoff_id, connection_id, created_at, "
-                "updated_at, lease_token) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?)",
+                "updated_at, lease_token, used_tokens, window_tokens, threshold) "
+                "VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     handoff_id,
                     workspace_id,
@@ -378,6 +402,9 @@ class HandoffDB:
                     now,
                     now,
                     lease_token,
+                    usage.used_tokens if usage else 0,
+                    usage.window_tokens if usage else 0,
+                    threshold,
                 ),
             )
             return self._handoff(self._required(handoff_id)), True
@@ -469,11 +496,12 @@ class HandoffDB:
                 raise HandoffDBError(f"cannot register a successor for {row['state']} handoff")
             if row["state"] == "stored":
                 conn.execute("UPDATE handoffs SET state = 'launched' WHERE id = ?", (handoff_id,))
+            now = _iso(_now())
             conn.execute(
                 "UPDATE handoffs SET successor_agent_ref = ?, successor_url = ?, "
-                "successor_thread_id = ?, state = 'done', launch_claimed = 1, updated_at = ? "
-                "WHERE id = ?",
-                (ref.agent_ref, ref.url, ref.thread_id, _iso(_now()), handoff_id),
+                "successor_thread_id = ?, state = 'done', launch_claimed = 1, updated_at = ?, "
+                "completed_at = ? WHERE id = ?",
+                (ref.agent_ref, ref.url, ref.thread_id, now, now, handoff_id),
             )
             self._queue(conn, row, EVENT_COMPLETED, caller)
             return self._handoff(self._required(handoff_id))

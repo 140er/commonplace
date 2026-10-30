@@ -18,6 +18,7 @@ from commonplace.handoff.events import Events
 from commonplace.handoff.models import (
     EVENT_STARTED,
     STATES,
+    ContextUsage,
     LauncherConfig,
     SettingRow,
     SuccessorRef,
@@ -224,7 +225,16 @@ def test_upgrade_existing_handoff_table_without_cwd(open_control):
     upgraded = open_control()
     db = _database(upgraded)
     after = dict(upgraded._conn.execute("SELECT * FROM handoffs").fetchone())
-    assert after == {**before, "cwd": "", "lease_token": "", "doc_markdown": ""}
+    assert after == {
+        **before,
+        "cwd": "",
+        "lease_token": "",
+        "doc_markdown": "",
+        "used_tokens": 0,
+        "window_tokens": 0,
+        "threshold": 0,
+        "completed_at": "",
+    }
     assert db.get("hof_legacy").cwd == ""
     assert db.by_stored_thread("thr_legacy").doc_markdown == DOCUMENT
     assert db.list("workspace-one")[0].cwd == ""
@@ -395,6 +405,45 @@ def test_begin_metadata_and_workspace_scoped_idempotency(db):
     other = _begin(db, "workspace-two", "same-key")
     assert other.id != handoff.id
     assert db.get(handoff.id) == handoff
+
+
+def test_begin_records_context_usage_and_threshold(db):
+    handoff, _ = db.begin(
+        "workspace-one",
+        "usage",
+        META,
+        connection_id="conn_source",
+        usage=ContextUsage(162_400, 200_000, "model"),
+        threshold=0.8,
+    )
+    assert (handoff.used_tokens, handoff.window_tokens, handoff.threshold) == (
+        162_400,
+        200_000,
+        0.8,
+    )
+    assert db.get(handoff.id) == handoff
+    plain = _begin(db, key="no-usage")
+    assert (plain.used_tokens, plain.window_tokens, plain.threshold) == (0, 0, 0.0)
+    db.mark_failed(handoff.id, "store failed")
+    retried, created = db.begin(
+        "workspace-one",
+        "usage",
+        META,
+        connection_id="conn_source",
+        usage=ContextUsage(190_000, 200_000),
+        threshold=0.9,
+    )
+    assert created and (retried.used_tokens, retried.threshold) == (190_000, 0.9)
+
+
+def test_completed_at_is_set_once_by_the_first_successor(db, monkeypatch):
+    handoff = _begin(db)
+    db.mark_stored(handoff.id, "thr_one", "doc")
+    first = db.set_successor(handoff.id, SuccessorRef("claude:next"))
+    assert first.completed_at == NOW
+    monkeypatch.setattr(db_module, "_now", lambda: datetime(2026, 10, 31, tzinfo=timezone.utc))
+    filled = db.set_successor(handoff.id, SuccessorRef("claude:next", "https://example.test/n"))
+    assert filled.completed_at == NOW and filled.updated_at != NOW
 
 
 @pytest.mark.parametrize("state", STATES)
