@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     to_status   TEXT,
     target     TEXT,                                -- actor ref (handoff, assign) or drawer id (link)
     choice     TEXT,                                -- decide: the option picked
+    options    TEXT,                                -- ask: JSON list of the choices offered, verbatim
     stamp_user       TEXT NOT NULL,
     stamp_connection TEXT,                          -- NULL for people in the web UI
     stamp_trust      TEXT NOT NULL,

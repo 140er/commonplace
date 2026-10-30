@@ -38,6 +38,7 @@ function remember() {
   const active = document.activeElement;
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
+    ask: active?.closest?.("[data-ask]") && !active.dataset.draft ? active.dataset.option ?? "" : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
   };
 }
@@ -49,6 +50,10 @@ function restore(saved) {
     const input = root.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
     input?.focus({ preventScroll: true });
     if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
+  }
+  if (saved?.ask != null) {
+    const ask = root.querySelector("[data-ask]");
+    (saved.ask === "" ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask)}"]`))?.focus({ preventScroll: true });
   }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
@@ -80,9 +85,33 @@ function title(text, actions = "") {
   root.querySelector("#head-actions").innerHTML = actions;
   document.title = `${text} · Commonplace`;
 }
-function decision(card, panel = false) {
+function decision(card, panel = false, answered = null) {
+  if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
   return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+}
+const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
+// An ask inside the conversation: the question verbatim and its choices. Answered asks keep
+// their place in time with the pick marked and who answered when; only the open ask is live.
+function askCard(card, ask, { answer = null, open = false } = {}) {
+  const offered = [...(open ? card.ask_options || [] : ask.options || [])];
+  if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
+  const question = ask.text ?? (open ? card.ask : null);
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? decision(card, true) : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+}
+function conversation(card) {
+  const items = [];
+  let ask = null;
+  for (const event of card.events || []) {
+    if (event.options) items.push(ask = { ask: event });
+    else if (event.kind === "decide" && ask) { ask.answer = event; ask = null; }
+    else items.push({ event });
+  }
+  if (card.ask != null) {
+    if (ask) ask.open = true;
+    else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
+  }
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, item)).join("");
 }
 function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
@@ -111,14 +140,16 @@ function boardsView() {
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  if (state.card?.number !== number) panel.innerHTML = message("Loading card…");
+  const opening = state.card?.number !== number;
+  if (opening) panel.innerHTML = message("Loading card…");
   try {
     const card = await api(`/api/cards/${number}`);
     if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}${card.ask ? `<div class="hit"><p class="q">${e(card.ask)}</p><p class="stamp">${e(actor(card.return_to))}</p>${decision(card, true)}</div>` : ""}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${(card.events || []).map((event) => `<li class="ev"><time title="${e(event.at)}">${e(event.at?.slice(11, 16) || "")}</time><span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>`).join("")}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
+    if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
     if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
@@ -377,6 +408,11 @@ root.addEventListener("drop", async (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
   if (event.key === "Escape") { root.querySelector('[data-action="close-panel"]')?.click(); return; }
+  const ask = event.target instanceof Element && event.target.closest("[data-ask]");
+  if (ask && /^[1-6]$/.test(event.key)) {
+    ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
+    event.preventDefault(); return;
+  }
   if (state.base !== "#/" || !state.me) return;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
   const index = cards.findIndex((c) => c.number === state.selected);
