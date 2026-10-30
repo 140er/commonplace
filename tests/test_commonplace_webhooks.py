@@ -645,18 +645,24 @@ def test_dispatcher_replays_committed_events_idempotently_from_durable_cursor(
     try:
         dispatcher.start()
         wait_for(lambda: len(sent) == 4)
-        rows = reopened._conn.execute(
-            "SELECT webhook_id,event_seq FROM webhook_deliveries ORDER BY event_seq,webhook_id"
-        ).fetchall()
+        # The dispatcher thread shares this connection and polls it under _lock. Reading it
+        # without the lock races that thread and can return a wrong value ('' == '3').
+        with reopened._lock:
+            rows = reopened._conn.execute(
+                "SELECT webhook_id,event_seq FROM webhook_deliveries ORDER BY event_seq,webhook_id"
+            ).fetchall()
         assert {(r["webhook_id"], r["event_seq"]) for r in rows} == {
             (s.hook["id"], e["seq"]) for e in (first, second, third)
         } | {(late["id"], third["seq"])}
         assert len(rows) == 4
         dispatcher.on_event(first)
-        assert reopened._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0] == 4
-        assert reopened._conn.execute(
-            "SELECT value FROM meta WHERE key='webhook_dispatch_seq'"
-        ).fetchone()[0] == str(third["seq"])
+        with reopened._lock:
+            count = reopened._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0]
+            cursor = reopened._conn.execute(
+                "SELECT value FROM meta WHERE key='webhook_dispatch_seq'"
+            ).fetchone()[0]
+        assert count == 4
+        assert cursor == str(third["seq"])
     finally:
         dispatcher.stop()
         reopened.close()
