@@ -153,7 +153,17 @@ def _link(ctx, memory_id, task, store):
     if not ctx.principal.policy.can_write_wing(memory["theme"]):
         raise ToolError("no: cannot link this memory")
     _link_target(ctx, task, store)
-    store.link_drawer(task, memory_id, ctx.principal.actor, principal=ctx.principal)
+    title = next(iter(memory["text"].splitlines()), "")
+    try:
+        store.link_drawer(
+            task,
+            memory_id,
+            actor=ctx.principal.actor,
+            title=title,
+            principal=ctx.principal,
+        )
+    except (ValueError, KeyError):
+        raise ToolError("no: no such card") from None
     _emit(ctx, "memory.linked", memory_id, task=task)
 
 
@@ -169,10 +179,7 @@ def _save(ctx, args):
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id)
     if task is not None:
-        try:
-            _link(ctx, memory_id, task, store)
-        except ToolError as exc:
-            raise ToolError(f"{exc}; saved {memory_id}") from None
+        _link(ctx, memory_id, task, store)
     return memory_id, task
 
 

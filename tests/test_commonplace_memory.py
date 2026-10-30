@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import pytest
 
-from commonplace import events, memory_tools
+from commonplace import events, memory_tools, sessions
 from commonplace.extensions import ToolContext, ToolError
 from mempalace import provenance
 from mempalace.knowledge_graph import KnowledgeGraph
@@ -62,7 +62,7 @@ class FakeStore:
             raise ToolError("no: card not found")
         return {"wing": theme}
 
-    def link_drawer(self, task_ref, drawer_id, actor, title="", *, principal):
+    def link_drawer(self, task_ref, drawer_id, *, actor, title="", principal):
         self.board_for_task(task_ref, principal=principal)
         self.links.append((task_ref, drawer_id, actor, title))
 
@@ -239,12 +239,13 @@ def test_map_people_and_facts_are_stored_relationships_only(hub):
 def test_link_and_save_to_card_emit_ids_and_appear_in_rest_and_map(hub, board_store):
     store, paths = board_store
     owner = hub.owner_token()
-    memory_id = _save(hub, owner, "card link text", task="#7")
-    assert store.links == [(7, memory_id, "conn:owner", "")]
+    memory_id = _save(hub, owner, "card link text\r\nSecond line stays in memory", task="#7")
+    assert store.links == [(7, memory_id, "conn:owner", "card link text")]
     assert paths == [hub.gateway.workspace_dir(hub.workspace)]
     result = _call(hub, owner, "memory_link", id=memory_id, task=7)
     assert not result.get("isError")
     assert result["content"][0]["text"] == f"linked {memory_id} to #7"
+    assert store.links[-1] == (7, memory_id, "conn:owner", "card link text")
     status, memory = _http(hub, owner, f"/api/memory/{memory_id}")
     assert status == 200 and memory["cards"] == store.cards_for_drawer(
         memory_id, principal=hub.db.authenticate_token(owner)
@@ -289,6 +290,53 @@ def test_store_errors_are_not_reported_as_boards_unavailable(hub, board_store, m
     with pytest.raises(RuntimeError, match="database locked"):
         memory_tools.memory_link(ctx, {"id": memory_id, "task": 7})
     assert [e["kind"] for e in events.after(hub.db, hub.workspace)] == ["memory.saved"]
+
+
+@pytest.mark.parametrize("error_type", [ValueError, KeyError])
+def test_unknown_card_errors_from_link_are_refusals(hub, board_store, monkeypatch, error_type):
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "link source")
+
+    def unknown_card(*args, **kwargs):
+        raise error_type("unknown card")
+
+    monkeypatch.setattr(board_store[0], "link_drawer", unknown_card)
+    for tool, arguments in (
+        ("memory_link", {"id": memory_id, "task": 7}),
+        ("memory_save", {"text": "saved source without a card", "task": 7}),
+    ):
+        result = _call(hub, owner, tool, **arguments)
+        assert result["isError"]
+        assert result["content"][0]["text"] == "no: no such card"
+    assert all(e["kind"] == "memory.saved" for e in events.after(hub.db, hub.workspace))
+
+
+def test_person_session_gets_full_map_and_slim_token_fails_closed(hub):
+    owner = hub.owner_token()
+    public_id = _save(hub, owner, "shared memory")
+    private_id = _save(hub, owner, "private memory", theme="private_notes")
+    link = sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
+    session = sessions.redeem_login_link(hub.db, link)
+    assert session
+    status, text = hub.raw(
+        None,
+        b"",
+        headers={"Cookie": f"{sessions.COOKIE}={session}"},
+        method="GET",
+        path="/api/memory/map",
+    )
+    assert status == 200
+    assert {node["id"] for node in json.loads(text)["nodes"]} == {public_id, private_id}
+    slim = hub.token(
+        "slim-reader",
+        profile="slim",
+        scopes=["memory:read", "private:read"],
+        read_wings=["*"],
+        trust="standard",
+    )
+    status, body = _http(hub, slim, "/api/memory/map")
+    assert status == 403
+    assert "nodes" not in body and private_id not in json.dumps(body)
 
 
 def test_scoped_link_uses_board_policy_and_does_not_disclose_hidden_cards(hub, board_store):
