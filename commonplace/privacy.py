@@ -123,13 +123,19 @@ def scan(text: str) -> list[str]:
     }
     for match in _ASSIGNMENT.finditer(text):
         value = match.group(1)
-        # Require three character classes and eight distinct characters, so long
-        # placeholders and repeated characters do not qualify by length alone.
+        # Require variety; hexadecimal secrets need only letters and digits.
+        # Length alone would flag repeated characters and common placeholders.
         classes = sum(
             bool(re.search(pattern, value))
             for pattern in (r"[a-z]", r"[A-Z]", r"[0-9]", r"[_+/=-]")
         )
-        if classes >= 3 and len(set(value)) >= 8:
+        varied_hex = (
+            re.fullmatch(r"[0-9a-fA-F]+", value) is not None
+            and re.search(r"[0-9]", value) is not None
+            and re.search(r"[a-fA-F]", value) is not None
+            and len(set(value.lower())) >= 8
+        )
+        if (classes >= 3 and len(set(value)) >= 8) or varied_hex:
             flags.add("secret:generic_assignment")
             break
     if (
