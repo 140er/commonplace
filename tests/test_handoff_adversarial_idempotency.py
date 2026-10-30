@@ -16,11 +16,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from commonplace import events as hub_events
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
 from commonplace.handoff import db as db_module, launchers, palace_mirror, transcripts
 from commonplace.handoff.db import HandoffDB, HandoffDBError
-from commonplace.handoff.events import Outbox
 from commonplace.handoff.models import (
     EVENT_COMPLETED,
     EVENT_FAILED,
@@ -65,7 +65,9 @@ class Harness:
 
     def _open(self):
         self.gateway = Gateway(self.control, _NoWorker())
-        self.ctx = install(self.gateway, self.root, start_outbox=False)
+        assert not hasattr(self.gateway, "handoff")
+        self.ctx = install(self.gateway, self.root)
+        assert install(self.gateway, self.root) is self.ctx is self.gateway.handoff
         self.ctx.service.call_tool = None
         self.server = self.gateway.build_server("127.0.0.1", 0)
         self.thread = threading.Thread(
@@ -85,6 +87,7 @@ class Harness:
         self.server.server_close()
         self.thread.join(timeout=5)
         self.ctx.close()
+        self.gateway.webhooks.stop()
         self.control.close()
 
     def restart(self):
@@ -112,8 +115,12 @@ class Harness:
         finally:
             connection.close()
 
-    def events(self, event):
-        return [row for row in self.control.audit_entries() if row["action"] == event]
+    def assert_event_count(self, event, count):
+        audits = [row for row in self.control.audit_entries() if row["action"] == event]
+        logged = [
+            row for row in hub_events.after(self.control, self.workspace) if row["kind"] == event
+        ]
+        assert (len(audits), len(logged)) == (count, count), {"audit": audits, "hub": logged}
 
     def rows(self, table):
         connection = self.ctx.store_for(self.workspace)._conn
@@ -188,7 +195,7 @@ def test_sixteen_real_http_requests_store_and_launch_once(harness):
     assert harness.ctx.handoff_db.get(handoff_id).successor == SuccessorRef(
         "agent:successor", thread_id="successor"
     )
-    assert len(harness.events(EVENT_COMPLETED)) == 1
+    harness.assert_event_count(EVENT_COMPLETED, 1)
 
 
 def test_single_real_http_request(harness):
@@ -235,7 +242,7 @@ def test_crash_after_thread_commit_before_mark_stored_can_resume(harness, monkey
     assert result.launch
     harness.ctx.service.register_successor(harness.principal, row.id, SuccessorRef("recovered"))
     assert not harness.ctx.service.run(harness.principal, body).launch
-    assert len(harness.events(EVENT_COMPLETED)) == 1
+    harness.assert_event_count(EVENT_COMPLETED, 1)
 
 
 @pytest.mark.parametrize("age", [0, 599, 600])
@@ -290,7 +297,7 @@ def test_paused_old_writer_cannot_mutate_replacement_pending_row(harness, monkey
     moment = datetime(2030, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(db_module, "_now", lambda: moment)
     other_control = ControlDB(str(harness.root / "control.sqlite3"))
-    other = install(Gateway(other_control, _NoWorker()), harness.root, start_outbox=False)
+    other = install(Gateway(other_control, _NoWorker()), harness.root)
     other.service.call_tool = None
     old_entered, old_release = threading.Event(), threading.Event()
     new_entered, new_release = threading.Event(), threading.Event()
@@ -324,18 +331,19 @@ def test_paused_old_writer_cannot_mutate_replacement_pending_row(harness, monkey
                 old_result = old.result(timeout=10)
                 assert (old_result.action, old_result.launch) == ("compact", False)
                 assert other.handoff_db.get(row.id) == row
-                assert not harness.events(EVENT_FAILED)
+                harness.assert_event_count(EVENT_FAILED, 0)
                 new_release.set()
                 new_result = new.result(timeout=10)
                 assert new_result.launch
                 other.service.register_successor(harness.principal, row.id, SuccessorRef("new"))
                 assert len(harness.rows("threads")) == 1
-                assert len(harness.events(EVENT_COMPLETED)) == 1
+                harness.assert_event_count(EVENT_COMPLETED, 1)
             finally:
                 old_release.set()
                 new_release.set()
     finally:
         other.close()
+        other.gateway.webhooks.stop()
         other_control.close()
 
 
@@ -482,7 +490,7 @@ def test_append_failure_rolls_back_then_retry_mirrors_new_tail(harness, monkeypa
         store._conn.execute("DROP TRIGGER fail_append")
     assert (failed.action, failed.launch) == ("compact", False)
     assert {table: harness.rows(table) for table in baseline} == baseline
-    assert len(harness.events(EVENT_FAILED)) == 1
+    harness.assert_event_count(EVENT_FAILED, 1)
     mirrored = []
     harness.ctx.service.call_tool = lambda *args: None
     monkeypatch.setattr(
@@ -513,7 +521,7 @@ def test_append_failure_rolls_back_then_retry_mirrors_new_tail(harness, monkeypa
     assert (
         store.messages(first.handoff.stored_thread_id)[-1].text == "tail while mirror unavailable"
     )
-    assert len(harness.events(EVENT_FAILED)) == 1  # Only the actual append failure.
+    harness.assert_event_count(EVENT_FAILED, 1)  # Only the actual append failure.
 
 
 def test_workspace_doc_hydrates_after_restart_and_cli_reads_it(harness, monkeypatch, capsys):
@@ -558,7 +566,7 @@ def test_document_write_failure_never_launches_and_can_retry(harness, monkeypatc
         patch.setattr(store, "put_doc", full_disk)
         result = harness.ctx.service.run(harness.principal, request())
     assert (result.action, result.launch, result.handoff.state) == ("compact", False, "failed")
-    assert len(harness.events(EVENT_FAILED)) == 1
+    harness.assert_event_count(EVENT_FAILED, 1)
     assert "Verbatim goal" not in "\n".join(harness.control._conn.iterdump())
     assert harness.ctx.service.run(harness.principal, request()).launch
     assert len(harness.rows("threads")) == 1
@@ -695,7 +703,7 @@ def test_storage_failure_rolls_back_preserves_existing_and_retries(harness, monk
                 store._conn.execute("DROP TRIGGER fail_store")
     assert result.action == "compact"
     assert result.launch is False
-    assert len(harness.events(EVENT_FAILED)) == 1
+    harness.assert_event_count(EVENT_FAILED, 1)
     assert {table: harness.rows(table) for table in baseline} == baseline
     assert harness.ctx.handoff_db.get(existing.handoff.id) == existing.handoff
     assert marker.read_bytes() == b"existing Memory stays untouched\r\n"
@@ -714,7 +722,7 @@ def test_mirror_failure_is_best_effort_after_durable_storage(harness, monkeypatc
     result = harness.ctx.service.run(harness.principal, request())
     assert result.launch
     assert len(harness.rows("threads")) == 1
-    assert not harness.events(EVENT_FAILED)
+    harness.assert_event_count(EVENT_FAILED, 0)
 
 
 @pytest.mark.parametrize("field", ["agent_ref", "thread_id", "url"])
@@ -736,7 +744,7 @@ def test_successor_empty_metadata_can_be_filled_once_without_completion_duplicat
     result = harness.ctx.service.register_successor(harness.principal, row.id, ref)
     assert result.successor == ref
     assert harness.ctx.service.register_successor(harness.principal, row.id, ref) == result
-    assert len(harness.events(EVENT_COMPLETED)) == 1
+    harness.assert_event_count(EVENT_COMPLETED, 1)
 
 
 def test_registration_failure_after_external_launch_keeps_claim(harness, monkeypatch):
@@ -756,7 +764,7 @@ def test_registration_failure_after_external_launch_keeps_claim(harness, monkeyp
         result = harness.ctx.service.run(harness.principal, request())
     assert len(launches) == 1
     assert result.handoff.state == "launched"
-    assert not harness.events(EVENT_LAUNCH_FAILED)
+    harness.assert_event_count(EVENT_LAUNCH_FAILED, 0)
     harness.restart()
     retry = harness.ctx.service.run(harness.principal, request())
     assert retry.launch is False
@@ -819,7 +827,7 @@ def test_real_launcher_failure_then_concurrent_relaunch_once(harness, kind):
         assert result.handoff.state == "launch_failed"
         assert result.handoff.successor is None
         assert not launches.exists()
-        assert len(harness.events(EVENT_LAUNCH_FAILED)) == 1
+        harness.assert_event_count(EVENT_LAUNCH_FAILED, 1)
         assert not harness.ctx.service.run(harness.principal, request()).launch
         mode.write_text("succeed")
         # A restarted gateway reconstructs the stored prompt and uses a durable claim.
@@ -837,7 +845,7 @@ def test_real_launcher_failure_then_concurrent_relaunch_once(harness, kind):
         assert row.state == "done"
         assert row.successor is not None
         assert launches.read_text() == "launched\n"
-        assert len(harness.events(EVENT_COMPLETED)) == 1
+        harness.assert_event_count(EVENT_COMPLETED, 1)
         assert len(harness.rows("threads")) == 1
         if kind == "webhook":
             assert len(webhook_calls) == 2
@@ -901,55 +909,6 @@ def test_forged_storage_cycle_cannot_loop_recall_or_handoff_doc(harness):
     assert len(harness.ctx.recall.chain(harness.principal, third.handoff.stored_thread_id)) == 3
 
 
-def test_outbox_retry_survives_restart_and_delivered_marker_prevents_repeat(harness):
-    harness.ctx.handoff_db.add_webhook(
-        harness.workspace, "http://127.0.0.1/wake", "local", (EVENT_COMPLETED,), actor=harness.owner
-    )
-    result = harness.ctx.service.run(harness.principal, request())
-    harness.ctx.service.register_successor(
-        harness.principal, result.handoff.id, SuccessorRef("new")
-    )
-    deliveries = []
-
-    def post(url, body, headers):
-        deliveries.append((body, headers))
-        return 503 if len(deliveries) == 1 else 204
-
-    outbox = Outbox(harness.ctx.handoff_db, post=post)
-    assert outbox.deliver_once() == 1
-    harness.restart()
-    outbox = Outbox(harness.ctx.handoff_db, post=post)
-    outbox.clock = lambda: datetime(2100, 1, 1, tzinfo=timezone.utc)
-    assert outbox.deliver_once() == 1
-    assert deliveries[0] == deliveries[1]
-    harness.restart()
-    assert Outbox(harness.ctx.handoff_db, post=post).deliver_once() == 0
-    assert len(deliveries) == 2
-
-
-def test_external_acceptance_before_ack_can_redeliver_same_id(harness, monkeypatch):
-    harness.ctx.handoff_db.add_webhook(
-        harness.workspace, "http://127.0.0.1/wake", "local", (EVENT_COMPLETED,), actor=harness.owner
-    )
-    harness.ctx.handoff_db.enqueue(harness.workspace, EVENT_COMPLETED, {"event": EVENT_COMPLETED})
-    deliveries = []
-
-    def post(url, body, headers):
-        deliveries.append(headers["X-Commonplace-Delivery"])
-        return 200
-
-    def fail_ack(*args):
-        raise sqlite3.OperationalError("injected acknowledgement failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(harness.ctx.handoff_db, "mark_delivered", fail_ack)
-        assert Outbox(harness.ctx.handoff_db, post=post).deliver_once() == 1
-    harness.restart()
-    assert Outbox(harness.ctx.handoff_db, post=post).deliver_once() == 1
-    assert len(deliveries) == 2
-    assert deliveries[0] == deliveries[1]  # Receiver can deduplicate the stable delivery id.
-
-
 def test_completion_crash_window_is_preserved_without_duplicate_successor(harness):
     row = prepared(harness)
     ref = SuccessorRef("already:running")
@@ -957,43 +916,96 @@ def test_completion_crash_window_is_preserved_without_duplicate_successor(harnes
     harness.ctx.handoff_db.set_successor(row.id, ref)
     harness.restart()
     assert harness.ctx.service.register_successor(harness.principal, row.id, ref).successor == ref
-    assert not harness.events(
-        EVENT_COMPLETED
-    )  # Known durable event gap, per orchestration decision.
+    # Known durable event gap, per orchestration decision.
+    harness.assert_event_count(EVENT_COMPLETED, 0)
     assert not harness.ctx.service.run(harness.principal, request()).launch
+
+
+class DuplicateCompletion(AssertionError):
+    """The known race wrote two completion records to each persistence seam."""
 
 
 @pytest.mark.xfail(
     strict=True,
+    raises=DuplicateCompletion,
     reason="Completion event deduplication needs a durable transition shared by gateways",
 )
-def test_separate_gateways_emit_only_one_completion(harness, monkeypatch):
+def test_separate_gateways_emit_only_one_completion(harness):
     row = prepared(harness)
-    other_control = ControlDB(str(harness.root / "control.sqlite3"))
-    other = install(Gateway(other_control, _NoWorker()), harness.root, start_outbox=False)
-    barrier = threading.Barrier(2)
+
+    def assert_one_completion():
+        try:
+            harness.assert_event_count(EVENT_COMPLETED, 1)
+        except AssertionError as error:
+            # Only the demonstrated duplicate is expected. Setup, import and
+            # unrelated persistence failures must still fail this test.
+            harness.assert_event_count(EVENT_COMPLETED, 2)
+            raise DuplicateCompletion(str(error)) from error
+
+    # Real hub listeners take each gateway's control lock. Bound the whole
+    # concurrent call, including executor shutdown, if those locks deadlock.
+    script = """
+import json
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
+
+from commonplace.control_db import ControlDB
+from commonplace.gateway import Gateway
+from commonplace.handoff.models import SuccessorRef
+from commonplace.handoff.wiring import install
+
+root = Path(sys.argv[1])
+controls = [ControlDB(str(root / "control.sqlite3")) for _ in range(2)]
+contexts = [install(Gateway(control, SimpleNamespace()), root) for control in controls]
+principal = controls[0].authenticate_token(sys.argv[3])
+barrier = threading.Barrier(2)
+try:
+    for current in contexts:
+        authorize = current.service._authorized
+
+        def simultaneous(principal, identifier, original=authorize):
+            result = original(principal, identifier)
+            barrier.wait(timeout=5)
+            return result
+
+        current.service._authorized = simultaneous
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                current.service.register_successor,
+                principal,
+                sys.argv[2],
+                SuccessorRef("same"),
+            )
+            for current in contexts
+        ]
+        print(json.dumps([future.result(timeout=10).state for future in futures]))
+finally:
+    for current in contexts:
+        current.close()
+        current.gateway.webhooks.stop()
+    for control in controls:
+        control.close()
+"""
     try:
-        for current in (harness.ctx.service, other.service):
-            authorize = current._authorized
-
-            def simultaneous(principal, identifier, original=authorize):
-                result = original(principal, identifier)
-                barrier.wait(timeout=5)
-                return result
-
-            monkeypatch.setattr(current, "_authorized", simultaneous)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [
-                pool.submit(
-                    current.register_successor, harness.principal, row.id, SuccessorRef("same")
-                )
-                for current in (harness.ctx.service, other.service)
-            ]
-            assert all(future.result(timeout=10).state == "done" for future in futures)
-        assert len(harness.events(EVENT_COMPLETED)) == 1
-    finally:
-        other.close()
-        other_control.close()
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(harness.root), row.id, harness.token],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        # Both writes can commit before their listeners deadlock. Their event
+        # counts must still satisfy the original duplicate-completion contract.
+        assert_one_completion()
+        pytest.fail("Separate gateways deadlocked while registering the same successor")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == ["done", "done"]
+    assert harness.ctx.handoff_db.get(row.id).successor == SuccessorRef("same")
+    assert_one_completion()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="The hook's fcntl lock is POSIX only")
@@ -1073,7 +1085,7 @@ def test_two_real_hook_processes_share_lock_and_server_claim(harness, tmp_path):
         assert json.loads(output)["continue"] is False
         assert launches.read_text() == "launched\n"
         assert len(harness.rows("threads")) == 1
-        assert len(harness.events(EVENT_COMPLETED)) == 1
+        harness.assert_event_count(EVENT_COMPLETED, 1)
         status, retry = harness.request(body=asdict(request("hook-session")))
         assert status == 200
         assert retry["launch"] is False
