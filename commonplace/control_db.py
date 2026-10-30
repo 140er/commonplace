@@ -85,6 +85,18 @@ CREATE TABLE IF NOT EXISTS connections (
     UNIQUE (workspace_id, name),
     FOREIGN KEY (workspace_id, user_id) REFERENCES memberships(workspace_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS account_plans (
+    user_id TEXT PRIMARY KEY REFERENCES users(id),
+    plan TEXT NOT NULL CHECK (plan IN ('free','paid')),
+    set_by TEXT NOT NULL,
+    set_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transcription_usage (
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    seconds INTEGER NOT NULL,
+    PRIMARY KEY(user_id, day)
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,

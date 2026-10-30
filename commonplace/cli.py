@@ -12,6 +12,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import plans
 from .backup import BackupError, data_lock
 from .control_db import ControlDB, ControlError
 from .extensions import ToolError
@@ -69,6 +70,59 @@ def cmd_user_list(args) -> int:
     for u in _db(args).users():
         print(f"{u['id']}  {u['email']}{'  admin' if u['is_admin'] else ''}")
     return 0
+
+
+def cmd_plan_set(args) -> int:
+    db = _db(args)
+    try:
+        user = db.user(args.user)
+        actor = db.user(_actor(db, args))
+        if not actor["is_admin"]:
+            raise ControlError("admin access required")
+        plans.set_plan(db, user["id"], args.plan, actor=actor["id"])
+        print(f"plan  {args.plan}")
+        if not plans.enabled():
+            print("Plans are off.")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_plan_show(args) -> int:
+    from .workers import WorkerSupervisor
+
+    db = _db(args)
+    try:
+        user = db.user(args.user)
+        plan = plans.get_plan(db, user["id"])
+        meter = plans.StorageMeter()
+        supervisor = WorkerSupervisor(str(_data_dir(args)))
+        used = sum(
+            meter.used(ws["id"], supervisor.workspace_dir(ws["id"]))
+            for ws in db.workspaces()
+            if ws["personal_of"] == user["id"]
+        )
+        storage = (
+            str(plan.storage_bytes) if plan and plan.storage_bytes is not None else "unlimited"
+        )
+        voice = (
+            str(plan.transcription_seconds)
+            if plan and plan.transcription_seconds is not None
+            else "unlimited"
+        )
+        if plan and plan.name == "paid":
+            storage = voice = "unlimited**"
+        print(f"plan  {plan.name if plan else 'none'}")
+        print(f"storage  {used} / {storage} bytes")
+        print(f"transcription today  {plans.transcription_used(db, user['id'])} / {voice} seconds")
+        print(f"xai_voice  {str(plans.allows(db, user['id'], 'xai_voice')).lower()}")
+        if plan and plan.name == "paid":
+            print(plans.PAID_FOOTNOTE)
+        if not plans.enabled():
+            print("Plans are off.")
+        return 0
+    finally:
+        db.close()
 
 
 def cmd_workspace_add(args) -> int:
@@ -565,6 +619,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-workspace", action="store_true")
     s.set_defaults(func=cmd_user_add)
     users.add_parser("list").set_defaults(func=cmd_user_list)
+
+    plan = sub.add_parser("plan").add_subparsers(dest="action", required=True)
+    s = plan.add_parser("set")
+    s.add_argument("user")
+    s.add_argument("plan", choices=["free", "paid", "none"])
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_plan_set)
+    s = plan.add_parser("show")
+    s.add_argument("user")
+    s.set_defaults(func=cmd_plan_show)
 
     ws = sub.add_parser("workspace").add_subparsers(dest="action", required=True)
     s = ws.add_parser("add")
