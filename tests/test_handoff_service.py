@@ -1184,3 +1184,15 @@ def test_next_message_reaches_the_successor_prompt(rig, kind):
     result = rig.service.run(rig.principal, make_request(next_message=message))
     prompt = result.prompt if kind == "client" else rig.launch_calls[-1][2]
     assert prompt.endswith("not yet answered:\n\n````\n" + message + "\n````")
+
+
+def test_relaunch_keeps_the_next_message(rig):
+    rig.settings.current = HandoffSettings(enabled=True, launcher=LauncherConfig(kind="command"))
+    rig.launch_error = service.launchers.LaunchError("boom")
+    first = rig.service.run(rig.principal, make_request(next_message="the unanswered one"))
+    assert first.handoff.state == "launch_failed"
+    rig.launch_error = None
+    rig.successor = SuccessorRef("new-agent")
+    owner = SimpleNamespace(**{**vars(rig.principal), "role": "owner"})
+    rig.service.relaunch(owner, first.handoff.id)
+    assert "the unanswered one" in rig.launch_calls[-1][2]

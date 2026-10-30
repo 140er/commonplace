@@ -541,7 +541,10 @@ old thread and the successor reference or URL.
 - Request limits are 64 MB for `/api/handoff` and 1 MB for
   other JSON requests.
 - A Codex handoff happens at the start of the next turn, not mid-turn;
-  see the Codex section.
+  see the Codex section. If that successor fails to start and the gateway
+  restarts before an owner relaunches it, the relaunched successor doesn't
+  get the user's unanswered message (the control database holds no text);
+  the old session showed it was refused.
 - Each stored thread is also written into Memory search in the background,
   in a private section: ordinary Memory tools show it only to tokens with
   `private:read`. The thread tools need `threads:read`.

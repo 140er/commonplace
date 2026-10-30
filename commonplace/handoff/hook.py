@@ -165,65 +165,90 @@ def _settings(path: Path, context: str, server: str, token: str, agent: str, tas
 _PARENT_MARKER = re.compile(r"commonplace-handoff-id: (hof_[0-9a-f]{8,64})")
 
 
-def _first_user_text(line: dict) -> Optional[str]:
-    """A user message's own text (Claude Code or Codex line), else None."""
-    if line.get("type") == "user":
-        content = (line.get("message") or {}).get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            texts = [
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            ]
-            return "\n".join(texts) if texts else None
+_HEAD_LIMIT = 16 * 1024 * 1024  # never read more of a transcript for the marker
+
+
+def _texts(parts, kinds) -> Optional[str]:
+    if not isinstance(parts, list):
         return None
+    texts = [
+        part["text"]
+        for part in parts
+        if isinstance(part, dict)
+        and part.get("type") in kinds
+        and isinstance(part.get("text"), str)
+    ]
+    return "\n".join(texts) if texts else None
+
+
+def _opening_item(line: dict):
+    """``("user", text)`` for a user message of the opening turn, ``("end",
+    None)`` for the first item that isn't one (assistant text, a tool call or
+    result, reasoning), else ``("skip", None)`` (metadata lines)."""
+    kind = line.get("type")
+    if kind == "user":  # Claude Code
+        message = line.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            return "user", content
+        if isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+        ):
+            return "end", None
+        text = _texts(content, ("text",))
+        return ("user", text) if text is not None else ("skip", None)
+    if kind == "assistant":
+        return "end", None
     payload = line.get("payload")
     if not isinstance(payload, dict):
-        return None
-    if line.get("type") == "event_msg" and payload.get("type") == "user_message":
-        message = payload.get("message")
-        return message if isinstance(message, str) else None
-    if payload.get("type") == "message" and payload.get("role") == "user":
-        texts = [
-            part.get("text", "")
-            for part in payload.get("content") or []
-            if isinstance(part, dict) and part.get("type") == "input_text"
-        ]
-        return "\n".join(texts) if texts else None
-    return None
+        return "skip", None
+    if kind == "event_msg":
+        if payload.get("type") == "user_message" and isinstance(payload.get("message"), str):
+            return "user", payload["message"]
+        return "skip", None
+    if kind == "response_item":
+        if payload.get("type") == "message" and payload.get("role") == "user":
+            text = _texts(payload.get("content"), ("input_text", "text"))
+            return ("user", text) if text is not None else ("skip", None)
+        if payload.get("type") == "message" and payload.get("role") == "developer":
+            return "skip", None
+        return "end", None
+    return "skip", None
 
 
 def _parent_from_transcript(path) -> str:
     """The handoff id a successor prompt names in its last line
     (``writer.HANDOFF_ID_MARKER``): how a successor without
     COMMONPLACE_HANDOFF_ID in its environment (a T3 thread) links into the
-    chain. Only the last line of this agent's first user message counts, so
-    a marker quoted anywhere else (a tool result, a doc) is ignored. The
-    server checks it and drops a parent the caller can't read."""
+    chain. It counts only as the last line of a user message of the opening
+    turn (before any reply, tool call or tool result; harnesses put their own
+    preambles there too), so a marker quoted later is ignored. The server
+    checks it and drops a parent the caller can't read."""
+    found = ""
+    read = 0
     try:
         with open(path, "rb") as stream:
-            head = stream.read(262_144)
+            for raw in stream:
+                read += len(raw)
+                if read > _HEAD_LIMIT:
+                    break
+                try:
+                    line = json.loads(raw)
+                except (ValueError, UnicodeError, RecursionError):
+                    continue
+                if not isinstance(line, dict):
+                    continue
+                state, text = _opening_item(line)
+                if state == "end":
+                    break
+                if state == "user" and text:
+                    last = text.rstrip().rpartition("\n")[2].strip()
+                    match = _PARENT_MARKER.fullmatch(last)
+                    if match:
+                        found = match.group(1)
     except OSError:
         return ""
-    for raw in head.split(b"\n"):
-        try:
-            line = json.loads(raw)
-        except (ValueError, UnicodeError, RecursionError):
-            continue
-        if not isinstance(line, dict):
-            continue
-        text = _first_user_text(line)
-        if text is None:
-            continue
-        # Codex writes some harness text as user messages first; skip those.
-        if text.lstrip().startswith(("<environment_context>", "<user_instructions>")):
-            continue
-        last = text.rstrip().rpartition("\n")[2].strip()
-        found = _PARENT_MARKER.fullmatch(last)
-        return found.group(1) if found else ""
-    return ""
+    return found
 
 
 def _branch(cwd: str) -> str:
@@ -410,17 +435,21 @@ def _handoff(
         and successor["agent_ref"]
     ):
         # The hub started it (command or webhook launcher). Remember that, so
-        # later hooks of this session keep pointing at the successor.
-        _write_json(
-            journal,
-            {
-                "context": context,
-                "handoff_id": handoff["id"],
-                "state": "launched",
-                "agent_ref": successor["agent_ref"],
-                "registered": True,
-            },
-        )
+        # later hooks of this session keep pointing at the successor; a
+        # failed write must not unblock this turn.
+        try:
+            _write_json(
+                journal,
+                {
+                    "context": context,
+                    "handoff_id": handoff["id"],
+                    "state": "launched",
+                    "agent_ref": successor["agent_ref"],
+                    "registered": True,
+                },
+            )
+        except OSError:
+            pass
         return _output(meta.client, successor["agent_ref"], turn_start=turn_start)
     # A claimed launch without a known successor is not proof one is running.
     return None
@@ -566,8 +595,11 @@ def _due(event, client, turn_start, marked, usage, settings, pending: Path, cont
         return False, None
     if client == "codex":
         # A Codex hook can't stop the running turn: mark it, hand off when
-        # the next one starts. Notice once.
+        # the next one starts. Notice once. A compaction upgrades the mark, so
+        # the hand off still happens once the context is small again.
         if marked is not None:
+            if event == "PreCompact" and marked.get("event") != "PreCompact":
+                _write_json(pending, {**marked, "event": "PreCompact"})
             return False, None
         _write_json(pending, {"context": context, "event": event, "attempts": 0})
         return False, {"systemMessage": PENDING_NOTICE}

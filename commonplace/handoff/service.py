@@ -173,7 +173,12 @@ class HandoffService:
                 snapshot = self._snapshots.get((workspace_id, key))
             if snapshot is None:
                 snapshot = _Snapshot(settings, self._meta(handoff))
-            snapshot = replace(snapshot, next_message=request.next_message)
+            if request.next_message or not snapshot.next_message:
+                snapshot = replace(snapshot, next_message=request.next_message)
+            with self.control_db._lock:
+                # A relaunch in this process still passes the message on. The
+                # control DB holds no text, so a restart loses it.
+                self._snapshots[(workspace_id, key)] = snapshot
             return self._launch(principal, handoff, snapshot)
 
         snapshot = _Snapshot(

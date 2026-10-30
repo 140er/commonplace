@@ -1114,3 +1114,129 @@ def test_parent_marker_only_from_the_first_user_message(tmp_path, lines, expecte
     path = tmp_path / "t.jsonl"
     path.write_text("\n".join(lines) + "\n")
     assert hook._parent_from_transcript(path) == expected
+
+
+def _codex_line(kind, payload):
+    return json.dumps({"type": kind, "payload": payload})
+
+
+def test_marker_found_after_codex_and_t3_preambles(tmp_path):
+    lines = [
+        _codex_line("session_meta", {"id": "x"}),
+        _codex_line(
+            "response_item",
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "# AGENTS.md instructions for /w\n..."},
+                    {"type": "input_text", "text": "<environment_context>e</environment_context>"},
+                ],
+            },
+        ),
+        _codex_line(
+            "response_item",
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<external_t3_fanout_mode>x"}],
+            },
+        ),
+        _codex_line(
+            "response_item",
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Continue.\ncommonplace-handoff-id: hof_00000000000000dd",
+                    }
+                ],
+            },
+        ),
+        _codex_line("response_item", {"type": "reasoning", "summary": []}),
+        _codex_line(
+            "response_item",
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "commonplace-handoff-id: hof_00000000000000ee"}
+                ],
+            },
+        ),
+    ]
+    path = tmp_path / "rollout.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    # The opening turn's marker wins; one after the first reply is ignored.
+    assert hook._parent_from_transcript(path) == "hof_00000000000000dd"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        {"type": "user", "message": "str"},
+        {"type": "user", "message": {"content": 5}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user", "content": 5}},
+        {"type": "response_item", "payload": "x"},
+        {"type": "event_msg", "payload": {"type": "user_message", "message": 7}},
+        [1, 2],
+    ],
+)
+def test_odd_lines_never_crash_the_marker_parser(tmp_path, line):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        json.dumps(line)
+        + "\n"
+        + _user_line("go\ncommonplace-handoff-id: hof_00000000000000ff")
+        + "\n"
+    )
+    assert hook._parent_from_transcript(path) in ("", "hof_00000000000000ff")
+
+
+def test_marker_after_a_long_first_prompt(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(
+        _user_line("x" * 400_000 + "\ncommonplace-handoff-id: hof_00000000000000ab") + "\n"
+    )
+    assert hook._parent_from_transcript(path) == "hof_00000000000000ab"
+
+
+def test_codex_precompact_upgrades_an_existing_mark(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys, event="PostToolUse")
+    local.data["hook_event_name"] = "PreCompact"
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    [pending] = _pending_files(local)
+    assert json.loads(pending.read_text())["event"] == "PreCompact"
+    local.usage = ContextUsage(20_000, 200_000, "gpt-test")  # compacted
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
+
+
+def test_hub_started_successor_blocks_even_if_journal_write_fails(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys)
+    api.reply = {
+        "action": "handoff",
+        "launch": False,
+        "prompt": "",
+        "handoff": {
+            "id": "hof_one",
+            "stored_thread_id": "thr_one",
+            "source_thread_id": "session-one",
+            "state": "done",
+            "successor": {"agent_ref": "t3:thread-b", "url": "", "thread_id": ""},
+        },
+    }
+    real = hook._write_json
+
+    def failing(path, value):
+        if str(path).endswith(".launch.json"):
+            raise OSError("disk full")
+        return real(path, value)
+
+    monkeypatch.setattr(hook, "_write_json", failing)
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="next")
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
