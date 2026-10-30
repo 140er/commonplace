@@ -207,12 +207,16 @@ class ThreadStore:
                 if "no such module: fts5" not in str(error).lower():
                     raise
                 return False
+            # Version 1 aligns the derived index with chunks.rowid. Rebuild
+            # atomically: legacy FTS rowids need not match after fallback writes.
+            if self._conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+                self._conn.execute("DELETE FROM chunks_fts")
+                self._conn.execute("PRAGMA user_version=1")
             # Also handles reopening with FTS5 after stores made without it.
             self._conn.execute(
-                """INSERT INTO chunks_fts(thread_id, idx, text)
-                   SELECT thread_id, idx, text FROM chunks
-                   WHERE (thread_id, idx) NOT IN
-                         (SELECT thread_id, idx FROM chunks_fts)"""
+                """INSERT INTO chunks_fts(rowid, thread_id, idx, text)
+                   SELECT rowid, thread_id, idx, text FROM chunks
+                   WHERE rowid NOT IN (SELECT rowid FROM chunks_fts)"""
             )
         return True
 
@@ -333,8 +337,9 @@ class ThreadStore:
             )
             if self._fts_enabled:
                 self._conn.executemany(
-                    "INSERT INTO chunks_fts(thread_id, idx, text) VALUES (?, ?, ?)",
-                    [(stored.id, c.index, c.text) for c in chunks],
+                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
+                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
+                    [(stored.id, c.index) for c in chunks],
                 )
             return stored
 
@@ -379,8 +384,9 @@ class ThreadStore:
             )
             if self._fts_enabled:
                 self._conn.executemany(
-                    "INSERT INTO chunks_fts(thread_id, idx, text) VALUES (?, ?, ?)",
-                    [(stored_id, stored.chunk_count + c.index, c.text) for c in chunks],
+                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
+                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
+                    [(stored_id, stored.chunk_count + c.index) for c in chunks],
                 )
             self._conn.execute(
                 "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
@@ -500,12 +506,20 @@ class ThreadStore:
             placeholders = ",".join("?" for _ in ids)
             rows.extend(
                 self._conn.execute(
-                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
-                    "-bm25(chunks_fts) AS score FROM chunks_fts "
-                    "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
-                    f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
-                    "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
-                    (match, *ids, limit),
+                    # Scope and tie keys come from the covering primary-key
+                    # index, never FTS's unindexed columns or chunk payloads.
+                    # LIMIT stays after scoping and the complete tie ordering.
+                    "WITH scope AS MATERIALIZED ("
+                    "SELECT rowid, thread_id, idx FROM chunks "
+                    f"WHERE thread_id IN ({placeholders})), "
+                    "ranked AS MATERIALIZED ("
+                    "SELECT chunks_fts.rowid AS chunk_rowid, -bm25(chunks_fts) AS score "
+                    "FROM chunks_fts JOIN scope ON scope.rowid=chunks_fts.rowid "
+                    "WHERE chunks_fts MATCH ? "
+                    "ORDER BY bm25(chunks_fts), scope.thread_id, scope.idx LIMIT ?) "
+                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, ranked.score "
+                    "FROM ranked JOIN chunks AS c ON c.rowid=ranked.chunk_rowid",
+                    (*ids, match, limit),
                 ).fetchall()
             )
         # BM25 scores use the same corpus for every id batch, so their
