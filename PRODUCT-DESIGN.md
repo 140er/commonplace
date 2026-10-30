@@ -181,7 +181,7 @@ Every request carries exactly one token. The gateway turns it into this policy a
 
 **Lifecycle**
 
-- Tokens are random, carry a prefix (`cpl_…`), are shown once, and are stored as a SHA-256 hash.
+- Tokens are random, carry a prefix (`cmmn_…`), are shown once, and are stored as a SHA-256 hash.
 - OAuth access tokens are short-lived (1 hour) and come with refresh tokens.
 - Personal tokens have an optional expiry, defaulting to 1 year.
 - Revoking a token in the web UI takes effect on the next request.
@@ -374,7 +374,7 @@ The fork needs its own name. MIT covers the code, not the "MemPalace" name, and 
 - Add our own copyright line for new files.
 - The README says "built on MemPalace" in its first paragraph.
 
-**Decided: Commonplace.** After the *commonplace book*, a notebook of passages copied word for word. That matches the verbatim promise, and "common place" also says "shared". CLI: `commonplace`, token prefix `cpl_`.
+**Decided: Commonplace.** After the *commonplace book*, a notebook of passages copied word for word. That matches the verbatim promise, and "common place" also says "shared". CLI: `commonplace`, token prefix `cmmn_` (matches the cmmn.dev short domain).
 
 **Name check, 2026-10-29.** A quick web and registry pass, not legal advice:
 
@@ -507,7 +507,7 @@ Each milestone ends with something people can use. Effort estimates assume one p
 - [x] **Website:** static, on zurvur (§15, W).
 - [x] **Website look:** B, developer tool. Dark, monospace accents, a terminal hero showing `docker run` and a recall result. Rejected: A (commonplace book: serif, off-white paper) and C (index cards: warm editorial, drawings of linked cards).
 - [x] **Domain:** commonplace.run as the main domain, and cmmn.dev for short links. Decided and registered on 2026-10-29 on Jeffrey's Cloudflare account, paid until 2027-10-29 with auto-renew on. Must be live before M1, because OAuth binds tokens to the hub's URL (§11, §14).
-  - **Rule:** no domain or short name may put "c" and "p" next to each other (no cp, cplace, cpmem). The rule covers only outward-facing names (domains, URLs, short names). Internal identifiers such as the token prefix `cpl_` are fine (decided by Jeffrey 2026-10-29).
+  - **Rule:** no name may put "c" and "p" next to each other (no cp, cplace, cpmem), and "cp" is never used as an abbreviation. This covers domains, URLs and short names, and also internal identifiers: the token prefix is `cmmn_` (decided by Jeffrey 2026-10-30).
   - Rejected: commonplacememory.com (says "memory"), commonplacehub.app/.dev (generic), parked commonplace.io/.eu (unknown price), and commonplace.com, .app, .dev, .ai, .org, .me plus the get-/use-/-hq variants (all registered).
 - [x] **Boards:** shared kanban in the same workspace store and scopes as memories, design from kanzo, our own MIT code (§10, §15 B).
 
