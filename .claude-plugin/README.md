@@ -1,6 +1,6 @@
 # MemPalace Claude Code Plugin
 
-A Claude Code plugin that gives your AI a persistent memory system. Mine projects and conversations into a searchable palace backed by ChromaDB, with 47 MCP tools, auto-save hooks, and 7 guided commands.
+A Claude Code plugin that gives your AI a persistent memory system. Mine projects and conversations into a searchable palace backed by ChromaDB, with 48 MCP tools, auto-save hooks, and 7 guided commands.
 
 ## Prerequisites
 
@@ -53,7 +53,7 @@ Set the `MEMPAL_DIR` environment variable to a directory path to automatically r
 
 ## MCP Server
 
-The plugin automatically configures a local MCP server with 47 tools for storing, searching, managing memories, and coordinating agent tasks. No manual MCP setup is required -- `/mempalace:init` handles everything.
+The plugin automatically configures a local MCP server with 48 tools for storing, searching, managing memories, and coordinating agent tasks. No manual MCP setup is required -- `/mempalace:init` handles everything.
 
 ## Full Documentation
 
