@@ -28,6 +28,28 @@ def line(c):
     return result
 
 
+def tree(stack):
+    stats = stack.get("stats", {})
+    rows = [
+        f"call tree: {stats.get('new', 0)} new, {stats.get('changed', 0)} changed, "
+        f"{stats.get('files', 0)} files"
+    ]
+
+    def walk(node, depth):
+        if len(rows) > 60:
+            return
+        place = f"{node.get('file', '')}:{node['line']}" if "line" in node else node.get("file", "")
+        rows.append(f"{'  ' * depth}- {node['change']} {quoted(node['name'])} {quoted(place)}")
+        for child in node.get("children", []):
+            walk(child, depth + 1)
+
+    for root in stack.get("roots", []):
+        walk(root, 1)
+    if len(rows) > 60 or stack.get("truncated"):
+        rows.append("  (truncated)")
+    return rows
+
+
 def show(c):
     rows = [f"{line(c)}  board {c['board']}", f"body: {quoted(c['body'])}"]
     if c["ask"]:
@@ -42,6 +64,8 @@ def show(c):
     ):
         if c[key] not in (None, ""):
             rows.append(f"{label}: {quoted(c[key])}")
+    if c.get("callstack"):
+        rows += tree(c["callstack"])
     for event in c["events"][-10:]:
         rows.append(f"- {event['at']} {event['actor']} {event['kind']}: {quoted(event['text'])}")
     if c["linked"]:
@@ -135,7 +159,8 @@ def add(name, properties, required=(), *, work=False, trusted=False, owner=False
                 "task_add": "Add a card; submissions from untrusted connections enter backlog.",
                 "task_comment": "Append a comment and renew your claim.",
                 "task_take_next": "Claim a ready card reserved for you or free for anyone.",
-                "task_update": "Update your card or finish it, optionally saving a lesson.",
+                "task_update": "Update your card or finish it, optionally saving a lesson. "
+                "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
                 "ask": "Ask the workspace owner and end the turn.",
                 "decide": "Answer a review and return, release, close or park the card.",
@@ -193,6 +218,7 @@ def register_tools():
             "after": TASK,
             "pr": {"type": ["string", "integer"]},
             "labels": ARRAY,
+            "callstack": {"type": ["object", "null"]},
             **{
                 k: STRING
                 for k in (

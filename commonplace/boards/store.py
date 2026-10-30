@@ -156,7 +156,8 @@ class BoardStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
-                for name, datatype in {**TASK_COLUMNS, "created_by": "TEXT"}.items():
+                extra = {"created_by": "TEXT", "callstack": "TEXT"}
+                for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
                 conn.execute(
