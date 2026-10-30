@@ -4,7 +4,7 @@ import { mountMap } from "./map.js";
 const root = document.querySelector("#root");
 const state = {
   me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
-  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0,
+  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
 };
@@ -276,22 +276,23 @@ async function search(form) {
 }
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
-  const epoch = state.screen;
+  const epoch = state.screen, request = ++state.refreshRequest;
+  const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
     const [boards, needs] = await Promise.all([api("/api/boards"), api("/api/needs-me")]);
-    if (epoch !== state.screen) return;
+    if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
       const result = await api(`/api/boards/${enc(slug)}/cards`);
-      if (epoch !== state.screen) return;
+      if (!current()) return;
       state.cards = result.cards;
       if (state.base.startsWith("#/space/")) {
         const messages = state.chatBoard === slug ? [...state.chat] : [];
         let cursor = state.chatBoard === slug ? state.chatCursor : 0, batch;
         do {
           batch = await api(`/api/boards/${enc(slug)}/chat?after=${cursor}`);
-          if (epoch !== state.screen) return;
+          if (!current()) return;
           messages.push(...batch.messages); cursor = batch.cursor;
         } while (batch.messages.length === 100);
         state.chat = messages; state.chatCursor = cursor; state.chatBoard = slug;
@@ -300,7 +301,7 @@ async function refresh({ background = false, events = [] } = {}) {
           const cached = state.chatTasks.get(c.number);
           return cached?.version === c.version ? { ...cached, ...c } : api(`/api/cards/${c.number}`);
         }));
-        if (epoch !== state.screen) return;
+        if (!current()) return;
         state.cards = cards;
         state.chatTasks = new Map(cards.filter((c) => c.message_id).map((c) => [c.number, c]));
       }
@@ -321,7 +322,7 @@ async function refresh({ background = false, events = [] } = {}) {
     showError("");
     return true;
   } catch (error) {
-    if (epoch !== state.screen || !state.me) return;
+    if (!current() || !state.me) return;
     showError(error.message);
     if (!root.querySelector("#content").children.length) root.querySelector("#content").innerHTML = message(error.message, true);
     return false;
