@@ -1,119 +1,154 @@
 # RFC 008: Compact workspace store
 
-Status: proposed, 30 Oct 2026. Research and measurements: `~/work/mempalace-notes/storage-encryption-research.md` (option B).
+Status: proposed, 30 Oct 2026. Based on a storage and encryption study (its option B). Revised after review.
 
 ## Why
 
 On 250 MB of real agent chats (130 Claude Code and Codex transcripts, 54,494 messages):
 
 - Today's stores take 1,733 MB (6.9× the chats): the thread store 642 MB, the Chroma mirror 1,091 MB.
-- The same content in the prototype of this design takes 146 MB (0.59×), byte-for-byte lossless.
-- Writing one chat into the Chroma mirror takes ~76 s (192 `add_drawer` calls, mean 398 ms). The prototype writes a chat in 0.1 s, excluding embedding.
+- A prototype of this design took 146 MB (0.59×), byte-for-byte lossless. That prototype kept no second copy of mirror text: its vectors pointed at thread chunks (the content references deferred under Open points). The first cut stores mirror drawer text compressed, plus metadata and its own word index; the B1b PR measures it (estimate 180–230 MB).
+- Writing one chat into the Chroma mirror takes ~76 s (192 `add_drawer` calls, mean 398 ms). The prototype thread store writes a chat in 0.1 s, excluding embedding.
 - 43% of raw chat bytes and 53% of message text are base64 (screenshots, encrypted reasoning, signatures). 51% of the drawers embedded today are mostly base64. 86% of text is tool output.
 
-Jeffrey decided on 30 Oct (23:01 CET): keep all agent chats; embed conversation and tool calls only after the recall gate; operator-blind token slots. All agent chats at his rate are ~9 GB a month raw: 65 GB a month in today's format, ~5.5 GB in this one.
+Decisions (30 Oct 2026): keep all agent chats; embed conversation and tool calls only after the recall gate; operator-blind token slots. A heavy multi-agent user writes ~9 GB of transcripts a month: 65 GB a month in today's format.
 
 ## Goals
 
-- Store every verbatim byte once, compressed, and keep it exactly recoverable.
-- Index text that is useful for search: base64 runs become placeholders in the index, never in storage.
-- Let a record be keyword-only (no vector), so tool output can stay findable without embedding it.
+- Store every verbatim byte once per store, compressed, and recover it exactly.
+- Index text that is useful for search: base64 runs become placeholders in index and embedding text, never in storage.
+- Let a record be keyword-only (no vector), so tool output stays findable without embedding it.
 - One key per workspace later (B2): every file of a workspace encrypted with SQLCipher.
 - No breaking change to MCP tool shapes (optional arguments only), the ThreadStore API, or search results apart from intended ranking changes.
 
 ## Non-goals
 
-- Changing the embedding model, chunk sizes or ranking weights.
+- Changing the embedding model, chunk sizes or ranking weights (except where B1c's gate requires it, stated there).
 - Server-side search over sealed records.
-- Moving the thread store into MemPalace. The layers stay as they are; each gets a compact format.
+- Moving the thread store into MemPalace. Each layer gets its own compact format.
 
 ## Phases
 
-| Phase | What | Layer | Card |
+| Phase | What | Layer | Needs |
 |---|---|---|---|
-| B1a | Thread store v2 format | Commonplace | #40 |
-| B1b | `compact` palace backend | MemPalace | #40 |
-| B1c | Mirror policy: placeholders in index text, tool output keyword-only (was QW4) | both | #39 |
-| B1d | Flag, backfill, dual-read, switch | both | #40 |
-| B2 | SQLCipher on every workspace file + keyslots + byte-copy backups | both | #41 |
-| B3 | Operator-blind token slots | Commonplace | #42 |
-| C | Capture all agent chats (after B1a + B1d) | Commonplace | #43 |
+| A0 | Embed index text (base64 → placeholder) instead of raw text, all backends | MemPalace | PR #39 detector |
+| B1a | Thread store v2 format | Commonplace | detector (or index version 0, reindex later) |
+| B1b | `compact` palace backend | MemPalace | – |
+| B1c | Mirror unit + policy: one drawer per message class, tool output keyword-only | both | B1a, B1b, PR #38, PR #39 gate |
+| B1d | Flag, verified backfill, switch, rollback | both | B1a, B1b |
+| B1e | Vector tier for 1M+ vectors per collection with recall@10 ≥ 0.98 | MemPalace | B1b |
+| B2 | SQLCipher on every workspace file, keyslots, byte-copy backups | both | B1d |
+| B3 | Operator-blind token slots | Commonplace | B2 |
+| C | Capture all agent chats | Commonplace | B1c, B1d, B1e |
 
-B1a and B1b are independent and can be built in parallel. B1c needs B1a, B1b, the `union` default search (#37) and a passing recall gate (#38).
+C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vectors a month at the measured rate, ~7 CPU-hours of embedding a day. Even under the B1c policy a heavy user passes 1M vectors in about 7 weeks.
+
+## A0: Placeholder embeddings (all backends)
+
+- Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text; the stored document stays verbatim.
+- Chroma accepts explicit embeddings, so this ships on Chroma too. It cuts embedding CPU on base64-heavy drawers and removes junk vectors. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
 
 ## B1a: Thread store v2
 
-Same file (`threads.sqlite3`), same `ThreadStore` API and semantics: idempotent `store`, prefix-only `append`, `ThreadConflict`, one transaction per call, `canonical_sha256` unchanged.
+Same `ThreadStore` API and semantics: idempotent `store`, prefix-only `append`, `ThreadConflict`, one transaction per call.
+
+Files and versions:
+
+- New file name `threads.v2.sqlite3`, `PRAGMA application_id` and `user_version` set. An old binary never sees it, so it cannot create empty v1 tables over it. The v1 file stays until B1d removes it.
+- `canonical_sha256` is computed with `surrogatepass`. For every thread v1 can store today the digest is identical; threads with lone surrogates (which v1 rejects with an encode error) become storable.
 
 Layout:
 
-- `thread` as today.
-- `line(thread, line, block)`: one row per source line of the transcript.
-- `message(thread, seq, line, role, kind, name, call_id, at)`: message fields except `text`; `raw` is the message's source line. Several messages of one line share it (today `raw` is stored once per content block).
-- `block(thread, idx, first_line, n_lines, first_seq, last_seq, zraw, ztext)`:
-  - `zraw`: consecutive source lines up to ~64 KB, zstd level 3 with a trained dictionary.
-  - `ztext`: the same lines' message texts in a second frame, so a text read never touches raw.
-  - Base64 runs are cut out of both frames and replaced by a reference to `blob`.
-- `blob(hash, kind, data)`: base64 payloads, deduplicated by hash, stored decoded as binary when the encoding is canonical (re-encodes to exactly the input), else as the original string.
-- `dict(name, data)`: zstd dictionaries, versioned. A dictionary is never changed once a block uses it.
-- `chunk(id, thread, idx, seq_start, seq_end, off, len)`: chunk boundaries only. Chunk text is rebuilt from messages with the existing `chunk_messages` format.
-- `chunk_fts`: contentless FTS5 (`content=''`, `contentless_delete=1`), rowid = `chunk.id`, fed with index text (base64 runs replaced by placeholders, see B1c).
+- `threads`: as in v1 (same ids, `parent_stored_id`, counts, `sha256`, wing, stamps).
+- `line(thread, line, block)`: a source line. The API receives messages, not lines: a line is a run of consecutive messages with equal `raw`. Today `raw` is stored once per message.
+- `message(thread, seq, line, role, kind, name, call_id, at)`.
+- `block(thread, idx, first_line, n_lines, first_seq, last_seq, raw_dict, zraw, text_dict, ztext)`:
+  - `zraw`: consecutive source lines up to ~64 KB, zstd level 3.
+  - `ztext`: the same lines' message texts, length-prefixed, so a text read never touches raw.
+  - Base64 runs are cut out of both frames. Each frame carries a span list (offset, blob key); there are no inline markers, so nothing needs escaping.
+- `blob(key, kind, data)`: key = hash(kind ‖ payload). `kind` is `decoded` (canonical base64, stored as bytes) or `text` (stored as the original string). The span carries the key, so a decoded blob and a string with the same bytes never collide.
+- `dict(id, frame, data)`: zstd dictionaries trained from this workspace's own data only. Bootstrap: blocks are written without a dictionary until enough data exists. A dictionary is immutable once used.
+- `chunk(thread, idx, seq_start, seq_end, off, len)`: the stored chunk boundaries. Appended threads keep their append-time boundaries (they differ from `chunk_messages` over the whole thread). Chunk text is rebuilt from messages in the exact `chunk_messages` format, split pieces included.
+- `chunk_fts`: contentless FTS5 (`content=''`, no `contentless_delete`: the thread store never deletes), rowid = chunk rowid. UNINDEXED columns read NULL in contentless tables, so every query joins `chunk` on rowid.
+- `index_meta(index_version)`: which index-text rules built `chunk_fts`. A reindex rebuilds `chunk_fts` from stored text; storage never changes.
+- `handoff_docs` and `fact_extraction`: as in v1.
 
 Rules:
 
-- Reads return the exact `ThreadMessage` values the parser produced: every field, every byte of `raw`, lone surrogates included.
-- A block is written once. `append` adds new blocks; it never rewrites an old one.
-- Measured (prototype): file 128 MB for the 250 MB corpus with 4 KB pages; read 50 messages 0.8 ms (text) / 1.5–1.9 ms (with raw); keyword top 8 with text 9 ms.
+- Reads return exactly what the transcript parser produced: every field, every byte of `raw`, lone surrogates and NUL included, for all three formats (`claude-code`, `codex`, `messages`).
+- Every block is read back and compared before its transaction commits.
+- Blocks are immutable, except the last block of a thread: an `append` may extend it in the same transaction, verified by read-back, so per-turn appends do not leave thousands of tiny blocks.
+- `append` checks the incoming prefix against `threads.sha256` without decompressing the thread.
+- A query containing NUL uses the existing literal-scan fallback over rebuilt text.
+- Measured on the prototype: 128 MB for the 250 MB corpus (4 KB pages); read 50 messages 0.8 ms (text) and 1.5–1.9 ms (with raw); keyword top 8 with text 9 ms. B1a's PR measures small-block overhead under per-turn appends.
 
 ## B1b: `compact` palace backend
 
-A new backend registered as `compact`, built from `sqlite_exact` (same RFC 001 contract, same file per palace, own magic/format marker).
+A new backend `compact` with the RFC 001 contract. It reuses `sqlite_exact` code where it fits, but has its own file name (`compact.sqlite3`) and `application_id`, is not part of the exact-vector family, and is added wherever the code lists backends by name.
 
-- `documents`: as in `sqlite_exact`, but `document` is a zstd-compressed BLOB (per-collection dictionary), `metadata_json` unchanged, `embedding` nullable.
-- Vectors: int8 with one float32 scale per vector (388 B for 384 dims). Exact cosine scan, using the Rust crate when present. Measured recall@10 vs float32 exact: 0.984 (float16 scores 0.985 on the same set; the misses are near-duplicate drawers swapping places).
-- Past ~1M vectors in a collection: 1-bit vectors in RAM (48 B each) plus int8 rescoring of the top 400 (recall@10 0.953, 68 ms at 1M in numpy). Add when a palace needs it, not in the first PR.
-- `docs_fts`: contentless FTS5 over index text, rowid = document rowid. `lexical_search` implemented on it.
-- Keyword-only records: a write may carry no embedding when the caller asks for it (B1c). Vector queries skip those rows; lexical and `get` see them.
-- Filters (`where`) are evaluated on metadata as in `sqlite_exact`. A filter never turns a vector query into a slow path: today Chroma takes 519 ms for a `wing` filter that matches every drawer.
-- Measured (prototype, 112k drawers): vectors 47 MB in SQLite; open + load all int8 vectors 0.16 s.
+- Selection: workspace config `backend: compact` (the config value wins over `MEMPALACE_BACKEND`), or `--backend compact`.
+- `documents`: `document` as a zstd BLOB (per-collection dictionary from the palace's own data, immutable once used, bootstrap without one); `metadata_json` unchanged; `embedding` nullable.
+- Keyword-only records: marked in metadata (a reserved key), so update, repair, migrate and replication never re-embed them. Vector queries skip them; `get` and lexical search see them.
+- Vectors: int8 plus one float32 scale (388 B for 384 dims); the in-RAM cache stays int8. Exact cosine scan in numpy first; the Rust crate has no int8 kernel yet. Do not advertise `supports_embeddings_passthrough`: int8 does not return vectors as given (RFC 001 §1.5).
+- `docs_fts`: contentless FTS5 with `contentless_delete=1` (requires SQLite ≥ 3.43; the backend refuses to open on older SQLite), rowid = document rowid, fed with core's index text. Queries join on rowid.
+- Filters: today `sqlite_exact` evaluates `where` in a per-row Python loop (37 ms for a wing filter, 114 ms for wing + room on 112k rows). `compact` must:
+  - build filter masks vectorised or in SQL, then scan only matching rows;
+  - push `$or` on ids and parent ids into SQL, with an index on the parent drawer id;
+  - decompress only the rows it returns, including in `get` and filtered `lexical_search`;
+  - keep a LIMIT on filtered lexical queries (PR #38's review found filtered lexical paths that score every match in Python).
+- `get_drawer` hydration of split drawers (`$or` over parent keys, used by `palace_mirror` for every split mirror drawer) gets its own latency gate.
 
-## B1c: Mirror and index policy (was QW4)
+## B1c: Mirror unit and index policy
 
-- Base64 detector: the validated rule from #38 (200+ characters, one alphabet, canonical, decodes, entropy > 4.5 bits/char), applied per message before chunking. Index text replaces each run with a placeholder like `[base64 image/png 245760 B]`. Stored text never changes.
-- Embedding policy (Jeffrey, 30 Oct): embed conversation (user, assistant, thinking) and tool calls. Tool output and system messages are keyword-only records.
-- `add_drawer` gains an optional `lexical_only: bool` and `index_text` is derived by the backend; backends that cannot do keyword-only records embed as today.
-- Chroma cannot do either (it indexes the stored document and needs a vector per record), so B1c ships on `compact` only.
-- Ships only when the #38 gate passes through default `mempalace_search` with the `union` default (#37).
+- Today the mirror writes 4,000-character chunks of mixed messages, and `add_drawer` cuts them into 800-character pieces, often through a base64 run. A per-kind policy cannot apply to mixed pieces.
+- New mirror unit: consecutive messages of one class (conversation = user, assistant and thinking; tool call; tool output; system), grouped up to 4,000 characters. Index text is derived on the whole unit before it is split.
+- Policy (decided 30 Oct): conversation and tool-call drawers are embedded; tool output and system drawers are keyword-only.
+- Ranking: `_hybrid_rank` caps a hit without a vector distance at 0.4 × BM25. Keyword-only by design must not be penalised like "outside the vector pool". If the gate shows it, rank keyword-only records on BM25 alone.
+- Gate: the PR #39 gate through default `mempalace_search` (`union`, PR #38), plus end-to-end recall@10 on the existing benchmarks against today's default search, not only overlap with float32.
+- The vector-count saving (112k → ~18k on the corpus) was measured per message. B1c's PR measures it with the real mirror unit and restates it.
 
-## B1d: Flag, backfill and switch
+## B1d: Flag, backfill, switch, rollback
 
-- Per workspace setting `store: compact`. Commonplace passes `MEMPALACE_BACKEND=compact` to that workspace's worker and opens the v2 thread store. Default stays as today until switched.
-- Backfill is a background job per workspace:
-  1. Thread store v1 → v2: copy every thread, then compare `canonical_sha256` per thread and every message field. Any mismatch aborts that workspace.
-  2. Palace → `compact`: copy every record with its existing vector (quantised to int8), apply B1c's policy to mirror drawers.
-  3. Dual-read: answer from the new store, compare against the old one on a sample of live searches and reads, log differences.
-  4. Switch, keep the old files 14 days, then delete them. They cannot be crypto-shredded (no per-workspace key), and restic keeps them until it prunes.
-- `commonplace doctor` reports the store format and backfill state per workspace.
+- Thread store v1 → v2 is a row copy, never `store()`: same thread ids, chunk boundaries, parent chains, `handoff_docs`, `fact_extraction`. The copy is verified before it counts:
+  - every message field equals v1;
+  - every rebuilt chunk text equals v1 `chunks.text`;
+  - every digest equals v1.
+  - A mismatch aborts that workspace.
+- Palace → `compact` is built in a sibling directory, never next to the live files: a Chroma file and a compact file in one palace directory make `resolve_backend_name` raise `BackendMismatchError`.
+  - Hold the palace writer lock, or copy first and then replay the write-log entries written since.
+  - Verify every record of every collection: ids, metadata, document text, vectors within quantisation error.
+  - Carry over the knowledge graph, `logstream.sqlite3`, `replica.json` and sidecars the way `migrate._carry_over_palace_files` does.
+  - Then rename-swap.
+- Dual-read after the switch compares a sample of live reads and searches with the old store. Logs hold ids and hashes only.
+- Rollback: the copier works in both directions with the same verification. Writes made after the switch exist only in `compact`, so rolling back copies them back.
+- Old files are deleted after 14 days. They cannot be crypto-shredded (no per-workspace key), and existing backups keep them until they are pruned.
+- `commonplace doctor` reports store format, index version and backfill state per workspace.
+
+## B1e: Vectors past 1M per collection
+
+- Gate: recall@10 ≥ 0.98 against float32 exact at 1M and 4M vectors, with query p95 within the search budget.
+- The 1-bit + int8 rescore of the top 400 measured 0.953, which fails. Candidates: a native int8 kernel (exact), a larger rescore pool, partitions by wing and time. B1e's PR picks one by measurement.
 
 ## B2: Encryption at rest (summary; own PR)
 
-- SQLCipher for `threads.sqlite3`, the palace, the knowledge graph and `boards.sqlite3`, with one random 256-bit key per workspace.
+- SQLCipher for the v2 thread store, the palace, the knowledge graph and `boards.sqlite3`, with one random 256-bit key per workspace.
 - Pinned settings: 16 KB pages, HMAC-SHA256, 64 MB page cache, raw key (no passphrase KDF), `temp_store=MEMORY`. Untuned SQLCipher was 3–5× slower on reads.
-- The key is wrapped in keyslots (server slot, recovery code), kept in a small key store outside the workspace and outside long-retention backups.
-- Backups copy the file bytes after a checkpoint (or a snapshot), never the SQLite backup API: a new chat changed 2.9% of pages in a byte copy, 100% through the backup API.
+- The key is wrapped in keyslots (server slot, recovery code) kept in a small key store outside the workspace and outside long-retention backups.
+- Backups copy file bytes after a checkpoint (or a snapshot), never the SQLite backup API: a new chat changed 2.9% of pages in a byte copy, 100% through the backup API.
 - `drawer_revisions.jsonl`, entity registries and exports move inside the encrypted files or are encrypted with the same key.
 - Measured cost: +0.4% disk, +10–22% write CPU, reads +0.2–0.5 ms, keyword search +9 ms.
 
 ## Tests and gates
 
-- Lossless: round trip every message (all fields, raw bytes) on synthetic transcripts covering both formats, multi-block lines, lone surrogates, NUL escapes, non-canonical base64, duplicate blobs; property tests against the v1 store as oracle.
-- Conformance: the RFC 001 backend suite passes for `compact`, plus keyword-only records.
-- Search parity: recall@10 of `compact` vs `sqlite_exact` float32 on the existing benchmarks ≥ 0.98; the #38 gate for B1c.
-- Budgets: hooks < 500 ms, startup injection < 100 ms on a 100k-drawer palace.
-- Size: a benchmark on synthetic chats reports bytes per source byte for v1/v2 and chroma/compact.
-- No private data in tests or fixtures.
+- Lossless: the transcript parser's output is the oracle. Synthetic transcripts in all three formats with multi-message lines, long messages split across chunks, appended threads, lone surrogates, NUL, non-canonical base64, duplicate blobs, and a decoded blob whose bytes equal a text blob.
+- Backfill: row-copy verification as in B1d, on v1 files made by today's code.
+- Conformance: the RFC 001 backend suite for `compact`, plus keyword-only records through update, repair, migrate and replication.
+- Search: end-to-end recall@10 against today's default search on the existing benchmarks; the PR #39 gate for B1c.
+- Latency at 100k and 1M drawers: unfiltered and filtered vector queries, filtered lexical search, `get_drawer` hydration of split drawers. Budgets: hooks < 500 ms, startup injection < 100 ms.
+- Size: bytes per source byte for v1/v2 and chroma/compact on synthetic chats, first cut as built.
+- No private data in tests or fixtures. `zstandard` becomes a required dependency.
 
 ## Open points
 
-- Content references: mirror drawers duplicate thread text (compressed, ~30–50 MB per 250 MB of chats). A resolver that lets `compact` point at thread-store blocks would remove that. Measure after B1d; not needed for the first cut.
-- Native kernels for the int8 and 1-bit scans in the existing Rust crate.
+- Content references: let `compact` point mirror drawers at thread-store blocks instead of storing their text again. Needs a resolver across the layers. Measure the first cut's duplicate cost first.
+- A native int8 (and 1-bit) scan kernel in the Rust crate.
