@@ -227,6 +227,7 @@ class Handoff:
     used_tokens: int = 0  # context use when the hook fired; 0: not reported
     window_tokens: int = 0
     threshold: float = 0.0  # the threshold that applied; 0: not recorded
+    completed_at: str = ""  # when the successor was first registered
 
 
 @dataclass(frozen=True)

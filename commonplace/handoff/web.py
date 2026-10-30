@@ -100,20 +100,8 @@ def _stamp(value, *, date=False):
     return f'<time datetime="{escape(value)}">{escape(text)}</time>'
 
 
-def _elapsed(start, end):
-    first, last = _time(start), _time(end)
-    if first is None or last is None or last < first:
-        return ""
-    seconds = int((last - first).total_seconds())
-    if seconds < 60:
-        return f"+{seconds}s"
-    if seconds < 3600:
-        return f"+{seconds // 60}m {seconds % 60:02d}s"
-    return f"+{seconds // 3600}h {seconds % 3600 // 60:02d}m"
-
-
 def _tokens(count):
-    if count >= 1_000_000:
+    if round(count / 1_000) >= 1_000:
         return f"{count / 1_000_000:.1f}".removesuffix(".0") + "M"
     if count >= 1_000:
         return f"{round(count / 1_000)}k"
@@ -127,9 +115,10 @@ def _meter(handoff):
     """Context use when the handoff fired, as blocks; past the threshold in amber."""
     if handoff.window_tokens <= 0:
         return ""
-    fraction = min(max(handoff.used_tokens / handoff.window_tokens, 0.0), 1.0)
-    filled = round(fraction * _METER_BLOCKS)
-    limit = round(handoff.threshold * _METER_BLOCKS) if handoff.threshold else _METER_BLOCKS
+    fraction = handoff.used_tokens / handoff.window_tokens
+    # Any use of a block lights it, so crossing the threshold always shows amber.
+    filled = math.ceil(min(fraction, 1.0) * _METER_BLOCKS)
+    limit = math.floor(handoff.threshold * _METER_BLOCKS) if handoff.threshold else _METER_BLOCKS
     blocks = ""
     for index in range(_METER_BLOCKS):
         if index < filled:
@@ -149,23 +138,32 @@ def _meter(handoff):
         '<div class="context"><div class="context-row"><span class="label">Context</span>'
         f"<span>{escape(reading)}</span>{threshold}</div>"
         f'<div class="meter" role="meter" aria-label="Context" aria-valuemin="0" '
-        f'aria-valuemax="{handoff.window_tokens}" aria-valuenow="{handoff.used_tokens}">'
+        f'aria-valuemax="{handoff.window_tokens}" '
+        f'aria-valuenow="{min(handoff.used_tokens, handoff.window_tokens)}">'
         f"{blocks}</div></div>"
     )
 
 
-_SECTION = re.compile(r"^## (Goal|Status)\n\n(`{3,})\n(.*?)\n\2(?!`)$", re.MULTILINE | re.DOTALL)
+# render_markdown writes Goal, then Status, first; read only from the top, so a
+# section quoted inside a later Note can never stand in for them.
+_OPENING = re.compile(
+    r"(?:## (Goal)\n\n(`{3,})\n(.*?)\n\2(?!`)(?:\n\n|\Z))?"
+    r"(?:## (Status)\n\n(`{3,})\n(.*?)\n\5(?!`)(?:\n\n|\Z))?",
+    re.DOTALL,
+)
 
 
 def _preview(markdown):
     """Goal and Status, the verbatim quotes the handoff document opens with."""
+    match = _OPENING.match(markdown or "")
     items = ""
-    for name, _fence, text in _SECTION.findall(markdown or ""):
-        items += (
-            f"<div><dt>{name}</dt><dd><pre><span>"
-            + escape(text).replace("\r", "&#13;")
-            + "</span></pre></dd></div>"
-        )
+    for name, text in ((match[1], match[3]), (match[4], match[6])):
+        if name:
+            items += (
+                f"<div><dt>{name}</dt><dd><pre><span>"
+                + escape(text).replace("\r", "&#13;")
+                + "</span></pre></dd></div>"
+            )
     return f'<dl class="preview">{items}</dl>' if items else ""
 
 
@@ -464,10 +462,10 @@ class _Pages:
         elif not handoff.successor:
             new += '<span class="muted">waiting</span>'
         new += "</span>"
-        if handoff.successor:
-            new += _stamp(handoff.updated_at)
-            elapsed = _elapsed(handoff.created_at, handoff.updated_at)
-            new += f'<span class="muted">{elapsed}</span>' if elapsed else ""
+        if handoff.successor and handoff.completed_at:
+            started, finished = _time(handoff.created_at), _time(handoff.completed_at)
+            same_day = started and finished and started.date() == finished.date()
+            new += _stamp(handoff.completed_at, date=not same_day)
         html += f'<ol class="timeline">{old}{middle}{new}</li></ol>'
         return html + _preview(handoff.doc_markdown) + "</article>"
 

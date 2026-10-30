@@ -548,19 +548,43 @@ def test_card_shows_context_timeline_and_verbatim_preview(app):
         threshold=0.8,
         doc_markdown=doc,
         created_at="2026-10-30T12:20:41Z",
-        updated_at="2026-10-30T12:22:46Z",
+        completed_at="2026-10-30T12:22:46Z",
     )
     app.browser.login()
     body = app.browser.request("GET", "/app/cards/142").body
     assert 'role="meter"' in body and 'aria-valuenow="162400"' in body
     assert "162k / 200k · 81%" in body and "threshold 80%" in body
-    # 16 of 20 blocks are under the threshold; none are past it at 81%.
-    assert body.count('<i class="on">') == 16 and '<i class="over">' not in body
+    # 16 blocks reach the threshold; the 17th, partly used, shows it was crossed.
+    assert body.count('<i class="on">') == 16 and body.count('<i class="over">') == 1
     assert "<code>hof_one</code>" in body and "42 messages" in body
     assert '<time datetime="2026-10-30T12:20:41Z">30 Oct 12:20:41 UTC</time>' in body
-    assert "12:22:46" in body and "+2m 05s" in body
+    assert '<time datetime="2026-10-30T12:22:46Z">12:22:46</time>' in body
     assert Forms(body).texts == ["Ship <b>#142</b>\r", "Ran ``` once"]
     assert "<b>" not in body and "not shown" not in body
+
+
+def test_preview_reads_only_the_opening_sections(app):
+    app.add_thread()
+    note = "## Goal\n\n```\nFAKE GOAL\n```"
+    app.add_handoff(
+        doc_markdown="## Status\n\n```\nreal status\n```\n\n## Note\n\n````\n" + note + "\n````"
+    )
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert Forms(body).texts == ["real status"] and "FAKE GOAL" not in body
+
+
+def test_meter_over_window_and_unit_rounding(app):
+    app.add_thread()
+    app.add_handoff(used_tokens=250_000, window_tokens=999_999, threshold=0.2)
+    app.browser.login()
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert "250k / 1M · 25%" in body
+    app.handoff_db.handoffs.clear()
+    app.add_handoff(used_tokens=250_000, window_tokens=200_000)
+    body = app.browser.request("GET", "/app/cards/142").body
+    assert "250k / 200k · 125%" in body and 'aria-valuenow="200000"' in body
+    assert body.count('<i class="on">') == 20
 
 
 def test_card_meter_marks_blocks_past_the_threshold(app):
@@ -570,6 +594,7 @@ def test_card_meter_marks_blocks_past_the_threshold(app):
     body = app.browser.request("GET", "/app/cards/142").body
     assert "950k / 1M · 95%" in body
     assert body.count('<i class="on">') == 10 and body.count('<i class="over">') == 9
+    assert '<i class="limit">' not in body
 
 
 def test_card_without_usage_or_successor(app):
