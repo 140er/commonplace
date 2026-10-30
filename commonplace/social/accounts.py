@@ -60,7 +60,7 @@ def resolve(db, provider: str, profile: Profile, *, signup: bool) -> str:
                 db.create_workspace(profile.emails[0], uid, personal=True)
             except ControlError:
                 raise SignInError("failed") from None
-            db.audit(action="user.create", decision="ok", user_id=uid)
+            db.audit(action="user.create", decision="ok", user_id=uid, reason=provider)
         now = iso()
         db._conn.execute(
             "INSERT INTO user_identities(provider, subject, user_id, created_at, last_used_at) VALUES (?,?,?,?,?)",

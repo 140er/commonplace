@@ -1,6 +1,7 @@
 """Provider sign-in through a real gateway, with every remote request faked."""
 
 import base64
+import http.client
 import io
 import json
 import re
@@ -8,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from html import unescape
 from types import SimpleNamespace
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, urlencode, urlsplit
 
 import pytest
@@ -414,6 +415,7 @@ def test_open_signup_creates_user_personal_workspace_identity_and_session(make_s
     assert set(identity) == {"provider", "subject", "user_id", "created_at", "last_used_at"}
     audits = surface.db.audit_entries()
     assert {a["action"] for a in audits} >= {"user.create", "identity.link", "session.create"}
+    assert next(a for a in audits if a["action"] == "user.create")["reason"] == "google"
     assert next(a for a in audits if a["action"] == "identity.link")["reason"] == "google"
     assert next(a for a in audits if a["action"] == "session.create")["reason"] == "google"
     assert rows(surface, "signin_flows") == []
@@ -457,6 +459,7 @@ def test_unverified_or_missing_email_never_links_or_creates(make_signin, remote,
     refused(finish(surface, start(surface, remote)), "email")
     assert rows(surface, "users") == before
     assert rows(surface, "user_identities") == rows(surface, "sessions") == []
+    assert surface.db.audit_entries()[0]["reason"] == "google:email"
 
 
 @pytest.mark.parametrize("known", [False, True])
@@ -469,6 +472,7 @@ def test_disabled_user_is_refused_by_email_and_subject(make_signin, remote, know
         surface.db._conn.execute("UPDATE users SET disabled_at='2026-01-01T00:00:00Z'")
     refused(finish(surface, start(surface, remote)), "disabled")
     assert len(rows(surface, "sessions")) == int(known)
+    assert surface.db.audit_entries()[0]["reason"] == "google:disabled"
 
 
 def test_user_without_workspace_is_refused(make_signin, remote):
@@ -477,6 +481,7 @@ def test_user_without_workspace_is_refused(make_signin, remote):
         surface.db._conn.execute("DELETE FROM memberships")
     refused(finish(surface, start(surface, remote)), "disabled")
     assert rows(surface, "sessions") == []
+    assert surface.db.audit_entries()[0]["reason"] == "google:disabled"
 
 
 @pytest.mark.parametrize(
@@ -484,7 +489,8 @@ def test_user_without_workspace_is_refused(make_signin, remote):
 )
 def test_invalid_flow_is_consumed_and_never_exchanges_code(make_signin, remote, problem):
     surface = make_signin(("google", "github"))
-    flow = start(surface, remote)
+    next_path = "/app/#/card/123"
+    flow = start(surface, remote, next_path=next_path)
     if problem == "expired":
         with surface.db._lock:
             surface.db._conn.execute("UPDATE signin_flows SET expires_at = ?", (int(time.time()),))
@@ -493,7 +499,7 @@ def test_invalid_flow_is_consumed_and_never_exchanges_code(make_signin, remote, 
     if problem == "wrong-provider":
         flow.id = "github"
     if problem == "replay":
-        signed_in(surface, finish(surface, flow))
+        signed_in(surface, finish(surface, flow), landing=next_path)
         remote.calls.clear()
     cookie = (
         "cmmn_signin=" + "a" * 43
@@ -502,10 +508,15 @@ def test_invalid_flow_is_consumed_and_never_exchanges_code(make_signin, remote, 
         if problem == "no-browser"
         else None
     )
-    refused(finish(surface, flow, cookie=cookie), "expired")
+    refused(
+        finish(surface, flow, cookie=cookie), "expired", next_path if problem == "expired" else ""
+    )
     assert remote.calls == []
+    audits = [a for a in surface.db.audit_entries() if a["action"] == "signin.refuse"]
+    assert [a["reason"] for a in audits] == (["google:expired"] if problem == "expired" else [])
     if problem != "missing":
         refused(finish(surface, flow), "expired")
+        assert [a for a in surface.db.audit_entries() if a["action"] == "signin.refuse"] == audits
 
 
 @pytest.mark.parametrize(
@@ -556,7 +567,14 @@ def test_bad_token_responses_are_refused_including_github_http_200_error(
     refused(finish(surface, start(surface, remote, provider_id)), "failed")
     assert rows(surface, "sessions") == rows(surface, "user_identities") == []
     assert len(remote.calls) == 1
+    assert len(caplog.records) == 1
+    endpoint = urlsplit(TOKENS[IDS.index(provider_id)])
+    assert endpoint.hostname + endpoint.path in caplog.text and "status=200" in caplog.text
+    error = token.get("error") if isinstance(token, dict) else None
+    assert "error=" + (error or "-") in caplog.text
     assert "test-private-description" not in caplog.text
+    assert "test-access-token" not in caplog.text
+    assert surface.db.audit_entries()[0]["reason"] == provider_id + ":failed"
 
 
 def test_token_request_failure_is_refused(make_signin, remote):
@@ -564,6 +582,7 @@ def test_token_request_failure_is_refused(make_signin, remote):
     remote.failure = True
     refused(finish(surface, start(surface, remote)), "failed")
     assert rows(surface, "signin_flows") == []
+    assert surface.db.audit_entries()[0]["reason"] == "google:failed"
 
 
 @pytest.mark.parametrize("code", ["", "a" * 2049])
@@ -835,6 +854,15 @@ def test_malformed_callback_parameters_fail_without_provider_requests(make_signi
         "failed",
     )
     assert not remote.calls
+    assert not [a for a in surface.db.audit_entries() if a["action"] == "signin.refuse"]
+
+
+def test_malformed_start_parameters_are_not_audited(make_signin, remote):
+    surface = make_signin()
+    refused(request(surface, "/app/auth/google?next=a&next=b"), "failed")
+    assert not remote.calls
+    assert rows(surface, "signin_flows") == []
+    assert not [a for a in surface.db.audit_entries() if a["action"] == "signin.refuse"]
 
 
 def test_consent_links_preserve_next_and_success_returns_to_agent_origin(make_signin, remote):
@@ -1001,3 +1029,91 @@ def test_fetch_failures_are_generic_and_do_not_log_responses(monkeypatch, caplog
         _FETCH("https://test.example/token")
     assert exc.value.code == "failed" and str(exc.value) == "failed"
     assert "test-private-description" not in caplog.text
+    assert len(caplog.records) == 1
+    assert "test.example/token" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error", ["redirect_uri_mismatch", "a" * 64, "a" * 65, "a@b.example", "bad code", "", 123, None]
+)
+def test_fetch_http_error_logs_only_safe_diagnostics(monkeypatch, caplog, error):
+    sizes = []
+
+    class ErrorBody(io.BytesIO):
+        def read(self, size=-1):
+            sizes.append(size)
+            return super().read(size)
+
+    body = ErrorBody(
+        json.dumps(
+            {
+                "error": error,
+                "error_description": "test-private-description a@b.example",
+                "access_token": "test-access-token",
+            }
+        ).encode()
+        + b" " * 8192
+    )
+
+    class Opener:
+        def open(self, req, timeout):
+            raise HTTPError(req.full_url, 400, "test-private-description", {}, body)
+
+    monkeypatch.setattr(providers, "build_opener", lambda *args: Opener())
+    with pytest.raises(providers.SignInError, match="failed"):
+        _FETCH(
+            "https://test.example/token?code=test-private-code",
+            form={"client_secret": "test-client-secret"},
+        )
+    assert sizes == [4096] and body.closed
+    assert len(caplog.records) == 1
+    assert "test.example/token" in caplog.text and "status=400" in caplog.text
+    expected = (
+        error if isinstance(error, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", error) else "-"
+    )
+    assert "error=" + expected in caplog.text
+    for private in (
+        "test-private-description",
+        "a@b.example",
+        "test-access-token",
+        "test-private-code",
+        "test-client-secret",
+        "?",
+    ):
+        assert private not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError,
+        URLError,
+        TimeoutError,
+        http.client.HTTPException,
+        ValueError,
+        UnicodeError,
+        RecursionError,
+    ],
+)
+def test_fetch_expected_failures_are_warned_once(monkeypatch, caplog, failure):
+    class Opener:
+        def open(self, req, timeout):
+            raise failure("test-private-description")
+
+    monkeypatch.setattr(providers, "build_opener", lambda *args: Opener())
+    with pytest.raises(providers.SignInError, match="failed"):
+        _FETCH("https://test.example/token")
+    assert len(caplog.records) == 1 and "test.example/token" in caplog.text
+    assert "test-private-description" not in caplog.text
+
+
+@pytest.mark.parametrize("failure", [AttributeError, TypeError, RuntimeError])
+def test_fetch_does_not_mask_programming_errors(monkeypatch, caplog, failure):
+    class Opener:
+        def open(self, req, timeout):
+            raise failure("test programming error")
+
+    monkeypatch.setattr(providers, "build_opener", lambda *args: Opener())
+    with pytest.raises(failure, match="test programming error"):
+        _FETCH("https://test.example/token")
+    assert not caplog.records

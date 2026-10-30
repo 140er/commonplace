@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import logging
 import math
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
-from urllib.parse import quote, quote_plus, urlencode
+from urllib.error import HTTPError
+from urllib.parse import quote, quote_plus, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from .. import urls
@@ -38,7 +41,29 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _warn_failure(url, status=None, data=None):
+    endpoint = urlsplit(url)
+    error = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(error, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", error):
+        error = "-"
+    logger.warning(
+        "sign-in request %s%s failed status=%s error=%s",
+        endpoint.hostname,
+        endpoint.path,
+        status if status is not None else "-",
+        error,
+    )
+
+
+def _error_body(raw):
+    try:
+        return json.loads(raw)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+
+
 def fetch(url, *, form=None, headers=None):
+    status = None
     try:
         hdrs = {"User-Agent": "Commonplace", "Accept": "application/json", **(headers or {})}
         data = None
@@ -47,11 +72,26 @@ def fetch(url, *, form=None, headers=None):
             hdrs["Content-Type"] = "application/x-www-form-urlencoded"
         opener = build_opener(ProxyHandler({}), _NoRedirect())
         with opener.open(Request(url, data=data, headers=hdrs), timeout=10) as response:
+            status = response.status
+            if status != 200:
+                _warn_failure(url, status, _error_body(response.read(4096)))
+                raise SignInError("failed")
             raw = response.read(MAX_RESPONSE + 1)
-            if response.status != 200 or len(raw) > MAX_RESPONSE:
+            if len(raw) > MAX_RESPONSE:
+                _warn_failure(url, status)
                 raise SignInError("failed")
         return json.loads(raw)
-    except Exception:
+    except HTTPError as exc:
+        data = None
+        try:
+            with exc:
+                data = _error_body(exc.read(4096))
+        except (OSError, http.client.HTTPException, ValueError, UnicodeError, RecursionError):
+            pass
+        _warn_failure(url, exc.code, data)
+        raise SignInError("failed") from None
+    except (OSError, http.client.HTTPException, ValueError, UnicodeError, RecursionError):
+        _warn_failure(url, status)
         raise SignInError("failed") from None
 
 
@@ -213,6 +253,7 @@ class Provider:
             or not isinstance(token.get("access_token"), str)
             or not token["access_token"]
         ):
+            _warn_failure(self.token, 200, token)
             raise SignInError("failed")
         if self.issuers:
             return self._oidc_profile(token.get("id_token"), nonce, user)
@@ -329,7 +370,7 @@ _SPECS = (
 def configured() -> list[Provider]:
     result = []
     for spec in _SPECS:
-        provider_id, _name, keys, *_rest = spec
+        provider_id, _provider_name, keys, *_rest = spec
         credentials = {
             key: os.environ.get(f"COMMONPLACE_{provider_id.upper()}_{key}", "").strip()
             for key in keys

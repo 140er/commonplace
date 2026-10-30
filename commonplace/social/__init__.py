@@ -86,7 +86,7 @@ class SignIn:
             try:
                 self._start(gateway, h, provider)
             except OAuthError:
-                self._refuse(gateway, h, provider.id, "failed", "")
+                self._refuse(gateway, h, provider.id, "failed", "", audit=False)
 
     def _start(self, gateway, h, provider):
         next_path = _next(query(h.path).get("next", ""))
@@ -117,6 +117,7 @@ class SignIn:
 
     def _callback(self, gateway, h, provider):
         next_path = ""
+        matched = False
         try:
             parameters = body(h) if h.command == "POST" else query(h.path)
             with gateway.db._lock, gateway.db._tx() as conn:
@@ -128,15 +129,17 @@ class SignIn:
                     conn.execute(
                         "DELETE FROM signin_flows WHERE state_hash = ?", (row["state_hash"],)
                     )
-            next_path = row["next"] if row else ""
             browser = sessions.cookie_value(h.headers.get("Cookie"), COOKIE)
             if (
                 row is None
                 or row["provider"] != provider.id
-                or row["expires_at"] <= time.time()
                 or not browser
                 or not secrets.compare_digest(row["browser_hash"], digest(browser))
             ):
+                raise SignInError("expired")
+            matched = True
+            next_path = row["next"]
+            if row["expires_at"] <= time.time():
                 raise SignInError("expired")
             if "error" in parameters:
                 raise SignInError(
@@ -163,6 +166,7 @@ class SignIn:
                 provider.id,
                 exc.code if isinstance(exc, SignInError) else "failed",
                 next_path,
+                audit=matched,
             )
             return
         landing = (
@@ -175,8 +179,9 @@ class SignIn:
             headers=(("Set-Cookie", sessions.set_cookie(session, gateway.secure_cookies)),),
         )
 
-    def _refuse(self, gateway, h, provider, code, next_path):
-        gateway.db.audit(action="signin.refuse", decision="deny", reason=f"{provider}:{code}")
+    def _refuse(self, gateway, h, provider, code, next_path, *, audit):
+        if audit:
+            gateway.db.audit(action="signin.refuse", decision="deny", reason=f"{provider}:{code}")
         parameters = {"signin": code}
         if next_path:
             parameters["next"] = next_path
