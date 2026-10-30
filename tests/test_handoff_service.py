@@ -658,10 +658,17 @@ def test_launch_errors_keep_stored_thread_and_stop_old_agent(rig, monkeypatch, s
         monkeypatch.setattr(rig.db, stage, fail)
     result = rig.service.run(rig.principal, make_request())
     assert result.action == "handoff" and not result.launch
-    assert result.handoff.state == "launch_failed" and result.handoff.stored_thread_id
-    assert rig.events.count(EVENT_LAUNCH_FAILED) == 1 and rig.events.count(EVENT_FAILED) == 0
-    failure = rig.events.calls[-1]
-    assert failure[4:6] == ("error", "successor launch failed")
+    assert result.handoff.stored_thread_id
+    if stage == "set_successor":
+        # External launch succeeded; retain its claim rather than permit relaunch.
+        assert result.handoff.state == "launched"
+        assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+    else:
+        assert result.handoff.state == "launch_failed"
+        assert rig.events.count(EVENT_LAUNCH_FAILED) == 1
+        failure = rig.events.calls[-1]
+        assert failure[4:6] == ("error", "successor launch failed")
+    assert rig.events.count(EVENT_FAILED) == 0
     assert "PRIVATE" not in result.reason and "PRIVATE" not in result.handoff.error
 
 

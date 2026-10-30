@@ -510,13 +510,11 @@ def test_launch_failure_explicit_retry_preserves_stored_data(db, launched):
     assert done.state == "done" and done.successor == SUCCESSOR
 
 
-def test_successor_same_agent_is_idempotent_and_different_agent_refused(db):
+def test_successor_same_ref_is_idempotent_and_conflicting_metadata_refused(db):
     handoff = _in_state(db, "done")
     assert db.set_successor(handoff.id, SUCCESSOR) == handoff
-    assert (
+    with pytest.raises(HandoffDBError, match="different successor"):
         db.set_successor(handoff.id, replace(SUCCESSOR, url="changed", thread_id="changed"))
-        == handoff
-    )
     with pytest.raises(HandoffDBError, match="different successor"):
         db.set_successor(handoff.id, replace(SUCCESSOR, agent_ref="other-agent"))
     assert db.get(handoff.id) == handoff
