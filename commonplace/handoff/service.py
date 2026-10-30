@@ -43,5 +43,12 @@ class HandoffService:
     def register_successor(self, principal, handoff_id: str, ref: SuccessorRef) -> Handoff:
         raise NotImplementedError
 
+    def report_launch_failure(self, principal, handoff_id: str, error: str) -> Handoff:
+        """The client launcher couldn't start the successor. Same permission
+        as ``register_successor``; stored/launched → ``launch_failed``,
+        ``EVENT_LAUNCH_FAILED`` once (repeats are no-ops); ``error`` is cut
+        to 200 chars and goes to the event reason only."""
+        raise NotImplementedError
+
     def relaunch(self, principal, handoff_id: str) -> HandoffResult:
         raise NotImplementedError

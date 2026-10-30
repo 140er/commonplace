@@ -8,6 +8,7 @@ POST /api/handoff                         handoff:write   HandoffRequest → Han
 GET  /api/handoffs?task=#142              threads:read    list
 GET  /api/handoffs/<id>                   threads:read
 POST /api/handoffs/<id>/successor         handoff:write   {agent_ref, url?, thread_id?}
+POST /api/handoffs/<id>/launch-failed     handoff:write   {error} (client launcher failed)
 POST /api/handoffs/<id>/relaunch          owner
 GET  /api/threads/<id>                    threads:read    StoredThread
 GET  /api/threads/<id>/messages?start=&end=   threads:read
