@@ -35,7 +35,8 @@ OAuth2 Client ID → `COMMONPLACE_DISCORD_CLIENT_ID`; client secret → `COMMONP
 
 ## Accounts and cost
 
-Set `COMMONPLACE_SIGNUP=open` to allow a new verified email to create a user and personal workspace; otherwise new-account signup is closed.
+Sign-up is open by default: a new verified email gets a user and personal workspace. The hosting plan attaches in `commonplace/plans.py` once a free tier is decided; there are no limits yet.
+Set `COMMONPLACE_SIGNUP=closed` to turn off new-account sign-up; only existing accounts can sign in.
 Known provider accounts return to the same user; a verified email matching an existing account links to it.
 Unverified email never links or creates an account; an already linked provider account uses its saved identity.
 

@@ -43,7 +43,7 @@ COMMONPLACE_ALLOWED_HOSTS=app.cmmn.dev,cmmn.dev,edge1.tail6cee8c.ts.net,100.76.2
 # COMMONPLACE_APPLE_KEY_ID, COMMONPLACE_APPLE_PRIVATE_KEY
 # COMMONPLACE_X_CLIENT_ID, COMMONPLACE_X_CLIENT_SECRET
 # COMMONPLACE_DISCORD_CLIENT_ID, COMMONPLACE_DISCORD_CLIENT_SECRET
-# COMMONPLACE_SIGNUP controls new-account signup; see commonplace/SETUP.md.
+# COMMONPLACE_SIGNUP=closed turns off new-account sign-up.
 ```
 
 Provider registration and signup policy: [social sign-in setup](../commonplace/SETUP.md). Apply optional variables through the gateway's environment and restart it; no provider variables means no change to sign-in.
