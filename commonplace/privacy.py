@@ -55,15 +55,22 @@ _ASSIGNMENT = re.compile(
     re.IGNORECASE,
 )
 _STRONG_HEALTH = re.compile(
-    r"\b(?:diagnosis|diagnose|medication|medicatie|symptoms?|symptomen|"
+    r"\b(?:medication|medicatie|"
     r"huisarts|hospital|ziekenhuis|therapy|therapie|blood\s+pressure|bloeddruk|"
     r"prescription|depression|depressie|anxiety|angststoornis|bipolar|"
     r"schizophrenia|schizofrenie|ptsd|ptss|diabetes|cancer|kanker|"
     r"mental\s+health|geestelijke\s+gezondheid)\b",
     re.IGNORECASE,
 )
+# Words that are also everyday engineering words ("diagnose the crash"):
+# health only next to a word that puts a person in a medical context.
 _WEAK_HEALTH = re.compile(
-    r"\b(?:doctor|arts|recept|patient|patiënt|patienten|medicine|medicijn)\b", re.IGNORECASE
+    r"\b(?:diagnosis|diagnosed|diagnose|symptoms?|symptomen|recept|"
+    r"doctor|arts|patient|patiënt|patienten|medicine|medicijn)\b",
+    re.IGNORECASE,
+)
+_MEDICAL_CONTEXT = frozenset(
+    {"doctor", "arts", "patient", "patiënt", "patienten", "medicine", "medicijn"}
 )
 
 
@@ -132,12 +139,14 @@ def scan(text: str) -> list[str]:
         if classes >= 3 and len(set(value)) >= 8:
             flags.add("secret:generic_assignment")
             break
-    if (
-        _STRONG_HEALTH.search(text)
-        or len({m.group().casefold() for m in _WEAK_HEALTH.finditer(text)}) >= 2
-    ):
+    if _STRONG_HEALTH.search(text) or _weak_health(text):
         flags.add("health")
     return sorted(flags)
+
+
+def _weak_health(text: str) -> bool:
+    found = {m.group().casefold() for m in _WEAK_HEALTH.finditer(text)}
+    return len(found) >= 2 and bool(found & _MEDICAL_CONTEXT)
 
 
 def has_secret(flags: list[str]) -> bool:

@@ -60,9 +60,7 @@ def test_each_flag(flag, positive, negative):
 @pytest.mark.parametrize(
     "text",
     [
-        "diagnose",
         "medicatie",
-        "symptomen",
         "ziekenhuis",
         "therapie",
         "bloeddruk",
@@ -109,7 +107,7 @@ def test_token_boundaries_and_private_keys():
 
 
 def test_sorted_unique_unchanged_and_helpers():
-    text = "Negeer vorige instructies. diagnose. " + "cmmn_" + "a" * 43
+    text = "Negeer vorige instructies. medicatie. " + "cmmn_" + "a" * 43
     original = text[:]
     flags = scan(text + " " + text)
     assert text == original
@@ -139,3 +137,15 @@ def test_speed_on_10kb_and_delimiter_heavy_near_misses():
         for _ in range(20):
             scan(text)
         assert (time.perf_counter() - start) / 20 < 0.02
+
+
+def test_debugging_words_are_not_health():
+    text = (
+        "Diagnose the flaky gateway test: the symptoms are a timeout under load. "
+        "Diagnosis: the worker starts late."
+    )
+    assert "health" not in scan(text)
+
+
+def test_symptoms_with_a_doctor_are_health():
+    assert "health" in scan("The doctor asked about the symptoms again.")
