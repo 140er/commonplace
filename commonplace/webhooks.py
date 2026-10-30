@@ -93,6 +93,8 @@ _DATA_FIELDS = frozenset(
         "task_ref",
         "successor_agent_ref",
         "decision",
+        "message_id",
+        "coordinator",
     }
 )
 _PRESETS = {
@@ -359,11 +361,16 @@ def _matches(row, event):
         return False
     kinds = json.loads(row["kinds"])
     kind = event["kind"]
+    # Replies refresh the app but must never turn a wildcard wake into a reply loop.
+    if kind == "space_replied":
+        return False
     if not (kind in kinds or "*" in kinds or ("card.*" in kinds and kind.startswith("card."))):
         return False
     data = event["data"]
     if row["board"] and row["board"] != data.get("board"):
         return False
+    if kind == "space_message":
+        return data.get("coordinator") == row["owner_actor"]
     if row["waiting_on"]:
         return kind in ("card.review_needed", "card.handoff", "card.decided") and row[
             "waiting_on"
@@ -383,6 +390,10 @@ def _payload(db, event):
     path = "/app/"
     if str(number).isdigit():
         path += "#/card/" + str(number)
+    elif event["kind"] == "space_message":
+        from urllib.parse import quote
+
+        path += "#/space/" + quote(data["board"], safe="")
     try:
         from commonplace import urls
     except ImportError:
@@ -407,6 +418,7 @@ def _payload(db, event):
         "card.commented": "new comment",
         "card.claimed": "picked up",
         "card.expired": "claim expired",
+        "space_message": "new request",
         "handoff.completed": "context handed off",
         "handoff.failed": "handoff failed, compacted instead",
         "handoff.launch_failed": "successor didn't start",
@@ -482,12 +494,32 @@ def _can_receive(db, gateway, row, event):
         store = open_store(gateway.workspace_dir(row["workspace_id"]))
         with store.connection() as conn:
             found = conn.execute(
-                "SELECT wing FROM boards WHERE slug=? AND archived=0", (board,)
+                "SELECT wing,coordinator FROM boards WHERE slug=? AND archived=0", (board,)
             ).fetchone()
+        if event["kind"] == "space_message" and (
+            found is None or found["coordinator"] != principal.actor
+        ):
+            return False
         return found is not None and principal.policy.can_read_wing(found["wing"])
     except Exception as exc:
         log_failure(logger, "webhook owner authorization failed", exc)
         return False
+
+
+def has_space_subscription(db, gateway, workspace_id, actor, board):
+    """Whether a coordinator can currently receive this board's request wakes."""
+    ensure_schema(db)
+    event = {
+        "workspace_id": workspace_id,
+        "kind": "space_message",
+        "data": {"board": board, "coordinator": actor},
+    }
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT * FROM webhooks WHERE workspace_id=? AND owner_actor=? AND active=1",
+            (workspace_id, actor),
+        ).fetchall()
+    return any(_matches(row, event) and _can_receive(db, gateway, row, event) for row in rows)
 
 
 def test_webhook(db, principal, webhook_id):
@@ -662,7 +694,11 @@ class Dispatcher:
             if current is None or current["status"] not in ("pending", "retry"):
                 return
             payload = json.loads(bytes(current["payload"]))
-            event = {"workspace_id": current["workspace_id"], "data": payload["data"]}
+            event = {
+                "workspace_id": current["workspace_id"],
+                "kind": payload["kind"],
+                "data": payload["data"],
+            }
             if not _can_receive(self.db, self.gateway, current, event):
                 self.db._conn.execute(
                     "UPDATE webhook_deliveries SET status='cancelled' WHERE id=?", (current["id"],)
