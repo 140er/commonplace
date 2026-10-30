@@ -3,6 +3,7 @@
 from commonplace.extensions import ToolContext, ToolError
 
 from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json
+from .display import with_urls
 from .service import BoardService, VersionClash
 
 
@@ -17,7 +18,9 @@ def install(gateway):
         try:
             status, result = dispatch(service, h, parts, method)
         except VersionClash as exc:
-            send_json(h, 409, {"error": "card changed", "current": exc.current})
+            send_json(
+                h, 409, {"error": "card changed", "current": with_urls(service.ctx, exc.current)}
+            )
             return
         except HTTPError as exc:
             send_json(h, exc.status, {"error": str(exc)})
@@ -33,7 +36,7 @@ def install(gateway):
         except TypeError:
             send_json(h, 400, {"error": "invalid arguments"})
             return
-        send_json(h, status, result)
+        send_json(h, status, with_urls(service.ctx, result))
 
     for method in ("GET", "POST", "PATCH", "DELETE"):
         for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/"):

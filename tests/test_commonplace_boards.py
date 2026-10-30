@@ -757,3 +757,16 @@ def test_reverse_links_include_authoritative_board_and_wing(hub, env):
         item for item in raw if person.policy.can_read_wing(item.get("wing", ""))
     ]
     assert not person.policy.can_read_wing({}.get("wing", ""))
+
+
+def test_cards_carry_short_links_and_people_read_as_names(hub, env):
+    token, _agent, _person, cookie, owner = env
+    ok, text = mcp(hub, token, "ask", question="Ship?", options=["yes", "no"], board="work")
+    assert ok, text
+    assert "owner@example.com" in text and "user:" not in text
+    assert "/s/" in text
+    number = int(text.split()[0].lstrip("#"))
+    status, card = api(hub, cookie, "GET", f"/api/cards/{number}")
+    assert status == 200 and "/s/" in card["url"]
+    status, needs = api(hub, cookie, "GET", "/api/needs-me")
+    assert all("url" in c for c in needs["asks"])

@@ -4,6 +4,7 @@ import json
 
 from commonplace.extensions import ALL_PROFILES, WORK_PROFILES, LocalTool, ToolError, register
 
+from .display import card_url, people
 from .service import BoardService
 
 STRING = {"type": "string"}
@@ -56,6 +57,10 @@ def show(c):
 
 
 def run(ctx, name, args):
+    return people(ctx, _run(ctx, name, args))
+
+
+def _run(ctx, name, args):
     service = BoardService(ctx)
     try:
         result = getattr(service, name)(**args)
@@ -75,7 +80,7 @@ def run(ctx, name, args):
     if name == "task_list":
         return "\n".join(line(c) for c in result) or "no cards"
     if name == "task_show":
-        return show(result)
+        return show(result) + f"\nlink: {card_url(ctx, result['number'])}"
     if name == "task_add":
         return f"#{result['number']} added to {result['status']} on {result['board']}"
     if name == "task_take_next":
@@ -90,7 +95,9 @@ def run(ctx, name, args):
             reply += f"\ndecision by {d['actor']}: {d['choice'] or ''}  {quoted(d['reply'])}"
         return reply
     if name == "ask":
-        return f"#{result['number']} waiting on {result['ask_to']}"
+        return (
+            f"#{result['number']} waiting on {result['ask_to']}  {card_url(ctx, result['number'])}"
+        )
     if name == "needs_me":
         lines = []
         for key, label in (
