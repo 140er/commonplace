@@ -196,8 +196,15 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        visible = [t for t in tools if policy.tool_visible(t.get("name"))]
-        for name in sorted(extensions.names()):
+        local_names = extensions.names()
+        # The gateway's own tools win over a worker tool of the same name, so a
+        # gated extension tool can't slip through as a worker tool.
+        visible = [
+            t
+            for t in tools
+            if t.get("name") not in local_names and policy.tool_visible(t.get("name"))
+        ]
+        for name in sorted(local_names):
             tool = extensions.get(name)
             if policy.tool_visible(name) and tool.usable_by(principal, self.gateway):
                 visible.append(tool.schema())
