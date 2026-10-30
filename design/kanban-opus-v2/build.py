@@ -1,6 +1,5 @@
 """Writes decide.html, board.html, card.html and mobile.html from one data set. Run: python3 build.py"""
 
-import math
 
 # ---------- icons ----------
 def svg(body, vb=14, cls="", style=""):
@@ -8,16 +7,16 @@ def svg(body, vb=14, cls="", style=""):
     s = f' style="{style}"' if style else ""
     return f'<svg{c}{s} viewBox="0 0 {vb} {vb}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
 
+
 MARK = '<svg viewBox="0 0 32 32"><rect x="4" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="17" y="4" width="11" height="11" fill="#0b0c0b"/><rect x="4" y="17" width="11" height="11" fill="#0b0c0b"/></svg>'
 I_DRAWER = svg('<rect x="2" y="2.5" width="10" height="9" rx="1.5"/><path d="M5 6h4"/>')
 I_FLAG = '<span class="flag">!</span>'
 
 
-
 def claim(left):
     """Claim left as six blocks: full at claim, empty at expiry."""
     on = max(1, round(left * 6))
-    blocks = "".join(f'<i class="on"></i>' if k < on else "<i></i>" for k in range(6))
+    blocks = "".join('<i class="on"></i>' if k < on else "<i></i>" for k in range(6))
     return f'<span class="claim{" low" if left < 0.2 else ""}">{blocks}</span>'
 
 
@@ -33,15 +32,51 @@ def actor(a, untrusted=False):
 
 # ---------- data (DESIGN.md / API.md examples) ----------
 DECIDE = [
-    dict(id=145, board="mempalace", title="Pick the token expiry default", by="claude-code:vm", age="2h", links=2,
-         q="1 year or 90 days for personal tokens?", opts=["1y", "90d"]),
-    dict(id=150, board="mempalace", title="Phone push for the Decide count", by="claude-code:vm", age="1h", links=0,
-         q="Self-hosted ntfy on zurvur, or only the Decide count for v1?", opts=["ntfy", "count only"]),
-    dict(id=151, board="mempalace", title="Split the hook output", by="codex:vm", age="40m", links=0, done=True,
-         q=None, opts=["ship", "redo"]),
+    dict(
+        id=145,
+        board="mempalace",
+        title="Pick the token expiry default",
+        by="claude-code:vm",
+        age="2h",
+        links=2,
+        q="1 year or 90 days for personal tokens?",
+        opts=["1y", "90d"],
+    ),
+    dict(
+        id=150,
+        board="mempalace",
+        title="Phone push for the Decide count",
+        by="claude-code:vm",
+        age="1h",
+        links=0,
+        q="Self-hosted ntfy on zurvur, or only the Decide count for v1?",
+        opts=["ntfy", "count only"],
+    ),
+    dict(
+        id=151,
+        board="mempalace",
+        title="Split the hook output",
+        by="codex:vm",
+        age="40m",
+        links=0,
+        done=True,
+        q=None,
+        opts=["ship", "redo"],
+    ),
 ]
-FILED = [dict(id=153, board="home", title="Add Grok calendar sync", by="grok:cos", age="1d", links=0, flag=True,
-              q=None, opts=["todo", "close"])]
+FILED = [
+    dict(
+        id=153,
+        board="home",
+        title="Add Grok calendar sync",
+        by="grok:cos",
+        age="1d",
+        links=0,
+        flag=True,
+        q=None,
+        opts=["todo", "close"],
+    )
+]
 
 TODO = [
     (147, "Canary for board tools", "", 1),
@@ -79,7 +114,9 @@ DONE = [
 # ---------- pieces ----------
 def side(current):
     boards = ["mempalace", "commonplace-site", "computercraft", "home"]
-    b = "".join(f'<a href="board.html"{" aria-current" if x == current else ""}>{x}</a>' for x in boards)
+    b = "".join(
+        f'<a href="board.html"{" aria-current" if x == current else ""}>{x}</a>' for x in boards
+    )
     dec = " aria-current" if current == "decide" else ""
     return f"""<aside class="side">
     <div class="ws"><span class="mark">{MARK}</span><span class="name">jeffrey</span></div>
@@ -113,9 +150,13 @@ def item(d, sel=False, mobile=False, reply=None, picked=None):
 
 
 def queue(narrow=False):
-    rows = item(DECIDE[0], sel=True, reply="Go with 90 days, keep 1 year as an option.", picked="90d")
+    rows = item(
+        DECIDE[0], sel=True, reply="Go with 90 days, keep 1 year as an option.", picked="90d"
+    )
     rows += "".join(item(d) for d in DECIDE[1:])
-    rows += '<div class="split"></div>' + "".join(item(d) for d in FILED) + '<div class="rest"></div>'
+    rows += (
+        '<div class="split"></div>' + "".join(item(d) for d in FILED) + '<div class="rest"></div>'
+    )
     return f'<section class="queue{" narrow" if narrow else ""}">{rows}</section>'
 
 
@@ -125,20 +166,25 @@ def board_cols(focus=None, open_=None):
 
     todo = "".join(
         f'<article class="{cls(i)}"><p class="ct">{t}</p><div class="meta"><span>#{i}</span>'
-        f'<span class="push">{links(l)}{actor(a) if a else ""}</span></div></article>'
-        for i, t, a, l in TODO)
+        f'<span class="push">{links(n_links)}{actor(a) if a else ""}</span></div></article>'
+        for i, t, a, n_links in TODO
+    )
     doing = ""
-    for i, t, a, held, left, l in DOING:
+    for i, t, a, held, left, n_links in DOING:
         c = claim(left) if left is not None else ""
-        doing += (f'<article class="{cls(i)}"><p class="ct">{t}</p><div class="meta"><span>#{i}</span>'
-                  f'<span class="push">{links(l)}{actor(a)}<span>{held}</span>{c}</span></div></article>')
+        doing += (
+            f'<article class="{cls(i)}"><p class="ct">{t}</p><div class="meta"><span>#{i}</span>'
+            f'<span class="push">{links(n_links)}{actor(a)}<span>{held}</span>{c}</span></div></article>'
+        )
     review = ""
     for d in REVIEW:
         pre = '<span class="pre">Done? </span>' if d.get("done") else ""
         q = f'<p class="cq">{d["q"]}</p>' if d["q"] else ""
-        review += (f'<article class="{cls(d["id"])}"><p class="ct">{pre}{d["title"]}</p>{q}<div class="meta"><span>#{d["id"]}</span>'
-                   f'<span class="push">{links(d["links"])}{actor(d["by"])}<span>{d["age"]}</span></span></div></article>')
-    done = "".join(f'<li><i></i><span>{t}</span><time>{age}</time></li>' for i, t, age in DONE)
+        review += (
+            f'<article class="{cls(d["id"])}"><p class="ct">{pre}{d["title"]}</p>{q}<div class="meta"><span>#{d["id"]}</span>'
+            f'<span class="push">{links(d["links"])}{actor(d["by"])}<span>{d["age"]}</span></span></div></article>'
+        )
+    done = "".join(f"<li><i></i><span>{t}</span><time>{age}</time></li>" for i, t, age in DONE)
     return f"""<div class="cols">
       <section class="col rail"><header><span class="n">9</span></header><div class="stack"><span class="v">backlog</span>{I_FLAG}</div></section>
       <section class="col"><header>todo<span class="n">{len(TODO)}</span></header><div class="stack">{todo}</div></section>
@@ -149,8 +195,10 @@ def board_cols(focus=None, open_=None):
 
 
 def bar(i, board):
-    return (f'<div class="bar"><span class="id">#{i}</span><span>{board}</span>'
-            f'<span class="right"><kbd>k</kbd><kbd>j</kbd><kbd>esc</kbd></span></div>')
+    return (
+        f'<div class="bar"><span class="id">#{i}</span><span>{board}</span>'
+        f'<span class="right"><kbd>k</kbd><kbd>j</kbd><kbd>esc</kbd></span></div>'
+    )
 
 
 def ev(who, what, time, kind="", said=None):
@@ -235,12 +283,20 @@ def page(title, side_current, main, main_cls=""):
 BOARD_HEAD = '<header class="head"><h1>mempalace</h1><div class="right"><button class="blockbtn">New<kbd>c</kbd></button></div></header>'
 DECIDE_HEAD = '<header class="head"><h1>Decide <span class="n">4</span></h1></header>'
 
-open("decide.html", "w").write(page("Decide", "decide", DECIDE_HEAD + queue(narrow=True) + PANEL_145))
+open("decide.html", "w").write(
+    page("Decide", "decide", DECIDE_HEAD + queue(narrow=True) + PANEL_145)
+)
 open("board.html", "w").write(page("mempalace", "mempalace", BOARD_HEAD + board_cols(focus=147)))
-open("card.html", "w").write(page("#142", "mempalace", BOARD_HEAD + board_cols(open_=142) + PANEL_142, "dim"))
+open("card.html", "w").write(
+    page("#142", "mempalace", BOARD_HEAD + board_cols(open_=142) + PANEL_142, "dim")
+)
 
 mitems = item(DECIDE[0], sel=True, mobile=True, reply="Keep 1 year as an option", picked="90d")
-mitems += "".join(item(d, mobile=True) for d in DECIDE[1:]) + '<div class="split"></div>' + "".join(item(d, mobile=True) for d in FILED)
+mitems += (
+    "".join(item(d, mobile=True) for d in DECIDE[1:])
+    + '<div class="split"></div>'
+    + "".join(item(d, mobile=True) for d in FILED)
+)
 open("mobile.html", "w").write(f"""<!doctype html>
 <html lang="en">
 <head>
