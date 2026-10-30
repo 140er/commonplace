@@ -223,6 +223,65 @@ def legacy_entity_id(name: str) -> str:
     return (name or "").lower().replace(" ", "_").replace("'", "")
 
 
+FACT_STATUSES = ("active", "superseded", "retracted", "expired")
+_MAX_SOURCE_THREAD_LEN = 256
+
+
+def _seq(value, field: str) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        number = value
+    elif isinstance(value, str) and value.strip().isdecimal():
+        number = int(value.strip())
+    else:
+        raise ValueError(f"{field} must be a whole message number")
+    if number < 0:
+        raise ValueError(f"{field} must not be negative")
+    return number
+
+
+def source_range(thread=None, seq_start=None, seq_end=None) -> tuple:
+    """Validate a fact's pointer back to the chat it came from.
+
+    Returns ``(thread, seq_start, seq_end)``. A range needs a thread; one
+    message number alone means that single message. All three may be
+    ``None`` (no source).
+    """
+    if thread is not None and not isinstance(thread, str):
+        raise ValueError("source_thread must be a string")
+    thread = (thread or "").strip() or None
+    if thread is not None:
+        if len(thread) > _MAX_SOURCE_THREAD_LEN:
+            raise ValueError("source_thread is too long")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in thread):
+            raise ValueError("source_thread contains control characters")
+    start = _seq(seq_start, "source_seq_start")
+    end = _seq(seq_end, "source_seq_end")
+    if start is None and end is not None:
+        start = end
+    elif end is None and start is not None:
+        end = start
+    if start is not None:
+        if thread is None:
+            raise ValueError("a message range needs source_thread")
+        if end < start:
+            raise ValueError("source_seq_end is before source_seq_start")
+    return thread, start, end
+
+
+def _fact_fields(row) -> dict:
+    """The id, status and chat pointer every fact read returns."""
+    return {
+        "id": row["id"],
+        "status": row["status"] or "active",
+        "superseded_by": row["superseded_by"],
+        "source_thread": row["source_thread"],
+        "source_seq_start": row["source_seq_start"],
+        "source_seq_end": row["source_seq_end"],
+    }
+
+
 def _drop_none(props: dict) -> dict:
     return {
         k: _drop_none(v) if isinstance(v, dict) else v for k, v in props.items() if v is not None
@@ -364,6 +423,11 @@ class KnowledgeGraph:
                 adapter_name TEXT,
                 extracted_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 hub_stamp TEXT,
+                source_thread TEXT,
+                source_seq_start INTEGER,
+                source_seq_end INTEGER,
+                status TEXT NOT NULL DEFAULT 'active',
+                superseded_by TEXT,
                 FOREIGN KEY (subject) REFERENCES entities(id),
                 FOREIGN KEY (object) REFERENCES entities(id)
             );
@@ -393,6 +457,22 @@ class KnowledgeGraph:
             conn.execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT")
         if "hub_stamp" not in existing:
             conn.execute("ALTER TABLE triples ADD COLUMN hub_stamp TEXT")
+        for column, decl in (
+            ("source_thread", "TEXT"),
+            ("source_seq_start", "INTEGER"),
+            ("source_seq_end", "INTEGER"),
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("superseded_by", "TEXT"),
+        ):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE triples ADD COLUMN {column} {decl}")
+        # Indexes on migrated columns live here: in the CREATE script above
+        # they would fail on a legacy table that does not have them yet.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_triples_status ON triples(status)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_triples_source_thread "
+            "ON triples(source_thread, source_seq_start)"
+        )
 
     def _conn(self):
         if self._connection is None:
@@ -476,6 +556,9 @@ class KnowledgeGraph:
         source_file: str = None,
         source_drawer_id: str = None,
         adapter_name: str = None,
+        source_thread: str = None,
+        source_seq_start: int = None,
+        source_seq_end: int = None,
     ):
         """
         Add a relationship triple: subject → predicate → object.
@@ -485,6 +568,10 @@ class KnowledgeGraph:
         they default to ``None`` so every existing caller stays
         source-compatible.
 
+        ``source_thread`` with ``source_seq_start``/``source_seq_end`` points
+        the fact back at the chat messages it came from (see
+        :func:`source_range`). The chat stays the record; the fact indexes it.
+
         Examples:
             add_triple("Max", "child_of", "Alice", valid_from="2015-04-01")
             add_triple("Max", "does", "swimming", valid_from="2025-01-01")
@@ -493,6 +580,9 @@ class KnowledgeGraph:
 
         valid_from = sanitize_iso_temporal(valid_from, "valid_from")
         valid_to = sanitize_iso_temporal(valid_to, "valid_to")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
 
         # Reject inverted intervals. Use temporal comparison keys rather than
         # raw string comparison so legacy date-only values and canonical UTC
@@ -537,8 +627,9 @@ class KnowledgeGraph:
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -552,6 +643,9 @@ class KnowledgeGraph:
                         source_drawer_id,
                         adapter_name,
                         provenance.stamp_json(),
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
                     ),
                 )
                 return triple_id
@@ -600,6 +694,9 @@ class KnowledgeGraph:
         source_file: str = None,
         source_drawer_id: str = None,
         adapter_name: str = None,
+        source_thread: str = None,
+        source_seq_start: int = None,
+        source_seq_end: int = None,
     ):
         """Atomically replace one fact with another at a single shared boundary.
 
@@ -620,6 +717,9 @@ class KnowledgeGraph:
         normalized to ``<date>T00:00:00Z`` so both sides carry the same precise
         value rather than the asymmetric whole-day expansion.
 
+        The closed fact gets ``status = 'superseded'`` and ``superseded_by`` =
+        the successor's id, so a reader can walk from an old value to the new.
+
         Returns the new triple's id. If no open ``old_obj`` triple exists the
         successor is still opened, so ``supersede`` degrades to ``add_triple``.
         """
@@ -630,6 +730,9 @@ class KnowledgeGraph:
         else:
             boundary = at
         boundary = sanitize_iso_temporal(boundary, "at")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
 
         pred = predicate.lower().replace(" ", "_")
 
@@ -652,7 +755,7 @@ class KnowledgeGraph:
                 # Reject a boundary that precedes the old fact's start — an
                 # inverted interval would be invisible to every KG query.
                 rows = conn.execute(
-                    "SELECT valid_from FROM triples "
+                    "SELECT id, valid_from FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL",
                     (sub_id, pred, old_id),
                 ).fetchall()
@@ -680,15 +783,18 @@ class KnowledgeGraph:
                     (sub_id, pred, new_id),
                 ).fetchone()
                 if existing:
-                    return existing["id"]
+                    triple_id = existing["id"]
+                    self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
+                    return triple_id
 
                 triple_id = make_triple_id(sub_id, pred, new_id, boundary, utc_now_iso())
                 conn.execute(
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -702,9 +808,23 @@ class KnowledgeGraph:
                         source_drawer_id,
                         adapter_name,
                         provenance.stamp_json(),
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
                     ),
                 )
+                self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
                 return triple_id
+
+    @staticmethod
+    def _mark_superseded(conn, old_ids, new_id):
+        """Point each replaced fact at its successor. A fact never supersedes itself."""
+        for old in old_ids:
+            if old != new_id:
+                conn.execute(
+                    "UPDATE triples SET status='superseded', superseded_by=? WHERE id=?",
+                    (new_id, old),
+                )
 
     def rewrite(
         self,
@@ -730,7 +850,7 @@ class KnowledgeGraph:
 
         The successor inherits the original's ``confidence`` and provenance
         (``source_closet``, ``source_file``, ``source_drawer_id``,
-        ``adapter_name``): rewording a predicate is not new evidence, and a
+        ``adapter_name`` and the chat range): rewording a predicate is not new evidence, and a
         normalized fact must still point at the drawer it came from.
         ``source_file`` here is only a fallback for an original carrying none.
         """
@@ -749,7 +869,8 @@ class KnowledgeGraph:
                 obj_id = self._resolve_entity_id(conn, obj)
                 row = conn.execute(
                     "SELECT subject, valid_from, confidence, source_closet, source_file, "
-                    "source_drawer_id, adapter_name, hub_stamp FROM triples "
+                    "source_drawer_id, adapter_name, hub_stamp, source_thread, "
+                    "source_seq_start, source_seq_end FROM triples "
                     "WHERE id=? AND valid_to IS NULL",
                     (triple_id,),
                 ).fetchone()
@@ -776,7 +897,8 @@ class KnowledgeGraph:
                     "WHERE subject=? AND predicate=? AND object=? AND valid_to IS NULL "
                     f"AND (valid_from IS NULL OR {_sql_temporal_start_expr('valid_from')} <= ?) "
                     "AND confidence IS ? AND source_closet IS ? AND source_file IS ? "
-                    "AND source_drawer_id IS ? AND adapter_name IS ?",
+                    "AND source_drawer_id IS ? AND adapter_name IS ? "
+                    "AND source_thread IS ? AND source_seq_start IS ? AND source_seq_end IS ?",
                     (
                         sub_id,
                         pred,
@@ -787,17 +909,22 @@ class KnowledgeGraph:
                         row["source_file"] or source_file,
                         row["source_drawer_id"],
                         row["adapter_name"],
+                        row["source_thread"],
+                        row["source_seq_start"],
+                        row["source_seq_end"],
                     ),
                 ).fetchone()
                 if existing:
+                    self._mark_superseded(conn, [triple_id], existing["id"])
                     return existing["id"]
                 new_id = make_triple_id(sub_id, pred, obj_id, boundary, utc_now_iso())
                 conn.execute(
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name, hub_stamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_id,
                         sub_id,
@@ -811,8 +938,12 @@ class KnowledgeGraph:
                         row["source_drawer_id"],
                         row["adapter_name"],
                         row["hub_stamp"],
+                        row["source_thread"],
+                        row["source_seq_start"],
+                        row["source_seq_end"],
                     ),
                 )
+                self._mark_superseded(conn, [triple_id], new_id)
                 return new_id
 
     # ── Query operations ──────────────────────────────────────────────────
@@ -855,6 +986,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **_fact_fields(row),
                             **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
@@ -878,6 +1010,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **_fact_fields(row),
                             **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
@@ -964,6 +1097,7 @@ class KnowledgeGraph:
                         "confidence": row["confidence"],
                         "source_closet": row["source_closet"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         if direction in ("incoming", "both"):
@@ -983,6 +1117,7 @@ class KnowledgeGraph:
                         "confidence": row["confidence"],
                         "source_closet": row["source_closet"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         return results
@@ -1018,6 +1153,7 @@ class KnowledgeGraph:
                         "valid_from": row["valid_from"],
                         "valid_to": row["valid_to"],
                         "current": row["valid_to"] is None,
+                        **_fact_fields(row),
                     }
                 )
         return results
@@ -1069,6 +1205,7 @@ class KnowledgeGraph:
                 "valid_from": r["valid_from"],
                 "valid_to": r["valid_to"],
                 "current": r["valid_to"] is None,
+                **_fact_fields(r),
             }
             for r in rows
         ]
@@ -1106,6 +1243,11 @@ class KnowledgeGraph:
             "source_drawer_id",
             "adapter_name",
             "extracted_at",
+            "source_thread",
+            "source_seq_start",
+            "source_seq_end",
+            "status",
+            "superseded_by",
         ),
     }
 
@@ -1140,6 +1282,9 @@ class KnowledgeGraph:
         if not row.get("id"):
             raise ValueError("replicated row is missing 'id'")
         values = [row.get(col) for col in columns]
+        if table == "triples" and values[columns.index("status")] is None:
+            # A row from a replica that predates fact status is a live fact.
+            values[columns.index("status")] = "active"
         with self._lock:
             conn = self._conn()
             with conn:

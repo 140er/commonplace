@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
 from . import events
@@ -123,6 +124,36 @@ def _cards(ctx, memory_id, store):
     ]
 
 
+def _source(args):
+    """The chat range a save came from, as add_drawer arguments."""
+    value = args.get("source")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ToolError("no: source must be {thread, seq_start, seq_end}")
+    try:
+        thread, start, end = source_range(
+            value.get("thread"), value.get("seq_start"), value.get("seq_end")
+        )
+    except ValueError as exc:
+        raise ToolError(f"no: {exc}") from None
+    if thread is None:
+        raise ToolError("no: source needs a thread")
+    found = {"source_thread": thread, "source_seq_start": start, "source_seq_end": end}
+    return {key: item for key, item in found.items() if item is not None}
+
+
+def _stored_source(metadata):
+    thread = metadata.get("source_thread")
+    if not thread:
+        return None
+    return {
+        "thread": thread,
+        "seq_start": metadata.get("source_seq_start"),
+        "seq_end": metadata.get("source_seq_end"),
+    }
+
+
 def _get(ctx, memory_id, store=None):
     record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": memory_id})
     metadata = record.get("metadata") or {}
@@ -134,6 +165,7 @@ def _get(ctx, memory_id, store=None):
         "author": metadata.get("hub_connection", ""),
         "trust": metadata.get("hub_trust", ""),
         "at": metadata.get("hub_written_at") or metadata.get("filed_at", ""),
+        "source": _stored_source(metadata),
         "cards": _cards(ctx, record["drawer_id"], store),
     }
 
@@ -143,7 +175,8 @@ def _quote(memory):
     # while preventing stored instructions from becoming output structure.
     fields = " ".join(
         f"{name}={json.dumps(memory[name], ensure_ascii=False)}"
-        for name in ("id", "theme", "author", "trust", "at")
+        for name in ("id", "theme", "author", "trust", "at", "source")
+        if name != "source" or memory.get("source")
     )
     return f"{fields}\nquoted data: {json.dumps(memory['text'], ensure_ascii=False)}"
 
@@ -208,13 +241,16 @@ def _save(ctx, args):
     theme = _string(args, "theme", ctx.principal.policy.write_wing or "shared")
     topic = _string(args, "topic", "general")
     task = _task(args) if args.get("task") is not None else None
+    source = _source(args)
     store = _boards(ctx, required=True) if task is not None else None
     if task is not None:
         _link_target(ctx, task, store)
     flags = _privacy_flags(text)
     if "health" in flags and ctx.principal.policy.can_write_wing("private"):
         theme = "private"
-    result = _memory(ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text})
+    result = _memory(
+        ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
+    )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
     if task is not None:
@@ -447,11 +483,19 @@ def _register(name, description, handler, properties, required, scope, kind="rea
 
 _STRING = {"type": "string", "minLength": 1}
 _TASK = {"oneOf": [_STRING, {"type": "integer", "minimum": 1}]}
+_SEQ = {"type": "integer", "minimum": 0}
+_SOURCE = {
+    "type": "object",
+    "properties": {"thread": _STRING, "seq_start": _SEQ, "seq_end": _SEQ},
+    "required": ["thread"],
+    "additionalProperties": False,
+}
 _register(
     "memory_save",
-    "Save exact words as a memory, optionally linked to a card.",
+    "Save exact words as a memory, optionally linked to a card and to the chat"
+    " messages they came from.",
     memory_save,
-    {"text": _STRING, "theme": _STRING, "topic": _STRING, "task": _TASK},
+    {"text": _STRING, "theme": _STRING, "topic": _STRING, "task": _TASK, "source": _SOURCE},
     ["text"],
     "memory:write",
     "write",

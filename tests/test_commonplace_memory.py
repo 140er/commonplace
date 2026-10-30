@@ -122,6 +122,7 @@ def test_save_search_get_verbatim_and_verified_stamp(hub, monkeypatch):
             "author": "owner",
             "trust": "trusted",
             "at": "2026-10-30T09:15:00+00:00",
+            "source": None,
             "cards": [],
         }
     ]
@@ -157,6 +158,54 @@ def test_http_save_defaults_and_caller_stamp_cannot_be_forged(hub):
     assert memory["at"] != "1990-01-01" and memory["text"] == "exact\nwords"
     default_id = _save(hub, token, "default theme")
     assert _http(hub, token, f"/api/memory/{default_id}")[1]["theme"] == "inbox"
+
+
+def test_save_records_the_chat_range_it_came_from(hub):
+    owner = hub.owner_token()
+    source = {"thread": "thread-41", "seq_start": 41, "seq_end": 44}
+    memory_id = _save(hub, owner, "We switched to pnpm.", source=source)
+    got = _call(hub, owner, "memory_get", id=memory_id)["content"][0]["text"]
+    header = got.split("\nquoted data: ", 1)[0]
+    assert f"source={json.dumps(source)}" in header
+    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] == source
+
+    one = _save(hub, owner, "One message.", source={"thread": "t", "seq_start": 3})
+    assert _http(hub, owner, f"/api/memory/{one}")[1]["source"] == {
+        "thread": "t",
+        "seq_start": 3,
+        "seq_end": 3,
+    }
+    plain = _save(hub, owner, "No source.")
+    assert _http(hub, owner, f"/api/memory/{plain}")[1]["source"] is None
+    got = _call(hub, owner, "memory_get", id=plain)["content"][0]["text"]
+    assert "source=" not in got.split("\nquoted data: ", 1)[0]
+
+    status, body = _http(
+        hub, owner, "/api/memory", {"text": "over http", "source": {"thread": "h", "seq_end": 9}}
+    )
+    assert status == 201
+    assert _http(hub, owner, f"/api/memory/{body['id']}")[1]["source"] == {
+        "thread": "h",
+        "seq_start": 9,
+        "seq_end": 9,
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "thread-1",
+        {"seq_start": 1},
+        {"thread": "t", "seq_start": 5, "seq_end": 2},
+        {"thread": "t", "seq_start": -1},
+    ],
+)
+def test_save_refuses_a_bad_source_and_stores_nothing(hub, source):
+    owner = hub.owner_token()
+    status, body = _http(hub, owner, "/api/memory", {"text": "bad source", "source": source})
+    assert status == 403 and body["error"].startswith("no: ")
+    result = _call(hub, owner, "memory_search", query="bad source")
+    assert "bad source" not in result["content"][0]["text"]
 
 
 def test_search_hydrates_chunked_content(hub, config):

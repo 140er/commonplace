@@ -132,6 +132,9 @@ File verbatim content into the palace. Identical content (same deterministic dra
 | `content` | string | **Yes** | Verbatim content to store |
 | `source_file` | string | No | Where this came from |
 | `added_by` | string | No | Who is filing (default: "mcp") |
+| `source_thread` | string | No | Chat thread these words came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
 
 **Returns:** `{ success, drawer_id, wing, room }`
 
@@ -325,6 +328,9 @@ Add a fact to the knowledge graph.
 | `object` | string | **Yes** | The entity being connected to |
 | `valid_from` | string | No | When this became true (YYYY-MM-DD) |
 | `source_closet` | string | No | Closet ID where this fact appears |
+| `source_thread` | string | No | Chat thread the fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
 
 **Returns:** `{ success, triple_id, fact }`
 
@@ -356,6 +362,11 @@ Atomically replace a fact with its successor at a single shared boundary. Use wh
 | `old_object` | string | **Yes** | Value being replaced |
 | `new_object` | string | **Yes** | New value |
 | `at` | string | No | Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ; default: now UTC) |
+| `source_thread` | string | No | Chat thread the new fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+
+The replaced fact keeps its row with `status: "superseded"` and `superseded_by` set to the new fact's id.
 
 **Returns:** `{ success, triple_id, fact, superseded }`
 
