@@ -29,6 +29,7 @@ from mempalace import provenance
 from mempalace.config import normalize_wing_name
 from mempalace.tool_capabilities import classify_tool
 
+from . import events, extensions, sessions
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .policy import TOOL_RULES, Policy
@@ -151,6 +152,7 @@ class Mediator:
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
+        self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
     def handle(self, principal: Principal, request) -> Optional[dict]:
@@ -175,7 +177,10 @@ class Mediator:
 
     # ── tools/list ──
     def _tools_list(self, principal: Principal, request: dict) -> dict:
-        response = self.workers.post(principal, request)
+        try:
+            response = self.workers.post(principal, request)
+        except WorkerUnavailable:
+            response = {"jsonrpc": "2.0", "id": request.get("id"), "result": {"tools": []}}
         policy = principal.policy
         try:
             tools = response["result"]["tools"]
@@ -183,8 +188,43 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        response["result"]["tools"] = [t for t in tools if policy.tool_visible(t.get("name"))]
+        visible = [t for t in tools if policy.tool_visible(t.get("name"))]
+        for name in sorted(extensions.names()):
+            tool = extensions.get(name)
+            if policy.tool_visible(name) and (not tool.owner_only or principal.role == "owner"):
+                visible.append(tool.schema())
+        response["result"]["tools"] = visible
         return response
+
+    def _local_call(self, principal: Principal, tool, req_id, args: dict) -> dict:
+        if tool.owner_only and principal.role != "owner":
+            self._audit(principal, tool.name, "deny", "owner only")
+            return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
+        ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
+        try:
+            result = tool.handler(ctx, args)
+        except extensions.ToolError as exc:
+            if tool.kind == "write":
+                self._audit(principal, tool.name, "deny", str(exc)[:200])
+            text = str(exc)
+            if not text.startswith("no:"):
+                text = f"no: {text}"
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": text}], "isError": True},
+            }
+        if tool.kind == "write":
+            self._audit(principal, tool.name, "ok")
+        if isinstance(result, str):
+            text = result
+        else:
+            text = json.dumps(result, indent=2, ensure_ascii=False)
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"content": [{"type": "text", "text": text}]},
+        }
 
     # ── tools/call ──
     def _tools_call(self, principal: Principal, request: dict) -> dict:
@@ -203,6 +243,10 @@ class Mediator:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
+
+        local = extensions.get(name)
+        if local is not None:
+            return self._local_call(principal, local, req_id, args)
 
         rule = TOOL_RULES[name][1]
         notes: list = []
@@ -588,10 +632,68 @@ class Gateway:
         self.supervisor = supervisor
         self.authenticators: list = authenticators or [PersonalTokenAuthenticator(db)]
         self.mediator = Mediator(db, WorkerClient(supervisor))
+        self.mediator.gateway = self
         self.routes: dict = {}
+        self.prefix_routes: list = []
+        self.secure_cookies = False
+        events.ensure_schema(db)
+        sessions.ensure_schema(db)
+        extensions.install(self)
 
     def add_route(self, method: str, path: str, handler: RouteHandler) -> None:
         self.routes[(method.upper(), path)] = handler
+
+    def add_prefix_route(self, method: str, prefix: str, handler: RouteHandler) -> None:
+        """Serve every path under ``prefix`` (longest prefix wins). The handler
+        gets the request handler; ``urlparse(h.path)`` gives the rest."""
+        self.prefix_routes.append((method.upper(), prefix, handler))
+        self.prefix_routes.sort(key=lambda r: len(r[1]), reverse=True)
+
+    def find_route(self, method: str, path: str):
+        handler = self.routes.get((method, path))
+        if handler is not None:
+            return handler
+        for m, prefix, h in self.prefix_routes:
+            if m == method and (path == prefix.rstrip("/") or path.startswith(prefix)):
+                return h
+        return None
+
+    def workspace_dir(self, workspace_id: str) -> str:
+        path = self.supervisor.workspace_dir(workspace_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def principal_for(self, handler) -> Optional[Principal]:
+        """A route's caller: a bearer token, else the web session cookie."""
+        header = handler.headers.get("Authorization")
+        if header:
+            return self.authenticate(header)
+        session = sessions.cookie_value(handler.headers.get("Cookie"))
+        if session:
+            return sessions.session_principal(self.db, session)
+        return None
+
+    def call_memory_tool(self, principal: Principal, name: str, arguments: dict):
+        """Run a MemPalace tool for ``principal`` through the full policy path."""
+        request = {
+            "jsonrpc": "2.0",
+            "id": "commonplace-local",
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        try:
+            response = self.mediator._tools_call(principal, request)
+        except WorkerUnavailable:
+            raise extensions.ToolError("Memory is unavailable right now") from None
+        if "error" in response:
+            raise extensions.ToolError(response["error"].get("message", "refused"))
+        result = _tool_result(response)
+        if response.get("result", {}).get("isError") or (
+            isinstance(result, dict) and result.get("error")
+        ):
+            message = result.get("error") if isinstance(result, dict) else "refused"
+            raise extensions.ToolError(str(message))
+        return result
 
     def authenticate(self, header: Optional[str]) -> Optional[Principal]:
         bearer = bearer_from_header(header)
@@ -626,11 +728,17 @@ class Gateway:
                 self.wfile.write(body)
 
             def _route(self, method: str) -> bool:
-                handler = gateway.routes.get((method, urlparse(self.path).path))
+                handler = gateway.find_route(method, urlparse(self.path).path)
                 if handler is None:
                     return False
                 handler(self)
                 return True
+
+            def _other(self):
+                if not self._route(self.command):
+                    self._send_json(404, {"error": "not found"})
+
+            do_PUT = do_PATCH = do_DELETE = _other
 
             def do_GET(self):
                 path = urlparse(self.path).path

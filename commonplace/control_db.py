@@ -142,10 +142,13 @@ class Principal:
     auth: str
     role: str
     policy: Policy
+    person: bool = False  # a signed-in person (web session), not an agent's token
 
     @property
     def actor(self) -> str:
         """The board actor ref for this caller (docs/boards/schema.sql)."""
+        if self.person:
+            return f"user:{self.user_id}"
         return f"conn:{self.connection}"
 
     def identity(self) -> dict:
