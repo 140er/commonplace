@@ -109,6 +109,31 @@ User Facts:      0.980
 Time:            ~2 minutes
 ```
 
+## Benchmark 4: Fact recall (synthetic, offline)
+
+Do facts work as an index into the full chats? A seeded corpus of chat threads is stored verbatim, facts pointing at exact message ranges are filed into the knowledge graph, and each question is answered from the fact index alone, then checked against the message it cites. It needs no download, no model and no network.
+
+```bash
+python benchmarks/fact_recall_bench.py              # metrics
+python benchmarks/fact_recall_bench.py --threads 200 --json
+```
+
+| Metric | Bar | Meaning |
+|---|---|---|
+| `recall_at_1` | 1.0 | the expected value is the index's first answer |
+| `stale_rate` | 0.0 | no replaced value is left open or returned after its end date |
+| `source_hit_rate` | 1.0 | every source matches the exact planted thread and range and contains the answer as whole words |
+| `old_thread_recall` | 1.0 | facts said only in the oldest thread |
+| `private_leaks` | 0 | facts a restricted reader may not see |
+| `merge_rate` | 1.0 | a restated fact is one fact with every source |
+| `extraction_recall` | 1.0 | every planted occurrence is filed with its wing and exact source; oracle coverage until extraction lands |
+| `temporal_precision` | 1.0 | as-of queries return only the value valid then, including at the replacement boundary |
+| `denied_ok` | 1.0 | denied questions return no facts |
+
+The report also includes `recall_at_5`, source range widths, per-question results, and `passed`. The CLI exits 1 when any bar or question fails, and 2 for invalid arguments. Corpus dates remain valid beyond a year. Newer near-match and hidden competing facts challenge old-thread recall; other cases cover multi-message attribution, separate facts with identical values in different wings, and a private fact later restated publicly.
+
+`tests/test_fact_recall_eval.py` holds these bars in the normal test run and checks they reject broken end-date filtering, unclosed superseded rows, broad/partial/missing/echo source ranges, corrupted merged sources, substring matches, missing facts, wing collapse, and independently missing wing or sensitivity filters. Today facts are filed by an oracle (`--saver oracle`, as an agent calling `fact_save`); handoff-time extraction will plug in as another saver. `run(saver=..., retriever=...)` lets later steps compare retrieval implementations on this corpus.
+
 ## What Each Benchmark Tests
 
 | Benchmark | What it measures | Why it matters |
