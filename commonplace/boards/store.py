@@ -51,12 +51,20 @@ def task_row(conn, ref):
     return row
 
 
+def link_visible(theme, principal) -> bool:
+    if principal is None:
+        return True
+    if not theme:
+        return principal.policy.sees_all_wings
+    return principal.policy.can_read_wing(theme)
+
+
 def require_visible(row, principal) -> None:
     if principal is not None and not principal.policy.can_read_wing(row["board_wing"]):
         raise ToolError("no: card not found")
 
 
-def card(conn, row) -> dict:
+def card(conn, row, principal=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     return {
         "number": row["id"],
@@ -73,9 +81,7 @@ def card(conn, row) -> dict:
         "flags": json.loads(row["flags"] or "[]"),
         **{key: row[key] for key in TASK_COLUMNS if key != "labels"},
         "labels": json.loads(row["labels"] or "[]"),
-        "links": conn.execute(
-            "SELECT count(*) FROM task_links WHERE task_id=?", (row["id"],)
-        ).fetchone()[0],
+        "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],
         "created_at": row["created_at"],
@@ -156,6 +162,8 @@ class BoardStore:
                 link_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_links)")}
                 if "title" not in link_columns:
                     conn.execute("ALTER TABLE task_links ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+                if "theme" not in link_columns:
+                    conn.execute("ALTER TABLE task_links ADD COLUMN theme TEXT")
                 if "invalidated" not in link_columns:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
@@ -199,7 +207,9 @@ class BoardStore:
                 conn.execute("SELECT * FROM boards WHERE id=?", (row["board_id"],)).fetchone()
             )
 
-    def link_drawer(self, task_ref, drawer_id: str, actor: str, title: str = "", *, principal=None):
+    def link_drawer(
+        self, task_ref, drawer_id: str, actor: str, title: str = "", *, principal=None, theme=None
+    ):
         if not isinstance(drawer_id, str) or not drawer_id:
             raise ToolError("no: memory id is required")
         with self.transaction() as conn:
@@ -216,8 +226,8 @@ class BoardStore:
             connection = actor.removeprefix("conn:") if actor.startswith("conn:") else None
             added = conn.execute(
                 "INSERT OR IGNORE INTO task_links(task_id,drawer_id,stamp_user,stamp_connection,"
-                "created_at,title) VALUES (?,?,?,?,?,?)",
-                (row["id"], drawer_id, user, connection, now(), title),
+                "created_at,title,theme) VALUES (?,?,?,?,?,?,?)",
+                (row["id"], drawer_id, user, connection, now(), title, theme),
             ).rowcount
             if added:
                 conn.execute(
@@ -238,7 +248,9 @@ class BoardStore:
             return self.links(conn, row["id"])
 
     @staticmethod
-    def links(conn, number) -> list[dict]:
+    def links(conn, number, principal=None) -> list[dict]:
+        """Links the caller may see: the memory's theme must be readable.
+        Links without a theme (older rows) only show to all-theme readers."""
         return [
             {
                 "drawer_id": r["drawer_id"],
@@ -246,10 +258,22 @@ class BoardStore:
                 "invalidated": bool(r["invalidated"]),
             }
             for r in conn.execute(
-                "SELECT drawer_id,title,invalidated FROM task_links WHERE task_id=? ORDER BY rowid",
+                "SELECT drawer_id,title,invalidated,theme FROM task_links WHERE task_id=? "
+                "ORDER BY rowid",
                 (number,),
             )
+            if link_visible(r["theme"], principal)
         ]
+
+    @staticmethod
+    def hidden_link_targets(conn, number, principal) -> set:
+        return {
+            r["drawer_id"]
+            for r in conn.execute(
+                "SELECT drawer_id,theme FROM task_links WHERE task_id=?", (number,)
+            )
+            if not link_visible(r["theme"], principal)
+        }
 
     def cards_for_drawer(self, drawer_id, *, principal=None) -> list[dict]:
         with self.connection() as conn:

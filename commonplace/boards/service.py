@@ -99,7 +99,7 @@ def needs_me(store, principal) -> dict:
         for row in rows:
             if not principal.policy.can_read_wing(row["board_wing"]):
                 continue
-            item = card(conn, row)
+            item = card(conn, row, principal)
             addressed = row["ask_to"] in (None, f"user:{principal.user_id}")
             if row["status"] == "review" and addressed:
                 result["done_review" if row["ask"] == "Done?" else "asks"].append(item)
@@ -278,7 +278,7 @@ class BoardService:
             if not isinstance(version, int) or isinstance(version, bool):
                 raise ToolError("no: version must be an integer")
             if version != row["version"]:
-                raise VersionClash(card(conn, row))
+                raise VersionClash(card(conn, row, self.principal))
 
     def _owner_actor(self):
         for member in self.ctx.db.members(self.principal.workspace_id):
@@ -410,13 +410,14 @@ class BoardService:
                         task["ask_to"],
                     ):
                         continue
-                    result.append(card(conn, task))
+                    result.append(card(conn, task, self.principal))
             return result
 
     def task_show(self, task):
         with self.transaction() as conn:
             row, _board = self._get(conn, task)
-            result = card(conn, row)
+            result = card(conn, row, self.principal)
+            hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
             result["events"] = [
                 {
                     "kind": r["kind"],
@@ -433,8 +434,9 @@ class BoardService:
                 for r in conn.execute(
                     "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
                 )
+                if not (r["kind"] in ("link", "unlink") and r["target"] in hidden)
             ]
-            result["linked"] = self.store.links(conn, row["id"])
+            result["linked"] = self.store.links(conn, row["id"], self.principal)
             return result
 
     def _new_card(
@@ -507,7 +509,7 @@ class BoardService:
         if status == "review":
             self._log(conn, number, "ask", text=ask, target=target, to_status="review")
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
-        return card(conn, task_row(conn, number))
+        return card(conn, task_row(conn, number), self.principal)
 
     def task_add(self, title, body="", board=None, status="todo", assignee=None, labels=None):
         with self.transaction() as conn:
@@ -534,7 +536,7 @@ class BoardService:
             self._set(conn, row, {"flags": json.dumps(flags)})
             self._log(conn, row["id"], "comment", text=value, flags=flags_for(value))
             self._emit(conn, row["id"], "card.commented")
-            return card(conn, task_row(conn, row["id"]))
+            return card(conn, task_row(conn, row["id"]), self.principal)
 
     def task_take_next(self, board=None, task=None):
         with self.transaction() as conn:
@@ -569,7 +571,7 @@ class BoardService:
             )
             self._log(conn, row["id"], "claim", from_status="todo", to_status="doing")
             self._emit(conn, row["id"], "card.claimed", **{"from": "todo", "to": "doing"})
-            result = card(conn, task_row(conn, row["id"]))
+            result = card(conn, task_row(conn, row["id"]), self.principal)
             decision = conn.execute(
                 "SELECT * FROM task_events WHERE task_id=? AND kind='decide' ORDER BY id DESC LIMIT 1",
                 (row["id"],),
@@ -639,6 +641,19 @@ class BoardService:
                 return
         raise ToolError("no: this move requires a person or a handoff")
 
+    def _memory_theme(self, memory_id):
+        """The memory's theme and first line, read through the caller's own
+        policy: a memory the caller can't read can't be linked."""
+        from commonplace.policy import canonical_wing
+
+        result = self.ctx.memory("mempalace_get_drawer", {"drawer_id": memory_id})
+        metadata = (result.get("metadata") or {}) if isinstance(result, dict) else {}
+        wing = (result.get("wing") if isinstance(result, dict) else None) or metadata.get("wing")
+        if not wing:
+            raise ToolError("no: memory not found")
+        text = result.get("content") or ""
+        return canonical_wing(wing), next(iter(str(text).splitlines()), "")
+
     def _link(self, conn, row, memory_id, *, unlink=False):
         memory_id = validate_text(memory_id, "memory id", required=True, limit=1000)
         if unlink:
@@ -646,14 +661,18 @@ class BoardService:
                 "DELETE FROM task_links WHERE task_id=? AND drawer_id=?", (row["id"], memory_id)
             )
         else:
+            theme, title = self._memory_theme(memory_id)
             conn.execute(
-                "INSERT OR IGNORE INTO task_links(task_id,drawer_id,stamp_user,stamp_connection,created_at) VALUES (?,?,?,?,?)",
+                "INSERT OR IGNORE INTO task_links(task_id,drawer_id,stamp_user,stamp_connection,"
+                "created_at,title,theme) VALUES (?,?,?,?,?,?,?)",
                 (
                     row["id"],
                     memory_id,
                     self.principal.user_id,
                     None if self.principal.person else self.principal.connection,
                     now(),
+                    title,
+                    theme,
                 ),
             )
         self._log(conn, row["id"], "unlink" if unlink else "link", target=memory_id)
@@ -771,7 +790,7 @@ class BoardService:
                     sorted(set(json.loads(row["flags"] or "[]")) | set(new_flags))
                 )
             if not updates and not any(key in args for key in ("link", "unlink", "lesson")):
-                return card(conn, row)
+                return card(conn, row, self.principal)
             self._set(conn, row, updates)
             moved = updates.get("status", row["status"]) != row["status"]
             self._log(
@@ -789,7 +808,7 @@ class BoardService:
             )
             if updates.get("status") == "review":
                 self._emit(conn, row["id"], "card.review_needed", return_to=self.principal.actor)
-            return card(conn, task_row(conn, row["id"]))
+            return card(conn, task_row(conn, row["id"]), self.principal)
 
     def _handoff(self, conn, row, board, to, note, options=None):
         self._write(board)
@@ -842,7 +861,7 @@ class BoardService:
         )
         if person:
             self._emit(conn, row["id"], "card.review_needed", return_to=updates["return_to"])
-        return card(conn, task_row(conn, row["id"]))
+        return card(conn, task_row(conn, row["id"]), self.principal)
 
     def task_handoff(self, task, to, note, options=None, version=None):
         with self.transaction() as conn:
@@ -935,7 +954,7 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
-            return card(conn, task_row(conn, row["id"]))
+            return card(conn, task_row(conn, row["id"]), self.principal)
 
     def needs_me(self):
         return needs_me(self.store, self.principal)
@@ -964,7 +983,7 @@ class BoardService:
                 (b["id"], title),
             ).fetchone()
             if existing:
-                return card(conn, task_row(conn, existing["id"]))
+                return card(conn, task_row(conn, existing["id"]), self.principal)
             if repo is not None:
                 normalized = normalize_repo(repo)
                 mapped = conn.execute(
@@ -1011,4 +1030,4 @@ class BoardService:
                 self._emit(conn, row["id"], "card.moved", **{"from": row["status"], "to": status})
             if status == "review":
                 self._emit(conn, row["id"], "card.review_needed")
-            return card(conn, task_row(conn, row["id"]))
+            return card(conn, task_row(conn, row["id"]), self.principal)

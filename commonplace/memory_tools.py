@@ -196,6 +196,7 @@ def _link(ctx, memory_id, task, store):
             actor=ctx.principal.actor,
             title=title,
             principal=ctx.principal,
+            theme=memory["theme"],
         )
     except (ValueError, KeyError):
         raise ToolError("no: no such card") from None

@@ -63,7 +63,7 @@ class FakeStore:
             raise ToolError("no: card not found")
         return {"wing": theme}
 
-    def link_drawer(self, task_ref, drawer_id, *, actor, title="", principal):
+    def link_drawer(self, task_ref, drawer_id, *, actor, title="", principal, theme=None):
         self.board_for_task(task_ref, principal=principal)
         self.links.append((task_ref, drawer_id, actor, title))
 
@@ -588,3 +588,40 @@ def test_optional_helper_errors_are_not_hidden(monkeypatch):
     ctx = SimpleNamespace(db=object(), principal=SimpleNamespace(workspace_id="ws_test"))
     with pytest.raises(ValueError, match="helper bug"):
         memory_tools._share_link(ctx, "/app/#/card/7")
+
+
+def test_private_memory_link_shows_no_trace_to_a_scoped_reader(hub):
+    from commonplace import sessions
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+
+    owner = hub.owner_token()
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    BoardService(ToolContext(principal=person, gateway=hub.gateway)).board_add(
+        slug="work", wing="shared"
+    )
+    card = _call(hub, owner, "task_add", title="Shared card", board="work")
+    number = int(card["content"][0]["text"].split()[0].lstrip("#"))
+    saved = _call(
+        hub,
+        owner,
+        "memory_save",
+        text="PRIVATE_LINK_MARKER first line\nsecond",
+        theme="private",
+        task=number,
+    )
+    memory_id = saved["content"][0]["text"].split()[1]
+    reader = hub.token(
+        "reader",
+        profile="standard",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+        trust="trusted",
+    )
+    shown = _call(hub, reader, "task_show", task=number)["content"][0]["text"]
+    assert "PRIVATE_LINK_MARKER" not in shown and memory_id not in shown
+    listed = _call(hub, reader, "task_list", board="work")["content"][0]["text"]
+    assert memory_id not in listed
+    full = _call(hub, owner, "task_show", task=number)["content"][0]["text"]
+    assert memory_id in full
