@@ -466,7 +466,8 @@ def test_ambiguous_body_framing_is_closed(surface, headers):
             conn.putheader(key, value)
         conn.endheaders()
         response = conn.getresponse()
-        assert hardened((response.status, dict(response.getheaders()), response.read())) == 400
+        expected = 411 if headers[0][0] == "Transfer-Encoding" else 400
+        assert hardened((response.status, dict(response.getheaders()), response.read())) == expected
         assert response.will_close
     finally:
         conn.close()

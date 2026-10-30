@@ -109,7 +109,6 @@ def test_tools_list_follows_the_profile(hub):
         "mempalace_add_drawer",
         "mempalace_diary_write",
         "mempalace_diary_read",
-        "mempalace_kg_query",
     }
     coder = hub.tool_names(hub.token("coder", **CODER))
     assert "mempalace_kg_add" in coder and "mempalace_list_drawers" in coder
@@ -206,7 +205,7 @@ def test_standard_token_writes_only_its_wings(hub):
 def test_kg_writes_are_stamped(hub):
     token = hub.token("coder", **CODER)
     hub.call(token, "mempalace_kg_add", subject="api", predicate="uses", object="sqlite")
-    facts, _ = hub.call(token, "mempalace_kg_query", entity="api")
+    facts, _ = hub.call(hub.owner_token(), "mempalace_kg_query", entity="api")
     assert facts["facts"][0]["hub_connection"] == "coder"
 
 
@@ -527,7 +526,8 @@ def test_coerced_drawer_ids_are_refused_not_forwarded(hub, ids):
         trust="trusted",
     )
     result, _ = hub.call(trusted, "mempalace_delete_drawers", drawer_ids=ids(vault["drawer_id"]))
-    assert result.get("denied") or result.get("error"), result
+    # Refused, or (a parsed JSON string) answered as missing: never deleted.
+    assert result.get("denied") or result.get("error") or result.get("deleted") == 0, result
     still, _ = hub.call(owner, "mempalace_get_drawer", drawer_id=vault["drawer_id"])
     assert still["content"] == "keep me"
 
@@ -536,3 +536,119 @@ def test_non_string_wing_is_refused(hub):
     token = hub.token("coder", **CODER)
     result, _ = hub.call(token, "mempalace_list_drawers", wing=["project_a"])
     assert result["denied"]
+
+
+# ── review round 2 ──
+def test_hidden_drawers_answer_in_each_tools_own_not_found_shape(hub):
+    """No existence oracle: a hidden id and a missing id read the same (review HIGH)."""
+    owner = hub.owner_token()
+    vault, _ = hub.call(owner, "mempalace_add_drawer", wing="vault", room="r", content="secret v")
+    mine, _ = hub.call(owner, "mempalace_add_drawer", wing="shared", room="r", content="mine")
+    trusted = hub.token(
+        "t",
+        profile="full",
+        scopes=["memory:read", "memory:write", "memory:delete"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+        trust="trusted",
+    )
+    missing_id = "drawer_vault_r_000000000000000000000000"
+    for tool, arg in (
+        ("mempalace_delete_drawers", "drawer_ids"),
+        ("mempalace_delete_drawer", "drawer_id"),
+        ("mempalace_update_drawer", "drawer_id"),
+    ):
+        extra = {"content": "x"} if tool == "mempalace_update_drawer" else {}
+
+        def ask(drawer_id, tool=tool, arg=arg, extra=extra):
+            value = [drawer_id] if arg == "drawer_ids" else drawer_id
+            result, _ = hub.call(trusted, tool, **{arg: value}, **extra)
+            return json.loads(json.dumps(result).replace(drawer_id, "ID"))
+
+        assert ask(vault["drawer_id"]) == ask(missing_id), tool
+    # A hidden id in a batch is one not-found item; the visible one is deleted.
+    both, _ = hub.call(
+        trusted, "mempalace_delete_drawers", drawer_ids=[vault["drawer_id"], mine["drawer_id"]]
+    )
+    assert (both["deleted"], both["errors"]) == (1, 1)
+    assert both["results"][0] == {
+        "drawer_id": vault["drawer_id"],
+        "error": f"Drawer not found: {vault['drawer_id']}",
+    }
+    still, _ = hub.call(owner, "mempalace_get_drawer", drawer_id=vault["drawer_id"])
+    assert still["content"] == "secret v"
+    assert "cmmn-hidden-" not in json.dumps([dict(r) for r in hub.db.audit_entries(limit=50)])
+
+
+def _raw_exchange(port, payload: bytes) -> bytes:
+    import socket
+
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        sock.sendall(payload)
+        chunks = []
+        while True:
+            try:
+                data = sock.recv(65536)
+            except socket.timeout:
+                break
+            if not data:
+                break
+            chunks.append(data)
+        return b"".join(chunks)
+
+
+def test_early_errors_close_the_connection(hub):
+    """An unread body must never be parsed as the next request (review MEDIUM)."""
+    smuggled = b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n"
+    body = b'{"jsonrpc":"2.0","id":1,"method":"ping"}' + smuggled
+    head = (
+        b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n"
+    )
+    reply = _raw_exchange(hub.port, head + body)
+    assert reply.startswith(b"HTTP/1.1 401") and b"Connection: close" in reply
+    assert reply.count(b"HTTP/1.1 ") == 1
+    token = hub.owner_token().encode()
+    head = (
+        b"POST /mcp HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + token + b"\r\n"
+        b"Content-Type: text/plain\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n"
+    )
+    reply = _raw_exchange(hub.port, head + body)
+    assert reply.startswith(b"HTTP/1.1 415") and reply.count(b"HTTP/1.1 ") == 1
+
+
+def test_transfer_encoding_is_refused(hub):
+    head = (
+        b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+        b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    )
+    reply = _raw_exchange(hub.port, head)
+    assert reply.startswith(b"HTTP/1.1 411") and b"Connection: close" in reply
+
+
+def test_untrusted_tokens_cannot_write_the_graph(hub):
+    bot = hub.token(
+        "grok",
+        profile="full",
+        scopes=["memory:read", "memory:write", "kg:write"],
+        read_wings=["inbox"],
+        write_wing="inbox",
+        trust="untrusted",
+    )
+    response = hub.rpc(
+        bot,
+        "tools/call",
+        {
+            "name": "mempalace_kg_add",
+            "arguments": {"subject": "a", "predicate": "b", "object": "c"},
+        },
+    )
+    assert response["error"]["message"] == "Unknown tool: mempalace_kg_add"
+
+
+def test_audit_fields_are_capped(hub):
+    token = hub.token("coder", **CODER)
+    hub.rpc(token, "tools/call", {"name": "x" * 10_000, "arguments": {}})
+    hub.call(token, "mempalace_add_drawer", wing="w" * 5_000, room="r", content="c")
+    for entry in hub.db.audit_entries(limit=5):
+        assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200

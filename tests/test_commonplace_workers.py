@@ -2,8 +2,10 @@
 
 import http.client
 import json
+import sys
+from pathlib import Path
 
-from commonplace.workers import SubprocessLauncher, WorkerSupervisor
+from commonplace.workers import _PASSED_ENV, SubprocessLauncher, WorkerSupervisor
 from mempalace import provenance
 
 IDENTITY = {
@@ -38,6 +40,15 @@ def test_subprocess_worker_is_isolated_and_locked(tmp_path, monkeypatch):
     # A shared remote store would mix workspaces; the worker must not see it.
     monkeypatch.setenv("MEMPALACE_BACKEND", "qdrant")
     monkeypatch.setenv("MEMPALACE_QDRANT_URL", "http://127.0.0.1:1")
+    for secret in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "MEMPALACE_LLM_API_KEY",
+        "MEMPALACE_ACCEPT_EXTERNAL_LLM",
+        "COMMONPLACE_DATA",
+    ):
+        monkeypatch.setenv(secret, "leak-me")
+    monkeypatch.setenv("MEMPALACE_EMBEDDING_THREADS", "2")
     sup = WorkerSupervisor(
         str(tmp_path / "data"), launcher=SubprocessLauncher(startup_timeout_s=120)
     )
@@ -53,6 +64,19 @@ def test_subprocess_worker_is_isolated_and_locked(tmp_path, monkeypatch):
         }
         status, body = _post(worker, ok)
         assert status == 200 and json.loads(body)["result"] == {}
+        if sys.platform.startswith("linux"):
+            environ = Path(f"/proc/{worker.pid}/environ").read_bytes().split(b"\0")
+            names = {e.split(b"=", 1)[0].decode() for e in environ if e}
+            assert "leak-me".encode() not in b"\0".join(environ)
+            assert "MEMPALACE_EMBEDDING_THREADS" in names
+            assert names <= _PASSED_ENV | {
+                "HOME",
+                "USERPROFILE",
+                "MEMPALACE_CONFIG_DIR",
+                "MEMPALACE_PALACE_PATH",
+                "MEMPALACE_MCP_HTTP_TOKEN",
+                "MEMPALACE_MCP_TRUSTED_IDENTITY",
+            }, names
         ws_dir = tmp_path / "data" / "workspaces" / "ws_1a2b"
         assert (ws_dir / "palace").is_dir() and (ws_dir / "home").is_dir()
         assert not elsewhere.exists()

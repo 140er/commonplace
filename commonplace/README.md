@@ -19,12 +19,13 @@ commonplace serve --host 127.0.0.1 --port 8765
 | `--scopes` | `memory:read`, `memory:write`, `memory:delete`, `kg:read`, `kg:write`, `events:read`, `events:write`, `private:read`, `private:write`, `admin` |
 | `--read-wings` / `--write-wings` | wing names or patterns (`project_*`, `*`) |
 | `--write-wing` | where an `untrusted` token's writes always land |
-| `--trust` | `untrusted` (inbox writes, no update or delete), `standard` (no delete), `trusted` |
+| `--trust` | `untrusted` (inbox writes only, no update, delete or graph writes), `standard` (no delete), `trusted` |
 
 - `mine`, `sync`, `hook_settings` and `reconnect` are never served through the gateway.
 - Wings named `private` or `private_*` also need `private:read` / `private:write`, even under `*`.
 - Tools that read or change data across wings (status, graph, tunnels, events) need every wing.
-- The knowledge graph has no wings: `kg:read` sees the whole graph.
+- The knowledge graph has no wings, so reading it, or invalidating or superseding a fact, needs every wing. `kg:write` alone allows adding facts. Untrusted tokens never write the graph.
+- A hidden drawer answers exactly like a missing one in every tool.
 - A tool the token can't use is missing from `tools/list` and answers `Unknown tool`. A drawer it can't read answers `Drawer not found`.
 - Searches without a wing run once per readable wing and merge by score.
 
