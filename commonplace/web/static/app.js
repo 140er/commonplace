@@ -1,5 +1,6 @@
 import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
+import { digestSpeech } from "./digest.js";
 
 const root = document.querySelector("#root");
 const state = {
@@ -15,6 +16,18 @@ const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
 const message = (text, retry = false) => `<div class="message" role="status">${e(text)}${retry ? '<button data-action="retry">Retry</button>' : ""}</div>`;
 const options = (items, selected) => items.map((s) => `<option value="${e(s)}" ${s === selected ? "selected" : ""}>${e(s)}</option>`).join("");
+let speechState = { active: false, text: "" };
+const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
+function speechView() {
+  const button = root.querySelector('[data-action="speak-digest"]');
+  if (button) {
+    button.textContent = speechState.active ? "Stop" : "Speak";
+    button.dataset.active = String(speechState.active);
+    button.setAttribute("aria-label", speechState.active ? "Stop speaking" : "Speak what needs you today");
+  }
+  const captions = root.querySelector("#digest-captions");
+  if (captions) { captions.hidden = !speechState.text; captions.textContent = speechState.text; }
+}
 const prLink = (card) => {
   const href = safeLink(card.pr_url);
   return href ? `<a href="${e(href)}" target="_blank" rel="noopener noreferrer">PR #${e(card.pr_number || "↗")}</a>` : card.pr_number ? `<span>PR #${e(card.pr_number)}</span>` : "";
@@ -128,6 +141,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 function signin() {
+  speech.stop();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
@@ -187,12 +201,15 @@ function needsCards() {
   return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
 }
 function needsView() {
-  title("Needs you");
+  // Keep the focused Speak/Stop node through live refreshes.
+  if (!root.querySelector('[data-action="speak-digest"]')) title("Needs you", speech.supported ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "");
   const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
   const cards = needsCards();
   if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
   const open = state.route.startsWith("#/card/") ? Number(state.route.slice(7)) : null; // its controls live in the panel
   root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="0">${taskRow(card, `<a href="#/board/${enc(card.board)}">${e(card.board)}</a><span class="actor">${e(actor(card.return_to || card.assignee || card.created_by))}</span>`)}${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${card.number === open ? "" : ["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${rowFoot(card)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
+  root.querySelector(".queue").insertAdjacentHTML("afterbegin", '<div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div>');
+  speechView();
 }
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
@@ -462,6 +479,7 @@ async function route() {
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
   if (state.base !== previousBase) { state.chatObserver?.disconnect(); state.chatVisible.clear(); }
+  if (state.base !== "#/") speech.stop();
   root.querySelector("#card-panel").hidden = !hash.startsWith("#/card/");
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
@@ -513,7 +531,8 @@ root.addEventListener("click", async (event) => {
   const b = event.target.closest("[data-action]"); if (!b) return;
   const number = Number(b.dataset.card), action = b.dataset.action;
   try {
-    if (action === "decide") {
+    if (action === "speak-digest") await speech.toggle();
+    else if (action === "decide") {
       const reply = state.drafts.get(`reply-${number}`);
       await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
@@ -674,6 +693,7 @@ async function poll() {
 document.addEventListener("visibilitychange", () => schedule(document.hidden ? 30000 : 0));
 document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
+window.addEventListener("pagehide", () => speech.stop());
 setInterval(() => {
   root.querySelectorAll("[data-elapsed]").forEach((time) => { time.textContent = elapsed(time.dataset.elapsed); });
   root.querySelectorAll("[data-claim-until]").forEach((bar) => {
