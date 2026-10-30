@@ -204,7 +204,17 @@ class HandoffService:
         as ``register_successor``; stored/launched → ``launch_failed``,
         ``EVENT_LAUNCH_FAILED`` once (repeats are no-ops); ``error`` is cut
         to 200 chars and goes to the event reason only."""
-        raise NotImplementedError
+        with self.control_db._lock:
+            handoff = self._authorized(principal, handoff_id)
+            if handoff.state == "launch_failed":
+                return handoff
+            if handoff.state not in ("stored", "launched"):
+                raise HandoffDBError("handoff is not ready to report a launch failure")
+            handoff = self.db.mark_launch_failed(handoff_id, "successor launch failed")
+            self._emit(
+                EVENT_LAUNCH_FAILED, principal, handoff, decision="error", reason=error[:200]
+            )
+            return handoff
 
     def relaunch(self, principal, handoff_id: str) -> HandoffResult:
         with self.control_db._lock:
@@ -316,6 +326,7 @@ class HandoffService:
             task_ref=handoff.task_ref,
             branch=handoff.branch,
             pr_url=handoff.pr_url,
+            cwd=handoff.cwd,
             parent_handoff_id=handoff.parent_handoff_id,
         )
 

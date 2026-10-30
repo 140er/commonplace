@@ -59,6 +59,7 @@ class FakeDB:
                 task_ref=meta.task_ref,
                 branch=meta.branch,
                 pr_url=meta.pr_url,
+                cwd=meta.cwd,
                 parent_handoff_id=meta.parent_handoff_id,
                 connection_id=connection_id,
             )
@@ -885,6 +886,113 @@ def test_concurrent_successor_repeats_emit_completion_once(rig):
     assert rig.events.count(EVENT_COMPLETED) == rig.trace.count("set_successor") == 1
 
 
+@pytest.mark.parametrize("state", ["stored", "launched"])
+@pytest.mark.parametrize("owner", [False, True])
+def test_report_launch_failure_allows_source_connection_or_owner_once(rig, state, owner):
+    first = rig.service.run(rig.principal, make_request())
+    rig.db.update(first.handoff.id, state=state)
+    caller = (
+        rig.principal
+        if not owner
+        else SimpleNamespace(**{**vars(rig.principal), "role": "owner", "connection_id": "other"})
+    )
+    failed = rig.service.report_launch_failure(caller, first.handoff.id, "local command failed")
+    assert (
+        failed.state == "launch_failed"
+        and failed.stored_thread_id == first.handoff.stored_thread_id
+    )
+    assert failed.error == "successor launch failed"
+    assert rig.service.report_launch_failure(caller, failed.id, "a later error") == failed
+    assert rig.trace.count("mark_launch_failed") == rig.events.count(EVENT_LAUNCH_FAILED) == 1
+    assert rig.events.calls[-1][4:6] == ("error", "local command failed")
+    assert len(rig.store.writes) == len(rig.launch_calls) == 1
+
+
+@pytest.mark.parametrize("error", ["", "x" * 200, "private diagnostic: " + "é" * 250])
+def test_report_launch_failure_bounds_error_and_keeps_it_out_of_row(rig, error):
+    first = rig.service.run(rig.principal, make_request())
+    failed = rig.service.report_launch_failure(rig.principal, first.handoff.id, error)
+    assert failed.error == "successor launch failed"
+    assert rig.events.calls[-1][5] == error[:200]
+    assert len(rig.events.calls[-1][5]) <= 200
+
+
+@pytest.mark.parametrize("case", ["other_connection", "other_workspace", "missing"])
+def test_report_launch_failure_hides_unauthorized_handoffs_even_on_repeats(rig, case):
+    first = rig.service.run(rig.principal, make_request())
+    rig.service.report_launch_failure(rig.principal, first.handoff.id, "local failure")
+    changes = {"connection_id": "other"} if case == "other_connection" else {}
+    if case == "other_workspace":
+        changes = {"workspace_id": "other", "role": "owner"}
+    caller = SimpleNamespace(**{**vars(rig.principal), **changes})
+    with pytest.raises(LookupError, match="^handoff not found$"):
+        rig.service.report_launch_failure(
+            caller, "missing" if case == "missing" else first.handoff.id, "private error"
+        )
+    assert rig.trace.count("mark_launch_failed") == rig.events.count(EVENT_LAUNCH_FAILED) == 1
+
+
+@pytest.mark.parametrize("state", ["pending", "failed", "done"])
+def test_report_launch_failure_rejects_other_states_and_preserves_completion(rig, state):
+    first = rig.service.run(rig.principal, make_request())
+    if state == "done":
+        before = rig.service.register_successor(
+            rig.principal, first.handoff.id, SuccessorRef("agent")
+        )
+    else:
+        before = rig.db.update(first.handoff.id, state=state)
+    with pytest.raises(HandoffDBError):
+        rig.service.report_launch_failure(rig.principal, first.handoff.id, "late failure")
+    assert rig.db.get(first.handoff.id) == before
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0 and "mark_launch_failed" not in rig.trace
+
+
+def test_report_launch_failure_does_not_emit_when_db_transition_fails(rig, monkeypatch):
+    first = rig.service.run(rig.principal, make_request())
+
+    def fail(handoff_id, error):
+        raise sqlite3.OperationalError("database unavailable")
+
+    monkeypatch.setattr(rig.db, "mark_launch_failed", fail)
+    with pytest.raises(sqlite3.OperationalError):
+        rig.service.report_launch_failure(rig.principal, first.handoff.id, "local failure")
+    assert rig.db.get(first.handoff.id) == first.handoff
+    assert rig.events.count(EVENT_LAUNCH_FAILED) == 0
+
+
+def test_report_launch_failure_contains_event_error_without_repeating_transition(rig):
+    first = rig.service.run(rig.principal, make_request())
+    rig.events.fail_on = EVENT_LAUNCH_FAILED
+    failed = rig.service.report_launch_failure(rig.principal, first.handoff.id, "local failure")
+    assert failed.state == "launch_failed"
+    assert rig.service.report_launch_failure(rig.principal, failed.id, "repeat") == failed
+    assert rig.trace.count("mark_launch_failed") == rig.events.count(EVENT_LAUNCH_FAILED) == 1
+
+
+def test_concurrent_client_failure_reports_transition_and_emit_once(rig):
+    first = rig.service.run(rig.principal, make_request())
+    barrier = threading.Barrier(8)
+
+    def report():
+        other_service = rig.new_service()
+        barrier.wait(timeout=10)
+        return other_service.report_launch_failure(rig.principal, first.handoff.id, "local failure")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: report(), range(8)))
+    assert all(row == results[0] and row.state == "launch_failed" for row in results)
+    assert rig.trace.count("mark_launch_failed") == rig.events.count(EVENT_LAUNCH_FAILED) == 1
+
+
+def test_reported_client_failure_can_be_relaunched_by_owner(rig):
+    first = rig.service.run(rig.principal, make_request())
+    rig.service.report_launch_failure(rig.principal, first.handoff.id, "local failure")
+    owner = SimpleNamespace(**{**vars(rig.principal), "role": "owner"})
+    result = rig.service.relaunch(owner, first.handoff.id)
+    assert result.launch and result.handoff.id == first.handoff.id
+    assert len(rig.store.writes) == 1
+
+
 @pytest.mark.parametrize("kind", ["client", "command"])
 def test_owner_relaunch_releases_claim_and_uses_captured_settings(rig, kind):
     rig.settings.current = HandoffSettings(enabled=True, launcher=LauncherConfig(kind=kind))
@@ -935,6 +1043,7 @@ def test_restart_reconstructs_unclaimed_stored_doc_without_storing_again(rig, mo
     )
     assert result.launch and result.handoff.id == first.handoff.id
     assert rig.doc_calls[-1][1].thread_id == "source-1"
+    assert rig.doc_calls[-1][1].cwd == make_request().meta.cwd
     assert len(rig.store.writes) == 1
 
 
