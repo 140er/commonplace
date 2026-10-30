@@ -307,30 +307,21 @@ def _finalize_candidate_hits(
     stats: dict = None,
     known_distances: dict = None,
 ) -> tuple:
-    try:
-        _apply_candidate_strategy(
-            candidate_strategy,
-            hits,
-            drawers_col,
-            query,
-            wing,
-            room,
-            n_results,
-            max_distance=max_distance,
-            source_file=source_file,
-            since_dt=since_dt,
-            before_dt=before_dt,
-            stats=stats,
-            known_distances=known_distances,
-        )
-    except UnsupportedCapabilityError:
-        return [], _search_error_result(
-            "candidate_strategy='union' requires a backend with lexical_search support",
-            unsupported_capability="supports_lexical_search",
-            hint=(
-                "Use candidate_strategy='vector' or select a backend that supports lexical search."
-            ),
-        )
+    _apply_candidate_strategy(
+        candidate_strategy,
+        hits,
+        drawers_col,
+        query,
+        wing,
+        room,
+        n_results,
+        max_distance=max_distance,
+        source_file=source_file,
+        since_dt=since_dt,
+        before_dt=before_dt,
+        stats=stats,
+        known_distances=known_distances,
+    )
 
     vector_weight, bm25_weight = _resolve_hybrid_rank_weights()
     ranked = _hybrid_rank(
@@ -350,6 +341,7 @@ def _finalize_candidate_hits(
         hit.pop("_source_file_full", None)
         hit.pop("_chunk_index", None)
         hit.pop("_parent_drawer_id", None)
+        hit.pop("_stored_id", None)
 
     return hits, None
 

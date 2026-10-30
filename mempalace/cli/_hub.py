@@ -106,7 +106,7 @@ def _print_hub_search_result(args, result: dict) -> bool:
         print(f"  [{index}] {wing} / {room}")
         print(f"      Source: {source}")
         if similarity is None:
-            print(f"      Match:  bm25={bm25}  (vector disabled)")
+            print(f"      Match:  bm25={bm25}  (lexical candidate)")
         else:
             print(f"      Match:  similarity={similarity}  bm25={bm25}")
         print()

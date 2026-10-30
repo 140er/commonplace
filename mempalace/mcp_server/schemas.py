@@ -508,7 +508,7 @@ TOOLS = {
                     "type": "string",
                     "enum": ["vector", "union"],
                     "default": "union",
-                    "description": "Candidate source strategy. Default 'union' merges vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only.",
+                    "description": "Drawer-only candidate strategy. Default 'union' merges vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only. Media/code task search always uses shared-space vector ranking.",
                 },
                 "cli_compatible": {
                     "type": "boolean",

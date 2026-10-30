@@ -96,7 +96,7 @@ def _range_label(hit: dict):
 
 
 def _score(hit: dict) -> float:
-    for key, sign in (("similarity", 1), ("score", 1), ("distance", -1)):
+    for key, sign in (("score", 1), ("similarity", 1), ("distance", -1)):
         value = hit.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return sign * float(value)

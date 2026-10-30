@@ -243,6 +243,8 @@ def search_memories(
             detects a divergence that would segfault chromadb on segment
             load.
         candidate_strategy: How candidates for the hybrid re-rank are gathered.
+            Applies to drawer-only search. Experimental ``include_media`` /
+            ``query_task="code"`` search always uses shared-space vector ranking.
 
             * ``"vector"`` — preserves historical behavior: top
               ``n_results * 4`` rows from the vector index are the rerank pool.
@@ -252,7 +254,8 @@ def search_memories(
               through the backend's ``lexical_search`` capability and merge
               them into the rerank pool (deduped by source_file). Catches docs
               with strong BM25 signal that are vector-distant from the query.
-              Requires a backend with lexical search support.
+              Backends without lexical search retain vector candidates and
+              report ``candidate_strategy_fallback="lexical_search_unsupported"``.
 
               When ``max_distance`` is also set, a BM25-only candidate whose
               computed vector distance is past it is dropped; one whose
@@ -409,6 +412,7 @@ def search_memories(
         # On the cosine scale, so l2 and ip palaces rank the same way.
         effective_dist = _boosted_cosine_distance(dist, boost, metric)
         entry = {
+            "_stored_id": stored_drawer_id,
             "drawer_id": _result_drawer_id(meta, stored_drawer_id),
             "text": doc,
             "wing": meta.get("wing", "unknown"),

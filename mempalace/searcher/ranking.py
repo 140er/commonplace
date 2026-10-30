@@ -195,7 +195,8 @@ def _hybrid_rank(
     Used by candidate-union mode to merge BM25-only candidates that the
     vector index didn't surface.
 
-    Mutates each result dict to add ``bm25_score`` and reorders the list
+    Mutates each result dict to add ``bm25_score`` and the hybrid ``score``,
+    allowing downstream scope merges to preserve this order. Reorders the list
     in place. Returns the same list for convenience.
     """
     if not results:
@@ -215,7 +216,8 @@ def _hybrid_rank(
             distance = _metric_scale_distance(boosted, metric)
         vec_sim = _distance_to_similarity(distance, metric)
         r["bm25_score"] = round(raw, 3)
-        scored.append((vector_weight * vec_sim + bm25_weight * norm, r))
+        r["score"] = vector_weight * vec_sim + bm25_weight * norm
+        scored.append((r["score"], r))
 
     # Break exact score ties by raw vector distance first: boosted drawers closer
     # than their boost all clamp to the same score and must keep vector order.

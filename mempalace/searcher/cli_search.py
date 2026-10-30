@@ -150,19 +150,22 @@ def _cli_ranked_hits(
     docs = _first_or_empty(results, "documents")
     metas = _first_or_empty(results, "metadatas")
     dists = _first_or_empty(results, "distances")
+    stored_ids = _aligned_query_ids(results, len(docs))
+    known_distances = dict(zip(stored_ids, dists))
     fetched = len(docs)
     if window is not None:
         # Keep the whole in-window pool: the hybrid re-rank must see every
         # survivor before the display cut, or a BM25-strong drawer deep in the
         # pool could never surface.
         kept = [
-            (doc, meta, dist)
-            for doc, meta, dist in zip(docs, metas, dists)
+            (stored_id, doc, meta, dist)
+            for stored_id, doc, meta, dist in zip(stored_ids, docs, metas, dists)
             if filed_at_in_window((meta or {}).get("filed_at"), *window)
         ]
-        docs = [k[0] for k in kept]
-        metas = [k[1] for k in kept]
-        dists = [k[2] for k in kept]
+        stored_ids = [k[0] for k in kept]
+        docs = [k[1] for k in kept]
+        metas = [k[2] for k in kept]
+        dists = [k[3] for k in kept]
 
     # Pure-cosine retrieval on the CLI path was missing lexical matches: a
     # drawer whose text contains every query term can still score distance
@@ -170,6 +173,7 @@ def _cli_ranked_hits(
     # fragment). Hybridize with BM25 as `mempalace_search` does.
     hits = [
         {
+            "_stored_id": stored_id,
             "text": doc or "",
             "distance": float(dist),
             "metadata": meta or {},
@@ -177,31 +181,24 @@ def _cli_ranked_hits(
             "_source_file_full": (meta or {}).get("source_file"),
             "_chunk_index": (meta or {}).get("chunk_index"),
         }
-        for doc, meta, dist in zip(docs, metas, dists)
+        for stored_id, doc, meta, dist in zip(stored_ids, docs, metas, dists)
         if not is_bookkeeping(meta)
     ]
     # Bookkeeping rows held slots in the fetch, so the caller widens for them too.
     skipped = len(docs) - len(hits)
-    try:
-        _apply_candidate_strategy(
-            candidate_strategy,
-            hits,
-            col,
-            query,
-            wing,
-            room,
-            n_results,
-            since_dt=window[0] if window else None,
-            before_dt=window[1] if window else None,
-            known_distances=dict(
-                zip(
-                    _aligned_query_ids(results, len(_first_or_empty(results, "documents"))),
-                    _first_or_empty(results, "distances"),
-                )
-            ),
-        )
-    except UnsupportedCapabilityError as exc:
-        raise SearchError(str(exc)) from exc
+    _apply_candidate_strategy(
+        candidate_strategy,
+        hits,
+        col,
+        query,
+        wing,
+        room,
+        n_results,
+        since_dt=window[0] if window else None,
+        before_dt=window[1] if window else None,
+        known_distances=known_distances,
+    )
+
     for hit in hits:
         if "metadata" not in hit:
             hit["metadata"] = {
@@ -391,7 +388,10 @@ def search(
         print(f"  [{i}] {wing_name} / {room_name}")
         print(f"      Source: {source}")
         _print_also_in(hit)
-        print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
+        if vec_sim is None:
+            print(f"      Match:  bm25={bm25}  (lexical candidate)")
+        else:
+            print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
         print()
         # Print the verbatim text, indented
         for line in hit["text"].strip().split("\n"):

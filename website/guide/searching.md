@@ -31,6 +31,8 @@ mempalace search "deploy process" --candidate-strategy vector
 3. Optional wing/room filters narrow both candidate sources.
 4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
 
+Use the returned hybrid `score` when combining search results from different scopes. A backend without lexical search keeps vector results and reports `candidate_strategy_fallback: "lexical_search_unsupported"`. Experimental media/code task search always uses shared-space vector ranking.
+
 ### Why Scoping Matters
 
 Wing/room filtering is useful when a single palace contains many unrelated projects or people. Narrowing the search to a specific wing (or wing + room) means the vector store only scores candidates inside that scope, which keeps retrieval predictable as the palace grows.

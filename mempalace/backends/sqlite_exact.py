@@ -1458,15 +1458,26 @@ class SQLiteExactCollection(BaseCollection):
         fts_query = " OR ".join(tokens)
         collection_id = self._collection_id(cur)
         try:
-            limit_sql = "" if where else "LIMIT ?"
+            pushed = _equality_where_sql(where, locus_columns=self._handle.has_locus_columns)
+            scope_sql = ""
             params = (fts_query, collection_id)
-            if not where:
+            if pushed is not None and where:
+                filter_sql, filter_params = pushed
+                scope_sql = (
+                    "AND EXISTS (SELECT 1 FROM documents "
+                    "WHERE documents.rowid = docs_fts.rowid "
+                    f"AND collection_id = ? AND ({filter_sql}))"
+                )
+                params = (*params, collection_id, *filter_params)
+            limit_sql = "LIMIT ?" if pushed is not None else ""
+            if pushed is not None:
                 params = (*params, max(n_results * 5, n_results))
             rows = cur.execute(
                 f"""
                 SELECT doc_id, bm25(docs_fts) AS rank
                 FROM docs_fts
                 WHERE docs_fts MATCH ? AND collection_id = ?
+                {scope_sql}
                 ORDER BY rank
                 {limit_sql}
                 """,

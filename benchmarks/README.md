@@ -14,15 +14,18 @@ uv sync --extra dev   # or: pip install -e ".[dev]"
 
 ```bash
 uv run python benchmarks/search_union_bench.py
+uv run python benchmarks/search_union_bench.py --backend chroma --wing engineering --room notes
 ```
 
-Measures the default production search path on 20,000 synthetic `sqlite_exact`
-drawers, including local MiniLM query embedding. It refuses to download a missing
-model. Run the same harness on both revisions for before/after p50/p95 and
-recall@5. Each query is warmed once, then 300 searches are timed. Construction
-reuses 100 filler-template embeddings with unique record suffixes; ten embedded
-needles and ten zero-vector ID/path needles measure both candidate sources.
-These search timings do not measure hook execution or startup injection.
+Compares explicit `vector` (the previous default) and `union` (the current
+default) on 20,000 synthetic drawers, including local MiniLM query embedding.
+Supports `sqlite_exact` and Chroma. Each query/strategy/scope is warmed once;
+five interleaved repeats give 165 samples per strategy per scope. Unfiltered,
+wing, and wing/room searches include natural-language common-word queries.
+The model must already be fully cached. Construction reuses 100 filler-template
+embeddings with unique record suffixes; ten embedded needles and ten zero-vector
+ID/path needles measure recall@5 within each scope. These search timings do not
+measure hook execution or startup injection.
 
 ## Benchmark 1: LongMemEval (500 questions)
 

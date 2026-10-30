@@ -454,20 +454,26 @@ def sqlite_lexical_rows(
 ) -> list[tuple]:
     """Decoded ``(drawer_id, document, metadata)`` worth BM25-ranking for ``query``.
 
-    The best ``limit`` full-text matches by FTS rank, or every match under a
-    ``where``, which is applied to the stored metadata afterwards: a cap
-    before filtering could fill with wrong-scope rows. The newest ``limit``
+    Equality scopes are applied in SQL before the FTS rank limit. Other
+    filters retain the post-filter path so a cap cannot starve them.
+    The newest ``limit``
     rows stand in when no query term is three characters long or the
     full-text query fails; a clean miss stays empty. ``[]`` when the database
     is missing or unreadable.
     """
     tokens = [t for t in tokenize(query) if len(t) >= 3]
+    equalities = _string_equalities(encode_where(where))
+    filter_sql, filter_params = (
+        _match_sql(equalities, "e.id") if equalities is not None else ("", [])
+    )
 
     def read(conn):
         row_ids: list[int] = []
         recency = not tokens
         if tokens:
-            limit_sql = "" if where else "ORDER BY embedding_fulltext_search.rank LIMIT ?"
+            limit_sql = (
+                "ORDER BY embedding_fulltext_search.rank LIMIT ?" if equalities is not None else ""
+            )
             try:
                 row_ids = [
                     row[0]
@@ -480,15 +486,17 @@ def sqlite_lexical_rows(
                         JOIN collections c ON s.collection = c.id
                         WHERE embedding_fulltext_search MATCH ?
                           AND c.name = ?
+                          {filter_sql}
                         {limit_sql}
                         """,
-                        (" OR ".join(tokens), collection_name) + (() if where else (limit,)),
+                        (" OR ".join(tokens), collection_name, *filter_params)
+                        + ((limit,) if equalities is not None else ()),
                     )
                 ]
             except sqlite3.Error:
                 recency = True
         if not row_ids and recency:
-            row_ids = _newest_row_ids(conn, collection_name, limit)
+            row_ids = _newest_row_ids(conn, collection_name, limit, filter_sql, filter_params)
         return _decoded_rows(conn, row_ids, where)
 
     return _read_db(palace_path, read) or []

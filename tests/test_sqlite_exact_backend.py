@@ -975,7 +975,8 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
     assert called["query"] == 0
 
 
-def test_search_union_reports_unsupported_lexical_capability(monkeypatch, tmp_path):
+@pytest.mark.parametrize("strategy", [None, "union"])
+def test_search_union_falls_back_on_unsupported_lexical_capability(monkeypatch, tmp_path, strategy):
     import mempalace.searcher as searcher
 
     class NoLexicalCollection:
@@ -1001,10 +1002,12 @@ def test_search_union_reports_unsupported_lexical_capability(monkeypatch, tmp_pa
         "anything",
         str(tmp_path),
         n_results=1,
-        candidate_strategy="union",
+        **({"candidate_strategy": strategy} if strategy else {}),
     )
 
-    assert result["unsupported_capability"] == "supports_lexical_search"
+    assert "error" not in result
+    assert result["candidate_strategy_fallback"] == "lexical_search_unsupported"
+    assert result["results"][0]["drawer_id"] == "a"
 
 
 def test_search_vector_disabled_fallback_is_chroma_only(tmp_path, monkeypatch):

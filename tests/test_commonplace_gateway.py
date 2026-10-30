@@ -2,6 +2,7 @@
 
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -274,6 +275,53 @@ def test_search_fans_out_over_readable_wings_only(hub):
     assert {h["wing"] for h in pinned["results"]} == {"project_a"}
     denied, _ = hub.call(token, "mempalace_search", query="lantern", wing="vault")
     assert denied["denied"]
+
+
+def test_multiwing_search_merges_by_hybrid_score_before_limit():
+    from mempalace.searcher import _hybrid_rank
+
+    results = {
+        "shared": _hybrid_rank(
+            [
+                {
+                    "drawer_id": "lexical",
+                    "wing": "shared",
+                    "text": "ZXQ739251",
+                    "distance": None,
+                    "similarity": None,
+                }
+            ],
+            "ZXQ739251",
+        ),
+        "project_a": _hybrid_rank(
+            [
+                {
+                    "drawer_id": "vector",
+                    "wing": "project_a",
+                    "text": "Unrelated note",
+                    "distance": 0.5,
+                    "similarity": 0.5,
+                }
+            ],
+            "ZXQ739251",
+        ),
+    }
+
+    def call_tool(principal, name, args):
+        if name == "mempalace_list_wings":
+            return {"wings": {"shared": {}, "project_a": {}, "vault": {}}}
+        return {"results": results[args["wing"]]}
+
+    from commonplace.gateway import Mediator
+
+    gateway = object.__new__(Mediator)
+    gateway.workers = SimpleNamespace(call_tool=call_tool)
+    principal = SimpleNamespace(policy=Policy.build(**CODER))
+    result = gateway._fan_out_search(
+        principal, "mempalace_search", {"query": "ZXQ739251", "limit": 1}
+    )
+    assert result["wings_searched"] == ["project_a", "shared"]
+    assert [hit["drawer_id"] for hit in result["results"]] == ["lexical"]
 
 
 def test_get_drawers_hides_other_wings_as_missing(hub):

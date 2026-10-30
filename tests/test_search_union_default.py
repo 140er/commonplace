@@ -22,7 +22,13 @@ def lexical_palace(tmp_path, monkeypatch):
         + ["Build ZXQ739251 failed reading /srv/archive/kestrel/manifest.lock on port 8473."],
         embeddings=[[0.01, 1.0]] * 40 + [[0.0, 0.0]],
         metadatas=[
-            {"wing": "build", "room": "logs", "source_file": f"log-{i}.txt", "chunk_index": 0}
+            {
+                "wing": "build",
+                "room": "logs",
+                "source_file": f"log-{i}.txt",
+                "chunk_index": 0,
+                "filed_at": "2026-03-01T12:00:00Z",
+            }
             for i in range(41)
         ],
     )
@@ -54,7 +60,107 @@ def test_cli_default_finds_zero_vector_artifact(lexical_palace, capsys):
 
 def test_cli_union_respects_room_filter_and_date_window(lexical_palace, capsys):
     palace, col = lexical_palace
+    search("ZXQ739251", palace, collection=col, room="logs", since="2026-03-01")
+    assert "Build ZXQ739251" in capsys.readouterr().out
     search("ZXQ739251", palace, collection=col, room="other")
     assert "Build ZXQ739251" not in capsys.readouterr().out
     search("ZXQ739251", palace, collection=col, since="2099-01-01")
     assert "Build ZXQ739251" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("source", ["", "log-0.txt"])
+def test_lexical_candidates_use_stored_identity_not_source(lexical_palace, capsys, source):
+    palace, col = lexical_palace
+    col.update(ids=["artifact"], metadatas=[{"source_file": source}], embeddings=[[0.0, 0.0]])
+    col.update(ids=["noise-0"], embeddings=[[0.1, 1.0]])
+    vector = search_memories("ZXQ739251", palace, candidate_strategy="vector")
+    assert "artifact" not in {hit["drawer_id"] for hit in vector["results"]}
+    assert "noise-0" in {hit["drawer_id"] for hit in vector["results"]}
+    result = search_memories("ZXQ739251", palace)
+    assert "artifact" in {hit["drawer_id"] for hit in result["results"]}
+    assert result["results"][0]["matched_via"] == "bm25_backend"
+    assert all("_stored_id" not in hit for hit in result["results"])
+    search("ZXQ739251", palace, collection=col)
+    assert "Build ZXQ739251" in capsys.readouterr().out
+
+
+def test_default_union_filters_both_wings_with_in_scope_drawers(lexical_palace, capsys):
+    palace, col = lexical_palace
+    col.add(
+        ids=["other-artifact"],
+        documents=["Hidden ZXQOTHER8540 log entry"],
+        embeddings=[[0.0, 0.0]],
+        metadatas=[{"wing": "other", "room": "logs", "filed_at": "2026-03-01T12:00:00Z"}],
+    )
+    query = "ZXQ739251 ZXQOTHER8540"
+    result = search_memories(query, palace, wing="build", room="logs", since="2026-03-01")
+    ids = {hit["drawer_id"] for hit in result["results"]}
+    assert "artifact" in ids and "other-artifact" not in ids
+    search(query, palace, collection=col, wing="build", room="logs", since="2026-03-01")
+    output = capsys.readouterr().out
+    assert "Build ZXQ739251" in output and "Hidden ZXQOTHER8540" not in output
+
+
+@pytest.mark.parametrize("backend,max_decoded", [("chroma", 500), ("sqlite_exact", 10)])
+def test_filtered_lexical_search_bounds_hydration(tmp_path, monkeypatch, backend, max_decoded):
+    import importlib
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    col = get_collection(str(tmp_path / "palace"), create=True)
+    for start in range(0, 1200, 400):
+        col.add(
+            ids=[f"d{i}" for i in range(start, start + 400)],
+            documents=[f"Commonword record {i}" for i in range(start, start + 400)],
+            embeddings=[[1.0, 0.0]] * 400,
+            metadatas=[
+                {"wing": "target" if i % 2 else "other", "room": "logs"}
+                for i in range(start, start + 400)
+            ],
+        )
+    module = importlib.import_module(
+        f"mempalace.backends.{'chroma_sqlite' if backend == 'chroma' else backend}"
+    )
+    decode = module.decode_record
+    count = 0
+
+    def counted(*args, **kwargs):
+        nonlocal count
+        count += 1
+        return decode(*args, **kwargs)
+
+    monkeypatch.setattr(module, "decode_record", counted)
+    result = col.lexical_search(
+        query="commonword record",
+        n_results=2,
+        where={"$and": [{"wing": "target"}, {"room": "logs"}]},
+    )
+    assert len(result.hits) == 2
+    assert all(hit.metadata["wing"] == "target" for hit in result.hits)
+    assert 0 < count <= max_decoded
+
+
+def test_lexical_date_window_uses_wider_candidate_pool(lexical_palace):
+    palace, col = lexical_palace
+    col.add(
+        ids=[f"old-{i}" for i in range(25)],
+        documents=[f"ZXQ739251 ZXQ739251 old record {i}" for i in range(25)],
+        embeddings=[[0.0, 0.0]] * 25,
+        metadatas=[{"wing": "build", "room": "logs", "filed_at": "2025-01-01"}] * 25,
+    )
+    result = search_memories("ZXQ739251", palace, since="2026-01-01", n_results=5)
+    assert "artifact" in {hit["drawer_id"] for hit in result["results"]}
+
+
+def test_default_cli_keeps_vector_results_without_lexical_support(
+    lexical_palace, monkeypatch, capsys
+):
+    from mempalace.backends import UnsupportedCapabilityError
+
+    palace, col = lexical_palace
+
+    def unsupported(**kwargs):
+        raise UnsupportedCapabilityError("lexical search is unavailable")
+
+    monkeypatch.setattr(col, "lexical_search", unsupported)
+    search("engineering", palace, collection=col)
+    assert "Routine engineering note" in capsys.readouterr().out

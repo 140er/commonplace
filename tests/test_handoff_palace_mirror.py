@@ -262,10 +262,19 @@ def test_duplicates_keep_the_best_score_and_ties_keep_worker_order():
     assert [(hit.chunk_index, hit.score) for hit in hits] == [(7, 0.9), (3, 0.9)]
 
 
+def test_cross_thread_recall_preserves_hybrid_score_before_limit():
+    worker = FakeWorker()
+    worker.search_results["thr_first"] = [_hit(similarity=0.5, score=0.3)]
+    worker.search_results["thr_second"] = [_hit("thr_second", similarity=None, score=0.4)]
+    hits = palace_search(worker, object(), ["thr_first", "thr_second"], "needle", limit=1)
+    assert [hit.stored_thread_id for hit in hits] == ["thr_second"]
+
+
 @pytest.mark.parametrize(
     ("extra", "expected"),
     [
         ({"similarity": None, "score": 0.7}, 0.7),
+        ({"similarity": 0.9, "score": 0.3}, 0.3),
         ({"similarity": None, "distance": 0.2}, -0.2),
         ({"similarity": None}, 0.0),
         ({"similarity": float("nan"), "distance": 0.4}, -0.4),

@@ -344,11 +344,8 @@ def _merge_bm25_union_candidates(
     selection skips docs whose embeddings are far from the query even when
     BM25 signal is strong.
 
-    Dedup is chunk-precise: the key is ``(_source_file_full, _chunk_index)``
-    so two files sharing a basename in different directories don't collide,
-    and a vector hit on chunk N of a file doesn't block BM25 from
-    contributing chunk M of the same file. Falls back to ``source_file``
-    only when full-path/chunk metadata is absent.
+    Dedup uses the stored row id. Source metadata is optional and several
+    independent drawers can share one source and chunk index.
 
     BM25-only additions carry ``distance=None`` unless a ``max_distance``
     cutoff is set. Under a cutoff, union mode loads stored embeddings for
@@ -366,11 +363,14 @@ def _merge_bm25_union_candidates(
     try:
         lexical = drawers_col.lexical_search(
             query=query,
-            n_results=n_results * 3,
+            n_results=_candidate_pool_size(
+                n_results, since_dt is not None or before_dt is not None
+            ),
             where=where or None,
         )
     except UnsupportedCapabilityError:
-        raise
+        stats["candidate_strategy_fallback"] = "lexical_search_unsupported"
+        return
     except Exception:
         logger.warning("candidate_strategy=union: lexical fetch failed", exc_info=True)
         stats["candidate_strategy_fallback"] = "lexical_search_failed"
@@ -409,6 +409,7 @@ def _merge_bm25_union_candidates(
         if distance is not None:
             distance = round(distance, 4)
         entry = {
+            "_stored_id": hit.id,
             "drawer_id": _result_drawer_id(meta, hit.id),
             "text": hit.document or "",
             "wing": meta.get("wing", "unknown"),
@@ -435,20 +436,10 @@ def _merge_bm25_union_candidates(
             entry["fallback_reason"] = "distance_unavailable"
         bm25_extra.append(entry)
 
-    def _dedup_key(entry: dict):
-        full = entry.get("_source_file_full")
-        ci = entry.get("_chunk_index")
-        if full and ci is not None:
-            return (full, ci)
-        # Fall back to basename only when richer metadata is missing —
-        # avoids silently dropping candidates on legacy data while still
-        # giving chunk-precise dedup whenever the metadata is present.
-        return entry.get("source_file")
-
-    seen = {_dedup_key(h) for h in hits}
+    seen = {h["_stored_id"] for h in hits if h.get("_stored_id")}
     for bh in bm25_extra:
-        key = _dedup_key(bh)
-        if not key or key == "?" or key in seen:
+        key = bh["_stored_id"]
+        if key in seen:
             continue
         bh["closet_boost"] = 0.0
         hits.append(bh)
