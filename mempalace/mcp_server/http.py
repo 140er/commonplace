@@ -450,6 +450,42 @@ def _http_request_rejected(handler, require_auth: bool) -> bool:
             logger.warning("HTTP request rejected: missing/invalid bearer token")
             handler.send_error(401, "Unauthorized")
             return True
+    if require_auth:
+        return _http_identity_rejected(handler)
+    return False
+
+
+def _http_trusts_identity(auth_token) -> bool:
+    """Whether this worker reads the gateway's verified-identity header."""
+    if not env_bool(_provenance.TRUSTED_IDENTITY_ENV, False):
+        return False
+    # Only a token holder can reach the handler, so only it can vouch.
+    if not auth_token:
+        raise RuntimeError(
+            f"{_provenance.TRUSTED_IDENTITY_ENV}=1 needs a bearer token: "
+            "set MEMPALACE_MCP_HTTP_TOKEN"
+        )
+    return True
+
+
+def _http_identity_rejected(handler) -> bool:
+    """Read the gateway's verified-identity header onto ``handler``.
+
+    Only a worker started with ``MEMPALACE_MCP_TRUSTED_IDENTITY=1`` reads it,
+    and only after the bearer check, so only the token holder (the gateway)
+    can vouch for a caller. Fail closed: no identity, no request.
+    """
+    handler.verified_identity = None
+    if not getattr(handler.server, "trust_identity", False):
+        return False
+    try:
+        handler.verified_identity = _provenance.decode_identity(
+            handler.headers.get(_provenance.IDENTITY_HEADER) or ""
+        )
+    except ValueError as exc:
+        logger.warning("HTTP request rejected: %s", exc)
+        handler.send_error(403, "Forbidden", "Missing or invalid verified identity")
+        return True
     return False
 
 
@@ -1276,6 +1312,7 @@ def _build_http_server(host: str, port: int):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     auth_token = _http_resolve_token(host)
+    trust_identity = _http_trusts_identity(auth_token)
 
     # Resolve TLS before bind so a bad cert/key fails loudly rather than at the
     # first request. TLS is transport encryption only — the bearer-token guard
@@ -1403,7 +1440,8 @@ def _build_http_server(host: str, port: int):
             # Locking policy lives in _http_dispatch: global lock for
             # Chroma-touching tools, lock-free for logstream tools.
             try:
-                response = _http_dispatch(request)
+                with _provenance.verified(self.verified_identity):
+                    response = _http_dispatch(request)
             except Exception:
                 # Without this the exception escaped into BaseHTTPRequestHandler,
                 # which closes the connection with no reply at all -- the client
@@ -1449,6 +1487,7 @@ def _build_http_server(host: str, port: int):
     httpd.enforce_host_pin = _http_is_loopback(host)
     httpd.allowed_hosts = _http_allowed_host_values(host, bound_port)
     httpd.auth_token = auth_token
+    httpd.trust_identity = trust_identity
     httpd.scheme = "http"
     httpd.bind_host = host
     httpd.started_at = utc_now_iso()

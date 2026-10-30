@@ -44,7 +44,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from . import paths
+from . import paths, provenance
 from .config import sanitize_iso_temporal
 from .ids import make_triple_id
 from .timeutil import utc_now_iso, utc_now_z
@@ -363,6 +363,7 @@ class KnowledgeGraph:
                 source_drawer_id TEXT,
                 adapter_name TEXT,
                 extracted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                hub_stamp TEXT,
                 FOREIGN KEY (subject) REFERENCES entities(id),
                 FOREIGN KEY (object) REFERENCES entities(id)
             );
@@ -390,6 +391,8 @@ class KnowledgeGraph:
             conn.execute("ALTER TABLE triples ADD COLUMN source_drawer_id TEXT")
         if "adapter_name" not in existing:
             conn.execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT")
+        if "hub_stamp" not in existing:
+            conn.execute("ALTER TABLE triples ADD COLUMN hub_stamp TEXT")
 
     def _conn(self):
         if self._connection is None:
@@ -534,8 +537,8 @@ class KnowledgeGraph:
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -548,6 +551,7 @@ class KnowledgeGraph:
                         source_file,
                         source_drawer_id,
                         adapter_name,
+                        provenance.stamp_json(),
                     ),
                 )
                 return triple_id
@@ -683,8 +687,8 @@ class KnowledgeGraph:
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         triple_id,
                         sub_id,
@@ -697,6 +701,7 @@ class KnowledgeGraph:
                         source_file,
                         source_drawer_id,
                         adapter_name,
+                        provenance.stamp_json(),
                     ),
                 )
                 return triple_id
@@ -744,7 +749,7 @@ class KnowledgeGraph:
                 obj_id = self._resolve_entity_id(conn, obj)
                 row = conn.execute(
                     "SELECT subject, valid_from, confidence, source_closet, source_file, "
-                    "source_drawer_id, adapter_name FROM triples "
+                    "source_drawer_id, adapter_name, hub_stamp FROM triples "
                     "WHERE id=? AND valid_to IS NULL",
                     (triple_id,),
                 ).fetchone()
@@ -791,8 +796,8 @@ class KnowledgeGraph:
                     """INSERT INTO triples (
                         id, subject, predicate, object, valid_from, valid_to,
                         confidence, source_closet, source_file,
-                        source_drawer_id, adapter_name
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        source_drawer_id, adapter_name, hub_stamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_id,
                         sub_id,
@@ -805,6 +810,7 @@ class KnowledgeGraph:
                         row["source_file"] or source_file,
                         row["source_drawer_id"],
                         row["adapter_name"],
+                        row["hub_stamp"],
                     ),
                 )
                 return new_id
@@ -849,6 +855,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
 
@@ -871,6 +878,7 @@ class KnowledgeGraph:
                             "confidence": row["confidence"],
                             "source_closet": row["source_closet"],
                             "current": row["valid_to"] is None,
+                            **provenance.stamp_from_json(row["hub_stamp"]),
                         }
                     )
 

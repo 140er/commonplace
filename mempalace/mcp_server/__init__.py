@@ -81,6 +81,7 @@ from chromadb.errors import NotFoundError as _ChromaNotFoundError  # noqa: E402
 
 from .. import (  # noqa: E402
     paths,
+    provenance as _provenance,
     tool_capabilities as _tool_capabilities,
 )
 from .._env import env_bool, env_float, env_int, env_list, env_str  # noqa: E402

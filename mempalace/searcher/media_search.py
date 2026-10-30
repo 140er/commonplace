@@ -131,6 +131,7 @@ def search_with_media(
                     "distance": round(distance, 4),
                     "matched_via": "shared_vector",
                     **_result_date_fields(metadata),
+                    **_result_author_fields(metadata),
                 }
                 if result_type == "asset":
                     hit.update(

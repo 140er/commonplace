@@ -52,6 +52,7 @@ from ..palace import (
     is_aaak_row,
     resolve_backend_name,
 )
+from ..provenance import STAMP_FIELDS
 from ..search_util import (
     _boosted_cosine_distance,
     _cosine_scale_distance,
