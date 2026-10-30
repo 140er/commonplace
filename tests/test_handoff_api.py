@@ -5,16 +5,18 @@ import json
 import socket
 import threading
 from dataclasses import replace
+from email.message import Message
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 
+from commonplace import ratelimit, urls, webhooks
 from commonplace.control_db import ControlDB
-from commonplace.gateway import Gateway
-from commonplace.handoff import api
+from commonplace.gateway import HANDOFF_REQUEST_BYTES, Gateway
+from commonplace.handoff import api, wiring
 from commonplace.handoff.db import HandoffDBError
 from commonplace.handoff.models import (
-    EVENTS,
     ContextUsage,
     Handoff,
     HandoffResult,
@@ -81,9 +83,6 @@ ROUTES = [
         "owner",
         200,
     ),
-    ("webhooks", "GET", "/api/webhooks", None, "owner", 200),
-    ("webhook_add", "POST", "/api/webhooks", {"url": "http://127.0.0.1/wake"}, "owner", 201),
-    ("webhook_remove", "DELETE", "/api/webhooks/hook_local", None, "owner", 200),
 ]
 
 
@@ -118,16 +117,6 @@ class _Data:
             )
             for workspace in (local, other)
         ]
-        self.hooks = {
-            name: {
-                "id": name,
-                "workspace_id": workspace,
-                "url": "http://127.0.0.1/wake",
-                "events": list(EVENTS),
-                "secret": "never-list-this",
-            }
-            for name, workspace in (("hook_local", local), ("hook_other", other))
-        }
 
     def get(self, record_id):
         self.calls.append(("get_handoff", record_id))
@@ -154,25 +143,6 @@ class _Data:
     def list_settings(self, workspace_id):
         self.calls.append(("list_settings", workspace_id))
         return [row for row in self.rows if row.workspace_id == workspace_id]
-
-    def webhooks(self, workspace_id):
-        self.calls.append(("webhooks", workspace_id))
-        return [dict(row) for row in self.hooks.values() if row["workspace_id"] == workspace_id]
-
-    def add_webhook(self, workspace_id, url, secret, events, *, actor):
-        self.calls.append(("add_webhook", workspace_id, url, secret, events, actor))
-        self.hooks["hook_new"] = {
-            "id": "hook_new",
-            "workspace_id": workspace_id,
-            "url": url,
-            "secret": secret,
-            "events": events,
-        }
-        return "hook_new"
-
-    def remove_webhook(self, webhook_id, *, actor):
-        self.calls.append(("remove_webhook", webhook_id, actor))
-        return self.hooks.pop(webhook_id, None) is not None
 
 
 class _Settings:
@@ -278,9 +248,10 @@ class _Harness:
         self.other = self.db.create_workspace("other", owner)
         self.db.add_member(self.workspace, member, "member", actor=owner)
         self.gateway = Gateway(self.db, _Supervisor())
-        self.ctx = SimpleNamespace(gateway=self.gateway)
+        self.ctx = wiring.install(self.gateway, root)
+        assert self.ctx is self.gateway.handoff
+        self.service = self.ctx.service
         self.reset()
-        api.register(self.ctx)
         self.tokens = {}
         for name, user, workspace, scopes, wings in (
             (
@@ -331,6 +302,7 @@ class _Harness:
 
     def reset(self):
         self.calls = []
+        self.gateway.limiter = ratelimit.TokenBuckets()
         self.ctx.handoff_db = _Data(self.workspace, self.other, self.calls)
         if hasattr(self, "tokens") and "member" in self.tokens:
             principal = self.db.authenticate_token(self.tokens["member"])
@@ -356,7 +328,11 @@ class _Harness:
             )
         )
         try:
-            connection.request(method, path, raw, outgoing)
+            try:
+                connection.request(method, path, raw, outgoing)
+            except BrokenPipeError:
+                # A framing rejection can arrive before a large body finishes sending.
+                pass
             response = connection.getresponse()
             return response.status, json.loads(response.read()), dict(response.getheaders())
         finally:
@@ -366,6 +342,9 @@ class _Harness:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
+        webhooks.stop(self.gateway)
+        self.ctx.service = self.service
+        self.ctx.close()
         self.db.close()
 
     def framed(self, headers, body=b"{}", *, half_close=False):
@@ -406,7 +385,9 @@ def test_every_route_authenticates_before_any_service_access(hub, route, token):
     _, method, path, _, _, _ = route
     status, body, headers = hub.request(method, path, b"broken", token=token)
     assert (status, body) == (401, {"error": "unauthorized"})
-    assert headers["WWW-Authenticate"] == 'Bearer realm="commonplace"'
+    assert headers["WWW-Authenticate"] == (
+        f'Bearer resource_metadata="{urls.AGENT_URL}/.well-known/oauth-protected-resource"'
+    )
     assert not hub.calls
 
 
@@ -444,7 +425,6 @@ def test_every_route_uses_callers_workspace(hub, route):
         "messages",
         "recall",
         "chain",
-        "webhook_remove",
     }:
         assert (status, result) == (404, NOT_FOUND)
         assert not any(
@@ -453,7 +433,6 @@ def test_every_route_uses_callers_workspace(hub, route):
                 "successor",
                 "launch_failure",
                 "relaunch",
-                "remove_webhook",
                 "messages",
                 "recall",
                 "chain",
@@ -464,14 +443,11 @@ def test_every_route_uses_callers_workspace(hub, route):
         assert status == expected, result
         assert hub.workspace not in json.dumps(result)
         assert "hof_local" not in json.dumps(result)
-        assert "hook_local" not in json.dumps(result)
         for call in hub.calls:
             if call[0] in {
                 "list",
                 "list_settings",
                 "effective",
-                "webhooks",
-                "add_webhook",
                 "clear",
             }:
                 assert call[1] == hub.other
@@ -492,8 +468,7 @@ def test_body_routes_reject_invalid_json_or_missing_fields(hub, route, body):
     status, result, _ = hub.request(method, path, body)
     assert status == 400, result
     assert not any(
-        call[0] in {"run", "successor", "launch_failure", "recall", "set", "add_webhook"}
-        for call in hub.calls
+        call[0] in {"run", "successor", "launch_failure", "recall", "set"} for call in hub.calls
     )
 
 
@@ -875,56 +850,18 @@ def test_settings_validation_and_delete_errors(hub):
     )
 
 
-def test_webhook_supplied_secret_returned_only_on_creation(hub):
-    status, result, _ = hub.request(
-        "POST",
-        "/api/webhooks",
-        {"url": "http://127.0.0.1/wake", "secret": "my-secret", "events": [EVENTS[0]]},
+def test_handoff_leaves_hub_webhook_routes_available(hub):
+    principal = hub.db.authenticate_token(hub.tokens["owner"])
+    _, token = hub.db.create_token(
+        workspace_ref=hub.workspace,
+        user_ref=principal.user_id,
+        name="hub-webhooks",
+        client="test",
+        policy=Policy.build(profile="standard", scopes=["memory:read"], trust="standard"),
+        actor=principal.user_id,
     )
-    assert (status, result) == (201, {"id": "hook_new", "secret": "my-secret"})
-    assert hub.calls[-1] == (
-        "add_webhook",
-        hub.workspace,
-        "http://127.0.0.1/wake",
-        "my-secret",
-        (EVENTS[0],),
-        "conn:owner",
-    )
-    status, result, _ = hub.request("GET", "/api/webhooks")
-    assert status == 200 and "secret" not in json.dumps(result)
-    status, result, _ = hub.request("DELETE", "/api/webhooks/hook_new")
-    assert status == 200 and "secret" not in json.dumps(result)
-
-
-def test_webhook_secret_generation_and_default_events(hub, monkeypatch):
-    sizes = []
-    monkeypatch.setattr(
-        api.secrets, "token_urlsafe", lambda size: sizes.append(size) or "generated"
-    )
-    status, result, _ = hub.request("POST", "/api/webhooks", {"url": "http://127.0.0.1/wake"})
-    assert status == 201 and result["secret"] == "generated"
-    assert sizes == [32]
-    assert hub.calls[-1][4] == EVENTS
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"url": "file:///tmp/wake"},
-        {"url": "http://"},
-        {"url": 1},
-        {"url": "http://127.0.0.1:bad"},
-        {"url": "http://127.0.0.1:0"},
-        {"url": "http://127.0.0.1", "secret": ""},
-        {"url": "http://127.0.0.1", "secret": None},
-        {"url": "http://127.0.0.1", "events": "handoff.started"},
-        {"url": "http://127.0.0.1", "events": []},
-        {"url": "http://127.0.0.1", "events": ["unknown"]},
-        {"url": "http://127.0.0.1", "events": [{}]},
-    ],
-)
-def test_invalid_webhook_fields(hub, body):
-    assert hub.request("POST", "/api/webhooks", body)[0] == 400
+    for path in ("/api/webhooks", "/api/webhooks/"):
+        assert hub.request("GET", path, token=token)[:2] == (200, {"webhooks": []})
     assert not hub.calls
 
 
@@ -941,8 +878,7 @@ def test_body_limits_and_media_types(hub, route):
     )
     assert hub.request(method, path, b"{}", headers={"Content-Length": str(limit + 1)})[0] == 413
     assert not any(
-        call[0] in {"run", "successor", "launch_failure", "recall", "set", "add_webhook"}
-        for call in hub.calls
+        call[0] in {"run", "successor", "launch_failure", "recall", "set"} for call in hub.calls
     )
 
 
@@ -965,6 +901,7 @@ def test_nonstandard_or_deep_json_is_a_parse_error(hub, raw):
 
 
 def test_handoff_accepts_larger_than_default_body_limit(hub):
+    assert api.MAX_HANDOFF_BYTES == HANDOFF_REQUEST_BYTES == 64 * 1024 * 1024
     transcript = "é" * (api.MAX_BODY_BYTES // 2 + 1)
     status, _, _ = hub.request("POST", "/api/handoff", {**HANDOFF_BODY, "transcript": transcript})
     assert status == 200
@@ -1034,7 +971,6 @@ def test_service_errors_are_json_and_do_not_leak_details(
         ("/api/threads/thr_local/unknown", "GET"),
         ("/api/threads/thr_local/messages/extra", "GET"),
         ("/api/threads/thr_local", "POST"),
-        ("/api/webhooks/hook_local/extra", "DELETE"),
         ("/api/handoffs/hof_local%2Fextra", "GET"),
     ],
 )
@@ -1088,7 +1024,7 @@ def test_owner_routes_use_workspace_role_without_requiring_extra_scopes(hub, rou
                 ("Content-Length", "2"),
                 ("Transfer-Encoding", "chunked"),
             ],
-            400,
+            411,
         ),
         ([("Content-Type", "application/json"), ("Content-Length", "9" * 100)], 413),
     ],
@@ -1114,16 +1050,30 @@ def test_content_length_allows_leading_zeros_and_outer_whitespace(hub):
         hub.framed(
             [
                 ("Content-Type", "application/json"),
-                ("Content-Length", "0" * 30 + str(len(raw)) + " "),
+                ("Content-Length", "0" * 30 + str(len(raw))),
             ],
             raw,
         )[0]
         == 200
     )
+    # The gateway enforces canonical framing; the API parser also handles whitespace.
+    assert (
+        hub.framed(
+            [("Content-Type", "application/json"), ("Content-Length", str(len(raw)) + " ")],
+            raw,
+        )[0]
+        == 400
+    )
+    headers = Message()
+    headers["Content-Type"] = "application/json"
+    headers["Content-Length"] = " " + "0" * 30 + str(len(raw)) + " "
+    handler = SimpleNamespace(headers=headers, rfile=BytesIO(raw))
+    assert api._read_json(handler) == HANDOFF_BODY
+    assert handler._handoff_body_read is True
 
 
 def test_bodyless_routes_close_connection_when_body_is_unread(hub):
-    status, _, headers = hub.request("GET", "/api/webhooks", b"ignored")
+    status, _, headers = hub.request("GET", "/api/settings/handoff", b"ignored")
     assert status == 200 and headers["Connection"] == "close"
 
 
@@ -1139,7 +1089,7 @@ def test_bodyless_routes_close_connection_when_body_is_unread(hub):
         (b"{}", {"Content-Type": "text/plain"}, 415),
         (b"{}", {"Content-Length": str(api.MAX_BODY_BYTES + 1)}, 413),
         (b"{}", {"Content-Length": "-1"}, 400),
-        (b"{}", {"Transfer-Encoding": "chunked"}, 400),
+        (b"{}", {"Transfer-Encoding": "chunked"}, 411),
     ],
 )
 def test_relaunch_allows_no_body_and_validates_any_supplied_body(hub, body, headers, expected):
@@ -1152,23 +1102,49 @@ def test_relaunch_allows_no_body_and_validates_any_supplied_body(hub, body, head
         assert not any(call[0] == "relaunch" for call in hub.calls)
 
 
-def test_json_routes_keep_connection_usable_after_consuming_body(hub):
+def test_json_routes_consume_body_and_reconnect_after_gateway_closes(hub):
+    raw = json.dumps(HANDOFF_BODY).encode()
+    headers = Message()
+    headers["Authorization"] = "Bearer " + hub.tokens["owner"]
+    headers["Content-Type"] = "application/json"
+    headers["Content-Length"] = str(len(raw))
+    replies = []
+    handler = SimpleNamespace(
+        headers=headers,
+        rfile=BytesIO(raw),
+        path="/api/handoff",
+        command="POST",
+        close_connection=False,
+        _send_json=lambda status, body, extra=None: replies.append((status, body, extra)),
+    )
+    # A consumed body leaves the API handler eligible for connection reuse.
+    api._API(hub.ctx).handle(handler)
+    assert replies[0][0] == 200 and replies[0][2] is None
+    assert handler._handoff_body_read is True
+    assert handler.close_connection is False
+
+    # The gateway closes each request; the HTTP client must open another socket.
     connection = http.client.HTTPConnection("127.0.0.1", hub.port, timeout=3)
     try:
         headers = {
             "Authorization": "Bearer " + hub.tokens["owner"],
             "Content-Type": "application/json",
         }
-        connection.request("POST", "/api/handoff", json.dumps(HANDOFF_BODY).encode(), headers)
-        response = connection.getresponse()
-        assert response.status == 200
-        response.read()
+        connection.request("POST", "/api/handoff", raw, headers)
         first_socket = connection.sock
-        connection.request("GET", "/api/settings/handoff", headers=headers)
+        assert first_socket is not None
         response = connection.getresponse()
         assert response.status == 200
+        assert response.getheader("Connection") == "close"
         response.read()
-        assert first_socket is connection.sock
+        assert connection.sock is None
+        connection.request("GET", "/api/settings/handoff", headers=headers)
+        assert connection.sock is not None and connection.sock is not first_socket
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.getheader("Connection") == "close"
+        response.read()
+        assert connection.sock is None
     finally:
         connection.close()
 
@@ -1243,17 +1219,6 @@ def test_list_responses_drop_rows_from_other_workspaces(hub, monkeypatch):
     status, result, _ = hub.request("GET", "/api/settings/handoff")
     assert status == 200 and len(result["rows"]) == 1
     assert result["rows"][0]["workspace_id"] == hub.workspace
-
-
-@pytest.mark.parametrize("path", ["/api/webhooks/missing", "/api/webhooks/hook_other"])
-def test_delete_missing_and_foreign_webhooks_are_identical(hub, path):
-    assert hub.request("DELETE", path)[:2] == (404, NOT_FOUND)
-    assert not any(call[0] == "remove_webhook" for call in hub.calls)
-
-
-def test_webhook_disappearing_before_delete_stays_not_found(hub, monkeypatch):
-    monkeypatch.setattr(hub.ctx.handoff_db, "remove_webhook", lambda *args, **kwargs: False)
-    assert hub.request("DELETE", "/api/webhooks/hook_local")[:2] == (404, NOT_FOUND)
 
 
 def test_successor_and_setting_responses_cannot_return_foreign_workspace(hub, monkeypatch):

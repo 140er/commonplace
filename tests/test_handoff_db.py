@@ -1,4 +1,4 @@
-"""Control DB handoff storage, transitions, races and webhook deliveries."""
+"""Memory handoff storage, transitions and races in the control database."""
 
 import json
 import re
@@ -10,10 +10,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+from commonplace import events as hub_events
 from commonplace.control_db import SCHEMA_VERSION, ControlDB
 from commonplace.handoff import db as db_module
 from commonplace.handoff.db import HandoffDB, HandoffDBError
+from commonplace.handoff.events import Events
 from commonplace.handoff.models import (
+    EVENT_STARTED,
     STATES,
     LauncherConfig,
     SettingRow,
@@ -139,16 +142,25 @@ def _race(databases, operation):
         return list(pool.map(run, range(16)))
 
 
-def _outbox(control, outbox_id):
-    return dict(
-        control._conn.execute("SELECT * FROM handoff_outbox WHERE id = ?", (outbox_id,)).fetchone()
-    )
-
-
 def test_upgrade_existing_control_database(open_control):
     original = open_control()
     owner = original.create_user("owner@example.test", "Owner")
     workspace = original.create_workspace("Memory", owner)
+    original.audit(
+        action="memory.saved",
+        decision="ok",
+        workspace_id=workspace,
+        user_id=owner,
+        target_ids=["drawer_雪"],
+    )
+    existing_event = hub_events.emit(
+        original,
+        workspace,
+        "memory.saved",
+        subject="drawer_雪",
+        actor=owner,
+        data={"drawer_id": "drawer_雪", "nested": {"ids": ["one", "two"]}},
+    )
     audit_before = [dict(row) for row in original.audit_entries()]
     assert not original._conn.execute(
         "SELECT 1 FROM sqlite_master WHERE name LIKE 'handoff%'"
@@ -163,7 +175,8 @@ def test_upgrade_existing_control_database(open_control):
         row["name"]
         for row in upgraded._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    assert {"handoff_settings", "handoffs", "handoff_webhooks", "handoff_outbox"} <= tables
+    assert {"handoff_settings", "handoffs"} <= tables
+    assert not {"handoff_webhooks", "handoff_outbox"} & tables
     assert dict(upgraded.user(owner)) == dict(original.user(owner))
     assert upgraded.workspace(workspace)["name"] == "Memory"
     assert upgraded._conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[
@@ -172,14 +185,27 @@ def test_upgrade_existing_control_database(open_control):
 
     saved = db.put_setting(SettingRow(workspace, "workspace", "", enabled=True), actor=owner)
     handoff = _begin(db, workspace)
-    webhook_id = db.add_webhook(workspace, WAKE_URL, "secret", ("*",), actor=owner)
-    outbox_ids = db.enqueue(workspace, "handoff.started", {"handoff_id": handoff.id})
-    reopened = _database(open_control())
+    assert [dict(row) for row in upgraded.audit_entries()] == audit_before
+    assert hub_events.after(upgraded, workspace) == [existing_event]
+
+    Events(upgraded, db).emit(EVENT_STARTED, workspace_id=workspace, handoff=handoff)
+    events_after = hub_events.after(upgraded, workspace)
+    assert len(events_after) == 2 and events_after[0] == existing_event
+    assert events_after[1]["kind"] == EVENT_STARTED
+    assert events_after[1]["workspace_id"] == workspace
+    assert events_after[1]["data"]["handoff_id"] == handoff.id
+    audit_after = [dict(row) for row in upgraded.audit_entries()]
+    assert len(audit_after) == len(audit_before) + 1
+    assert audit_after[0]["action"] == EVENT_STARTED
+    assert json.loads(audit_after[0]["target_ids"]) == [handoff.id]
+    assert audit_after[1:] == audit_before
+
+    reopened_control = open_control()
+    reopened = _database(reopened_control)
     assert reopened.setting_rows(workspace) == [saved]
     assert reopened.get(handoff.id) == handoff
-    assert reopened.webhooks(workspace)[0]["id"] == webhook_id
-    assert [row["id"] for row in reopened.due(NOW)] == outbox_ids
-    assert [dict(row) for row in upgraded.audit_entries()] == audit_before
+    assert hub_events.after(reopened_control, workspace) == events_after
+    assert [dict(row) for row in reopened_control.audit_entries()] == audit_after
 
 
 def test_upgrade_existing_handoff_table_without_cwd(open_control):
@@ -314,10 +340,11 @@ def test_invalid_setting_scope_and_ref(db, scope, ref):
     assert db.list_settings("workspace-one") == []
 
 
-def test_invalid_enabled_rolls_back_and_database_remains_usable(db):
+def test_invalid_enabled_rolls_back_and_database_remains_usable(db, control):
     with pytest.raises(HandoffDBError, match="invalid handoff setting"):
         db.put_setting(SettingRow("workspace-one", "workspace", "", enabled=2), actor="owner")
     assert db.list_settings("workspace-one") == []
+    assert not control._conn.in_transaction
     assert db.put_setting(SettingRow("workspace-one", "workspace", "", True), actor="owner")
 
 
@@ -586,135 +613,11 @@ def test_lists_and_thread_indexes_are_scoped_and_deterministic(db, control):
     assert [item.id for item in db.list("workspace-one")] == [first.id, third.id, second.id]
 
 
-def test_webhook_management_hides_secrets_and_stamps_actor(db, control):
-    webhook_id = db.add_webhook(
-        "workspace-one",
-        WAKE_URL,
-        "secret-one",
-        ("handoff.stored", "handoff.completed"),
-        actor="owner",
-    )
-    assert re.fullmatch(r"whk_[0-9a-f]{16}", webhook_id)
-    db.add_webhook("workspace-two", WAKE_URL, "secret-two", ("*",), actor="other")
-    assert db.webhooks("workspace-one") == [
-        {
-            "id": webhook_id,
-            "url": WAKE_URL,
-            "events": ["handoff.stored", "handoff.completed"],
-            "created_at": NOW,
-        }
-    ]
-    assert db.webhooks("missing") == []
-    assert db.webhook_secret(webhook_id) == "secret-one"
-    row = control._conn.execute(
-        "SELECT * FROM handoff_webhooks WHERE id = ?", (webhook_id,)
-    ).fetchone()
-    assert row["created_by"] == "owner" and row["workspace_id"] == "workspace-one"
-    assert db.remove_webhook(webhook_id, actor="owner")
-    assert not db.remove_webhook(webhook_id, actor="owner")
-    assert db.webhooks("workspace-one") == []
-    with pytest.raises(HandoffDBError, match="webhook not found"):
-        db.webhook_secret(webhook_id)
-    with pytest.raises(HandoffDBError, match="webhook not found"):
-        db.webhook_secret("missing")
-
-
-def test_enqueue_matches_events_and_workspace_once_and_round_trips_json(db, control):
-    exact = db.add_webhook(
-        "workspace-one", WAKE_URL, "exact-secret", ("handoff.stored",), actor="owner"
-    )
-    wildcard = db.add_webhook(
-        "workspace-one", WAKE_URL + "/all", "wild-secret", ("*", "handoff.stored"), actor="owner"
-    )
-    db.add_webhook("workspace-one", WAKE_URL, "other-secret", ("handoff.failed",), actor="owner")
-    db.add_webhook("workspace-one", WAKE_URL, "empty-secret", (), actor="owner")
-    db.add_webhook("workspace-two", WAKE_URL, "other-workspace", ("*",), actor="owner")
-    payload = {"handoff_id": "hof_雪", "task_ref": "#142", "nested": {"ids": ["one", "two"]}}
-    ids = db.enqueue("workspace-one", "handoff.stored", payload)
-    rows = db.due(NOW)
-    assert len(ids) == 2 and [row["id"] for row in rows] == ids
-    assert [row["webhook_id"] for row in rows] == [exact, wildcard]
-    assert [row["url"] for row in rows] == [WAKE_URL, WAKE_URL + "/all"]
-    for row in rows:
-        assert row["payload"] == payload and row["attempts"] == 0
-        assert row["next_at"] == NOW and row["event"] == "handoff.stored"
-        assert row["workspace_id"] == "workspace-one"
-        assert row["delivered_at"] is None and row["gave_up_at"] is None
-        assert row["last_error"] == "" and "secret" not in row
-    assert json.loads(_outbox(control, ids[0])["payload"]) == payload
-    assert db.enqueue("missing", "handoff.stored", payload) == []
-
-
-def test_due_time_boundary_oldest_first_limits_and_terminal_states(db, control):
-    db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    ids = [
-        db.enqueue("workspace-one", "handoff.stored", {"handoff_id": str(i)})[0] for i in range(5)
-    ]
-    db.mark_retry(ids[0], "later", LATER)
-    db.mark_delivered(ids[1])
-    db.mark_retry(ids[2], "final failure", NOW, give_up=True)
-    assert db.due("2026-10-30T03:59:59Z") == []
-    assert [row["id"] for row in db.due(NOW)] == ids[3:]
-    assert [row["id"] for row in db.due(LATER)] == [ids[0], ids[3], ids[4]]
-    assert [row["id"] for row in db.due(LATER, limit=1)] == [ids[0]]
-    assert db.due(LATER, limit=0) == [] and db.due(LATER, limit=-1) == []
-    assert _outbox(control, ids[2])["gave_up_at"] == NOW
-
-
-def test_delivery_retries_count_attempts_and_terminal_rows_cannot_be_revived(db, control):
-    db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    outbox_id = db.enqueue("workspace-one", "handoff.stored", {})[0]
-    db.mark_retry(outbox_id, "timeout\n雪", LATER)
-    row = _outbox(control, outbox_id)
-    assert row["attempts"] == 1 and row["last_error"] == "timeout\n雪"
-    assert row["next_at"] == LATER and row["gave_up_at"] is None
-    db.mark_retry(outbox_id, "again", LATER)
-    assert _outbox(control, outbox_id)["attempts"] == 2
-    db.mark_delivered(outbox_id)
-    delivered = _outbox(control, outbox_id)
-    assert delivered["attempts"] == 3 and delivered["delivered_at"] == NOW
-    assert delivered["last_error"] == ""
-    db.mark_delivered(outbox_id)
-    db.mark_retry(outbox_id, "late error", NOW, give_up=True)
-    assert _outbox(control, outbox_id) == delivered
-
-    failed_id = db.enqueue("workspace-one", "handoff.stored", {})[0]
-    db.mark_retry(failed_id, "gave up", LATER, give_up=True)
-    failed = _outbox(control, failed_id)
-    db.mark_retry(failed_id, "late retry", NOW)
-    db.mark_delivered(failed_id)
-    assert _outbox(control, failed_id) == failed
-    db.mark_retry(999999, "missing", NOW)
-    db.mark_delivered(999999)
-    assert db.due(LATER) == []
-
-
-def test_removing_webhook_cancels_queued_delivery(db, control):
-    first = db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    second = db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    ids = db.enqueue("workspace-one", "handoff.stored", {})
-    assert db.remove_webhook(first, actor="owner")
-    assert [row["webhook_id"] for row in db.due(NOW)] == [second]
-    assert [row[0] for row in control._conn.execute("SELECT id FROM handoff_outbox")] == [ids[1]]
-
-
-def test_enqueue_serialization_failure_creates_no_partial_rows(db, control):
-    db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    with pytest.raises(TypeError):
-        db.enqueue("workspace-one", "handoff.stored", {"unsupported": object()})
-    assert db.due(NOW) == []
-    assert not control._conn.in_transaction
-
-
 def test_database_operations_do_not_write_audit_entries(db, control):
     handoff = _in_state(db, "done")
     db.put_setting(SettingRow("workspace-one", "workspace", "", True), actor="owner")
     db.delete_setting("workspace-one", "workspace", "", actor="owner")
-    webhook_id = db.add_webhook("workspace-one", WAKE_URL, "secret", ("*",), actor="owner")
-    outbox_id = db.enqueue("workspace-one", "handoff.completed", {"handoff_id": handoff.id})[0]
-    db.mark_retry(outbox_id, "again", NOW)
-    db.mark_delivered(outbox_id)
-    db.remove_webhook(webhook_id, actor="owner")
+    assert db.get(handoff.id) == handoff
     assert control.audit_entries() == []
 
 
