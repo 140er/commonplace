@@ -158,3 +158,66 @@ def test_person_marker_must_be_a_verified_boolean():
     with pytest.raises(ValueError):
         provenance.parse_identity({**AGENT, "person": "true"})
     assert provenance.decode_identity(provenance.encode_identity(PERSON))["person"] is True
+
+
+def test_normalization_does_not_reuse_successor_with_different_authority():
+    with KnowledgeGraph.empty() as kg:
+        with provenance.verified(PERSON):
+            old = save(kg, valid_from="2026-01-01")
+        with provenance.verified(AGENT):
+            proposed = kg.add_triple(
+                "SimSteer",
+                "performance_gate",
+                "5%",
+                valid_from="2026-01-01",
+                source_thread="mcp:origin",
+                wing="simsteer",
+            )
+        new = kg.rewrite(old["triple_id"], "performance_gate", "5%", at="2026-02-01")
+        assert new != proposed
+        row = next(r for r in kg.query_entity("SimSteer") if r["id"] == new)
+        assert row["fact_status"] == "approved"
+
+
+def test_new_handoff_preview_keeps_goal_status_and_provenance_visible():
+    from commonplace.handoff.models import HandoffDoc
+    from commonplace.handoff.web import _preview
+    from commonplace.handoff.writer import render_markdown
+
+    doc = HandoffDoc(
+        goal="Ship <SimSteer>",
+        status="Checking",
+        stored_thread_id="thr_abc",
+        source_actor="conn:agent",
+    )
+    preview = _preview(render_markdown(doc))
+    assert "Ship &lt;SimSteer&gt;" in preview and "Checking" in preview
+    assert "Provenance" in preview and "proposal" in preview and "/app/threads/thr_abc" in preview
+
+
+def test_import_preserves_decision_source_and_explicit_approval(tmp_path):
+    from mempalace.knowledge_graph import import_graph_rows
+
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    with KnowledgeGraph(src) as kg, provenance.verified(PERSON):
+        save(kg)
+    import_graph_rows(src, dst, apply=True)
+    with KnowledgeGraph(dst) as kg:
+        row = facts(kg)["5%"]
+        assert row["fact_status"] == "approved" and row["approved_by"] == "jeffrey"
+        assert row["origin_link"] == "t3-thread://v1/mcp:origin"
+
+
+def test_stale_proposal_snapshot_cannot_erase_user_approval():
+    with KnowledgeGraph.empty() as kg:
+        with provenance.verified(AGENT):
+            save(kg)
+        stale = kg.dump_rows("triples")[0]
+        with provenance.verified(PERSON):
+            save(kg)
+        kg.apply_row("triples", stale)
+        row = facts(kg)["5%"]
+        assert row["fact_status"] == "approved"
+        assert (
+            row["approved_by"] == "jeffrey" and row["approval_link"] == "t3-thread://v1/mcp:origin"
+        )

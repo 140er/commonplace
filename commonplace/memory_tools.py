@@ -305,6 +305,8 @@ def _file_fact(ctx, args):
     call.update(_source(args, fact=True))
     if not call.get("source_thread"):
         raise ToolError("no: fact_save needs a source thread")
+    if fact_provenance.source_link(call["source_thread"], call.get("source_url")) is None:
+        raise ToolError("no: source.url is required for a chat outside Commonplace or T3")
     return _memory(ctx, "mempalace_kg_save", call)
 
 

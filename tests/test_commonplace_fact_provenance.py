@@ -95,3 +95,15 @@ def test_cross_origin_human_approval_is_refused(hub):
         headers={"Cookie": f"{sessions.COOKIE}={session}", "Origin": "https://unrelated.example"},
     )
     assert status == 403
+
+
+def test_external_chat_requires_link_and_keeps_supplied_link_on_every_source(hub):
+    token = hub.owner_token()
+    external = {**FACT, "source": {"thread": "external-session", "seq_start": 4}}
+    refused = _call(hub, token, external)
+    assert refused.get("isError") and "source.url" in refused["content"][0]["text"]
+    external["source"]["url"] = "https://chat.example/threads/external-session"
+    assert not _call(hub, token, external).get("isError")
+    row = hub.call(token, "mempalace_kg_query", entity="SimSteer")[0]["facts"][0]
+    assert row["origin_link"] == external["source"]["url"]
+    assert row["sources"][0]["origin_link"] == external["source"]["url"]

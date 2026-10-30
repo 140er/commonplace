@@ -1451,7 +1451,8 @@ class KnowledgeGraph:
                     "AND confidence IS ? AND source_closet IS ? AND source_file IS ? "
                     "AND source_drawer_id IS ? AND adapter_name IS ? "
                     "AND source_thread IS ? AND source_seq_start IS ? AND source_seq_end IS ? "
-                    "AND wing IS ? AND sensitivity IS ?",
+                    "AND wing IS ? AND sensitivity IS ?"
+                    + "".join(f" AND {key} IS ?" for key in fact_provenance.COLUMNS),
                     (
                         sub_id,
                         pred,
@@ -1467,6 +1468,7 @@ class KnowledgeGraph:
                         row["source_seq_end"],
                         row["wing"],
                         row["sensitivity"],
+                        *(row[key] for key in fact_provenance.COLUMNS),
                     ),
                 ).fetchone()
                 if existing:
@@ -1898,14 +1900,21 @@ class KnowledgeGraph:
         ):
             if col in sent and values[sent.index(col)] is None:
                 values[sent.index(col)] = default
-        updates = ", ".join(
-            # A stale peer must not lower how far a fact may travel.
-            f"sensitivity = {_STRICTER_SENSITIVITY}"
-            if col == "sensitivity" and table == "triples"
-            else f"{col} = excluded.{col}"
-            for col in sent
-            if col != "id"
-        )
+        updates = []
+        for col in sent:
+            if col == "id":
+                continue
+            if col == "sensitivity" and table == "triples":
+                updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
+            elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
+                updates.append(
+                    f"{col} = CASE WHEN triples.approval_status='approved' "
+                    "AND COALESCE(excluded.approval_status, 'unknown') != 'approved' "
+                    f"THEN triples.{col} ELSE excluded.{col} END"
+                )
+            else:
+                updates.append(f"{col} = excluded.{col}")
+        updates = ", ".join(updates)
         with self._lock:
             conn = self._conn()
             with conn:

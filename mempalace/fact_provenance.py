@@ -75,7 +75,8 @@ def record(conn, triple_id, thread=None, url=None, *, new=False):
 def fields(row):
     """Approval and lifecycle remain separate in storage and explicit on recall."""
     result = {key: row[key] for key in COLUMNS}
-    result["fact_status"] = row["status"] if row["status"] != "active" else row["approval_status"]
+    lifecycle = row["status"] or "active"
+    result["fact_status"] = lifecycle if lifecycle != "active" else row["approval_status"]
     return result
 
 
