@@ -584,8 +584,9 @@ _register(
 )
 _register(
     "fact_save",
-    "Save one fact as subject, predicate, object. The same fact gains a source"
-    " instead of a copy; a new value of a single-valued predicate replaces the old.",
+    "Save one fact with its originating chat source. Agent writes are proposals;"
+    " user approval comes from a signed-in person, never an agent's claim."
+    " Repeated facts gain sources; single-valued changes replace eligible older facts.",
     fact_save,
     {
         "subject": _STRING,
