@@ -171,3 +171,60 @@ def test_stats_still_need_every_wing(hub):
     token = hub.token("scoped", **SCOPED)
     response = hub.rpc(token, "tools/call", {"name": "mempalace_kg_stats", "arguments": {}})
     assert "error" in response
+
+
+def test_writes_cannot_find_or_change_a_hidden_fact(hub):
+    owner = hub.owner_token()
+    hidden = _add(
+        hub,
+        owner,
+        subject="Alice",
+        predicate="has",
+        object="flu",
+        wing="shared",
+        sensitivity="private",
+        valid_from="2024-03-01",
+    )["triple_id"]
+    token = hub.token("scoped", **SCOPED)
+    result, text = hub.call(
+        token,
+        "mempalace_kg_invalidate",
+        subject="Alice",
+        predicate="has",
+        object="flu",
+        ended="1900-01-01",
+        wing="shared",
+    )
+    assert result and result["closed"] == 0, text
+    assert "2024" not in text
+    mine = _add(hub, token, subject="Alice", predicate="has", object="flu", wing="shared")
+    assert mine["triple_id"] != hidden
+    result, text = hub.call(
+        token,
+        "mempalace_kg_supersede",
+        subject="Alice",
+        predicate="has",
+        old_object="flu",
+        new_object="cold",
+        wing="shared",
+    )
+    assert result and result["success"], text
+    facts = hub.call(owner, "mempalace_kg_query", entity="Alice")[0]["facts"]
+    by_id = {f["id"]: f for f in facts}
+    assert by_id[hidden]["current"] and by_id[hidden]["status"] == "active"
+    assert by_id[mine["triple_id"]]["status"] == "superseded"
+
+
+def test_filters_sent_as_text_are_refused(hub):
+    token = hub.token("scoped", **SCOPED)
+    for args in ({"wings": '["shared"]'}, {"sensitivities": "secret"}):
+        denied, _ = hub.call(token, "mempalace_kg_query", entity="api", **args)
+        assert denied["denied"], args
+
+
+def test_a_scoped_full_timeline_counts_only_visible_facts(hub):
+    _seed(hub)
+    token = hub.token("scoped", **SCOPED)
+    timeline, _ = hub.call(token, "mempalace_kg_timeline")
+    assert [f["object"] for f in timeline["timeline"]] == ["sqlite"]
+    assert timeline["total"] == 1

@@ -19,7 +19,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import http.client
-import importlib
 import ipaddress
 import json
 import logging
@@ -36,7 +35,7 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, ratelimit, sessions, urls
+from . import events, extensions, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
@@ -463,6 +462,10 @@ class Mediator:
             # Only a token that sees every wing may file a fact with no wing:
             # only such a token can read one back.
             self._pin_write_wing(policy, args, wing, notes)
+        if not policy.sees_all_wings:
+            # Only facts this token could read count as the same fact or can
+            # be changed, so a write never reveals or touches a hidden one.
+            args["sensitivities"] = policy.fact_sensitivities()
         if name == "mempalace_kg_invalidate":
             return None
         floor = _fact_floor(args)
@@ -573,10 +576,6 @@ class Mediator:
 def _fact_floor(args: dict) -> str:
     """The least sensitivity a fact may have: from its wing and its words."""
     floor = "private" if args.get("wing") and is_private_wing(args["wing"]) else "internal"
-    try:
-        privacy = importlib.import_module("commonplace.privacy")
-    except ModuleNotFoundError:
-        return floor
     words = " ".join(
         str(args[key])
         for key in ("subject", "predicate", "object", "old_object", "new_object")

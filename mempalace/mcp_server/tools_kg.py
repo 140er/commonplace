@@ -117,6 +117,7 @@ def tool_kg_add(
     source_seq_end: int = None,
     wing: str = None,
     sensitivity: str = None,
+    sensitivities: list = None,
 ):
     """Add a relationship to the knowledge graph.
 
@@ -142,6 +143,7 @@ def tool_kg_add(
         )
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -180,6 +182,7 @@ def tool_kg_add(
                 source_seq_end=source_seq_end,
                 wing=wing,
                 sensitivity=sensitivity,
+                sensitivities=sensitivities,
             )
         )
     except Exception as e:
@@ -201,7 +204,12 @@ def tool_kg_add(
 
 
 def tool_kg_invalidate(
-    subject: str, predicate: str, object: str, ended: str = None, wing: str = None
+    subject: str,
+    predicate: str,
+    object: str,
+    ended: str = None,
+    wing: str = None,
+    sensitivities: list = None,
 ):
     """Mark a fact as no longer true.
 
@@ -218,6 +226,7 @@ def tool_kg_invalidate(
         object = sanitize_kg_value(object, "object")
         ended = sanitize_iso_temporal(ended, "ended")
         wing = fact_wing(wing)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -234,12 +243,22 @@ def tool_kg_invalidate(
         },
     )
 
-    _call_kg(lambda kg: kg.invalidate(subject, predicate, object, ended=resolved_ended, wing=wing))
+    closed = _call_kg(
+        lambda kg: kg.invalidate(
+            subject,
+            predicate,
+            object,
+            ended=resolved_ended,
+            wing=wing,
+            sensitivities=sensitivities,
+        )
+    )
     return _with_kg_notice(
         {
             "success": True,
             "fact": f"{subject} → {predicate} → {object}",
             "ended": resolved_ended,
+            "closed": closed,
         }
     )
 
@@ -255,6 +274,7 @@ def tool_kg_supersede(
     source_seq_end: int = None,
     wing: str = None,
     sensitivity: str = None,
+    sensitivities: list = None,
 ):
     """Atomically replace one fact with another at a single shared boundary.
 
@@ -278,6 +298,7 @@ def tool_kg_supersede(
         )
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -313,6 +334,7 @@ def tool_kg_supersede(
             source_seq_end=source_seq_end,
             wing=wing,
             sensitivity=sensitivity,
+            sensitivities=sensitivities,
         )
     )
     return _with_kg_notice(

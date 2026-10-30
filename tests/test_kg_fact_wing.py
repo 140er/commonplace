@@ -183,3 +183,47 @@ def test_replication_and_import_carry_wing_and_sensitivity(tmp_path):
     assert counts["triples"]["added"] == 1
     with KnowledgeGraph(db_path=dst) as kg:
         assert _row(kg, tid)["wing"] == "w"
+
+
+def test_writes_never_touch_facts_outside_the_given_sensitivities(kg):
+    hidden = kg.add_triple(
+        "Alice", "has", "flu", wing="w", sensitivity="private", valid_from="2024-03-01"
+    )
+    visible = ["public", "internal"]
+    # No match, so no error that would reveal the hidden fact's start date.
+    assert (
+        kg.invalidate("Alice", "has", "flu", ended="1900-01-01", wing="w", sensitivities=visible)
+        == 0
+    )
+    assert _row(kg, hidden)["valid_to"] is None
+    # The same words at a visible sensitivity are a new fact, not a merge.
+    mine = kg.add_triple("Alice", "has", "flu", wing="w", sensitivities=visible)
+    assert mine != hidden
+    new = kg.supersede("Alice", "has", "flu", "cold", wing="w", sensitivities=visible)
+    assert _row(kg, hidden)["valid_to"] is None and _row(kg, hidden)["status"] == "active"
+    assert _row(kg, mine)["superseded_by"] == new
+    # Without a filter the owner closes it, and learns how many it closed.
+    assert kg.invalidate("Alice", "has", "flu", wing="w") == 1
+
+
+def test_replication_and_import_never_lower_sensitivity(tmp_path):
+    src = str(tmp_path / "src.sqlite3")
+    with KnowledgeGraph(db_path=src) as kg:
+        tid = kg.add_triple("a", "b", "c", wing="w", valid_from="2026-01-01")
+        stale = kg.dump_rows("triples")[0]
+    with KnowledgeGraph(db_path=str(tmp_path / "replica.sqlite3")) as replica:
+        for row in KnowledgeGraph(db_path=src).dump_rows("entities"):
+            replica.apply_row("entities", row)
+        replica.apply_row("triples", {**stale, "sensitivity": "secret"})
+        replica.apply_row("triples", stale)
+        assert _row(replica, tid)["sensitivity"] == "secret"
+    dst = str(tmp_path / "dst.sqlite3")
+    with KnowledgeGraph(db_path=dst) as kg:
+        kept = kg.add_triple("a", "b", "c", wing="w", valid_from="2026-01-01", sensitivity="public")
+    with KnowledgeGraph(db_path=src) as kg:
+        kg._conn().execute("UPDATE triples SET sensitivity='private' WHERE id=?", (tid,))
+        kg._conn().commit()
+    counts = import_graph_rows(src, dst, apply=True)
+    assert counts["triples"]["present"] == 1
+    with KnowledgeGraph(db_path=dst) as kg:
+        assert _row(kg, kept)["sensitivity"] == "private"

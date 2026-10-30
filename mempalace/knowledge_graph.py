@@ -153,6 +153,20 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
                         "AND object = ? AND valid_from IS ? AND valid_to IS ? AND wing IS ?",
                         fact + window + wing,
                     ):
+                        if "sensitivity" in cols:
+                            # Keep the stricter sensitivity of the two copies.
+                            for found_row in target.execute(
+                                "SELECT id, sensitivity FROM triples WHERE subject = ? "
+                                "AND predicate = ? AND object = ? AND valid_from IS ? "
+                                "AND valid_to IS ? AND wing IS ?",
+                                fact + window + wing,
+                            ).fetchall():
+                                raised = strictest(found_row[1], row["sensitivity"])
+                                if raised != found_row[1]:
+                                    target.execute(
+                                        "UPDATE triples SET sensitivity = ? WHERE id = ?",
+                                        (raised, found_row[0]),
+                                    )
                         numbers["present"] += 1
                         continue
                     if found("SELECT 1 FROM triples WHERE id = ?", (row["id"],)):
@@ -329,6 +343,19 @@ def visibility(wings=None, sensitivities=None) -> tuple:
             items.append(check(item))
         out.append(sorted(set(items)))
     return tuple(out)
+
+
+def _sensitivity_rank(column: str) -> str:
+    cases = " ".join(f"WHEN '{name}' THEN {i}" for i, name in enumerate(FACT_SENSITIVITIES))
+    return f"(CASE {column} {cases} ELSE 1 END)"
+
+
+# SQL for an upsert: keep the stricter of the stored and the incoming sensitivity.
+_STRICTER_SENSITIVITY = (
+    f"CASE WHEN {_sensitivity_rank('excluded.sensitivity')} > "
+    f"{_sensitivity_rank('triples.sensitivity')} "
+    "THEN excluded.sensitivity ELSE triples.sensitivity END"
+)
 
 
 def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
@@ -643,6 +670,7 @@ class KnowledgeGraph:
         source_seq_end: int = None,
         wing: str = None,
         sensitivity: str = None,
+        sensitivities=None,
     ):
         """
         Add a relationship triple: subject → predicate → object.
@@ -659,6 +687,8 @@ class KnowledgeGraph:
         ``wing`` scopes the fact: a fact is the same fact only within one
         wing, and wing-filtered reads never return another wing's facts.
         ``sensitivity`` is one of :data:`FACT_SENSITIVITIES`.
+        ``sensitivities`` limits which stored facts count as the same one, so
+        a caller never merges into (or learns of) a fact it may not read.
 
         Examples:
             add_triple("Max", "child_of", "Alice", valid_from="2015-04-01")
@@ -673,6 +703,8 @@ class KnowledgeGraph:
         )
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         # Reject inverted intervals. Use temporal comparison keys rather than
         # raw string comparison so legacy date-only values and canonical UTC
@@ -707,8 +739,8 @@ class KnowledgeGraph:
                 # Check for existing identical triple in the same wing
                 existing = conn.execute(
                     "SELECT id FROM triples WHERE subject=? AND predicate=? AND object=? "
-                    "AND wing IS ? AND valid_to IS NULL",
-                    (sub_id, pred, obj_id, wing),
+                    "AND wing IS ? AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchone()
                 if existing:
                     return existing["id"]  # Already exists and still valid
@@ -745,12 +777,24 @@ class KnowledgeGraph:
                 return triple_id
 
     def invalidate(
-        self, subject: str, predicate: str, obj: str, ended: str = None, wing: str = None
-    ):
-        """Mark a relationship in ``wing`` as no longer valid (set valid_to date/time)."""
+        self,
+        subject: str,
+        predicate: str,
+        obj: str,
+        ended: str = None,
+        wing: str = None,
+        sensitivities=None,
+    ) -> int:
+        """Mark a relationship in ``wing`` as no longer valid (set valid_to date/time).
+
+        Only facts of ``sensitivities`` (``None``: any) are touched. Returns
+        how many open facts were closed.
+        """
         pred = predicate.lower().replace(" ", "_")
         ended = sanitize_iso_temporal(ended or date.today().isoformat(), "ended")
         wing = fact_wing(wing)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         with self._lock:
             conn = self._conn()
@@ -760,8 +804,8 @@ class KnowledgeGraph:
                 rows = conn.execute(
                     "SELECT id, valid_from FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL",
-                    (sub_id, pred, obj_id, wing),
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchall()
 
                 for row in rows:
@@ -774,12 +818,12 @@ class KnowledgeGraph:
                             "an inverted interval would be invisible to every KG query"
                         )
 
-                conn.execute(
+                return conn.execute(
                     "UPDATE triples SET valid_to=? "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL",
-                    (ended, sub_id, pred, obj_id, wing),
-                )
+                    "AND valid_to IS NULL" + within_sql,
+                    (ended, sub_id, pred, obj_id, wing, *within_params),
+                ).rowcount
 
     def supersede(
         self,
@@ -798,6 +842,7 @@ class KnowledgeGraph:
         source_seq_end: int = None,
         wing: str = None,
         sensitivity: str = None,
+        sensitivities=None,
     ):
         """Atomically replace one fact with another at a single shared boundary.
 
@@ -821,8 +866,9 @@ class KnowledgeGraph:
         The closed fact gets ``status = 'superseded'`` and ``superseded_by`` =
         the successor's id, so a reader can walk from an old value to the new.
 
-        Only facts in ``wing`` are replaced, and the successor lands there.
-        The successor is at least as sensitive as the fact it replaces.
+        Only facts in ``wing`` (and of ``sensitivities``, when given) are
+        replaced, and the successor lands there. The successor is at least as
+        sensitive as the fact it replaces.
 
         Returns the new triple's id. If no open ``old_obj`` triple exists the
         successor is still opened, so ``supersede`` degrades to ``add_triple``.
@@ -839,6 +885,8 @@ class KnowledgeGraph:
         )
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
 
         pred = predicate.lower().replace(" ", "_")
 
@@ -863,8 +911,8 @@ class KnowledgeGraph:
                 rows = conn.execute(
                     "SELECT id, valid_from, sensitivity FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL",
-                    (sub_id, pred, old_id, wing),
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, old_id, wing, *within_params),
                 ).fetchall()
                 sensitivity = strictest(sensitivity, *(r["sensitivity"] for r in rows))
                 for row in rows:
@@ -881,16 +929,16 @@ class KnowledgeGraph:
                 conn.execute(
                     "UPDATE triples SET valid_to=? "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL",
-                    (boundary, sub_id, pred, old_id, wing),
+                    "AND valid_to IS NULL" + within_sql,
+                    (boundary, sub_id, pred, old_id, wing, *within_params),
                 )
 
                 # Open the successor at the same instant (idempotent if already open).
                 existing = conn.execute(
                     "SELECT id, sensitivity FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL",
-                    (sub_id, pred, new_id, wing),
+                    "AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, new_id, wing, *within_params),
                 ).fetchone()
                 if existing:
                     triple_id = existing["id"]
@@ -1451,7 +1499,14 @@ class KnowledgeGraph:
         for col, default in (("status", "active"), ("sensitivity", DEFAULT_SENSITIVITY)):
             if col in sent and values[sent.index(col)] is None:
                 values[sent.index(col)] = default
-        updates = ", ".join(f"{col} = excluded.{col}" for col in sent if col != "id")
+        updates = ", ".join(
+            # A stale peer must not lower how far a fact may travel.
+            f"sensitivity = {_STRICTER_SENSITIVITY}"
+            if col == "sensitivity" and table == "triples"
+            else f"{col} = excluded.{col}"
+            for col in sent
+            if col != "id"
+        )
         with self._lock:
             conn = self._conn()
             with conn:

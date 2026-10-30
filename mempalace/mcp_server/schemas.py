@@ -125,6 +125,14 @@ TOOLS = {
                     "enum": ["public", "internal", "private", "secret"],
                     "description": "How far the fact may travel (default: internal)",
                 },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
+                },
             },
             "required": ["subject", "predicate", "object"],
         },
@@ -145,6 +153,14 @@ TOOLS = {
                 "wing": {
                     "type": "string",
                     "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "object"],
@@ -189,6 +205,14 @@ TOOLS = {
                     "type": "string",
                     "enum": ["public", "internal", "private", "secret"],
                     "description": "How far the fact may travel (default: internal)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "old_object", "new_object"],

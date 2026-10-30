@@ -421,9 +421,9 @@ _FILTER = {"wings", "sensitivities"}
 ADDED_SINCE_BASELINE = {
     "memory_save": {"source"},
     "mempalace_add_drawer": _RANGE,
-    "mempalace_kg_add": _RANGE | _FACT,
-    "mempalace_kg_supersede": _RANGE | _FACT,
-    "mempalace_kg_invalidate": {"wing"},
+    "mempalace_kg_add": _RANGE | _FACT | {"sensitivities"},
+    "mempalace_kg_supersede": _RANGE | _FACT | {"sensitivities"},
+    "mempalace_kg_invalidate": {"wing", "sensitivities"},
     "mempalace_kg_query": _FILTER,
     "mempalace_kg_timeline": _FILTER,
 }
