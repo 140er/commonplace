@@ -182,7 +182,9 @@ DEFAULT_SCOPES = {
 }
 
 # Trust caps what scopes can do, whatever the token holds.
-_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "handoff:write", "admin"})
+_UNTRUSTED_BLOCKED = frozenset(
+    {"memory:delete", "private:write", "threads:read", "handoff:write", "admin"}
+)
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
 # Tools that change what someone else wrote. Untrusted tokens only add.
 _UPDATES = frozenset(

@@ -6,6 +6,8 @@ registers it (``POST /api/handoffs/<id>/successor``). ``command``: run
 ``COMMONPLACE_HANDOFF_ID`` and ``COMMONPLACE_THREAD_ID``. ``webhook``: POST
 JSON with an ``X-Commonplace-Signature: sha256=<hmac>`` header, 10 s
 timeout, expects ``{"agent_ref", "url"?, "thread_id"?}``.
+Webhook destinations are owner configured: local/private addresses are allowed;
+redirects are never followed.
 """
 
 from __future__ import annotations
@@ -65,6 +67,8 @@ def _command(
         not isinstance(config.argv, (tuple, list))
         or not config.argv
         or not all(isinstance(argument, str) for argument in config.argv)
+        or "{" in config.argv[0]
+        or "}" in config.argv[0]
     ):
         raise LaunchError("The handoff command must be a nonempty argument list.")
     try:

@@ -239,6 +239,15 @@ class _Pages:
     def _form(self, request, session):
         if not session:
             raise _Missing
+        origin = request.headers.get("Origin")
+        if request.headers.get("Sec-Fetch-Site", "").lower() == "cross-site":
+            raise _BadForm
+        if origin is not None:
+            scheme = "https" if isinstance(request.connection, ssl.SSLSocket) else "http"
+            if request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+                scheme = "https"
+            if origin != f"{scheme}://{request.headers.get('Host', '')}":
+                raise _BadForm
         try:
             length = int(request.headers.get("Content-Length", "0"))
             if not 0 < length <= 8192 or request.headers.get("Transfer-Encoding"):
@@ -303,7 +312,7 @@ class _Pages:
 
     def settings(self, request, session, principal):
         workspace = principal.workspace_id
-        owner = principal.role == "owner"
+        owner = principal.role == "owner" and principal.policy.trust != "untrusted"
         if request.command == "POST":
             data = self._form(request, session)
             if not owner:
