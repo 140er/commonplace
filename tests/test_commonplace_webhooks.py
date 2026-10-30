@@ -1,0 +1,427 @@
+"""W3: real HTTP/MCP, durable retries, filtering and ownership."""
+
+import hashlib
+import hmac
+import http.client
+import json
+import queue
+import sys
+import threading
+import time
+import types
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from commonplace import events, sessions, webhooks
+from commonplace.cli import main
+from commonplace.control_db import ControlDB
+from commonplace.extensions import ToolError
+from tests._commonplace_helpers import hub_fixture  # noqa: F401
+
+
+@pytest.fixture
+def receiver():
+    requests = queue.Queue()
+    statuses = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            requests.put((dict(self.headers), body))
+            self.send_response(statuses.pop(0) if statuses else 204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/hook", requests, statuses
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.fixture
+def live(hub):
+    try:
+        yield hub
+    finally:
+        webhooks.stop(hub.gateway)
+
+
+def principal(hub, token=None):
+    return hub.db.authenticate_token(token or hub.owner_token())
+
+
+def rest(hub, method, path="/api/webhooks", token=None, body=None, cookie=None):
+    conn = http.client.HTTPConnection("127.0.0.1", hub.port, timeout=3)
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    if cookie:
+        headers["Cookie"] = sessions.COOKIE + "=" + cookie
+    try:
+        conn.request(method, path, json.dumps(body) if body is not None else None, headers)
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        conn.close()
+
+
+def rpc(hub, token, name, **args):
+    return hub.rpc(token, "tools/call", {"name": name, "arguments": args})
+
+
+def wait_for(fn, timeout=3):
+    until = time.monotonic() + timeout
+    while time.monotonic() < until:
+        value = fn()
+        if value:
+            return value
+        threading.Event().wait(0.01)
+    raise AssertionError("condition not met")
+
+
+def delivery_state(hub, p, wid, state):
+    rows = webhooks.deliveries(hub.db, p, wid)
+    return rows if rows and rows[0]["status"] == state else None
+
+
+def emit(hub, kind="card.updated", **data):
+    return events.emit(
+        hub.db,
+        hub.workspace,
+        kind,
+        subject="#7",
+        actor="conn:agent",
+        data={"board": "work", "number": 7, **data},
+    )
+
+
+def test_signature_payload_and_routes(live, receiver, monkeypatch):
+    hub = live
+    url, requests, _ = receiver
+    monkeypatch.setenv("COMMONPLACE_BASE_URL", "https://memory.example")
+    # The W8 module may already be installed in the merged gateway.
+    import commonplace
+
+    monkeypatch.setattr(
+        commonplace,
+        "urls",
+        types.SimpleNamespace(share_link=lambda db, ws, path: "https://memory.example" + path),
+        raising=False,
+    )
+    token = hub.owner_token()
+    status, hook = rest(hub, "POST", token=token, body={"url": url, "events": ["card_changed"]})
+    assert status == 201
+    assert set(hook) == {"id", "secret"}
+    event = emit(
+        hub,
+        title="A card",
+        body="SECRET MEMORY",
+        text="SECRET MEMORY",
+        nested={"text": "SECRET MEMORY"},
+    )
+    headers, raw = requests.get(timeout=3)
+    payload = json.loads(raw)
+    assert payload == {
+        "id": f"evt_{event['seq']}",
+        "seq": event["seq"],
+        "kind": "card.updated",
+        "at": event["at"],
+        "workspace": hub.workspace,
+        "subject": "#7",
+        "actor": "conn:agent",
+        "data": {"board": "work", "number": 7, "title": "A card"},
+        "url": "https://memory.example/app/#/card/7",
+    }
+    assert b"SECRET MEMORY" not in raw
+    timestamp, signature = headers["X-Commonplace-Signature"].split(",")
+    expected = hmac.new(
+        hook["secret"].encode(), timestamp[2:].encode() + b"." + raw, hashlib.sha256
+    ).hexdigest()
+    assert hmac.compare_digest(signature, "v1=" + expected)
+    assert headers["X-Commonplace-Event"] == "card.updated"
+    p = principal(hub, token)
+    rows = wait_for(lambda: delivery_state(hub, p, hook["id"], "delivered"))
+    assert headers["X-Commonplace-Delivery"] == rows[0]["id"]
+    assert rows[0]["attempt"] == 1
+    status, result = rest(hub, "GET", token=token)
+    assert status == 200 and len(result["webhooks"]) == 1
+    assert "secret" not in json.dumps(result)
+    status, result = rest(hub, "GET", f"/api/webhooks/{hook['id']}/deliveries", token)
+    assert status == 200 and result["deliveries"][0]["attempts"][0]["http_status"] == 204
+    status, result = rest(hub, "POST", f"/api/webhooks/{hook['id']}/test", token)
+    assert status == 202 and result["ok"] is True
+    assert result["delivery"]["id"].startswith("dlv_")
+    requests.get(timeout=3)
+    assert rest(hub, "DELETE", f"/api/webhooks/{hook['id']}", token) == (200, {"ok": True})
+    assert rest(hub, "GET", token=token)[1] == {"webhooks": []}
+
+
+def test_retry_then_success(live, receiver):
+    hub = live
+    url, requests, statuses = receiver
+    statuses.extend([503, 204])
+    hub.gateway.webhooks.schedule = (0.01,)
+    p = principal(hub)
+    hook = webhooks.add(hub.db, p, url, kinds=["card.updated"])
+    emit(hub)
+    first = requests.get(timeout=3)
+    second = requests.get(timeout=3)
+    assert first[1] == second[1]
+    assert first[0]["X-Commonplace-Delivery"] == second[0]["X-Commonplace-Delivery"]
+    rows = wait_for(lambda: delivery_state(hub, p, hook["id"], "delivered"))
+    assert rows[0]["attempt"] == 2
+    assert [a["http_status"] for a in rows[0]["attempts"]] == [503, 204]
+
+
+def test_dead_failure_notification_and_no_feedback_loop(live, receiver):
+    hub = live
+    url, _, statuses = receiver
+    statuses.extend([500] * 20)
+    hub.gateway.webhooks.schedule = (0.001,)
+    hub.gateway.webhooks.max_attempts = 2
+    p = principal(hub)
+    hook = webhooks.add(hub.db, p, url)
+    emit(hub)
+
+    def finished():
+        rows = webhooks.deliveries(hub.db, p, hook["id"])
+        return rows if len(rows) == 2 and all(r["status"] == "dead" for r in rows) else None
+
+    rows = wait_for(finished)
+    assert all(row["attempt"] == 2 for row in rows)
+    failures = [e for e in events.after(hub.db, hub.workspace) if e["kind"] == "webhook.failed"]
+    assert len(failures) == 1
+    assert failures[0]["data"]["webhook_id"] == hook["id"]
+    assert all(len(row["attempts"]) == 2 for row in rows)
+
+
+def test_filters_and_presets(live, receiver):
+    hub = live
+    webhooks.stop(hub.gateway)
+    url, _, _ = receiver
+    p = principal(hub)
+    hooks = [
+        webhooks.add(hub.db, p, url, kinds=["card_changed"], board="work"),
+        webhooks.add(hub.db, p, url, kinds=["review_needed"]),
+        webhooks.add(hub.db, p, url, kinds=["waiting_on_me"]),
+        webhooks.add(hub.db, p, url, waiting_on="user:jeffrey"),
+    ]
+    listener = hub.gateway.webhooks.on_event
+    cases = [
+        ("card.updated", {}, [0]),
+        ("card.review_needed", {"ask_to": "user:jeffrey"}, [0, 1, 3]),
+        ("card.handoff", {"assignee": p.actor}, [0, 2]),
+        ("card.decided", {"return_to": p.actor}, [0, 2]),
+        ("card.handoff", {"ask_to": "user:jeffrey"}, [0, 3]),
+        ("memory.saved", {"assignee": "user:jeffrey"}, []),
+        ("card.updated", {"board": "other"}, []),
+    ]
+    counts = [0] * len(hooks)
+    for kind, data, matches in cases:
+        listener(emit(hub, kind, **data))
+        for index in matches:
+            counts[index] += 1
+    assert [len(webhooks.deliveries(hub.db, p, h["id"])) for h in hooks] == counts
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/hook",
+        "https://10.0.0.1/hook",
+        "http://localhost/hook",
+        "http://127.0.0.1:99/hook",
+        "http://127.10.2.3/hook",
+        "http://[::1]/hook",
+        "http://host.ts.net/hook",
+        "http://HOST.TS.NET./hook",
+        "http://100.64.0.0/hook",
+        "http://100.127.255.255/hook",
+    ],
+)
+def test_url_allowed(url):
+    assert webhooks.validate_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com",
+        "http://10.0.0.1",
+        "http://192.168.1.1",
+        "http://172.16.0.1",
+        "http://100.63.255.255",
+        "http://100.128.0.0",
+        "http://ts.net",
+        "http://fake-ts.net",
+        "http://host.ts.net.evil.com",
+        "http://localhost.evil.com",
+        "http://127.0.0.1.evil.com",
+        "http://[::ffff:127.0.0.1]",
+        "http://[fe80::1%25eth0]",
+        "ftp://127.0.0.1",
+        "https://user:pass@example.com",
+        "https://user@example.com",
+        "http://127.1",
+        "http://2130706433",
+        "https://example.com/#fragment",
+        "https://example.com:bad",
+        "https://example.com:0",
+        "https://",
+        "http://localhost/\r\nX:foo",
+        "http://localhost\\@evil.com",
+    ],
+)
+def test_url_refused(url):
+    with pytest.raises(ToolError):
+        webhooks.validate_url(url)
+
+
+def test_tool_gates_and_visibility(live, receiver):
+    hub = live
+    url, _, _ = receiver
+    trusted = hub.owner_token()
+    untrusted = hub.token("untrusted", profile="full", trust="untrusted", write_wing="inbox")
+    slim = hub.token("slim", trust="trusted", profile="slim")
+    no_scope = hub.token("no-scope", trust="trusted", profile="full", scopes=[])
+    for token in (untrusted, slim, no_scope):
+        assert "webhook_add" not in hub.tool_names(token)
+        for name in ("add", "list", "remove", "test"):
+            assert "error" in rpc(hub, token, "webhook_" + name, url=url, id="wh_missing")
+        assert rest(hub, "GET", token=token)[0] == 403
+    assert "webhook_add" in hub.tool_names(trusted)
+    response = rpc(hub, trusted, "webhook_add", url=url, events=["review_needed"])
+    text = response["result"]["content"][0]["text"]
+    wid = text.split()[0]
+    assert " secret " in text
+    response = rpc(hub, trusted, "webhook_list")
+    assert wid in json.dumps(response) and "secret" not in json.dumps(response)
+    assert "error" not in rpc(hub, trusted, "webhook_remove", id=wid)
+
+
+def test_connection_and_workspace_ownership_and_sessions(live, receiver):
+    hub = live
+    url, _, _ = receiver
+    owner = hub.owner_token()
+    other = hub.owner_token("other")
+    p = principal(hub, owner)
+    hook = webhooks.add(hub.db, p, url)
+    # An owner-held token still sees only its own registrations.
+    assert rest(hub, "GET", token=other)[1] == {"webhooks": []}
+    for method, suffix in (("DELETE", ""), ("POST", "/test"), ("GET", "/deliveries")):
+        assert rest(hub, method, "/api/webhooks/" + hook["id"] + suffix, other)[0] == 404
+    link = sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
+    cookie = sessions.redeem_login_link(hub.db, link)
+    assert len(rest(hub, "GET", cookie=cookie)[1]["webhooks"]) == 1
+    elsewhere = hub.db.create_workspace("elsewhere", hub.admin)
+    outsider = hub.token("other-ws", workspace=elsewhere, profile="full", trust="trusted")
+    assert rest(hub, "GET", token=outsider)[1] == {"webhooks": []}
+    assert rest(hub, "DELETE", "/api/webhooks/" + hook["id"], outsider)[0] == 404
+    assert rest(hub, "GET")[0] == 401
+
+
+def test_restart_resumes_persisted_delivery(live, receiver):
+    hub = live
+    url, requests, statuses = receiver
+    statuses.append(503)
+    hub.gateway.webhooks.schedule = (60,)
+    token = hub.owner_token()
+    p = principal(hub, token)
+    hook = webhooks.add(hub.db, p, url, kinds=["card.updated"])
+    emit(hub)
+    first = requests.get(timeout=3)
+    wait_for(lambda: delivery_state(hub, p, hook["id"], "retry"))
+    webhooks.stop(hub.gateway)
+    with hub.db._lock:
+        hub.db._conn.execute("UPDATE webhook_deliveries SET next_at = ?", (time.time(),))
+    # A new database connection and dispatcher read the same durable queue.
+    restarted_db = ControlDB(hub.db.path)
+    dispatcher = webhooks.Dispatcher(restarted_db, schedule=(0.001,)).start()
+    try:
+        second = requests.get(timeout=3)
+        assert first[1] == second[1]
+        rows = wait_for(lambda: delivery_state(hub, p, hook["id"], "delivered"))
+        assert rows[0]["attempt"] == 2
+    finally:
+        dispatcher.stop()
+        restarted_db.close()
+
+
+def test_redirect_is_not_followed(live, receiver):
+    hub = live
+    url, requests, statuses = receiver
+    statuses.append(302)
+    hub.gateway.webhooks.max_attempts = 1
+    p = principal(hub)
+    hook = webhooks.add(hub.db, p, url, kinds=["card.updated"])
+    emit(hub)
+    requests.get(timeout=3)
+    rows = wait_for(lambda: delivery_state(hub, p, hook["id"], "dead"))
+    assert rows[0]["http_status"] == 302
+    assert requests.empty()
+
+
+def test_cli_add_list_remove(tmp_path, capsys):
+    data = tmp_path / "data"
+    prefix = ["--data", str(data)]
+    assert main(prefix + ["init", "--admin-email", "owner@example.com", "--workspace", "home"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            prefix
+            + [
+                "webhook",
+                "add",
+                "http://localhost:9999/hook",
+                "--workspace",
+                "home",
+                "--events",
+                "waiting_on_me",
+            ]
+        )
+        == 0
+    )
+    hook = json.loads(capsys.readouterr().out)
+    assert hook["waiting_on"].startswith("user:") and hook["secret"]
+    assert main(prefix + ["webhook", "list", "--workspace", "home"]) == 0
+    output = capsys.readouterr().out
+    assert hook["id"] in output and "secret" not in output
+    assert main(prefix + ["webhook", "remove", hook["id"], "--workspace", "home"]) == 0
+    assert main(prefix + ["webhook", "add", "http://example.com", "--workspace", "home"]) == 2
+
+
+def test_shared_links_and_app_url_fallback(live, receiver, monkeypatch):
+    import commonplace
+
+    hub = live
+    url, requests, _ = receiver
+    p = principal(hub)
+    webhooks.add(hub.db, p, url, kinds=["card.updated"])
+    # Exercise import fallback even after W8 is merged.
+    monkeypatch.delattr(commonplace, "urls", raising=False)
+    monkeypatch.setitem(sys.modules, "commonplace.urls", None)
+    monkeypatch.setenv("COMMONPLACE_APP_URL", "https://app.example")
+    monkeypatch.setenv("COMMONPLACE_BASE_URL", "https://old.example")
+    emit(hub)
+    assert json.loads(requests.get(timeout=3)[1])["url"] == "https://app.example/app/#/card/7"
+    calls = []
+
+    def share_link(db, workspace_id, path):
+        calls.append((db, workspace_id, path))
+        return "https://agent.example/s/Ab12Cd3"
+
+    monkeypatch.setattr(
+        commonplace, "urls", types.SimpleNamespace(share_link=share_link), raising=False
+    )
+    emit(hub)
+    assert json.loads(requests.get(timeout=3)[1])["url"] == "https://agent.example/s/Ab12Cd3"
+    assert calls == [(hub.db, hub.workspace, "/app/#/card/7")]

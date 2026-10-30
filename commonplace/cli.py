@@ -155,10 +155,28 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def add_webhook_commands(sub):
+    from .webhooks import cli_command
+
+    commands = sub.add_parser("webhook").add_subparsers(dest="action", required=True)
+    for name in ("add", "list", "remove"):
+        parser = commands.add_parser(name)
+        parser.add_argument("--workspace", required=True)
+        if name == "add":
+            parser.add_argument("url")
+            parser.add_argument("--events", type=_csv)
+            parser.add_argument("--board", default="")
+            parser.add_argument("--waiting-on", default="")
+        elif name == "remove":
+            parser.add_argument("id")
+        parser.set_defaults(func=cli_command)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="commonplace")
     p.add_argument("--data", help=f"data directory (default ${DATA_ENV} or ~/.commonplace)")
     sub = p.add_subparsers(dest="command", required=True)
+    add_webhook_commands(sub)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
     s.add_argument("--admin-email", required=True)
