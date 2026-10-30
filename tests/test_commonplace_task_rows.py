@@ -1,10 +1,11 @@
 """Task rows: the server-derived ``need`` of a card, and where it shows up."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
-from commonplace.boards.display import NEEDS, need
+from commonplace.boards.display import NEEDS, need, need_for
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
 
@@ -39,7 +40,9 @@ PR = "https://github.com/140er/mempalace/pull/7"
     "fields, expected",
     [
         ({**ASK, "ask_to": ME}, "you"),
-        ({**ASK, "ask_to": OTHER}, "plan"),
+        ({**ASK, "ask_to": OTHER}, "idle"),
+        ({**ASK, "ask_to": OTHER, "pr_url": PR, "checks": "passing"}, "merge"),
+        ({"status": "review"}, "plan"),
         ({"labels": ["plan"]}, "plan"),
         ({"status": "doing", "pr_url": PR, "checks": "passing", "heartbeat_at": FRESH}, "merge"),
         ({"status": "doing", "checks": "pending", "heartbeat_at": FRESH}, "checks"),
@@ -58,8 +61,22 @@ def test_every_state(fields, expected):
 
 def test_ask_without_recipient_goes_to_the_owner():
     assert derive(card(**ASK)) == "you"
-    assert derive(card(**ASK), owner=False) == "plan"
-    assert derive(card(**ASK, ask_to=ME), me=None, owner=True) == "plan"
+    assert derive(card(**ASK), owner=False) == "idle"
+    assert derive(card(**ASK, ask_to=ME), me=None, owner=True) == "idle"
+
+
+def test_only_a_signed_in_person_is_you():
+    def viewer(actor, person, role="owner"):
+        return SimpleNamespace(actor=actor, person=person, role=role)
+
+    to_owner, to_me = card(**ASK), card(**ASK, ask_to=ME)
+    assert need_for(to_owner, viewer(ME, True), now=NOW) == "you"
+    assert need_for(to_me, viewer(ME, True, "member"), now=NOW) == "you"
+    assert need_for(to_owner, viewer(ME, True, "member"), now=NOW) == "idle"
+    # An agent token belongs to the owner but never inherits the owner's asks.
+    assert need_for(to_owner, viewer("conn:agent", False), now=NOW) == "idle"
+    assert need_for(card(**ASK, ask_to="conn:agent"), viewer("conn:agent", False)) == "idle"
+    assert need_for(to_owner, None, now=NOW) == "idle"
 
 
 def test_precedence_follows_needs_order():
@@ -75,6 +92,7 @@ def test_precedence_follows_needs_order():
     )
     assert derive(everything) == "you"
     assert derive({**everything, "ask_to": OTHER}) == "plan"
+    assert derive({**everything, "ask_to": OTHER, "labels": []}) == "merge"
     doing = {**everything, "status": "doing", "ask": None, "ask_to": None, "labels": []}
     assert derive(doing) == "merge"
     assert derive({**doing, "checks": "pending"}) == "checks"
@@ -138,8 +156,11 @@ def test_need_in_rest_and_mcp_output(hub, env):  # noqa: F811
     assert f"#{checks['number']} doing need:checks" in output
     assert f"#{merge['number']} doing need:merge" in output
     assert f"#{stale['number']} doing need:idle" in output
+    # The owner's web session sees the agent's ask as theirs; the asking agent does not.
     ok, output = mcp(hub, token, "task_show", task=asked["number"])
-    assert ok and output.startswith(f"#{asked['number']} review need:you")
+    assert ok and output.startswith(f"#{asked['number']} review need:idle")
+    status, agents = api(hub, token, "GET", f"/api/cards/{asked['number']}")
+    assert status == 200 and agents["need"] == "idle"
 
     member = hub.db.create_user("member@example.com")
     hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
@@ -153,4 +174,4 @@ def test_need_in_rest_and_mcp_output(hub, env):  # noqa: F811
         trust="standard",
     )
     status, theirs = api(hub, member_token, "GET", f"/api/cards/{asked['number']}")
-    assert status == 200 and theirs["need"] == "plan"
+    assert status == 200 and theirs["need"] == "idle"
