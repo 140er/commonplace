@@ -1,0 +1,62 @@
+# Replaces /etc/caddy/sites/commonplace.caddy; imported by edge1's Caddyfile.
+edge1.tail6cee8c.ts.net {
+	# Tailscale HTTPS is already configured on edge1. Keep its Caddy global config.
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	@backend path /app* /api/* /mcp /health /healthz
+	handle @backend {
+		reverse_proxy 127.0.0.1:8765 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv/commonplace/app/landing/public
+		header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+		file_server
+	}
+}
+
+# Public hosts: enable only after Jeffrey's OK and DNS/TLS preparation.
+# Exact 302 short-link table from website PR #8's landing/nginx.conf.
+# These belong only to cmmn.dev; /connect/ on the tailnet serves the website.
+# cmmn.dev, www.cmmn.dev {
+# 	@gh path /gh /gh/
+# 	redir @gh https://github.com/140er/mempalace 302
+# 	@mempalace path /mempalace /mempalace/
+# 	redir @mempalace https://github.com/MemPalace/mempalace 302
+# 	@install path /install /install/
+# 	redir @install https://commonplace.run/#install 302
+# 	@connect path /connect /connect/
+# 	redir @connect https://commonplace.run/connect/ 302
+# 	@claude path /claude /claude/
+# 	redir @claude https://commonplace.run/connect/#claude-code 302
+# 	@codex path /codex /codex/
+# 	redir @codex https://commonplace.run/connect/#codex 302
+# 	@cursor path /cursor /cursor/
+# 	redir @cursor https://commonplace.run/connect/#cursor 302
+# 	@antigravity path /antigravity /antigravity/
+# 	redir @antigravity https://commonplace.run/connect/#antigravity 302
+# 	@cloud path /cloud /cloud/
+# 	redir @cloud https://commonplace.run/connect/#cloud 302
+# 	@local path /local /local/
+# 	redir @local https://commonplace.run/connect/#local 302
+# 	redir https://commonplace.run/ 302
+# }
+#
+# app.cmmn.dev {
+# 	header X-Content-Type-Options nosniff
+# 	header Referrer-Policy no-referrer
+# 	header X-Frame-Options DENY
+# 	header Strict-Transport-Security "max-age=31536000"
+# 	reverse_proxy 127.0.0.1:8765 {
+# 		flush_interval -1
+# 	}
+# }
