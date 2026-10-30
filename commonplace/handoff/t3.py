@@ -215,7 +215,7 @@ class T3:
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}", identifier)
             or identifier == source.thread_id
             or not value.get("runId")
-            or value.get("status") in ("failed", "cancelled", "interrupted")
+            or value.get("status") in ("failed", "cancelled", "interrupted", "rolled_back")
         ):
             raise T3Error("T3 did not confirm a new successor thread")
         return SuccessorRef(agent_ref=f"t3:{identifier}", thread_id=identifier)

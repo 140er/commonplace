@@ -113,6 +113,7 @@ def test_insufficient_own_grant_is_unsupported_without_lowering_permissions(tmp_
         {"successor_id": "mcp:source"},
         {"run_id": None},
         {"run_status": "failed"},
+        {"run_status": "rolled_back"},
     ],
 )
 def test_a_thread_without_a_confirmed_new_run_is_not_a_successor(tmp_path, monkeypatch, reply):

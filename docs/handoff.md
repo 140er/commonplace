@@ -124,9 +124,10 @@ it does not change `successor_argv` or any saved launcher setting.
 
 For a project-root source, the client runs
 `t3 thread start <cwd> - --provider <p> --model <m> [--effort <e>] --json`,
-passing the prompt over stdin. For an existing worktree, the installed T3
-CLI cannot bind that checkout: its path argument selects a project and
-otherwise starts at the root. The adapter uses T3's `acp-mcp-call`
+passing the prompt over stdin. This CLI route uses the project's default
+permission mode, which may differ from the source's mode. For an existing
+worktree, the installed T3 CLI cannot bind that checkout: its path argument
+selects a project and otherwise starts at the root. The adapter uses T3's `acp-mcp-call`
 bridge to `t3_thread_launch` with
 `workspaceStrategy={"type":"existing_worktree","worktreePath":"…"}`.
 The bridge requires Commonplace's own explicitly approved OAuth MCP grant
@@ -152,7 +153,10 @@ handoffs return without rereading that session. Concurrent manual calls
 serialize, and the database launch claim also excludes competing hook requests with the same
 key. A private launch journal recovers registration after a confirmed start;
 an unconfirmed start is never retried automatically. Inspect T3 before an
-owner releases a failed launch claim. If source settlement fails, the result
+owner releases a failed launch claim. A crash after claiming a launch but
+before starting T3 or writing the journal can leave `launched` without a
+successor; this requires operator inspection and recovery, never an automatic
+retry. If source settlement fails, the result
 has `source_settled:false`; retry the same command to retry settlement.
 
 ### How the source is resolved

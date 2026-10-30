@@ -159,7 +159,7 @@ class ManualHandoff:
                 if isinstance(error, UnsupportedLaunch):
                     raise ManualHandoffError(str(error)) from None
                 raise ManualHandoffError(
-                    "successor launch failed; source is still running"
+                    "successor launch failed; source is still running; inspect T3 before relaunch"
                 ) from None
             # A confirmed launch must never be classified as a failed launch,
             # even if journalling/registration fails: its claim remains held.
@@ -175,7 +175,7 @@ class ManualHandoff:
             handoff = self.service.register_successor(principal, handoff.id, successor)
         if handoff.state == "launch_failed":
             raise ManualHandoffError(
-                "successor launch failed; source is still running; inspect before relaunch"
+                "successor launch failed; source is still running; inspect T3 before relaunch"
             )
         return self._result(handoff, source.thread_id)
 
