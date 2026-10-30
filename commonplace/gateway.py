@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import http.client
+import importlib
 import ipaddress
 import json
 import logging
@@ -32,13 +33,14 @@ from urllib.parse import unquote, urlparse
 
 from mempalace import provenance
 from mempalace.config import normalize_wing_name
+from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
 from . import events, extensions, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
-from .policy import TOOL_RULES, Policy
+from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
 from .workers import Worker, WorkerSupervisor
 
 logger = logging.getLogger("commonplace.gateway")
@@ -428,6 +430,51 @@ class Mediator:
                 raise Denied(f"this connection can't link drawers in wing {wing!r}")
         return None
 
+    def _before_kg_read(self, principal, name, args, notes):
+        policy = principal.policy
+        if policy.sees_all_wings:
+            return None
+        asked = args.get("wings")
+        if asked is not None:
+            for wing in asked:
+                if not policy.can_read_wing(wing):
+                    raise Denied(f"this connection can't read wing {wing!r}")
+            asked = {canonical_wing(w) for w in asked}
+        stats = self.workers.call_tool(principal, "mempalace_kg_stats", {})
+        known = stats.get("wings") if isinstance(stats, dict) else None
+        if not isinstance(known, list):
+            raise Denied("could not check which wings the facts are in")
+        args["wings"] = [
+            w
+            for w in known
+            if isinstance(w, str)
+            and policy.can_read_wing(w)
+            and (asked is None or canonical_wing(w) in asked)
+        ]
+        allowed = policy.fact_sensitivities()
+        given = args.get("sensitivities")
+        args["sensitivities"] = [s for s in allowed if given is None or s in given]
+        return None
+
+    def _before_kg_write(self, principal, name, args, notes):
+        policy = principal.policy
+        wing = args.get("wing")
+        if wing or not (policy.sees_all_wings and policy.writes_all_wings):
+            # Only a token that sees every wing may file a fact with no wing:
+            # only such a token can read one back.
+            self._pin_write_wing(policy, args, wing, notes)
+        if name == "mempalace_kg_invalidate":
+            return None
+        floor = _fact_floor(args)
+        try:
+            raised = strictest(args.get("sensitivity"), floor)
+        except ValueError as exc:
+            raise Denied(str(exc)) from None
+        if args.get("sensitivity") not in (None, "", raised):
+            notes.append(f"sensitivity raised to {raised!r}")
+        args["sensitivity"] = raised
+        return None
+
     def _pin_write_wing(self, policy: Policy, args: dict, wing, notes: list) -> None:
         if policy.trust == "untrusted":
             # Untrusted writes always land in the token's write wing (the inbox).
@@ -448,7 +495,7 @@ class Mediator:
         policy = principal.policy
         if not isinstance(response, dict) or "result" not in response or policy.sees_all_wings:
             return response
-        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read"):
+        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
             return response
         result = _tool_result(response)
         if result is None:
@@ -523,6 +570,26 @@ class Mediator:
 
 
 # ── pure helpers ──
+def _fact_floor(args: dict) -> str:
+    """The least sensitivity a fact may have: from its wing and its words."""
+    floor = "private" if args.get("wing") and is_private_wing(args["wing"]) else "internal"
+    try:
+        privacy = importlib.import_module("commonplace.privacy")
+    except ModuleNotFoundError:
+        return floor
+    words = " ".join(
+        str(args[key])
+        for key in ("subject", "predicate", "object", "old_object", "new_object")
+        if args.get(key) is not None
+    )
+    flags = privacy.scan(words)
+    if any(flag.startswith("secret:") for flag in flags):
+        return "secret"
+    if "health" in flags:
+        return strictest(floor, "private")
+    return floor
+
+
 def _wing_of(args: dict) -> Optional[str]:
     wing = args.get("wing")
     return wing if isinstance(wing, str) and wing else None
@@ -559,6 +626,12 @@ def _check_argument_types(args: dict) -> None:
     for key in _WING_ARGS + _ID_ARGS:
         if key in args and args[key] is not None and not isinstance(args[key], str):
             raise Denied(f"'{key}' must be a string")
+    for key in ("wings", "sensitivities"):
+        value = args.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(v, str) and v for v in value)
+        ):
+            raise Denied(f"'{key}' must be a list of names")
     if "drawer_ids" in args:
         ids = args["drawer_ids"]
         if isinstance(ids, str):

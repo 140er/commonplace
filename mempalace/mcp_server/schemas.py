@@ -53,6 +53,19 @@ TOOLS = {
                     "type": "string",
                     "description": "outgoing (entity→?), incoming (?→entity), or both (default: both)",
                 },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
+                },
             },
             "required": ["entity"],
         },
@@ -103,6 +116,15 @@ TOOLS = {
                     "minimum": 0,
                     "description": "Last message number of the source range (optional; defaults to source_seq_start)",
                 },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
             },
             "required": ["subject", "predicate", "object"],
         },
@@ -119,6 +141,10 @@ TOOLS = {
                 "ended": {
                     "type": "string",
                     "description": "When it stopped being true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, default: today)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
                 },
             },
             "required": ["subject", "predicate", "object"],
@@ -155,6 +181,15 @@ TOOLS = {
                     "minimum": 0,
                     "description": "Last message number of the source range (optional; defaults to source_seq_start)",
                 },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
             },
             "required": ["subject", "predicate", "old_object", "new_object"],
         },
@@ -179,6 +214,19 @@ TOOLS = {
                     "type": "integer",
                     "description": "Offset for pagination (default 0)",
                     "minimum": 0,
+                },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
                 },
             },
         },
