@@ -256,7 +256,7 @@ def test_snapshot_failure_removes_partial_and_unlocks(populated, tmp_path, monke
         # its environment is unreadable even for the same uid.
         (
             b"/usr/sbin/tailscaled\x00be-child\x00ssh\x00--uid=1001\x00"
-            b"--cmd=bash /home/runner/work/.jobs/pr-check-140er__mempalace-22.sh\x00",
+            b"--cmd=bash /opt/jobs/mempalace-check.sh\x00",
             False,
         ),
         (b"/bin/bash\x00-c\x00exec python -m mempalace.mcp_server\x00", False),
@@ -297,6 +297,35 @@ def test_denied_process_environment_only_blocks_worker_candidates(
             module._verify_offline(tmp_path / "data")
     else:
         module._verify_offline(tmp_path / "data")
+
+
+@pytest.mark.parametrize("entrypoint", ["mempalace", "commonplace"])
+@pytest.mark.parametrize("option", ["--palace", "--data"])
+def test_console_script_with_spaced_path_blocks_active_data(
+    tmp_path, monkeypatch, entrypoint, option
+):
+    import importlib
+
+    module = importlib.import_module("commonplace.backup")
+    proc_root = tmp_path / "proc"
+    (proc_root / "self").mkdir(parents=True)
+    (proc_root / "self" / "environ").write_bytes(b"")
+    process = proc_root / str(os.getpid() + 1000000)
+    process.mkdir()
+    data = tmp_path / "data"
+    palace = data / "workspaces" / "example" / "palace"
+    arguments = [
+        "/opt/My Apps/venv/bin/python3",
+        f"/opt/My Apps/venv/bin/{entrypoint}",
+        option,
+        str(palace),
+    ]
+    (process / "cmdline").write_bytes(b"\x00".join(os.fsencode(arg) for arg in arguments) + b"\x00")
+    (process / "environ").write_bytes(b"")
+    monkeypatch.setattr(module, "_PROC_ROOT", proc_root)
+
+    with pytest.raises(BackupError, match="data directory is in use by process"):
+        module._verify_offline(data)
 
 
 def test_parent_that_looks_like_a_worker_is_not_one(populated, tmp_path):

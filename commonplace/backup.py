@@ -79,18 +79,14 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def _names_worker(arg: bytes) -> bool:
-    """True for an argument naming our code: a path, script, module or option.
+    """Match worker names without treating multiword wrapper commands as workers.
 
-    An argument with whitespace in it is a command string carried for another
-    program: ``bash -c "..."``, or the remote command an SSH server child keeps
-    in its own command line (Tailscale SSH: ``--cmd=...``). The carrier writes
-    nothing; a worker it starts is a process of its own and is checked itself.
-    Tailscale's SSH children can also deny environment access to their own uid,
-    so counting them made a backup fail whenever another SSH session's command
-    merely mentioned commonplace or mempalace. The executable's own name is
-    checked separately, so a path with a space in it still counts.
+    Keep absolute script paths with spaces as candidates. Single-word wrapper
+    commands remain candidates too, conservatively failing closed.
     """
-    return (b"mempalace" in arg or b"commonplace" in arg) and len(arg.split()) == 1
+    return (b"mempalace" in arg or b"commonplace" in arg) and (
+        arg.startswith(b"/") or len(arg.split()) == 1
+    )
 
 
 def _process_path(value: str, proc: Path) -> Path:
