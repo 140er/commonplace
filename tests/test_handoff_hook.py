@@ -845,3 +845,34 @@ def test_wrapper_honors_interpreter_and_forwards_arguments(local, tmp_path):
         "input": "hook input",
         "safe": "1",
     }
+
+
+# ── Chain without COMMONPLACE_HANDOFF_ID (e.g. a T3 thread successor) ─────
+
+
+def _first_message(local, text):
+    path = Path(local.data["transcript_path"])
+    line = json.dumps({"type": "user", "message": {"role": "user", "content": text}})
+    path.write_bytes(line.encode() + b"\n" + path.read_bytes())
+
+
+def test_parent_comes_from_the_successor_prompt_marker(local, api, monkeypatch, capsys):
+    _first_message(local, "You continue...\n\ncommonplace-handoff-id: hof_0123456789abcdef")
+    run_hook(local, monkeypatch, capsys)
+    assert api.calls[1]["body"]["meta"]["parent_handoff_id"] == "hof_0123456789abcdef"
+
+
+def test_environment_pointer_wins_over_the_marker(local, api, monkeypatch, capsys):
+    _first_message(local, "commonplace-handoff-id: hof_0123456789abcdef")
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_ID", "hof_fedcba9876543210")
+    run_hook(local, monkeypatch, capsys)
+    assert api.calls[1]["body"]["meta"]["parent_handoff_id"] == "hof_fedcba9876543210"
+
+
+@pytest.mark.parametrize(
+    "text", ["no marker here", "commonplace-handoff-id: hof_XYZ", "commonplace-handoff-id: thr_ab"]
+)
+def test_no_or_malformed_marker_sends_no_parent(local, api, monkeypatch, capsys, text):
+    _first_message(local, text)
+    run_hook(local, monkeypatch, capsys)
+    assert api.calls[1]["body"]["meta"]["parent_handoff_id"] == ""

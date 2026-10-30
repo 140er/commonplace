@@ -159,6 +159,23 @@ def _settings(path: Path, context: str, server: str, token: str, agent: str, tas
     return settings
 
 
+_PARENT_MARKER = re.compile(rb"commonplace-handoff-id: (hof_[0-9a-f]{8,64})\b")
+
+
+def _parent_from_transcript(path) -> str:
+    """The handoff id a successor prompt names in its last line
+    (``writer.HANDOFF_ID_MARKER``), from the start of this agent's own
+    transcript: how a successor without COMMONPLACE_HANDOFF_ID in its
+    environment (a T3 thread) links into the chain. The server checks it."""
+    try:
+        with open(path, "rb") as stream:
+            head = stream.read(262_144)
+    except OSError:
+        return ""
+    found = _PARENT_MARKER.search(head)
+    return found.group(1).decode("ascii") if found else ""
+
+
 def _branch(cwd: str) -> str:
     if not cwd:
         return ""
@@ -410,7 +427,8 @@ def _run(argv, server: str, token: str):
             cwd=cwd,
             branch=_branch(cwd),
             task_ref=task,
-            parent_handoff_id=os.environ.get("COMMONPLACE_HANDOFF_ID", ""),
+            parent_handoff_id=os.environ.get("COMMONPLACE_HANDOFF_ID", "")
+            or _parent_from_transcript(transcript_path),
         )
         request = HandoffRequest(
             meta=meta, transcript=transcript_text, transcript_format=client, usage=usage
