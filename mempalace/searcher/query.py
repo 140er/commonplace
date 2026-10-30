@@ -186,7 +186,7 @@ def _pool_left_results_short(
     )
 
 
-def search_memories(
+def _search_drawer_memories(
     query: str,
     palace_path: str,
     wing: str = None,
@@ -490,7 +490,7 @@ def search_memories(
         hits, n_results, candidates_fetched, pool_size, bookkeeping_dropped
     ):
         if _pool_scale < _MAX_POOL_SCALE and pool_size < _MAX_FOLD_POOL:
-            return search_memories(
+            return _search_drawer_memories(
                 query,
                 palace_path,
                 wing=wing,
@@ -508,6 +508,56 @@ def search_memories(
             )
         envelope["distinct_results_truncated"] = True
     return envelope
+
+
+def search_memories(
+    query: str,
+    palace_path: str,
+    wing: str = None,
+    room: str = None,
+    source_file: str = None,
+    since: str = None,
+    before: str = None,
+    n_results: int = 5,
+    max_distance: Optional[float] = None,
+    vector_disabled: bool = False,
+    candidate_strategy: str = "vector",
+    collection_name: str = None,
+    lang: Optional[str] = None,
+    _pool_scale: int = 1,
+    include_media: bool = False,
+    query_task: str = "search",
+    include_facts: bool = True,
+) -> dict:
+    """Search facts first and drawers independently, preserving every drawer result.
+
+    Drawer controls are documented by ``_search_drawer_memories``. Their limits,
+    filtering and ordering are unchanged; facts have their own result list.
+    """
+    from .facts import palace_facts
+
+    result = _search_drawer_memories(
+        query,
+        palace_path,
+        wing=wing,
+        room=room,
+        source_file=source_file,
+        since=since,
+        before=before,
+        n_results=n_results,
+        max_distance=max_distance,
+        vector_disabled=vector_disabled,
+        candidate_strategy=candidate_strategy,
+        collection_name=collection_name,
+        lang=lang,
+        _pool_scale=_pool_scale,
+        include_media=include_media,
+        query_task=query_task,
+    )
+    if result.get("error"):
+        return result
+    facts = palace_facts(query, palace_path, wing=wing, limit=n_results) if include_facts else []
+    return {"facts": facts, **result}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

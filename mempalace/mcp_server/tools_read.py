@@ -620,6 +620,7 @@ def tool_search(
     cli_compatible: bool = False,
     include_media: bool = False,
     query_task: str = "search",
+    include_facts: bool = True,
 ):
     limit = max(1, min(limit, _MAX_RESULTS))
     try:
@@ -698,11 +699,21 @@ def tool_search(
                         since=since,
                         before=before,
                         collection=collection,
+                        facts=[],
                     )
                 )
         except SearchError as exc:
             return {"error": str(exc)}
-        result = {"query": query, "cli_output": output}
+        facts = (
+            tool_kg_search(query, limit=limit, wings=[wing] if wing else None)["facts"]
+            if include_facts
+            else []
+        )
+        from ..fact_render import format_facts
+
+        result = {"query": query, "cli_output": format_facts(facts) + output}
+        if facts:
+            result = {"facts": facts, **result}
         if error_output.getvalue():
             result["cli_error_output"] = error_output.getvalue()
         return result
@@ -734,6 +745,7 @@ def tool_search(
         vector_disabled=_vector_disabled,
         candidate_strategy=candidate_strategy,
         collection_name=_config.collection_name,
+        include_facts=False,
         **experimental,
     )
     if _is_transient_index_error(result):
@@ -756,6 +768,7 @@ def tool_search(
             vector_disabled=_vector_disabled,
             candidate_strategy=candidate_strategy,
             collection_name=_config.collection_name,
+            include_facts=False,
             **experimental,
         )
         if not _is_transient_index_error(result):
@@ -770,7 +783,16 @@ def tool_search(
         result["sanitizer"] = report
     if context:
         result["context_received"] = True
-    return result
+    if result.get("error"):
+        return result
+    facts = (
+        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)[
+            "facts"
+        ]
+        if include_facts
+        else []
+    )
+    return {"facts": facts, **{k: v for k, v in result.items() if k != "facts"}}
 
 
 def tool_check_duplicate(content: str, threshold: float = 0.9):

@@ -12,6 +12,7 @@ def _print_search_results_bm25_only(
     stop_words: frozenset = frozenset(),
     since_dt=None,
     before_dt=None,
+    facts=(),
 ) -> None:
     """CLI fallback printer for when HNSW divergence fences off vector search.
 
@@ -41,6 +42,9 @@ def _print_search_results_bm25_only(
         before_dt=before_dt,
     )
     hits = result.get("results", [])
+    from ..fact_render import format_facts
+
+    print(format_facts(facts), end="")
 
     print(
         "\n  NOTICE: vector search disabled — HNSW index has diverged from SQLite.\n"
@@ -187,6 +191,7 @@ def search(
     collection=None,
     include_media: bool = False,
     query_task: str = "search",
+    facts=None,
 ):
     """
     Search the palace. Returns verbatim drawer content.
@@ -215,6 +220,9 @@ def search(
             else:
                 print(result["error"])
             raise SearchError(result["error"])
+        from ..fact_render import format_facts
+
+        print(format_facts(result.get("facts", [])), end="")
         for index, hit in enumerate(result["results"], 1):
             kind = hit.get("media_type") or "text/code"
             print(f"{index}. [{kind}] {hit['source_file']}  similarity={hit['similarity']:.3f}")
@@ -242,6 +250,11 @@ def search(
         print(f"\n  {e}")
         raise SearchError(str(e)) from e
     date_window_active = since_dt is not None or before_dt is not None
+    from ..fact_render import format_facts
+    from .facts import palace_facts
+
+    if facts is None:
+        facts = palace_facts(query, palace_path, wing=wing, limit=n_results)
 
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call
@@ -269,6 +282,7 @@ def search(
                 stop_words=stop_words,
                 since_dt=since_dt,
                 before_dt=before_dt,
+                facts=facts,
             )
 
         col = _open_collection_or_explain(palace_path, opener=get_collection, read_only=True)
@@ -310,6 +324,7 @@ def search(
             break
         fetch = min(fetch * 4, _MAX_FOLD_POOL)
     hits = hits[:n_results]
+    print(format_facts(facts), end="")
     if not hits:
         print(f'\n  No results found for: "{query}"')
         return None

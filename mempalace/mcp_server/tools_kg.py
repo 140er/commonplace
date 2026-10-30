@@ -6,6 +6,32 @@ if __name__ != "mempalace.mcp_server":
 # ==================== KNOWLEDGE GRAPH ====================
 
 
+def tool_kg_list_wings(wings=None, sensitivities=None):
+    return {"wings": _call_kg(lambda kg: kg.list_wings(wings, sensitivities), read=True)}
+
+
+def tool_kg_search(query: str, limit: int = 5, wings=None, sensitivities=None, as_of=None):
+    """Fact-only half of search, so gateway drawer fan-out needs one lookup."""
+    from ..searcher.facts import search_facts
+
+    try:
+        facts = _call_kg(
+            lambda kg: search_facts(
+                kg,
+                query,
+                limit=max(1, min(limit, _MAX_RESULTS)),
+                wings=wings,
+                sensitivities=sensitivities,
+                as_of=as_of,
+            ),
+            read=True,
+        )
+    except (sqlite3.Error, OSError):
+        logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
+        return {"facts": [], "error": "Fact search unavailable"}
+    return {"facts": facts}
+
+
 def _temporal_bound_key(value, *, end: bool = False) -> Optional[str]:
     if not value:
         return None
@@ -31,12 +57,19 @@ def tool_kg_query(
     direction: str = "both",
     wings: list = None,
     sensitivities: list = None,
+    search: bool = False,
+    list_wings: bool = False,
+    limit: int = 5,
 ):
     """Query the knowledge graph for an entity's relationships.
 
     ``wings`` / ``sensitivities`` limit the answer to facts in those wings and
     of those sensitivities. Facts filed before facts had wings match no wing.
     """
+    if list_wings:
+        return tool_kg_list_wings(wings, sensitivities)
+    if search:
+        return tool_kg_search(entity, limit, wings, sensitivities, as_of)
     try:
         entity = sanitize_kg_value(entity, "entity")
         as_of = sanitize_iso_temporal(as_of, "as_of")

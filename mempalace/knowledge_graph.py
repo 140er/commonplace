@@ -583,6 +583,9 @@ class KnowledgeGraph:
             );
         """)
         self._migrate_schema(conn)
+        from .fact_index import install
+
+        install(conn)
         if not had_sources:
             # Facts filed before fact_sources existed keep their first source.
             conn.execute(
@@ -1386,6 +1389,34 @@ class KnowledgeGraph:
                         {k: row[k] for k in row.keys() if k != "triple_id" and row[k] is not None}
                     )
         return out
+
+    def list_wings(self, wings=None, sensitivities=None) -> list:
+        """Fact wings only, using the wing index without computing KG stats."""
+        wings, sensitivities = visibility(wings, sensitivities)
+        visible_sql, params = _visibility_sql(wings, sensitivities)
+        with self._lock:
+            return [
+                r[0]
+                for r in self._conn().execute(
+                    "SELECT DISTINCT t.wing FROM triples t WHERE t.wing IS NOT NULL"
+                    + visible_sql
+                    + " ORDER BY t.wing",
+                    params,
+                )
+            ]
+
+    def search_fact_rows(self, tokens, *, wings=None, sensitivities=None, as_of=None):
+        """Indexed lexical lookup with the same visibility as other KG reads."""
+        from .fact_index import candidates
+
+        wings, sensitivities = visibility(wings, sensitivities)
+        as_of = sanitize_iso_temporal(as_of, "as_of")
+        visible_sql, params = _visibility_sql(wings, sensitivities)
+        temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
+        with self._lock:
+            return candidates(
+                self._conn(), tokens, visible_sql, params, temporal_sql, temporal_params
+            )
 
     @staticmethod
     def _mark_superseded(conn, old_ids, new_id):

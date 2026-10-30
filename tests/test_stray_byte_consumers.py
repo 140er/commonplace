@@ -96,7 +96,7 @@ def stray_server(monkeypatch, config, kg, stray_palace):
     from mempalace.palace import get_collection
 
     monkeypatch.setattr(mcp_server, "_config", config)
-    monkeypatch.setattr(mcp_server, "_get_kg", lambda: kg)
+    monkeypatch.setattr(mcp_server, "_get_kg", lambda *a, **kw: kg)
     drawer_id = get_collection(stray_palace).get()["ids"][0]
     httpd = mcp_server._build_http_server("127.0.0.1", 0)
     thread = threading.Thread(
@@ -215,7 +215,7 @@ def test_update_drawer_keeps_the_stray_byte_in_the_revision(monkeypatch, config,
     from mempalace.revisions import load_drawer_revisions
 
     monkeypatch.setattr(mcp_server, "_config", config)
-    monkeypatch.setattr(mcp_server, "_get_kg", lambda: kg)
+    monkeypatch.setattr(mcp_server, "_get_kg", lambda *a, **kw: kg)
     drawer_id = get_collection(stray_palace).get()["ids"][0]
 
     result = mcp_server.tool_update_drawer(drawer_id, content="rewritten notes")
@@ -237,7 +237,7 @@ def test_update_drawer_drops_the_source_stamps_with_new_content(
     (src / "n.txt").write_bytes(b"\x93quoted\x94 notes " * 12)
     miner.mine(str(src), palace_path, wing_override="proj", agent="t")
     monkeypatch.setattr(mcp_server, "_config", config)
-    monkeypatch.setattr(mcp_server, "_get_kg", lambda: kg)
+    monkeypatch.setattr(mcp_server, "_get_kg", lambda *a, **kw: kg)
     col = get_collection(palace_path)
     drawer_id = col.get()["ids"][0]
     assert col.get(ids=[drawer_id])["metadatas"][0]["source_encoding"] == "windows-1252"
