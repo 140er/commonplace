@@ -186,6 +186,38 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 
 ## HTTP JSON for the web UI
 
+### Spoken Needs you digest
+
+`GET /api/needs-me/digest` accepts the same owner session or bearer token as
+`GET /api/needs-me`, with the same wing visibility. It returns
+`{text, count, items: [{number, title, need, board}], remaining}`. The queue is
+deduplicated, ordered by the server's `need` priority and then card number, and
+limited to five spoken items. Titles stay verbatim. No LLM or external service
+is used. `needs_me(format="digest")` returns the same JSON in its MCP text reply;
+omitting `format` keeps the existing grouped reply.
+
+The Needs you header's Speak button uses an installed local browser voice. Press
+it again to stop. Captions appear during speech; leaving Needs you or signing out
+stops it. Browsers without speech synthesis hide the button. If no local voice
+is installed, install an English voice in the device's speech settings.
+
+`GET /api/needs-me/digest?format=text` returns UTF-8 plain text with `no-store`.
+For an iOS Shortcut, use Get Contents of URL with that URL and an
+`Authorization: Bearer <your token>` header, then Speak Text. Use a token scoped
+to the wings you want read aloud and an installed local voice. The phone must
+be able to reach your Commonplace host.
+
+For local Piper (with a downloaded voice model):
+
+```sh
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $COMMONPLACE_TOKEN" \
+  "$COMMONPLACE_URL/api/needs-me/digest?format=text" \
+  | piper --model /path/to/en_US-voice.onnx --output_file digest.wav
+```
+
+Play `digest.wav` with your local audio player.
+
 All bodies are JSON. Writes send the card's `version`; a stale one gets `409` with the current card, and the UI redraws it.
 
 | Method and path | Does |

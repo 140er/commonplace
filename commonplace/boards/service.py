@@ -13,6 +13,7 @@ from commonplace import events, privacy
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
+from .digest import digest
 from .display import stale_before
 from .store import (
     STATUSES,
@@ -986,8 +987,11 @@ class BoardService:
             )
             return card(conn, task_row(conn, row["id"]), self.principal)
 
-    def needs_me(self):
-        return needs_me(self.store, self.principal)
+    def needs_me(self, format="list"):
+        if format not in ("list", "digest"):
+            raise ToolError("no: format must be list or digest")
+        groups = needs_me(self.store, self.principal)
+        return digest(groups) if format == "digest" else groups
 
     def seed_card(
         self,
