@@ -17,6 +17,7 @@ Commonplace is the shared board and Memory for Jeffrey and all his agents. The M
 
 - Report progress with `task_update task=#n status_line="<what you are doing now>"` at every real step, at least every 20 minutes. It renews your claim; a claim expires after 30 minutes without a write and the card goes back to the pool.
 - Record the work: `task_update task=#n repo=… branch=… pr=<url>` as soon as they exist.
+- After each push to the PR: `python -m commonplace.callstack --base origin/<base branch> --card <n>` (uses `COMMONPLACE_URL` and `COMMONPLACE_TOKEN`) so the reviewer sees the change as a call tree.
 - Longer notes for the next agent: `task_comment task=#n text=…`.
 - New work you discover: `task_add title=… body=…` (don't start it unless it blocks you).
 

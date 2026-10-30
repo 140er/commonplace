@@ -43,6 +43,69 @@ def validate_text(value, name, *, required=False, limit=100_000):
     return value
 
 
+CALLSTACK_BYTES = 64_000
+CALLSTACK_KEYS = {"base", "head", "stats", "roots", "files", "truncated", "more"}
+CALLSTACK_NODE = {"name", "file", "line", "change", "params", "children", "more", "seen"}
+
+
+def callstack_json(value):
+    """The PR call tree an agent reports, checked and stored as compact JSON (None clears)."""
+    if value is None:
+        return None
+    nodes = 0
+
+    def check(ok):
+        if not ok:
+            raise ToolError("no: invalid callstack")
+
+    def text(item, key, limit, required=False):
+        if key in item or required:
+            check(isinstance(item.get(key), str) and 0 < len(item[key]) <= limit)
+
+    def count(item, key):
+        if key in item:
+            check(type(item[key]) is int and 0 <= item[key] <= 1_000_000)
+
+    def node(item, depth):
+        nonlocal nodes
+        nodes += 1
+        check(isinstance(item, dict) and not set(item) - CALLSTACK_NODE)
+        check(
+            depth <= 16 and nodes <= 500 and item.get("change") in ("new", "changed", "unchanged")
+        )
+        text(item, "name", 300, required=True)
+        text(item, "file", 500)
+        text(item, "params", 300)
+        count(item, "line")
+        count(item, "more")
+        check(isinstance(item.get("seen", False), bool))
+        check(isinstance(item.get("children", []), list))
+        for child in item.get("children", []):
+            node(child, depth + 1)
+
+    check(isinstance(value, dict) and not set(value) - CALLSTACK_KEYS)
+    text(value, "base", 300)
+    text(value, "head", 100)
+    count(value, "more")
+    check(isinstance(value.get("truncated", False), bool))
+    stats = value.get("stats", {})
+    check(isinstance(stats, dict) and set(stats) <= {"new", "changed", "files"})
+    for key in stats:
+        count(stats, key)
+    check(isinstance(value.get("roots", []), list) and isinstance(value.get("files", []), list))
+    for root in value.get("roots", []):
+        node(root, 0)
+    check(len(value.get("files", [])) <= 200)
+    for item in value.get("files", []):
+        check(isinstance(item, dict) and set(item) == {"file", "change"})
+        text(item, "file", 500, required=True)
+        check(item["change"] in ("new", "changed", "deleted"))
+    stored = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(stored.encode()) > CALLSTACK_BYTES:
+        raise ToolError("no: callstack is too large")
+    return stored
+
+
 def choices(value):
     if value is None:
         return []
@@ -460,6 +523,7 @@ class BoardService:
                 if not (r["kind"] in ("link", "unlink") and r["target"] in hidden)
             ]
             result["linked"] = self.store.links(conn, row["id"], self.principal)
+            result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
             return result
 
     def _new_card(
@@ -735,6 +799,7 @@ class BoardService:
             "pr",
             "checks",
             "status_line",
+            "callstack",
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
@@ -743,7 +808,9 @@ class BoardService:
             if set(args) - permitted:
                 raise ToolError("no: unknown update field")
             self._holder(row, editing=bool(set(args) & {"title", "body", "labels"}))
-            if row["status"] == "review" and not self.principal.person:
+            # The agent that asked for review may still refresh the PR's call tree.
+            refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
+            if row["status"] == "review" and not self.principal.person and not refresh:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")
@@ -773,6 +840,8 @@ class BoardService:
                 self._pr_updates(row, updates, args["pr"])
             if "status_line" in args:
                 updates["heartbeat_at"] = now()
+            if "callstack" in args:
+                updates["callstack"] = callstack_json(args["callstack"])
             status = args.get("status", row["status"])
             self._transition(row, status)
             if status != row["status"]:
@@ -814,7 +883,8 @@ class BoardService:
                 if key in args:
                     self._link(conn, row, args[key], unlink=key == "unlink")
             new_flags = flags_for(
-                *(args.get(key) for key in ("title", "body", "lesson", "status_line"))
+                *(args.get(key) for key in ("title", "body", "lesson", "status_line")),
+                updates.get("callstack"),
             )
             if new_flags:
                 updates["flags"] = json.dumps(
