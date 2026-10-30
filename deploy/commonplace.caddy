@@ -1,5 +1,7 @@
 # Replaces /etc/caddy/sites/commonplace.caddy; imported by edge1's Caddyfile.
 edge1.tail6cee8c.ts.net {
+	bind 100.76.209.1
+	encode zstd gzip
 	# Tailscale HTTPS is already configured on edge1. Keep its Caddy global config.
 	header {
 		X-Content-Type-Options nosniff
@@ -22,6 +24,12 @@ edge1.tail6cee8c.ts.net {
 		header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 		file_server
 	}
+}
+
+# Plain HTTP fallback on the tailnet IP.
+http://100.76.209.1 {
+	bind 100.76.209.1
+	reverse_proxy 127.0.0.1:8765
 }
 
 # Public hosts: enable only after Jeffrey's OK and DNS/TLS preparation.
