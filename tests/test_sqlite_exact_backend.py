@@ -898,17 +898,19 @@ def test_search_union_uses_sqlite_exact_lexical_search(tmp_path, monkeypatch):
 
     col = get_collection(str(tmp_path), create=True)
     col.add(
-        ids=["d1", "d2", "d3", "rare"],
+        ids=["d1", "d2", "d3", "d4", "rare"],
         documents=[
             "ordinary support note",
             "ordinary billing note",
             "ordinary project note",
+            "ordinary deployment note",
             "rareterm rareterm rareterm policy note",
         ],
         metadatas=[
             {"wing": "w", "room": "r", "source_file": "/tmp/d1.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/d2.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/d3.md", "chunk_index": 0},
+            {"wing": "w", "room": "r", "source_file": "/tmp/d4.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/rare.md", "chunk_index": 0},
         ],
     )
