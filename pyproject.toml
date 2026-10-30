@@ -37,6 +37,7 @@ dependencies = [
     "huggingface_hub>=0.20",
     "tokenizers>=0.15",
     "numpy>=1.24",
+    "zstandard>=0.22,<1",
     # Tier 6a content-date extraction uses dateutil for natural-language
     # date parsing (filename + content body branches). It happens to install
     # transitively today via chromadb→kubernetes→python-dateutil, but that
@@ -59,6 +60,7 @@ commonplace = "commonplace.cli:main"
 
 [project.entry-points."mempalace.backends"]
 chroma = "mempalace.backends.chroma:ChromaBackend"
+compact = "mempalace.backends.compact:CompactBackend"
 milvus = "mempalace.backends.milvus:MilvusBackend"
 pgvector = "mempalace.backends.pgvector:PgVectorBackend"
 qdrant = "mempalace.backends.qdrant:QdrantBackend"

@@ -165,6 +165,10 @@ def _wing_source_counts_reader(config: MempalaceConfig):
         from .backends.chroma_sqlite import sqlite_wing_source_counts
 
         return sqlite_wing_source_counts
+    if backend == "compact":
+        from .backends.compact import sqlite_wing_source_counts
+
+        return sqlite_wing_source_counts
     if backend in {"sqlite_exact", "rust_exact"}:
         from .backends.sqlite_exact import sqlite_wing_source_counts
 

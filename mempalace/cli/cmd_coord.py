@@ -91,7 +91,9 @@ def _parse_metadata_arg(raw):
         raise ValueError(f"--metadata is not valid JSON: {exc}") from None
     if not isinstance(value, dict):
         raise ValueError("--metadata must be a JSON object")
-    return value
+    from ..stored_text import user_metadata
+
+    return user_metadata(value)
 
 
 def _print_event_line(event):

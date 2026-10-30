@@ -15,10 +15,12 @@ from _backend_conformance import (
 
 from mempalace.backends import PalaceRef
 from mempalace.backends.chroma import ChromaBackend
+from mempalace.backends.compact import CompactBackend
 from mempalace.backends.rust_exact import RustExactBackend
 from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
 _LOCAL_BACKENDS = [
+    pytest.param(CompactBackend, id="compact"),
     pytest.param(ChromaBackend, id="chroma"),
     pytest.param(SQLiteExactBackend, id="sqlite_exact"),
     pytest.param(RustExactBackend, id="rust_exact"),

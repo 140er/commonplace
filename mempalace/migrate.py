@@ -234,6 +234,18 @@ def migrate(palace_path: str, dry_run: bool = False, confirm: bool = False):
     from .palace import MineAlreadyRunning, mine_palace_lock
 
     palace_path = os.path.abspath(os.path.expanduser(palace_path))
+    from .backends.compact import CompactBackend
+
+    if CompactBackend.detect(palace_path):
+        # This command upgrades Chroma versions. Compact validates its own
+        # schema on open and must never be sent through a Chroma rebuild.
+        backend = CompactBackend()
+        try:
+            backend._connect(palace_path, create=False)
+            print("  Compact schema is current; no migration needed.")
+            return True
+        finally:
+            backend.close()
     db_path = os.path.join(palace_path, "chroma.sqlite3")
 
     if not os.path.isdir(palace_path) or not contains_palace_database(palace_path):

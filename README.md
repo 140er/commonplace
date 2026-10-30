@@ -197,6 +197,7 @@ non-default backend is opt-in.
 | ------- | ---- | ------- | :--------: | :-----: | -------------- |
 | `chroma` _(default)_ | Local (embedded) | bundled | – | ✓ | – |
 | `sqlite_exact` | Local (exact NumPy) | bundled | – | ✓ | – |
+| `compact` | Local (zstd + int8 NumPy) | bundled; SQLite ≥ 3.43 | – | ✓ | – |
 | `rust_exact` | Local (native vectors) | wheel / compiled | – | ✓ | – |
 | `milvus` | Local (Lite) · Server opt-in | `mempalace[milvus]` | ✓ | ✓ | `MEMPALACE_MILVUS_URI` |
 | `qdrant` | Server (REST) | bundled | ✓ | ✓ | `MEMPALACE_QDRANT_URL` |
@@ -204,6 +205,18 @@ non-default backend is opt-in.
 
 Select with `--backend <name>`, `MEMPALACE_BACKEND=<name>`, or
 `"backend": "<name>"` in `config.json`. `rust_exact` uses the exact same `sqlite_exact.sqlite3` file on disk as `sqlite_exact` with zero data migration. See [native installation and vector CLI usage](crates/README.md) for the separately distributed wheel and executables.
+
+`compact` stores verbatim documents as zstd frames and vectors as int8 values
+with a float32 scale. Its file is `compact.sqlite3`; it cannot share a palace
+directory with another backend. It uses contentless FTS5 and requires SQLite
+3.43 or newer. Per-collection compression dictionaries are trained locally and
+remain immutable; earlier rows keep their original frames. Returned vectors
+are dequantised approximations, so this backend does not claim lossless vector
+passthrough. The reserved `_mempalace_keyword_only` metadata marker belongs to
+the internal write API; marked rows remain available to get and lexical search
+and are skipped by vector search and embedding during updates and rebuilds.
+Config `backend` takes priority over `MEMPALACE_BACKEND`; `--backend` takes
+priority over both. Chroma remains the default.
 
 ### Native vector search
 
