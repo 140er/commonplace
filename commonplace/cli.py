@@ -6,10 +6,13 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
+from .backup import BackupError, data_lock
 from .control_db import ControlDB, ControlError
+from .extensions import ToolError
 from .policy import PROFILES, TRUST_LEVELS, Policy, PolicyError
 
 DATA_ENV = "COMMONPLACE_DATA"
@@ -87,14 +90,22 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
+    from .bridge import CLIENT_PRESETS
+
+    defaults = CLIENT_PRESETS.get(args.client, {})
+
+    def value(name, fallback):
+        explicit = getattr(args, name)
+        return explicit if explicit is not None else defaults.get(name, fallback)
+
     policy = Policy.build(
-        profile=args.profile,
+        profile=value("profile", "slim"),
         tools=_csv(args.tools),
         scopes=_csv(args.scopes),
-        read_wings=_csv(args.read_wings) or [],
-        write_wings=_csv(args.write_wings) or [],
-        write_wing=args.write_wing or "",
-        trust=args.trust,
+        read_wings=_csv(value("read_wings", "")),
+        write_wings=_csv(value("write_wings", "")),
+        write_wing=value("write_wing", ""),
+        trust=value("trust", "untrusted"),
     )
     actor = _actor(db, args)
     user = args.user or actor
@@ -172,6 +183,36 @@ def add_webhook_commands(sub):
         parser.set_defaults(func=cli_command)
 
 
+def cmd_login_link(args) -> int:
+    from .bridge import create_login_url
+
+    print(create_login_url(_db(args), args.email, args.workspace, args.base_url))
+    return 0
+
+
+def cmd_connect(args) -> int:
+    from .bridge import run_bridge
+
+    return run_bridge(args.url, args.token_env)
+
+
+def cmd_seed(args) -> int:
+    from .seed import seed_workspace
+
+    db = _db(args)
+    result = seed_workspace(db, _data_dir(args), args.workspace, args.file, _actor(db, args))
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_backup(args) -> int:
+    from .backup import backup
+
+    backup(_data_dir(args), args.dest_dir)
+    print(Path(args.dest_dir).expanduser().resolve() / "manifest.json")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="commonplace")
     p.add_argument("--data", help=f"data directory (default ${DATA_ENV} or ~/.commonplace)")
@@ -212,13 +253,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--workspace", required=True)
     s.add_argument("--user", help="token holder (default: --by)")
     s.add_argument("--client", default="other")
-    s.add_argument("--profile", choices=sorted(PROFILES), default="slim")
+    s.add_argument("--profile", choices=sorted(PROFILES))
     s.add_argument("--tools", help="explicit tool list instead of --profile")
     s.add_argument("--scopes")
-    s.add_argument("--read-wings", default="")
-    s.add_argument("--write-wings", default="")
-    s.add_argument("--write-wing", default="")
-    s.add_argument("--trust", choices=TRUST_LEVELS, default="untrusted")
+    s.add_argument("--read-wings")
+    s.add_argument("--write-wings")
+    s.add_argument("--write-wing")
+    s.add_argument("--trust", choices=TRUST_LEVELS)
     s.add_argument("--expires-days", type=int, default=365, help="0 for no expiry")
     s.add_argument("--by")
     s.set_defaults(func=cmd_token_add)
@@ -241,13 +282,42 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--idle-minutes", type=float, default=15.0)
     s.set_defaults(func=cmd_serve)
+
+    s = sub.add_parser("login-link")
+    s.add_argument("email")
+    s.add_argument("--workspace")
+    s.add_argument("--base-url")
+    s.set_defaults(func=cmd_login_link)
+
+    s = sub.add_parser("connect")
+    s.add_argument("--url", required=True)
+    s.add_argument("--token-env", default="COMMONPLACE_TOKEN")
+    s.set_defaults(func=cmd_connect)
+
+    s = sub.add_parser("seed")
+    s.add_argument("file")
+    s.add_argument("--workspace", required=True)
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_seed)
+
+    s = sub.add_parser("backup")
+    s.add_argument("dest_dir")
+    s.set_defaults(func=cmd_backup)
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return args.func(args)
-    except (ControlError, PolicyError) as exc:
+        if args.command in {"connect", "backup"}:
+            return args.func(args)
+        with data_lock(_data_dir(args)):
+            return args.func(args)
+    except (ControlError, PolicyError, BackupError, ToolError, OSError, sqlite3.Error) as exc:
+        print(f"commonplace: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        if args.command not in {"login-link", "seed", "backup"}:
+            raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
