@@ -170,6 +170,14 @@ def _assert_clean(text, forbidden_markers, label):
 
 
 SCOPED_TOKENS = {
+    # Holds kg:read and kg:write but reads only some wings: the graph stays shut.
+    "scoped_with_kg": dict(
+        profile="full",
+        scopes=["memory:read", "memory:write", "kg:read", "kg:write"],
+        read_wings=["shared", "project_*"],
+        write_wings=["shared"],
+        trust="trusted",
+    ),
     # A cloud chat bot: slim, untrusted, inbox writes, no KG.
     "untrusted_slim": dict(
         profile="slim",
@@ -244,8 +252,9 @@ def test_scoped_token_changes_no_canary(hub, seeded, kind):
     for wing in FORBIDDEN_WINGS + ("wing_spy2", "private_notes", "linux_workstation"):
         assert after["wings"].get(wing) == before["wings"].get(wing), (wing, before, after)
     facts, _ = hub.call(owner, "mempalace_kg_query", entity="jeff")
-    if kind != "standard_all_but_private":
-        assert [f["object"] for f in facts["facts"]] == ["CANARYKGFACT"]
+    # Adding facts may be allowed; changing the canary fact never is.
+    canary = [f for f in facts["facts"] if f["object"] == "CANARYKGFACT"]
+    assert len(canary) == 1 and canary[0]["current"], facts
 
 
 def test_hidden_and_unknown_tools_answer_the_same(hub, seeded):

@@ -20,6 +20,7 @@ import copy
 import http.client
 import json
 import logging
+import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
@@ -225,6 +226,14 @@ class Mediator:
             forwarded["params"] = {**params, "arguments": args}
             response = self.workers.post(principal, forwarded)
             response = self._after(principal, name, rule, args, response)
+            if isinstance(plan, dict) and plan.get("unhide"):
+                unhide = plan["unhide"]
+                response = _unhide(response, unhide)
+                if "drawer_ids" in args:
+                    args["drawer_ids"] = [unhide.get(i, i) for i in args["drawer_ids"]]
+                else:
+                    args["drawer_id"] = unhide.get(args.get("drawer_id"), args.get("drawer_id"))
+                notes.append(f"{len(unhide)} hidden drawer(s) answered as missing")
 
         if classify_tool(name) != "read":
             result = _tool_result(response) if isinstance(response, dict) else None
@@ -297,17 +306,28 @@ class Mediator:
         if ids is None:
             raise Denied("drawer_id or drawer_ids (1 to 500 ids) is required")
         wings = self._drawer_wings(principal, ids)
+        unhide = {}
         for drawer_id in ids:
             wing = wings.get(drawer_id)
             if wing is None:
                 continue  # Missing: the worker answers "not found".
             if not policy.can_read_wing(wing):
-                raise Hidden({"success": False, "error": f"Drawer not found: {drawer_id}"})
+                # Send an id that can't exist, so the worker answers in the
+                # tool's own not-found shape; the real id goes back on the way out.
+                unhide[f"cmmn-hidden-{secrets.token_hex(12)}"] = drawer_id
+                continue
             if not policy.can_write_wing(wing):
                 raise Denied(f"this connection can't change memories in wing {wing!r}")
         new_wing = args.get("wing")
         if new_wing and not policy.can_write_wing(new_wing):
             raise Denied(f"this connection can't write to wing {new_wing!r}")
+        if unhide:
+            by_real = {real: fake for fake, real in unhide.items()}
+            if "drawer_ids" in args:
+                args["drawer_ids"] = [by_real.get(i, i) for i in args["drawer_ids"]]
+            else:
+                args["drawer_id"] = by_real[args["drawer_id"]]
+            return {"unhide": unhide}
         return None
 
     def _before_add_drawer(self, principal, name, args, notes):
@@ -545,6 +565,26 @@ def _scrub(node, can_read: Callable[[str], bool]):
     return node
 
 
+def _unhide(response, unhide: dict):
+    """Put the caller's real ids back where the worker echoed the stand-ins."""
+    result = _tool_result(response) if isinstance(response, dict) else None
+    if result is None:
+        return response
+
+    def swap(node):
+        if isinstance(node, str):
+            for fake, real in unhide.items():
+                node = node.replace(fake, real)
+            return node
+        if isinstance(node, dict):
+            return {k: swap(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [swap(v) for v in node]
+        return node
+
+    return _replace_result(response, swap(result))
+
+
 def _filter_wing_keys(result, policy: Policy):
     """list_wings / get_taxonomy keyed by wing: keep only the readable wings."""
     if not isinstance(result, dict):
@@ -622,6 +662,10 @@ class Gateway:
                 self.send_header("Cache-Control", "no-store")
                 for key, value in (extra_headers or {}).items():
                     self.send_header(key, value)
+                if status >= 400:
+                    # The request body may be unread: never reuse this connection.
+                    self.send_header("Connection", "close")
+                    self.close_connection = True
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -646,6 +690,9 @@ class Gateway:
 
             def do_POST(self):
                 path = urlparse(self.path).path
+                if self.headers.get("Transfer-Encoding"):
+                    self._send_json(411, {"error": "send a Content-Length, not Transfer-Encoding"})
+                    return
                 if path != "/mcp":
                     if not self._route("POST"):
                         self._send_json(404, {"error": "not found"})

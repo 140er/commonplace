@@ -21,23 +21,33 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Protocol
 
-# Operator settings that must never reach a worker: each would point it at
-# another palace, open it to the network, or drop its token.
-_STRIPPED_ENV = (
-    "MEMPALACE_PALACE_PATH",
-    "MEMPAL_PALACE_PATH",
-    "MEMPALACE_CONFIG_DIR",
-    "MEMPALACE_MCP_HTTP_TOKEN",
-    "MEMPALACE_MCP_HTTP_ALLOW_INSECURE_NO_TOKEN",
-    "MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS",
-    "MEMPALACE_HUB_FORWARD",
-    "MEMPALACE_BACKEND",
-    "MEMPALACE_LOG_FILE",
+# The only operator variables a worker sees. Everything else (API keys, LLM
+# settings, remote stores, palace paths, Commonplace's own settings) stays
+# with the gateway: a worker gets its palace, home, config and token below.
+_PASSED_ENV = frozenset(
+    {
+        "PATH",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SYSTEMROOT",
+        "VIRTUAL_ENV",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "MEMPALACE_EMBEDDING_DEVICE",
+        "MEMPALACE_EMBEDDING_THREADS",
+        "MEMPALACE_EMBEDDINGGEMMA_BATCH_SIZE",
+    }
 )
-# Shared remote stores would put every workspace in one namespace. Workers
-# use the default local store in their own palace directory until each
-# workspace gets its own namespace.
-_STRIPPED_PREFIXES = ("MEMPALACE_QDRANT_", "MEMPALACE_PGVECTOR_", "MEMPALACE_MILVUS_")
 DEFAULT_IDLE_STOP_S = 15 * 60
 
 
@@ -49,6 +59,7 @@ class Worker:
     token: str
     stop: Callable[[], None]
     alive: Callable[[], bool] = lambda: True
+    pid: Optional[int] = None
     last_used: float = field(default_factory=time.monotonic)
 
     @property
@@ -112,11 +123,7 @@ class SubprocessLauncher:
         _share_model_cache(home)
         port = _free_loopback_port()
         token = secrets.token_urlsafe(32)
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in _STRIPPED_ENV and not k.startswith(_STRIPPED_PREFIXES)
-        }
+        env = {k: v for k, v in os.environ.items() if k in _PASSED_ENV}
         env.update(
             {
                 "HOME": str(home),
@@ -127,25 +134,29 @@ class SubprocessLauncher:
                 "MEMPALACE_MCP_TRUSTED_IDENTITY": "1",
             }
         )
-        proc = subprocess.Popen(
-            [
-                self.python,
-                "-m",
-                "mempalace.mcp_server",
-                "--transport",
-                "http",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--palace",
-                str(palace),
-            ],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=open(workspace_dir / "worker.log", "ab"),
-        )
+        log = open(workspace_dir / "worker.log", "ab")
+        try:
+            proc = subprocess.Popen(
+                [
+                    self.python,
+                    "-m",
+                    "mempalace.mcp_server",
+                    "--transport",
+                    "http",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--palace",
+                    str(palace),
+                ],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=log,
+            )
+        finally:
+            log.close()  # The worker holds its own copy of the handle.
 
         def stop() -> None:
             if proc.poll() is None:
@@ -162,6 +173,7 @@ class SubprocessLauncher:
             token=token,
             stop=stop,
             alive=lambda: proc.poll() is None,
+            pid=proc.pid,
         )
         try:
             wait_until_ready(worker, self.startup_timeout_s)

@@ -185,14 +185,39 @@ def test_worker_aliases_decide_wing_access():
 
 
 def test_kg_is_never_a_default_scope_and_untrusted_never_rewrites_facts():
-    for profile in ("slim", "standard"):
-        assert not {"kg:read", "kg:write"} & set(P.DEFAULT_SCOPES[profile])
+    for profile in P.PROFILES:
+        assert "kg:read" not in P.DEFAULT_SCOPES[profile], profile
+    assert "kg:write" not in P.DEFAULT_SCOPES["slim"]
     bot = Policy.build(
-        profile="full", scopes=["kg:read", "kg:write"], read_wings=["*"], trust="untrusted"
+        profile="full",
+        scopes=["memory:read", "private:read", "kg:read", "kg:write"],
+        read_wings=["*"],
+        trust="untrusted",
     )
-    assert bot.tool_visible("mempalace_kg_add") and bot.tool_visible("mempalace_kg_query")
-    assert not bot.tool_visible("mempalace_kg_invalidate")
-    assert not bot.tool_visible("mempalace_kg_supersede")
+    # Untrusted writes wait for review; the graph has no inbox, so no KG writes.
+    for name in ("mempalace_kg_add", "mempalace_kg_invalidate", "mempalace_kg_supersede"):
+        assert not bot.tool_visible(name), name
+    assert bot.tool_visible("mempalace_kg_query")
+
+
+def test_kg_reads_need_every_wing():
+    """The graph has no wings: a wing-scoped token never reads it (review blocker)."""
+    scoped = _p(
+        profile="full", scopes=["memory:read", "kg:read", "kg:write"], read_wings=["shared"]
+    )
+    for name in ("mempalace_kg_query", "mempalace_kg_timeline", "mempalace_kg_stats"):
+        assert scoped.refusal(name) == "needs read access to every wing", name
+    for name in ("mempalace_kg_invalidate", "mempalace_kg_supersede"):
+        assert not scoped.tool_visible(name), name
+    assert scoped.tool_visible("mempalace_kg_add")
+    # The full profile's defaults no longer carry kg:read at all.
+    assert (
+        "kg:read" not in Policy.build(profile="full", read_wings=["shared"], trust="trusted").scopes
+    )
+    everything = _p(
+        profile="full", scopes=["memory:read", "private:read", "kg:read"], read_wings=["*"]
+    )
+    assert everything.tool_visible("mempalace_kg_query")
 
 
 def test_untrusted_write_wing_cannot_be_private():

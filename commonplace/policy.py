@@ -73,12 +73,15 @@ TOOL_RULES = {
     "mempalace_list_rooms": ("memory:read", "read_wing"),
     "mempalace_get_taxonomy": ("memory:read", "wing_list"),
     "mempalace_get_aaak_spec": ("memory:read", "none"),
-    "mempalace_kg_query": ("kg:read", "none"),
+    # The knowledge graph has no wings: facts filed from a private wing sit
+    # beside the rest. Reading it, or changing a fact someone else wrote,
+    # needs every wing. Adding a fact needs only kg:write.
+    "mempalace_kg_query": ("kg:read", "all_wings"),
     "mempalace_kg_add": ("kg:write", "none"),
-    "mempalace_kg_invalidate": ("kg:write", "none"),
-    "mempalace_kg_supersede": ("kg:write", "none"),
-    "mempalace_kg_timeline": ("kg:read", "none"),
-    "mempalace_kg_stats": ("kg:read", "none"),
+    "mempalace_kg_invalidate": ("kg:write", "all_wings"),
+    "mempalace_kg_supersede": ("kg:write", "all_wings"),
+    "mempalace_kg_timeline": ("kg:read", "all_wings"),
+    "mempalace_kg_stats": ("kg:read", "all_wings"),
     "mempalace_traverse": ("memory:read", "all_wings"),
     "mempalace_find_tunnels": ("memory:read", "all_wings"),
     "mempalace_graph_stats": ("memory:read", "all_wings"),
@@ -155,13 +158,13 @@ PROFILES = {"slim": _SLIM, "standard": _STANDARD, "full": _FULL}
 # Scopes a profile grants when a token is made without explicit scopes.
 DEFAULT_SCOPES = {
     # The knowledge graph has no wings, so kg:read sees all of it: never a default.
+    # It only works for a token that reads every wing anyway.
     "slim": ("memory:read", "memory:write"),
     "standard": ("memory:read", "memory:write"),
     "full": (
         "memory:read",
         "memory:write",
         "memory:delete",
-        "kg:read",
         "kg:write",
         "events:read",
         "events:write",
@@ -169,7 +172,8 @@ DEFAULT_SCOPES = {
 }
 
 # Trust caps what scopes can do, whatever the token holds.
-_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "admin"})
+# Untrusted writes go to the inbox for review; the graph has no inbox yet.
+_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "kg:write", "admin"})
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
 # Tools that change what someone else wrote. Untrusted tokens only add.
 _UPDATES = frozenset(
