@@ -4,7 +4,6 @@ Used as a sanity check for the harness. Any decent ≤4B instruct model
 should ace this; if accuracy is poor, the harness is broken before the
 real tasks even run.
 """
-
 from __future__ import annotations
 
 

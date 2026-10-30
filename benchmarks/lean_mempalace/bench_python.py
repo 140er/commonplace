@@ -5,36 +5,31 @@ import json
 import sqlite3
 import numpy as np
 
-
 def get_rss_mb():
     try:
         import psutil
-
         return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
     except ImportError:
         import ctypes
         from ctypes import wintypes
-
         class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
             _fields_ = [
-                ("cb", wintypes.DWORD),
-                ("PageFaultCount", wintypes.DWORD),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
+                ('cb', wintypes.DWORD),
+                ('PageFaultCount', wintypes.DWORD),
+                ('PeakWorkingSetSize', ctypes.c_size_t),
+                ('WorkingSetSize', ctypes.c_size_t),
+                ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                ('PagefileUsage', ctypes.c_size_t),
+                ('PeakPagefileUsage', ctypes.c_size_t),
             ]
-
         counters = PROCESS_MEMORY_COUNTERS()
         counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
         handle = ctypes.windll.kernel32.GetCurrentProcess()
         ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
         return counters.WorkingSetSize / (1024 * 1024)
-
 
 def run_suite(mode="drawers"):
     db_path = os.environ["MEMPALACE_DB_PATH"]
@@ -46,9 +41,7 @@ def run_suite(mode="drawers"):
     c.execute("PRAGMA busy_timeout=2000")
 
     # Sample query vector
-    c.execute(
-        "SELECT embedding FROM documents WHERE collection_id = (SELECT id FROM collections WHERE name = 'mempalace_drawers') ORDER BY rowid LIMIT 1"
-    )
+    c.execute("SELECT embedding FROM documents WHERE collection_id = (SELECT id FROM collections WHERE name = 'mempalace_drawers') ORDER BY rowid LIMIT 1")
     sample_blob = c.fetchone()[0]
     query_vec = np.frombuffer(sample_blob, dtype=np.float32)
 
@@ -99,10 +92,7 @@ def run_suite(mode="drawers"):
     def hydrate(top_indices):
         out = []
         for idx in top_indices:
-            c.execute(
-                "SELECT id, document, metadata_json FROM documents WHERE collection_id = ? AND id = ?",
-                (cids[idx], ids[idx]),
-            )
+            c.execute("SELECT id, document, metadata_json FROM documents WHERE collection_id = ? AND id = ?", (cids[idx], ids[idx]))
             out.append(c.fetchone())
         return out
 
@@ -159,10 +149,7 @@ def run_suite(mode="drawers"):
     def hydrate_filtered(f_top_indices):
         out = []
         for f_idx in f_top_indices:
-            c.execute(
-                "SELECT id, document, metadata_json FROM documents WHERE collection_id = ? AND id = ?",
-                (filt_cids[f_idx], filt_ids[f_idx]),
-            )
+            c.execute("SELECT id, document, metadata_json FROM documents WHERE collection_id = ? AND id = ?", (filt_cids[f_idx], filt_ids[f_idx]))
             out.append(c.fetchone())
         return out
 
@@ -209,9 +196,8 @@ def run_suite(mode="drawers"):
         "python_opt_warm_p95_ms": round(float(np.percentile(opt_warm_latencies, 95)), 2),
         "filtered_p50_ms": round(float(np.percentile(filtered_latencies, 50)), 2),
         "filtered_p95_ms": round(float(np.percentile(filtered_latencies, 95)), 2),
-        "top_10": [{"id": tid, "distance": round(td, 6)} for tid, td in zip(top_ids, top_dists)],
+        "top_10": [{"id": tid, "distance": round(td, 6)} for tid, td in zip(top_ids, top_dists)]
     }
-
 
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "drawers"

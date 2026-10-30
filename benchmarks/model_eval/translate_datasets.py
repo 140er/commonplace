@@ -20,7 +20,6 @@ fixtures in this repo, but DO NOT run this script over real user data
 local-first by design — for real data, pass `--model` pointing to a
 locally-hosted model (e.g. `qwen3:4b-instruct-2507-q8_0`).
 """
-
 from __future__ import annotations
 
 import argparse
@@ -147,9 +146,7 @@ def translate_file(
         print(f"  skip (exists): {dst.name}", flush=True)
         return
 
-    samples = [
-        json.loads(line) for line in src.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    samples = [json.loads(line) for line in src.read_text(encoding="utf-8").splitlines() if line.strip()]
     results = [None] * len(samples)
 
     work = [
@@ -180,35 +177,20 @@ def translate_file(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Translate benchmark datasets to new languages")
-    parser.add_argument(
-        "--languages", required=True, help="Comma-separated language codes, e.g. de,fr,it,ru,ko,hi"
-    )
-    parser.add_argument(
-        "--model", default="kimi-k2.6:cloud", help="Ollama model tag to use for translation"
-    )
+    parser.add_argument("--languages", required=True, help="Comma-separated language codes, e.g. de,fr,it,ru,ko,hi")
+    parser.add_argument("--model", default="kimi-k2.6:cloud", help="Ollama model tag to use for translation")
     parser.add_argument("--endpoint", default="http://localhost:11434")
     parser.add_argument("--dataset-dir", type=Path, default=Path(__file__).parent / "datasets")
-    parser.add_argument(
-        "--tasks",
-        default="all",
-        help="all or comma-separated: calibration,entity_extraction,memory_extraction,room_classification",
-    )
+    parser.add_argument("--tasks", default="all", help="all or comma-separated: calibration,entity_extraction,memory_extraction,room_classification")
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
     args = parser.parse_args()
 
     langs = [code.strip() for code in args.languages.split(",") if code.strip()]
-    tasks = (
-        list(TASK_TEXT_FIELD.keys())
-        if args.tasks == "all"
-        else [t.strip() for t in args.tasks.split(",")]
-    )
+    tasks = list(TASK_TEXT_FIELD.keys()) if args.tasks == "all" else [t.strip() for t in args.tasks.split(",")]
 
     unknown_langs = [code for code in langs if code not in LANGUAGE_NAMES]
     if unknown_langs:
-        print(
-            f"Unknown language codes: {unknown_langs}. Add them to LANGUAGE_NAMES in this script.",
-            file=sys.stderr,
-        )
+        print(f"Unknown language codes: {unknown_langs}. Add them to LANGUAGE_NAMES in this script.", file=sys.stderr)
         sys.exit(1)
 
     for lang in langs:

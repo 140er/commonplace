@@ -12,7 +12,6 @@ The matrix per default:
     tasks: room_classification (closed + open), entity_extraction,
            memory_extraction, calibration
 """
-
 from __future__ import annotations
 
 import argparse
@@ -132,9 +131,7 @@ def result_to_row(result: Result) -> dict:
         "vram_peak_mb": result.vram_peak_mb if result.vram_peak_mb else "",
         "host": result.host.hostname,
         "gpu": result.host.gpu,
-        "ollama_version": result.host.ollama_version.split("\n")[0]
-        if result.host.ollama_version
-        else "",
+        "ollama_version": result.host.ollama_version.split("\n")[0] if result.host.ollama_version else "",
         "run_date": result.run_date,
         "error": result.error or "",
         "extras_json": json.dumps(result.extras, separators=(",", ":")),
@@ -143,69 +140,39 @@ def result_to_row(result: Result) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Run benchmark matrix across candidates")
-    parser.add_argument(
-        "--candidates-file", type=Path, default=Path(__file__).parent / "candidates.yaml"
-    )
-    parser.add_argument(
-        "--candidates",
-        default="tier1",
-        help="tier1, tier2, tier3, all, tier<=2, or a specific model tag",
-    )
-    parser.add_argument(
-        "--tasks",
-        default="all",
-        help="all, or comma-separated list (e.g. 'room_classification:closed,calibration')",
-    )
+    parser.add_argument("--candidates-file", type=Path, default=Path(__file__).parent / "candidates.yaml")
+    parser.add_argument("--candidates", default="tier1", help="tier1, tier2, tier3, all, tier<=2, or a specific model tag")
+    parser.add_argument("--tasks", default="all", help="all, or comma-separated list (e.g. 'room_classification:closed,calibration')")
     parser.add_argument("--dataset-dir", required=True, type=Path)
     output_group = parser.add_mutually_exclusive_group(required=True)
-    output_group.add_argument(
-        "--output", type=Path, default=None, help="Single CSV output (all languages in one file)."
-    )
-    output_group.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Output directory; writes <dir>/<lang>/YYYY-MM-DD-<host>.csv "
-        "per language so results stay grouped by locale.",
-    )
+    output_group.add_argument("--output", type=Path, default=None,
+                              help="Single CSV output (all languages in one file).")
+    output_group.add_argument("--output-dir", type=Path, default=None,
+                              help="Output directory; writes <dir>/<lang>/YYYY-MM-DD-<host>.csv "
+                                   "per language so results stay grouped by locale.")
     parser.add_argument("--endpoint", default="http://localhost:11434")
-    parser.add_argument(
-        "--llm-provider",
-        default="ollama",
-        choices=["ollama", "openai-compat", "anthropic"],
-        help="LLM provider (default: ollama)",
-    )
-    parser.add_argument(
-        "--embed-endpoint",
-        default=None,
-        help="Endpoint for the embedding model (always Ollama). "
-        "When omitted: defaults to --endpoint if --llm-provider=ollama, "
-        "else http://localhost:11434.",
-    )
-    parser.add_argument(
-        "--embed-model",
-        default=_EMBED_MODEL,
-        help=f"Embedding model for semantic-similarity scoring. Default: {_EMBED_MODEL}.",
-    )
-    parser.add_argument(
-        "--num-ctx",
-        type=int,
-        default=4096,
-        help="Ollama context window per request (sent as options.num_ctx). "
-        "Defaults to 4096 so every candidate runs at the same window regardless "
-        "of its Modelfile default — without this, a 32k-default model pre-allocates "
-        "KV cache that a 4k-default model doesn't, and accuracy/latency/VRAM stop "
-        "being comparable. Pass a larger value if a task prompt exceeds 4k tokens.",
-    )
+    parser.add_argument("--llm-provider", default="ollama",
+                        choices=["ollama", "openai-compat", "anthropic"],
+                        help="LLM provider (default: ollama)")
+    parser.add_argument("--embed-endpoint", default=None,
+                        help="Endpoint for the embedding model (always Ollama). "
+                             "When omitted: defaults to --endpoint if --llm-provider=ollama, "
+                             "else http://localhost:11434.")
+    parser.add_argument("--embed-model", default=_EMBED_MODEL,
+                        help=f"Embedding model for semantic-similarity scoring. Default: {_EMBED_MODEL}.")
+    parser.add_argument("--num-ctx", type=int, default=4096,
+                        help="Ollama context window per request (sent as options.num_ctx). "
+                             "Defaults to 4096 so every candidate runs at the same window regardless "
+                             "of its Modelfile default — without this, a 32k-default model pre-allocates "
+                             "KV cache that a 4k-default model doesn't, and accuracy/latency/VRAM stop "
+                             "being comparable. Pass a larger value if a task prompt exceeds 4k tokens.")
     parser.add_argument("--warmup", type=int, default=1)
-    parser.add_argument(
-        "--n", type=int, default=None, help="Limit each task to first N samples (debug mode)"
-    )
+    parser.add_argument("--n", type=int, default=None, help="Limit each task to first N samples (debug mode)")
     parser.add_argument(
         "--languages",
         default="en",
         help="Comma-separated dataset languages. 'en' uses dataset.jsonl; "
-        "other values use dataset.{lang}.jsonl. Example: 'en,pt-BR,es,zh'.",
+             "other values use dataset.{lang}.jsonl. Example: 'en,pt-BR,es,zh'.",
     )
     parser.add_argument(
         "--continue-on-error",
@@ -219,9 +186,7 @@ def main():
     # follow --endpoint when the LLM provider is Ollama so a remote benchmark
     # run scores against the same host.
     if args.embed_endpoint is None:
-        args.embed_endpoint = (
-            args.endpoint if args.llm_provider == "ollama" else "http://localhost:11434"
-        )
+        args.embed_endpoint = args.endpoint if args.llm_provider == "ollama" else "http://localhost:11434"
 
     candidates = load_candidates(args.candidates_file, args.candidates)
     if not candidates:
@@ -238,9 +203,7 @@ def main():
         languages = ["en"]
 
     n_runs = len(candidates) * len(task_modes) * len(languages)
-    print(
-        f"Running {len(candidates)} candidates × {len(task_modes)} task/mode × {len(languages)} languages = {n_runs} runs"
-    )
+    print(f"Running {len(candidates)} candidates × {len(task_modes)} task/mode × {len(languages)} languages = {n_runs} runs")
     print(f"Languages: {languages}")
 
     # Resolve output path(s). --output-dir writes one CSV per language so results
@@ -317,10 +280,7 @@ def main():
                     rows.append(row)
                     writer.writerow(row)
                     fh.flush()
-                    print(
-                        f"  acc={row['accuracy']}  e2e_p50={row['e2e_p50_ms']}ms  vram={row['vram_resident_mb']}",
-                        flush=True,
-                    )
+                    print(f"  acc={row['accuracy']}  e2e_p50={row['e2e_p50_ms']}ms  vram={row['vram_resident_mb']}", flush=True)
     finally:
         # In --output mode every language maps to the same fh; dedupe by id to
         # avoid double-close.
@@ -333,7 +293,7 @@ def main():
 
     elapsed = time.time() - start
     output_summary = args.output or args.output_dir
-    print(f"\nDone in {elapsed / 60:.1f}min. Wrote {len(rows)} rows to {output_summary}")
+    print(f"\nDone in {elapsed/60:.1f}min. Wrote {len(rows)} rows to {output_summary}")
 
 
 if __name__ == "__main__":

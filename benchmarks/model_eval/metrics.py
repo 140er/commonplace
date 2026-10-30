@@ -1,5 +1,4 @@
 """Metrics: timing extraction, VRAM measurement, embedding similarity, percentiles."""
-
 from __future__ import annotations
 
 import json
@@ -331,13 +330,11 @@ def gather_host_info() -> HostInfo:
             info.ram_gb = round(kb / (1024 * 1024), 1)
             break
 
-    nvidia = _run(
-        [
-            "nvidia-smi",
-            "--query-gpu=name,memory.total",
-            "--format=csv,noheader,nounits",
-        ]
-    )
+    nvidia = _run([
+        "nvidia-smi",
+        "--query-gpu=name,memory.total",
+        "--format=csv,noheader,nounits",
+    ])
     if nvidia:
         first = nvidia.strip().splitlines()[0]
         if "," in first:
@@ -350,11 +347,7 @@ def gather_host_info() -> HostInfo:
 
     info.ollama_version = (_run(["ollama", "--version"]) or "").strip()
 
-    info.os = (
-        (_read_file("/etc/os-release") or "").splitlines()[0]
-        if _read_file("/etc/os-release")
-        else ""
-    )
+    info.os = (_read_file("/etc/os-release") or "").splitlines()[0] if _read_file("/etc/os-release") else ""
     if info.os.startswith("PRETTY_NAME="):
         info.os = info.os.split("=", 1)[1].strip('"')
 

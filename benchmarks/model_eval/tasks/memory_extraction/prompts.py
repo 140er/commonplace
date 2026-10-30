@@ -1,5 +1,4 @@
 """Memory extraction prompts. JSON output."""
-
 from __future__ import annotations
 
 

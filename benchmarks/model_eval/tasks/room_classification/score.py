@@ -6,7 +6,6 @@ as a valid answer when ground truth is "other".
 Open-set: cosine similarity between the embedding of the predicted slug
 and the embedding of the preferred-open label. Scored 0-1.
 """
-
 from __future__ import annotations
 
 from ...metrics import label_similarity
