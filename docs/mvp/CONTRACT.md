@@ -154,3 +154,23 @@ Teaches: connect (URL + `COMMONPLACE_TOKEN`), at session start `needs_me`/`task_
 ## Deploy (W7): `deploy/commonplace/`
 
 `Dockerfile` (python:3.12-slim, `pip install .`, non-root, `commonplace serve --host 0.0.0.0`), `compose.yml` (gateway + volume `/data`, healthcheck `/health`, mem limit), `Caddyfile.snippet` (site from `landing/public` at the site host; `/app*`, `/api/*`, `/mcp`, `/health` → gateway; `flush_interval -1`), `backup.sh` (calls `commonplace backup`, then restic to zurvur over Tailscale; cron nightly), `DEPLOY.md` (edge1 steps, tailnet first, public only after OK).
+
+## Update 03:35 CET (Jeffrey's answers): URLs, short links, OAuth, privacy
+
+**Hosts.** `commonplace.run` = website. `app.cmmn.dev` = the app (`/app`, `/api`). `cmmn.dev` = everything agents use and every link a user shares: `/mcp`, OAuth (`/.well-known/*`, `/oauth/*`), short links `/s/<code>`. During the tailnet phase all three are `https://edge1.tail6cee8c.ts.net`.
+
+Settings (env, read once via `commonplace/urls.py`, owned by W8):
+
+```python
+APP_URL    = env COMMONPLACE_APP_URL   or env COMMONPLACE_BASE_URL or "http://127.0.0.1:8765"
+AGENT_URL  = env COMMONPLACE_AGENT_URL or APP_URL      # MCP + OAuth issuer + short links
+SITE_URL   = env COMMONPLACE_SITE_URL  or APP_URL
+app_link(path) -> str          # APP_URL + path
+share_link(db, workspace_id, path) -> str   # AGENT_URL + "/s/" + code; idempotent per (workspace, path)
+mcp_url() -> str               # AGENT_URL + "/mcp"
+```
+Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JSON `url`, login links) uses `share_link` for app pages and `mcp_url()` for MCP. `GET /s/<code>` → 302 to `APP_URL + path` (no auth on the redirect; the target page needs sign-in). Codes: 7 chars base62, table `short_links(code PK, workspace_id, path, created_at)`. Until W8 lands, call `commonplace.urls` lazily and fall back to `APP_URL + path`.
+
+**OAuth 2.1 (W8)** for claude.ai and ChatGPT, on AGENT_URL: protected-resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`), AS metadata (RFC 8414) at `/.well-known/oauth-authorization-server`, dynamic client registration (RFC 7591) at `/oauth/register`, `/oauth/authorize` (requires the web session; consent screen = one card: client name, workspace, Allow / Deny; policy preset = slim, standard trust, write_wing `inbox`, read `shared,inbox,project_*`; no extra clicks beyond Allow), `/oauth/token` (authorization_code with PKCE S256 only, refresh_token with rotation), `/oauth/revoke`. Access tokens `cmmn_at_…`-style opaque, 1 h; refresh 90 d. Stored as hashes; each grant is a `connections` row with `auth='oauth'`. 401 on `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="<AGENT_URL>/.well-known/oauth-protected-resource"`. An `OAuthAuthenticator` is added to `gateway.authenticators` in `install(gateway)`.
+
+**Privacy, invisible (W9)**: `commonplace/privacy.py` with `scan(text) -> list[str]` flags: `secret:<kind>` (API keys, tokens incl. cmmn_, private keys, passwords in URLs, JWTs), `health`, `injection:<kind>` (§9 list). No clicks, no prompts. Use: `memory_save` routes text flagged `health` to theme `private` when the caller may write `private`, otherwise keeps the theme; secrets are flagged in the event data (`flags`) and shown as ⚠ in the app; text is never changed. Boards store `flags` from `scan()` on titles/bodies/comments.
