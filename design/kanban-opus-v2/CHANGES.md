@@ -1,29 +1,35 @@
-# Kanban UI v2: polish pass
+# Kanban UI v2: polish pass, in the site's look
 
-Same screens, data and behaviour as [v1](../kanban-opus/DECISIONS.md); only the look changed. `png/before-*` is v1, `png/after-*` is v2, same sizes. Render with `./shot.sh`.
+Same screens, data and behaviour as [v1](../kanban-opus/DECISIONS.md). The look now comes from the Commonplace site (PR #8, `landing/public/site.css`): the same tokens, mono type, square tiles on a 6px gap grid, orange blocks and terminal panels. `png/before-*` is v1, `png/after-*` is v2, at the same sizes. To re-render, run `./shot.sh`.
 
-## Removed
+## Taken from the site
+
+- **Tokens:** `--bg`, `--surface`, `--surface-2`, `--ink`, `--muted`, `--accent`, `--paper`, `--ok` and `--wait` are copied as they are. The app adds one quieter text step (`#80847b`, 4.9:1) for IDs and times, plus `--surface-3` for empty meter blocks.
+- **Tiles, not boxes:** every region (sidebar, header, column, panel, log) is a flat tile, separated by the gap. There are no borders or rounded corners.
+- **Big type, once per screen:** the page title is 32px bold with -0.05em tracking, like the site's headings. Everything else runs from 11 to 20px.
+- **Orange blocks:** the review column header, the Decide count and the selected Decide row. The selected row opens in orange, like the site's expanded agent row. Its picked option turns black with orange text, like the site's `.btn.on-accent`.
+- **Terminal panels:** the ask is shown as a recall hit: the verbatim question, then the stamp line in orange. The event log is a terminal (`time actor verb`), with comments in hit blocks. Review cards show their question in a small terminal block.
+- **Block cursor and meters:** text fields use the site's orange block cursor. A claim is six small blocks, in the style of the site's toggles: green while healthy, amber in the last fifth.
+
+## Removed (slop tells from v1)
 
 | What | Why |
 |---|---|
-| 1px borders on every card, column, list and box | Borders everywhere is the default dark-dashboard look. Depth now comes from four surface steps and a soft shadow on cards. |
-| Boxed backlog rail and tinted, outlined review column | Columns sit on the canvas. Status icons in the headers (dashed, empty, half, orange dot, check) carry the column meaning. |
-| Monospace for IDs, actors, times and quotes | It read as a wall of code. Geist for all UI, tabular figures for numbers. Mono stays only for `code` in card bodies. |
-| Pill badges (`review`, `doing`) and the filled orange count badge | Generic. Status is an icon and a word; the Decide count is a plain orange number. |
-| Orange outlines: selected row bar, focus glow, ask box border, card focus ring, old ages | Too many loud things competed. Orange is left on the Decide count, the review status icon, the picked option and the text caret. |
-| `⚠` emoji, `●` reserved dot, `✓` glyphs | Emoji-ish. Replaced by drawn 14px icons; a reservation shows as the agent's name on a `todo` card, which no other `todo` card has. |
-| Coloured dots before board names | Decoration with no meaning. One board icon, in grey. |
-| Green "live" indicator, white "New" button, search box in the header | Secondary chrome. Search moved to the sidebar with `⌘K`; New is a `+` icon. |
-| Key caps on every button and the 2px-bottom kbd style | Kept the digits only on the selected row, as faint text inside the button. |
-| `trusted`, drawer IDs (`drawer_7f3a`), status pill and the "then" segmented control in the panel | Secondary labels. The return target is one line (`↩ claude-code:vm ⌄`); the other outcomes live in that menu. |
-| Boxed log comments and timeline rail | Comments are plain text under the author line; one hairline separates the log from the card. |
-| Hatched stripe between Decide groups | A 28px gap does the same job. |
-| Claim hairline under `doing` cards | Became a 12px ring next to the held time: same meaning, reads at a glance, amber under 20% left. |
+| 1px borders on every card, column, list and box | They made it look like a default dark dashboard. Depth now comes from surface steps and the gap. |
+| Tinted, outlined review column; boxed backlog rail | Column headers are solid blocks with a big count. Only review is orange. |
+| 2–3px rounded corners | The site is square. |
+| Orange outlines: row accent bar, focus glow, ask box border, card focus ring, orange "old" ages | Too many loud things at once. Orange is now a fill for things that wait on Jeffrey, never an outline. |
+| Tinted pills with status dots | Status is a solid square chip, the same as the site's `automatic` blocks. |
+| `⚠`, `●` and `✓` glyphs | They looked like emoji. Flags are a small amber `!` block, done items get a green square, and a reservation shows as the agent's name on a `todo` card. |
+| Coloured dots before board names | They were decoration with no meaning. |
+| The "live" dot, header search box and white New button next to a search field | Secondary chrome. Search sits in the sidebar with `⌘K`. New is one ink block with `c`. |
+| `trusted` label, drawer IDs, "Done?" in orange on cards | Secondary labels. Trust appears once, in the ask's stamp line, where the site shows it too. |
+| Hatched stripe between Decide groups | A gap does the same job. |
+| The 2px-bottom key caps on every button | Number hints appear only on the selected row, as plain digits inside the button. |
+| DejaVu Sans Mono fallback rendering | Geist Mono (OFL, in `fonts/`) is narrower and evener, so long agent names and IDs no longer turn into a wall of mono. Nothing loads from the network. |
 
-## Changed
+## Kept calm for daily use
 
-- **Type scale** 11 / 12 / 13 / 14 / 20, **spacing scale** 4 / 8 / 12 / 16 / 20 / 24 / 32. Titles 13–14 at weight 450–500, panel title 20/28 at 600.
-- **Text contrast:** meta text moved from `#7d8178` to `#8b8f86` (about 5.8:1 on the canvas). The darkest grey is used for icons only.
-- **Font:** Geist and Geist Mono ship in `fonts/` (OFL, `fonts/OFL.txt`), with Inter and system fonts as fallback. Still nothing loads from the network.
-- **Layout:** the main area is a raised sheet with rounded corners next to a darker sidebar, as in Linear and Things. The Done column is a quiet one-line list.
-- **Optical alignment:** IDs sit in a fixed 36px gutter so titles, quotes and options share one left edge in Decide.
+- Only one big, bold thing per screen: the page title. Card titles use weight 500 at 13px; metadata is 12px in the quiet step.
+- Unselected Decide rows and board cards are plain surface tiles. Orange marks only what waits on Jeffrey, plus the text cursor.
+- The Done column is a dense one-line list with time on the right and no card chrome.
