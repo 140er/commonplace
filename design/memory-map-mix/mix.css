@@ -1,0 +1,59 @@
+/* Memory map mix: look B unchanged (app.css, map.css), plus the information layer from the ctOS preview,
+   drawn in look B's own tokens: header read-outs, profiler fields and meters, a segmented signal strip. */
+
+/* ---------- Header read-outs ---------- */
+.head { gap: 0; }
+.hud { display: flex; margin: 0 0 1px 28px; }
+.hud > div { padding: 0 14px; box-shadow: inset 1px 0 0 var(--surface-3); display: flex; flex-direction: column; gap: 2px; }
+.hud dt { font-size: 11px; line-height: 14px; color: var(--quiet); }
+.hud dd { margin: 0; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+.hud dd.on, .hud .clock dd { color: var(--accent); }
+
+/* ---------- Profiler ---------- */
+.panel .bar .tag { height: 22px; display: inline-flex; align-items: center; padding: 0 8px; background: var(--ink); color: var(--bg); font-weight: 700; }
+.panel .bar .code { color: var(--ink); letter-spacing: 0.02em; white-space: nowrap; }
+.panel .bar .where { display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; white-space: nowrap; }
+.panel .top:has(.tag) { gap: 16px; }
+
+.pf { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin: 0; }
+.pf > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pf dt { font-size: 12px; line-height: 16px; color: var(--quiet); }
+.pf dd { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+
+/* Ten blocks, like the site's meters: orange for links, green for how recent. */
+.meter { display: inline-flex; gap: 2px; }
+.meter i { width: 6px; height: 10px; background: var(--surface-3); }
+.meter i.on { background: var(--accent); }
+.meter.ok i.on { background: var(--ok); }
+
+/* ---------- Signal: memories per week, as stacked blocks ---------- */
+.when { gap: 14px; padding: 8px 12px 22px; }
+.when b { flex: none; align-self: flex-start; font-size: 11px; line-height: 12px; font-weight: 700; color: var(--quiet); }
+.when .sig { width: 44px; color: var(--muted); }
+.when .sig::after { content: ""; display: block; margin-top: 6px; width: 6px; height: 6px; background: var(--accent); animation: blink 1.2s steps(2, jump-none) infinite; }
+.when .peak { align-self: flex-end; width: 54px; margin-bottom: -15px; text-align: right; font-weight: 400; }
+.when .bars { flex: 1; display: flex; align-items: stretch; gap: 2px; position: relative; box-shadow: 0 1px 0 var(--surface-3); }
+.when i { transition: none; -webkit-mask: repeating-linear-gradient(to top, #000 0 3px, transparent 3px 4px); mask: repeating-linear-gradient(to top, #000 0 3px, transparent 3px 4px); }
+.when.live i { transition: height 260ms cubic-bezier(0.2, 0.7, 0.1, 1); }
+@keyframes blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .when .sig::after { animation: none; }
+  .when.live i { transition: none; }
+}
+
+/* ---------- Phone ---------- */
+@media (max-width: 640px) {
+  .head { grid-template-columns: 1fr auto 64px; }
+  .hud { grid-column: 2; grid-row: 1; margin: 0; background: var(--surface); align-items: center; padding: 0 4px; }
+  .hud > div { padding: 0 10px; }
+  .hud > div:first-child { box-shadow: none; }
+  .hud > div:nth-child(2), .hud .clock { display: none; }
+  .mmark { grid-column: 3; grid-row: 1; }
+  .panel .bar { flex-wrap: wrap; row-gap: 10px; }
+  .panel .bar .right { order: 1; }
+  .panel .bar .where { order: 2; flex-basis: 100%; margin-left: 0; }
+  .when { gap: 10px; padding: 6px 8px 20px; }
+  .when .sig { width: auto; }
+  .when .peak { display: none; }
+}
