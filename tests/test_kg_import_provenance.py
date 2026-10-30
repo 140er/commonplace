@@ -382,12 +382,12 @@ def test_imported_evidence_never_infers_person_approval(tmp_path, transport, evi
         assert "approved_by" not in observed and "approval_link" not in observed
 
 
-def test_replication_refuses_source_without_matching_triple_identity():
+def test_replication_skips_unmatched_source_but_refuses_missing_triple_identity():
     with KnowledgeGraph.empty() as source, KnowledgeGraph.empty() as target:
         _save(source)
         row = source.dump_rows("fact_sources")[0]
-        with pytest.raises(ValueError, match="no matching target triple"):
-            target.apply_row("fact_sources", row)
+        result = target.apply_row("fact_sources", row)
+        assert not result["applied"] and result["reason"] == "no_matching_triple"
         row.pop("_triple")
         with pytest.raises(ValueError, match="missing triple identity"):
             target.apply_row("fact_sources", row)

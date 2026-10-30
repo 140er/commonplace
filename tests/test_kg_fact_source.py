@@ -209,7 +209,12 @@ def test_replication_carries_status_and_range(tmp_path):
         for row in entities:
             replica.apply_row("entities", row)
         for row in triples:
-            replica.apply_row("triples", row)
+            report = replica.apply_row("triples", row)
+            if row["id"] == old:
+                assert report["unresolved_links"] == [{"id": old, "superseded_by": new}]
+                assert _row(replica, old)["superseded_by"] is None
+        # A later pass retries links after their successor rows have arrived.
+        replica.apply_row("triples", triples[0])
         assert _row(replica, old)["superseded_by"] == new
         assert _row(replica, old)["source_thread"] == "t"
         # A row from an older replica has no status: it lands as a live fact.

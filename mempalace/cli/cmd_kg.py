@@ -132,6 +132,11 @@ def _kg_import_legacy(args, config):
         print(f"\n  {len(unresolved)} successor link(s) omitted: no identical target successor.")
         for link in unresolved:
             print(f"    {link['id']} -> {link['superseded_by']}")
+    not_carried = counts["triples"]["end_not_carried"]
+    if not_carried:
+        print(f"\n  {len(not_carried)} fact end(s) not carried: the successor did not resolve.")
+        for end in not_carried:
+            print(f"    {end['id']} (here: {end['target_id']}) -> {end['superseded_by']}")
     skipped = counts["fact_sources"]["skipped"]
     if skipped:
         print(f"\n  {len(skipped)} source observation(s) skipped: no imported target fact.")

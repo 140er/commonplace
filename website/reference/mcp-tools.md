@@ -424,6 +424,8 @@ Chronological timeline of facts.
 
 No parameters. Returns `{"wings": ["project", "shared"]}` in sorted order. Facts without a wing are omitted.
 
+---
+
 ### `mempalace_kg_stats`
 
 Knowledge graph overview.

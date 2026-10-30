@@ -172,15 +172,23 @@ _TRIPLE_IDENTITY = ("subject", "predicate", "object", "valid_from", "valid_to", 
 
 def _identical_triples(conn, row, *, allow_superseded_end=False):
     columns = [c for c in _TRIPLE_IDENTITY if c != "valid_to"]
-    end = "valid_to IS ?"
-    if allow_superseded_end and row.get("status") == "superseded" and row.get("valid_to"):
-        end = f"({end} OR (valid_to IS NULL AND status='active'))"
-    return conn.execute(
-        "SELECT * FROM triples WHERE "
-        + " AND ".join(f"{c} IS ?" for c in columns)
-        + f" AND {end} ORDER BY id=? DESC, id",
-        (*[row.get(c) for c in columns], row.get("valid_to"), row.get("id")),
+    where = " AND ".join(f"{c} IS ?" for c in columns)
+    args = [row.get(c) for c in columns]
+    exact = conn.execute(
+        f"SELECT * FROM triples WHERE {where} AND valid_to IS ? ORDER BY id=? DESC, id LIMIT 1",
+        (*args, row.get("valid_to"), row.get("id")),
     ).fetchall()
+    if exact or not (
+        allow_superseded_end and row.get("status") == "superseded" and row.get("valid_to")
+    ):
+        return exact
+    # A reassertion can share the old fact's start (including NULL). An exact
+    # history row always wins; an ambiguous open instance is never reconciled.
+    opened = conn.execute(
+        f"SELECT * FROM triples WHERE {where} AND valid_to IS NULL AND status='active' LIMIT 2",
+        args,
+    ).fetchall()
+    return opened if len(opened) == 1 else []
 
 
 def _import_triples(conn, rows):
@@ -192,18 +200,21 @@ def _import_triples(conn, rows):
         "id_conflicts": [],
         "unresolved_link_count": 0,
         "unresolved_links": [],
+        "end_not_carried": [],
     }
     by_id = {r["id"]: r for r in rows}
-    id_map, links = {}, []
-    # Reconcile ends before considering current successors. Otherwise the old
-    # open target value would incorrectly block its own imported replacement.
+    id_map, links, pending_ends = {}, [], {}
+    # Stage history first. A current successor may replace only the open rows
+    # waiting for that very successor; carry their ends after it is accepted.
     for raw in sorted(rows, key=lambda r: r.get("valid_to") is None):
         row = {**raw, **fact_provenance.imported_fields(raw)}
         same = _identical_triples(conn, row, allow_superseded_end=True)
         if same:
-            id_map[row["id"]] = same[0]["id"]
-            for existing in same:
-                _merge_imported_triple(conn, existing, row, by_id, numbers, links)
+            existing = same[0]
+            id_map[row["id"]] = existing["id"]
+            _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends)
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row.get("superseded_by"))
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
             numbers["present"] += 1
             continue
         if conn.execute("SELECT 1 FROM triples WHERE id=?", (row["id"],)).fetchone():
@@ -211,16 +222,18 @@ def _import_triples(conn, rows):
             continue
         clash = None
         if row.get("valid_to") is None:
-            clash = conn.execute(
-                "SELECT object FROM triples WHERE subject=? AND predicate=? "
+            waiting = {target_id for _, target_id in pending_ends.get(row["id"], [])}
+            rivals = conn.execute(
+                "SELECT id, object FROM triples WHERE subject=? AND predicate=? "
                 "AND object != ? AND wing IS ? AND valid_to IS NULL",
                 (row["subject"], row["predicate"], row["object"], row.get("wing")),
-            ).fetchone()
+            ).fetchall()
+            clash = next((r for r in rivals if r["id"] not in waiting), None)
         if clash:
             numbers["conflicts"].append(
                 {
                     **{k: row[k] for k in ("subject", "predicate", "object")},
-                    "current_object": clash[0],
+                    "current_object": clash["object"],
                 }
             )
             continue
@@ -231,6 +244,7 @@ def _import_triples(conn, rows):
         numbers["added"] += 1
         if successor:
             links.append((row["id"], row["id"], successor))
+        _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
     for source_id, target_id, successor in links:
         mapped = id_map.get(successor)
         if mapped is None or mapped == target_id:
@@ -238,18 +252,40 @@ def _import_triples(conn, rows):
             continue
         conn.execute("UPDATE triples SET superseded_by=? WHERE id=?", (mapped, target_id))
     numbers["unresolved_link_count"] = len(numbers["unresolved_links"])
+    numbers["end_not_carried"].extend(
+        {"id": row["id"], "target_id": target_id, "superseded_by": successor}
+        for successor, ends in pending_ends.items()
+        for row, target_id in ends
+    )
     return numbers, id_map
 
 
-def _merge_imported_triple(conn, existing, row, by_id, numbers, links):
+def _carry_imported_ends(conn, pending, id_map, numbers, successor):
+    mapped = id_map.get(successor)
+    if mapped is None:
+        return
+    for row, target_id in pending.pop(successor, []):
+        if mapped == target_id:
+            numbers["end_not_carried"].append(
+                {"id": row["id"], "target_id": target_id, "superseded_by": successor}
+            )
+            continue
+        conn.execute(
+            "UPDATE triples SET status='superseded', valid_to=?, superseded_by=? WHERE id=?",
+            (row.get("valid_to"), mapped, target_id),
+        )
+        numbers["superseded"] += 1
+
+
+def _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends):
     raised = strictest(existing["sensitivity"], row.get("sensitivity"))
     if raised != existing["sensitivity"]:
         conn.execute("UPDATE triples SET sensitivity=? WHERE id=?", (raised, existing["id"]))
     ending = row.get("status") == "superseded" and existing["status"] == "active"
     if ending:
-        successor = by_id.get(row.get("superseded_by"), {})
+        successor = by_id.get(row.get("superseded_by"))
         approved_end = row["approval_status"] == "approved" and (
-            not row.get("superseded_by")
+            successor is None
             or fact_provenance.imported_fields(successor)["approval_status"] == "approved"
         )
         if existing["approval_status"] == "approved" and not approved_end:
@@ -263,16 +299,12 @@ def _merge_imported_triple(conn, existing, row, by_id, numbers, links):
                 }
             )
             return
-        conn.execute(
-            "UPDATE triples SET status='superseded', valid_to=? WHERE id=?",
-            (row.get("valid_to"), existing["id"]),
-        )
-        numbers["superseded"] += 1
+        pending_ends.setdefault(row.get("superseded_by"), []).append((row, existing["id"]))
     fact_provenance.merge_imported_approval(conn, existing["id"], row)
     if (
         row.get("superseded_by")
         and not existing["superseded_by"]
-        and (ending or existing["status"] == "superseded")
+        and existing["status"] == "superseded"
     ):
         links.append((row["id"], existing["id"], row["superseded_by"]))
 
@@ -350,6 +382,107 @@ def _merge_imported_source(conn, row, triple_id):
         )
     fact_provenance.merge_imported_approval(conn, triple_id, fields)
     return inserted == 1
+
+
+_REPLICATED_AUTHORSHIP = {
+    "origin_kind",
+    "origin_id",
+    "origin_link",
+    "source_closet",
+    "source_file",
+    "source_drawer_id",
+    "adapter_name",
+    "extracted_at",
+    "source_thread",
+    "source_seq_start",
+    "source_seq_end",
+}
+
+
+def _prepare_replicated_triple(conn, incoming):
+    """Validate peer authority and links against the local row before any write."""
+    row = dict(incoming)
+    evidence = fact_provenance.imported_fields(row)
+    for col in fact_provenance.COLUMNS:
+        if col in row or ("approval_status" in row and col in ("approved_by", "approval_link")):
+            row[col] = evidence[col]
+    report = {"id": row["id"], "applied": True, "unresolved_links": []}
+    existing = conn.execute("SELECT * FROM triples WHERE id=?", (row["id"],)).fetchone()
+    if existing and any(
+        c in row and row[c] != existing[c] for c in _TRIPLE_IDENTITY if c != "valid_to"
+    ):
+        return row, {**report, "applied": False, "reason": "id_conflict"}
+    successor_id = row.get("superseded_by")
+    successor = (
+        conn.execute("SELECT * FROM triples WHERE id=?", (successor_id,)).fetchone()
+        if successor_id and successor_id != row["id"]
+        else None
+    )
+    if successor_id and successor is None:
+        report["unresolved_links"].append({"id": row["id"], "superseded_by": successor_id})
+    lifecycle_changed = existing is not None and any(
+        c in row and row[c] != existing[c] for c in ("status", "valid_to", "superseded_by")
+    )
+    approved_change = evidence["approval_status"] == "approved" and (
+        successor is None
+        or fact_provenance.imported_fields(dict(successor))["approval_status"] == "approved"
+    )
+    if (
+        existing
+        and existing["approval_status"] == "approved"
+        and lifecycle_changed
+        and not approved_change
+    ):
+        return row, {**report, "applied": False, "reason": "approved_target"}
+    closes_open = (
+        existing is not None
+        and existing["valid_to"] is None
+        and (row.get("valid_to") is not None or row.get("status", "active") != "active")
+    )
+    if closes_open and successor is None and (successor_id or row.get("status") == "superseded"):
+        return row, {
+            **report,
+            "applied": False,
+            "reason": "unresolved_successor",
+            "end_not_carried": {"id": row["id"], "superseded_by": successor_id},
+        }
+    if successor_id and successor is None:
+        if existing:
+            row.pop("superseded_by")  # Preserve any already recorded local link.
+        else:
+            row["superseded_by"] = None
+    return row, report
+
+
+def _upsert_replicated_row(conn, table, row, columns):
+    sent = [col for col in columns if col in row]
+    defaults = {
+        "status": "active",
+        "sensitivity": DEFAULT_SENSITIVITY,
+        "origin_kind": "unknown",
+        "origin_id": "unknown",
+        "approval_status": "unknown",
+    }
+    values = [row[col] if row[col] is not None else defaults.get(col) for col in sent]
+    updates = []
+    for col in sent:
+        if col == "id" or (table == "triples" and col in _REPLICATED_AUTHORSHIP):
+            continue
+        if col == "sensitivity" and table == "triples":
+            updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
+        elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
+            updates.append(
+                f"{col} = CASE WHEN triples.approval_status='approved' "
+                f"THEN triples.{col} ELSE excluded.{col} END"
+            )
+        else:
+            updates.append(f"{col} = excluded.{col}")
+    conflict = "DO UPDATE SET " + ", ".join(updates) if updates else "DO NOTHING"
+    conn.execute(
+        f"INSERT INTO {table} ({', '.join(sent)}) VALUES ({', '.join('?' for _ in sent)}) "
+        f"ON CONFLICT(id) {conflict}",
+        values,
+    )
 
 
 def _escape_like(value: str) -> str:
@@ -2063,11 +2196,19 @@ class KnowledgeGraph:
             result.append(item)
         return result
 
-    def apply_row(self, table: str, row: dict) -> None:
-        """Upsert a replicated row, retaining approval and stricter sensitivity.
+    def apply_row(self, table: str, row: dict) -> dict:
+        """Apply a peer row and return an ``applied`` flag and any skip reason.
 
-        Observations dedupe by their source key after resolving triple identity;
-        their integer ids are local to each graph. Apply triples before sources.
+        Existing fact identity, authorship, first source and approval proof are
+        retained. Only person-approved peer evidence may change an approved
+        fact's lifecycle. Missing successor links are omitted and reported;
+        an open target stays open until its successor resolves. Retry those
+        rows after applying their dependencies.
+
+        Observations dedupe by source key after resolving exact triple identity;
+        their integer ids are graph-local. An orphan returns a skip report so
+        replication can continue. Missing row ids or source identity still
+        raise ValueError.
         """
         columns = self._REPLICATION_TABLES.get(table)
         if columns is None:
@@ -2083,53 +2224,26 @@ class KnowledgeGraph:
                 with conn:
                     same = _identical_triples(conn, identity)
                     if not same:
-                        raise ValueError("replicated fact source has no matching target triple")
+                        return {
+                            "id": row["id"],
+                            "triple_id": row.get("triple_id"),
+                            "applied": False,
+                            "reason": "no_matching_triple",
+                        }
                     _merge_imported_source(conn, row, same[0]["id"])
-            return
-        row = dict(row)
-        if table == "triples":
-            evidence = fact_provenance.imported_fields(row)
-            for col in fact_provenance.COLUMNS:
-                if col in row or (
-                    "approval_status" in row and col in ("approved_by", "approval_link")
-                ):
-                    row[col] = evidence[col]
+                    return {"id": row["id"], "triple_id": same[0]["id"], "applied": True}
         # A peer that predates a column sends no key for it. Leave the local
         # value alone then, so an older replica cannot erase a supersede link.
-        sent = [col for col in columns if col in row]
-        values = [row[col] for col in sent]
-        for col, default in (
-            ("status", "active"),
-            ("sensitivity", DEFAULT_SENSITIVITY),
-            ("origin_kind", "unknown"),
-            ("origin_id", "unknown"),
-            ("approval_status", "unknown"),
-        ):
-            if col in sent and values[sent.index(col)] is None:
-                values[sent.index(col)] = default
-        updates = []
-        for col in sent:
-            if col == "id":
-                continue
-            if col == "sensitivity" and table == "triples":
-                updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
-            elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
-                updates.append(
-                    f"{col} = CASE WHEN triples.approval_status='approved' "
-                    f"THEN triples.{col} ELSE excluded.{col} END"
-                )
-            else:
-                updates.append(f"{col} = excluded.{col}")
-        updates = ", ".join(updates)
         with self._lock:
             conn = self._conn()
             with conn:
-                conn.execute(
-                    f"INSERT INTO {table} ({', '.join(sent)}) "
-                    f"VALUES ({', '.join('?' for _ in sent)}) "
-                    f"ON CONFLICT(id) DO UPDATE SET {updates}",
-                    values,
-                )
+                report = {"id": row["id"], "applied": True}
+                if table == "triples":
+                    row, report = _prepare_replicated_triple(conn, row)
+                    if not report["applied"]:
+                        return report
+                _upsert_replicated_row(conn, table, row, columns)
+                return report
 
     def list_wings(self):
         """Fact wings in one covering-index query, without graph-wide statistics."""
