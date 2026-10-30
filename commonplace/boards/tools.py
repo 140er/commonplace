@@ -188,6 +188,7 @@ def register_tools():
             "before": TASK,
             "after": TASK,
             "pr": {"type": ["string", "integer"]},
+            "labels": ARRAY,
             **{
                 k: STRING
                 for k in (

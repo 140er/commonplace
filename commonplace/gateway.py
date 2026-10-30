@@ -27,7 +27,7 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from mempalace import provenance
 from mempalace.config import normalize_wing_name
@@ -677,6 +677,79 @@ def _write_request(method: str, path: str, request) -> bool:
     return local.kind == "write" if local else classify_tool(name) in ("write", "maintenance")
 
 
+def _rest_tool(method, path):
+    """REST aliases share MCP's tool visibility gate, before route execution."""
+    parts = [unquote(part) for part in path.split("/") if part]
+    if parts == ["api", "boards"]:
+        return {"GET": "board_list", "POST": "board_add"}.get(method)
+    if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":
+        return {"GET": "task_list", "POST": "task_add"}.get(method)
+    if parts == ["api", "needs-me"] and method == "GET":
+        return "needs_me"
+    if parts[:2] == ["api", "cards"]:
+        if len(parts) == 3:
+            return {"GET": "task_show", "PATCH": "task_update"}.get(method)
+        if len(parts) == 4 and method == "POST":
+            return {"comments": "task_comment", "handoff": "task_handoff", "decide": "decide"}.get(
+                parts[3]
+            )
+    if parts[:2] == ["api", "memory"]:
+        if len(parts) == 2 and method == "POST":
+            return "memory_save"
+        if len(parts) == 3 and method == "GET":
+            return "memory_search" if parts[2] in ("search", "map") else "memory_get"
+    if parts[:2] == ["api", "webhooks"]:
+        if len(parts) == 2:
+            return {"GET": "webhook_list", "POST": "webhook_add"}.get(method)
+        if len(parts) == 3 and method == "DELETE":
+            return "webhook_remove"
+        if len(parts) == 4:
+            if method == "GET" and parts[3] == "deliveries":
+                return "webhook_list"
+            if method == "POST" and parts[3] == "test":
+                return "webhook_test"
+    return None
+
+
+def _origin(value):
+    """A strict serialized HTTP origin, normalized for default ports."""
+    try:
+        if not value or any(ord(c) <= 32 or ord(c) >= 127 for c in value):
+            return None
+        parsed = urlparse(value)
+        if (
+            parsed.scheme not in ("http", "https")
+            or parsed.path
+            or parsed.params
+            or "?" in value
+            or "#" in value
+        ):
+            return None
+        _host_name(parsed.netloc)
+        host = parsed.hostname.lower()
+        return parsed.scheme, host, parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+
+
+def _session_write_allowed(gateway, handler):
+    media = handler.headers.get_all("Content-Type", [])
+    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != "application/json":
+        return False
+    origins = handler.headers.get_all("Origin", [])
+    if not origins:
+        return True
+    if len(origins) != 1 or (origin := _origin(origins[0])) is None:
+        return False
+    app = urlparse(urls.APP_URL)
+    allowed = {_origin(app.scheme + "://" + app.netloc)}
+    hosts = handler.headers.get_all("Host", [])
+    if len(hosts) == 1:
+        scheme = "https" if gateway.secure_cookies else "http"
+        allowed.add(_origin(scheme + "://" + hosts[0]))
+    return origin in allowed
+
+
 class Gateway:
     """The HTTP front. ``routes`` is the seam OAuth plugs its endpoints into."""
 
@@ -948,6 +1021,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
+        if (
+            principal is not None
+            and principal.person
+            and self.command in ("POST", "PATCH", "DELETE")
+            and (path.startswith("/api/") or path == "/app/logout")
+            and not _session_write_allowed(self.server.gateway, self)
+        ):
+            self.close_connection = True
+            self._send_json(403, {"error": "JSON and same-origin request required"})
+            return
         handler = self.server.gateway.find_route(self.command, path)
         request, parse_error = None, None
         if path == "/mcp" and self.command == "POST" and principal is not None:
@@ -963,6 +1046,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 except (ValueError, UnicodeError, RecursionError):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
         if self._rate_limit(path, principal, request):
+            return
+        tool = _rest_tool(self.command, path)
+        if (
+            principal is not None
+            and not principal.person
+            and tool
+            and not principal.policy.tool_visible(tool)
+        ):
+            self.close_connection = True
+            self._send_json(403, {"error": "tool not allowed for this connection"})
             return
         # OAuth POST has a browser-bound login-token stage. Its handler
         # checks sign-in before validating the authorization form.

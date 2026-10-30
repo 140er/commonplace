@@ -444,13 +444,31 @@ class ControlDB:
             ).fetchone()
         if row is None or not tokens.hashes_match(row["token_hash"], digest):
             return None
+        return self._connection_principal(row, touch=True)
+
+    def authenticate_connection(self, connection_id: str) -> Optional[Principal]:
+        """Rebuild a durable subscription owner's current connection authority."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role "
+                "FROM connections c JOIN users u ON u.id = c.user_id "
+                "LEFT JOIN memberships m ON m.workspace_id = c.workspace_id "
+                "AND m.user_id = c.user_id WHERE c.id = ?",
+                (connection_id,),
+            ).fetchone()
+            return self._connection_principal(row)
+
+    def _connection_principal(self, row, *, touch=False) -> Optional[Principal]:
+        if row is None:
+            return None
         now = _now()
         if row["revoked_at"] or row["user_disabled"] or row["role"] is None:
             return None
         expires = _parse(row["expires_at"])
         if expires is not None and expires <= now:
             return None
-        self._touch(row, now)
+        if touch:
+            self._touch(row, now)
         return Principal(
             user_id=row["user_id"],
             user_email=row["user_email"],
@@ -458,7 +476,7 @@ class ControlDB:
             connection_id=row["id"],
             connection=row["name"],
             client=row["client"],
-            auth="pat",
+            auth=row["auth"],
             role=row["role"],
             policy=Policy.from_json(row["policy"]),
         )

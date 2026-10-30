@@ -49,6 +49,13 @@ def receiver():
 
 @pytest.fixture
 def live(hub):
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+
+    owner = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    BoardService(ToolContext(principal=owner, gateway=hub.gateway)).board_add(
+        slug="work", wing="shared"
+    )
     try:
         yield hub
     finally:
@@ -345,7 +352,7 @@ def test_restart_resumes_persisted_delivery(live, receiver):
         hub.db._conn.execute("UPDATE webhook_deliveries SET next_at = ?", (time.time(),))
     # A new database connection and dispatcher read the same durable queue.
     restarted_db = ControlDB(hub.db.path)
-    dispatcher = webhooks.Dispatcher(restarted_db, schedule=(0.001,)).start()
+    dispatcher = webhooks.Dispatcher(restarted_db, gateway=hub.gateway, schedule=(0.001,)).start()
     try:
         second = requests.get(timeout=3)
         assert first[1] == second[1]
@@ -425,3 +432,269 @@ def test_shared_links_and_app_url_fallback(live, receiver, monkeypatch):
     emit(hub)
     assert json.loads(requests.get(timeout=3)[1])["url"] == "https://agent.example/s/Ab12Cd3"
     assert calls == [(hub.db, hub.workspace, "/app/#/card/7")]
+
+
+@pytest.fixture
+def security(tmp_path):
+    from types import SimpleNamespace
+
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+    from commonplace.policy import Policy
+
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    uid = db.create_user("security@example.com", is_admin=True)
+    ws = db.create_workspace("security", uid)
+    gateway = SimpleNamespace(db=db, workspace_dir=lambda _: str(tmp_path / "workspace"))
+    person = sessions.person_principal(db, uid, ws)
+    owner = BoardService(ToolContext(principal=person, gateway=gateway))
+    owner.board_add(slug="work", wing="shared")
+    owner.board_add(slug="medical", wing="private")
+    cid, token = db.create_token(
+        workspace_ref=ws,
+        user_ref=uid,
+        name="agent",
+        client="test",
+        actor=uid,
+        policy=Policy.build(
+            profile="full",
+            trust="trusted",
+            scopes=["memory:read", "memory:write"],
+            read_wings=["shared"],
+            write_wings=["shared"],
+        ),
+    )
+    agent = db.authenticate_token(token)
+    webhooks.ensure_schema(db)
+    events.ensure_schema(db)
+    hook = webhooks.add(db, agent, "http://127.0.0.1:9/hook")
+    dispatcher = webhooks.Dispatcher(db)
+    # Set before authorization is implemented, keeping this a behavioral regression.
+    dispatcher.gateway = gateway
+    result = SimpleNamespace(
+        db=db,
+        uid=uid,
+        ws=ws,
+        cid=cid,
+        agent=agent,
+        person=person,
+        owner=owner,
+        hook=hook,
+        dispatcher=dispatcher,
+        gateway=gateway,
+    )
+    try:
+        yield result
+    finally:
+        db.close()
+
+
+def security_event(env, board="work", kind="card.updated"):
+    return events.emit(
+        env.db,
+        env.ws,
+        kind,
+        subject="#1",
+        actor="system",
+        data={} if board is None else {"board": board, "number": 1, "title": "PRIVATE-CANARY"},
+    )
+
+
+@pytest.mark.parametrize(
+    "board,kind",
+    [
+        ("medical", "card.updated"),
+        ("missing", "card.updated"),
+        (None, "memory.saved"),
+        ("", "card.updated"),
+    ],
+)
+def test_webhook_enqueue_requires_current_read_access(security, board, kind):
+    s = security
+    s.dispatcher.on_event(security_event(s, board, kind))
+    assert s.dispatcher._due() is None
+    assert webhooks.deliveries(s.db, s.agent, s.hook["id"]) == []
+
+
+def invalidate_owner(s, reason):
+    with s.db._lock:
+        if reason == "revoked":
+            s.db.revoke(s.cid, actor=s.uid)
+        elif reason == "expired":
+            s.db._conn.execute(
+                "UPDATE connections SET expires_at='2000-01-01T00:00:00Z' WHERE id=?", (s.cid,)
+            )
+        elif reason == "disabled":
+            s.db._conn.execute(
+                "UPDATE users SET disabled_at='2000-01-01T00:00:00Z' WHERE id=?", (s.uid,)
+            )
+        elif reason == "membership":
+            # Model stale connections left by administrative/older tooling.
+            s.db._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                s.db._conn.execute(
+                    "DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (s.ws, s.uid)
+                )
+            finally:
+                s.db._conn.execute("PRAGMA foreign_keys=ON")
+        elif reason == "policy":
+            from dataclasses import replace
+
+            policy = replace(s.agent.policy, read_wings=("elsewhere",))
+            s.db._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?", (policy.to_json(), s.cid)
+            )
+        elif reason == "deleted":
+            webhooks.remove(s.db, s.agent, s.hook["id"])
+        elif reason == "wing":
+            with s.owner.store.transaction() as conn:
+                conn.execute("UPDATE boards SET wing='private' WHERE slug='work'")
+        elif reason == "lookup":
+            s.gateway.workspace_dir = lambda _: (_ for _ in ()).throw(
+                RuntimeError("PRIVATE-CANARY")
+            )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["revoked", "expired", "disabled", "membership", "policy", "deleted", "wing", "lookup"],
+)
+@pytest.mark.parametrize("stage", ["enqueue", "attempt", "retry"])
+def test_webhook_rechecks_owner_and_cancels_stale_deliveries(security, monkeypatch, reason, stage):
+    s = security
+    sent = []
+    monkeypatch.setattr(webhooks, "_post", lambda *args: sent.append(args) or 503)
+    event = security_event(s)
+    if stage != "enqueue":
+        s.dispatcher.on_event(event)
+        row = s.dispatcher._due()
+        assert row is not None
+        if stage == "retry":
+            s.dispatcher.schedule = (0,)
+            s.dispatcher._deliver(row)
+            row = s.dispatcher._due()
+            assert len(sent) == 1 and row is not None
+            sent.clear()
+    invalidate_owner(s, reason)
+    if stage == "enqueue":
+        s.dispatcher.on_event(event)
+        assert s.dispatcher._due() is None
+        assert s.db._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0] == 0
+    else:
+        s.dispatcher._deliver(row)
+        actual = s.db._conn.execute(
+            "SELECT status,attempt FROM webhook_deliveries WHERE id=?", (row["id"],)
+        ).fetchone()
+        assert actual["status"] == "cancelled"
+        assert actual["attempt"] == (1 if stage == "retry" else 0)
+    assert sent == []
+
+
+def test_person_webhook_rebuilds_person_principal_and_rechecks_membership(security, monkeypatch):
+    s = security
+    webhooks.remove(s.db, s.agent, s.hook["id"])
+    hook = webhooks.add(s.db, s.person, "http://127.0.0.1:9/hook")
+    sent = []
+    monkeypatch.setattr(webhooks, "_post", lambda *args: sent.append(args) or 204)
+    s.dispatcher.on_event(security_event(s, "medical"))
+    row = s.dispatcher._due()
+    assert row is not None and row["webhook_id"] == hook["id"]
+    s.dispatcher._deliver(row)
+    assert len(sent) == 1
+    s.dispatcher.on_event(security_event(s, None, "memory.saved"))
+    row = s.dispatcher._due()
+    assert row is not None
+    invalidate_owner(s, "membership")
+    s.dispatcher._deliver(row)
+    assert len(sent) == 1
+    assert (
+        s.db._conn.execute(
+            "SELECT status FROM webhook_deliveries WHERE id=?", (row["id"],)
+        ).fetchone()[0]
+        == "cancelled"
+    )
+
+
+def test_dispatcher_replays_committed_events_idempotently_from_durable_cursor(
+    security, monkeypatch
+):
+    s = security
+    first = security_event(s)
+    original_enqueue = webhooks._enqueue
+
+    def crash_after_enqueue(*args, **kwargs):
+        original_enqueue(*args, **kwargs)
+        raise RuntimeError("crash before cursor advance")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(webhooks, "_enqueue", crash_after_enqueue)
+        with pytest.raises(RuntimeError):
+            s.dispatcher.on_event(first)
+    second = security_event(s)
+    late = webhooks.add(s.db, s.agent, "http://127.0.0.1:9/late")
+    third = security_event(s)
+    sent = []
+    monkeypatch.setattr(webhooks, "_post", lambda *args: sent.append(args) or 204)
+    reopened = ControlDB(s.db.path)
+    dispatcher = webhooks.Dispatcher(reopened)
+    dispatcher.gateway = s.gateway
+    try:
+        dispatcher.start()
+        wait_for(lambda: len(sent) == 4)
+        rows = reopened._conn.execute(
+            "SELECT webhook_id,event_seq FROM webhook_deliveries ORDER BY event_seq,webhook_id"
+        ).fetchall()
+        assert {(r["webhook_id"], r["event_seq"]) for r in rows} == {
+            (s.hook["id"], e["seq"]) for e in (first, second, third)
+        } | {(late["id"], third["seq"])}
+        assert len(rows) == 4
+        dispatcher.on_event(first)
+        assert reopened._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0] == 4
+        assert reopened._conn.execute(
+            "SELECT value FROM meta WHERE key='webhook_dispatch_seq'"
+        ).fetchone()[0] == str(third["seq"])
+    finally:
+        dispatcher.stop()
+        reopened.close()
+
+
+def test_dispatcher_out_of_order_notifications_do_not_skip_events(security):
+    s = security
+    first, second = security_event(s), security_event(s)
+    s.dispatcher.on_event(second)
+    s.dispatcher.on_event(first)
+    assert {r["event_seq"] for r in webhooks.deliveries(s.db, s.agent, s.hook["id"])} == {
+        first["seq"],
+        second["seq"],
+    }
+
+
+def test_committed_board_event_recovers_when_listener_enqueue_fails(security, monkeypatch, caplog):
+    s = security
+
+    def fail(*args):
+        raise RuntimeError("PRIVATE-CANARY")
+
+    events.add_listener(s.dispatcher.on_event)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(webhooks, "_enqueue", fail)
+            created = s.owner.task_add(board="work", title="PRIVATE-CANARY")
+    finally:
+        events.remove_listener(s.dispatcher.on_event)
+    persisted = events.after(s.db, s.ws)
+    assert len(persisted) == 1 and persisted[0]["subject"] == f"#{created['number']}"
+    assert s.db._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0] == 0
+    assert "PRIVATE-CANARY" not in caplog.text
+    sent = []
+    monkeypatch.setattr(webhooks, "_post", lambda *args: sent.append(args) or 204)
+    reopened = ControlDB(s.db.path)
+    dispatcher = webhooks.Dispatcher(reopened, gateway=s.gateway)
+    try:
+        dispatcher.start()
+        wait_for(lambda: len(sent) == 1)
+        assert json.loads(sent[0][1])["seq"] == persisted[0]["seq"]
+        assert s.owner.task_show(created["number"])["title"] == "PRIVATE-CANARY"
+    finally:
+        dispatcher.stop()
+        reopened.close()

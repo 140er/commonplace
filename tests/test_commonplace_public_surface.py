@@ -655,3 +655,154 @@ def test_mcp_failure_preserves_rpc_envelope_without_exception_text(surface, capl
         "error": {"code": -32603, "message": "Internal error"},
     }
     assert "private memory and credentials" not in caplog.text
+
+
+REST_TOOLS = [
+    ("GET", "/api/boards", "board_list"),
+    ("POST", "/api/boards", "board_add"),
+    ("GET", "/api/boards/work/cards", "task_list"),
+    ("POST", "/api/boards/work/cards", "task_add"),
+    ("GET", "/api/cards/1", "task_show"),
+    ("PATCH", "/api/cards/1", "task_update"),
+    ("POST", "/api/cards/1/comments", "task_comment"),
+    ("POST", "/api/cards/1/handoff", "task_handoff"),
+    ("POST", "/api/cards/1/decide", "decide"),
+    ("GET", "/api/needs-me", "needs_me"),
+    ("GET", "/api/memory/search", "memory_search"),
+    ("GET", "/api/memory/map", "memory_search"),
+    ("GET", "/api/memory/id", "memory_get"),
+    ("POST", "/api/memory", "memory_save"),
+    ("GET", "/api/webhooks", "webhook_list"),
+    ("POST", "/api/webhooks", "webhook_add"),
+    ("DELETE", "/api/webhooks/id", "webhook_remove"),
+    ("GET", "/api/webhooks/id/deliveries", "webhook_list"),
+    ("POST", "/api/webhooks/id/test", "webhook_test"),
+]
+
+
+@pytest.mark.parametrize("method,path,tool", REST_TOOLS)
+def test_rest_requires_the_matching_visible_tool(surface, method, path, tool):
+    from commonplace.http_util import send_json
+
+    surface.gateway.add_route(method, path, lambda h: send_json(h, 200, {"reached": True}))
+    for index, allowed in enumerate(([], [tool])):
+        policy = Policy.build(tools=allowed, trust="trusted", read_wings=["shared"])
+        _cid, value = surface.db.create_token(
+            workspace_ref=surface.workspace,
+            user_ref=surface.uid,
+            name=f"tools-{index}",
+            client="test",
+            policy=policy,
+            actor=surface.uid,
+        )
+        assert request(
+            surface, method, path, headers={"Authorization": "Bearer " + value}, body=b"{}"
+        )[0] == (200 if allowed else 403)
+    session = sessions.redeem_login_link(
+        surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
+    )
+    assert (
+        request(
+            surface,
+            method,
+            path,
+            headers={"Cookie": sessions.COOKIE + "=" + session, "Content-Type": "application/json"},
+            body=b"{}",
+        )[0]
+        == 200
+    )
+
+
+def test_rest_profiles_apply_the_same_tool_visibility(surface):
+    from commonplace.http_util import send_json
+
+    surface.gateway.add_route("PATCH", "/api/cards/1", lambda h: send_json(h, 200, {}))
+    policy = Policy.build(profile="slim", trust="trusted")
+    _cid, value = surface.db.create_token(
+        workspace_ref=surface.workspace,
+        user_ref=surface.uid,
+        name="slim",
+        client="test",
+        policy=policy,
+        actor=surface.uid,
+    )
+    assert not policy.tool_visible("task_update")
+    assert (
+        request(
+            surface,
+            "PATCH",
+            "/api/cards/1",
+            headers={"Authorization": "Bearer " + value},
+            body=b"{}",
+        )[0]
+        == 403
+    )
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/api/boards"),
+        ("PATCH", "/api/cards/1"),
+        ("DELETE", "/api/webhooks/id"),
+        ("POST", "/app/logout"),
+    ],
+)
+@pytest.mark.parametrize(
+    "content_type,origin",
+    [
+        (None, None),
+        ("text/plain", None),
+        ("application/json", "https://evil.example"),
+        ("application/json", "https://app.example.evil"),
+        ("application/json", "null"),
+        ("application/json", "https://user@app.example"),
+        ("application/json", "https://app.example/path"),
+        ("application/json", "https://app.example?"),
+        ("application/json", "https://app.example#"),
+        ("application/json", ""),
+    ],
+)
+def test_session_writes_require_json_and_valid_origin(
+    surface, monkeypatch, method, path, content_type, origin
+):
+    from commonplace.http_util import send_json
+
+    monkeypatch.setattr(urls, "APP_URL", "https://app.example")
+    surface.gateway.add_route(method, path, lambda h: send_json(h, 200, {}))
+    session = sessions.redeem_login_link(
+        surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
+    )
+    headers = {"Cookie": sessions.COOKIE + "=" + session}
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+    if origin is not None:
+        headers["Origin"] = origin
+    assert request(surface, method, path, headers=headers, body=b"{}")[0] == 403
+    assert request(surface, headers={"Cookie": headers["Cookie"]})[0] == 200
+    assert (
+        request(surface, method, path, headers={**headers, **token(surface)[2]}, body=b"{}")[0]
+        == 200
+    )
+
+
+@pytest.mark.parametrize("origin", [None, "app", "local", "default-port"])
+def test_session_json_writes_accept_app_and_request_origins(surface, monkeypatch, origin):
+    from commonplace.http_util import send_json
+
+    monkeypatch.setattr(urls, "APP_URL", "https://app.example")
+    surface.gateway.add_route("POST", "/api/boards", lambda h: send_json(h, 200, {}))
+    session = sessions.redeem_login_link(
+        surface.db, sessions.create_login_link(surface.db, "owner@example.com", surface.workspace)
+    )
+    headers = {
+        "Cookie": sessions.COOKIE + "=" + session,
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    if origin:
+        headers["Origin"] = {
+            "app": "https://app.example",
+            "local": f"http://127.0.0.1:{surface.port}",
+            "default-port": "https://app.example:443",
+        }[origin]
+    assert request(surface, "POST", "/api/boards", headers=headers, body=b"{}")[0] == 200

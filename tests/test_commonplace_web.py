@@ -46,7 +46,9 @@ def test_login_cookie_identity_replay_and_logout(hub):
         "people": {f"user:{hub.admin}": "owner"},
     }
     assert request(hub, f"/app/login?t={token}")[0] == 400
-    status, headers, _ = request(hub, "/app/logout", "POST", headers=cookie)
+    status, headers, _ = request(
+        hub, "/app/logout", "POST", headers={**cookie, "Content-Type": "application/json"}
+    )
     assert status == 204
     assert "Max-Age=0" in headers["Set-Cookie"]
     assert request(hub, "/api/me", headers=cookie)[0] == 401

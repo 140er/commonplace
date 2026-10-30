@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from commonplace import events
+from commonplace import events, privacy
 from commonplace.extensions import ToolError
+from commonplace.http_util import log_failure
 
 from .store import (
     STATUSES,
@@ -21,6 +23,8 @@ from .store import (
     require_visible,
     task_row,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def open_store(workspace_dir) -> BoardStore:
@@ -57,7 +61,10 @@ def flags_for(*values):
         "hidden_unicode": r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]",
         "image_query": r"https?://[^\s]+\.(?:png|jpg|jpeg|gif|svg|webp)\?",
     }
-    return [name for name, pattern in patterns.items() if re.search(pattern, content, re.I)]
+    return sorted(
+        {name for name, pattern in patterns.items() if re.search(pattern, content, re.I)}
+        | set(privacy.scan(content))
+    )
 
 
 def normalize_repo(value):
@@ -132,14 +139,17 @@ class BoardService:
                 # System expiries precede the version check; publish that current card.
                 conflict = exc
         for kind, number, data, actor in self.pending:
-            events.emit(
-                self.ctx.db,
-                self.principal.workspace_id,
-                kind,
-                subject=f"#{number}",
-                actor=actor,
-                data=data,
-            )
+            try:
+                events.emit(
+                    self.ctx.db,
+                    self.principal.workspace_id,
+                    kind,
+                    subject=f"#{number}",
+                    actor=actor,
+                    data=data,
+                )
+            except Exception as exc:
+                log_failure(logger, "committed board event emission failed", exc)
         if conflict is not None:
             raise conflict
 
@@ -333,7 +343,11 @@ class BoardService:
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
-    def _holder(self, row):
+    def _holder(self, row, *, editing=False):
+        if self.principal.person:
+            return
+        if row["status"] == "done":
+            raise ToolError("no: completed cards are frozen for connections")
         if (
             row["status"] == "doing"
             and not self.principal.person
@@ -348,6 +362,15 @@ class BoardService:
             and not self.principal.person
         ):
             raise ToolError("no: card is reserved for another connection")
+        if editing and not (
+            (row["status"] == "doing" and row["assignee"] == self.principal.actor)
+            or (
+                row["status"] in ("todo", "backlog")
+                and row["created_by"] == self.principal.actor
+                and row["assignee"] is None
+            )
+        ):
+            raise ToolError("no: take this card before editing it")
 
     def board_list(self):
         with self.transaction() as conn:
@@ -681,6 +704,7 @@ class BoardService:
         permitted = {
             "title",
             "body",
+            "labels",
             "status",
             "before",
             "after",
@@ -699,12 +723,19 @@ class BoardService:
             self._version(conn, row, version)
             if set(args) - permitted:
                 raise ToolError("no: unknown update field")
-            self._holder(row)
+            self._holder(row, editing=bool(set(args) & {"title", "body", "labels"}))
             if row["status"] == "review" and not self.principal.person:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")
             updates = {}
+            if "labels" in args:
+                labels = args["labels"]
+                if not isinstance(labels, list) or len(labels) > 100:
+                    raise ToolError("no: labels must be a list")
+                updates["labels"] = json.dumps(
+                    [validate_text(label, "label", required=True, limit=200) for label in labels]
+                )
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:
                     updates[key] = validate_text(
