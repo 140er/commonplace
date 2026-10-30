@@ -584,9 +584,18 @@ def tool_add_drawer(
         last_chunk_idx = (len(content) - 1) // chunk_size
         idempotency_probe_ids = [drawer_id, f"{drawer_id}_chunk_{last_chunk_idx:06d}"]
     try:
-        existing = col.get(ids=idempotency_probe_ids, include=[])
+        existing = col.get(ids=idempotency_probe_ids, include=["metadatas"])
         if _get_result_ids(existing):
             outcome = {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
+            stored = next(iter(existing.get("metadatas") or []), None) or {}
+            if stored.get("source_thread"):
+                # The first write's source is kept; say which, so a caller
+                # citing another chat knows its range was not recorded.
+                outcome["source_kept"] = {
+                    "thread": stored["source_thread"],
+                    "seq_start": stored.get("source_seq_start"),
+                    "seq_end": stored.get("source_seq_end"),
+                }
             _wal_result("add_drawer", outcome)
             return outcome
     except Exception as e:

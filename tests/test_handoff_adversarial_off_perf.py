@@ -430,12 +430,16 @@ ADDED_SINCE_BASELINE = {
 
 
 # KG tools that once needed every wing and are now wing-scoped, so a token
-# that reads every wing but not private ones may now see them.
+# that reads every wing but not private ones may now see them; and KG tools
+# added since the baseline.
 WING_SCOPED_SINCE_BASELINE = {
     "mempalace_kg_query",
     "mempalace_kg_timeline",
     "mempalace_kg_invalidate",
     "mempalace_kg_supersede",
+    # Added later: saving a fact with merge and supersede.
+    "mempalace_kg_save",
+    "fact_save",
 }
 
 

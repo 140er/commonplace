@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import paths, provenance
-from .config import sanitize_iso_temporal
+from .config import DEFAULT_SINGLE_VALUED_PREDICATES, sanitize_iso_temporal
 from .ids import make_triple_id
 from .timeutil import utc_now_iso, utc_now_z
 
@@ -241,8 +241,14 @@ def legacy_entity_id(name: str) -> str:
 
 # Lifecycle of a fact record. ``status`` says whether a fact was replaced;
 # ``valid_to`` (``current`` on reads) says whether it still holds in time. An
-# invalidated fact ended but was never replaced, so it stays ``active``.
+# invalidated fact ended but was never replaced, so it stays ``active``: a
+# status that depended on the clock would go stale on its own.
 FACT_STATUSES = ("active", "superseded", "retracted", "expired")
+
+# Predicates that hold one value at a time: saving a new value replaces the
+# open one (see :meth:`KnowledgeGraph.save_fact`). ``single_valued_predicates``
+# in config.json adds more.
+SINGLE_VALUED_PREDICATES = DEFAULT_SINGLE_VALUED_PREDICATES
 _MAX_SOURCE_THREAD_LEN = 256
 
 
@@ -380,6 +386,7 @@ def _fact_fields(row) -> dict:
         "sensitivity": row["sensitivity"] or DEFAULT_SENSITIVITY,
         "status": row["status"] or "active",
         "superseded_by": row["superseded_by"],
+        "seen_count": row["seen_count"] or 1,
         "source_thread": row["source_thread"],
         "source_seq_start": row["source_seq_start"],
         "source_seq_end": row["source_seq_end"],
@@ -534,6 +541,8 @@ class KnowledgeGraph:
                 superseded_by TEXT,
                 wing TEXT,
                 sensitivity TEXT NOT NULL DEFAULT 'internal',
+                seen_count INTEGER NOT NULL DEFAULT 1,
+                last_seen_at TEXT,
                 FOREIGN KEY (subject) REFERENCES entities(id),
                 FOREIGN KEY (object) REFERENCES entities(id)
             );
@@ -542,6 +551,29 @@ class KnowledgeGraph:
             CREATE INDEX IF NOT EXISTS idx_triples_object ON triples(object);
             CREATE INDEX IF NOT EXISTS idx_triples_predicate ON triples(predicate);
             CREATE INDEX IF NOT EXISTS idx_triples_valid ON triples(valid_from, valid_to);
+
+            -- Every chat range or drawer a fact was seen in. The first is
+            -- also on the triple; save_fact adds the rest when it merges.
+            CREATE TABLE IF NOT EXISTS fact_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                triple_id TEXT NOT NULL,
+                source_thread TEXT,
+                source_seq_start INTEGER,
+                source_seq_end INTEGER,
+                source_drawer_id TEXT,
+                source_file TEXT,
+                added_at TEXT NOT NULL,
+                hub_stamp TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_sources_triple ON fact_sources(triple_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fact_sources_once ON fact_sources(
+                triple_id,
+                COALESCE(source_thread, ''),
+                COALESCE(source_seq_start, -1),
+                COALESCE(source_seq_end, -1),
+                COALESCE(source_drawer_id, ''),
+                COALESCE(source_file, '')
+            );
         """)
         self._migrate_schema(conn)
         conn.commit()
@@ -571,6 +603,8 @@ class KnowledgeGraph:
             ("superseded_by", "TEXT"),
             ("wing", "TEXT"),
             ("sensitivity", "TEXT NOT NULL DEFAULT 'internal'"),
+            ("seen_count", "INTEGER NOT NULL DEFAULT 1"),
+            ("last_seen_at", "TEXT"),
         ):
             if column not in existing:
                 conn.execute(f"ALTER TABLE triples ADD COLUMN {column} {decl}")
@@ -743,7 +777,18 @@ class KnowledgeGraph:
                     (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchone()
                 if existing:
-                    return existing["id"]  # Already exists and still valid
+                    # Already exists and still valid: keep where it was seen again.
+                    self._add_source(
+                        conn,
+                        existing["id"],
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
+                        source_drawer_id,
+                        source_file,
+                        utc_now_iso(),
+                    )
+                    return existing["id"]
 
                 triple_id = make_triple_id(sub_id, pred, obj_id, valid_from, utc_now_iso())
                 conn.execute(
@@ -773,6 +818,16 @@ class KnowledgeGraph:
                         wing,
                         sensitivity,
                     ),
+                )
+                self._add_source(
+                    conn,
+                    triple_id,
+                    source_thread,
+                    source_seq_start,
+                    source_seq_end,
+                    source_drawer_id,
+                    source_file,
+                    utc_now_iso(),
                 )
                 return triple_id
 
@@ -979,8 +1034,228 @@ class KnowledgeGraph:
                         sensitivity,
                     ),
                 )
+                self._add_source(
+                    conn,
+                    triple_id,
+                    source_thread,
+                    source_seq_start,
+                    source_seq_end,
+                    source_drawer_id,
+                    source_file,
+                    utc_now_iso(),
+                )
                 self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
                 return triple_id
+
+    @staticmethod
+    def _add_source(conn, triple_id, thread, start, end, drawer_id, source_file, now) -> bool:
+        """Record one more place a fact was seen. Returns False for a repeat or no source."""
+        if not any(v is not None for v in (thread, drawer_id, source_file)):
+            return False
+        return (
+            conn.execute(
+                "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
+                "source_seq_start, source_seq_end, source_drawer_id, source_file, "
+                "added_at, hub_stamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    triple_id,
+                    thread,
+                    start,
+                    end,
+                    drawer_id,
+                    source_file,
+                    now,
+                    provenance.stamp_json(),
+                ),
+            ).rowcount
+            == 1
+        )
+
+    def save_fact(
+        self,
+        subject: str,
+        predicate: str,
+        obj: str,
+        *,
+        valid_from: str = None,
+        confidence: float = 1.0,
+        source_thread: str = None,
+        source_seq_start: int = None,
+        source_seq_end: int = None,
+        source_drawer_id: str = None,
+        source_file: str = None,
+        wing: str = None,
+        sensitivity: str = None,
+        sensitivities=None,
+        single_valued: bool = False,
+    ) -> dict:
+        """File a fact, folding it into what the graph already holds. One transaction.
+
+        - The same open fact in the same wing: **merge**. No new row; the new
+          source joins :meth:`sources`, ``seen_count`` goes up, and the stored
+          sensitivity and confidence only ever rise.
+        - ``single_valued`` and the subject holds another open value in this
+          wing: **supersede** it at ``valid_from`` (default now), as
+          :meth:`supersede` does. If that value started after ``valid_from``,
+          the new fact is older news: it is filed as **history**, ending
+          where the open value begins, and nothing is closed.
+        - Otherwise: **add**.
+
+        ``sensitivities`` limits which stored facts count, so a caller never
+        merges into, replaces or learns of a fact it may not read.
+
+        Returns ``{"action": "merged"|"superseded"|"historical"|"added",
+        "triple_id": id, ...}``; a supersede also lists ``superseded`` ids and
+        their ``previous`` objects.
+        """
+        valid_from = sanitize_iso_temporal(valid_from, "valid_from")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        within_sql, within_params = _visibility_sql(None, sensitivities, alias="triples")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            raise ValueError("confidence must be a number from 0 to 1")
+        if not 0 <= confidence <= 1:
+            raise ValueError("confidence must be a number from 0 to 1")
+        pred = predicate.lower().replace(" ", "_")
+        now = utc_now_iso()
+        if valid_from is None:
+            boundary = utc_now_z()
+        elif _is_date_only_temporal(valid_from):
+            boundary = f"{valid_from}T00:00:00Z"
+        else:
+            boundary = valid_from
+
+        with self._lock:
+            conn = self._conn()
+            with conn:
+                sub_id = self._resolve_entity_id(conn, subject)
+                obj_id = self._resolve_entity_id(conn, obj)
+                for name, eid in ((subject, sub_id), (obj, obj_id)):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)", (eid, name)
+                    )
+                source = (
+                    source_thread,
+                    source_seq_start,
+                    source_seq_end,
+                    source_drawer_id,
+                    source_file,
+                    now,
+                )
+
+                same = conn.execute(
+                    "SELECT id, sensitivity FROM triples WHERE subject=? AND predicate=? "
+                    "AND object=? AND wing IS ? AND valid_to IS NULL" + within_sql,
+                    (sub_id, pred, obj_id, wing, *within_params),
+                ).fetchone()
+                if same:
+                    conn.execute(
+                        "UPDATE triples SET seen_count = seen_count + 1, last_seen_at = ?, "
+                        "sensitivity = ?, confidence = MAX(COALESCE(confidence, 0), ?) "
+                        "WHERE id = ?",
+                        (now, strictest(sensitivity, same["sensitivity"]), confidence, same["id"]),
+                    )
+                    added = self._add_source(conn, same["id"], *source)
+                    return {"action": "merged", "triple_id": same["id"], "source_added": added}
+
+                rivals = []
+                if single_valued:
+                    rivals = conn.execute(
+                        "SELECT t.id, t.valid_from, t.sensitivity, e.name AS obj_name "
+                        "FROM triples t JOIN entities e ON t.object = e.id "
+                        "WHERE t.subject=? AND t.predicate=? AND t.object != ? AND t.wing IS ? "
+                        "AND t.valid_to IS NULL" + within_sql.replace("triples.", "t."),
+                        (sub_id, pred, obj_id, wing, *within_params),
+                    ).fetchall()
+                later = sorted(
+                    (r for r in rivals if r["valid_from"] is not None),
+                    key=lambda r: _temporal_start_key(r["valid_from"]),
+                )
+                later = [
+                    r
+                    for r in later
+                    if _temporal_start_key(r["valid_from"]) > _temporal_start_key(boundary)
+                ]
+                if later:
+                    action, start, end, closing = (
+                        "historical",
+                        valid_from,
+                        later[0]["valid_from"],
+                        [],
+                    )
+                else:
+                    closing = rivals
+                    action = "superseded" if rivals else "added"
+                    start = boundary if rivals else valid_from
+                    end = None
+                sensitivity = strictest(sensitivity, *(r["sensitivity"] for r in closing))
+
+                triple_id = make_triple_id(sub_id, pred, obj_id, start, now)
+                conn.execute(
+                    """INSERT INTO triples (
+                        id, subject, predicate, object, valid_from, valid_to,
+                        confidence, source_file, source_drawer_id, hub_stamp,
+                        source_thread, source_seq_start, source_seq_end,
+                        wing, sensitivity, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        triple_id,
+                        sub_id,
+                        pred,
+                        obj_id,
+                        start,
+                        end,
+                        confidence,
+                        source_file,
+                        source_drawer_id,
+                        provenance.stamp_json(),
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
+                        wing,
+                        sensitivity,
+                        now,
+                    ),
+                )
+                self._add_source(conn, triple_id, *source)
+                for rival in closing:
+                    conn.execute(
+                        "UPDATE triples SET valid_to = ? WHERE id = ?", (boundary, rival["id"])
+                    )
+                self._mark_superseded(conn, [r["id"] for r in closing], triple_id)
+                out = {"action": action, "triple_id": triple_id}
+                if closing:
+                    out["superseded"] = [r["id"] for r in closing]
+                    out["previous"] = [r["obj_name"] for r in closing]
+                if later:
+                    out["current"] = later[0]["id"]
+                return out
+
+    def sources(self, triple_ids) -> dict:
+        """Every recorded source of each fact, oldest first: ``{triple_id: [source, ...]}``."""
+        ids = [i for i in dict.fromkeys(triple_ids) if isinstance(i, str)]
+        out = {i: [] for i in ids}
+        if not ids:
+            return out
+        with self._lock:
+            conn = self._conn()
+            for start in range(0, len(ids), 500):
+                batch = ids[start : start + 500]
+                rows = conn.execute(
+                    "SELECT triple_id, source_thread, source_seq_start, source_seq_end, "
+                    "source_drawer_id, source_file, added_at FROM fact_sources "
+                    f"WHERE triple_id IN ({', '.join('?' for _ in batch)}) ORDER BY id",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    out[row["triple_id"]].append(
+                        {k: row[k] for k in row.keys() if k != "triple_id" and row[k] is not None}
+                    )
+        return out
 
     @staticmethod
     def _mark_superseded(conn, old_ids, new_id):
