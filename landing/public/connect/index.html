@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect your agents · Commonplace</title>
+<meta name="description" content="Connect Claude Code, Codex, Cursor, Antigravity, cloud chat clients and local models to your Commonplace server.">
+<meta name="theme-color" content="#0b0c0b">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../site.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+
+<header class="board top">
+  <a class="tile mark" href="../" aria-label="Commonplace home"><svg viewBox="0 0 28 28" aria-hidden="true"><rect width="13" height="13" fill="#0b0c0b"/><rect x="15" width="13" height="13" fill="#0b0c0b"/><rect y="15" width="13" height="13" fill="#0b0c0b"/></svg></a>
+  <nav class="tile nav" aria-label="Main">
+    <a href="../#agents">Agents</a>
+    <a href="../#modules">Modules</a>
+    <a href="../#install">Self-host</a>
+    <a href="./" aria-current="page">Connect</a>
+  </nav>
+  <a class="tile act" href="https://github.com/140er/mempalace">GitHub</a>
+</header>
+
+<main>
+<section class="board guide-head" aria-labelledby="title">
+  <div class="tile rise">
+    <h1 id="title">Connect your agents</h1>
+<pre class="env" data-ui><code>export COMMONPLACE_URL=https://your-server/mcp
+export COMMONPLACE_TOKEN=&lt;from your setup page&gt;</code></pre>
+  </div>
+  <nav class="tile jump rise" style="--d:80ms" aria-label="Clients">
+    <a href="#claude-code">Claude Code</a>
+    <a href="#codex">Codex</a>
+    <a href="#cursor">Cursor</a>
+    <a href="#antigravity">Antigravity</a>
+    <a href="#cloud">Cloud clients</a>
+    <a href="#local">Local models</a>
+  </nav>
+</section>
+
+<section class="client" id="claude-code" aria-labelledby="h-claude">
+  <div class="tile rise">
+    <h2 id="h-claude">Claude Code</h2>
+    <p>The recall skill fires on its own when a turn needs memory. Stop and PreCompact hooks file the session.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code>claude mcp add --transport http commonplace "$COMMONPLACE_URL" \
+  --header "Authorization: Bearer $COMMONPLACE_TOKEN"</code></pre>
+  </div>
+</section>
+
+<section class="client" id="codex" aria-labelledby="h-codex">
+  <div class="tile rise">
+    <h2 id="h-codex">Codex</h2>
+    <p>The recall skill fires on its own when a turn needs memory. Stop and PreCompact hooks file the session.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code># ~/.codex/config.toml
+[mcp_servers.commonplace]
+url = "https://your-server/mcp"
+bearer_token_env_var = "COMMONPLACE_TOKEN"</code></pre>
+  </div>
+</section>
+
+<section class="client" id="cursor" aria-labelledby="h-cursor">
+  <div class="tile rise">
+    <h2 id="h-cursor">Cursor</h2>
+    <p>The sessionStart hook tells the agent to search the workspace's wing before it answers. The recall skill and an optional rule cover the turns after it.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code>// ~/.cursor/mcp.json
+{"mcpServers": {"commonplace": {
+  "url": "https://your-server/mcp",
+  "headers": {"Authorization": "Bearer ${env:COMMONPLACE_TOKEN}"}
+}}}</code></pre>
+  </div>
+</section>
+
+<section class="client" id="antigravity" aria-labelledby="h-ag">
+  <div class="tile rise">
+    <h2 id="h-ag">Antigravity</h2>
+    <p>On the first model call the wake hook injects the palace's own words, verbatim. The recall skill and rule take over from there.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code>// ~/.gemini/antigravity/mcp_config.json
+{"mcpServers": {"commonplace": {
+  "serverUrl": "https://your-server/mcp",
+  "headers": {"Authorization": "Bearer &lt;token&gt;"}
+}}}</code></pre>
+  </div>
+</section>
+
+<section class="client" id="cloud" aria-labelledby="h-cloud">
+  <div class="tile rise">
+    <h2 id="h-cloud">Cloud clients</h2>
+    <p>claude.ai, ChatGPT and Grok connect over OAuth, so your server needs a public HTTPS address. The consent page on your server picks which wings each one may read. Their writes land in the inbox.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code>claude.ai   Settings → Connectors → Add custom connector → paste the URL
+ChatGPT     Settings → Connectors → developer mode → create → paste the URL
+Grok Bot    add a connector by URL, one connection per bot</code></pre>
+<pre><code>https://your-server/mcp</code></pre>
+  </div>
+</section>
+
+<section class="client" id="local" aria-labelledby="h-local">
+  <div class="tile rise">
+    <h2 id="h-local">Local models</h2>
+    <p>LM Studio, or Open WebUI in front of Ollama, over your LAN or tailnet. The model searches when you ask it to.</p>
+  </div>
+  <div class="tile how rise" style="--d:80ms" data-ui>
+<pre><code>// LM Studio mcp.json
+{"mcpServers": {"commonplace": {
+  "url": "http://your-server:8765/mcp",
+  "headers": {"Authorization": "Bearer &lt;token&gt;"}
+}}}</code></pre>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="cols">
+    <ul><li><a href="./">Connect</a></li><li><a href="../#install">Self-host</a></li><li><a href="../#modules">Modules</a></li></ul>
+    <ul><li><a href="https://github.com/140er/mempalace">GitHub</a></li><li><a href="https://github.com/MemPalace/mempalace">MemPalace</a></li><li><a href="https://github.com/140er/mempalace/blob/develop/LICENSE">License</a></li></ul>
+    <ul><li><a href="https://cmmn.dev/gh">cmmn.dev/gh</a></li><li><a href="https://cmmn.dev/connect">cmmn.dev/connect</a></li></ul>
+    <div class="contact"><span>commonplace.run</span><span>Built on MemPalace, MIT License.</span></div>
+  </div>
+  <div class="blocks" role="img" aria-label="Commonplace">
+    <span style="height:92%" data-l="c"></span><span style="height:70%" data-l="o"></span><span style="height:100%" data-l="m"></span><span style="height:78%" data-l="m"></span><span style="height:64%" data-l="o"></span><span style="height:88%" data-l="n"></span><span style="height:100%" data-l="p"></span><span style="height:72%" data-l="l"></span><span style="height:84%" data-l="a"></span><span style="height:60%" data-l="c"></span><span style="height:96%" data-l="e"></span>
+  </div>
+  <div class="last"><span>© 2026 Commonplace contributors</span><a class="btn" href="#title">Top</a></div>
+</footer>
+</body>
+</html>
