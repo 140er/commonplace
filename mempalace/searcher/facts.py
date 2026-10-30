@@ -9,7 +9,7 @@ from datetime import datetime, time, timezone
 from .. import fact_provenance
 from ..fact_render import ordered_sources
 from ..i18n import get_stopwords
-from ..lexical import tokenize
+from ..lexical import TOKEN_RE, tokenize
 from ..query_sanitizer import sanitize_query
 
 # All scoring constants live here. Ended facts retain a visible history score;
@@ -18,10 +18,10 @@ STATUS_WEIGHTS = {"approved": 1.0, "proposal": 0.85, "unknown": 0.75}
 ENDED_WEIGHT = 0.25
 DECAY_HALF_LIFE_DAYS = 180
 DECAY_FLOOR = 0.5
-FACT_CANDIDATE_LIMIT = 50
+FACT_CANDIDATE_LIMIT = 50  # Distinct subject/predicate keys; one BM25 seed per key.
 FACT_COMMON_TERM_FRACTION = 0.5
-# English question/predicate glue is always ignored. Explicit locales add their
-# own stop words through the existing searcher resolver.
+# Lowercase question/predicate glue is ignored. Query capitalization can retain
+# names and acronyms; explicit locales add stop words through the search resolver.
 FACT_STOP_WORDS = frozenset(get_stopwords("en")) | frozenset(
     "a an and are as at be been being but by can could did do does for from "
     "had has have how if in into is it its me my of on or our she should so "
@@ -47,6 +47,24 @@ def _words(text, stop_words=FACT_STOP_WORDS):
     return set(tokenize(text.replace("_", " "), stop_words))
 
 
+def _query_stop_words(query, stop_words):
+    """Keep mid-sentence names, standalone names, and uppercase acronyms.
+
+    Sentence-initial capitalization alone ("What is the ...") is not a signal
+    that a filler token names something. Use the shared tokenizer's boundaries.
+    """
+    query = query.replace("_", " ")
+    tokens = list(TOKEN_RE.finditer(query))
+    names = set()
+    for index, match in enumerate(tokens):
+        word = match.group()
+        between = query[tokens[index - 1].end() if index else 0 : match.start()]
+        mid_sentence = index > 0 and not any(mark in between for mark in ".!?。！？\n")
+        if word.isupper() or (word.istitle() and (mid_sentence or len(tokens) == 1)):
+            names.add(word.lower())
+    return stop_words - names
+
+
 def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=None, now=None):
     """Readable, whole-word fact matches, with original source and authority.
 
@@ -56,8 +74,9 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
     """
     from . import _resolve_stop_words
 
-    stop_words = FACT_STOP_WORDS | _resolve_stop_words(None)
-    words = _words(sanitize_query(query)["clean_query"], stop_words)
+    query = sanitize_query(query)["clean_query"]
+    stop_words = _query_stop_words(query, FACT_STOP_WORDS | _resolve_stop_words(None))
+    words = _words(query, stop_words)
     if not words:
         return []
     now = now or datetime.now(timezone.utc)
@@ -75,6 +94,7 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
         return []
     total = rows[0]["documents"]
     frequencies = rows[0]["frequencies"]
+    words = {word for word in words if frequencies.get(word, 0) > 0}
     idf = {
         word: math.log(
             1 + (total - frequencies.get(word, 0) + 0.5) / (frequencies.get(word, 0) + 0.5)

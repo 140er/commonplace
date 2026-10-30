@@ -1,8 +1,11 @@
 """Fact-first recall uses the real gateway's KG scope, even with drawer fan-out."""
 
+import logging
+
 import pytest
 
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests.test_fact_ranking_round_two import LONG_QUERY
 
 
 def plant(hub):
@@ -183,6 +186,50 @@ def test_captured_cli_output_and_local_hub_are_scoped(hub):
     assert "public-value" in output and "private-value" not in raw and "hidden-value" not in raw
     all_facts, raw = hub.call(owner, "mempalace_search", query="Kestrel")
     assert len(all_facts["facts"]) == 4, raw
+
+
+def test_long_query_returns_facts_for_owner_and_scoped_reader_without_warnings(hub, caplog):
+    owner = plant(hub)
+    reader = hub.token(
+        "reader",
+        profile="full",
+        scopes=["memory:read", "kg:read"],
+        read_wings=["shared", "project_*"],
+        trust="standard",
+    )
+    caplog.clear()
+    caplog.set_level(logging.WARNING)
+    for token, count in ((owner, 4), (reader, 2)):
+        short, raw = hub.call(token, "mempalace_search", query="Kestrel deploy port")
+        assert short, raw
+        long, raw = hub.call(token, "mempalace_search", query=LONG_QUERY)
+        assert long and "facts_error" not in long, raw
+        assert len(long["facts"]) == count
+        assert {f["id"] for f in long["facts"]} == {f["id"] for f in short["facts"]}
+        kg, raw = hub.call(token, "mempalace_kg_query", entity=LONG_QUERY, search=True)
+        assert kg and "facts_error" not in kg, raw
+        assert {f["id"] for f in kg["facts"]} == {f["id"] for f in long["facts"]}
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("owner", [False, True])
+@pytest.mark.parametrize("wing", [None, "shared"])
+def test_empty_cli_capture_omits_facts_for_direct_and_fanout_search(hub, owner, wing):
+    owner_token = plant(hub)
+    token = (
+        owner_token
+        if owner
+        else hub.token(
+            "reader", profile="full", scopes=["memory:read", "kg:read"], read_wings=["shared"]
+        )
+    )
+    args = {"query": "database migration", "cli_compatible": True}
+    if wing:
+        args["wing"] = wing
+    for include_facts in (False, True):
+        result, raw = hub.call(token, "mempalace_search", include_facts=include_facts, **args)
+        assert result and "cli_output" in result, raw
+        assert "facts" not in result and "facts_error" not in result
 
 
 def test_search_source_opens_verbatim_range_through_gateway_recall(hub):

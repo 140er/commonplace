@@ -583,9 +583,9 @@ class KnowledgeGraph:
             );
         """)
         self._migrate_schema(conn)
-        from .fact_index import install
+        from .fact_index import try_install
 
-        install(conn)
+        self._fact_index_ready = try_install(conn)
         if not had_sources:
             # Facts filed before fact_sources existed keep their first source.
             conn.execute(
@@ -1408,6 +1408,8 @@ class KnowledgeGraph:
         visible_sql, params = _visibility_sql(wings, sensitivities)
         temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
         with self._lock:
+            if not self._fact_index_ready:
+                raise RuntimeError("Fact search index unavailable")
             return candidates(
                 self._conn(),
                 tokens,

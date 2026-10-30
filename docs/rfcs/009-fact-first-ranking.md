@@ -11,16 +11,23 @@ The existing drawer search still runs with the same limits, filters and order.
 
 Reuse the query sanitizer and lexical tokenizer, treating predicate underscores
 as word separators. Ignore English question/predicate glue and configured locale
-stop words. A filler-only query returns no facts; every returned fact must match
-at least one remaining whole word.
+stop words. Preserve capitalized names mid-sentence, standalone names and all-caps
+acronyms such as `Will` and `IT`; sentence-initial capitalization alone does not
+preserve question glue. Lowercase `who` and `can` remain fillers, including when
+the graph contains `WHO` or `Can`. A filler-only query returns no facts; every
+returned fact must match at least one remaining whole word.
 
-If any query term occurs in at most half the facts, use those terms to seed the
-lookup; otherwise keep all meaningful terms. This avoids scanning the corpus
-for universal words when a selective term is available. All query terms still
-contribute to final IDF relevance.
+Ignore query terms absent from the fact vocabulary. If any remaining query term
+occurs in at most half the facts, use those terms to seed the lookup; otherwise
+keep all remaining meaningful terms. Unknown words cannot suppress this fallback.
+This avoids scanning the corpus for universal words when a selective term is
+available. Known query terms contribute to final IDF relevance.
 
-Use FTS5 BM25 to select at most 50 scoped seed facts in SQL. Expand only their
-subject/predicate keys to retain visible history and current successors. Final
+Use the best FTS5 BM25 match per subject/predicate key to select at most 50 scoped
+seed keys in SQL (one seed per key). History cannot crowd other keys out of the
+seed cap. Start with a bounded BM25 prefix; if duplicate keys leave slots empty,
+fill only those slots from the best remaining distinct keys, within the same SQL
+query. Expand only selected keys to retain visible history and current successors. Final
 lexical relevance is the fraction of query IDF weight matched:
 
 `idf(term) = ln(1 + (N - df(term) + 0.5) / (df(term) + 0.5))`
@@ -57,7 +64,20 @@ existing drawer fan-out and uses the existing KG policy for scope enumeration.
 The separate KG import/provenance work owns cheap wing listing. Callers that
 discard facts explicitly disable their lookup. Missing graphs return no facts
 and do not create a palace file. Any fact-side exception returns an empty facts
-list and a generic `facts_error` marker; drawer search remains independent.
+list and a generic `facts_error` marker; drawer search remains independent. Index
+build failure also leaves ordinary KG reads and writes available: roll back the
+build, disable derived write hooks, and retry on the next graph open. Readiness
+checks include all index tables, the key index and all four maintenance triggers.
+Search-mode KG queries use the same query sanitizer as drawer search, rather
+than the entity-name length limit. CLI capture omits an empty facts list unless
+there is a fact-side error marker, matching direct MCP search.
+
+## Known limits
+
+Dutch stop words are out of scope; there is currently no Dutch locale. Without
+an applicable configured locale, non-English glue can still produce weak matches.
+Queries containing only common terms must rank all matching keys. History is
+retained in full for selected keys, so very large histories add lookup cost.
 
 ## Non-goals
 
@@ -76,7 +96,10 @@ boost in this step. Facts remain index entries pointing to the verbatim source.
   its recall. Tests cover weights, decay, boundaries, whole words, provenance,
   one indexed lookup, unchanged drawers and real gateway privacy/scope.
 - Deterministic gates cover filler/noise rejection, rare-term ranking, the SQL
-  seed cap with key history, source ordering, generic error isolation, and VACUUM.
+  seed cap with key history and diversity, unknown words in tiny graphs,
+  capitalized names/acronyms, long queries across gateway and local MCP, optional
+  FTS index setup, source ordering, generic error isolation, and VACUUM.
 - The seeded latency probe reports before/after added lookup time at 5k, 20k and
-  50k facts, targeting at most 50 ms at 50k for common and selective queries.
+  50k facts, targeting at most 50 ms at 50k for the broad and selective queries,
+  and separately reporting the worst-case all-common query.
 - Run lint, format and the requested broad suite without changing budget tests.

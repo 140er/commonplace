@@ -2,8 +2,9 @@
 """Measure added fact-search latency on a seeded local graph, without models.
 
 The corpus mirrors the review probe: one source per fact, nine predicates,
-and entity names sharing common words. Timings exclude seeding and the one-time
-index build, and report the optional fact lookup's added wall time per search.
+and entity names sharing common words. Queries cover broad, selective, and
+all-common terms. Timings exclude seeding and the one-time index build, and
+report the optional fact lookup's added wall time per search.
 """
 
 import argparse
@@ -21,7 +22,7 @@ if __name__ == "__main__":
 from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.searcher.facts import search_facts
 
-QUERIES = ("what is the status of the project", "Entity 42")
+QUERIES = ("what is the status of the project", "Entity 42", "entity project")
 PREDICATES = (
     "is_a",
     "works_at",

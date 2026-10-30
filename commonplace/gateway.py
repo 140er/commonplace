@@ -64,7 +64,9 @@ def _with_search_facts(result, facts, facts_error=None):
         and not any(key in result for key in ("facts", "results", "cli_output"))
     ):
         return result
-    out = {"facts": facts, **{k: v for k, v in result.items() if k != "facts"}}
+    out = {k: v for k, v in result.items() if k != "facts"}
+    if facts or facts_error or "cli_output" not in out:
+        out = {"facts": facts, **out}
     if facts_error:
         out["facts_error"] = "unavailable"
     if isinstance(out.get("cli_output"), str):

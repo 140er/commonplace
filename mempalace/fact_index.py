@@ -1,8 +1,32 @@
 """Local lexical candidates for facts; source text stays in its original store."""
 
 import json
+import logging
 
 from . import fact_provenance
+
+
+def _drop_triggers(conn):
+    for name in ("insert", "update", "delete", "rename"):
+        conn.execute("DROP TRIGGER IF EXISTS fact_search_" + name)
+
+
+def try_install(conn):
+    """An optional index must never prevent ordinary KG reads or writes.
+
+    A failed atomic build leaves user data untouched. Disable any old index
+    hooks too, so writes can proceed even if the FTS module is unavailable.
+    Missing hooks ensure the next graph open retries the build.
+    """
+    try:
+        install(conn)
+        return True
+    except Exception:
+        _drop_triggers(conn)
+        logging.getLogger(__name__).warning(
+            "Fact search index unavailable; will retry on next graph open"
+        )
+        return False
 
 
 def install(conn):
@@ -12,10 +36,13 @@ def install(conn):
     triple ID. VACUUM can renumber triples.rowid without affecting this index.
     """
     ready = conn.execute(
-        "SELECT count(*) FROM sqlite_master WHERE name IN "
-        "('fact_search', 'fact_search_keys', 'fact_search_vocab')"
+        "SELECT count(*) FROM sqlite_master WHERE "
+        "(type='table' AND name IN ('fact_search', 'fact_search_keys', 'fact_search_vocab')) "
+        "OR (type='trigger' AND name IN "
+        "('fact_search_insert', 'fact_search_update', 'fact_search_delete', 'fact_search_rename')) "
+        "OR (type='index' AND name='idx_fact_search_key')"
     ).fetchone()[0]
-    if ready == 3:
+    if ready == 8:
         return
     conn.execute("SAVEPOINT fact_search_install")
     try:
@@ -28,8 +55,7 @@ def install(conn):
 
 
 def _create(conn):
-    for name in ("insert", "update", "delete", "rename"):
-        conn.execute("DROP TRIGGER IF EXISTS fact_search_" + name)
+    _drop_triggers(conn)
     for name in ("fact_search_vocab", "fact_search", "fact_search_keys"):
         conn.execute("DROP TABLE IF EXISTS " + name)
     conn.execute(
@@ -96,10 +122,10 @@ def candidates(
     limit,
     common_term_fraction,
 ):
-    """One SQL query: bounded BM25 seeds, scoped key history, sources and IDF.
+    """One SQL query: distinct BM25 seed keys, scoped history, sources and IDF.
 
-    FTS5's rank column uses bm25 by default. ORDER BY rank LIMIT bounds the
-    seed set before expanding its (subject, predicate) keys or loading sources.
+    FTS5's rank column uses bm25 by default. Each key has one seed score (its
+    best match), so history cannot consume another key's slot in the seed cap.
     History expansion applies the same scope and as-of predicates as the seeds.
     """
     words = sorted(tokens)
@@ -113,6 +139,14 @@ def candidates(
         *fact_provenance.COLUMNS,
     )
     source_json = ", ".join(f"'{key}', fs.{key}" for key in columns)
+    match_sql = (
+        "SELECT t.subject, t.predicate, fact_search.rank AS relevance FROM fact_search "
+        "JOIN triples t ON t.id=fact_search.triple_id "
+        "WHERE fact_search MATCH COALESCE("
+        "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')"
+        + visible_sql
+        + temporal_sql
+    )
     rows = conn.execute(
         "WITH words(term) AS (VALUES " + ",".join("(?)" for _ in words) + "), "
         "term_stats AS MATERIALIZED ("
@@ -122,16 +156,21 @@ def candidates(
         "SELECT json_group_object(term, doc) AS frequencies, "
         "(SELECT count(*) FROM fact_search_keys) AS documents FROM term_stats), "
         "chosen_terms AS MATERIALIZED ("
-        "SELECT term FROM term_stats WHERE doc <= ?*(SELECT documents FROM stats) "
-        "OR (SELECT min(doc) FROM term_stats) > ?*(SELECT documents FROM stats)), "
-        "selected AS MATERIALIZED ("
-        "SELECT t.subject, t.predicate FROM fact_search "
-        "JOIN triples t ON t.id=fact_search.triple_id "
-        "WHERE fact_search MATCH (SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms)"
-        + visible_sql
-        + temporal_sql
-        + " ORDER BY fact_search.rank LIMIT ?), "
-        "keys AS MATERIALIZED (SELECT DISTINCT subject, predicate FROM selected) "
+        "SELECT term FROM term_stats WHERE doc > 0 AND "
+        "(doc <= ?*(SELECT documents FROM stats) "
+        "OR (SELECT min(doc) FROM term_stats WHERE doc > 0) > ?*(SELECT documents FROM stats))), "
+        "first_matches AS MATERIALIZED (" + match_sql + " ORDER BY fact_search.rank LIMIT ?), "
+        "first_keys AS MATERIALIZED (SELECT DISTINCT subject, predicate FROM first_matches), "
+        "extra_matches AS MATERIALIZED ("
+        + match_sql
+        + " AND (SELECT count(*) FROM first_keys) < (SELECT count(*) FROM first_matches) "
+        "AND NOT EXISTS (SELECT 1 FROM first_keys k "
+        "WHERE k.subject=t.subject AND k.predicate=t.predicate)), "
+        "extra_keys AS MATERIALIZED ("
+        "SELECT subject, predicate FROM extra_matches GROUP BY subject, predicate "
+        "ORDER BY min(relevance), subject, predicate "
+        "LIMIT ? - (SELECT count(*) FROM first_keys)), "
+        "keys AS MATERIALIZED (SELECT * FROM first_keys UNION ALL SELECT * FROM extra_keys) "
         "SELECT t.*, s.name AS subject_name, o.name AS object_name, "
         "stats.frequencies, stats.documents, "
         f"json_group_array(json_object({source_json})) "
@@ -145,6 +184,9 @@ def candidates(
             *words,
             common_term_fraction,
             common_term_fraction,
+            *visible_params,
+            *temporal_params,
+            limit,
             *visible_params,
             *temporal_params,
             limit,

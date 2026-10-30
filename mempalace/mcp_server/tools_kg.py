@@ -62,7 +62,9 @@ def tool_kg_query(
     of those sensitivities. Facts filed before facts had wings match no wing.
     """
     try:
-        entity = sanitize_kg_value(entity, "entity")
+        entity = (
+            sanitize_query(entity)["clean_query"] if search else sanitize_kg_value(entity, "entity")
+        )
         as_of = sanitize_iso_temporal(as_of, "as_of")
         wings, sensitivities = visibility(wings, sensitivities)
     except ValueError as e:
