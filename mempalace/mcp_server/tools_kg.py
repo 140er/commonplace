@@ -512,3 +512,8 @@ def tool_kg_timeline(
 def tool_kg_stats():
     """Knowledge graph overview: entities, triples, relationship types."""
     return _with_kg_notice(_call_kg(lambda kg: kg.stats(), read=True))
+
+
+def tool_kg_list_wings():
+    """List fact wings without counting entities, facts or predicates."""
+    return {"wings": _call_kg(lambda kg: kg.list_wings(), read=True)}
