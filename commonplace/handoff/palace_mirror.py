@@ -41,10 +41,15 @@ def _call(call_tool: CallTool, principal, name: str, arguments: dict) -> dict:
 
 
 def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -> list[str]:
-    """Write the chunks as drawers; return their drawer ids."""
+    """Return one drawer id per input chunk; identical text reuses an id."""
     drawer_ids = []
-    seen = set()
+    mirrored = {}
     for chunk in chunks:
+        if chunk.text in mirrored:
+            # Preserve the input-to-drawer mapping without another write.
+            # The lossless store retains each repeated piece's full origin.
+            drawer_ids.append(mirrored[chunk.text])
+            continue
         try:
             chunk.text.encode("utf-8")
         except UnicodeEncodeError as exc:
@@ -70,11 +75,7 @@ def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -
         drawer_id = result.get("drawer_id")
         if not isinstance(drawer_id, str) or not drawer_id:
             raise MirrorError("Memory worker returned no entry id")
-        if drawer_id in seen:
-            # The worker keys by content, not origin. Identical continuation
-            # chunks must not silently appear to have distinct stored origins.
-            raise MirrorError("Memory cannot distinguish repeated chunks")
-        seen.add(drawer_id)
+        mirrored[chunk.text] = drawer_id
         drawer_ids.append(drawer_id)
     return drawer_ids
 
@@ -140,6 +141,7 @@ def palace_search(
     """Semantic search over mirrored chunks of ``stored_ids`` only."""
     if limit <= 0:
         return []
+    fetch_limit = min(limit * 4, 50)
     hits = {}
     hydrated = {}
     for stored_id in dict.fromkeys(stored_ids):
@@ -147,7 +149,7 @@ def palace_search(
             call_tool,
             principal,
             "mempalace_search",
-            {"query": query, "wing": THREADS_WING, "room": stored_id, "limit": limit},
+            {"query": query, "wing": THREADS_WING, "room": stored_id, "limit": fetch_limit},
         )
         results = result.get("results")
         if not isinstance(results, list):

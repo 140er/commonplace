@@ -68,7 +68,7 @@ class FakeWorker:
                 "reason": "already_exists" if exists else "added",
             }
         if name == "mempalace_search":
-            return {"results": self.search_results.get(arguments["room"], [])}
+            return {"results": self.search_results.get(arguments["room"], [])[: arguments["limit"]]}
         if name == "mempalace_get_drawer":
             return self.entries[arguments["drawer_id"]]
         raise AssertionError(name)
@@ -127,12 +127,23 @@ def test_text_the_worker_would_change_is_rejected(stored):
     assert worker.calls == []
 
 
-def test_identical_chunks_cannot_silently_lose_their_origins(stored):
+def test_identical_chunks_reuse_a_drawer_and_keep_the_input_mapping(stored):
     worker = FakeWorker()
-    chunks = [Chunk(0, 1, 1, "repeated continuation"), Chunk(1, 1, 1, "repeated continuation")]
-    with pytest.raises(MirrorError, match="repeated chunks"):
-        mirror(worker, object(), stored, chunks)
-    assert len(worker.entries) == 1
+    principal = object()
+    chunks = [
+        Chunk(0, 1, 1, "[1] assistant message: repeated piece"),
+        Chunk(1, 1, 1, "[1] assistant message: distinct piece"),
+        Chunk(2, 1, 1, "[1] assistant message: repeated piece"),
+    ]
+    ids = mirror(worker, principal, stored, chunks)
+    assert len(ids) == 3
+    assert ids[0] == ids[2]
+    assert ids[0] != ids[1]
+    assert len(worker.entries) == 2
+    assert len(worker.calls) == 2
+    assert worker.entries[ids[0]]["metadata"]["source_file"] == f"handoff:{stored.id}#0"
+    assert mirror(worker, principal, stored, chunks) == ids
+    assert len(worker.entries) == 2
 
 
 @pytest.mark.parametrize("limit", [0, -1])
@@ -201,7 +212,7 @@ def test_search_scopes_each_thread_and_globally_orders_and_limits():
         (
             principal,
             "mempalace_search",
-            {"query": "raw?\nquery", "wing": THREADS_WING, "room": room, "limit": 2},
+            {"query": "raw?\nquery", "wing": THREADS_WING, "room": room, "limit": 8},
         )
         for room in ("thr_first", "thr_other")
     ]
@@ -340,6 +351,26 @@ def test_worker_splits_are_hydrated_once_to_the_complete_chunk(stored):
     assert [name for _, name, _ in worker.calls].count("mempalace_get_drawer") == 1
 
 
+def test_overfetch_finds_distinct_chunks_after_physical_duplicates(stored):
+    worker, _, text = _split_worker(stored)
+    worker.search_results[stored.id].extend(
+        [_hit(index=1, similarity=0.7), _hit(index=2, similarity=0.6)]
+    )
+    hits = palace_search(worker, object(), [stored.id], "needle", limit=2)
+    assert [(hit.chunk_index, hit.score) for hit in hits] == [(0, 0.8), (1, 0.7)]
+    assert hits[0].text == text
+    searches = [arguments for _, name, arguments in worker.calls if name == "mempalace_search"]
+    assert len(searches) == 1
+    assert searches[0]["limit"] == 8
+
+
+@pytest.mark.parametrize(("limit", "fetch_limit"), [(1, 4), (8, 32), (12, 48), (13, 50), (100, 50)])
+def test_search_overfetch_is_bounded(limit, fetch_limit):
+    worker = FakeWorker()
+    assert palace_search(worker, object(), ["thr_first"], "needle", limit=limit) == []
+    assert worker.calls[0][2]["limit"] == fetch_limit
+
+
 @pytest.mark.parametrize("entry_id", [None, "", 7])
 def test_worker_splits_need_an_entry_id(stored, entry_id):
     worker, _, _ = _split_worker(stored)
@@ -421,6 +452,7 @@ def test_real_worker_mirrors_three_chunks_and_recalls_the_matching_chunk(
     assert hits[0].chunk_index == 1
     assert hits[0].text == chunks[1].text
     assert (hits[0].seq_start, hits[0].seq_end) == (1, 1)
+    assert {hit.chunk_index for hit in hits} == {0, 1, 2}
     continuation = palace_search(call_tool, principal, [stored.id], "spare lantern north gate", 1)[
         0
     ]
