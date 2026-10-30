@@ -27,6 +27,9 @@ Apple's web setup guide explicitly says domain registration needs no server file
 
 X Developer Console (`console.x.com`; legacy portal: `developer.x.com` → Projects & Apps) → Create App/select app → Settings → User authentication settings → Set up/Edit. Enable OAuth 2.0; choose **Web App** (confidential) and **Request email from users**; supply the published Terms of service and Privacy policy URLs. Callback/Redirect URL: `https://app.cmmn.dev/app/auth/x/callback`; scopes `tweet.read users.read users.email`.
 Keys and tokens → OAuth 2.0 Client ID → `COMMONPLACE_X_CLIENT_ID`; client secret → `COMMONPLACE_X_CLIENT_SECRET` (use OAuth 2.0 credentials, not the API key/secret).
+When registering, set a monthly spending cap of EUR 2 in the X developer console under billing / usage limits.
+`COMMONPLACE_X_DAILY_CAP` limits X sign-ins per day (default 6; integer >= 0; 0 hides X). Empty or unset uses 6; invalid or negative values warn and use 6.
+The cap resets at 00:00 UTC (01:00 CET, 02:00 CEST). When reached, the X button hides until then and returning X users are pointed to another option with the same email.
 
 ## Discord
 
@@ -40,5 +43,5 @@ Set `COMMONPLACE_SIGNUP=closed` to turn off new-account sign-up; only existing a
 Known provider accounts return to the same user; a verified email matching an existing account links to it.
 Unverified email never links or creates an account; an already linked provider account uses its saved identity.
 
-Google, GitHub and Discord sign-in are free. Apple requires the paid Developer Program: US$99/year; €99/year needs confirmation at local checkout before the owner approves enrollment.
+Google, GitHub and Discord sign-in are free. Apple requires the paid Developer Program: US$99/year; local pricing is shown at checkout before the owner approves enrollment.
 X uses prepaid API credits: one `GET /2/users/me` per sign-in is approximately US$0.01 at the published user-read rate; repeat reads of the same user within a UTC day are generally deduplicated. Confirm the rate in the console before funding.

@@ -64,7 +64,7 @@ test("messages match the contract and unknown codes never get reflected", () => 
 });
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-function app({ search = "", pathname = "/app/", hash = "", loadProviders = () => ({ providers }) } = {}) {
+function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProviders = () => ({ providers }) } = {}) {
   const listeners = new Map(), calls = [], replacements = [];
   const root = { innerHTML: "", addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
   const location = { search, pathname, hash };
@@ -73,7 +73,7 @@ function app({ search = "", pathname = "/app/", hash = "", loadProviders = () =>
     const next = new URL(path, "https://app.example");
     Object.assign(location, { search: next.search, pathname: next.pathname, hash: next.hash });
   } };
-  const document = { querySelector: () => root, addEventListener: (name, handler) => listeners.set(name, handler) };
+  const document = { cookie, querySelector: () => root, addEventListener: (name, handler) => listeners.set(name, handler) };
   const context = createContext({
     document, location, history, URLSearchParams, signinView, signinMessage, e: escape,
     window: { addEventListener() {} },
@@ -149,4 +149,69 @@ test("a late provider response cannot replace an authenticated screen", async ()
   resolve({ providers });
   await settle();
   assert.equal(page.root.innerHTML, "Authenticated screen");
+});
+
+const paused = [{ id: "x", name: "X", until: "2026-11-01T00:00:00Z" }];
+const localTime = new Date(paused[0].until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const pauseNotice = `Sign-in with X is paused until ${localTime}. Use another option with the same email.`;
+
+test("paused code uses the provider name and local reset time, or the fallback", () => {
+  assert.equal(signinMessage("paused", paused), pauseNotice);
+  assert.equal(signinMessage("paused"), "This sign-in option is paused until tomorrow. Use another option with the same email.");
+  assert.ok(signinView({ error: signinMessage("paused", paused) }).includes(escape(pauseNotice)));
+});
+
+test("returning users see one proactive notice only for their paused provider", () => {
+  const html = signinView({ providers: providers.filter((p) => p.id !== "x"), paused, via: "x" });
+  assert.ok(html.includes(escape(pauseNotice)));
+  assert.equal((html.match(/role="status"/g) || []).length, 1);
+  assert.doesNotMatch(html, /Continue with X/);
+  for (const via of ["", "github", "unknown"]) assert.doesNotMatch(signinView({ paused, via }), /role="status"/);
+  const explicit = signinView({ paused, via: "x", error: signinMessage("expired") });
+  assert.ok(explicit.includes("Sign-in expired. Try again."));
+  assert.doesNotMatch(explicit, /paused until/);
+  assert.equal((explicit.match(/role="status"/g) || []).length, 1);
+});
+
+test("paused provider names and formatted times are escaped", () => {
+  const attack = '<script>alert("x")</script>';
+  const evil = [{ ...paused[0], name: attack }];
+  const html = signinView({ paused: evil, via: "x" });
+  assert.ok(html.includes(escape(attack)));
+  assert.doesNotMatch(html, /<script>/);
+  const format = Date.prototype.toLocaleTimeString;
+  try {
+    Date.prototype.toLocaleTimeString = () => attack;
+    const formatted = signinView({ paused, via: "x" });
+    assert.ok(formatted.includes(escape(attack)));
+    assert.doesNotMatch(formatted, /<script>/);
+  } finally {
+    Date.prototype.toLocaleTimeString = format;
+  }
+});
+
+test("boot reads only a validated provider hint and renders paused inventory", async () => {
+  for (const cookie of ["cmmn_via=x", "other=value; cmmn_via=x; another=value"]) {
+    const page = app({ cookie, loadProviders: () => ({ providers: [], paused }) });
+    await settle();
+    assert.ok(page.root.innerHTML.includes(escape(pauseNotice)));
+  }
+  for (const value of ["github", "X", "x%00", "x=", "x<script>", "x".repeat(21)]) {
+    const entry = [{ ...paused[0], id: value }];
+    const page = app({ cookie: `cmmn_via=${value}`, loadProviders: () => ({ paused: value === "github" ? paused : entry }) });
+    await settle();
+    assert.doesNotMatch(page.root.innerHTML, /role="status"/);
+  }
+});
+
+test("boot resolves paused code after providers load and explicit errors win", async () => {
+  const options = { cookie: "cmmn_via=x", loadProviders: () => ({ providers: [], paused }) };
+  const page = app({ ...options, search: "?signin=paused" });
+  await settle();
+  assert.ok(page.root.innerHTML.includes(escape(pauseNotice)));
+  assert.equal((page.root.innerHTML.match(/role="status"/g) || []).length, 1);
+  const explicit = app({ ...options, search: "?signin=cancelled" });
+  await settle();
+  assert.ok(explicit.root.innerHTML.includes("Sign-in cancelled."));
+  assert.doesNotMatch(explicit.root.innerHTML, /paused until/);
 });

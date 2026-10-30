@@ -7,7 +7,9 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from html import unescape
+from threading import Barrier
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, urlencode, urlsplit
@@ -21,10 +23,7 @@ from commonplace import plans, sessions, social, urls
 from commonplace.oauth import store
 from commonplace.social import accounts, providers
 from tests.test_commonplace_oauth import Client
-from tests.test_commonplace_public_surface import (
-    make_surface as make_surface,
-    request as http_request,
-)
+from tests.test_commonplace_public_surface import make_surface as make_surface
 
 IDS = ("google", "github", "apple", "x", "discord")
 NAMES = ("Google", "GitHub", "Apple", "X", "Discord")
@@ -154,6 +153,7 @@ def remote(monkeypatch):
         for key in ("CLIENT_ID", "CLIENT_SECRET", "TEAM_ID", "KEY_ID", "PRIVATE_KEY"):
             monkeypatch.delenv(f"COMMONPLACE_{provider_id.upper()}_{key}", raising=False)
     monkeypatch.delenv("COMMONPLACE_SIGNUP", raising=False)
+    monkeypatch.delenv("COMMONPLACE_X_DAILY_CAP", raising=False)
     monkeypatch.setattr(urls, "APP_URL", "https://app.example")
     monkeypatch.setattr(urls, "AGENT_URL", "https://agent.example")
     remote = Remote()
@@ -184,7 +184,13 @@ def request(surface, path, method="GET", *, data=None, cookie=None, raw=None, he
     if data is not None:
         raw = urlencode(data).encode()
         hdrs["Content-Type"] = "application/x-www-form-urlencoded"
-    return http_request(surface, method, path, headers=hdrs, body=raw)
+    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
+    try:
+        conn.request(method, path, raw, hdrs)
+        response = conn.getresponse()
+        return response.status, response.headers, response.read()
+    finally:
+        conn.close()
 
 
 def start(surface, remote, provider_id="google", *, next_path="", cookie=None):
@@ -244,7 +250,7 @@ def signed_in(surface, response, uid=None, landing="/app/"):
 def test_no_configuration_preserves_token_signin(make_signin):
     surface = make_signin(())
     status, headers, raw = request(surface, "/app/auth/providers")
-    assert status == 200 and json.loads(raw) == {"providers": []}
+    assert status == 200 and json.loads(raw) == {"providers": [], "paused": []}
     assert headers["Cache-Control"] == "no-store"
     for provider_id in IDS:
         assert request(surface, f"/app/auth/{provider_id}")[0] == 404
@@ -266,7 +272,7 @@ def test_no_configuration_preserves_token_signin(make_signin):
 def test_partial_configuration_is_hidden(make_signin, monkeypatch, caplog, provider_id):
     monkeypatch.setenv(f"COMMONPLACE_{provider_id.upper()}_CLIENT_ID", "test-client-id")
     surface = make_signin(())
-    assert json.loads(request(surface, "/app/auth/providers")[2]) == {"providers": []}
+    assert json.loads(request(surface, "/app/auth/providers")[2]) == {"providers": [], "paused": []}
     assert request(surface, f"/app/auth/{provider_id}")[0] == 404
     assert len(caplog.records) == 1
     assert f"COMMONPLACE_{provider_id.upper()}_" in caplog.text
@@ -279,7 +285,8 @@ def test_provider_inventory_order_and_install_is_idempotent(make_signin):
         "providers": [
             {"id": pid, "name": name, "url": f"https://app.example/app/auth/{pid}"}
             for pid, name in zip(IDS, NAMES)
-        ]
+        ],
+        "paused": [],
     }
     before = list(surface.gateway.prefix_routes)
     social.install(surface.gateway)
@@ -1149,3 +1156,173 @@ def test_fetch_does_not_mask_programming_errors(monkeypatch, caplog, failure):
     with pytest.raises(failure, match="test programming error"):
         _FETCH("https://test.example/token")
     assert not caplog.records
+
+
+@pytest.mark.parametrize(
+    "value,cap,warnings",
+    [
+        (None, 6, 0),
+        ("", 6, 0),
+        ("  ", 6, 0),
+        ("2", 2, 0),
+        ("0", 0, 0),
+        ("invalid", 6, 1),
+        ("-1", 6, 1),
+        ("1.5", 6, 1),
+    ],
+)
+def test_x_daily_cap_configuration(make_signin, monkeypatch, caplog, value, cap, warnings):
+    if value is not None:
+        monkeypatch.setenv("COMMONPLACE_X_DAILY_CAP", value)
+    surface = make_signin(IDS)
+    configured = surface.gateway.sign_in.providers
+    assert configured["x"].daily_cap == cap
+    assert all(p.daily_cap is None for pid, p in configured.items() if pid != "x")
+    assert len(caplog.records) == warnings
+    if warnings:
+        assert caplog.records[0].levelname == "WARNING"
+        assert "COMMONPLACE_X_DAILY_CAP" in caplog.text
+        assert "using 6" in caplog.text
+    inventory = json.loads(request(surface, "/app/auth/providers")[2])
+    assert [p["id"] for p in inventory["providers"]] == [
+        pid for pid in IDS if pid != "x" or cap > 0
+    ]
+    assert [p["id"] for p in inventory["paused"]] == (["x"] if cap == 0 else [])
+
+
+def test_seventh_x_callback_pauses_all_surfaces_without_provider_requests(
+    make_signin, remote, monkeypatch
+):
+    now = datetime(2026, 10, 31, 23, 59, 59, tzinfo=timezone.utc)
+    monkeypatch.setattr(social, "_now", lambda: now)
+    surface = make_signin(("x", "github"))
+    next_path = "/app/#/card/123"
+    flows = [start(surface, remote, "x", next_path=next_path) for _ in range(7)]
+    assert rows(surface, "signin_usage") == []
+    for flow in flows[:6]:
+        signed_in(surface, finish(surface, flow), landing=next_path)
+    assert len(remote.calls) == 12
+    remote.calls.clear()
+    refused(finish(surface, flows[6]), "paused", next_path)
+    assert not remote.calls
+    assert rows(surface, "signin_usage") == [{"provider": "x", "day": "2026-10-31", "count": 6}]
+    assert surface.db.audit_entries()[0]["reason"] == "x:paused"
+    assert json.loads(request(surface, "/app/auth/providers")[2]) == {
+        "providers": [
+            {"id": "github", "name": "GitHub", "url": "https://app.example/app/auth/github"}
+        ],
+        "paused": [{"id": "x", "name": "X", "until": "2026-11-01T00:00:00Z"}],
+    }
+    assert surface.gateway.sign_in.links() == [("GitHub", "https://app.example/app/auth/github")]
+    client = Client(surface)
+    cid = client.register()
+    html = client.request("GET", client.authorize_path(cid))[2]
+    assert "Continue with X" not in html and "Continue with GitHub" in html
+    audits = [dict(a) for a in surface.db.audit_entries()]
+    for destination in ("", next_path, "https://evil.example/app/"):
+        refused(
+            request(surface, "/app/auth/x?" + urlencode({"next": destination})),
+            "paused",
+            next_path if destination == next_path else "",
+        )
+        assert rows(surface, "signin_flows") == []
+        assert [dict(a) for a in surface.db.audit_entries()] == audits
+    signed_in(surface, finish(surface, start(surface, remote, "github")))
+    assert rows(surface, "signin_usage")[0]["count"] == 6
+
+
+@pytest.mark.parametrize(
+    "problem", ["missing", "wrong-provider", "wrong-browser", "expired", "error", "no-code"]
+)
+def test_x_rejected_callbacks_do_not_count(make_signin, remote, problem):
+    surface = make_signin(("x", "github"))
+    flow = start(surface, remote, "x")
+    parameters = {}
+    cookie = None
+    if problem == "missing":
+        flow.params["state"] = "unknown"
+    elif problem == "wrong-provider":
+        flow.id = "github"
+    elif problem == "wrong-browser":
+        cookie = "cmmn_signin=" + "a" * 43
+    elif problem == "expired":
+        with surface.db._lock:
+            surface.db._conn.execute("UPDATE signin_flows SET expires_at = 0")
+    elif problem == "error":
+        parameters["error"] = "access_denied"
+    else:
+        parameters["code"] = ""
+    code = "cancelled" if problem == "error" else "failed" if problem == "no-code" else "expired"
+    refused(finish(surface, flow, cookie=cookie, **parameters), code)
+    assert rows(surface, "signin_usage") == []
+    assert not remote.calls
+
+
+def test_x_failed_provider_request_keeps_reservation(make_signin, remote, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_X_DAILY_CAP", "1")
+    surface = make_signin(("x",))
+    remote.failure = True
+    refused(finish(surface, start(surface, remote, "x")), "failed")
+    assert len(remote.calls) == 1
+    assert rows(surface, "signin_usage")[0]["count"] == 1
+    refused(request(surface, "/app/auth/x"), "paused")
+
+
+def test_x_utc_rollover_and_usage_pruning(make_signin, remote, monkeypatch):
+    now = datetime(2026, 10, 31, 23, 59, 59, tzinfo=timezone.utc)
+    monkeypatch.setattr(social, "_now", lambda: now)
+    monkeypatch.setenv("COMMONPLACE_X_DAILY_CAP", "1")
+    surface = make_signin(("x",))
+    with surface.db._lock:
+        surface.db._conn.executemany(
+            "INSERT INTO signin_usage(provider, day, count) VALUES (?,?,?)",
+            [("x", (now.date() - timedelta(days=days)).isoformat(), 1) for days in (40, 41)],
+        )
+    signed_in(surface, finish(surface, start(surface, remote, "x")))
+    assert {r["day"] for r in rows(surface, "signin_usage")} == {"2026-09-21", "2026-10-31"}
+    assert json.loads(request(surface, "/app/auth/providers")[2])["providers"] == []
+    now += timedelta(seconds=1)
+    inventory = json.loads(request(surface, "/app/auth/providers")[2])
+    assert [p["id"] for p in inventory["providers"]] == ["x"] and inventory["paused"] == []
+    signed_in(surface, finish(surface, start(surface, remote, "x")))
+    assert rows(surface, "signin_usage") == [
+        {"provider": "x", "day": "2026-10-31", "count": 1},
+        {"provider": "x", "day": "2026-11-01", "count": 1},
+    ]
+
+
+def test_x_concurrent_reservations_grant_only_remaining_unit(make_signin, monkeypatch):
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    monkeypatch.setattr(social, "_now", lambda: now)
+    surface = make_signin(("x",))
+    signin = surface.gateway.sign_in
+    with surface.db._lock:
+        surface.db._conn.execute(
+            "INSERT INTO signin_usage(provider, day, count) VALUES ('x','2026-10-31',5)"
+        )
+    barrier = Barrier(8)
+
+    def reserve(_):
+        barrier.wait(timeout=5)
+        return signin._reserve(signin.providers["x"])
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        granted = list(pool.map(reserve, range(8)))
+    assert granted.count(True) == 1 and granted.count(False) == 7
+    assert rows(surface, "signin_usage")[0]["count"] == 6
+
+
+@pytest.mark.parametrize("provider_id", IDS)
+@pytest.mark.parametrize("secure", [False, True])
+def test_success_sets_readable_provider_hint_cookie(make_signin, remote, provider_id, secure):
+    surface = make_signin((provider_id,))
+    surface.gateway.secure_cookies = secure
+    response = finish(surface, start(surface, remote, provider_id))
+    signed_in(surface, response)
+    cookies = response[1].get_all("Set-Cookie")
+    assert len(cookies) == 2 and cookies[0].startswith(sessions.COOKIE + "=")
+    assert cookies[1] == (
+        f"cmmn_via={provider_id}; Path=/app/; Max-Age=34560000; SameSite=Lax"
+        + ("; Secure" if secure else "")
+    )
+    assert "HttpOnly" not in cookies[1]
