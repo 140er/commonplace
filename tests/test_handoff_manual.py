@@ -219,6 +219,39 @@ def test_concurrent_independent_services_claim_only_one_launch(manual):
         other_db.close()
 
 
+def test_completed_retry_does_not_need_the_old_transcript_or_session(manual, monkeypatch):
+    first = manual.start()
+    manual.source.transcript_paths[0].unlink()
+
+    def unavailable(*args):
+        raise AssertionError("A completed handoff must not resolve the old session again")
+
+    monkeypatch.setattr(manual.t3, "resolve", unavailable)
+    assert manual.start() == first
+    assert len(manual.t3.starts) == 1
+
+
+def test_completed_retry_replays_a_failed_completion_delivery(manual, monkeypatch):
+    deliver = manual.service.events.deliver_pending
+    calls = 0
+
+    def fail_completion(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("event delivery failed after successor registration")
+        return deliver(**kwargs)
+
+    monkeypatch.setattr(manual.service.events, "deliver_pending", fail_completion)
+    with pytest.raises(ManualHandoffError, match="registration failed"):
+        manual.start()
+    record = manual.records.list(manual.principal.workspace_id)[0]
+    assert record.state == "done" and manual.records.pending_events(handoff_id=record.id)
+    assert manual.start()["source_settled"]
+    assert manual.records.pending_events(handoff_id=record.id) == []
+    assert len(manual.t3.starts) == 1
+
+
 def test_store_failure_never_launches_or_settles(manual, monkeypatch):
     def fail(*args, **kwargs):
         raise OSError("disk failed")

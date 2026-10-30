@@ -102,3 +102,9 @@ def test_dry_run_does_not_store_or_launch(writer):
     result = _value(writer.invoke_start({**ARGS, "dry_run": True}))
     assert result["dry_run"] and result["target"]["model"] == "gpt-6.1-sol"
     assert writer.ctx.handoff_db.list(writer.workspace) == []
+
+
+def test_invalid_task_reference_returns_a_tool_error(writer):
+    assert "task ref must" in _error(writer.invoke_start({**ARGS, "task": "../../wrong"}))
+    assert writer.ctx.handoff_db.list(writer.workspace) == []
+    assert not writer.fake.log.exists()

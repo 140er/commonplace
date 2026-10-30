@@ -86,6 +86,21 @@ class ManualHandoff:
         target = Target.parse(to, effort)
         if os.environ.get("COMMONPLACE_HANDOFF", "").lower() in ("off", "0", "false"):
             raise ManualHandoffError("handoff is off for this run (COMMONPLACE_HANDOFF)")
+        agent = agent or os.environ.get("COMMONPLACE_AGENT", "") or principal.connection
+        task = task or os.environ.get("COMMONPLACE_TASK", "")
+        setting = self.service.settings.effective(principal.workspace_id, agent, task)
+        if not setting.enabled:
+            raise ManualHandoffError(
+                f"handoff is off ({setting.source}); enable it for this workspace, agent or task first"
+            )
+        existing = self.service.db.by_key(principal.workspace_id, f"thread:{thread_id}")
+        if existing is not None:
+            if not self.service._can_reuse(principal, existing):
+                raise ManualHandoffError("in progress")
+            if existing.successor is not None and not dry_run:
+                # A successful handoff remains retryable after the old native
+                # session or checkout has gone away.
+                return self._result(existing, thread_id)
         source = source or self.t3.resolve(thread_id)
         if require_binding:
             binding = workspace_for(source.cwd) or workspace_for(source.workspace_root)
@@ -94,13 +109,6 @@ class ManualHandoff:
                 raise ManualHandoffError(
                     "source checkout is not bound to this Commonplace workspace"
                 )
-        agent = agent or os.environ.get("COMMONPLACE_AGENT", "") or principal.connection
-        task = task or os.environ.get("COMMONPLACE_TASK", "")
-        setting = self.service.settings.effective(principal.workspace_id, agent, task)
-        if not setting.enabled:
-            raise ManualHandoffError(
-                f"handoff is off ({setting.source}); enable it for this workspace, agent or task first"
-            )
         if dry_run:
             return {
                 "dry_run": True,
@@ -166,10 +174,14 @@ class ManualHandoff:
             raise ManualHandoffError(
                 "successor launch failed; source is still running; inspect before relaunch"
             )
+        return self._result(handoff, source.thread_id)
+
+    def _result(self, handoff, source_thread_id):
+        self.service.events.deliver_pending(workspace_id=handoff.workspace_id)
         settled = False
         if handoff.successor is not None:
             try:
-                self.t3.settle(source.thread_id)
+                self.t3.settle(source_thread_id)
                 settled = True
             except T3Error:
                 pass  # Already started and registered: retries only retry settle.
@@ -195,13 +207,11 @@ def run_cli(args):
 
     target = Target.parse(args.to, args.effort)
     t3 = T3()
-    source = t3.resolve(args.thread)
-    workspace_ref = (
-        args.workspace
-        or os.environ.get("COMMONPLACE_WORKSPACE")
-        or workspace_for(source.cwd)
-        or workspace_for(source.workspace_root)
-    )
+    source = None
+    workspace_ref = args.workspace or os.environ.get("COMMONPLACE_WORKSPACE")
+    if not workspace_ref:
+        source = t3.resolve(args.thread)
+        workspace_ref = workspace_for(source.cwd) or workspace_for(source.workspace_root)
     if not workspace_ref:
         raise ManualHandoffError(
             "choose --workspace or map the source checkout in handoff-client.json"

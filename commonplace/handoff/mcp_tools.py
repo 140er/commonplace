@@ -214,7 +214,9 @@ _START_SCHEMA = {
 
 
 def _start(tool_ctx, args):
+    from .db import HandoffDBError
     from .manual import ManualHandoff, ManualHandoffError
+    from .settings import SettingsError
     from .t3 import T3Error
 
     error = _argument_error(args, _START_SCHEMA)
@@ -224,8 +226,10 @@ def _start(tool_ctx, args):
         return ManualHandoff(tool_ctx.gateway.handoff.service).start(
             tool_ctx.principal, require_binding=True, **args
         )
-    except (ManualHandoffError, T3Error) as error:
+    except (ManualHandoffError, T3Error, SettingsError, HandoffDBError) as error:
         raise ToolError(str(error)) from None
+    except OSError:
+        raise ToolError("local handoff data is unavailable; source was not settled") from None
 
 
 register(

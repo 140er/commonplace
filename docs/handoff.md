@@ -140,8 +140,10 @@ Only a confirmed T3 start is registered as `t3:<new thread ID>`. Registration
 is followed by `t3 thread settle <source ID>`, which settles a running
 source when its turn ends. Storage or launch failures leave the source
 running; a failed launch records `launch_failed`. Repeating the command
-returns the existing successor. Concurrent manual calls serialize, and the
-database launch claim also excludes competing hook requests with the same
+returns the existing successor, even after the old native session is gone
+(pass `--workspace` if its checkout is no longer available). Completed manual
+handoffs return without rereading that session. Concurrent manual calls
+serialize, and the database launch claim also excludes competing hook requests with the same
 key. A private launch journal recovers registration after a confirmed start;
 an unconfirmed start is never retried automatically. Inspect T3 before an
 owner releases a failed launch claim. If source settlement fails, the result
