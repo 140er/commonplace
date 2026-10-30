@@ -546,6 +546,7 @@ def tool_add_drawer(
         base_meta.update(identity_metadata(source_file))
 
     base_meta["last_modified"] = base_meta["filed_at"]
+    _provenance.stamp_metadata(base_meta)
     # Idempotency. Three cases to detect a prior committed write:
     # (a) Single-doc path: drawer_id row exists (the only id used).
     # (b) Chunked path: probe the LAST chunk id — its presence implies

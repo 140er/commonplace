@@ -69,6 +69,7 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general", wing: 
             "filed_at": filed_at,
             "date": now.strftime("%Y-%m-%d"),
         }
+        _provenance.stamp_metadata(base_metadata)
         chunk_size = _config.chunk_size
         if len(entry) <= chunk_size:
             col.add(
