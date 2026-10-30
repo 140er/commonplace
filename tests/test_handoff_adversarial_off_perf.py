@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -421,6 +422,15 @@ def legacy(tmp_path_factory):
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as source:
         source.extractall(snapshot, filter="data")
+    # Boards and the PR call tree are not part of handoff and keep changing on
+    # develop: take them from this tree, so only handoff's surface stays pinned.
+    shutil.rmtree(snapshot / "commonplace" / "boards")
+    shutil.copytree(
+        ROOT / "commonplace" / "boards",
+        snapshot / "commonplace" / "boards",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
     # A separate interpreter keeps relative and dynamic imports, policies and
     # extension registrations entirely on the pinned source tree.
     script = (
