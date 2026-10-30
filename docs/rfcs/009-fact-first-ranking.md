@@ -10,8 +10,22 @@ The existing drawer search still runs with the same limits, filters and order.
 ## Scoring
 
 Reuse the query sanitizer and lexical tokenizer, treating predicate underscores
-as word separators. Lexical relevance is the fraction of distinct query words
-present in the subject, predicate or object. Only whole words match.
+as word separators. Ignore English question/predicate glue and configured locale
+stop words. A filler-only query returns no facts; every returned fact must match
+at least one remaining whole word.
+
+If any query term occurs in at most half the facts, use those terms to seed the
+lookup; otherwise keep all meaningful terms. This avoids scanning the corpus
+for universal words when a selective term is available. All query terms still
+contribute to final IDF relevance.
+
+Use FTS5 BM25 to select at most 50 scoped seed facts in SQL. Expand only their
+subject/predicate keys to retain visible history and current successors. Final
+lexical relevance is the fraction of query IDF weight matched:
+
+`idf(term) = ln(1 + (N - df(term) + 0.5) / (df(term) + 0.5))`
+
+`lexical_relevance = sum(idf(matched_terms)) / sum(idf(query_terms))`
 
 `score = lexical_relevance * status_weight * decay`
 
@@ -35,10 +49,15 @@ An explicit as-of read limits candidates to the interval valid then.
 
 Use the existing KG wing/sensitivity filters and gateway caller policy, including
 permission to read KG facts. Never widen a scoped search. A local SQLite FTS
-index supplies candidates; one indexed SELECT also reads their observed sources.
+index supplies candidates; one indexed query also reads their term frequencies
+and observed sources after the seed cap. FTS maps to stable triple IDs through
+an INTEGER PRIMARY KEY mapping, so VACUUM cannot misalign facts and search hits.
 The gateway performs one fact lookup across allowed wings, independently of its
-existing drawer fan-out. Scoped KG reads use a cheap wing list instead of full
-KG statistics. Missing graphs return no facts and do not create a palace file.
+existing drawer fan-out and uses the existing KG policy for scope enumeration.
+The separate KG import/provenance work owns cheap wing listing. Callers that
+discard facts explicitly disable their lookup. Missing graphs return no facts
+and do not create a palace file. Any fact-side exception returns an empty facts
+list and a generic `facts_error` marker; drawer search remains independent.
 
 ## Non-goals
 
@@ -56,4 +75,8 @@ boost in this step. Facts remain index entries pointing to the verbatim source.
 - Existing searcher tests pass unchanged; a cheap local drawer benchmark keeps
   its recall. Tests cover weights, decay, boundaries, whole words, provenance,
   one indexed lookup, unchanged drawers and real gateway privacy/scope.
+- Deterministic gates cover filler/noise rejection, rare-term ranking, the SQL
+  seed cap with key history, source ordering, generic error isolation, and VACUUM.
+- The seeded latency probe reports before/after added lookup time at 5k, 20k and
+  50k facts, targeting at most 50 ms at 50k for common and selective queries.
 - Run lint, format and the requested broad suite without changing budget tests.

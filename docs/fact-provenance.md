@@ -35,9 +35,8 @@ an empty facts list to preserve their existing shape.
 The gateway includes facts only for callers allowed to use `mempalace_kg_query`,
 with that tool's wing and sensitivity scope. Source links still open through the
 existing source reader's access checks. `mempalace_kg_query` with `search=true` uses its `entity` argument as search
-text and exposes the same ranker for fact-only, optionally as-of reads. Its
-`list_wings=true` mode lists readable fact wings without computing statistics. Ranking details and constants are
-documented in [RFC 008](rfcs/008-fact-first-ranking.md).
+text and exposes the same ranker for fact-only, optionally as-of reads. Ranking details and constants are
+documented in [RFC 009](rfcs/009-fact-first-ranking.md).
 
 Run `uv run python benchmarks/fact_recall_bench.py --threads 120 --retriever fact-first`
 for the fact-first gate, and `uv run python benchmarks/fact_first_bench.py --threads 120`

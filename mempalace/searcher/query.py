@@ -510,54 +510,45 @@ def _search_drawer_memories(
     return envelope
 
 
+_DRAWER_SEARCH_SIGNATURE = inspect.signature(_search_drawer_memories)
+
+
 def search_memories(
-    query: str,
-    palace_path: str,
-    wing: str = None,
-    room: str = None,
-    source_file: str = None,
-    since: str = None,
-    before: str = None,
-    n_results: int = 5,
-    max_distance: Optional[float] = None,
-    vector_disabled: bool = False,
-    candidate_strategy: str = "vector",
-    collection_name: str = None,
-    lang: Optional[str] = None,
-    _pool_scale: int = 1,
-    include_media: bool = False,
-    query_task: str = "search",
-    include_facts: bool = True,
+    query: str, palace_path: str, *args, include_facts: bool = True, **kwargs
 ) -> dict:
-    """Search facts first and drawers independently, preserving every drawer result.
+    """Search facts and drawers independently; drawer defaults come from one place.
 
-    Drawer controls are documented by ``_search_drawer_memories``. Their limits,
-    filtering and ordering are unchanged; facts have their own result list.
+    Drawer parameters pass through untouched to ``_search_drawer_memories``.
+    ``include_facts=False`` skips the optional fact path entirely.
     """
-    from .facts import palace_facts
-
-    result = _search_drawer_memories(
-        query,
-        palace_path,
-        wing=wing,
-        room=room,
-        source_file=source_file,
-        since=since,
-        before=before,
-        n_results=n_results,
-        max_distance=max_distance,
-        vector_disabled=vector_disabled,
-        candidate_strategy=candidate_strategy,
-        collection_name=collection_name,
-        lang=lang,
-        _pool_scale=_pool_scale,
-        include_media=include_media,
-        query_task=query_task,
-    )
+    result = _search_drawer_memories(query, palace_path, *args, **kwargs)
     if result.get("error"):
         return result
-    facts = palace_facts(query, palace_path, wing=wing, limit=n_results) if include_facts else []
-    return {"facts": facts, **result}
+    fact_result = {"facts": []}
+    if include_facts:
+        try:
+            from .facts import palace_facts
+
+            bound = _DRAWER_SEARCH_SIGNATURE.bind(query, palace_path, *args, **kwargs)
+            bound.apply_defaults()
+            fact_result = palace_facts(
+                query, palace_path, wing=bound.arguments["wing"], limit=bound.arguments["n_results"]
+            )
+        except Exception:
+            logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
+            fact_result = {"facts": [], "facts_error": "unavailable"}
+    return {**fact_result, **result}
+
+
+# Keep introspection accurate without copying drawer parameters or defaults.
+search_memories.__signature__ = _DRAWER_SEARCH_SIGNATURE.replace(
+    parameters=[
+        *_DRAWER_SEARCH_SIGNATURE.parameters.values(),
+        inspect.Parameter(
+            "include_facts", inspect.Parameter.KEYWORD_ONLY, default=True, annotation=bool
+        ),
+    ]
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

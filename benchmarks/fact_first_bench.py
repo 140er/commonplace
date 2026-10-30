@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fact-first vs plain drawer search on the fact-recall corpus (RFC 008).
+"""Fact-first vs plain drawer search on the fact-recall corpus (RFC 009).
 
 Run from a checkout: uv run python benchmarks/fact_first_bench.py --threads 120
 No models or network: drawers have explicit dummy vectors and use the product's

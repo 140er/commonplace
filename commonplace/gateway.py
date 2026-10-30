@@ -53,12 +53,20 @@ _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
 
-def _with_search_facts(result, facts):
+def _with_search_facts(result, facts, facts_error=None):
     from mempalace.fact_render import format_facts
 
-    if not facts and not any(key in result for key in ("facts", "results", "cli_output")):
+    if result.get("error"):
+        return result
+    if (
+        not facts
+        and not facts_error
+        and not any(key in result for key in ("facts", "results", "cli_output"))
+    ):
         return result
     out = {"facts": facts, **{k: v for k, v in result.items() if k != "facts"}}
+    if facts_error:
+        out["facts_error"] = "unavailable"
     if isinstance(out.get("cli_output"), str):
         out["cli_output"] = format_facts(facts) + out["cli_output"]
     return out
@@ -304,7 +312,9 @@ class Mediator:
             if isinstance(plan, dict) and "facts" in plan:
                 result = _tool_result(response)
                 if isinstance(result, dict):
-                    response = _replace_result(response, _with_search_facts(result, plan["facts"]))
+                    response = _replace_result(
+                        response, _with_search_facts(result, plan["facts"], plan.get("facts_error"))
+                    )
             if isinstance(plan, dict) and plan.get("unhide"):
                 unhide = plan["unhide"]
                 response = _unhide(response, unhide)
@@ -370,28 +380,46 @@ class Mediator:
         wing = args.get("wing")
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
-        facts = self._search_facts(principal, args) if args.get("include_facts", True) else []
+        fact_result = (
+            self._search_facts(principal, args)
+            if args.get("include_facts", True)
+            else {"facts": []}
+        )
         # A worker has workspace authority. Always suppress its unscoped fact
         # search, including captured CLI output, and attach the scoped read.
         args["include_facts"] = False
         if policy.sees_all_wings or wing:
-            return {"facts": facts}
-        return {"respond": _with_search_facts(self._fan_out_search(principal, name, args), facts)}
+            return fact_result
+        return {
+            "respond": _with_search_facts(
+                self._fan_out_search(principal, name, args),
+                fact_result["facts"],
+                fact_result.get("facts_error"),
+            )
+        }
 
     def _search_facts(self, principal, args):
-        if not principal.policy.tool_visible("mempalace_kg_query"):
-            return []
-        call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
-        if args.get("wing"):
-            call["wings"] = [args["wing"]]
         try:
+            if not principal.policy.tool_visible("mempalace_kg_query"):
+                return {"facts": []}
+            call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
+            if args.get("wing"):
+                call["wings"] = [args["wing"]]
             self._before_kg_read(principal, "mempalace_kg_query", call, [])
-        except Denied:
-            # Failure to establish fact scope must neither widen it nor stop
-            # the independent, already-authorized drawer search.
-            return []
-        result = self.workers.call_tool(principal, "mempalace_kg_query", call)
-        return result.get("facts", []) if isinstance(result, dict) else []
+            result = self.workers.call_tool(principal, "mempalace_kg_query", call)
+            if (
+                not isinstance(result, dict)
+                or result.get("error")
+                or not isinstance(result.get("facts"), list)
+            ):
+                raise ValueError("Invalid fact search response")
+            return {
+                "facts": result["facts"],
+                **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
+            }
+        except Exception:
+            logger.warning("Fact search unavailable; preserving drawer search", exc_info=True)
+            return {"facts": [], "facts_error": "unavailable"}
 
     def _before_drawer_read(self, principal, name, args, notes):
         return None  # Checked on the way out, so a hidden drawer reads as missing.
@@ -471,10 +499,8 @@ class Mediator:
                 if not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
             asked = {canonical_wing(w) for w in asked}
-        listing = self.workers.call_tool(
-            principal, "mempalace_kg_query", {"entity": "", "list_wings": True}
-        )
-        known = listing.get("wings") if isinstance(listing, dict) else None
+        stats = self.workers.call_tool(principal, "mempalace_kg_stats", {})
+        known = stats.get("wings") if isinstance(stats, dict) else None
         if not isinstance(known, list):
             raise Denied("could not check which wings the facts are in")
         args["wings"] = [

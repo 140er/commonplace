@@ -1,4 +1,4 @@
-"""Fact ranking, indexed reads and the additive drawer contract (RFC 008)."""
+"""Fact ranking, indexed reads and the additive drawer contract (RFC 009)."""
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -96,7 +96,9 @@ def test_stale_sinks_for_its_key_while_unrelated_keys_keep_lexical_order():
         # row still has an active lifecycle and no end date.
         kg._conn().execute("UPDATE triples SET status='active', valid_to=NULL WHERE id=?", (old,))
         unrelated = kg.add_triple("Somebody", "mentions", "alpha bravo", wing="shared")
-        found = search_facts(kg, "Avery alpha bravo charlie delta echo foxtrot golf", now=NOW)
+        found = search_facts(
+            kg, "Avery Somebody alpha bravo charlie delta echo foxtrot golf", now=NOW
+        )
         assert [f["id"] for f in found] == [unrelated, new, old]
         assert found[0]["score"] > found[1]["score"]
         assert found[2]["score"] > found[1]["score"]
@@ -152,7 +154,7 @@ def test_one_indexed_read_includes_all_provenance_and_drawer_sources():
         kg._conn().set_trace_callback(calls.append)
         (fact,) = search_facts(kg, "pnpm", now=NOW)
         kg._conn().set_trace_callback(None)
-        selects = [sql for sql in calls if sql.startswith("SELECT")]
+        selects = [sql for sql in calls if sql.startswith(("SELECT", "WITH"))]
         assert len(selects) == 1
         plan = kg._conn().execute("EXPLAIN QUERY PLAN " + selects[0]).fetchall()
         assert any("VIRTUAL TABLE INDEX" in row[3] for row in plan)

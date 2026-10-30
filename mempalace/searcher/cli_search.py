@@ -180,6 +180,21 @@ def _cli_ranked_hits(
     return _fold_copies_across_sources(hits, _cli_hit_source, _cli_hit_ref), fetched, skipped
 
 
+def _cli_fact_matches(query, palace_path, wing, n_results):
+    """Optional facts can report a generic failure but never stop CLI drawers."""
+    try:
+        from .facts import palace_facts
+
+        result = palace_facts(query, palace_path, wing=wing, limit=n_results)
+        if result.get("facts_error"):
+            print("  facts_error: unavailable")
+        return result["facts"]
+    except Exception:
+        logger.warning("Fact search unavailable; preserving CLI drawers", exc_info=True)
+        print("  facts_error: unavailable")
+        return []
+
+
 def search(
     query: str,
     palace_path: str,
@@ -251,10 +266,9 @@ def search(
         raise SearchError(str(e)) from e
     date_window_active = since_dt is not None or before_dt is not None
     from ..fact_render import format_facts
-    from .facts import palace_facts
 
     if facts is None:
-        facts = palace_facts(query, palace_path, wing=wing, limit=n_results)
+        facts = _cli_fact_matches(query, palace_path, wing, n_results)
 
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call

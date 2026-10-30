@@ -1,12 +1,14 @@
-"""Fact-first ranking (RFC 008). Drawers never share this ranking or limit."""
+"""Fact-first ranking (RFC 009). Drawers never share this ranking or limit."""
 
 import heapq
 import logging
-import sqlite3
+import math
 from collections import defaultdict
 from datetime import datetime, time, timezone
 
 from .. import fact_provenance
+from ..fact_render import ordered_sources
+from ..i18n import get_stopwords
 from ..lexical import tokenize
 from ..query_sanitizer import sanitize_query
 
@@ -16,6 +18,16 @@ STATUS_WEIGHTS = {"approved": 1.0, "proposal": 0.85, "unknown": 0.75}
 ENDED_WEIGHT = 0.25
 DECAY_HALF_LIFE_DAYS = 180
 DECAY_FLOOR = 0.5
+FACT_CANDIDATE_LIMIT = 50
+FACT_COMMON_TERM_FRACTION = 0.5
+# English question/predicate glue is always ignored. Explicit locales add their
+# own stop words through the existing searcher resolver.
+FACT_STOP_WORDS = frozenset(get_stopwords("en")) | frozenset(
+    "a an and are as at be been being but by can could did do does for from "
+    "had has have how if in into is it its me my of on or our she should so "
+    "than that the their them then there these they this those to was we were "
+    "what when where which who why will with would you your".split()
+)
 logger = logging.getLogger(__name__)
 
 
@@ -31,8 +43,8 @@ def _instant(value, *, end=False):
         return None
 
 
-def _words(text):
-    return set(tokenize(text.replace("_", " ")))
+def _words(text, stop_words=FACT_STOP_WORDS):
+    return set(tokenize(text.replace("_", " "), stop_words))
 
 
 def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=None, now=None):
@@ -42,15 +54,37 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
     score can consume a drawer slot. A source's latest observation controls
     decay; approved facts never decay, including approved history.
     """
-    words = _words(sanitize_query(query)["clean_query"])
+    from . import _resolve_stop_words
+
+    stop_words = FACT_STOP_WORDS | _resolve_stop_words(None)
+    words = _words(sanitize_query(query)["clean_query"], stop_words)
     if not words:
         return []
     now = now or datetime.now(timezone.utc)
     at = _instant(as_of) if as_of else now
     facts = []
-    for row in kg.search_fact_rows(words, wings=wings, sensitivities=sensitivities, as_of=as_of):
+    rows = kg.search_fact_rows(
+        words,
+        candidate_limit=FACT_CANDIDATE_LIMIT,
+        common_term_fraction=FACT_COMMON_TERM_FRACTION,
+        wings=wings,
+        sensitivities=sensitivities,
+        as_of=as_of,
+    )
+    if not rows:
+        return []
+    total = rows[0]["documents"]
+    frequencies = rows[0]["frequencies"]
+    idf = {
+        word: math.log(
+            1 + (total - frequencies.get(word, 0) + 0.5) / (frequencies.get(word, 0) + 0.5)
+        )
+        for word in words
+    }
+    total_weight = sum(idf.values())
+    for row in rows:
         text = " ".join((row["subject_name"], row["predicate"], row["object_name"]))
-        lexical = len(words & _words(text)) / len(words)
+        lexical = sum(idf[word] for word in words & _words(text, stop_words)) / total_weight
         if lexical == 0:  # FTS token boundaries can be broader than our tokenizer.
             continue
         start, end = _instant(row["valid_from"]), _instant(row["valid_to"], end=True)
@@ -77,7 +111,7 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
             authority["fact_status"] = "superseded"
         elif not current and authority["fact_status"] in STATUS_WEIGHTS:
             authority["fact_status"] = "historical" if end and end <= at else "future"
-        sources = row["sources"]
+        sources = ordered_sources(row["sources"])
         for source in sources:
             source["source_link"] = fact_provenance.source_link(
                 source.get("source_thread"), source.get("origin_link")
@@ -142,12 +176,12 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
 
 def palace_facts(query, palace_path, *, wing=None, limit=5):
     """A local owner's read; missing graphs never create a file."""
-    from ..knowledge_graph import open_graph
-    from ..paths import knowledge_graph_path
-
     try:
+        from ..knowledge_graph import open_graph
+        from ..paths import knowledge_graph_path
+
         with open_graph(knowledge_graph_path(palace_path), read=True) as kg:
-            return search_facts(kg, query, wings=[wing] if wing else None, limit=limit)
-    except (sqlite3.Error, OSError):
+            return {"facts": search_facts(kg, query, wings=[wing] if wing else None, limit=limit)}
+    except Exception:
         logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
-        return []
+        return {"facts": [], "facts_error": "unavailable"}

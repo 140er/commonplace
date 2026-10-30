@@ -1390,22 +1390,16 @@ class KnowledgeGraph:
                     )
         return out
 
-    def list_wings(self, wings=None, sensitivities=None) -> list:
-        """Fact wings only, using the wing index without computing KG stats."""
-        wings, sensitivities = visibility(wings, sensitivities)
-        visible_sql, params = _visibility_sql(wings, sensitivities)
-        with self._lock:
-            return [
-                r[0]
-                for r in self._conn().execute(
-                    "SELECT DISTINCT t.wing FROM triples t WHERE t.wing IS NOT NULL"
-                    + visible_sql
-                    + " ORDER BY t.wing",
-                    params,
-                )
-            ]
-
-    def search_fact_rows(self, tokens, *, wings=None, sensitivities=None, as_of=None):
+    def search_fact_rows(
+        self,
+        tokens,
+        *,
+        candidate_limit,
+        common_term_fraction,
+        wings=None,
+        sensitivities=None,
+        as_of=None,
+    ):
         """Indexed lexical lookup with the same visibility as other KG reads."""
         from .fact_index import candidates
 
@@ -1415,7 +1409,14 @@ class KnowledgeGraph:
         temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
         with self._lock:
             return candidates(
-                self._conn(), tokens, visible_sql, params, temporal_sql, temporal_params
+                self._conn(),
+                tokens,
+                visible_sql,
+                params,
+                temporal_sql,
+                temporal_params,
+                limit=candidate_limit,
+                common_term_fraction=common_term_fraction,
             )
 
     @staticmethod

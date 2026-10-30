@@ -704,16 +704,17 @@ def tool_search(
                 )
         except SearchError as exc:
             return {"error": str(exc)}
-        facts = (
-            tool_kg_search(query, limit=limit, wings=[wing] if wing else None)["facts"]
+        fact_result = (
+            tool_kg_search(query, limit=limit, wings=[wing] if wing else None)
             if include_facts
-            else []
+            else {"facts": []}
         )
+        facts = fact_result["facts"]
         from ..fact_render import format_facts
 
         result = {"query": query, "cli_output": format_facts(facts) + output}
-        if facts:
-            result = {"facts": facts, **result}
+        if facts or fact_result.get("facts_error"):
+            result = {**fact_result, **result}
         if error_output.getvalue():
             result["cli_error_output"] = error_output.getvalue()
         return result
@@ -785,14 +786,12 @@ def tool_search(
         result["context_received"] = True
     if result.get("error"):
         return result
-    facts = (
-        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)[
-            "facts"
-        ]
+    fact_result = (
+        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)
         if include_facts
-        else []
+        else {"facts": []}
     )
-    return {"facts": facts, **{k: v for k, v in result.items() if k != "facts"}}
+    return {**fact_result, **{k: v for k, v in result.items() if k != "facts"}}
 
 
 def tool_check_duplicate(content: str, threshold: float = 0.9):

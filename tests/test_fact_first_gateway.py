@@ -70,11 +70,8 @@ def test_search_matches_scoped_kg_visibility_and_makes_one_fact_lookup(hub, monk
     assert (
         sum(name == "mempalace_kg_query" and args.get("search", False) for name, args in calls) == 1
     )
-    assert (
-        sum(name == "mempalace_kg_query" and args.get("list_wings", False) for name, args in calls)
-        == 1
-    )
-    assert all(name != "mempalace_kg_stats" for name, _ in calls)
+    # Wing enumeration belongs to the shared KG policy path, owned by #40.
+    assert sum(name in ("mempalace_kg_stats", "mempalace_kg_list_wings") for name, _ in calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -119,7 +116,7 @@ def test_failed_fact_scope_check_does_not_gate_drawers_or_widen_scope(hub, monke
     def broken(principal, name, arguments):
         return (
             {"error": "fact index unavailable"}
-            if name == "mempalace_kg_query" and arguments.get("list_wings")
+            if name in ("mempalace_kg_stats", "mempalace_kg_list_wings")
             else original(principal, name, arguments)
         )
 
@@ -127,6 +124,45 @@ def test_failed_fact_scope_check_does_not_gate_drawers_or_widen_scope(hub, monke
     combined, raw = hub.call(token, "mempalace_search", query="Kestrel")
     assert combined and combined["facts"] == [], raw
     assert combined["results"] == plain["results"]
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
+def test_unexpected_fact_worker_error_keeps_drawers_and_generic_marker(hub, monkeypatch, wing):
+    plant(hub)
+    token = hub.token(
+        "reader", profile="full", scopes=["memory:read", "kg:read"], read_wings=["shared"]
+    )
+    args = {"query": "Kestrel", **({"wing": wing} if wing else {})}
+    plain, _ = hub.call(token, "mempalace_search", include_facts=False, **args)
+    original = hub.gateway.mediator.workers.call_tool
+
+    def broken(principal, name, arguments):
+        if name == "mempalace_kg_query" and arguments.get("search"):
+            raise RuntimeError("private detail")
+        return original(principal, name, arguments)
+
+    monkeypatch.setattr(hub.gateway.mediator.workers, "call_tool", broken)
+    combined, raw = hub.call(token, "mempalace_search", **args)
+    assert combined["results"] == plain["results"]
+    assert combined["facts"] == [] and combined["facts_error"] == "unavailable"
+    assert "private detail" not in raw
+
+
+def test_multiwing_drawer_error_is_not_decorated_with_facts(hub, monkeypatch):
+    plant(hub)
+    token = hub.token(
+        "reader", profile="full", scopes=["memory:read", "kg:read"], read_wings=["shared"]
+    )
+    original = hub.gateway.mediator.workers.call_tool
+
+    def failed_drawers(principal, name, arguments):
+        if name == "mempalace_search":
+            return {"error": "Drawer search failed"}
+        return original(principal, name, arguments)
+
+    monkeypatch.setattr(hub.gateway.mediator.workers, "call_tool", failed_drawers)
+    result, _ = hub.call(token, "mempalace_search", query="Kestrel")
+    assert result == {"error": "Drawer search failed"}
 
 
 def test_captured_cli_output_and_local_hub_are_scoped(hub):
@@ -191,6 +227,10 @@ def test_search_source_opens_verbatim_range_through_gateway_recall(hub):
         source_seq_end=0,
     )
     assert saved and saved["success"], raw
+    drawer, raw = hub.call(
+        token, "mempalace_add_drawer", wing="shared", room="source", content=text
+    )
+    assert drawer and drawer["success"], raw
     result, raw = hub.call(token, "mempalace_search", query="Kestrel deploy port")
     assert result and result["facts"], raw
     (source,) = result["facts"][0]["sources"]

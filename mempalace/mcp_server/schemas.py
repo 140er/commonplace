@@ -49,10 +49,6 @@ TOOLS = {
                     "type": "boolean",
                     "description": "Rank whole-word matches across facts, using entity as search text (default false).",
                 },
-                "list_wings": {
-                    "type": "boolean",
-                    "description": "List only readable fact wings without graph statistics; entity may be empty.",
-                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
