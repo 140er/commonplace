@@ -70,10 +70,7 @@ def _command(
     try:
         directory = Path(prompt_dir).resolve()
         prompt_file = _write_prompt(directory, handoff.id, prompt)
-        # The current shared Handoff has no cwd field. Support both forms so
-        # persisted metadata can be added without changing this launcher.
-        meta = getattr(handoff, "meta", None)
-        requested_cwd = getattr(meta, "cwd", "") or getattr(handoff, "cwd", "")
+        requested_cwd = handoff.cwd
         cwd = Path(requested_cwd).resolve() if requested_cwd else directory
         if not cwd.is_dir():
             cwd = directory
@@ -195,8 +192,7 @@ def launch(
     """Raises ``LaunchError`` on failure. ``prompt_dir``: where
     ``{prompt_file}`` is written (0600). ``timeout`` applies to webhooks.
 
-    Commands use ``handoff.meta.cwd`` or ``handoff.cwd`` when available and
-    pointing to a directory; otherwise they use ``prompt_dir``.
+    Commands run in ``handoff.cwd`` when it is a directory, else in ``prompt_dir``.
     """
     if config.kind == "client":
         return None

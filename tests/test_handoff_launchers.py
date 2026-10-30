@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -21,7 +22,7 @@ import pytest
 
 from commonplace.handoff import launchers
 from commonplace.handoff.launchers import LaunchError, launch
-from commonplace.handoff.models import Handoff, LauncherConfig, SuccessorRef, ThreadMeta
+from commonplace.handoff.models import Handoff, LauncherConfig, SuccessorRef
 
 
 @pytest.fixture
@@ -195,22 +196,17 @@ def test_command_arguments_environment_logs_and_private_prompt(
     assert os.environ["COMMONPLACE_HANDOFF_ID"] == "old"
 
 
-@pytest.mark.parametrize("metadata", ["existing", "missing", "file", "flat"])
+@pytest.mark.parametrize("metadata", ["existing", "missing", "file"])
 def test_command_cwd_and_relative_prompt_directory(
     metadata, handoff, tmp_path, monkeypatch, processes
 ):
     monkeypatch.chdir(tmp_path)
     wanted = tmp_path / "work"
-    if metadata in ("existing", "flat"):
+    if metadata == "existing":
         wanted.mkdir()
     elif metadata == "file":
         wanted.write_text("a file")
-    if metadata == "flat":
-        handoff = SimpleNamespace(**vars(handoff), cwd=str(wanted))
-    else:
-        handoff = SimpleNamespace(
-            **vars(handoff), meta=ThreadMeta(thread_id="source", cwd=str(wanted))
-        )
+    handoff = dataclasses.replace(handoff, cwd=str(wanted))
     result_file = tmp_path / "cwd.txt"
     config = LauncherConfig(
         kind="command",
@@ -224,7 +220,7 @@ def test_command_cwd_and_relative_prompt_directory(
         ),
     )
     launch(config, handoff, "prompt", prompt_dir="prompts")
-    expected = wanted if metadata in ("existing", "flat") else tmp_path / "prompts"
+    expected = wanted if metadata == "existing" else tmp_path / "prompts"
     assert result_file.read_text().splitlines() == [str(expected), str(expected)]
     assert (tmp_path / "prompts" / f"{handoff.id}.md").read_text() == "prompt"
 
