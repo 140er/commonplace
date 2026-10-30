@@ -70,6 +70,10 @@ def parse_identity(data) -> dict:
         if not isinstance(value, str) or not value.strip() or len(value) > _MAX_FIELD_LEN:
             raise ValueError(f"identity field {key!r} must be a non-empty string")
         out[key] = value
+    if "person" in data:
+        if not isinstance(data["person"], bool):
+            raise ValueError("identity person must be a boolean")
+        out["person"] = data["person"]
     return out
 
 

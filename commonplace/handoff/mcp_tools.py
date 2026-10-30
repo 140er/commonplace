@@ -20,14 +20,14 @@ import sqlite3
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
 
 from .models import SCOPE_HANDOFF, SCOPE_THREADS_READ
-from .recall import ThreadNotFound
+from .recall import ThreadNotFound, thread_provenance
 
 TOOL_NAMES = ("thread_recall", "thread_get", "thread_chain")
 
 _SCHEMAS = {
     "thread_recall": {
         "name": "thread_recall",
-        "description": "Search the stored thread of an earlier agent.",
+        "description": "Search the stored thread of an earlier agent. Results include source and proposal/unknown authority; transcript roles do not prove user approval.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -42,7 +42,7 @@ _SCHEMAS = {
     },
     "thread_get": {
         "name": "thread_get",
-        "description": "Read messages from the stored thread of an earlier agent.",
+        "description": "Read exact messages with source and approval status. Transcript roles do not verify who decided a rule.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -111,6 +111,11 @@ def _argument_error(args, schema):
     return None
 
 
+def _provenance(ctx, principal, thread_id):
+    stored = ctx.recall.thread(principal, thread_id)
+    return thread_provenance(stored)
+
+
 def _recall(ctx, principal, args):
     hits = ctx.recall.recall(
         principal,
@@ -128,6 +133,7 @@ def _recall(ctx, principal, args):
                 "seq_end": hit.seq_end,
                 "score": hit.score,
                 "text": hit.text,
+                "provenance": _provenance(ctx, principal, hit.stored_thread_id),
             }
             for hit in hits
         ],
@@ -146,7 +152,11 @@ def _get(ctx, principal, args):
         if not args.get("include_raw", False):
             value.pop("raw", None)
         values.append(value)
-    return {"thread_id": args["thread_id"], "messages": values}
+    return {
+        "thread_id": args["thread_id"],
+        "messages": values,
+        "provenance": _provenance(ctx, principal, args["thread_id"]),
+    }
 
 
 def _chain(ctx, principal, args):
@@ -157,6 +167,7 @@ def _chain(ctx, principal, args):
                 "thread_id": thread.id,
                 "created_at": thread.created_at,
                 "message_count": thread.message_count,
+                "provenance": _provenance(ctx, principal, thread.id),
             }
             for thread in threads
         ]

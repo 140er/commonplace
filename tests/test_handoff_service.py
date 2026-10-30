@@ -351,7 +351,9 @@ def rig(monkeypatch, tmp_path):
         value.mirror_calls.append((call_tool, principal, stored, chunks))
         return ["memory-id"]
 
-    def build_doc(messages, meta, *, note="", stored_thread_id="", handoff_id="", chain=()):
+    def build_doc(
+        messages, meta, *, note="", stored_thread_id="", handoff_id="", chain=(), source_actor=""
+    ):
         trace.append("build")
         value.doc_calls.append((messages, meta, note, stored_thread_id, handoff_id, chain))
         return HandoffDoc(
@@ -364,6 +366,7 @@ def rig(monkeypatch, tmp_path):
             stored_thread_id=stored_thread_id,
             handoff_id=handoff_id,
             chain=chain,
+            source_actor=source_actor,
         )
 
     def render_markdown(doc):

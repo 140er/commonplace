@@ -22,6 +22,9 @@ def test_a_new_fact_is_added_with_its_source(kg):
             "source_seq_start": 4,
             "source_seq_end": 4,
             "added_at": kg.sources([out["triple_id"]])[out["triple_id"]][0]["added_at"],
+            "origin_kind": "thread",
+            "origin_id": "t1",
+            "approval_status": "proposal",
         }
     ]
 

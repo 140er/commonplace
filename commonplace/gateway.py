@@ -1022,7 +1022,12 @@ class Gateway:
         finally:
             stop.set()
             server.server_close()
-            self.supervisor.stop_all()
+            try:
+                handoff = getattr(self, "handoff", None)
+                if handoff is not None:
+                    handoff.close()
+            finally:
+                self.supervisor.close()
 
 
 class _GatewayHandler(BaseHTTPRequestHandler):

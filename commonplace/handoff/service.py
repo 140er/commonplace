@@ -59,6 +59,7 @@ External launch calls never hold a database transaction.
 
 from __future__ import annotations
 
+import logging
 import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
@@ -102,6 +103,7 @@ class HandoffService:
         store_for,
         events,
         call_tool=None,
+        save_fact=None,
         prompt_dir: str = "",
     ):
         self.control_db = control_db
@@ -110,11 +112,16 @@ class HandoffService:
         self.store_for = store_for
         self.events = events
         self.call_tool = call_tool
+        self.save_fact = save_fact
         self.prompt_dir = prompt_dir
         self.db.set_document_store(store_for)
         self._mirror_lock = threading.Lock()
         self._mirror_pool = None
         self._mirror_jobs: list = []
+        self._fact_lock = threading.Lock()
+        self._fact_pool = None
+        self._fact_jobs: list = []
+        self._background_closed = False
         self._snapshots: dict[tuple[str, str], _Snapshot] = {}
 
     def run(self, principal, request: HandoffRequest, *, manual: bool = False) -> HandoffResult:
@@ -228,6 +235,7 @@ class HandoffService:
                 messages,
                 meta,
                 note=request.note,
+                source_actor=stored.created_by,
                 stored_thread_id=stored.id,
                 handoff_id=handoff.id,
                 chain=self._chain(store, parent_id, workspace_id, exclude=stored.id),
@@ -254,6 +262,7 @@ class HandoffService:
             return HandoffResult("compact", handoff, reason=reason)
 
         self._emit(EVENT_STORED, principal, handoff)
+        self._extract_later(principal, stored)
         return self._launch(principal, handoff, snapshot)
 
     def _append_retry(self, principal, request: HandoffRequest, handoff: Handoff):
@@ -273,7 +282,65 @@ class HandoffService:
         # Mirroring all durable chunks also repairs a previous mirror failure;
         # immutable chunk ids make these retries idempotent.
         self._mirror_later(principal, stored, lambda: store.chunks(stored.id))
+        self._extract_later(principal, stored)
         return None
+
+    def _extract_later(self, principal, stored) -> None:
+        """File facts independently of the mirror, after the source is durable."""
+        if self.save_fact is None:
+            return
+
+        def job():
+            try:
+                from . import facts
+
+                # Internal worker calls bypass policy. Extraction instead uses
+                # the gateway's fact_save path, and must also be able to read
+                # the private source before opening it.
+                if (
+                    stored.workspace_id != principal.workspace_id
+                    or not principal.policy.has_scope("threads:read")
+                    or not principal.policy.can_read_wing(stored.wing)
+                ):
+                    return
+                store = self.store_for(stored.workspace_id)
+                facts.file_pending(store, stored, lambda args: self.save_fact(principal, args))
+            except Exception:
+                # Never log exception text or a candidate; it can contain chat
+                # content. A retry resumes from the last committed cursor.
+                logging.getLogger(__name__).warning(
+                    "handoff fact extraction incomplete: %s", stored.id
+                )
+
+        try:
+            with self._fact_lock:
+                if self._background_closed:
+                    return
+                if self._fact_pool is None:
+                    self._fact_pool = ThreadPoolExecutor(
+                        max_workers=1, thread_name_prefix="handoff-facts"
+                    )
+                self._fact_jobs.append(self._fact_pool.submit(job))
+                self._fact_jobs = [f for f in self._fact_jobs if not f.done()]
+        except RuntimeError:
+            logging.getLogger(__name__).warning("handoff fact scheduling incomplete: %s", stored.id)
+
+    def wait_for_facts(self, timeout: Optional[float] = None) -> None:
+        """Wait for fact jobs in tests; handoff requests never wait for them."""
+        with self._fact_lock:
+            jobs = list(self._fact_jobs)
+        futures_wait(jobs, timeout=timeout)
+
+    def close(self, timeout: float = 30) -> None:
+        """Bound shutdown waiting across both background indexes."""
+        with self._mirror_lock, self._fact_lock:
+            self._background_closed = True
+            jobs = [*self._mirror_jobs, *self._fact_jobs]
+            pools = [self._mirror_pool, self._fact_pool]
+        futures_wait(jobs, timeout=timeout)
+        for pool in pools:
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
 
     def _mirror_later(self, principal, stored, chunks) -> None:
         """Mirror into Memory search in the background, one job at a time.
@@ -291,6 +358,8 @@ class HandoffService:
                 pass
 
         with self._mirror_lock:
+            if self._background_closed:
+                return
             if self._mirror_pool is None:
                 self._mirror_pool = ThreadPoolExecutor(
                     max_workers=1, thread_name_prefix="handoff-mirror"
@@ -390,6 +459,7 @@ class HandoffService:
                     store.messages(handoff.stored_thread_id),
                     snapshot.meta,
                     stored_thread_id=handoff.stored_thread_id,
+                    source_actor=store.get(handoff.stored_thread_id).created_by,
                     handoff_id=handoff.id,
                     chain=self._chain(
                         store,

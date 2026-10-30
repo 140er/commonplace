@@ -32,6 +32,7 @@ EXACT = {
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/events"): "authenticated",
     ("GET", "/api/connections"): "authenticated",
+    ("POST", "/api/facts"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",

@@ -205,10 +205,10 @@ def test_card_links_failure_and_verbatim_script(app, owner):
     )
     assert owner.evaluate(
         "Array.from(document.querySelectorAll('.preview dt')).map(node => node.textContent)"
-    ) == ["Goal", "Status"]
-    assert owner.evaluate("document.querySelector('.preview pre span').textContent") == (
-        "Finish #142 with every word preserved."
-    )
+    ) == ["Provenance", "Goal", "Status"]
+    assert owner.evaluate(
+        "document.querySelectorAll('.preview div')[1].querySelector('pre span').textContent"
+    ) == ("Finish #142 with every word preserved.")
     owner.evaluate("document.querySelector('.timeline a').click()")
     owner.wait(
         f"location.pathname === {json.dumps(app.old_path)} && document.readyState === 'complete'"

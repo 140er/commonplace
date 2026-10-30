@@ -44,7 +44,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from . import paths, provenance
+from . import fact_provenance, paths, provenance
 from .config import DEFAULT_SINGLE_VALUED_PREDICATES, sanitize_iso_temporal
 from .ids import make_triple_id
 from .timeutil import utc_now_iso, utc_now_z
@@ -390,6 +390,7 @@ def _fact_fields(row) -> dict:
         "source_thread": row["source_thread"],
         "source_seq_start": row["source_seq_start"],
         "source_seq_end": row["source_seq_end"],
+        **fact_provenance.fields(row),
     }
 
 
@@ -626,6 +627,13 @@ class KnowledgeGraph:
         ):
             if column not in existing:
                 conn.execute(f"ALTER TABLE triples ADD COLUMN {column} {decl}")
+        for column, decl in fact_provenance.COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE triples ADD COLUMN {column} {decl}")
+        source_columns = {r["name"] for r in conn.execute("PRAGMA table_info(fact_sources)")}
+        for column, decl in fact_provenance.COLUMNS.items():
+            if column not in source_columns:
+                conn.execute(f"ALTER TABLE fact_sources ADD COLUMN {column} {decl}")
         # Indexes on migrated columns live here: in the CREATE script above
         # they would fail on a legacy table that does not have them yet.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_triples_status ON triples(status)")
@@ -720,6 +728,7 @@ class KnowledgeGraph:
         source_thread: str = None,
         source_seq_start: int = None,
         source_seq_end: int = None,
+        source_url: str = None,
         wing: str = None,
         sensitivity: str = None,
         sensitivities=None,
@@ -753,6 +762,7 @@ class KnowledgeGraph:
         source_thread, source_seq_start, source_seq_end = source_range(
             source_thread, source_seq_start, source_seq_end
         )
+        fact_provenance.source_link(source_thread, source_url)
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
         _, sensitivities = visibility(None, sensitivities)
@@ -805,7 +815,9 @@ class KnowledgeGraph:
                         source_drawer_id,
                         source_file,
                         utc_now_iso(),
+                        source_url,
                     )
+                    fact_provenance.record(conn, existing["id"], source_thread, source_url)
                     return existing["id"]
 
                 triple_id = make_triple_id(sub_id, pred, obj_id, valid_from, utc_now_iso())
@@ -846,7 +858,9 @@ class KnowledgeGraph:
                     source_drawer_id,
                     source_file,
                     utc_now_iso(),
+                    source_url,
                 )
+                fact_provenance.record(conn, triple_id, source_thread, source_url, new=True)
                 return triple_id
 
     def invalidate(
@@ -875,12 +889,16 @@ class KnowledgeGraph:
                 sub_id = self._resolve_entity_id(conn, subject)
                 obj_id = self._resolve_entity_id(conn, obj)
                 rows = conn.execute(
-                    "SELECT id, valid_from FROM triples "
+                    "SELECT id, valid_from, approval_status FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
                     "AND valid_to IS NULL" + within_sql,
                     (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchall()
 
+                if any(r["approval_status"] == "approved" for r in rows) and not (
+                    provenance.current() or {}
+                ).get("person"):
+                    raise ValueError("only a signed-in person can invalidate an approved fact")
                 for row in rows:
                     valid_from = row["valid_from"]
                     if valid_from is not None and _temporal_end_key(ended) < _temporal_start_key(
@@ -913,6 +931,7 @@ class KnowledgeGraph:
         source_thread: str = None,
         source_seq_start: int = None,
         source_seq_end: int = None,
+        source_url: str = None,
         wing: str = None,
         sensitivity: str = None,
         sensitivities=None,
@@ -956,6 +975,7 @@ class KnowledgeGraph:
         source_thread, source_seq_start, source_seq_end = source_range(
             source_thread, source_seq_start, source_seq_end
         )
+        fact_provenance.source_link(source_thread, source_url)
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
         _, sensitivities = visibility(None, sensitivities)
@@ -982,11 +1002,17 @@ class KnowledgeGraph:
                 # Reject a boundary that precedes the old fact's start — an
                 # inverted interval would be invisible to every KG query.
                 rows = conn.execute(
-                    "SELECT id, valid_from, sensitivity FROM triples "
+                    "SELECT id, valid_from, sensitivity, approval_status FROM triples "
                     "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
                     "AND valid_to IS NULL" + within_sql,
                     (sub_id, pred, old_id, wing, *within_params),
                 ).fetchall()
+                if any(
+                    r["approval_status"] == "approved" for r in rows
+                ) and not fact_provenance.may_replace_approved(source_thread, source_url):
+                    raise ValueError(
+                        "only a signed-in person with a source can supersede an approved fact"
+                    )
                 sensitivity = strictest(sensitivity, *(r["sensitivity"] for r in rows))
                 for row in rows:
                     valid_from = row["valid_from"]
@@ -1021,6 +1047,18 @@ class KnowledgeGraph:
                             "UPDATE triples SET sensitivity=? WHERE id=?", (raised, triple_id)
                         )
                     self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
+                    fact_provenance.record(conn, triple_id, source_thread, source_url)
+                    self._add_source(
+                        conn,
+                        triple_id,
+                        source_thread,
+                        source_seq_start,
+                        source_seq_end,
+                        source_drawer_id,
+                        source_file,
+                        utc_now_iso(),
+                        source_url,
+                    )
                     return triple_id
 
                 triple_id = make_triple_id(sub_id, pred, new_id, boundary, utc_now_iso())
@@ -1061,20 +1099,34 @@ class KnowledgeGraph:
                     source_drawer_id,
                     source_file,
                     utc_now_iso(),
+                    source_url,
                 )
                 self._mark_superseded(conn, [r["id"] for r in rows], triple_id)
+                fact_provenance.record(conn, triple_id, source_thread, source_url, new=True)
                 return triple_id
 
     @staticmethod
-    def _add_source(conn, triple_id, thread, start, end, drawer_id, source_file, now) -> bool:
-        """Record one more place a fact was seen. Returns False for a repeat or no source."""
+    def _add_source(
+        conn, triple_id, thread, start, end, drawer_id, source_file, now, source_url=None
+    ) -> bool:
+        """Record a source or its new approval evidence; return False for repeats or no source."""
         if not any(v is not None for v in (thread, drawer_id, source_file)):
             return False
+        evidence = fact_provenance.evidence(thread, source_url)
         return (
             conn.execute(
-                "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
+                "INSERT INTO fact_sources (triple_id, source_thread, "
                 "source_seq_start, source_seq_end, source_drawer_id, source_file, "
-                "added_at, hub_stamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "added_at, hub_stamp, "
+                + ", ".join(evidence)
+                + ") VALUES ("
+                + ", ".join("?" for _ in range(8 + len(evidence)))
+                + ") ON CONFLICT DO UPDATE SET approval_status='approved', "
+                "approved_by=excluded.approved_by, approval_link=excluded.approval_link "
+                "WHERE excluded.approval_status='approved' AND "
+                "(fact_sources.approval_status != 'approved' "
+                "OR fact_sources.approved_by IS NOT excluded.approved_by "
+                "OR fact_sources.approval_link IS NOT excluded.approval_link)",
                 (
                     triple_id,
                     thread,
@@ -1084,6 +1136,7 @@ class KnowledgeGraph:
                     source_file,
                     now,
                     provenance.stamp_json(),
+                    *evidence.values(),
                 ),
             ).rowcount
             == 1
@@ -1100,6 +1153,7 @@ class KnowledgeGraph:
         source_thread: str = None,
         source_seq_start: int = None,
         source_seq_end: int = None,
+        source_url: str = None,
         source_drawer_id: str = None,
         source_file: str = None,
         wing: str = None,
@@ -1116,7 +1170,10 @@ class KnowledgeGraph:
           wing: **supersede** it at ``valid_from`` (default now), as
           :meth:`supersede` does. If that value started after ``valid_from``,
           the new fact is older news: it is filed as **history**, ending
-          where the open value begins, and nothing is closed.
+          where the open value begins, and nothing is closed. A person's
+          approval can be history only relative to another approved value;
+          competing proposals end at the approval boundary or their own start,
+          whichever is later, and link to the approved successor.
         - Otherwise: **add**.
 
         ``sensitivities`` limits which stored facts count, so a caller never
@@ -1130,6 +1187,8 @@ class KnowledgeGraph:
         source_thread, source_seq_start, source_seq_end = source_range(
             source_thread, source_seq_start, source_seq_end
         )
+        fact_provenance.source_link(source_thread, source_url)
+        can_approve = fact_provenance.may_replace_approved(source_thread, source_url)
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
         _, sensitivities = visibility(None, sensitivities)
@@ -1163,6 +1222,7 @@ class KnowledgeGraph:
                     source_drawer_id,
                     source_file,
                     now,
+                    source_url,
                 )
 
                 same = conn.execute(
@@ -1177,20 +1237,44 @@ class KnowledgeGraph:
                         "WHERE id = ?",
                         (now, strictest(sensitivity, same["sensitivity"]), confidence, same["id"]),
                     )
+                    if single_valued and can_approve:
+                        closing = conn.execute(
+                            "SELECT id, valid_from FROM triples WHERE subject=? AND predicate=? AND object != ? "
+                            "AND wing IS ? AND valid_to IS NULL "
+                            "AND (approval_status != 'approved' OR valid_from IS NULL "
+                            f"OR {_sql_temporal_start_expr('valid_from')} <= ?)" + within_sql,
+                            (sub_id, pred, obj_id, wing, boundary, *within_params),
+                        ).fetchall()
+                        for old in closing:
+                            ended = max(
+                                boundary, _temporal_start_key(old["valid_from"]) or boundary
+                            )
+                            conn.execute(
+                                "UPDATE triples SET valid_to=? WHERE id=?", (ended, old["id"])
+                            )
+                        self._mark_superseded(conn, [r["id"] for r in closing], same["id"])
+                    fact_provenance.record(conn, same["id"], source_thread, source_url)
                     added = self._add_source(conn, same["id"], *source)
                     return {"action": "merged", "triple_id": same["id"], "source_added": added}
 
                 rivals = []
                 if single_valued:
                     rivals = conn.execute(
-                        "SELECT t.id, t.valid_from, t.sensitivity, e.name AS obj_name "
+                        "SELECT t.id, t.valid_from, t.sensitivity, t.approval_status, e.name AS obj_name "
                         "FROM triples t JOIN entities e ON t.object = e.id "
                         "WHERE t.subject=? AND t.predicate=? AND t.object != ? AND t.wing IS ? "
                         "AND t.valid_to IS NULL" + within_sql.replace("triples.", "t."),
                         (sub_id, pred, obj_id, wing, *within_params),
                     ).fetchall()
+                if not can_approve:
+                    rivals = [r for r in rivals if r["approval_status"] != "approved"]
                 later = sorted(
-                    (r for r in rivals if r["valid_from"] is not None),
+                    (
+                        r
+                        for r in rivals
+                        if r["valid_from"] is not None
+                        and (not can_approve or r["approval_status"] == "approved")
+                    ),
                     key=lambda r: _temporal_start_key(r["valid_from"]),
                 )
                 later = [
@@ -1222,6 +1306,7 @@ class KnowledgeGraph:
                                 same_history["id"],
                             ),
                         )
+                        fact_provenance.record(conn, same_history["id"], source_thread, source_url)
                         added = self._add_source(conn, same_history["id"], *source)
                         return {
                             "action": "merged",
@@ -1262,10 +1347,12 @@ class KnowledgeGraph:
                         now,
                     ),
                 )
+                fact_provenance.record(conn, triple_id, source_thread, source_url, new=True)
                 self._add_source(conn, triple_id, *source)
                 for rival in closing:
+                    ended = max(boundary, _temporal_start_key(rival["valid_from"]) or boundary)
                     conn.execute(
-                        "UPDATE triples SET valid_to = ? WHERE id = ?", (boundary, rival["id"])
+                        "UPDATE triples SET valid_to = ? WHERE id = ?", (ended, rival["id"])
                     )
                 self._mark_superseded(conn, [r["id"] for r in closing], triple_id)
                 out = {"action": action, "triple_id": triple_id}
@@ -1288,7 +1375,9 @@ class KnowledgeGraph:
                 batch = ids[start : start + 500]
                 rows = conn.execute(
                     "SELECT triple_id, source_thread, source_seq_start, source_seq_end, "
-                    "source_drawer_id, source_file, added_at FROM fact_sources "
+                    "source_drawer_id, source_file, added_at, "
+                    + ", ".join(fact_provenance.COLUMNS)
+                    + " FROM fact_sources "
                     f"WHERE triple_id IN ({', '.join('?' for _ in batch)}) ORDER BY id",
                     batch,
                 ).fetchall()
@@ -1350,10 +1439,7 @@ class KnowledgeGraph:
             with conn:
                 obj_id = self._resolve_entity_id(conn, obj)
                 row = conn.execute(
-                    "SELECT subject, valid_from, confidence, source_closet, source_file, "
-                    "source_drawer_id, adapter_name, hub_stamp, source_thread, "
-                    "source_seq_start, source_seq_end, wing, sensitivity FROM triples "
-                    "WHERE id=? AND valid_to IS NULL",
+                    "SELECT * FROM triples WHERE id=? AND valid_to IS NULL",
                     (triple_id,),
                 ).fetchone()
                 if row is None:
@@ -1381,7 +1467,8 @@ class KnowledgeGraph:
                     "AND confidence IS ? AND source_closet IS ? AND source_file IS ? "
                     "AND source_drawer_id IS ? AND adapter_name IS ? "
                     "AND source_thread IS ? AND source_seq_start IS ? AND source_seq_end IS ? "
-                    "AND wing IS ? AND sensitivity IS ?",
+                    "AND wing IS ? AND sensitivity IS ?"
+                    + "".join(f" AND {key} IS ?" for key in fact_provenance.COLUMNS),
                     (
                         sub_id,
                         pred,
@@ -1397,6 +1484,7 @@ class KnowledgeGraph:
                         row["source_seq_end"],
                         row["wing"],
                         row["sensitivity"],
+                        *(row[key] for key in fact_provenance.COLUMNS),
                     ),
                 ).fetchone()
                 if existing:
@@ -1430,6 +1518,12 @@ class KnowledgeGraph:
                         row["wing"],
                         row["sensitivity"],
                     ),
+                )
+                conn.execute(
+                    "UPDATE triples SET "
+                    + ", ".join(f"{key}=?" for key in fact_provenance.COLUMNS)
+                    + " WHERE id=?",
+                    (*(row[key] for key in fact_provenance.COLUMNS), new_id),
                 )
                 self._mark_superseded(conn, [triple_id], new_id)
                 return new_id
@@ -1775,6 +1869,7 @@ class KnowledgeGraph:
             "superseded_by",
             "wing",
             "sensitivity",
+            *fact_provenance.COLUMNS,
         ),
     }
 
@@ -1812,17 +1907,30 @@ class KnowledgeGraph:
         # value alone then, so an older replica cannot erase a supersede link.
         sent = [col for col in columns if col in row]
         values = [row[col] for col in sent]
-        for col, default in (("status", "active"), ("sensitivity", DEFAULT_SENSITIVITY)):
+        for col, default in (
+            ("status", "active"),
+            ("sensitivity", DEFAULT_SENSITIVITY),
+            ("origin_kind", "unknown"),
+            ("origin_id", "unknown"),
+            ("approval_status", "unknown"),
+        ):
             if col in sent and values[sent.index(col)] is None:
                 values[sent.index(col)] = default
-        updates = ", ".join(
-            # A stale peer must not lower how far a fact may travel.
-            f"sensitivity = {_STRICTER_SENSITIVITY}"
-            if col == "sensitivity" and table == "triples"
-            else f"{col} = excluded.{col}"
-            for col in sent
-            if col != "id"
-        )
+        updates = []
+        for col in sent:
+            if col == "id":
+                continue
+            if col == "sensitivity" and table == "triples":
+                updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
+            elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
+                updates.append(
+                    f"{col} = CASE WHEN triples.approval_status='approved' "
+                    "AND COALESCE(excluded.approval_status, 'unknown') != 'approved' "
+                    f"THEN triples.{col} ELSE excluded.{col} END"
+                )
+            else:
+                updates.append(f"{col} = excluded.{col}")
+        updates = ", ".join(updates)
         with self._lock:
             conn = self._conn()
             with conn:
