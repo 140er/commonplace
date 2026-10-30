@@ -29,11 +29,41 @@ META = ThreadMeta(
     task_ref="#142",
     branch="feat/handoff",
     pr_url="http://127.0.0.1/review/1",
+    cwd="/work/Memory café/雪",
     parent_handoff_id="hof_parent",
 )
 SUCCESSOR = SuccessorRef("agent:next", "http://127.0.0.1/thread/next", "next-thread")
 DOCUMENT = "# handoff\n\nExact words: café 雪\n  keep spaces\r\n\n"
 WAKE_URL = "http://127.0.0.1:9000/wake"
+
+# The pre-cwd handoff table, independent of the current schema under test.
+_LEGACY_HANDOFFS = """
+CREATE TABLE handoffs (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    source_thread_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN ('pending', 'stored', 'launched', 'done', 'failed', 'launch_failed')
+    ),
+    agent TEXT NOT NULL DEFAULT '',
+    task_ref TEXT NOT NULL DEFAULT '',
+    branch TEXT NOT NULL DEFAULT '',
+    pr_url TEXT NOT NULL DEFAULT '',
+    stored_thread_id TEXT NOT NULL DEFAULT '',
+    parent_handoff_id TEXT NOT NULL DEFAULT '',
+    doc_markdown TEXT NOT NULL DEFAULT '',
+    successor_agent_ref TEXT NOT NULL DEFAULT '',
+    successor_url TEXT NOT NULL DEFAULT '',
+    successor_thread_id TEXT NOT NULL DEFAULT '',
+    launch_claimed INTEGER NOT NULL DEFAULT 0 CHECK (launch_claimed IN (0, 1)),
+    error TEXT NOT NULL DEFAULT '',
+    connection_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (workspace_id, idempotency_key)
+);
+"""
 
 
 @pytest.fixture
@@ -136,6 +166,76 @@ def test_upgrade_existing_control_database(open_control):
     assert reopened.webhooks(workspace)[0]["id"] == webhook_id
     assert [row["id"] for row in reopened.due(NOW)] == outbox_ids
     assert [dict(row) for row in upgraded.audit_entries()] == audit_before
+
+
+def test_upgrade_existing_handoff_table_without_cwd(open_control):
+    original = open_control()
+    original._conn.executescript(_LEGACY_HANDOFFS)
+    original._conn.execute(
+        "INSERT INTO handoffs(id, workspace_id, idempotency_key, source_thread_id, state, "
+        "stored_thread_id, doc_markdown, created_at, updated_at) "
+        "VALUES ('hof_legacy', 'workspace-one', 'legacy', 'old-thread', 'stored', "
+        "'thr_legacy', ?, ?, ?)",
+        (DOCUMENT, NOW, NOW),
+    )
+    before = dict(original._conn.execute("SELECT * FROM handoffs").fetchone())
+    assert "cwd" not in before
+
+    upgraded = open_control()
+    db = HandoffDB(upgraded)
+    after = dict(upgraded._conn.execute("SELECT * FROM handoffs").fetchone())
+    assert after == {**before, "cwd": ""}
+    assert db.get("hof_legacy").cwd == ""
+    assert db.by_stored_thread("thr_legacy").doc_markdown == DOCUMENT
+    assert db.list("workspace-one")[0].cwd == ""
+    assert db.set_successor("hof_legacy", SUCCESSOR).cwd == ""
+    assert db.by_successor_thread("workspace-one", SUCCESSOR.thread_id).cwd == ""
+
+    # A second open must preserve data and never try to add the column twice.
+    reopened = HandoffDB(open_control())
+    assert reopened.get("hof_legacy") == db.get("hof_legacy")
+    assert _begin(reopened, key="new").cwd == META.cwd
+    columns = {row["name"]: row for row in upgraded._conn.execute("PRAGMA table_info(handoffs)")}
+    assert columns["cwd"]["type"] == "TEXT"
+    assert columns["cwd"]["notnull"] == 1 and columns["cwd"]["dflt_value"] == "''"
+
+
+def test_concurrent_existing_handoff_table_upgrade(open_control):
+    controls = [open_control() for _ in range(16)]
+    controls[0]._conn.executescript(_LEGACY_HANDOFFS)
+    databases = _race(controls, HandoffDB)
+    assert len(databases) == 16
+    columns = [row["name"] for row in controls[0]._conn.execute("PRAGMA table_info(handoffs)")]
+    assert columns.count("cwd") == 1
+    assert _begin(databases[0]).cwd == META.cwd
+
+
+@pytest.mark.parametrize("cwd", ["", "/work/Memory café/雪", r"C:\Users\labadmin\work\Memory"])
+def test_cwd_is_persisted_and_hydrated_on_all_reads(db, control, open_control, cwd):
+    meta = replace(META, cwd=cwd)
+    handoff = _begin(db, meta=meta)
+    assert handoff.cwd == cwd
+    assert (
+        control._conn.execute("SELECT cwd FROM handoffs WHERE id = ?", (handoff.id,)).fetchone()[0]
+        == cwd
+    )
+    # Retry metadata cannot replace the original working directory.
+    assert _begin(db, meta=replace(meta, cwd="changed")).cwd == cwd
+    assert db.mark_failed(handoff.id, "store error").cwd == cwd
+    retried = _begin(db, meta=meta)
+    assert retried.id == handoff.id and retried.cwd == cwd
+    assert db.mark_stored(handoff.id, "thr_stored", DOCUMENT).cwd == cwd
+    assert db.claim_launch(handoff.id)
+    assert db.mark_launched(handoff.id).cwd == cwd
+    assert db.mark_launch_failed(handoff.id, "launch error").cwd == cwd
+    assert db.release_launch(handoff.id, actor="owner").cwd == cwd
+    completed = db.set_successor(handoff.id, SUCCESSOR)
+    assert completed.cwd == cwd
+    reopened = HandoffDB(open_control())
+    assert reopened.get(handoff.id) == completed
+    assert reopened.list("workspace-one") == [completed]
+    assert reopened.by_stored_thread("thr_stored") == completed
+    assert reopened.by_successor_thread("workspace-one", SUCCESSOR.thread_id) == completed
 
 
 def test_settings_round_trip_nulls_launcher_secret_and_stamps(db, control):
@@ -244,6 +344,7 @@ def test_begin_metadata_and_workspace_scoped_idempotency(db):
     )
     assert handoff.parent_handoff_id == META.parent_handoff_id
     assert handoff.connection_id == "conn_source"
+    assert handoff.cwd == META.cwd
     assert handoff.created_at == NOW and handoff.updated_at == NOW
     assert handoff.successor is None and handoff.error == "" and handoff.stored_thread_id == ""
     repeated, created = db.begin(
@@ -420,6 +521,18 @@ def test_successor_same_agent_is_idempotent_and_different_agent_refused(db):
         db.set_successor(handoff.id, replace(SUCCESSOR, agent_ref="other-agent"))
     assert db.get(handoff.id) == handoff
     assert not db.claim_launch(handoff.id)
+
+
+def test_immediate_successor_follows_documented_state_graph(db, control):
+    handoff = _in_state(db, "stored")
+    control._conn.executescript(
+        "CREATE TRIGGER require_launched_before_done BEFORE UPDATE OF state ON handoffs "
+        "WHEN NEW.state = 'done' AND OLD.state != 'launched' "
+        "BEGIN SELECT RAISE(ABORT, 'handoff must be launched before done'); END;"
+    )
+    completed = db.set_successor(handoff.id, SUCCESSOR)
+    assert completed.state == "done" and completed.successor == SUCCESSOR
+    assert db.get(handoff.id) == completed
 
 
 def test_concurrent_successor_registration_keeps_one_agent(db, open_control):

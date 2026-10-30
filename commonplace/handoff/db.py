@@ -13,9 +13,10 @@ State graph (see ``models.STATES``)::
 
     pending -> stored -> launched -> done
     pending -> failed -> pending (begin retries a failed store)
-    stored -> done (a launcher can register its successor immediately)
     stored/launched -> launch_failed -> stored (explicit release_launch)
 
+Successor registration from ``stored`` performs ``stored -> launched -> done``
+in one transaction, so callers can register an immediately started successor.
 Repeating an identical outcome is a no-op. ``done`` is terminal. A launch
 claim is available once in ``stored`` and only an explicit release after
 launch failure makes another claim available. Authorization and audit
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS handoffs (
     task_ref TEXT NOT NULL DEFAULT '',
     branch TEXT NOT NULL DEFAULT '',
     pr_url TEXT NOT NULL DEFAULT '',
+    cwd TEXT NOT NULL DEFAULT '',
     stored_thread_id TEXT NOT NULL DEFAULT '',
     parent_handoff_id TEXT NOT NULL DEFAULT '',
     doc_markdown TEXT NOT NULL DEFAULT '',
@@ -141,6 +143,10 @@ class HandoffDB:
         self._lock = control_db._lock
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            with self._control._tx() as conn:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(handoffs)")}
+                if "cwd" not in columns:
+                    conn.execute("ALTER TABLE handoffs ADD COLUMN cwd TEXT NOT NULL DEFAULT ''")
 
     def _required(self, handoff_id: str) -> sqlite3.Row:
         """Called with the control lock held, inside a write transaction."""
@@ -263,8 +269,8 @@ class HandoffDB:
             now = _iso(_now())
             conn.execute(
                 "INSERT INTO handoffs(id, workspace_id, idempotency_key, source_thread_id, state, "
-                "agent, task_ref, branch, pr_url, parent_handoff_id, connection_id, created_at, "
-                "updated_at) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?)",
+                "agent, task_ref, branch, pr_url, cwd, parent_handoff_id, connection_id, created_at, "
+                "updated_at) VALUES (?,?,?,?,'pending',?,?,?,?,?,?,?,?,?)",
                 (
                     handoff_id,
                     workspace_id,
@@ -274,6 +280,7 @@ class HandoffDB:
                     meta.task_ref,
                     meta.branch,
                     meta.pr_url,
+                    meta.cwd,
                     meta.parent_handoff_id,
                     connection_id,
                     now,
@@ -333,6 +340,8 @@ class HandoffDB:
                 return _handoff(row)
             if row["state"] not in ("stored", "launched"):
                 raise HandoffDBError(f"cannot register a successor for {row['state']} handoff")
+            if row["state"] == "stored":
+                conn.execute("UPDATE handoffs SET state = 'launched' WHERE id = ?", (handoff_id,))
             conn.execute(
                 "UPDATE handoffs SET successor_agent_ref = ?, successor_url = ?, "
                 "successor_thread_id = ?, state = 'done', launch_claimed = 1, updated_at = ? "
