@@ -20,6 +20,7 @@ import copy
 import http.client
 import json
 import logging
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
@@ -635,7 +636,10 @@ class Gateway:
         self.mediator.gateway = self
         self.routes: dict = {}
         self.prefix_routes: list = []
-        self.secure_cookies = False
+        app_url = os.environ.get("COMMONPLACE_APP_URL") or os.environ.get(
+            "COMMONPLACE_BASE_URL", ""
+        )
+        self.secure_cookies = app_url.startswith("https://")
         events.ensure_schema(db)
         sessions.ensure_schema(db)
         extensions.install(self)
