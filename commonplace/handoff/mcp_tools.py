@@ -12,7 +12,9 @@ thread_chain(thread_id)
 
 from __future__ import annotations
 
+import sqlite3
 from functools import partial
+from pathlib import Path
 
 from commonplace.gateway import LocalTool
 
@@ -65,7 +67,29 @@ _SCHEMAS = {
 }
 
 
-def _refusal(principal, *, name: str):
+def _available(ctx, workspace_id: str) -> bool:
+    if any(
+        row.workspace_id == workspace_id and row.enabled is True
+        for row in ctx.handoff_db.list_settings(workspace_id)
+    ):
+        return True
+    path = Path(ctx.data_dir) / "workspaces" / workspace_id / "threads.sqlite3"
+    if not path.is_file():
+        return False
+    try:
+        store = ctx.store_for(workspace_id)
+        with store._lock:
+            return (
+                store._conn.execute(
+                    "SELECT 1 FROM threads WHERE workspace_id = ? LIMIT 1", (workspace_id,)
+                ).fetchone()
+                is not None
+            )
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def _refusal(ctx, principal, *, name: str):
     policy = principal.policy
     if not policy.has_scope(SCOPE_THREADS_READ):
         return f"needs scope {SCOPE_THREADS_READ}"
@@ -73,6 +97,8 @@ def _refusal(principal, *, name: str):
         return "tool not allowed for this connection"
     if policy.trust == "untrusted":
         return "untrusted connections can't read stored threads"
+    if not _available(ctx, principal.workspace_id):
+        return "handoff is not available"
     return None
 
 
@@ -164,5 +190,5 @@ def register(ctx) -> None:
             name=name,
             schema=schema,
             handler=partial(handle, schema=schema, action=action),
-            refusal=partial(_refusal, name=name),
+            refusal=partial(_refusal, ctx, name=name),
         )

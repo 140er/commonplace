@@ -29,6 +29,7 @@ from dataclasses import fields, is_dataclass
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .db import HandoffDBError
+from .events import _webhook_url
 from .models import (
     EVENTS,
     LAUNCHER_KINDS,
@@ -262,8 +263,11 @@ class _API:
         except ThreadNotFound:
             status, result = 404, {"error": "not found"}
         except SettingsError as error:
-            status = 403 if "only owners" in str(error).lower() else 400
-            result = {"error": str(error)}
+            denied = (
+                "only owners" in str(error).lower() or "only workspace owners" in str(error).lower()
+            )
+            status = 404 if denied else 400
+            result = {"error": "not found" if denied else str(error)}
         except (HandoffDBError, ThreadConflict):
             status, result = 409, {"error": "handoff conflict"}
         except ValueError:
@@ -283,7 +287,7 @@ class _API:
     @staticmethod
     def require(principal, scope: str = "", *, owner: bool = False) -> None:
         if (scope and not principal.policy.has_scope(scope)) or (
-            owner and principal.role != "owner"
+            owner and (principal.role != "owner" or principal.policy.trust == "untrusted")
         ):
             _missing()
 
@@ -293,11 +297,24 @@ class _API:
         if not principal.policy.can_read_wing(THREADS_WING):
             _missing()
 
-    def handoff(self, principal, handoff_id: str):
+    def handoff(self, principal, handoff_id: str, *, read: bool = False, write: bool = False):
         record = self.ctx.handoff_db.get(handoff_id)
         if record is None or record.workspace_id != principal.workspace_id:
             _missing()
+        if write and principal.role != "owner" and record.connection_id != principal.connection_id:
+            _missing()
+        if read and not self.handoff_readable(principal, record):
+            _missing()
         return record
+
+    def handoff_readable(self, principal, record) -> bool:
+        if not record.stored_thread_id:
+            return principal.role == "owner" or record.connection_id == principal.connection_id
+        try:
+            self.thread(principal, record.stored_thread_id)
+        except (ThreadNotFound, _RequestError):
+            return False
+        return True
 
     @staticmethod
     def result(principal, result):
@@ -319,13 +336,28 @@ class _API:
         if path == "/api/handoff":
             self.require(principal, SCOPE_HANDOFF)
             request = _handoff_request(_read_json(handler, MAX_HANDOFF_BYTES))
+            key = request.idempotency_key or f"thread:{request.meta.thread_id}"
+            # A retry is also a read of the existing handoff. Check ownership
+            # before the service can return another connection's saved text.
+            existing = self.ctx.handoff_db.by_key(workspace, key)
+            if existing is not None and existing.connection_id != principal.connection_id:
+                self.handoff(principal, existing.id, write=True)
+                self.readable(principal)
+                self.handoff(principal, existing.id, read=True)
             if request.meta.parent_handoff_id:
-                self.handoff(principal, request.meta.parent_handoff_id)
+                self.readable(principal)
+                self.handoff(principal, request.meta.parent_handoff_id, read=True)
             return 200, self.result(principal, self.ctx.service.run(principal, request))
         if path == "/api/handoffs":
             self.readable(principal)
             records = self.ctx.handoff_db.list(workspace, task_ref=_query(query, "task"))
-            return 200, _public([row for row in records if row.workspace_id == workspace])
+            return 200, _public(
+                [
+                    row
+                    for row in records
+                    if row.workspace_id == workspace and self.handoff_readable(principal, row)
+                ]
+            )
         if path == "/api/settings/handoff":
             return self.settings(handler, principal, query)
         if path == "/api/webhooks":
@@ -339,7 +371,7 @@ class _API:
         if path.startswith("/api/handoffs/"):
             if method == "GET" and len(parts) == 1:
                 self.readable(principal)
-                return 200, _public(self.handoff(principal, record_id))
+                return 200, _public(self.handoff(principal, record_id, read=True))
             if (
                 method == "POST"
                 and len(parts) == 2
@@ -347,13 +379,13 @@ class _API:
             ):
                 if parts[1] == "relaunch":
                     self.require(principal, owner=True)
-                    self.handoff(principal, record_id)
+                    self.handoff(principal, record_id, write=True)
                     _object(_read_json(handler, allow_empty=True), set())
                     return 200, self.result(
                         principal, self.ctx.service.relaunch(principal, record_id)
                     )
                 self.require(principal, SCOPE_HANDOFF)
-                self.handoff(principal, record_id)
+                self.handoff(principal, record_id, write=True)
                 if parts[1] == "launch-failed":
                     data = _object(_read_json(handler, MAX_FAILURE_BYTES), {"error"})
                     error = _text(data, "error", default=None)
@@ -434,6 +466,8 @@ class _API:
                 "rows": _public([row for row in rows if row.workspace_id == workspace]),
                 "effective": _public(effective),
             }
+        if principal.policy.trust == "untrusted":
+            _missing()
         if handler.command == "PUT":
             row = _setting_row(_read_json(handler), workspace)
             row = self.ctx.settings.set(row, actor=principal.actor, is_owner=owner)
@@ -458,9 +492,10 @@ class _API:
             return 200, _public(self.ctx.handoff_db.webhooks(workspace))
         data = _object(_read_json(handler), {"url", "secret", "events"})
         url = _text(data, "url", required=True)
-        target = urlsplit(url)
-        if target.scheme not in ("http", "https") or not target.hostname or target.port == 0:
-            raise _RequestError(400, "invalid url")
+        try:
+            _webhook_url(url)
+        except ValueError:
+            raise _RequestError(400, "invalid url") from None
         events = data.get("events", list(EVENTS))
         if (
             not isinstance(events, list)

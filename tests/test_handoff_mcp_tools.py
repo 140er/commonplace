@@ -7,7 +7,7 @@ import pytest
 
 from commonplace.gateway import LocalTool, Mediator
 from commonplace.handoff.mcp_tools import TOOL_NAMES, register
-from commonplace.handoff.models import RecallHit, StoredThread, ThreadMessage
+from commonplace.handoff.models import RecallHit, SettingRow, StoredThread, ThreadMessage
 from commonplace.handoff.recall import ThreadNotFound
 from commonplace.policy import GATEWAY_LOCAL_TOOLS, TOOL_RULES, Policy, PolicyError
 from mempalace.tool_capabilities import TOOL_CAPABILITIES
@@ -55,7 +55,13 @@ class FakeRecall:
 def setup_tools():
     recall = FakeRecall()
     mediator = SimpleNamespace(local_tools={"other": object()})
-    ctx = SimpleNamespace(gateway=SimpleNamespace(mediator=mediator), recall=recall)
+    ctx = SimpleNamespace(
+        gateway=SimpleNamespace(mediator=mediator),
+        recall=recall,
+        handoff_db=SimpleNamespace(
+            list_settings=lambda workspace: [SettingRow(workspace, "workspace", "", enabled=True)]
+        ),
+    )
     register(ctx)
     principal = SimpleNamespace(
         workspace_id="ws_home",
@@ -324,7 +330,13 @@ def test_worker_cannot_advertise_unregistered_local_tools(setup_tools):
 
 def test_real_hub_visibility_dispatch_and_workspace_isolation(hub):
     recall = FakeRecall(hub.workspace)
-    ctx = SimpleNamespace(gateway=hub.gateway, recall=recall)
+    ctx = SimpleNamespace(
+        gateway=hub.gateway,
+        recall=recall,
+        handoff_db=SimpleNamespace(
+            list_settings=lambda workspace: [SettingRow(workspace, "workspace", "", enabled=True)]
+        ),
+    )
     standard = hub.token(
         "handoff-reader",
         profile="standard",

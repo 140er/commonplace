@@ -133,6 +133,16 @@ class _Data:
         self.calls.append(("get_handoff", record_id))
         return self.records.get(record_id)
 
+    def by_key(self, workspace_id, key):
+        return next(
+            (
+                row
+                for row in self.records.values()
+                if row.workspace_id == workspace_id and row.idempotency_key == key
+            ),
+            None,
+        )
+
     def list(self, workspace_id, *, task_ref="", limit=50):
         self.calls.append(("list", workspace_id, task_ref))
         return [
@@ -322,6 +332,12 @@ class _Harness:
     def reset(self):
         self.calls = []
         self.ctx.handoff_db = _Data(self.workspace, self.other, self.calls)
+        if hasattr(self, "tokens") and "member" in self.tokens:
+            principal = self.db.authenticate_token(self.tokens["member"])
+            record = self.ctx.handoff_db.records["hof_local"]
+            self.ctx.handoff_db.records["hof_local"] = replace(
+                record, connection_id=principal.connection_id
+            )
         self.ctx.settings = _Settings(self.ctx.handoff_db, self.calls)
         self.ctx.service = _Service(self.ctx.handoff_db, self.calls)
         self.ctx.recall = _Recall(self.workspace, self.other, self.calls)
@@ -842,9 +858,9 @@ def test_invalid_settings_fields(hub, patch):
         {"scope": "task", "ref": "#142", "threshold": 0.8},
     ],
 )
-def test_members_setting_restrictions_are_explicit_403(hub, body):
+def test_members_setting_restrictions_look_missing(hub, body):
     status, result, _ = hub.request("PUT", "/api/settings/handoff", body, token="member")
-    assert status == 403 and "only owners" in result["error"]
+    assert (status, result) == (404, NOT_FOUND)
 
 
 def test_settings_validation_and_delete_errors(hub):
