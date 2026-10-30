@@ -223,6 +223,9 @@ def legacy_entity_id(name: str) -> str:
     return (name or "").lower().replace(" ", "_").replace("'", "")
 
 
+# Lifecycle of a fact record. ``status`` says whether a fact was replaced;
+# ``valid_to`` (``current`` on reads) says whether it still holds in time. An
+# invalidated fact ended but was never replaced, so it stays ``active``.
 FACT_STATUSES = ("active", "superseded", "retracted", "expired")
 _MAX_SOURCE_THREAD_LEN = 256
 
@@ -232,6 +235,8 @@ def _seq(value, field: str) -> Optional[int]:
         return None
     if isinstance(value, int) and not isinstance(value, bool):
         number = value
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
     elif isinstance(value, str) and value.strip().isdecimal():
         number = int(value.strip())
     else:
@@ -1281,16 +1286,20 @@ class KnowledgeGraph:
             raise ValueError(f"table must be one of {sorted(self._REPLICATION_TABLES)}")
         if not row.get("id"):
             raise ValueError("replicated row is missing 'id'")
-        values = [row.get(col) for col in columns]
-        if table == "triples" and values[columns.index("status")] is None:
-            # A row from a replica that predates fact status is a live fact.
-            values[columns.index("status")] = "active"
+        # A peer that predates a column sends no key for it. Leave the local
+        # value alone then, so an older replica cannot erase a supersede link.
+        sent = [col for col in columns if col in row]
+        values = [row[col] for col in sent]
+        if "status" in sent and values[sent.index("status")] is None:
+            values[sent.index("status")] = "active"
+        updates = ", ".join(f"{col} = excluded.{col}" for col in sent if col != "id")
         with self._lock:
             conn = self._conn()
             with conn:
                 conn.execute(
-                    f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
-                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    f"INSERT INTO {table} ({', '.join(sent)}) "
+                    f"VALUES ({', '.join('?' for _ in sent)}) "
+                    f"ON CONFLICT(id) DO UPDATE SET {updates}",
                     values,
                 )
 

@@ -228,3 +228,38 @@ def test_import_copies_status_and_range(tmp_path):
     with KnowledgeGraph(db_path=dst) as kg:
         assert _row(kg, old)["superseded_by"] == new
         assert _row(kg, old)["source_seq_start"] == 5
+
+
+def test_an_older_peer_cannot_erase_a_supersede_link(tmp_path):
+    with KnowledgeGraph(db_path=str(tmp_path / "r.sqlite3")) as kg:
+        old = kg.add_triple("Max", "loves", "chess", source_thread="t", source_seq_start=1)
+        new = kg.supersede("Max", "loves", "chess", "go")
+        legacy_row = {
+            key: value
+            for key, value in kg.dump_rows("triples")[0].items()
+            if key
+            not in (
+                "source_thread",
+                "source_seq_start",
+                "source_seq_end",
+                "status",
+                "superseded_by",
+            )
+        }
+        assert legacy_row["id"] == old
+        kg.apply_row("triples", legacy_row)
+        row = _row(kg, old)
+        assert row["status"] == "superseded" and row["superseded_by"] == new
+        assert row["source_thread"] == "t"
+
+
+def test_supersede_onto_the_same_value_links_the_new_row(kg):
+    old = kg.add_triple("Max", "loves", "chess")
+    new = kg.supersede("Max", "loves", "chess", "chess", at="2026-01-01T00:00:00Z")
+    assert new != old
+    assert _row(kg, old)["superseded_by"] == new
+    assert _row(kg, new)["status"] == "active"
+
+
+def test_whole_floats_count_as_message_numbers():
+    assert source_range("t", 3.0, 4.0) == ("t", 3, 4)

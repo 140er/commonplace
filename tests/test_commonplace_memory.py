@@ -191,6 +191,16 @@ def test_save_records_the_chat_range_it_came_from(hub):
     }
 
 
+def test_save_accepts_a_source_sent_as_json_text(hub):
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "json text source", source='{"thread": "t", "seq_start": 2}')
+    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] == {
+        "thread": "t",
+        "seq_start": 2,
+        "seq_end": 2,
+    }
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -198,6 +208,8 @@ def test_save_records_the_chat_range_it_came_from(hub):
         {"seq_start": 1},
         {"thread": "t", "seq_start": 5, "seq_end": 2},
         {"thread": "t", "seq_start": -1},
+        {"thread": "t", "seqStart": 4},
+        '{"thread": "t", "seq_start": 5, "seq_end": 2}',
     ],
 )
 def test_save_refuses_a_bad_source_and_stores_nothing(hub, source):

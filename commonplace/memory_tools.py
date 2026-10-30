@@ -129,7 +129,13 @@ def _source(args):
     value = args.get("source")
     if value is None:
         return {}
-    if not isinstance(value, dict):
+    if isinstance(value, str):
+        # Some MCP clients send an object argument as JSON text.
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError):
+            value = None
+    if not isinstance(value, dict) or set(value) - {"thread", "seq_start", "seq_end"}:
         raise ToolError("no: source must be {thread, seq_start, seq_end}")
     try:
         thread, start, end = source_range(

@@ -159,6 +159,27 @@ class TestWriteTools:
         meta = col.get(ids=[thread_only["drawer_id"]], include=["metadatas"])["metadatas"][0]
         assert meta["source_thread"] == "thread-8" and "source_seq_start" not in meta
 
+    def test_chunked_drawer_keeps_its_chat_range(self, monkeypatch, config, palace_path, kg):
+        _patch_mcp_server(monkeypatch, config, kg)
+        _get_collection(palace_path, create=True)
+        from mempalace.mcp_server import tool_add_drawer, tool_get_drawer
+
+        content = "word " * 2000
+        result = tool_add_drawer(
+            wing="w",
+            room="r",
+            content=content,
+            source_thread="thread-7",
+            source_seq_start=1,
+            source_seq_end=9,
+        )
+        assert result["success"] is True
+        assert result["chunks"] > 1
+        got = tool_get_drawer(result["drawer_id"])
+        assert got["content"] == content
+        assert got["metadata"]["source_thread"] == "thread-7"
+        assert (got["metadata"]["source_seq_start"], got["metadata"]["source_seq_end"]) == (1, 9)
+
     def test_add_drawer_refuses_a_bad_range(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _get_collection(palace_path, create=True)
