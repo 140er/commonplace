@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .db import HandoffDBError
@@ -179,6 +179,7 @@ def _handoff_request(data: dict) -> HandoffRequest:
         usage=usage,
         note=_text(data, "note"),
         idempotency_key=_text(data, "idempotency_key"),
+        next_message=_text(data, "next_message"),
     )
 
 
@@ -341,8 +342,14 @@ class _API:
                 self.readable(principal)
                 self.handoff(principal, existing.id, read=True)
             if request.meta.parent_handoff_id:
-                self.readable(principal)
-                self.handoff(principal, request.meta.parent_handoff_id, read=True)
+                # A parent the caller can't read is dropped, not an error: a
+                # stray marker must never block a handoff (same answer as no
+                # parent, so nothing leaks).
+                try:
+                    self.readable(principal)
+                    self.handoff(principal, request.meta.parent_handoff_id, read=True)
+                except _RequestError:
+                    request = replace(request, meta=replace(request.meta, parent_handoff_id=""))
             return 200, self.result(principal, self.ctx.service.run(principal, request))
         if path == "/api/handoffs":
             self.readable(principal)

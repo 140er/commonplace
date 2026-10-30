@@ -161,6 +161,9 @@ class HandoffRequest:
     usage: Optional[ContextUsage] = None
     note: str = ""  # optional words from the agent itself, stored verbatim
     idempotency_key: str = ""  # default: workspace + thread_id
+    # The user's message the old session won't answer (Codex hands off at the
+    # start of a turn): added to the successor prompt verbatim, not stored.
+    next_message: str = ""
 
 
 @dataclass(frozen=True)

@@ -88,6 +88,7 @@ class _Snapshot:
     meta: ThreadMeta
     doc: Optional[HandoffDoc] = None
     lease_token: Optional[str] = None
+    next_message: str = ""
 
 
 class HandoffService:
@@ -172,9 +173,12 @@ class HandoffService:
                 snapshot = self._snapshots.get((workspace_id, key))
             if snapshot is None:
                 snapshot = _Snapshot(settings, self._meta(handoff))
+            snapshot = replace(snapshot, next_message=request.next_message)
             return self._launch(principal, handoff, snapshot)
 
-        snapshot = _Snapshot(current, meta, lease_token=lease_token)
+        snapshot = _Snapshot(
+            current, meta, lease_token=lease_token, next_message=request.next_message
+        )
         with self.control_db._lock:
             self._snapshots[(workspace_id, key)] = snapshot
         self._emit(EVENT_STARTED, principal, handoff)
@@ -378,6 +382,7 @@ class HandoffService:
                 prompt = writer.successor_prompt(doc, markdown=handoff.doc_markdown)
             else:
                 prompt = writer.successor_prompt(doc)
+            prompt = writer.with_next_message(prompt, snapshot.next_message)
             with self.control_db._lock:
                 current = self.db.get(handoff.id)
                 if current is None or current.state != "stored" or current.successor is not None:

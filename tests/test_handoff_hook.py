@@ -332,6 +332,7 @@ def test_above_threshold_payload_and_detached_successor(local, api, monkeypatch,
         "usage": {"used_tokens": 180_000, "window_tokens": 200_000, "model": "claude-test"},
         "note": "",
         "idempotency_key": "",
+        "next_message": "",
     }
     assert api.calls[2]["route"] == "/api/handoffs/hof_one/successor"
     assert api.calls[2]["body"] == {"agent_ref": ref}
@@ -604,10 +605,10 @@ def test_codex_marks_pending_then_hands_off_at_next_turn(local, api, monkeypatch
     assert request["meta"]["thread_id"] == "session-one"
     assert request["meta"]["model"] == "gpt-test"
     assert request["transcript_format"] == "codex"
+    # The hub adds the message to the successor prompt, whatever launcher runs.
+    assert request["next_message"] == message
     prompt_file = Path(result["reason"].removeprefix("Context handed off. Successor: "))
-    prompt = prompt_file.read_bytes().decode()
-    assert prompt.startswith(api.reply["prompt"])
-    assert "````\n" + message + "\n````" in prompt
+    assert prompt_file.read_bytes().decode() == api.reply["prompt"]
     # Nothing pending any more; the same session keeps pointing at the successor.
     local.data["prompt"] = "another"
     out, _ = run_hook(local, monkeypatch, capsys, client="codex")
@@ -937,3 +938,179 @@ def test_no_or_malformed_marker_sends_no_parent(local, api, monkeypatch, capsys,
     _first_message(local, text)
     run_hook(local, monkeypatch, capsys)
     assert api.calls[1]["body"]["meta"]["parent_handoff_id"] == ""
+
+
+# ── Review fixes: Codex flow and the chain marker ──────────────────────────
+
+
+def _pending_files(local):
+    return list((local.home / ".commonplace" / "handoff-cache").glob("*.pending.json"))
+
+
+def _mark_codex(local, monkeypatch, capsys, event="Stop"):
+    local.usage = ContextUsage(180_000, 200_000, "gpt-test")
+    local.data["hook_event_name"] = event
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out) == {"systemMessage": hook.PENDING_NOTICE}
+
+
+def test_codex_hub_started_successor_keeps_blocking(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys)
+    api.reply = {
+        "action": "handoff",
+        "launch": False,
+        "prompt": "",
+        "handoff": {
+            "id": "hof_one",
+            "stored_thread_id": "thr_one",
+            "source_thread_id": "session-one",
+            "state": "done",
+            "successor": {"agent_ref": "t3:thread-b", "url": "", "thread_id": ""},
+        },
+    }
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="next step please")
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
+    assert _handoff_posts(api)[0]["body"]["next_message"] == "next step please"
+    assert not _pending_files(local)
+    # Later prompts in the old session keep pointing at the successor.
+    local.data["prompt"] = "and another"
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block" and len(_handoff_posts(api)) == 1
+    # A Stop in the old session never "blocks" (in Codex that means: go on).
+    local.data["hook_event_name"] = "Stop"
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert set(json.loads(out)) == {"systemMessage"}
+
+
+def test_codex_stale_mark_from_another_identity_is_replaced(local, api, monkeypatch, capsys):
+    local.usage = ContextUsage(180_000, 200_000, "gpt-test")
+    local.data["hook_event_name"] = "Stop"
+    run_hook(local, monkeypatch, capsys, client="codex")
+    [pending] = _pending_files(local)
+    pending.write_text(json.dumps({"context": "someone else", "event": "Stop"}))
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out) == {"systemMessage": hook.PENDING_NOTICE}
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="go")
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
+
+
+def test_codex_mark_expires_when_context_is_no_longer_full(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys)
+    local.usage = ContextUsage(20_000, 200_000, "gpt-test")  # compacted meanwhile
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    assert _handoff_posts(api) == [] and not _pending_files(local)
+
+
+def test_codex_precompact_mark_hands_off_even_below_threshold(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys, event="PreCompact")
+    local.usage = ContextUsage(20_000, 200_000, "gpt-test")
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    out, _ = run_hook(local, monkeypatch, capsys, client="codex")
+    assert json.loads(out)["decision"] == "block"
+
+
+def test_codex_failed_turn_start_backs_off(local, api, monkeypatch, capsys):
+    _mark_codex(local, monkeypatch, capsys)
+    api.statuses["/api/handoff"] = 500
+    local.data.update(hook_event_name="UserPromptSubmit", prompt="hi")
+    run_hook(local, monkeypatch, capsys, client="codex")
+    assert len(_handoff_posts(api)) == 1
+    [pending] = _pending_files(local)
+    marked = json.loads(pending.read_text())
+    assert marked["attempts"] == 1 and marked["retry_after"] > hook.time.time() + 50
+    # Within the wait: no new upload.
+    assert run_hook(local, monkeypatch, capsys, client="codex") == ("", "")
+    assert len(_handoff_posts(api)) == 1
+    # After it: one more try, and the wait doubles.
+    now = hook.time.time()
+    monkeypatch.setattr(hook.time, "time", lambda: now + 61)
+    run_hook(local, monkeypatch, capsys, client="codex")
+    assert len(_handoff_posts(api)) == 2
+    marked = json.loads(pending.read_text())
+    assert marked["attempts"] == 2 and marked["retry_after"] >= now + 61 + 120
+
+
+def _user_line(text):
+    return json.dumps({"type": "user", "message": {"role": "user", "content": text}})
+
+
+@pytest.mark.parametrize(
+    "lines,expected",
+    [
+        # Marker on the last line of the first user message.
+        (
+            [_user_line("Continue.\n\ncommonplace-handoff-id: hof_00000000000000bb")],
+            "hof_00000000000000bb",
+        ),
+        # A quoted older marker in the doc doesn't win over the last line.
+        (
+            [
+                _user_line(
+                    "commonplace-handoff-id: hof_00000000000000aa\n...\ncommonplace-handoff-id: hof_00000000000000bb"
+                )
+            ],
+            "hof_00000000000000bb",
+        ),
+        # Not on the last line: ignored.
+        ([_user_line("commonplace-handoff-id: hof_00000000000000aa\nplease go on")], ""),
+        # In a tool result, not the user's own message: ignored.
+        (
+            [
+                _user_line("Fix the bug"),
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "t1",
+                                    "content": "commonplace-handoff-id: hof_00000000000000aa",
+                                }
+                            ],
+                        },
+                    }
+                ),
+            ],
+            "",
+        ),
+        # Codex first user message.
+        (
+            [
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "<environment_context>x</environment_context>",
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Go.\ncommonplace-handoff-id: hof_00000000000000cc",
+                        },
+                    }
+                ),
+            ],
+            "hof_00000000000000cc",
+        ),
+    ],
+)
+def test_parent_marker_only_from_the_first_user_message(tmp_path, lines, expected):
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    assert hook._parent_from_transcript(path) == expected

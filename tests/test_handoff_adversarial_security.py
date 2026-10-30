@@ -758,19 +758,24 @@ def test_retry_cannot_take_over_another_connections_handoff(security, token):
 
 
 def test_parent_pointer_cannot_probe_threads_without_read_scope(security):
-    def attempt(parent):
+    def attempt(parent, thread):
         return security.request(
             "POST",
             "/api/handoff",
             {
-                "meta": {"thread_id": "parent-probe", "parent_handoff_id": parent},
+                "meta": {"thread_id": thread, "parent_handoff_id": parent},
                 "transcript": '[{"role":"user","content":"probe"}]',
                 "transcript_format": "messages",
             },
             token="missing",
         )[:2]
 
-    assert attempt(security.record.id) == attempt("hof_missing") == (404, json.dumps(NOT_FOUND))
+    # An unreadable parent is dropped, so a real id and a made-up one give
+    # the same answer: nothing about the other thread leaks.
+    real = attempt(security.record.id, "parent-probe-a")
+    fake = attempt("hof_missing", "parent-probe-b")
+    assert real[0] == fake[0]
+    assert TEXT_MARKER not in real[1] and security.record.id not in real[1]
 
 
 def test_app_settings_writes_require_owner_membership(security):

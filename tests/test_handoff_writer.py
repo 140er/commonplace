@@ -505,3 +505,14 @@ def test_successor_prompt_ends_with_the_handoff_id_marker():
     prompt = successor_prompt(doc)
     assert prompt.endswith("\n\ncommonplace-handoff-id: hof_1a")
     assert "commonplace-handoff-id" not in successor_prompt(HandoffDoc(goal="g", status="s"))
+
+
+def test_next_message_goes_before_the_marker_line():
+    doc = HandoffDoc(
+        goal="g", status="s", stored_thread_id="thr_0123456789abcdef", handoff_id="hof_1a"
+    )
+    from commonplace.handoff.writer import with_next_message
+
+    prompt = with_next_message(successor_prompt(doc), "please continue")
+    assert prompt.endswith("```\nplease continue\n```\n\ncommonplace-handoff-id: hof_1a")
+    assert with_next_message("plain", "") == "plain"

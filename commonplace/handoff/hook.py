@@ -36,6 +36,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -161,21 +162,68 @@ def _settings(path: Path, context: str, server: str, token: str, agent: str, tas
     return settings
 
 
-_PARENT_MARKER = re.compile(rb"commonplace-handoff-id: (hof_[0-9a-f]{8,64})\b")
+_PARENT_MARKER = re.compile(r"commonplace-handoff-id: (hof_[0-9a-f]{8,64})")
+
+
+def _first_user_text(line: dict) -> Optional[str]:
+    """A user message's own text (Claude Code or Codex line), else None."""
+    if line.get("type") == "user":
+        content = (line.get("message") or {}).get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            return "\n".join(texts) if texts else None
+        return None
+    payload = line.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if line.get("type") == "event_msg" and payload.get("type") == "user_message":
+        message = payload.get("message")
+        return message if isinstance(message, str) else None
+    if payload.get("type") == "message" and payload.get("role") == "user":
+        texts = [
+            part.get("text", "")
+            for part in payload.get("content") or []
+            if isinstance(part, dict) and part.get("type") == "input_text"
+        ]
+        return "\n".join(texts) if texts else None
+    return None
 
 
 def _parent_from_transcript(path) -> str:
     """The handoff id a successor prompt names in its last line
-    (``writer.HANDOFF_ID_MARKER``), from the start of this agent's own
-    transcript: how a successor without COMMONPLACE_HANDOFF_ID in its
-    environment (a T3 thread) links into the chain. The server checks it."""
+    (``writer.HANDOFF_ID_MARKER``): how a successor without
+    COMMONPLACE_HANDOFF_ID in its environment (a T3 thread) links into the
+    chain. Only the last line of this agent's first user message counts, so
+    a marker quoted anywhere else (a tool result, a doc) is ignored. The
+    server checks it and drops a parent the caller can't read."""
     try:
         with open(path, "rb") as stream:
             head = stream.read(262_144)
     except OSError:
         return ""
-    found = _PARENT_MARKER.search(head)
-    return found.group(1).decode("ascii") if found else ""
+    for raw in head.split(b"\n"):
+        try:
+            line = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError):
+            continue
+        if not isinstance(line, dict):
+            continue
+        text = _first_user_text(line)
+        if text is None:
+            continue
+        # Codex writes some harness text as user messages first; skip those.
+        if text.lstrip().startswith(("<environment_context>", "<user_instructions>")):
+            continue
+        last = text.rstrip().rpartition("\n")[2].strip()
+        found = _PARENT_MARKER.fullmatch(last)
+        return found.group(1) if found else ""
+    return ""
 
 
 def _branch(cwd: str) -> str:
@@ -199,26 +247,15 @@ def _branch(cwd: str) -> str:
 PENDING_NOTICE = "Context is nearly full. It hands off at the start of the next turn."
 
 
-def _output(client: str, successor: str) -> dict:
+def _output(client: str, successor: str, *, turn_start: bool = False) -> dict:
     reason = f"Context handed off. Successor: {successor}"
     if client == "codex":
-        # Only the start of a turn can refuse work: the old session must not
-        # answer a message its successor is now handling.
-        return {"decision": "block", "reason": reason, "systemMessage": reason}
+        # Only a turn start may block: there it refuses the user's message,
+        # which the successor now has. On Stop, "block" would mean "go on".
+        if turn_start:
+            return {"decision": "block", "reason": reason, "systemMessage": reason}
+        return {"systemMessage": reason}
     return {"continue": False, "stopReason": reason}
-
-
-def _fence(text: str) -> str:
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    fence = "`" * max(3, longest + 1)
-    return f"{fence}\n{text}\n{fence}"
-
-
-def _with_next_message(prompt: str, message: str) -> str:
-    """The successor also gets the message the old session won't answer."""
-    if not message:
-        return prompt
-    return prompt + "\n\nThe user's next message, not yet answered:\n\n" + _fence(message)
 
 
 def _register(server: str, token: str, record: dict, journal: Path) -> None:
@@ -245,14 +282,16 @@ def _report_launch_failure(server: str, token: str, handoff_id: str, error: str)
         pass
 
 
-def _resume(record: dict, journal: Path, client: str, server: str, token: str):
+def _resume(
+    record: dict, journal: Path, client: str, server: str, token: str, turn_start: bool = False
+):
     if record.get("state") == "manual" and isinstance(record.get("prompt_file"), str):
-        return _output(client, record["prompt_file"])
+        return _output(client, record["prompt_file"], turn_start=turn_start)
     if record.get("state") != "launched":
         return None
     if not record.get("registered"):
         _register(server, token, record, journal)
-    return _output(client, record["agent_ref"])
+    return _output(client, record["agent_ref"], turn_start=turn_start)
 
 
 def _launch(
@@ -263,13 +302,11 @@ def _launch(
     client: str,
     server: str,
     token: str,
-    next_message: str = "",
 ):
     handoff = reply["handoff"]
     prompt = reply.get("prompt")
     if not isinstance(prompt, str) or not prompt:
         raise ValueError("Missing prompt")
-    prompt = _with_next_message(prompt, next_message)
     config_path = Path.home() / ".commonplace" / "handoff-client.json"
     if config_path.exists():
         with config_path.open(encoding="utf-8") as stream:
@@ -297,7 +334,7 @@ def _launch(
     # must never start a second process after a partial success or crash.
     _write_json(journal, record)
     if not argv:
-        return _output(client, str(prompt_file))
+        return _output(client, str(prompt_file), turn_start=True)
     replacements = {
         "prompt": prompt,
         "prompt_file": str(prompt_file),
@@ -339,7 +376,7 @@ def _launch(
     record.update(state="launched", agent_ref=f"pid:{process.pid}", registered=False)
     _write_json(journal, record)
     _register(server, token, record, journal)
-    return _output(client, record["agent_ref"])
+    return _output(client, record["agent_ref"], turn_start=True)
 
 
 def _handoff(
@@ -349,7 +386,7 @@ def _handoff(
     meta: ThreadMeta,
     server: str,
     token: str,
-    next_message: str = "",
+    turn_start: bool = False,
 ):
     if reply.get("action") != "handoff":
         return None
@@ -365,14 +402,26 @@ def _handoff(
     ):
         raise ValueError("Invalid handoff")
     if reply["launch"]:
-        return _launch(reply, journal, context, meta.cwd, meta.client, server, token, next_message)
+        return _launch(reply, journal, context, meta.cwd, meta.client, server, token)
     successor = handoff.get("successor")
     if (
         isinstance(successor, dict)
         and isinstance(successor.get("agent_ref"), str)
         and successor["agent_ref"]
     ):
-        return _output(meta.client, successor["agent_ref"])
+        # The hub started it (command or webhook launcher). Remember that, so
+        # later hooks of this session keep pointing at the successor.
+        _write_json(
+            journal,
+            {
+                "context": context,
+                "handoff_id": handoff["id"],
+                "state": "launched",
+                "agent_ref": successor["agent_ref"],
+                "registered": True,
+            },
+        )
+        return _output(meta.client, successor["agent_ref"], turn_start=turn_start)
     # A claimed launch without a known successor is not proof one is running.
     return None
 
@@ -447,7 +496,7 @@ def _run(argv, server: str, token: str):
             if not isinstance(record, dict):
                 raise ValueError("Invalid launch record")
             if record.get("context") == context:
-                return _resume(record, journal, client, server, token)
+                return _resume(record, journal, client, server, token, turn_start)
         pending = cache_dir / f"{key}.pending.json"
         usage = trigger.usage_from_tail(
             str(transcript_path),
@@ -455,21 +504,12 @@ def _run(argv, server: str, token: str):
             override_window=settings.context_window,
             configured=trigger.configured_model(cwd) if client == "claude-code" else "",
         )
-        if turn_start:
-            # Codex: hand off now only if an earlier hook marked this session.
-            marked = _read_json(pending) if pending.exists() else None
-            if not isinstance(marked, dict) or marked.get("context") != context:
-                return None
-        else:
-            if event != "PreCompact" and not trigger.should_handoff(usage, settings):
-                return None
-            if client == "codex":
-                # A Codex hook can't stop the running turn: mark it, hand off
-                # when the next one starts. Notice once.
-                if pending.exists():
-                    return None
-                _write_json(pending, {"context": context, "event": event})
-                return {"systemMessage": PENDING_NOTICE}
+        marked = _read_json(pending) if pending.exists() else None
+        if not isinstance(marked, dict) or marked.get("context") != context:
+            marked = None  # another identity's or unreadable: as if absent
+        go, notice = _due(event, client, turn_start, marked, usage, settings, pending, context)
+        if not go:
+            return notice
         with transcript_path.open(encoding="utf-8", newline="") as stream:
             transcript_text = stream.read()
         meta = ThreadMeta(
@@ -483,24 +523,77 @@ def _run(argv, server: str, token: str):
             parent_handoff_id=os.environ.get("COMMONPLACE_HANDOFF_ID", "")
             or _parent_from_transcript(transcript_path),
         )
-        request = HandoffRequest(
-            meta=meta, transcript=transcript_text, transcript_format=client, usage=usage
-        )
-        reply = _request(server, token, "/api/handoff", asdict(request))
         next_message = data.get("prompt", "") if turn_start else ""
-        output = _handoff(
-            reply,
-            journal,
-            context,
-            meta,
-            server,
-            token,
-            next_message if isinstance(next_message, str) else "",
+        request = HandoffRequest(
+            meta=meta,
+            transcript=transcript_text,
+            transcript_format=client,
+            usage=usage,
+            # The hub adds it to the successor prompt, whichever launcher runs.
+            next_message=next_message if isinstance(next_message, str) else "",
         )
-        if turn_start and (output is not None or reply.get("reason") == "off"):
-            # Handed off, or handoff was turned off: nothing is pending now.
-            pending.unlink(missing_ok=True)
+        try:
+            reply = _request(server, token, "/api/handoff", asdict(request))
+            output = _handoff(reply, journal, context, meta, server, token, turn_start)
+        except Exception:
+            if turn_start:
+                _back_off(pending, marked)
+            raise
+        if turn_start:
+            if output is not None or reply.get("reason") == "off":
+                # Handed off, or handoff was turned off: nothing is pending now.
+                pending.unlink(missing_ok=True)
+            else:
+                _back_off(pending, marked)
         return output
+
+
+def _due(event, client, turn_start, marked, usage, settings, pending: Path, context: str):
+    """Whether to hand off now, else the output to print (or None)."""
+    if turn_start:
+        # Codex: hand off now only if an earlier hook marked this session.
+        if marked is None:
+            return False, None
+        # Still due? A PreCompact mark always is; otherwise the context must
+        # still be over the threshold (it may have been compacted since).
+        if marked.get("event") != "PreCompact" and not trigger.should_handoff(usage, settings):
+            pending.unlink(missing_ok=True)
+            return False, None
+        if time.time() < _number(marked.get("retry_after")):
+            return False, None
+        return True, None
+    if event != "PreCompact" and not trigger.should_handoff(usage, settings):
+        return False, None
+    if client == "codex":
+        # A Codex hook can't stop the running turn: mark it, hand off when
+        # the next one starts. Notice once.
+        if marked is not None:
+            return False, None
+        _write_json(pending, {"context": context, "event": event, "attempts": 0})
+        return False, {"systemMessage": PENDING_NOTICE}
+    return True, None
+
+
+def _number(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _back_off(pending: Path, marked: dict) -> None:
+    """A failed turn-start handoff waits 1, 2, 4… up to 30 minutes before
+    the next try, instead of re-sending the whole transcript every turn."""
+    attempts = int(_number(marked.get("attempts"))) + 1
+    marked = {
+        **marked,
+        "attempts": attempts,
+        "retry_after": time.time() + min(60 * 2 ** (attempts - 1), 1800),
+    }
+    try:
+        _write_json(pending, marked)
+    except OSError:
+        pass
 
 
 def main(argv=None) -> int:

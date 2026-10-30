@@ -234,6 +234,21 @@ def render_markdown(doc: HandoffDoc) -> str:
 HANDOFF_ID_MARKER = "commonplace-handoff-id: "
 
 
+def with_next_message(prompt: str, message: str) -> str:
+    """The successor also gets the message the old session won't answer,
+    fenced as data (a fence longer than any backtick run inside it). The
+    handoff id marker stays the prompt's last line."""
+    if not message:
+        return prompt
+    longest = max((len(run) for run in re.findall(r"`+", message)), default=0)
+    fence = "`" * max(3, longest + 1)
+    block = "The user's next message, not yet answered:\n\n" + f"{fence}\n{message}\n{fence}"
+    body, sep, last = prompt.rpartition("\n\n")
+    if sep and last.startswith(HANDOFF_ID_MARKER):
+        return body + "\n\n" + block + "\n\n" + last
+    return prompt + "\n\n" + block
+
+
 def successor_prompt(doc: HandoffDoc, *, markdown: Optional[str] = None) -> str:
     """The successor's first message: the markdown plus how to read the old
     thread (``thread_recall(thread_id, query)``, ``thread_get(thread_id,

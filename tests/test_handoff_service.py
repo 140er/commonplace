@@ -1173,3 +1173,14 @@ def test_completed_event_is_not_lost_when_emit_fails_before_idempotent_retry(rig
     repeated = rig.service.register_successor(rig.principal, completed.id, ref)
     assert repeated == completed
     assert rig.events.delivered.count(EVENT_COMPLETED) == 1
+
+
+@pytest.mark.parametrize("kind", ["client", "command", "webhook"])
+def test_next_message_reaches_the_successor_prompt(rig, kind):
+    rig.settings.current = HandoffSettings(enabled=True, launcher=LauncherConfig(kind=kind))
+    if kind != "client":
+        rig.successor = SuccessorRef("new-agent")
+    message = "Ship it.\n```\nx\n```"
+    result = rig.service.run(rig.principal, make_request(next_message=message))
+    prompt = result.prompt if kind == "client" else rig.launch_calls[-1][2]
+    assert prompt.endswith("not yet answered:\n\n````\n" + message + "\n````")

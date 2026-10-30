@@ -539,10 +539,20 @@ def test_handoff_rejects_invalid_nested_fields(hub, patch):
 
 
 @pytest.mark.parametrize("parent", ["hof_other", "missing"])
-def test_handoff_parent_must_be_in_workspace(hub, parent):
+def test_unreadable_parent_is_dropped_not_an_error(hub, parent):
+    # A stray chain marker must never block a handoff; another workspace's
+    # parent and a missing one look the same: no parent.
     data = {**HANDOFF_BODY, "meta": {"thread_id": "source", "parent_handoff_id": parent}}
-    assert hub.request("POST", "/api/handoff", data)[:2] == (404, NOT_FOUND)
-    assert not any(call[0] == "run" for call in hub.calls)
+    assert hub.request("POST", "/api/handoff", data)[0] == 200
+    request = next(call[2] for call in hub.calls if call[0] == "run")
+    assert request.meta.parent_handoff_id == ""
+
+
+def test_next_message_reaches_the_service(hub):
+    data = {**HANDOFF_BODY, "next_message": "  ship it\n"}
+    assert hub.request("POST", "/api/handoff", data)[0] == 200
+    request = next(call[2] for call in hub.calls if call[0] == "run")
+    assert request.next_message == "  ship it\n"
 
 
 def test_disabled_or_failed_handoff_result_is_returned_unchanged(hub, monkeypatch):
