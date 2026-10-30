@@ -46,7 +46,7 @@ def test_fixture_detection_and_explicit_format(name, fmt):
 
 def test_claude_blocks_and_metadata_are_verbatim():
     text = _fixture("claude.jsonl")
-    messages = parse(text)
+    messages = [message for message in parse(text) if message.raw.strip()]
     assert len(messages) == 11
     assert messages[0].text == "  Café ☕\n第二行  "
     assert [(m.role, m.kind) for m in messages[:6]] == [
@@ -75,9 +75,7 @@ def test_claude_fixture_has_crlf_blank_line_and_live_tail():
     text = _fixture("claude.jsonl")
     assert "\r\n\r\n" in text
     assert not text.endswith(("\r", "\n"))
-    assert "".join(raw for raw, _ in groupby(m.raw for m in parse(text))) == "".join(
-        raw for raw in text.splitlines(keepends=True) if raw.strip()
-    )
+    assert "".join(raw for raw, _ in groupby(m.raw for m in parse(text))) == text
 
 
 @pytest.mark.parametrize("role", ["user", "assistant"])
@@ -231,9 +229,9 @@ def test_jsonl_raw_line_endings_blanks_and_whitespace(fmt, ending):
     )
     raw = " \t" + json.dumps(record, ensure_ascii=False) + " \t" + ending
     messages = parse("\r\n \t\r\n" + raw)
-    assert len(messages) == 1
-    assert messages[0].raw == raw
-    assert messages[0].text == "\u2028 \u2029 \x85 🌍"
+    assert len(messages) == 3
+    assert [message.raw for message in messages] == ["\r\n", " \t\r\n", raw]
+    assert messages[2].text == "\u2028 \u2029 \x85 🌍"
 
 
 @pytest.mark.parametrize("fmt", ["claude-code", "codex"])
@@ -469,7 +467,7 @@ def test_jsonl_lossless_property(words, ending, codex):
     text = ending + ending.join(lines) + tail
     messages = parse(text)
     distinct_raw = [raw for raw, _ in groupby(m.raw for m in messages)]
-    assert "".join(distinct_raw) == "".join(lines) + tail
+    assert "".join(distinct_raw) == text
     assert [m.text for m in messages if m.kind == "message"] == words
     _assert_dense(messages)
 

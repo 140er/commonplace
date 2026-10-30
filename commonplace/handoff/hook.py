@@ -368,16 +368,22 @@ def _run(argv, server: str, token: str):
     task = os.environ.get("COMMONPLACE_TASK", "")
     context = _context(server, token, client, agent, task)
     cache_dir = Path.home() / ".commonplace" / "handoff-cache"
-    _private_dir(cache_dir.parent)
-    _private_dir(cache_dir)
     key = hashlib.sha256(session.encode()).hexdigest()
     cache = cache_dir / f"{key}.json"
     journal = cache_dir / f"{key}.launch.json"
+    # Disabled hooks only touch the settings cache. In particular, never
+    # create a launch lock or inspect a journal before the enabled gate.
+    try:
+        _private_dir(cache_dir.parent)
+        _private_dir(cache_dir)
+        settings = _settings(cache, context, server, token, agent, task)
+    except Exception:
+        # Unknown settings must behave like off, including silent fallback.
+        return None
+    if not settings.enabled:
+        return None
     with _session_lock(cache_dir / f"{key}.lock") as acquired:
         if not acquired:
-            return None
-        settings = _settings(cache, context, server, token, agent, task)
-        if not settings.enabled:
             return None
         # A malformed journal must not erase evidence of a previous launch.
         if journal.exists():

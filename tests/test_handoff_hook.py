@@ -395,7 +395,7 @@ def test_http_error_falls_back(local, api, monkeypatch, capsys, route, status):
     api.raw[route] = b"cmmn_test-secret\nexact text"
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
-    assert len(err.splitlines()) == 1
+    assert len(err.splitlines()) == int(route != "/api/settings/handoff")
     assert local.children == []
 
 
@@ -405,7 +405,7 @@ def test_bad_response_json_falls_back(local, api, monkeypatch, capsys, route, ra
     api.raw[route] = raw
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
-    assert err
+    assert bool(err) == (route != "/api/settings/handoff")
     assert local.children == []
 
 
@@ -417,7 +417,7 @@ def test_timeout_falls_back(local, api, monkeypatch, capsys, route):
     out, err = run_hook(local, monkeypatch, capsys)
     api.release.set()
     assert out == ""
-    assert err
+    assert bool(err) == (route != "/api/settings/handoff")
     assert time.monotonic() - started < 1
     assert local.children == []
 
@@ -427,7 +427,7 @@ def test_redirect_is_not_followed(local, api, monkeypatch, capsys):
     api.location = api.url + "/redirected"
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
-    assert err
+    assert err == ""
     assert len(api.calls) == 1
 
 
@@ -435,7 +435,7 @@ def test_lock_contention_skips_everything(local, api, monkeypatch, capsys):
     import fcntl
 
     path, _ = cache_paths(local)
-    path.parent.mkdir(parents=True)
+    seed_cache(local, api)
     lock = path.with_suffix(".lock")
     with lock.open("w") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -518,7 +518,7 @@ def test_invalid_settings_do_not_assume_enabled(local, api, monkeypatch, capsys,
     local.data["hook_event_name"] = "PreCompact"
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
-    assert err
+    assert err == ""
     assert local.tail_calls == []
     assert len(api.calls) == 1
 
@@ -742,7 +742,7 @@ def test_atomic_write_failure_removes_temporary_file(local, api, monkeypatch, ca
     monkeypatch.setattr(hook.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("failed")))
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
-    assert err
+    assert err == ""
     directory = cache_paths(local)[0].parent
     assert not list(directory.glob(".handoff-*"))
     assert len(api.calls) == 1
