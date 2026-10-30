@@ -47,9 +47,25 @@ class HandoffContext:
     def call_tool(self, principal, name: str, arguments: dict):
         return self.gateway.mediator.workers.call_tool(principal, name, arguments)
 
+    def save_fact(self, principal, arguments: dict):
+        """Use the public fact-save gate, including scope, trust and privacy."""
+        response = self.gateway.mediator.handle(
+            principal,
+            {
+                "jsonrpc": "2.0",
+                "id": "handoff-fact",
+                "method": "tools/call",
+                "params": {"name": "fact_save", "arguments": arguments},
+            },
+        )
+        result = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(result, dict) or result.get("isError") or response.get("error"):
+            raise RuntimeError("handoff fact write refused or unavailable")
+        return result
+
     def close(self) -> None:
         if self.service is not None:
-            self.service.wait_for_mirrors(timeout=30)
+            self.service.close(timeout=30)
         with self._lock:
             for store in self._stores.values():
                 store.close()
@@ -83,6 +99,7 @@ def install(gateway, data_dir=None, **_ignored) -> HandoffContext:
         store_for=ctx.store_for,
         events=ctx.events,
         call_tool=ctx.call_tool,
+        save_fact=ctx.save_fact,
         prompt_dir=str(Path(data_dir) / "handoff-prompts"),
     )
     gateway.handoff = ctx

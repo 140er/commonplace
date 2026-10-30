@@ -318,3 +318,43 @@ def test_the_cli_rejects_too_few_threads():
     with pytest.raises(SystemExit) as exc:
         bench.main(["--threads", "35"])
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("threads", [36, 120])
+def test_real_extraction_meets_its_grounded_private_fixture(threads):
+    report = bench.run(threads=threads, saver=bench.extraction_saver)
+    assert report["passed"], report
+    assert all(report[key] == bar for key, bar in bench.BARS.items())
+    assert report["old_thread_recall"] == 1.0
+
+
+def test_extraction_fixture_is_valid_independently_of_the_extractor():
+    corpus = bench.build_extraction_corpus()
+    report = bench.run(corpus=corpus)
+    assert report["passed"], report
+    missing = bench.run(corpus=corpus, saver=lambda *_args: None)
+    assert missing["extraction_recall"] == missing["old_thread_recall"] == 0.0
+    assert not missing["passed"]
+
+
+def test_extractor_receives_only_messages_and_trusted_metadata(monkeypatch):
+    from commonplace.handoff import facts
+    from commonplace.handoff.models import ThreadMessage
+
+    original = facts.extract
+    calls = []
+
+    def messages_only(messages, **metadata):
+        assert all(isinstance(message, ThreadMessage) for message in messages)
+        assert set(metadata) == {"user", "fallback_at"}
+        calls.append(len(messages))
+        return original(messages, **metadata)
+
+    monkeypatch.setattr(facts, "extract", messages_only)
+    assert bench.run(saver=bench.extraction_saver)["passed"]
+    assert len(calls) == 40
+
+
+def test_the_cli_runs_actual_extraction(capsys):
+    assert bench.main(["--saver", "extract", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["extraction_recall"] == 1.0

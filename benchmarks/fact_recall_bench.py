@@ -11,8 +11,10 @@ Savers:
 * ``oracle``: the corpus' planted facts, filed through ``save_fact`` with
   their exact message ranges, the way an agent calls ``fact_save`` mid-chat.
   This measures the index (merge, supersede, wings, sensitivity, sources),
-  not extraction. Extraction (step 5) plugs in as another saver and adds
-  ``extraction_recall``.
+  not extraction.
+* ``extract``: the production deterministic handoff extractor receives only
+  messages and trusted user/time metadata. Its independent private fixture
+  has explicit historical dates and literal decision/preference sentences.
 
 Metrics (see :func:`run`):
 
@@ -28,7 +30,7 @@ Metrics (see :func:`run`):
   Must be 0.
 * ``merge_rate``: restated facts that became one fact with every source.
 * ``extraction_recall``: planted occurrences present with the right identity,
-  wing and exact source (the oracle's filing coverage, until step 5).
+  wing and exact source (oracle filing coverage or real extraction coverage).
 * ``temporal_precision``: as-of answers contain only the value valid then.
 * ``denied_ok``: denied questions return no facts at all.
 
@@ -421,6 +423,160 @@ def oracle_saver(kg: KnowledgeGraph, stored_id: str, thread: Thread) -> int:
 SAVERS = {"oracle": oracle_saver}
 
 
+def build_extraction_corpus(threads=40, seed=7):
+    """Independent, grounded gold fixture for the private handoff extractor.
+
+    Unlike the oracle fixture's manually chosen wings, handoff facts always
+    live in private_threads. Historical dates are explicit in the messages.
+    Nothing in this fixture is passed to ``facts.extract`` except messages,
+    the source timestamp and the fixed authenticated user identity.
+    """
+    if threads < 36:
+        raise ValueError("the corpus needs at least 36 threads")
+    rng = random.Random(seed)
+    days = [(date(2025, 1, 1) + timedelta(days=i)).isoformat() for i in range(threads)]
+
+    def planted(subject, predicate, value, seq=0, **kwargs):
+        return Planted(
+            subject, predicate, value, seq, wing="private_threads", sensitivity="private", **kwargs
+        )
+
+    cases = {
+        0: (["For Kestrel the deploy port is 8443."], [planted("Kestrel", "deploy_port", "8443")]),
+        3: (
+            ["Jeffrey uses npm for every repo."],
+            [planted("Jeffrey", "uses_package_manager", "npm", single_valued=True)],
+        ),
+        5: (["Kestrel's default branch is main."], [planted("Kestrel", "default_branch", "main")]),
+        7: (
+            ["Private note: Jeffrey is allergic to penicillin."],
+            [planted("Jeffrey", "allergic_to", "penicillin")],
+        ),
+        10: (
+            ["Jeffrey works at Initech since this week."],
+            [planted("Jeffrey", "works_at", "Initech", single_valued=True)],
+        ),
+        12: (
+            ["Kestrel default branch is still main."],
+            [planted("Kestrel", "default_branch", "main")],
+        ),
+        18: (["Between us: Heron's budget is 40k."], [planted("Heron", "budget", "40k")]),
+        19: (["Heron's budget is still 40k."], [planted("Heron", "budget", "40k")]),
+        20: (["Never use mocks."], [planted("Eval user", "preference", "Never use mocks.")]),
+        21: (
+            ["We decided to use SQLite."],
+            [planted("Eval user", "decision", "We decided to use SQLite.")],
+        ),
+        25: (
+            ["We switched: Jeffrey uses pnpm now."],
+            [planted("Jeffrey", "uses_package_manager", "pnpm", single_valued=True)],
+        ),
+        26: (
+            ["Kestrel's staging deploy port is 8444."],
+            [planted("Kestrel", "staging_deploy_port", "8444")],
+        ),
+        30: (
+            ["On 2024-03-01 Jeffrey worked at Acme."],
+            [planted("Jeffrey", "works_at", "Acme", valid_from="2024-03-01", single_valued=True)],
+        ),
+        33: (
+            ["Reminder: the default branch for Kestrel is main."],
+            [planted("Kestrel", "default_branch", "main")],
+        ),
+        34: (
+            ["For Kestrel, record the backup contact.", "Ada Lovelace is the person."],
+            [planted("Kestrel", "backup_contact", "Ada Lovelace", seq_end=1)],
+        ),
+        35: (["Heron deploys on port 9000."], [planted("Heron", "deploy_port", "9000")]),
+    }
+    out = []
+    for index, day in enumerate(days):
+        if index in cases:
+            lines, gold = cases[index]
+            out.append(_thread(f"extract-{index}", day, [("user", line) for line in lines], gold))
+        else:
+            name, topic, advice = rng.choice(_FILLER_TOPICS)
+            out.append(
+                _thread(
+                    f"extract-{index}",
+                    day,
+                    [
+                        ("user", f"About {name}: {topic}."),
+                        ("assistant", f"I would {advice}."),
+                    ],
+                )
+            )
+    private = {"wings": ["private_threads"], "sensitivities": ["private"]}
+    public = {"wings": ["shared"], "sensitivities": ["public", "internal"]}
+    questions = [
+        Question("old-thread-port", "Kestrel", "deploy_port", "8443", private, old_thread=True),
+        Question(
+            "current-package", "Jeffrey", "uses_package_manager", "pnpm", private, stale=("npm",)
+        ),
+        Question(
+            "package-before", "Jeffrey", "uses_package_manager", "npm", private, as_of=days[10]
+        ),
+        Question(
+            "package-after",
+            "Jeffrey",
+            "uses_package_manager",
+            "pnpm",
+            private,
+            as_of=days[30],
+            stale=("npm",),
+        ),
+        Question(
+            "package-boundary",
+            "Jeffrey",
+            "uses_package_manager",
+            "pnpm",
+            private,
+            as_of=days[25] + "T09:00:00Z",
+            stale=("npm",),
+        ),
+        Question("employer-now", "Jeffrey", "works_at", "Initech", private, stale=("Acme",)),
+        Question("employer-history", "Jeffrey", "works_at", "Acme", private, as_of="2024-06-01"),
+        Question("restated", "Kestrel", "default_branch", "main", private),
+        Question("multi-message", "Kestrel", "backup_contact", "Ada Lovelace", private),
+        Question("preference", "Eval user", "preference", "Never use mocks.", private),
+        Question("decision", "Eval user", "decision", "We decided to use SQLite.", private),
+        Question("health-private", "Jeffrey", "allergic_to", "penicillin", private),
+        Question("health-denied", "Jeffrey", "allergic_to", None, public, hidden=("penicillin",)),
+        Question("budget-denied", "Heron", "budget", None, public, hidden=("40k",)),
+    ]
+    return Corpus(
+        out,
+        questions,
+        [
+            ("Kestrel", "default_branch", "main", "private_threads"),
+            ("Heron", "budget", "40k", "private_threads"),
+        ],
+    )
+
+
+def extraction_saver(kg, stored_id, thread):
+    from commonplace.handoff.facts import extract
+
+    proposed = extract(thread.messages, user="Eval user", fallback_at=thread.day + "T09:00:00Z")
+    for fact in proposed:
+        kg.save_fact(
+            fact.subject,
+            fact.predicate,
+            fact.object,
+            valid_from=fact.valid_from,
+            wing="private_threads",
+            sensitivity="private",
+            source_thread=stored_id,
+            source_seq_start=fact.seq_start,
+            source_seq_end=fact.seq_end,
+            single_valued=fact.single_valued,
+        )
+    return len(proposed)
+
+
+SAVERS["extract"] = extraction_saver
+
+
 # ── recall ─────────────────────────────────────────────────────────────────
 
 
@@ -501,13 +657,17 @@ def run(
     saver: Callable = oracle_saver,
     workdir: Optional[str] = None,
     retriever: Callable = recall,
+    corpus: Optional[Corpus] = None,
 ) -> dict:
     """Build the corpus, file facts with ``saver``, answer using ``retriever``.
 
     The oracle deliberately receives planted facts. A step-5 extraction saver
     must use only messages; its input boundary belongs in that implementation.
     """
-    corpus = build_corpus(threads, seed)
+    if corpus is None:
+        corpus = (build_extraction_corpus if saver is extraction_saver else build_corpus)(
+            threads, seed
+        )
     with tempfile.TemporaryDirectory(dir=workdir) as tmp:
         store = ThreadStore(str(Path(tmp) / "threads.sqlite3"))
         kg = KnowledgeGraph(db_path=str(Path(tmp) / "kg.sqlite3"))

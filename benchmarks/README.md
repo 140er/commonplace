@@ -116,6 +116,7 @@ Do facts work as an index into the full chats? A seeded corpus of chat threads i
 ```bash
 python benchmarks/fact_recall_bench.py              # metrics
 python benchmarks/fact_recall_bench.py --threads 200 --json
+python benchmarks/fact_recall_bench.py --saver extract --threads 120 --json
 ```
 
 | Metric | Bar | Meaning |
@@ -126,13 +127,13 @@ python benchmarks/fact_recall_bench.py --threads 200 --json
 | `old_thread_recall` | 1.0 | facts said only in the oldest thread |
 | `private_leaks` | 0 | facts a restricted reader may not see |
 | `merge_rate` | 1.0 | a restated fact is one fact with every source |
-| `extraction_recall` | 1.0 | every planted occurrence is filed with its wing and exact source; oracle coverage until extraction lands |
+| `extraction_recall` | 1.0 | every planted occurrence is filed with its wing and exact source; filing coverage for oracle, actual coverage for extract |
 | `temporal_precision` | 1.0 | as-of queries return only the value valid then, including at the replacement boundary |
 | `denied_ok` | 1.0 | denied questions return no facts |
 
 The report also includes `recall_at_5`, source range widths, per-question results, and `passed`. The CLI exits 1 when any bar or question fails, and 2 for invalid arguments. Corpus dates remain valid beyond a year. Newer near-match and hidden competing facts challenge old-thread recall; other cases cover multi-message attribution, separate facts with identical values in different wings, and a private fact later restated publicly.
 
-`tests/test_fact_recall_eval.py` holds these bars in the normal test run and checks they reject broken end-date filtering, unclosed superseded rows, broad/partial/missing/echo source ranges, corrupted merged sources, substring matches, missing facts, wing collapse, and independently missing wing or sensitivity filters. Today facts are filed by an oracle (`--saver oracle`, as an agent calling `fact_save`); handoff-time extraction will plug in as another saver. `run(saver=..., retriever=...)` lets later steps compare retrieval implementations on this corpus.
+`tests/test_fact_recall_eval.py` holds these bars in the normal test run and checks they reject broken end-date filtering, unclosed superseded rows, broad/partial/missing/echo source ranges, corrupted merged sources, substring matches, missing facts, wing collapse, and independently missing wing or sensitivity filters. `--saver oracle` measures the index using planted facts. `--saver extract` runs the actual deterministic handoff extractor on an independent gold fixture with private source scope, explicit historical dates, and verbatim decision/preference sentences. The extractor receives messages and trusted identity/time metadata; it never sees the planted answers. Both modes include old-thread recall. `run(saver=..., retriever=..., corpus=...)` lets later steps compare implementations on the same fixture.
 
 ## What Each Benchmark Tests
 
