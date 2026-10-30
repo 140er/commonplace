@@ -72,7 +72,10 @@ rust_exact = "mempalace.backends.rust_exact:RustExactBackend"
 
 [project.optional-dependencies]
 voice = ["useful-moonshine-onnx>=20251121,<20260101", "faster-whisper>=1.2.1"]
+# Sign in with Apple signs its client secret with ES256.
+commonplace = ["cryptography>=42"]
 dev = [
+    "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     # Offline media tests exercise real image objects and audio resampling
@@ -166,6 +169,7 @@ extract = [
 
 [dependency-groups]
 dev = [
+    "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pillow>=10.0",

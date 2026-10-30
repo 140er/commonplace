@@ -804,7 +804,10 @@ def _public_route(method: str, path: str) -> bool:
         return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
             ("/app/", "/s/", "/.well-known/")
         )
-    return method == "POST" and path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+    return method == "POST" and (
+        path.startswith("/app/auth/")
+        or path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+    )
 
 
 def _write_request(method: str, path: str, request) -> bool:
@@ -1115,8 +1118,11 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
-        if path == "/app/login" or (
-            self.command == "POST"
+        if (
+            path.startswith("/app/auth/")
+            and path != "/app/auth/providers"
+            or path == "/app/login"
+            or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
             policies.append((ratelimit.CREDENTIALS, ip))
