@@ -138,6 +138,10 @@ def test_signature_payload_and_routes(live, receiver, monkeypatch):
     headers, raw = requests.get(timeout=3)
     payload = json.loads(raw)
     assert payload == {
+        "agent": "commonplace",
+        "task": "#7",
+        "need": "info",
+        "message": '#7 "A card" updated https://memory.example/app/#/card/7',
         "id": f"evt_{event['seq']}",
         "seq": event["seq"],
         "kind": "card.updated",
@@ -698,3 +702,27 @@ def test_committed_board_event_recovers_when_listener_enqueue_fails(security, mo
     finally:
         dispatcher.stop()
         reopened.close()
+
+
+def test_auth_header_is_sent_and_never_shown(live, receiver):
+    hub = live
+    url, requests, _ = receiver
+    token = hub.owner_token()
+    status, hook = rest(
+        hub,
+        "POST",
+        token=token,
+        body={"url": url, "events": ["review_needed"], "auth": "Bearer chief-wake-key"},
+    )
+    assert status == 201
+    emit(hub, kind="card.review_needed", title="Pick one", ask_to="user:usr_x")
+    headers, raw = requests.get(timeout=3)
+    assert headers["Authorization"] == "Bearer chief-wake-key"
+    payload = json.loads(raw)
+    assert payload["need"] == "decision" and payload["message"].startswith(
+        '#7 "Pick one" waits on you'
+    )
+    listed = json.dumps(rest(hub, "GET", token=token)[1])
+    assert "chief-wake-key" not in listed
+    status, _ = rest(hub, "POST", token=token, body={"url": url, "auth": "X-Bad\r\nInjected: yes"})
+    assert status == 403 or status == 400

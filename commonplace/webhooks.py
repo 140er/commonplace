@@ -105,6 +105,8 @@ def ensure_schema(db):
     with db._lock:
         db._conn.executescript(SCHEMA)
         columns = {row[1] for row in db._conn.execute("PRAGMA table_info(webhooks)")}
+        if "auth_header" not in columns:
+            db._conn.execute("ALTER TABLE webhooks ADD COLUMN auth_header TEXT")
         if "start_seq" not in columns:
             db._conn.execute("ALTER TABLE webhooks ADD COLUMN start_seq INTEGER NOT NULL DEFAULT 0")
             # Older registrations lack a sequence boundary; exclude events from
@@ -209,9 +211,27 @@ def _public(row):
     }
 
 
-def add(db, principal, url, *, kinds=None, board="", waiting_on=""):
+def _auth_header(auth):
+    """``"Bearer xyz"`` (sent as Authorization) or ``"X-Name: value"``.
+    Stored to send with each delivery; never returned by any API."""
+    if auth is None or auth == "":
+        return None
+    if not isinstance(auth, str) or len(auth) > 1000 or any(c in auth for c in "\r\n\x00"):
+        raise ToolError("no: invalid auth header")
+    name, sep, value = auth.partition(":")
+    if sep and re.fullmatch(r"Authorization|X-[A-Za-z0-9-]{1,40}", name.strip()):
+        name, value = name.strip(), value.strip()
+    else:
+        name, value = "Authorization", auth.strip()
+    if not value:
+        raise ToolError("no: invalid auth header")
+    return json.dumps({"name": name, "value": value})
+
+
+def add(db, principal, url, *, kinds=None, board="", waiting_on="", auth=None):
     _authorize(principal, "add")
     validate_url(url)
+    auth_header = _auth_header(auth)
     if isinstance(kinds, str):
         kinds = [kinds]
     if kinds is None:
@@ -241,8 +261,8 @@ def add(db, principal, url, *, kinds=None, board="", waiting_on=""):
         ).fetchone()[0]
         db._conn.execute(
             "INSERT INTO webhooks(id, workspace_id, connection_id, owner_actor, url, "
-            "secret_hash, secret, kinds, board, waiting_on, created_at, start_seq) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "secret_hash, secret, kinds, board, waiting_on, created_at, start_seq, auth_header) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 webhook_id,
                 principal.workspace_id,
@@ -256,6 +276,7 @@ def add(db, principal, url, *, kinds=None, board="", waiting_on=""):
                 waiting_on,
                 _now(),
                 start_seq,
+                auth_header,
             ),
         )
     return {**_public(_get(db, principal, webhook_id)), "secret": secret}
@@ -351,8 +372,31 @@ def _payload(db, event):
         url = base.rstrip("/") + path
     else:
         url = urls.share_link(db, event["workspace_id"], path)
+    decision = event["kind"] == "card.review_needed" or (
+        event["kind"] == "card.handoff" and str(data.get("ask_to") or "").startswith("user:")
+    )
+    label = {
+        "card.review_needed": "waits on you",
+        "card.handoff": "handed off",
+        "card.decided": "decided",
+        "card.created": "new card",
+        "card.updated": "updated",
+        "card.moved": f"moved to {data.get('to') or data.get('status') or ''}".strip(),
+        "card.commented": "new comment",
+        "card.claimed": "picked up",
+        "card.expired": "claim expired",
+    }.get(event["kind"], event["kind"])
+    title = data.get("title")
+    message = " ".join(
+        part for part in (event["subject"], f'"{title}"' if title else "", label, url) if part
+    )
     return json.dumps(
         {
+            # Read by agents' own wake endpoints (Chief, Grok routines, T3).
+            "agent": "commonplace",
+            "task": event["subject"],
+            "need": "decision" if decision else "info",
+            "message": message,
             "id": f"evt_{event['seq']}",
             "seq": event["seq"],
             "kind": event["kind"],
@@ -439,7 +483,17 @@ def test_webhook(db, principal, webhook_id):
     return {"id": delivery["id"], "status": "pending"}
 
 
-def _post(url, body, secret, delivery_id, kind):
+def _extra_header(auth_header) -> dict:
+    if not auth_header:
+        return {}
+    try:
+        parsed = json.loads(auth_header)
+        return {parsed["name"]: parsed["value"]}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def _post(url, body, secret, delivery_id, kind, auth_header=None):
     validate_url(url)
     parts = urlsplit(url)
     timestamp = str(int(time.time()))
@@ -457,6 +511,7 @@ def _post(url, body, secret, delivery_id, kind):
                 "X-Commonplace-Event": kind,
                 "X-Commonplace-Delivery": delivery_id,
                 "X-Commonplace-Signature": f"t={timestamp},v1={signature.hexdigest()}",
+                **_extra_header(auth_header),
             },
         )
         response = conn.getresponse()
@@ -554,7 +609,8 @@ class Dispatcher:
         with self.db._lock:
             current = self.db._conn.execute(
                 "SELECT d.*, w.url, w.secret, w.workspace_id, w.connection_id, w.owner_actor, "
-                "w.active FROM webhook_deliveries d JOIN webhooks w ON w.id=d.webhook_id "
+                "w.active, w.auth_header FROM webhook_deliveries d "
+                "JOIN webhooks w ON w.id=d.webhook_id "
                 "WHERE d.id=?",
                 (row["id"],),
             ).fetchone()
@@ -575,7 +631,7 @@ class Dispatcher:
         status, error = None, ""
         attempt = row["attempt"] + 1
         try:
-            status = _post(row["url"], body, row["secret"], row["id"], kind)
+            status = _post(row["url"], body, row["secret"], row["id"], kind, row["auth_header"])
             if not 200 <= status < 300:
                 error = f"HTTP {status}"
         except Exception:
@@ -649,6 +705,7 @@ def _tool_add(ctx, args):
         kinds=args.get("events"),
         board=args.get("board", ""),
         waiting_on=args.get("waiting_on", ""),
+        auth=args.get("auth"),
     )
     return f"{result['id']} secret {result['secret']}"
 
@@ -676,6 +733,7 @@ for _name, _handler, _properties, _required in (
             },
             "board": {"type": "string"},
             "waiting_on": {"type": "string"},
+            "auth": {"type": "string"},
         },
         ["url"],
     ),
@@ -750,6 +808,7 @@ def _rest(gateway, h):
                 kinds=args.get("events"),
                 board=args.get("board", ""),
                 waiting_on=args.get("waiting_on", ""),
+                auth=args.get("auth"),
             )
             _send_json(h, 201, {"id": result["id"], "secret": result["secret"]})
         elif len(parts) == 1 and method == "DELETE":
