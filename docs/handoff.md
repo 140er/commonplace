@@ -479,6 +479,16 @@ Delivery makes at most six attempts, with retry delays of 10 seconds,
 1 minute, 5 minutes, 30 minutes and 2 hours. A `2xx` response succeeds;
 other responses retry until the limit. Redirects are not followed.
 
+## Fact indexing
+
+After a thread is stored, a separate background job extracts named relations and explicit decision/preference sentences. It runs locally with deterministic rules. Extracted facts point to the exact stored messages and live in `private_threads` with private sensitivity. Secret-like and instruction-like messages are excluded from the fact index; the lossless chat stays verbatim.
+
+The connection needs permission to read the source thread (`threads:read` and its source wing), plus the existing `fact_save` permissions for `private_threads`. Extraction uses the gateway's normal policy and privacy checks. It runs independently of mirroring and successor launch, so an unavailable fact worker or a slow embedding job does not block the handoff.
+
+Extraction progress is stored beside the chat. A repeated or extended handoff resumes unfinished messages. A crash between saving a fact and committing progress may replay the save; the fact row and source pointer are deduplicated. Unsupported wording remains in the full chat and its search mirror. Historical relations require an explicit date, and automatic extraction makes no model or external API calls.
+
+Run the offline extraction eval with `python benchmarks/fact_recall_bench.py --saver extract --threads 120`. Its gold fixture includes old-thread recall, changed values, exact merged sources, private facts and a two-message fact.
+
 ## Failure behaviour
 
 | Failure | Result |

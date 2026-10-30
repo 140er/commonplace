@@ -20,8 +20,8 @@ from .writer import _is_user_message
 
 VERSION = 1
 _NAME = r"(?P<subject>[^\W\d_][\w .-]{0,79}?)"
-_VALUE = r"(?P<object>[^\n,;.!?]{1,180}?)"
-_END = r"(?=\s+(?:since|from|now|for|today|this week)\b|[,;.!?]|$)"
+_VALUE = r"(?P<object>[^\n,;!?]{1,180}?)"
+_END = r"(?=\s+(?:since|from|now|for|today|this week)\b|[,;!?]|\.(?:\s|$)|$)"
 _PREFIX = re.compile(r"^(?:Reminder:|Private note:|Between us:|We switched:)\s*", re.I)
 _DATED = re.compile(r"^(?:On|As of) (\d{4}-\d{2}-\d{2})[, :]\s*", re.I)
 _UNCERTAIN = re.compile(
@@ -34,6 +34,14 @@ _HYPOTHETICAL = re.compile(
 )
 _PREFERENCE = re.compile("|".join(PREFERENCE_MARKERS), re.I)
 _DECISION = re.compile("|".join(DECISION_MARKERS), re.I)
+_PREFERENCE_STATEMENT = re.compile(
+    r"^(?:I prefer|I like|I hate|Always use|Never use|Don't|Please|My (?:rule|preference|style|convention)|We (?:always|never))\b",
+    re.I,
+)
+_DECISION_STATEMENT = re.compile(
+    r"^(?:We (?:decided|chose|picked|settled on)|Let's (?:use|go with|pick|choose|switch to))\b",
+    re.I,
+)
 _PROPERTIES = {
     "deploy port": "deploy_port",
     "staging deploy port": "staging_deploy_port",
@@ -93,7 +101,9 @@ def _instant(value, fallback):
             if stamp.tzinfo is None:
                 stamp = stamp.replace(tzinfo=timezone.utc)
             # KG temporal values deliberately use whole-second canonical UTC.
-            return stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return (
+                stamp.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            )
         except (ValueError, AttributeError, OverflowError):
             continue
     raise ValueError("a fact needs a source timestamp")
@@ -204,11 +214,11 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
                 and not sentence.endswith("?")
                 and not _HYPOTHETICAL.search(sentence)
             ):
-                kind = (
-                    "preference"
-                    if _PREFERENCE.search(sentence)
-                    else ("decision" if _DECISION.search(sentence) else None)
-                )
+                kind = None
+                if _PREFERENCE_STATEMENT.match(sentence) and _PREFERENCE.search(sentence):
+                    kind = "preference"
+                elif _DECISION_STATEMENT.match(sentence) and _DECISION.search(sentence):
+                    kind = "decision"
                 if kind:
                     out.append(Fact(user, kind, sentence, message.seq, message.seq, at))
         previous = message

@@ -31,6 +31,8 @@ def message(text, seq=0, *, role="user", at=AT):
         ("Heron deploys on port 9000.", "Heron", "deploy_port", "9000"),
         ("Kestrel's staging deploy port is 8444.", "Kestrel", "staging_deploy_port", "8444"),
         ("Kestrel's default branch is main.", "Kestrel", "default_branch", "main"),
+        ("Kestrel's default branch is release/1.2.", "Kestrel", "default_branch", "release/1.2"),
+        ("Kestrel's model is qwen3.5:27b.", "Kestrel", "uses_model", "qwen3.5:27b"),
         ("Reminder: the default branch for Kestrel is main.", "Kestrel", "default_branch", "main"),
         ("Kestrel default branch is still main.", "Kestrel", "default_branch", "main"),
         ("Jeffrey uses npm for every repo.", "Jeffrey", "uses_package_manager", "npm"),
@@ -74,6 +76,8 @@ def test_named_relations_are_literal_and_source_exact(text, subject, predicate, 
         "Jeffrey works at Acme. api_key=ExampleOnly0123456789abcd",
         "Jeffrey works at Ac\x00me.",
         "Jeffrey works at Ac\ud800me.",
+        "The functional test covers tabs and spaces.",
+        "The default behaviour is documented because this is a framework.",
     ],
 )
 def test_non_assertions_and_unsafe_content_are_not_filed(text):
@@ -239,4 +243,32 @@ def test_cursor_is_monotonic_and_cannot_skip_unstored_messages(tmp_path):
             store.fact_cursor(stored.id, facts.VERSION)
         assert [m.text for m in store.messages(stored.id)] == ["hello", "world"]
     finally:
+        store.close()
+
+
+def test_crash_between_fact_commit_and_checkpoint_keeps_one_row_and_source(tmp_path, monkeypatch):
+    store = ThreadStore(str(tmp_path / "threads.sqlite3"))
+    kg = KnowledgeGraph(db_path=str(tmp_path / "kg.sqlite3"))
+    original = [message("Kestrel deploys on port 8443.")]
+    try:
+        stored = store.store("ws", "chat", original, actor="eval")
+        advance = store.advance_fact_cursor
+
+        def crashed(*_args):
+            raise RuntimeError("checkpoint disk failure")
+
+        def save(args):
+            return _save(kg, args)
+
+        monkeypatch.setattr(store, "advance_fact_cursor", crashed)
+        with pytest.raises(RuntimeError, match="checkpoint"):
+            facts.file_pending(store, stored, save)
+        assert store.fact_cursor(stored.id, facts.VERSION) == 0
+        monkeypatch.setattr(store, "advance_fact_cursor", advance)
+        facts.file_pending(store, stored, save)
+        (fact,) = kg.query_entity("Kestrel", direction="outgoing")
+        assert len(kg.sources([fact["id"]])[fact["id"]]) == 1
+        assert store.messages(stored.id) == original
+    finally:
+        kg.close()
         store.close()
