@@ -1,10 +1,13 @@
 """Per-token policy: scopes, tool profiles, wing scopes and trust levels.
 
-Everything here fails closed. A tool the gateway serves must be classified in
+Everything here fails closed. A worker tool the gateway serves must be classified in
 ``mempalace.tool_capabilities`` *and* have a rule in :data:`TOOL_RULES`; a tool
 missing from either is hidden from ``tools/list`` and refused in
 ``tools/call``. The same :func:`tool_visible` decides both, so a client never
 sees a tool it would be refused.
+
+Gateway-local tools are accepted in tool grants and profiles, but their
+registered ``LocalTool`` decides visibility. Without registration they stay hidden.
 
 A wing argument passes only if every spelling the worker would match for it
 (``mempalace.config.wing_aliases``) passes, each compared by its slug. A grant
@@ -121,6 +124,8 @@ GATEWAY_NEVER = frozenset(
     {"mempalace_mine", "mempalace_sync", "mempalace_hook_settings", "mempalace_reconnect"}
 )
 
+GATEWAY_LOCAL_TOOLS = frozenset({"thread_recall", "thread_get", "thread_chain"})
+
 # ── Profiles ──────────────────────────────────────────────────────────────
 _SLIM = frozenset(
     {
@@ -132,26 +137,30 @@ _SLIM = frozenset(
         "mempalace_kg_query",
     }
 )
-_STANDARD = _SLIM | frozenset(
-    {
-        "mempalace_list_wings",
-        "mempalace_list_rooms",
-        "mempalace_list_drawers",
-        "mempalace_list_tunnels",
-        "mempalace_list_hallways",
-        "mempalace_get_drawers",
-        "mempalace_get_taxonomy",
-        "mempalace_check_duplicate",
-        "mempalace_kg_add",
-        "mempalace_kg_supersede",
-        "mempalace_kg_invalidate",
-        "mempalace_kg_timeline",
-        "mempalace_traverse",
-        "mempalace_find_tunnels",
-        "mempalace_follow_tunnels",
-    }
+_STANDARD = (
+    _SLIM
+    | GATEWAY_LOCAL_TOOLS
+    | frozenset(
+        {
+            "mempalace_list_wings",
+            "mempalace_list_rooms",
+            "mempalace_list_drawers",
+            "mempalace_list_tunnels",
+            "mempalace_list_hallways",
+            "mempalace_get_drawers",
+            "mempalace_get_taxonomy",
+            "mempalace_check_duplicate",
+            "mempalace_kg_add",
+            "mempalace_kg_supersede",
+            "mempalace_kg_invalidate",
+            "mempalace_kg_timeline",
+            "mempalace_traverse",
+            "mempalace_find_tunnels",
+            "mempalace_follow_tunnels",
+        }
+    )
 )
-_FULL = frozenset(TOOL_CAPABILITIES) - GATEWAY_NEVER
+_FULL = (frozenset(TOOL_CAPABILITIES) - GATEWAY_NEVER) | GATEWAY_LOCAL_TOOLS
 PROFILES = {"slim": _SLIM, "standard": _STANDARD, "full": _FULL}
 
 # Scopes a profile grants when a token is made without explicit scopes.
@@ -237,7 +246,7 @@ class Policy:
     ) -> "Policy":
         if tools is not None:
             tool_spec = tuple(sorted(set(tools)))
-            unknown = [t for t in tool_spec if t not in TOOL_RULES]
+            unknown = [t for t in tool_spec if t not in TOOL_RULES and t not in GATEWAY_LOCAL_TOOLS]
             if unknown:
                 raise PolicyError(f"unknown or ungated tools: {', '.join(unknown)}")
         else:
