@@ -34,6 +34,8 @@ SCOPES = (
     "events:write",
     "private:read",
     "private:write",
+    "threads:read",
+    "handoff:write",
     "admin",
 )
 
@@ -156,7 +158,7 @@ PROFILES = {"slim": _SLIM, "standard": _STANDARD, "full": _FULL}
 DEFAULT_SCOPES = {
     # The knowledge graph has no wings, so kg:read sees all of it: never a default.
     "slim": ("memory:read", "memory:write"),
-    "standard": ("memory:read", "memory:write"),
+    "standard": ("memory:read", "memory:write", "threads:read", "handoff:write"),
     "full": (
         "memory:read",
         "memory:write",
@@ -165,11 +167,13 @@ DEFAULT_SCOPES = {
         "kg:write",
         "events:read",
         "events:write",
+        "threads:read",
+        "handoff:write",
     ),
 }
 
 # Trust caps what scopes can do, whatever the token holds.
-_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "admin"})
+_UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "handoff:write", "admin"})
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
 # Tools that change what someone else wrote. Untrusted tokens only add.
 _UPDATES = frozenset(

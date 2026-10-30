@@ -21,6 +21,7 @@ import http.client
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -151,6 +152,7 @@ class Mediator:
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
+        self.local_tools: dict = {}  # name -> LocalTool (context handoff's thread tools)
 
     # ── entry point ──
     def handle(self, principal: Principal, request) -> Optional[dict]:
@@ -183,8 +185,27 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        response["result"]["tools"] = [t for t in tools if policy.tool_visible(t.get("name"))]
+        response["result"]["tools"] = [
+            t
+            for t in tools
+            if t.get("name") not in self.local_tools and policy.tool_visible(t.get("name"))
+        ] + [tool.schema for tool in self.local_tools.values() if tool.refusal(principal) is None]
         return response
+
+    def _local_call(self, principal: Principal, tool: LocalTool, req_id, args: dict) -> dict:
+        refusal = tool.refusal(principal)
+        if refusal is not None:
+            self._audit(principal, tool.name, "deny", refusal)
+            return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
+        try:
+            result = tool.handler(principal, args)
+        except Denied as exc:
+            self._audit(principal, tool.name, "deny", str(exc))
+            return _tool_response(req_id, {"error": str(exc), "denied": True}, is_error=True)
+        is_error = isinstance(result, dict) and bool(result.get("error"))
+        if not tool.read or is_error:
+            self._audit(principal, tool.name, "error" if is_error else "ok")
+        return _tool_response(req_id, result, is_error=is_error)
 
     # ── tools/call ──
     def _tools_call(self, principal: Principal, request: dict) -> dict:
@@ -197,6 +218,8 @@ class Mediator:
         policy = principal.policy
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
+        if name in self.local_tools:
+            return self._local_call(principal, self.local_tools[name], req_id, args)
 
         refusal = policy.refusal(name)
         if refusal is not None:
@@ -575,6 +598,23 @@ def _filter_drawer_batch(result, policy: Policy):
 RouteHandler = Callable[[BaseHTTPRequestHandler], None]
 
 
+@dataclass(frozen=True)
+class LocalTool:
+    """An MCP tool the gateway answers itself instead of a worker.
+
+    ``refusal(principal)`` returns why the caller can't use it, or ``None``;
+    a refused tool is missing from ``tools/list`` and answers ``Unknown
+    tool``, like any hidden tool. ``handler(principal, args)`` returns the
+    tool's result dict. ``read`` tools are not audited on success.
+    """
+
+    name: str
+    schema: dict  # the tools/list entry: name, description, inputSchema
+    handler: Callable
+    refusal: Callable
+    read: bool = True
+
+
 class Gateway:
     """The HTTP front. ``routes`` is the seam OAuth plugs its endpoints into."""
 
@@ -591,7 +631,19 @@ class Gateway:
         self.routes: dict = {}
 
     def add_route(self, method: str, path: str, handler: RouteHandler) -> None:
+        """Exact path, or a prefix when ``path`` ends in ``/*`` (``/api/threads/*``)."""
         self.routes[(method.upper(), path)] = handler
+
+    def route_for(self, method: str, path: str) -> Optional[RouteHandler]:
+        handler = self.routes.get((method, path))
+        if handler is not None:
+            return handler
+        best = None
+        for (m, pattern), h in self.routes.items():
+            if m == method and pattern.endswith("/*") and path.startswith(pattern[:-1]):
+                if best is None or len(pattern) > len(best[0]):
+                    best = (pattern, h)
+        return best[1] if best else None
 
     def authenticate(self, header: Optional[str]) -> Optional[Principal]:
         bearer = bearer_from_header(header)
@@ -626,7 +678,7 @@ class Gateway:
                 self.wfile.write(body)
 
             def _route(self, method: str) -> bool:
-                handler = gateway.routes.get((method, urlparse(self.path).path))
+                handler = gateway.route_for(method, urlparse(self.path).path)
                 if handler is None:
                     return False
                 handler(self)
@@ -643,6 +695,14 @@ class Gateway:
                     self._send_json(405, {"error": "use POST"}, {"Allow": "POST"})
                     return
                 self._send_json(404, {"error": "not found"})
+
+            def do_PUT(self):
+                if not self._route("PUT"):
+                    self._send_json(404, {"error": "not found"})
+
+            def do_DELETE(self):
+                if not self._route("DELETE"):
+                    self._send_json(404, {"error": "not found"})
 
             def do_POST(self):
                 path = urlparse(self.path).path

@@ -151,7 +151,11 @@ def cmd_serve(args) -> int:
     if not db.has_users():
         raise ControlError("not set up: run `commonplace init` first")
     supervisor = WorkerSupervisor(str(_data_dir(args)), idle_stop_s=args.idle_minutes * 60)
-    Gateway(db, supervisor).serve(args.host, args.port)
+    from .handoff.wiring import install
+
+    gateway = Gateway(db, supervisor)
+    install(gateway, _data_dir(args))
+    gateway.serve(args.host, args.port)
     return 0
 
 
