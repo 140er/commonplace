@@ -412,6 +412,28 @@ def _token(local, policy, name="review"):
 # this branch's own history, so any clone of the branch can read it.
 DEVELOP_BASELINE = "c07bb354"
 
+# Optional arguments tools gained after the baseline (the chat range on saves
+# and facts). Off mode must still match the baseline in everything else.
+_RANGE = {"source_thread", "source_seq_start", "source_seq_end"}
+ADDED_SINCE_BASELINE = {
+    "memory_save": {"source"},
+    "mempalace_add_drawer": _RANGE,
+    "mempalace_kg_add": _RANGE,
+    "mempalace_kg_supersede": _RANGE,
+}
+
+
+def _as_baseline(reply):
+    """``reply`` with the post-baseline arguments dropped from its tool list."""
+    status, body = reply
+    body = json.loads(json.dumps(body))
+    tools = body.get("result", {}).get("tools", []) if isinstance(body, dict) else []
+    for tool in tools:
+        properties = tool.get("inputSchema", {}).get("properties", {})
+        for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
+            properties.pop(name, None)
+    return status, body
+
 
 @pytest.fixture(scope="module")
 def legacy(tmp_path_factory):
@@ -566,7 +588,7 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             initial = len(gateway.db.audit_entries(limit=10_000))
             expected = _http(before, token, "POST", "/mcp", request)
             middle = gateway.db.audit_entries(limit=10_000)
-            actual = _http(after, token, "POST", "/mcp", request)
+            actual = _as_baseline(_http(after, token, "POST", "/mcp", request))
             final = gateway.db.audit_entries(limit=10_000)
             assert actual == expected
             count = len(middle) - initial
@@ -692,7 +714,7 @@ def test_new_token_has_legacy_tool_list_when_workspace_off(gateway, legacy, prof
     )
     request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
-        assert _http(after, token, "POST", "/mcp", request) == _http(
+        assert _as_baseline(_http(after, token, "POST", "/mcp", request)) == _http(
             before, before_token, "POST", "/mcp", request
         )
     assert not gateway.ctx._stores

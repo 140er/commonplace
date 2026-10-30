@@ -498,8 +498,7 @@ _SOURCE = {
 }
 _register(
     "memory_save",
-    "Save exact words as a memory, optionally linked to a card and to the chat"
-    " messages they came from.",
+    "Save exact words as a memory, optionally linked to a card.",
     memory_save,
     {"text": _STRING, "theme": _STRING, "topic": _STRING, "task": _TASK, "source": _SOURCE},
     ["text"],
