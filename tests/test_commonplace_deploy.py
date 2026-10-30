@@ -75,7 +75,16 @@ def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
     active = "\n".join(line for line in CADDY.read_text().splitlines() if not line.startswith("#"))
     assert active.count("edge1.tail6cee8c.ts.net {") == 1
     paths = re.search(r"@backend path (.+)", active)[1].split()
-    assert set(paths) == {"/app*", "/api/*", "/mcp", "/health", "/healthz"}
+    assert set(paths) == {
+        "/app*",
+        "/api/*",
+        "/mcp",
+        "/health",
+        "/healthz",
+        "/s/*",
+        "/oauth/*",
+        "/.well-known/*",
+    }
     assert "handle_path" not in active
     backend, fallback = active.split("handle @backend {", 1)[1].split("\n\thandle {", 1)
     assert "reverse_proxy 127.0.0.1:8765" in backend

@@ -10,7 +10,7 @@ edge1.tail6cee8c.ts.net {
 		-Server
 	}
 
-	@backend path /app* /api/* /mcp /health /healthz
+	@backend path /app* /api/* /mcp /health /healthz /s/* /oauth/* /.well-known/*
 	handle @backend {
 		reverse_proxy 127.0.0.1:8765 {
 			flush_interval -1
