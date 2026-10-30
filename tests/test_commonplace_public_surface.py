@@ -54,6 +54,8 @@ PREFIX = {
     ("POST", "/api/webhooks/"): "authenticated",
     ("DELETE", "/api/webhooks/"): "authenticated",
     ("GET", "/app/"): "public",
+    ("GET", "/app/auth/"): "public",
+    ("POST", "/app/auth/"): "public",
     ("GET", "/s/"): "public",
     ("GET", "/api/handoffs/"): "authenticated",
     ("POST", "/api/handoffs/"): "authenticated",
@@ -240,6 +242,8 @@ def test_sessions_have_separate_600_request_budgets(surface):
         ("POST", "/oauth/register"),
         ("POST", "/oauth/token"),
         ("POST", "/oauth/authorize"),
+        ("GET", "/app/auth/google"),
+        ("POST", "/app/auth/apple/callback"),
     ],
 )
 def test_sensitive_endpoint_ip_limit(surface, method, path):
@@ -259,6 +263,15 @@ def test_authenticated_requests_still_obey_sensitive_ip_limit(surface):
         assert request(surface, "GET", "/app/login", headers=auth)[0] == 400
     assert request(surface, "GET", "/app/login", headers=auth)[0] == 429
     assert request(surface, headers=auth)[0] == 200
+
+
+def test_provider_inventory_does_not_consume_the_sensitive_ip_budget(surface):
+    for _ in range(11):
+        assert request(surface, "GET", "/app/auth/providers")[0] == 200
+    for _ in range(10):
+        assert request(surface, "GET", "/app/auth/google")[0] != 429
+    assert request(surface, "GET", "/app/auth/google")[0] == 429
+    assert request(surface, "GET", "/app/auth/providers")[0] == 200
 
 
 def test_short_links_have_120_budget_replacing_anonymous(surface):

@@ -5,7 +5,8 @@ that works once within 15 minutes. Opening it sets an HttpOnly session
 cookie for 30 days. Only the SHA-256 of each link token and session id is
 stored. A signed-in person acts as ``user:<id>`` with the owner's full view
 of their workspace (people see everything in a workspace they belong to;
-scopes limit agents, not owners).
+scopes limit agents, not owners). Provider sign-in (:mod:`commonplace.social`)
+ends in the same session through :func:`start_session`.
 """
 
 from __future__ import annotations
@@ -89,6 +90,17 @@ def person_principal(db: ControlDB, user_id: str, workspace_id: str) -> Optional
     )
 
 
+def home_workspace(db: ControlDB, user_id: str) -> Optional[str]:
+    """Where a sign-in lands: the user's personal workspace, else their first."""
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id = w.id "
+            "WHERE m.user_id = ? ORDER BY w.personal_of IS ? DESC, w.created_at LIMIT 1",
+            (user_id, user_id),
+        ).fetchone()
+    return row["id"] if row else None
+
+
 def create_login_link(
     db: ControlDB, email: str, workspace_ref: Optional[str] = None, *, minutes: Optional[int] = None
 ) -> str:
@@ -98,11 +110,9 @@ def create_login_link(
     if workspace_ref:
         workspace_id = db.workspace(workspace_ref)["id"]
     else:
-        rows = [w for w in db.workspaces() if db.role(w["id"], user["id"])]
-        if not rows:
+        workspace_id = home_workspace(db, user["id"])
+        if workspace_id is None:
             raise ValueError(f"{email} is in no workspace")
-        personal = [w for w in rows if w["personal_of"] == user["id"]]
-        workspace_id = (personal or rows)[0]["id"]
     token = secrets.token_urlsafe(32)
     now = _now()
     with db._lock:
@@ -147,14 +157,22 @@ def redeem_login_link(db: ControlDB, token: str) -> Optional[str]:
         )
         if db._conn.execute("SELECT changes() AS n").fetchone()["n"] != 1:
             return None
-        session = secrets.token_urlsafe(32)
+        return start_session(db, row["user_id"], row["workspace_id"])
+
+
+def start_session(db: ControlDB, user_id: str, workspace_id: str, *, via: str = "") -> str:
+    """A new session id for a person who just proved who they are. ``via``
+    names the sign-in provider in the audit log; a login link leaves it empty."""
+    session = secrets.token_urlsafe(32)
+    now = _now()
+    with db._lock:
         db._conn.execute(
             "INSERT INTO sessions(id_hash, user_id, workspace_id, created_at, expires_at) "
             "VALUES (?,?,?,?,?)",
             (
                 _hash(session),
-                row["user_id"],
-                row["workspace_id"],
+                user_id,
+                workspace_id,
                 now.strftime(_FMT),
                 (now + timedelta(days=SESSION_DAYS)).strftime(_FMT),
             ),
@@ -162,8 +180,9 @@ def redeem_login_link(db: ControlDB, token: str) -> Optional[str]:
     db.audit(
         action="session.create",
         decision="ok",
-        workspace_id=row["workspace_id"],
-        user_id=row["user_id"],
+        workspace_id=workspace_id,
+        user_id=user_id,
+        reason=via,
     )
     return session
 
@@ -190,12 +209,12 @@ def end_session(db: ControlDB, session: str) -> None:
         )
 
 
-def cookie_value(header: Optional[str]) -> Optional[str]:
+def cookie_value(header: Optional[str], cookie: str = COOKIE) -> Optional[str]:
     if not header:
         return None
     for part in header.split(";"):
         name, _, value = part.strip().partition("=")
-        if name == COOKIE and value:
+        if name == cookie and value:
             return value
     return None
 
