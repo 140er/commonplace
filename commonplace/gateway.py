@@ -207,6 +207,7 @@ class Mediator:
         rule = TOOL_RULES[name][1]
         notes: list = []
         try:
+            _check_argument_types(args)
             plan = getattr(self, f"_before_{rule}")(principal, name, args, notes)
         except Hidden as exc:
             self._audit(
@@ -294,7 +295,7 @@ class Mediator:
         policy = principal.policy
         ids = _drawer_ids(args)
         if ids is None:
-            return None  # Malformed: the worker reports it without touching data.
+            raise Denied("drawer_id or drawer_ids (1 to 500 ids) is required")
         wings = self._drawer_wings(principal, ids)
         for drawer_id in ids:
             wing = wings.get(drawer_id)
@@ -347,6 +348,8 @@ class Mediator:
     def _pin_write_wing(self, policy: Policy, args: dict, wing, notes: list) -> None:
         if policy.trust == "untrusted":
             # Untrusted writes always land in the token's write wing (the inbox).
+            if not policy.can_write_wing(policy.write_wing):
+                raise Denied("this connection can't write")
             if wing and wing != policy.write_wing:
                 notes.append(f"wing {wing!r} forced to {policy.write_wing!r}")
             args["wing"] = policy.write_wing
@@ -456,6 +459,33 @@ def _only_literal_wing(policy: Policy) -> str:
 
 def _wings_text(policy: Policy) -> str:
     return ", ".join(policy.read_wings) or "no wings"
+
+
+_WING_ARGS = ("wing", "source_wing", "target_wing", "wing_a", "wing_b")
+_ID_ARGS = ("drawer_id", "source_drawer_id", "target_drawer_id")
+
+
+def _check_argument_types(args: dict) -> None:
+    """Wing and drawer arguments must already be what the policy checks.
+
+    The worker coerces arguments (a JSON string becomes an array, a number a
+    string), so a value the gateway can't read as-is must never reach it.
+    ``drawer_ids`` given as a JSON string is parsed here, once, and the
+    parsed list is what gets checked and forwarded.
+    """
+    for key in _WING_ARGS + _ID_ARGS:
+        if key in args and args[key] is not None and not isinstance(args[key], str):
+            raise Denied(f"'{key}' must be a string")
+    if "drawer_ids" in args:
+        ids = args["drawer_ids"]
+        if isinstance(ids, str):
+            try:
+                ids = json.loads(ids)
+            except (ValueError, RecursionError):
+                ids = None
+        if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+            raise Denied("'drawer_ids' must be a list of drawer id strings")
+        args["drawer_ids"] = ids
 
 
 def _drawer_ids(args: dict) -> Optional[list]:
