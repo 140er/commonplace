@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commonplace: one control point for all your AI agents</title>
+<meta name="description" content="Commonplace is one control point for all your AI agents. Memory ships first: verbatim, self-hosted, and recalled automatically in Claude Code, Codex, Cursor and Antigravity.">
+<meta name="theme-color" content="#0b0c0b">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="site.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+
+<header class="board top">
+  <a class="tile mark" href="./" aria-label="Commonplace home"><svg viewBox="0 0 28 28" aria-hidden="true"><rect width="13" height="13" fill="#0b0c0b"/><rect x="15" width="13" height="13" fill="#0b0c0b"/><rect y="15" width="13" height="13" fill="#0b0c0b"/></svg></a>
+  <nav class="tile nav" aria-label="Main">
+    <a href="#agents">Agents</a>
+    <a href="#modules">Modules</a>
+    <a href="#install">Self-host</a>
+    <a href="connect/">Connect</a>
+  </nav>
+  <a class="tile act" href="https://github.com/140er/mempalace">GitHub</a>
+</header>
+
+<main>
+<section class="board hero" aria-labelledby="title">
+  <div class="tile name rise">
+    <h1 id="title">Commonplace</h1>
+    <p>One control point for all your AI agents.</p>
+  </div>
+
+  <div class="tile term shutter" data-ui>
+    <div role="tablist" aria-label="Agent">
+      <button role="tab" id="t-claude" aria-controls="s-claude" aria-selected="true">Claude Code</button>
+      <button role="tab" id="t-codex" aria-controls="s-codex" aria-selected="false" tabindex="-1">Codex</button>
+      <button role="tab" id="t-cursor" aria-controls="s-cursor" aria-selected="false" tabindex="-1">Cursor</button>
+      <button role="tab" id="t-ag" aria-controls="s-ag" aria-selected="false" tabindex="-1">Antigravity</button>
+    </div>
+    <div class="screen">
+<pre role="tabpanel" id="s-claude" aria-labelledby="t-claude"><span class="line"><span class="p">$</span> docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/140er/commonplace</span><span class="line dim">setup  http://localhost:8765/setup/7c1e9a</span><span class="line"><span class="p">$</span> claude mcp add --transport http commonplace http://localhost:8765/mcp --header "Authorization: Bearer $COMMONPLACE_TOKEN"</span><span class="line dim">Added HTTP MCP server commonplace</span><span class="line"><span class="p">$</span> claude</span><span class="line you">&gt; why does the boards store live next to the palace?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "boards store palace"</span></span><span class="line hit">Boards live in the workspace's palace directory, in boards.sqlite3 next to knowledge_graph.sqlite3. One store per workspace, so tasks and memories are backed up, exported and deleted together.<span class="stamp">written by codex:zurvur:commonplace · trusted · 2 days ago</span></span><span class="line"><span class="cursor"></span></span></pre>
+<pre role="tabpanel" id="s-codex" aria-labelledby="t-codex" hidden><span class="line"><span class="p">$</span> cat &gt;&gt; ~/.codex/config.toml &lt;&lt;'EOF'
+[mcp_servers.commonplace]
+url = "http://localhost:8765/mcp"
+bearer_token_env_var = "COMMONPLACE_TOKEN"
+EOF</span><span class="line"><span class="p">$</span> codex</span><span class="line you">&gt; pick up where claude left off on token scopes</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "token scopes"</span></span><span class="line hit">Fail closed. A tool that isn't classified in tool_capabilities.py, or isn't in the token's list, is hidden from tools/list and refused in tools/call.<span class="stamp">written by claude-code:laptop:commonplace · trusted · yesterday</span></span><span class="line"><span class="cursor"></span></span></pre>
+<pre role="tabpanel" id="s-cursor" aria-labelledby="t-cursor" hidden><span class="line"><span class="p">$</span> cat ~/.cursor/mcp.json</span><span class="line">{"mcpServers": {"commonplace": {
+  "url": "http://localhost:8765/mcp",
+  "headers": {"Authorization": "Bearer ${env:COMMONPLACE_TOKEN}"}
+}}}</span><span class="line"><span class="ok">sessionStart</span> <span class="dim">search wing project_site before answering</span></span><span class="line you">&gt; what did grok file about the website?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "website" wing=project_site</span></span><span class="line hit">The site loads with zero third-party requests. No fonts, no scripts, no analytics from anyone else.<span class="stamp">written by grok:chief-of-staff · untrusted · inbox · 4 hours ago</span></span><span class="line"><span class="cursor"></span></span></pre>
+<pre role="tabpanel" id="s-ag" aria-labelledby="t-ag" hidden><span class="line"><span class="p">$</span> cat ~/.gemini/antigravity/mcp_config.json</span><span class="line">{"mcpServers": {"commonplace": {
+  "serverUrl": "http://localhost:8765/mcp",
+  "headers": {"Authorization": "Bearer &lt;token&gt;"}
+}}}</span><span class="line"><span class="ok">wake hook</span> <span class="dim">first model call, palace injected verbatim</span></span><span class="line you">&gt; which tier keeps my health notes from cloud models?</span><span class="line hit">Private wing: only tokens with private:read, which are never granted to cloud clients by default.<span class="stamp">written by you · web ui · 3 weeks ago</span></span><span class="line"><span class="cursor"></span></span></pre>
+    </div>
+  </div>
+
+  <div class="pair">
+    <div class="tile first rise" style="--d:120ms">
+      <p>Memory is the first module. Boards and agent control follow.</p>
+    </div>
+    <div class="tile go rise" style="--d:200ms">
+      <p>Self-host in one command.</p>
+      <a class="btn on-accent" href="#install">Self-host</a>
+    </div>
+  </div>
+</section>
+
+<section class="section steps" aria-labelledby="steps-h">
+  <h2 id="steps-h" class="rise">Running in five minutes</h2>
+  <ol class="bar" data-ui>
+    <li class="rise"><div class="seg">Under a minute</div><p>First, run one container.<code>docker run … ghcr.io/140er/commonplace</code></p></li>
+    <li class="rise" style="--d:80ms"><div class="seg">A minute per agent</div><p>Then add one line to each agent.<code>claude mcp add … commonplace</code></p></li>
+    <li class="rise" style="--d:160ms"><div class="seg">Every session after that</div><p>Recall fires on its own, in every agent you connected.</p></li>
+  </ol>
+</section>
+
+<section class="section" aria-labelledby="close-h">
+  <div class="board close">
+    <div class="tile t62 head rise"><h2 id="close-h">Every memory says who wrote it</h2></div>
+
+    <div class="tile t64 acc rise" style="--d:60ms">
+      <div class="zoom" data-ui style="--z:2.6em; top:28px; left:24px">grok:chief-of-staff<br>untrusted · inbox</div>
+      <p class="cap"><b>Server-stamped author</b><span>Taken from the token, never from the client.</span></p>
+    </div>
+
+    <div class="tile t34 lite rise">
+      <div class="zoom" data-ui style="--z:3.4em; top:20px; left:20px">"your exact<br>words"</div>
+      <p class="cap"><b>Verbatim</b><span>Recall returns what was written, word for word.</span></p>
+    </div>
+
+    <div class="tile t32 alt rise" style="--d:60ms">
+      <div class="zoom" data-ui style="--z:1.2em; top:20px; left:20px"><span class="chip">memory:read</span><span class="chip">kg:write</span><br><span class="chip">memory:write</span><span class="chip off">private:read</span></div>
+      <p class="cap"><b>Scoped tokens</b><span>One per agent.</span></p>
+    </div>
+
+    <div class="tile t32 rise" style="--d:120ms">
+      <div class="zoom" data-ui style="--z:5em; top:0; right:20px; color:var(--accent)">3</div>
+      <p class="cap"><b>Review inbox</b><span>Untrusted writes wait for you.</span></p>
+    </div>
+
+    <div class="tile t64 rise">
+      <div class="zoom" data-ui style="--z:1.5em; top:28px; left:24px; right:24px"><span class="tier" style="background:var(--surface-2)">Standard · encrypted at rest</span><span class="tier" style="background:var(--paper);color:var(--paper-ink)">Private wing · never to cloud</span><span class="tier" style="background:var(--accent);color:var(--accent-ink)">Sealed · your key only</span></div>
+      <p class="cap"><b>Three privacy tiers</b><span>Sealed memories are ciphertext on the server. Only your devices hold the key.</span></p>
+    </div>
+
+    <div class="tile t62 alt rise" style="--d:60ms">
+      <div class="zoom" data-ui style="--z:1.5em; top:24px; left:20px"><span class="toggle on"></span>shared &nbsp;<span class="toggle on"></span>inbox<br><span class="toggle"></span>private</div>
+      <p class="cap"><b>Wing scopes</b><span>A forbidden wing leaks nothing. A canary suite checks every read tool.</span></p>
+    </div>
+
+    <div class="tile t32 lite rise">
+      <div class="zoom" data-ui style="--z:1.2em; top:20px; left:20px">14:03 add_drawer grok<br>14:05 kg_add codex<br>14:11 delete you</div>
+      <p class="cap"><b>Audit log</b><span>Who, which tool, when. Never the text.</span></p>
+    </div>
+
+    <div class="tile t32 acc wide-phone rise" style="--d:60ms">
+      <div class="zoom" data-ui style="--z:1.5em; top:20px; left:20px">$ mempalace export</div>
+      <p class="cap"><b>No lock-in</b><span>Exports load into plain MemPalace.</span></p>
+    </div>
+
+    <div class="tile t62 rise" style="--d:120ms">
+      <div class="zoom" data-ui style="--z:2.6em; top:20px; left:20px; color:var(--accent)">localhost:8765</div>
+      <p class="cap"><b>Yours</b><span>No telemetry, no phone-home. Self-hosted memories stay on your machine.</span></p>
+    </div>
+  </div>
+</section>
+
+<section class="section agents" id="agents" aria-labelledby="agents-h">
+  <h2 id="agents-h" class="rise">Every agent, one memory</h2>
+  <div class="rows" data-ui>
+    <button class="row" aria-expanded="false"><span>Claude Code</span><span class="f conn">token</span><span class="f">recall skill</span><span class="s">automatic</span><span class="more">The recall skill fires on its own when a turn needs memory. Stop and PreCompact hooks file the session. <code>/mempalace:recall</code> forces it.</span></button>
+    <button class="row" aria-expanded="false"><span>Codex</span><span class="f conn">token</span><span class="f">recall skill</span><span class="s">automatic</span><span class="more">The recall skill fires on its own when a turn needs memory. Stop and PreCompact hooks file the session. <code>$mempalace recall</code> forces it.</span></button>
+    <button class="row" aria-expanded="true"><span>Cursor</span><span class="f conn">token</span><span class="f">sessionStart hook</span><span class="s">automatic</span><span class="more">sessionStart tells the agent to search the workspace's wing before it answers. The recall skill and an optional rule cover the turns after it.</span></button>
+    <button class="row" aria-expanded="false"><span>Antigravity</span><span class="f conn">token</span><span class="f">wake hook</span><span class="s">automatic</span><span class="more">On the first model call the wake hook injects the palace's own words, verbatim. The recall skill and rule take over from there.</span></button>
+    <button class="row" aria-expanded="false"><span>claude.ai</span><span class="f conn">OAuth</span><span class="f">connector</span><span class="s later">on request</span><span class="more">Settings, Connectors, add a custom connector, paste the URL. Added once on the web, it shows up on desktop and mobile too. Writes land in the inbox.</span></button>
+    <button class="row" aria-expanded="false"><span>ChatGPT</span><span class="f conn">OAuth</span><span class="f">connector</span><span class="s later">on request</span><span class="more">Connect by URL in developer mode. The consent page on your server picks which wings it may read. Writes land in the inbox.</span></button>
+    <button class="row" aria-expanded="false"><span>Grok Bot</span><span class="f conn">OAuth</span><span class="f">connector</span><span class="s later">on request</span><span class="more">One connection per bot, so each bot's writes carry their own stamp. Untrusted by default: it can only write to the inbox.</span></button>
+    <button class="row" aria-expanded="false"><span>Local models</span><span class="f conn">token</span><span class="f">MCP client</span><span class="s later">on request</span><span class="more">LM Studio, or Open WebUI in front of Ollama, over your LAN or tailnet. Same token, same stamps, nothing leaves the house.</span></button>
+  </div>
+</section>
+
+<section class="section modules" id="modules" aria-labelledby="mod-h">
+  <div class="headrow rise">
+    <h2 id="mod-h"><span class="soft">One core,</span>three modules</h2>
+    <a class="btn" href="#install">Self-host</a>
+  </div>
+  <div class="mods">
+    <div role="tablist" aria-label="Module" aria-orientation="vertical">
+      <button role="tab" id="m-mem" aria-controls="p-mem" aria-selected="true">Memory<span>ships first</span></button>
+      <button role="tab" id="m-boards" aria-controls="p-boards" aria-selected="false" tabindex="-1">Boards<span>next</span></button>
+      <button role="tab" id="m-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1">Agent control<span>later</span></button>
+    </div>
+    <div role="tabpanel" id="p-mem" aria-labelledby="m-mem" data-ui>
+      <div class="band"><code>mempalace_search</code><span>Hybrid search over every drawer in the wings your token can read.</span></div>
+      <div class="band"><code>add_drawer</code><span>Stores a passage word for word, stamped with who wrote it.</span></div>
+      <div class="band"><code>diary_write</code><span>Each agent keeps its own log, session by session.</span></div>
+      <div class="band"><code>kg_query</code><span>Facts about people and projects, with the dates they held.</span></div>
+      <div class="band"><code>kg_supersede</code><span>Replaces a fact and keeps the old one in its history.</span></div>
+    </div>
+    <div role="tabpanel" id="p-boards" aria-labelledby="m-boards" data-ui hidden>
+      <div class="band"><code>board_list</code><span>Boards your token can see, with their open tasks.</span></div>
+      <div class="band"><code>task_add</code><span>Untrusted agents can add tasks, but theirs land in the backlog.</span></div>
+      <div class="band"><code>task_take_next</code><span>An atomic claim. Two agents never get the same task.</span></div>
+      <div class="band"><code>task_comment</code><span>The progress log, stamped like every memory.</span></div>
+      <div class="band"><code>task_update</code><span>Moves a task, and links it to the drawers it came from.</span></div>
+    </div>
+    <div role="tabpanel" id="p-agents" aria-labelledby="m-agents" data-ui hidden>
+      <div class="band"><code>see</code><span>Every running agent, across machines and providers.</span></div>
+      <div class="band"><code>steer</code><span>Start, steer and stop them from one place.</span></div>
+      <div class="band"><code>hand off</code><span>Give an agent the top task on a board.</span></div>
+      <div class="band"><code>consent</code><span>Per-agent consent, a kill switch, and owner-only access come first.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section board cta" id="install" aria-labelledby="install-h">
+  <div class="l" aria-hidden="true" data-ui><pre>recall
+search
+drawer
+diary
+kg_add
+tunnel
+export</pre></div>
+  <div class="c rise">
+    <h2 id="install-h">Run it on your own box</h2>
+    <p>MIT licensed. Self-hosters get every feature, and your memories stay on your machine.</p>
+    <div class="cmd" data-ui>
+      <code id="cmd">docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/140er/commonplace</code>
+      <button class="btn" type="button" data-copy="cmd">Copy</button>
+    </div>
+    <p class="links"><a href="connect/">Connect your agents</a><a href="https://github.com/140er/mempalace">Source</a></p>
+  </div>
+  <div class="r" aria-hidden="true" data-ui><pre>trusted
+standard
+untrusted
+inbox
+private
+sealed
+owner</pre></div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="cols">
+    <ul><li><a href="connect/">Connect</a></li><li><a href="#install">Self-host</a></li><li><a href="#modules">Modules</a></li></ul>
+    <ul><li><a href="https://github.com/140er/mempalace">GitHub</a></li><li><a href="https://github.com/MemPalace/mempalace">MemPalace</a></li><li><a href="https://github.com/140er/mempalace/blob/develop/LICENSE">License</a></li></ul>
+    <ul><li><a href="https://cmmn.dev/gh">cmmn.dev/gh</a></li><li><a href="https://cmmn.dev/connect">cmmn.dev/connect</a></li></ul>
+    <div class="contact"><span>commonplace.run</span><span>Built on MemPalace, MIT License.</span></div>
+  </div>
+  <div class="blocks" role="img" aria-label="Commonplace">
+    <span style="height:92%" data-l="c"></span><span style="height:70%" data-l="o"></span><span style="height:100%" data-l="m"></span><span style="height:78%" data-l="m"></span><span style="height:64%" data-l="o"></span><span style="height:88%" data-l="n"></span><span style="height:100%" data-l="p"></span><span style="height:72%" data-l="l"></span><span style="height:84%" data-l="a"></span><span style="height:60%" data-l="c"></span><span style="height:96%" data-l="e"></span>
+  </div>
+  <div class="last"><span>© 2026 Commonplace contributors</span><a class="btn" href="#title">Top</a></div>
+</footer>
+</body>
+</html>
