@@ -35,7 +35,7 @@
 .col { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); }
 .col > header {
   height: 56px; flex: none;
-  display: flex; align-items: flex-end; justify-content: space-between;
+  display: flex; align-items: last baseline; justify-content: space-between;
   padding: 0 14px 10px; background: var(--surface-2);
   font-weight: 700;
 }
@@ -44,7 +44,7 @@
 .col.done > header { background: var(--surface); color: var(--muted); }
 .stack { flex: 1; min-height: 0; background: var(--surface); padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); overflow: hidden; }
 
-.rail > header { padding: 0; justify-content: center; }
+.rail > header { padding: 0 0 10px; justify-content: center; }
 .rail .stack { align-items: center; padding-top: 14px; gap: 14px; color: var(--muted); }
 .rail .v { writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 700; color: var(--muted); }
 
