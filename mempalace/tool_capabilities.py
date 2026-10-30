@@ -37,6 +37,7 @@ TOOL_CAPABILITIES = {
     "mempalace_kg_add": ("write", "mutating peer_exempt lock_free"),
     "mempalace_kg_invalidate": ("write", "mutating peer_exempt lock_free"),
     "mempalace_kg_supersede": ("write", "mutating peer_exempt lock_free"),
+    "mempalace_kg_save": ("write", "mutating peer_exempt lock_free"),
     "mempalace_kg_timeline": ("read", "lock_free"),
     "mempalace_kg_stats": ("read", "lock_free"),
     "mempalace_traverse": ("read", ""),

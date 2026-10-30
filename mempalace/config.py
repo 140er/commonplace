@@ -43,6 +43,10 @@ _SAFE_NAME_RE = re.compile(r"^(?:[^\W_]|[^\W_][\w .'-]{0,126}[^\W_])$")
 _LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
+# Predicates that hold one value at a time (see KnowledgeGraph.save_fact).
+DEFAULT_SINGLE_VALUED_PREDICATES = ("works_at", "uses_model", "lives_in", "default_branch")
+
+
 def strip_lone_surrogates(text: str) -> str:
     """Replace lone UTF-16 surrogates with U+FFFD so the string is legal UTF-8."""
     return _LONE_SURROGATE_RE.sub("�", text)
@@ -737,6 +741,15 @@ class MempalaceConfig:
         return os.path.expanduser(
             self._file_config.get("palace_path", str(self._config_dir / "palace"))
         )
+
+    @property
+    def single_valued_predicates(self) -> tuple:
+        """Predicates whose new value replaces the open one when a fact is saved."""
+        extra = self._file_config.get("single_valued_predicates")
+        names = list(DEFAULT_SINGLE_VALUED_PREDICATES)
+        if isinstance(extra, list):
+            names += [p.strip().lower().replace(" ", "_") for p in extra if isinstance(p, str)]
+        return tuple(dict.fromkeys(n for n in names if n))
 
     @property
     def tunnel_file(self):
