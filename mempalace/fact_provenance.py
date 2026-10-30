@@ -1,6 +1,6 @@
 """Decision provenance, distinct from the identity that transported a write."""
 
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from . import provenance
 
@@ -22,6 +22,8 @@ def source_link(thread=None, url=None):
         if any(ord(c) < 33 for c in url) or any(c in url for c in "<>`\\"):
             raise ValueError("source_url contains invalid characters")
         parts = urlsplit(url)
+        if not parts.scheme and ".." in unquote(parts.path).split("/"):
+            raise ValueError("source_url path must not contain '..' segments")
         if not (
             (parts.scheme in ("http", "https") and parts.netloc and not parts.username)
             or (parts.scheme == "t3-thread" and parts.netloc == "v1" and parts.path)
@@ -46,6 +48,9 @@ def evidence(thread=None, url=None):
     approved = person and link is not None
     kind = "user" if person else "agent" if identity else "thread" if thread else "unknown"
     decider = identity.get("user") if person else identity.get("connection") or thread or "unknown"
+    if not person and identity.get("auth") == "session" and thread:
+        # A person session transporting automatic extraction is not a deciding agent.
+        kind, decider = "thread", thread
     return {
         "origin_kind": kind,
         "origin_id": decider,

@@ -1109,19 +1109,24 @@ class KnowledgeGraph:
     def _add_source(
         conn, triple_id, thread, start, end, drawer_id, source_file, now, source_url=None
     ) -> bool:
-        """Record one more place a fact was seen. Returns False for a repeat or no source."""
+        """Record a source or its new approval evidence; return False for repeats or no source."""
         if not any(v is not None for v in (thread, drawer_id, source_file)):
             return False
         evidence = fact_provenance.evidence(thread, source_url)
         return (
             conn.execute(
-                "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
+                "INSERT INTO fact_sources (triple_id, source_thread, "
                 "source_seq_start, source_seq_end, source_drawer_id, source_file, "
                 "added_at, hub_stamp, "
                 + ", ".join(evidence)
                 + ") VALUES ("
                 + ", ".join("?" for _ in range(8 + len(evidence)))
-                + ")",
+                + ") ON CONFLICT DO UPDATE SET approval_status='approved', "
+                "approved_by=excluded.approved_by, approval_link=excluded.approval_link "
+                "WHERE excluded.approval_status='approved' AND "
+                "(fact_sources.approval_status != 'approved' "
+                "OR fact_sources.approved_by IS NOT excluded.approved_by "
+                "OR fact_sources.approval_link IS NOT excluded.approval_link)",
                 (
                     triple_id,
                     thread,
@@ -1165,7 +1170,10 @@ class KnowledgeGraph:
           wing: **supersede** it at ``valid_from`` (default now), as
           :meth:`supersede` does. If that value started after ``valid_from``,
           the new fact is older news: it is filed as **history**, ending
-          where the open value begins, and nothing is closed.
+          where the open value begins, and nothing is closed. A person's
+          approval can be history only relative to another approved value;
+          competing proposals end at the approval boundary or their own start,
+          whichever is later, and link to the approved successor.
         - Otherwise: **add**.
 
         ``sensitivities`` limits which stored facts count, so a caller never
@@ -1180,6 +1188,7 @@ class KnowledgeGraph:
             source_thread, source_seq_start, source_seq_end
         )
         fact_provenance.source_link(source_thread, source_url)
+        can_approve = fact_provenance.may_replace_approved(source_thread, source_url)
         wing = fact_wing(wing)
         sensitivity = fact_sensitivity(sensitivity)
         _, sensitivities = visibility(None, sensitivities)
@@ -1228,19 +1237,20 @@ class KnowledgeGraph:
                         "WHERE id = ?",
                         (now, strictest(sensitivity, same["sensitivity"]), confidence, same["id"]),
                     )
-                    if single_valued and fact_provenance.may_replace_approved(
-                        source_thread, source_url
-                    ):
+                    if single_valued and can_approve:
                         closing = conn.execute(
-                            "SELECT id FROM triples WHERE subject=? AND predicate=? AND object != ? "
+                            "SELECT id, valid_from FROM triples WHERE subject=? AND predicate=? AND object != ? "
                             "AND wing IS ? AND valid_to IS NULL "
-                            f"AND (valid_from IS NULL OR {_sql_temporal_start_expr('valid_from')} <= ?)"
-                            + within_sql,
+                            "AND (approval_status != 'approved' OR valid_from IS NULL "
+                            f"OR {_sql_temporal_start_expr('valid_from')} <= ?)" + within_sql,
                             (sub_id, pred, obj_id, wing, boundary, *within_params),
                         ).fetchall()
                         for old in closing:
+                            ended = max(
+                                boundary, _temporal_start_key(old["valid_from"]) or boundary
+                            )
                             conn.execute(
-                                "UPDATE triples SET valid_to=? WHERE id=?", (boundary, old["id"])
+                                "UPDATE triples SET valid_to=? WHERE id=?", (ended, old["id"])
                             )
                         self._mark_superseded(conn, [r["id"] for r in closing], same["id"])
                     fact_provenance.record(conn, same["id"], source_thread, source_url)
@@ -1256,10 +1266,15 @@ class KnowledgeGraph:
                         "AND t.valid_to IS NULL" + within_sql.replace("triples.", "t."),
                         (sub_id, pred, obj_id, wing, *within_params),
                     ).fetchall()
-                if not fact_provenance.may_replace_approved(source_thread, source_url):
+                if not can_approve:
                     rivals = [r for r in rivals if r["approval_status"] != "approved"]
                 later = sorted(
-                    (r for r in rivals if r["valid_from"] is not None),
+                    (
+                        r
+                        for r in rivals
+                        if r["valid_from"] is not None
+                        and (not can_approve or r["approval_status"] == "approved")
+                    ),
                     key=lambda r: _temporal_start_key(r["valid_from"]),
                 )
                 later = [
@@ -1335,8 +1350,9 @@ class KnowledgeGraph:
                 fact_provenance.record(conn, triple_id, source_thread, source_url, new=True)
                 self._add_source(conn, triple_id, *source)
                 for rival in closing:
+                    ended = max(boundary, _temporal_start_key(rival["valid_from"]) or boundary)
                     conn.execute(
-                        "UPDATE triples SET valid_to = ? WHERE id = ?", (boundary, rival["id"])
+                        "UPDATE triples SET valid_to = ? WHERE id = ?", (ended, rival["id"])
                     )
                 self._mark_superseded(conn, [r["id"] for r in closing], triple_id)
                 out = {"action": action, "triple_id": triple_id}

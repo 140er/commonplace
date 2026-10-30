@@ -139,7 +139,8 @@ def _source(args, *, fact=False):
             value = None
     allowed = {"thread", "seq_start", "seq_end"} | ({"url"} if fact else set())
     if not isinstance(value, dict) or set(value) - allowed:
-        raise ToolError("no: source must be {thread, seq_start, seq_end}")
+        shape = "{thread, seq_start, seq_end, url?}" if fact else "{thread, seq_start, seq_end}"
+        raise ToolError(f"no: source must be {shape}")
     try:
         thread, start, end = source_range(
             value.get("thread"), value.get("seq_start"), value.get("seq_end")

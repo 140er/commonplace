@@ -41,3 +41,11 @@ def test_provenance_eval_fails_when_recall_launders_authority_or_loses_source(mo
     assert not report["passed"] and report["provenance_accuracy"] < 1.0
     check = "invented_rule_is_proposal" if fault == "approval" else "proposal_has_exact_source"
     assert not report["checks"][check]
+
+
+def test_provenance_eval_fails_when_a_later_proposal_defeats_person_approval(monkeypatch):
+    bench = _bench()
+    monkeypatch.setattr("mempalace.fact_provenance.may_replace_approved", lambda *_args: False)
+    report = bench.run()
+    assert not report["passed"] and report["provenance_accuracy"] < 1.0
+    assert not report["checks"]["earlier_user_decision_retires_later_proposal"]

@@ -51,6 +51,11 @@ def test_missing_source_is_refused(hub):
     assert result.get("isError") and "source thread" in result["content"][0]["text"]
 
 
+def test_invalid_source_error_mentions_optional_url(hub):
+    result = _call(hub, hub.owner_token(), {**FACT, "source": {"unexpected": "value"}})
+    assert result.get("isError") and "url" in result["content"][0]["text"]
+
+
 def test_human_save_approves_with_proof_and_later_agent_save_retains_it(hub):
     token = hub.owner_token(name="original-agent")
     assert not _call(hub, token, FACT).get("isError")

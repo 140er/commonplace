@@ -105,6 +105,41 @@ def run():
         checks["agent_cannot_retire_user_decision"] = (
             recall("2%")["valid_to"] is None and recall("2%")["fact_status"] == "approved"
         )
+    with KnowledgeGraph.empty() as kg:
+        with provenance.verified(_AGENT):
+            proposed = kg.save_fact(
+                "SimSteer",
+                "perf_gate",
+                "5%",
+                valid_from="2026-10-20",
+                source_thread="mcp:later-dated-proposal",
+                wing="shared",
+                single_valued=True,
+            )
+        with provenance.verified(_PERSON):
+            approved = kg.save_fact(
+                "SimSteer",
+                "perf_gate",
+                "2%",
+                valid_from="2026-10-10",
+                source_thread="mcp:earlier-user-decision",
+                wing="shared",
+                single_valued=True,
+            )
+        rows = {r["object"]: r for r in kg.query_entity("SimSteer")}
+        decision, proposal = rows["2%"], rows["5%"]
+        checks["earlier_user_decision_retires_later_proposal"] = (
+            decision["fact_status"] == "approved"
+            and decision["approved_by"] == "eval-user"
+            and decision["approval_link"] == "t3-thread://v1/mcp:earlier-user-decision"
+            and decision["current"]
+            and decision["valid_to"] is None
+            and proposal["id"] == proposed["triple_id"]
+            and not proposal["current"]
+            and proposal["fact_status"] == "superseded"
+            and proposal["valid_to"] == "2026-10-20T00:00:00Z"
+            and proposal["superseded_by"] == approved["triple_id"]
+        )
     return {
         "provenance_accuracy": sum(checks.values()) / len(checks),
         "checks": checks,

@@ -96,6 +96,87 @@ def test_approving_existing_proposal_retires_competitor_without_changing_origin(
         assert rows["2%"]["origin_id"] == "sol:builder"
 
 
+@pytest.mark.parametrize("approve_existing", [False, True], ids=["new-fact", "existing-proposal"])
+@pytest.mark.parametrize(
+    "proposal_start, approval_start, proposal_end",
+    [
+        ("2026-10-20", "2026-10-10", "2026-10-20T00:00:00Z"),
+        ("2027-01-01", None, "2027-01-01T00:00:00Z"),
+        ("2026-10-01", "2026-10-10", "2026-10-10T00:00:00Z"),
+    ],
+    ids=["backdated-decision", "future-proposal", "earlier-proposal"],
+)
+def test_person_approval_retires_agent_proposal_regardless_of_its_start(
+    monkeypatch, approve_existing, proposal_start, approval_start, proposal_end
+):
+    monkeypatch.setattr("mempalace.knowledge_graph.utc_now_z", lambda: "2026-10-30T12:00:00Z")
+    with KnowledgeGraph.empty() as kg:
+        with provenance.verified(AGENT):
+            proposed = save(kg, valid_from=proposal_start)
+            if approve_existing:
+                existing = kg.save_fact(
+                    "SimSteer",
+                    "perf_gate",
+                    "2%",
+                    wing="simsteer",
+                    source_thread="mcp:origin",
+                    valid_from=approval_start,
+                )
+        with provenance.verified(PERSON):
+            approved = save(kg, "2%", valid_from=approval_start)
+        rows = facts(kg)
+        decision, proposal = rows["2%"], rows["5%"]
+        assert approved["action"] == ("merged" if approve_existing else "superseded")
+        assert decision["approval_status"] == decision["fact_status"] == "approved"
+        assert decision["current"] and decision["valid_to"] is None
+        assert decision["approved_by"] == "jeffrey"
+        assert proposal["id"] == proposed["triple_id"]
+        assert not proposal["current"] and proposal["fact_status"] == "superseded"
+        assert proposal["valid_to"] == proposal_end
+        assert proposal["superseded_by"] == approved["triple_id"]
+        assert proposal["approval_status"] == "proposal"
+        if approve_existing:
+            assert approved["triple_id"] == existing["triple_id"]
+            assert decision["origin_id"] == "sol:builder"
+        for as_of in ("2026-10-30T12:00:00Z", "2027-01-01", "2027-02-01"):
+            (current,) = kg.query_entity("SimSteer", as_of=as_of)
+            assert current["id"] == approved["triple_id"]
+
+
+def test_only_approved_later_rival_can_make_a_person_decision_historical():
+    with KnowledgeGraph.empty() as kg, provenance.verified(PERSON):
+        later = save(kg, valid_from="2026-10-20")
+        earlier = save(kg, "2%", valid_from="2026-10-10")
+        again = save(kg, "2%", valid_from="2026-10-10")
+        rows = facts(kg)
+        assert earlier["action"] == "historical" and earlier["current"] == later["triple_id"]
+        assert again["action"] == "merged" and again["triple_id"] == earlier["triple_id"]
+        assert rows["2%"]["valid_to"] == "2026-10-20T00:00:00Z"
+        assert rows["2%"]["approval_status"] == "approved" and not rows["2%"]["current"]
+        assert rows["5%"]["valid_to"] is None and rows["5%"]["current"]
+        assert rows["5%"]["fact_status"] == "approved"
+
+
+def test_same_range_approval_keeps_visible_evidence_and_original_author():
+    with KnowledgeGraph.empty() as kg:
+        with provenance.verified(AGENT):
+            first = save(kg, source_seq_start=1, source_seq_end=2)
+        with provenance.verified(PERSON):
+            approved = save(kg, source_seq_start=1, source_seq_end=2)
+            repeat = save(kg, source_seq_start=1, source_seq_end=2)
+        assert approved["source_added"] and not repeat["source_added"]
+        with provenance.verified(AGENT):
+            restated = save(kg, source_seq_start=1, source_seq_end=2)
+        assert not restated["source_added"]
+        (source,) = kg.sources([first["triple_id"]])[first["triple_id"]]
+        assert source["source_thread"] == "mcp:origin"
+        assert source["source_seq_start"] == 1 and source["source_seq_end"] == 2
+        assert source["origin_kind"] == "agent" and source["origin_id"] == "sol:builder"
+        assert source["approval_status"] == "approved" and source["approved_by"] == "jeffrey"
+        assert source["approval_link"] == "t3-thread://v1/mcp:origin"
+        assert facts(kg)["5%"]["origin_id"] == "sol:builder"
+
+
 def test_legacy_author_stamp_never_implies_approval(tmp_path):
     path = str(tmp_path / "kg.sqlite3")
     with KnowledgeGraph(path) as kg:
@@ -146,12 +227,24 @@ def test_normalization_retains_authority_and_origin():
         "https://user:pass@example.com/chat",
         "//outside/chat",
         "https://example.com/\nchat",
+        "/app/threads/../..",
+        "/app/threads/thr_source/..",
+        "/app/threads/%2E%2e/%2e.",
+        "/app/threads/thr_source%2f..%2f..",
         "",
     ],
 )
 def test_source_links_reject_non_chat_or_unsafe_urls(url):
     with pytest.raises(ValueError):
         fact_provenance.source_link("mcp:test", url)
+
+
+@pytest.mark.parametrize("identity", [AGENT, PERSON], ids=["agent-origin", "person-approval"])
+def test_dot_segment_source_link_is_rejected_before_writing_fact(identity):
+    with KnowledgeGraph.empty() as kg, provenance.verified(identity):
+        with pytest.raises(ValueError, match="path"):
+            save(kg, source_url="/app/threads/../..")
+        assert kg.query_entity("SimSteer") == []
 
 
 def test_person_marker_must_be_a_verified_boolean():
