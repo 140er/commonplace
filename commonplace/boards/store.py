@@ -10,7 +10,7 @@ from pathlib import Path
 
 from commonplace.extensions import ToolError
 
-from .display import need
+from .display import need_for
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
@@ -91,11 +91,7 @@ def card(conn, row, principal=None) -> dict:
         "updated_at": row["updated_at"],
         "position": row["position"],
     }
-    result["need"] = need(
-        result,
-        me=principal and f"user:{principal.user_id}",
-        owner=bool(principal and principal.role == "owner"),
-    )
+    result["need"] = need_for(result, principal)
     return result
 
 
