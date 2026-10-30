@@ -87,12 +87,26 @@ _DATA_FIELDS = frozenset(
         "topic",
         "webhook_id",
         "delivery_id",
+        # Context handoff: ids only, never thread text.
+        "handoff_id",
+        "stored_thread_id",
+        "task_ref",
+        "successor_agent_ref",
+        "decision",
     }
 )
 _PRESETS = {
     "card_changed": ("card.*",),
     "review_needed": ("card.review_needed",),
     "waiting_on_me": ("card.handoff", "card.decided"),
+    "handoff": (
+        "handoff.started",
+        "handoff.stored",
+        "handoff.completed",
+        "handoff.failed",
+        "handoff.launch_failed",
+        "handoff.settings_changed",
+    ),
 }
 
 
@@ -393,6 +407,9 @@ def _payload(db, event):
         "card.commented": "new comment",
         "card.claimed": "picked up",
         "card.expired": "claim expired",
+        "handoff.completed": "context handed off",
+        "handoff.failed": "handoff failed, compacted instead",
+        "handoff.launch_failed": "successor didn't start",
     }.get(event["kind"], event["kind"])
     title = data.get("title")
     message = " ".join(

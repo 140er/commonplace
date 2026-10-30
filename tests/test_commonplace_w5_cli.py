@@ -60,8 +60,13 @@ def test_client_presets(initialized, capsys, client, profile, read, write, pinne
     )
     output = capsys.readouterr()
     assert output.out.startswith("cmmn_") and output.out.count("\n") == 1
+    # Coding agents (standard profile) may hand off and read their earlier
+    # threads; both do nothing until a workspace turns handoff on.
+    scopes = ["memory:read", "memory:write"]
+    if profile == "standard":
+        scopes = ["handoff:write", "memory:read", "memory:write", "threads:read"]
     assert json.loads(output.err) == {
-        "scopes": ["memory:read", "memory:write"],
+        "scopes": scopes,
         "tools": profile,
         "read_wings": read,
         "write_wings": write,
