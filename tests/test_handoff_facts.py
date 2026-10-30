@@ -373,5 +373,5 @@ def test_background_parsing_rests_so_request_threads_keep_the_gil(monkeypatch):
     monkeypatch.setattr(facts.time, "perf_counter", lambda: next(clock) * facts.PACE_SECONDS)
     monkeypatch.setattr(facts.time, "sleep", rests.append)
     messages = [message(f"line {seq}", seq=seq) for seq in range(4)]
-    assert list(facts._paced(messages)) == messages
+    assert [*facts._Paced(messages)] == messages
     assert rests == [facts.PACE_SECONDS] * 4

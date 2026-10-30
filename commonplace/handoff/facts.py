@@ -284,14 +284,16 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
     return list(dict.fromkeys(out))
 
 
-def _paced(messages):
-    """Yield messages, resting after every ``PACE_SECONDS`` of parsing."""
-    started = time.perf_counter()
-    for message in messages:
-        if time.perf_counter() - started >= PACE_SECONDS:
-            time.sleep(PACE_SECONDS)
-            started = time.perf_counter()
-        yield message
+class _Paced(list):
+    """The batch as a list; iterating it rests after every ``PACE_SECONDS``."""
+
+    def __iter__(self):
+        started = time.perf_counter()
+        for message in super().__iter__():
+            if time.perf_counter() - started >= PACE_SECONDS:
+                time.sleep(PACE_SECONDS)
+                started = time.perf_counter()
+            yield message
 
 
 def file_pending(store, stored, save_fact, *, user="") -> int:
@@ -308,7 +310,7 @@ def file_pending(store, stored, save_fact, *, user="") -> int:
         pending = [m for m in messages if m.seq >= cursor]
         if not pending:
             return filed
-        facts = extract(_paced(messages), user=user, fallback_at=stored.created_at)
+        facts = extract(_Paced(messages), user=user, fallback_at=stored.created_at)
         by_end = {}
         for fact in facts:
             if fact.seq_end >= cursor:
