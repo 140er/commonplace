@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory · Commonplace</title>
+<link rel="stylesheet" href="ctos.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="ws br"><span class="mark"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="10" height="10"/><rect x="17.5" y="4.5" width="10" height="10"/><rect x="4.5" y="17.5" width="10" height="10"/><rect x="19.5" y="19.5" width="6" height="6" fill="currentColor" stroke="none"/></svg></span><span class="name">jeffrey</span></div>
+    <nav class="navs br">
+      <a href="#">Decide<span class="n">4</span></a>
+      <a href="#">Search<kbd>⌘K</kbd></a>
+      <a href="index.html" aria-current>Memory</a>
+    </nav>
+    <nav class="navs fill br"><a href="#">commonplace</a><a href="#">computercraft</a><a href="#">home</a></nav>
+  </aside>
+
+  <main class="main">
+    <header class="head br">
+      <h1>Memory<span class="n" id="count"></span></h1>
+      <span class="mmark"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="4.5" width="10" height="10"/><rect x="17.5" y="4.5" width="10" height="10"/><rect x="4.5" y="17.5" width="10" height="10"/><rect x="19.5" y="19.5" width="6" height="6" fill="currentColor" stroke="none"/></svg></span>
+      <dl class="hud" id="hud">
+        <div><dt>Nodes</dt><dd id="h-nodes"></dd></div>
+        <div><dt>Links</dt><dd id="h-links"></dd></div>
+        <div><dt>Filter</dt><dd id="h-filter"></dd></div>
+        <div class="clock"><dt>Local</dt><dd id="h-clock"></dd></div>
+      </dl>
+      <div class="right">
+        <label class="field filter">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"><circle cx="6" cy="6" r="4"/><path d="M9 9l3.5 3.5"/></svg>
+          <input id="q" type="search" placeholder="Filter" autocomplete="off" spellcheck="false" aria-label="Filter memories">
+          <span id="hits" class="hits"></span><kbd>/</kbd>
+        </label>
+        <div class="views" role="tablist" aria-label="Layout">
+          <button role="tab" data-view="map" aria-selected="true">Map</button>
+          <button role="tab" data-view="themes">Themes</button>
+          <button role="tab" data-view="people">People</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="stage" id="stage">
+      <canvas id="map"></canvas>
+      <ul class="legend br" id="legend" aria-label="Themes"></ul>
+      <div class="when br" id="when" aria-label="Memories per week"><b class="sig">Signal</b><div class="bars" id="bars"></div><b class="peak" id="peak"></b></div>
+      <div class="zoom">
+        <button class="br" data-zoom="in" aria-label="Zoom in">+</button>
+        <span id="pct">100%</span>
+        <button class="br" data-zoom="out" aria-label="Zoom out">−</button>
+        <button class="br" data-zoom="fit" aria-label="Fit"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"><path d="M2 5V2h3M9 2h3v3M12 9v3H9M5 12H2V9"/></svg></button>
+      </div>
+      <div class="tip br" id="tip" hidden></div>
+    </section>
+
+    <aside class="panel" id="panel" hidden></aside>
+  </main>
+
+  <nav class="mtabs"><a href="#">Decide<b>4</b></a><a href="#">Boards</a><a href="index.html" aria-current>Memory</a></nav>
+</div>
+<script src="data.js"></script>
+<script src="map.js"></script>
+</body>
+</html>
