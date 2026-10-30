@@ -191,8 +191,8 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 `GET /api/needs-me/digest` accepts the same owner session or bearer token as
 `GET /api/needs-me`, with the same wing visibility. It returns
 `{text, count, items: [{number, title, need, board}], remaining}`. The queue is
-deduplicated, ordered by the server's `need` priority and then card number, and
-limited to five spoken items. Titles stay verbatim. No LLM or external service
+deduplicated, with addressed asks first, then the server's `need` priority and
+card number, and limited to five spoken items. Titles stay verbatim. No LLM or external service
 is used. `needs_me(format="digest")` returns the same JSON in its MCP text reply;
 omitting `format` keeps the existing grouped reply.
 

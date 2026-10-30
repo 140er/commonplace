@@ -58,6 +58,21 @@ def test_all_priorities_and_three_wording():
     assert [c["need"] for c in result["items"]] == ["plan", "merge", "idle"]
 
 
+def test_owner_token_questions_lead_without_changing_their_derived_need():
+    question = {**item(3, need="idle"), "ask": "Ship?"}
+    labelled = {**item(4, need="plan"), "ask": "Which plan?"}
+    result = digest(
+        {
+            "asks": [labelled, question],
+            "done_review": [question],
+            "ready_to_merge": [item(1, need="merge")],
+            "stale": [item(2, need="idle")],
+        }
+    )
+    assert [c["number"] for c in result["items"]] == [3, 4, 1, 2]
+    assert result["items"][0]["need"] == "idle"
+
+
 def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     worker = service(hub, agent)
@@ -86,13 +101,16 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     assert expected["count"] == 4  # Includes the secret for the unrestricted owner.
     status, payload = api(hub, scoped, "GET", "/api/needs-me/digest")
     assert status == 200 and payload["count"] == 3
-    assert payload["items"][0] == item(asked["number"], title)
+    assert payload["items"][0] == item(asked["number"], title, need="idle")
     assert "SECRET CANARY" not in json.dumps(payload)
     assert "Another person's question" not in json.dumps(payload)
     ok, output = mcp(hub, scoped, "needs_me", format="digest")
     assert ok and json.loads(output) == payload
     assert title in payload["text"]
-    assert api(hub, cookie, "GET", "/api/needs-me/digest")[1] == expected
+    session_digest = api(hub, cookie, "GET", "/api/needs-me/digest")[1]
+    assert session_digest == owner.needs_me(format="digest")
+    assert session_digest["items"][0]["need"] == "you"
+    assert session_digest["text"] == expected["text"]
     assert api(hub, token, "GET", "/api/needs-me/digest")[1] == expected
     status, headers, text = request(
         hub, "/api/needs-me/digest?format=text", headers={"Authorization": f"Bearer {scoped}"}

@@ -13,7 +13,16 @@ def digest(groups):
     cards = {
         c["number"]: c for bucket in groups.values() if isinstance(bucket, list) for c in bucket
     }
-    ordered = sorted(cards.values(), key=lambda c: (NEEDS.index(c["need"]), c["number"]))
+    # An owner token's cards never say need:you. The existing addressed-ask
+    # buckets still identify the owner's urgent questions without redoing
+    # recipient or wing policy here. Keep each card's derived need intact.
+    asks = {
+        c["number"] for key in ("asks", "done_review") for c in groups.get(key, []) if c.get("ask")
+    }
+    ordered = sorted(
+        cards.values(),
+        key=lambda c: (0 if c["number"] in asks else NEEDS.index(c["need"]), c["number"]),
+    )
     count = len(ordered)
     items = [{k: c[k] for k in ("number", "title", "need", "board")} for c in ordered[:5]]
     remaining = count - len(items)
