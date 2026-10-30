@@ -183,6 +183,11 @@ class ThreadStore:
                     handoff_id TEXT PRIMARY KEY,
                     markdown TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS fact_extraction (
+                    thread_id TEXT PRIMARY KEY REFERENCES threads(id),
+                    version INTEGER NOT NULL,
+                    next_seq INTEGER NOT NULL CHECK(next_seq >= 0)
+                );
                 """
             )
             self._fts_enabled = self._init_fts()
@@ -214,6 +219,34 @@ class ThreadStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def fact_cursor(self, stored_id: str, version: int) -> int:
+        """First unprocessed message for this extractor version; chats stay untouched."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT version, next_seq FROM fact_extraction WHERE thread_id=?", (stored_id,)
+            ).fetchone()
+        if row is not None and row["version"] > version:
+            raise ValueError("a newer fact extractor already processed this thread")
+        return row["next_seq"] if row is not None and row["version"] == version else 0
+
+    def advance_fact_cursor(self, stored_id: str, version: int, next_seq: int) -> None:
+        """Commit progress monotonically, only within the durable message range."""
+        if type(version) is not int or version < 1 or type(next_seq) is not int or next_seq < 0:
+            raise ValueError("invalid fact extraction progress")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            stored = self.get(stored_id)
+            if stored is None or next_seq > stored.message_count:
+                raise ValueError("fact extraction progress is outside the thread")
+            self._conn.execute(
+                "INSERT INTO fact_extraction(thread_id, version, next_seq) VALUES (?, ?, ?) "
+                "ON CONFLICT(thread_id) DO UPDATE SET "
+                "next_seq=CASE WHEN version=excluded.version THEN MAX(next_seq, excluded.next_seq) "
+                "ELSE excluded.next_seq END, version=excluded.version "
+                "WHERE version <= excluded.version",
+                (stored_id, version, next_seq),
+            )
 
     def store(
         self,
