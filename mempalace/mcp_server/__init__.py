@@ -131,7 +131,14 @@ from ..hallways import (  # noqa: E402
     list_hallways_page,
 )
 from ..ids import ID_RECIPE, make_drawer_id_from_content  # noqa: E402
-from ..knowledge_graph import KnowledgeGraph, knowledge_graph_notice, source_range  # noqa: E402
+from ..knowledge_graph import (  # noqa: E402
+    KnowledgeGraph,
+    fact_sensitivity,
+    fact_wing,
+    knowledge_graph_notice,
+    source_range,
+    visibility,
+)
 from ..logstream import LOGSTREAM_DB_FILENAME, Logstream  # noqa: E402
 from ..metadata_types import BOOKKEEPING_WHERE, is_bookkeeping  # noqa: E402
 from ..palace_graph import (  # noqa: E402

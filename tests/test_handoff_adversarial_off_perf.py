@@ -412,22 +412,45 @@ def _token(local, policy, name="review"):
 # this branch's own history, so any clone of the branch can read it.
 DEVELOP_BASELINE = "c07bb354"
 
-# Optional arguments tools gained after the baseline (the chat range on saves
-# and facts). Off mode must still match the baseline in everything else.
+# Optional arguments tools gained after the baseline: first the chat range on
+# saves and facts. Off mode must still match the baseline in everything else.
 _RANGE = {"source_thread", "source_seq_start", "source_seq_end"}
+# Then wings and sensitivity on facts.
+_FACT = {"wing", "sensitivity"}
+_FILTER = {"wings", "sensitivities"}
 ADDED_SINCE_BASELINE = {
     "memory_save": {"source"},
     "mempalace_add_drawer": _RANGE,
-    "mempalace_kg_add": _RANGE,
-    "mempalace_kg_supersede": _RANGE,
+    "mempalace_kg_add": _RANGE | _FACT | {"sensitivities"},
+    "mempalace_kg_supersede": _RANGE | _FACT | {"sensitivities"},
+    "mempalace_kg_invalidate": {"wing", "sensitivities"},
+    "mempalace_kg_query": _FILTER,
+    "mempalace_kg_timeline": _FILTER,
 }
 
 
-def _as_baseline(reply):
-    """``reply`` with the post-baseline arguments dropped from its tool list."""
+# KG tools that once needed every wing and are now wing-scoped, so a token
+# that reads every wing but not private ones may now see them.
+WING_SCOPED_SINCE_BASELINE = {
+    "mempalace_kg_query",
+    "mempalace_kg_timeline",
+    "mempalace_kg_invalidate",
+    "mempalace_kg_supersede",
+}
+
+
+def _as_baseline(reply, baseline):
+    """``reply`` without what tools gained since ``baseline`` was recorded."""
     status, body = reply
     body = json.loads(json.dumps(body))
     tools = body.get("result", {}).get("tools", []) if isinstance(body, dict) else []
+    before = baseline[1] if isinstance(baseline[1], dict) else {}
+    known = {t.get("name") for t in before.get("result", {}).get("tools", [])}
+    tools[:] = [
+        t
+        for t in tools
+        if t.get("name") in known or t.get("name") not in WING_SCOPED_SINCE_BASELINE
+    ]
     for tool in tools:
         properties = tool.get("inputSchema", {}).get("properties", {})
         for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
@@ -588,7 +611,7 @@ def test_existing_http_and_audit_are_unchanged(gateway, legacy, profile, explici
             initial = len(gateway.db.audit_entries(limit=10_000))
             expected = _http(before, token, "POST", "/mcp", request)
             middle = gateway.db.audit_entries(limit=10_000)
-            actual = _as_baseline(_http(after, token, "POST", "/mcp", request))
+            actual = _as_baseline(_http(after, token, "POST", "/mcp", request), expected)
             final = gateway.db.audit_entries(limit=10_000)
             assert actual == expected
             count = len(middle) - initial
@@ -714,9 +737,9 @@ def test_new_token_has_legacy_tool_list_when_workspace_off(gateway, legacy, prof
     )
     request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     with legacy.server(gateway.path) as before, _server(gateway.gateway) as after:
-        assert _as_baseline(_http(after, token, "POST", "/mcp", request)) == _http(
-            before, before_token, "POST", "/mcp", request
-        )
+        expected = _http(before, before_token, "POST", "/mcp", request)
+        actual = _http(after, token, "POST", "/mcp", request)
+        assert _as_baseline(actual, expected) == expected
     assert not gateway.ctx._stores
 
 
