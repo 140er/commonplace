@@ -8,16 +8,18 @@ in particular, another request's pending handoff is not safe to stop for.
 1. settings off → ``HandoffResult("compact", reason="off")``; nothing stored.
 2. ``HandoffDB.begin`` by idempotency key (default ``thread:<thread_id>``);
    an existing non-failed handoff is returned as-is with ``launch=False``
-   (unless this is the first launch claim, see 6). Stored snapshots are
-   immutable: even a longer transcript on retry returns the original handoff,
-   without appending messages or launching a second successor. The calling
-   agent stops; the successor recalls the original snapshot.
+   (unless this is the first launch claim, see 6). A canonical transcript
+   prefix extension appends its new messages, chunks and search entries to
+   the same thread in one transaction. The handoff and successor stay the
+   same; a non-extension retry leaves the stored text unchanged.
    A pending writer keeps its lease for 600 seconds; an expired pending row
-   may be taken over atomically and its idempotent storage resumed.
+   may be taken over atomically and its idempotent storage resumed. Each
+   attempt carries an opaque token checked by mark_stored, mark_failed and
+   claim_launch; a paused original writer cannot mutate its replacement.
 3. parse transcript, store it (``ThreadStore.store``). Any failure →
    ``mark_failed`` + ``EVENT_FAILED`` + ``HandoffResult("compact",
    reason=...)``: no successor ever starts without a stored thread.
-4. palace mirror (best effort).
+4. Additional Memory search mirror (best effort, by orchestrator decision).
 5. build the doc (``writer``) with the chain (parent handoff's stored ids),
    ``mark_stored``, ``EVENT_STORED``.
 6. ``claim_launch``: only the winner launches. ``client`` launcher: return
@@ -37,7 +39,12 @@ failure and explicitly relaunch. If external launch succeeded but registering
 its result failed, preserve ``launched`` and its claim; registration can be
 retried, whereas relaunch could create a duplicate external successor.
 
-Successor registration uses the control DB's shared lock around read,
+Handoff documents, including all transcript quotes and notes, live in the
+workspace ThreadStore. The control row keeps only metadata and pointers;
+the DB hydrates the document for its callers and migrates pre-release rows.
+
+Open requirement: durable, exactly-once completion events. Successor
+registration uses the control DB's shared lock around read,
 set_successor and event emission. This deduplicates completion events for
 services sharing that ControlDB, but does not guarantee delivery: if emit
 fails after set_successor, an idempotent repeat does not retry the event.
@@ -54,11 +61,12 @@ External launch calls never hold a database transaction.
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass, replace
 from typing import Optional
 
 from . import launchers, palace_mirror, thread_store, transcripts, writer
-from .db import HandoffDBError
+from .db import HandoffDBError, HandoffLeaseError
 from .models import (
     EVENT_COMPLETED,
     EVENT_FAILED,
@@ -80,6 +88,7 @@ class _Snapshot:
     settings: HandoffSettings
     meta: ThreadMeta
     doc: Optional[HandoffDoc] = None
+    lease_token: Optional[str] = None
 
 
 class HandoffService:
@@ -101,6 +110,7 @@ class HandoffService:
         self.events = events
         self.call_tool = call_tool
         self.prompt_dir = prompt_dir
+        self.db.set_document_store(store_for)
         self._snapshots: dict[tuple[str, str], _Snapshot] = {}
 
     def run(self, principal, request: HandoffRequest) -> HandoffResult:
@@ -118,20 +128,38 @@ class HandoffService:
         if not settings.enabled:
             # Turning handoff off later never strands a handoff already under way:
             # a stored thread still gets its one successor.
-            existing = self.db.by_key(workspace_id, key)
+            with self.control_db._lock:
+                existing = self.db.by_key(workspace_id, key)
+                if existing is not None and not self._can_reuse(principal, existing):
+                    return HandoffResult("compact", reason="in progress")
             if existing is None or existing.state in ("failed", "pending"):
                 return HandoffResult("compact", reason="off")
             settings = replace(current, enabled=True)
 
+        lease_token = secrets.token_hex(16)
         try:
-            handoff, created = self.db.begin(
-                workspace_id, key, meta, connection_id=principal.connection_id
-            )
+            with self.control_db._lock:
+                existing = self.db.by_key(workspace_id, key)
+                if existing is not None and not self._can_reuse(principal, existing):
+                    return HandoffResult("compact", reason="in progress")
+                handoff, created = self.db.begin(
+                    workspace_id,
+                    key,
+                    meta,
+                    connection_id=principal.connection_id,
+                    lease_token=lease_token,
+                )
+                if not created and not self._can_reuse(principal, handoff):
+                    return HandoffResult("compact", reason="in progress")
         except Exception:
             reason = "thread storage failed"
             self._emit(EVENT_FAILED, principal, None, decision="error", reason=reason)
             return HandoffResult("compact", reason=reason)
         if not created:
+            if handoff.stored_thread_id:
+                failed = self._append_retry(principal, request, handoff)
+                if failed is not None:
+                    return failed
             if handoff.state in ("launched", "done", "launch_failed"):
                 return HandoffResult("handoff", handoff)
             if handoff.state != "stored":
@@ -142,7 +170,7 @@ class HandoffService:
                 snapshot = _Snapshot(settings, self._meta(handoff))
             return self._launch(principal, handoff, snapshot)
 
-        snapshot = _Snapshot(current, meta)
+        snapshot = _Snapshot(current, meta, lease_token=lease_token)
         with self.control_db._lock:
             self._snapshots[(workspace_id, key)] = snapshot
         self._emit(EVENT_STARTED, principal, handoff)
@@ -190,11 +218,15 @@ class HandoffService:
             snapshot = replace(snapshot, doc=doc)
             with self.control_db._lock:
                 self._snapshots[(workspace_id, key)] = snapshot
-            handoff = self.db.mark_stored(handoff.id, stored.id, markdown)
+            handoff = self.db.mark_stored(handoff.id, stored.id, markdown, lease_token=lease_token)
+        except HandoffLeaseError:
+            return self._superseded(workspace_id, key, lease_token, handoff)
         except Exception:
             reason = "thread storage failed"
             try:
-                handoff = self.db.mark_failed(handoff.id, reason)
+                handoff = self.db.mark_failed(handoff.id, reason, lease_token=lease_token)
+            except HandoffLeaseError:
+                return self._superseded(workspace_id, key, lease_token, handoff)
             except Exception:
                 # A broken DB must still allow the calling agent to compact.
                 pass
@@ -205,6 +237,41 @@ class HandoffService:
 
         self._emit(EVENT_STORED, principal, handoff)
         return self._launch(principal, handoff, snapshot)
+
+    def _append_retry(self, principal, request: HandoffRequest, handoff: Handoff):
+        try:
+            messages = transcripts.parse(request.transcript, request.transcript_format)
+        except ValueError:
+            return None  # Non-extension retries retain their previous behavior.
+        try:
+            store = self.store_for(handoff.workspace_id)
+            stored = store.append(handoff.stored_thread_id, messages)
+        except thread_store.ThreadConflict:
+            return None
+        except Exception:
+            reason = "thread storage failed"
+            self._emit(EVENT_FAILED, principal, handoff, decision="error", reason=reason)
+            return HandoffResult("compact", handoff, reason=reason)
+        if self.call_tool is not None:
+            try:
+                # Mirroring all durable chunks also repairs a previous mirror
+                # failure; immutable chunk ids make these retries idempotent.
+                palace_mirror.mirror(self.call_tool, principal, stored, store.chunks(stored.id))
+            except Exception:
+                pass
+        return None
+
+    def _superseded(self, workspace_id: str, key: str, lease_token: str, handoff: Handoff):
+        with self.control_db._lock:
+            snapshot = self._snapshots.get((workspace_id, key))
+            if snapshot and snapshot.lease_token == lease_token:
+                self._snapshots.pop((workspace_id, key), None)
+            handoff = self.db.get(handoff.id) or handoff
+        return HandoffResult("compact", handoff, reason="in progress")
+
+    @staticmethod
+    def _can_reuse(principal, handoff: Handoff) -> bool:
+        return principal.role == "owner" or handoff.connection_id == principal.connection_id
 
     def register_successor(self, principal, handoff_id: str, ref: SuccessorRef) -> Handoff:
         with self.control_db._lock:
@@ -259,7 +326,10 @@ class HandoffService:
     def _launch(self, principal, handoff: Handoff, snapshot: _Snapshot) -> HandoffResult:
         claimed = False
         try:
-            if not self.db.claim_launch(handoff.id):
+            lease_token = snapshot.lease_token
+            if lease_token is None:
+                lease_token = self.db.lease_token(handoff.id)
+            if not self.db.claim_launch(handoff.id, lease_token=lease_token):
                 return HandoffResult("handoff", handoff)
             claimed = True
             doc = snapshot.doc
@@ -277,7 +347,10 @@ class HandoffService:
                         exclude=handoff.stored_thread_id,
                     ),
                 )
-            prompt = writer.successor_prompt(doc)
+            if snapshot.doc is None and handoff.doc_markdown:
+                prompt = writer.successor_prompt(doc, markdown=handoff.doc_markdown)
+            else:
+                prompt = writer.successor_prompt(doc)
             with self.control_db._lock:
                 current = self.db.get(handoff.id)
                 if current is None or current.state != "stored" or current.successor is not None:

@@ -62,7 +62,7 @@ class FakeControl:
 
 def database_class(state):
     class FakeHandoffDB:
-        def __init__(self, control_db):
+        def __init__(self, control_db, *, document_store_for=None):
             assert control_db is state.control
 
         def setting_rows(self, workspace_id, agent="", task_ref=""):
@@ -124,6 +124,7 @@ def database_class(state):
 @pytest.fixture
 def adapter(monkeypatch, tmp_path):
     control = FakeControl()
+    control.path = str(tmp_path / "control.sqlite3")
     state = SimpleNamespace(
         control=control,
         rows={},

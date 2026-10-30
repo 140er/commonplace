@@ -8,7 +8,9 @@ messages (``chunk_messages``) indexed in FTS5 for ``search``.
 Idempotent: storing the same ``source_thread_id`` again returns the existing
 ``StoredThread`` and writes nothing; storing different content under the
 same source id raises ``ThreadConflict``. A crash mid-store leaves nothing
-behind (one transaction). Never deletes.
+behind (one transaction). ``append`` accepts canonical prefix extensions
+without rewriting any existing message or chunk. Handoff documents and
+their verbatim quotes stay in this workspace file as well. Never deletes.
 """
 
 from __future__ import annotations
@@ -177,6 +179,10 @@ class ThreadStore:
                     text TEXT NOT NULL,
                     PRIMARY KEY(thread_id, idx)
                 );
+                CREATE TABLE IF NOT EXISTS handoff_docs (
+                    handoff_id TEXT PRIMARY KEY,
+                    markdown TEXT NOT NULL
+                );
                 """
             )
             self._fts_enabled = self._init_fts()
@@ -298,6 +304,77 @@ class ThreadStore:
                     [(stored.id, c.index, c.text) for c in chunks],
                 )
             return stored
+
+    def append(self, stored_id: str, messages: list[ThreadMessage]) -> StoredThread:
+        """Append the suffix of a full transcript, retaining every existing row.
+
+        Canonical fields must match the saved prefix. An identical transcript,
+        or an older prefix after a concurrent append, is a no-op. Changed
+        content raises ``ThreadConflict``. New messages, chunks, FTS entries
+        and counts commit together; original chunk boundaries never change.
+        """
+        messages = list(messages)
+        if any(message.seq != seq for seq, message in enumerate(messages)):
+            raise ValueError("Message sequence must start at zero and be contiguous")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            stored = self.get(stored_id)
+            if stored is None:
+                raise ValueError("Thread not found")
+            previous = self.messages(stored_id)
+            common = min(len(previous), len(messages))
+            if canonical_sha256(previous[:common]) != canonical_sha256(messages[:common]):
+                raise ThreadConflict("Source thread already has different stored content")
+            if len(messages) <= len(previous):
+                return stored
+            added = messages[len(previous) :]
+            chunks = chunk_messages(added)
+            self._conn.executemany(
+                "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (stored_id, m.seq, m.role, m.kind, m.name, m.call_id, m.at, m.text, m.raw)
+                    for m in added
+                ],
+            )
+            self._conn.executemany(
+                "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (stored_id, stored.chunk_count + c.index, c.seq_start, c.seq_end, c.text)
+                    for c in chunks
+                ],
+            )
+            if self._fts_enabled:
+                self._conn.executemany(
+                    "INSERT INTO chunks_fts(thread_id, idx, text) VALUES (?, ?, ?)",
+                    [(stored_id, stored.chunk_count + c.index, c.text) for c in chunks],
+                )
+            self._conn.execute(
+                "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
+                (
+                    len(messages),
+                    stored.chunk_count + len(chunks),
+                    canonical_sha256(previous + added),
+                    stored_id,
+                ),
+            )
+            return self.get(stored_id)
+
+    def put_doc(self, handoff_id: str, markdown: str) -> None:
+        """Save a handoff's verbatim quotes beside its workspace transcript."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO handoff_docs(handoff_id, markdown) VALUES (?, ?) "
+                "ON CONFLICT(handoff_id) DO UPDATE SET markdown = excluded.markdown",
+                (handoff_id, markdown),
+            )
+
+    def doc(self, handoff_id: str) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT markdown FROM handoff_docs WHERE handoff_id = ?", (handoff_id,)
+            ).fetchone()
+            return row["markdown"] if row is not None else ""
 
     def get(self, stored_id: str) -> Optional[StoredThread]:
         with self._lock:

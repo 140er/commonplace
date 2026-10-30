@@ -599,10 +599,6 @@ def test_secrets_and_transcripts_do_not_enter_audit_outbox_or_logs(security, cap
         assert SECRET_MARKER not in security.request("GET", path)[1]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R2 owns db.py/service.py: doc_markdown persists transcript quotes in control DB",
-)
 def test_control_database_never_stores_transcript_text(security):
     with security.db._lock:
         dump = "\n".join(security.db._conn.iterdump())
@@ -812,14 +808,17 @@ def test_launcher_secret_is_redacted_in_settings_web_and_cli(security, capsys, m
     assert SECRET_MARKER not in capsys.readouterr().out
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="R2 owns service.py: API preflight cannot enforce ownership atomically with begin",
-)
 def test_service_cannot_return_another_connections_handoff(security):
-    principal = security.db.authenticate_token(security.tokens["missing"])
-    with pytest.raises(LookupError, match="not found"):
-        security.ctx.service.run(principal, HandoffRequest(ThreadMeta("seed"), "[]", "messages"))
+    principal = security.db.authenticate_token(security.tokens["member"])
+    result = security.ctx.service.run(
+        principal, HandoffRequest(ThreadMeta("seed"), "[]", "messages")
+    )
+    assert (result.action, result.reason, result.handoff, result.launch) == (
+        "compact",
+        "in progress",
+        None,
+        False,
+    )
 
 
 def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):

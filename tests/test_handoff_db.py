@@ -20,6 +20,7 @@ from commonplace.handoff.models import (
     SuccessorRef,
     ThreadMeta,
 )
+from commonplace.handoff.thread_store import ThreadStore
 
 NOW = "2026-10-30T04:00:00Z"
 LATER = "2026-10-30T05:00:00Z"
@@ -70,15 +71,24 @@ CREATE TABLE handoffs (
 def open_control(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, "_now", lambda: datetime(2026, 10, 30, 4, tzinfo=timezone.utc))
     controls = []
+    stores = {}
+
+    def store_for(workspace):
+        if workspace not in stores:
+            stores[workspace] = ThreadStore(str(tmp_path / (workspace + "-threads.sqlite3")))
+        return stores[workspace]
 
     def open_one():
         control = ControlDB(str(tmp_path / "control.sqlite3"))
         controls.append(control)
+        control.handoff_store_for = store_for
         return control
 
     yield open_one
     for control in controls:
         control.close()
+    for store in stores.values():
+        store.close()
 
 
 @pytest.fixture
@@ -88,7 +98,11 @@ def control(open_control):
 
 @pytest.fixture
 def db(control):
-    return HandoffDB(control)
+    return _database(control)
+
+
+def _database(control):
+    return HandoffDB(control, document_store_for=getattr(control, "handoff_store_for", None))
 
 
 def _begin(db, workspace="workspace-one", key="thread:source-thread", meta=META):
@@ -142,7 +156,7 @@ def test_upgrade_existing_control_database(open_control):
 
     # Reopen the file exactly as an existing hub would, then install handoff tables.
     upgraded = open_control()
-    db = HandoffDB(upgraded)
+    db = _database(upgraded)
     assert db._conn is upgraded._conn
     assert db._lock is upgraded._lock
     tables = {
@@ -160,7 +174,7 @@ def test_upgrade_existing_control_database(open_control):
     handoff = _begin(db, workspace)
     webhook_id = db.add_webhook(workspace, WAKE_URL, "secret", ("*",), actor=owner)
     outbox_ids = db.enqueue(workspace, "handoff.started", {"handoff_id": handoff.id})
-    reopened = HandoffDB(open_control())
+    reopened = _database(open_control())
     assert reopened.setting_rows(workspace) == [saved]
     assert reopened.get(handoff.id) == handoff
     assert reopened.webhooks(workspace)[0]["id"] == webhook_id
@@ -182,9 +196,9 @@ def test_upgrade_existing_handoff_table_without_cwd(open_control):
     assert "cwd" not in before
 
     upgraded = open_control()
-    db = HandoffDB(upgraded)
+    db = _database(upgraded)
     after = dict(upgraded._conn.execute("SELECT * FROM handoffs").fetchone())
-    assert after == {**before, "cwd": ""}
+    assert after == {**before, "cwd": "", "lease_token": "", "doc_markdown": ""}
     assert db.get("hof_legacy").cwd == ""
     assert db.by_stored_thread("thr_legacy").doc_markdown == DOCUMENT
     assert db.list("workspace-one")[0].cwd == ""
@@ -192,7 +206,7 @@ def test_upgrade_existing_handoff_table_without_cwd(open_control):
     assert db.by_successor_thread("workspace-one", SUCCESSOR.thread_id).cwd == ""
 
     # A second open must preserve data and never try to add the column twice.
-    reopened = HandoffDB(open_control())
+    reopened = _database(open_control())
     assert reopened.get("hof_legacy") == db.get("hof_legacy")
     assert _begin(reopened, key="new").cwd == META.cwd
     columns = {row["name"]: row for row in upgraded._conn.execute("PRAGMA table_info(handoffs)")}
@@ -231,7 +245,7 @@ def test_cwd_is_persisted_and_hydrated_on_all_reads(db, control, open_control, c
     assert db.release_launch(handoff.id, actor="owner").cwd == cwd
     completed = db.set_successor(handoff.id, SUCCESSOR)
     assert completed.cwd == cwd
-    reopened = HandoffDB(open_control())
+    reopened = _database(open_control())
     assert reopened.get(handoff.id) == completed
     assert reopened.list("workspace-one") == [completed]
     assert reopened.by_stored_thread("thr_stored") == completed
@@ -376,7 +390,7 @@ def test_begin_retries_only_store_failures(db, state):
 def test_begin_race_16_threads(db, open_control, separate_connections, retry_failed):
     original = _in_state(db, "failed") if retry_failed else None
     databases = (
-        [HandoffDB(open_control()) for _ in range(16)] if separate_connections else [db] * 16
+        [_database(open_control()) for _ in range(16)] if separate_connections else [db] * 16
     )
     results = _race(
         databases,
@@ -396,7 +410,7 @@ def test_begin_race_16_threads(db, open_control, separate_connections, retry_fai
 def test_claim_launch_race_16_threads(db, open_control, separate_connections):
     handoff = _in_state(db, "stored")
     databases = (
-        [HandoffDB(open_control()) for _ in range(16)] if separate_connections else [db] * 16
+        [_database(open_control()) for _ in range(16)] if separate_connections else [db] * 16
     )
     results = _race(databases, lambda current: current.claim_launch(handoff.id))
     assert results.count(True) == 1
@@ -535,7 +549,7 @@ def test_immediate_successor_follows_documented_state_graph(db, control):
 
 def test_concurrent_successor_registration_keeps_one_agent(db, open_control):
     handoff = _in_state(db, "stored")
-    databases = [HandoffDB(open_control()) for _ in range(16)]
+    databases = [_database(open_control()) for _ in range(16)]
 
     def register(current):
         ref = SuccessorRef(f"agent:{id(current)}")
@@ -706,10 +720,9 @@ def test_database_operations_do_not_write_audit_entries(db, control):
 
 def test_by_key_is_read_only(tmp_path):
     from commonplace.control_db import ControlDB
-    from commonplace.handoff.db import HandoffDB
     from commonplace.handoff.models import ThreadMeta
 
-    db = HandoffDB(ControlDB(str(tmp_path / "control.sqlite3")))
+    db = _database(ControlDB(str(tmp_path / "control.sqlite3")))
     assert db.by_key("ws", "thread:a") is None
     assert db.list("ws") == []
     made, created = db.begin("ws", "thread:a", ThreadMeta(thread_id="a"), connection_id="c")
