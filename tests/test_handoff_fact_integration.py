@@ -199,3 +199,68 @@ def test_off_mode_never_starts_extraction(hub, enabled):
     )
     assert context.service.run(principal, request()).action == "compact"
     assert context.service._fact_pool is None
+
+
+def test_private_fact_values_never_enter_events_or_default_webhook_deliveries(hub, enabled):
+    import re
+
+    from commonplace import events, sessions, webhooks
+
+    context, principal, token = enabled
+    dispatcher = hub.gateway.webhooks
+    dispatcher.stop()  # Reconcile the queue explicitly; never send a test webhook.
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    webhooks.add(hub.db, person, "https://example.invalid/sink")  # default kinds=["*"]
+    result = context.service.run(
+        principal,
+        request(lines=[{"role": "user", "content": "Jeffrey is allergic to penicillin."}]),
+    )
+    assert result.action == "handoff"
+    context.service.wait_for_facts(timeout=10)
+    (fact,) = query(hub, token, "Jeffrey")
+    saved = [
+        event for event in events.after(hub.db, hub.workspace) if event["kind"] == "fact.saved"
+    ]
+    assert len(saved) == 1 and re.fullmatch(r"fact_[0-9a-f]{64}", saved[0]["subject"])
+    dispatcher.reconcile()
+    with hub.db._lock:
+        payloads = [
+            bytes(row[0]).decode()
+            for row in hub.db._conn.execute(
+                "SELECT d.payload FROM webhook_deliveries d JOIN events e ON e.seq=d.event_seq WHERE e.kind='fact.saved'"
+            )
+        ]
+    assert payloads
+    for payload in [json.dumps(saved), *payloads]:
+        assert all(
+            value not in payload.lower()
+            for value in ("jeffrey", "penicillin", "allergic_to", fact["id"])
+        )
+    assert json.loads(payloads[0])["task"] == saved[0]["subject"]
+
+
+def test_scheduling_failure_does_not_fail_the_stored_handoff(hub, enabled, monkeypatch, caplog):
+    context, principal, token = enabled
+    context.service._fact_pool = ThreadPoolExecutor(max_workers=1)
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("private chat content must not be logged")
+
+    monkeypatch.setattr(context.service._fact_pool, "submit", unavailable)
+    result = context.service.run(principal, request())
+    assert result.action == "handoff" and result.launch
+    assert query(hub, token) == []
+    assert "scheduling incomplete" in caplog.text
+    assert "private chat content" not in caplog.text
+
+
+def test_named_facts_do_not_depend_on_or_infer_a_user_profile(hub, enabled, monkeypatch):
+    context, principal, token = enabled
+
+    def no_profile(*_args):
+        raise RuntimeError("profile unavailable")
+
+    monkeypatch.setattr(context.control_db, "user", no_profile)
+    assert context.service.run(principal, request()).action == "handoff"
+    context.service.wait_for_facts(timeout=10)
+    assert [fact["object"] for fact in query(hub, token)] == ["8443"]

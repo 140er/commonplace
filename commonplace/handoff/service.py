@@ -290,11 +290,7 @@ class HandoffService:
                 ):
                     return
                 store = self.store_for(stored.workspace_id)
-                user = self.control_db.user(principal.user_id)
-                identity = user["name"] or user["email"]
-                facts.file_pending(
-                    store, stored, lambda args: self.save_fact(principal, args), user=identity
-                )
+                facts.file_pending(store, stored, lambda args: self.save_fact(principal, args))
             except Exception:
                 # Never log exception text or a candidate; it can contain chat
                 # content. A retry resumes from the last committed cursor.
@@ -302,15 +298,18 @@ class HandoffService:
                     "handoff fact extraction incomplete: %s", stored.id
                 )
 
-        with self._fact_lock:
-            if self._background_closed:
-                return
-            if self._fact_pool is None:
-                self._fact_pool = ThreadPoolExecutor(
-                    max_workers=1, thread_name_prefix="handoff-facts"
-                )
-            self._fact_jobs.append(self._fact_pool.submit(job))
-            self._fact_jobs = [f for f in self._fact_jobs if not f.done()]
+        try:
+            with self._fact_lock:
+                if self._background_closed:
+                    return
+                if self._fact_pool is None:
+                    self._fact_pool = ThreadPoolExecutor(
+                        max_workers=1, thread_name_prefix="handoff-facts"
+                    )
+                self._fact_jobs.append(self._fact_pool.submit(job))
+                self._fact_jobs = [f for f in self._fact_jobs if not f.done()]
+        except RuntimeError:
+            logging.getLogger(__name__).warning("handoff fact scheduling incomplete: %s", stored.id)
 
     def wait_for_facts(self, timeout: Optional[float] = None) -> None:
         """Wait for fact jobs in tests; handoff requests never wait for them."""

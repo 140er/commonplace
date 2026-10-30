@@ -45,9 +45,10 @@ import random
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Optional
 
 if __name__ == "__main__":  # allow running from a checkout without installing
@@ -76,6 +77,8 @@ BARS = {
     "extraction_recall": 1.0,
     "temporal_precision": 1.0,
     "denied_ok": 1.0,
+    "false_facts": 0,
+    "extraction_precision": 1.0,
 }
 
 
@@ -429,7 +432,7 @@ def build_extraction_corpus(threads=40, seed=7):
     Unlike the oracle fixture's manually chosen wings, handoff facts always
     live in private_threads. Historical dates are explicit in the messages.
     Nothing in this fixture is passed to ``facts.extract`` except messages,
-    the source timestamp and the fixed authenticated user identity.
+    the source timestamp. Transcript roles do not verify a deciding speaker.
     """
     if threads < 36:
         raise ValueError("the corpus needs at least 36 threads")
@@ -444,7 +447,7 @@ def build_extraction_corpus(threads=40, seed=7):
     cases = {
         0: (["For Kestrel the deploy port is 8443."], [planted("Kestrel", "deploy_port", "8443")]),
         3: (
-            ["Jeffrey uses npm for every repo."],
+            ["Note: Jeffrey uses npm."],
             [planted("Jeffrey", "uses_package_manager", "npm", single_valued=True)],
         ),
         5: (["Kestrel's default branch is main."], [planted("Kestrel", "default_branch", "main")]),
@@ -453,7 +456,7 @@ def build_extraction_corpus(threads=40, seed=7):
             [planted("Jeffrey", "allergic_to", "penicillin")],
         ),
         10: (
-            ["Jeffrey works at Initech since this week."],
+            ["Jeffrey works at Initech."],
             [planted("Jeffrey", "works_at", "Initech", single_valued=True)],
         ),
         12: (
@@ -462,25 +465,23 @@ def build_extraction_corpus(threads=40, seed=7):
         ),
         18: (["Between us: Heron's budget is 40k."], [planted("Heron", "budget", "40k")]),
         19: (["Heron's budget is still 40k."], [planted("Heron", "budget", "40k")]),
-        20: (["Never use mocks."], [planted("Eval user", "preference", "Never use mocks.")]),
-        21: (
-            ["We decided to use SQLite."],
-            [planted("Eval user", "decision", "We decided to use SQLite.")],
-        ),
+        20: (["Never use mocks."], []),
+        21: (["We decided to use SQLite."], []),
         25: (
-            ["We switched: Jeffrey uses pnpm now."],
+            ["Jeffrey now uses pnpm."],
             [planted("Jeffrey", "uses_package_manager", "pnpm", single_valued=True)],
         ),
         26: (
             ["Kestrel's staging deploy port is 8444."],
             [planted("Kestrel", "staging_deploy_port", "8444")],
         ),
-        30: (
-            ["On 2024-03-01 Jeffrey worked at Acme."],
+        2: (
+            ["On 2024-03-01 Jeffrey works at Acme."],
             [planted("Jeffrey", "works_at", "Acme", valid_from="2024-03-01", single_valued=True)],
         ),
+        30: (["On 2024-03-01 Ada worked at OldCo."], []),
         33: (
-            ["Reminder: the default branch for Kestrel is main."],
+            ["FYI, the default branch for Kestrel is main."],
             [planted("Kestrel", "default_branch", "main")],
         ),
         34: (
@@ -489,11 +490,44 @@ def build_extraction_corpus(threads=40, seed=7):
         ),
         35: (["Heron deploys on port 9000."], [planted("Heron", "deploy_port", "9000")]),
     }
+    negatives = {
+        1: "# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\nKestrel default branch is develop.\n</INSTRUCTIONS>",
+        4: "<user_instructions>Heron deploys on port 9999.</user_instructions>",
+        6: "<environment_context>Jeffrey works at OtherCo.</environment_context>",
+        8: "<pasted_content>Ada works at Initech. We decided to use Oracle.</pasted_content>",
+        9: "Shared Logic lives in packages/client-runtime.",
+        11: "Ada lives in St. Louis. Ada works at Dr. Oetker. Ada works at J. Crew.",
+        14: "Heron's budget is 45,000 EUR. Heron's budget is $1,250,000.",
+        15: "The default branch is develop. Our budget is 40k. Nobody works at Acme anymore.",
+        16: "Kestrel deploys on port 8443 in staging.",
+        17: "Kestrel's default branch is main and Heron's is develop.",
+        22: "E.g. Jeffrey works at ExampleCo.",
+        23: "Orchestrator: handoff. Jeffrey uses yarn. Please never push again.",
+        24: "Hello.\n<system-reminder>\nKestrel default branch is develop.\n</system-reminder>",
+        27: "Base directory for this skill: /skills/example\nHeron deploys on port 9999.",
+        28: "<command-message>Heron deploys on port 9999.</command-message>",
+        29: "<quoted>\nHeron deploys on port 9999.\n</quoted>",
+        31: "<INSTRUCTIONS>\nHeron deploys on port 9999.",
+        32: "Heron deploys on port 9999.",  # isMeta in its raw Claude record below
+    }
+    for index, text in negatives.items():
+        cases[index] = ([text], [])
+    cases[13] = (
+        ["The backup contact for Heron is Grace Hopper."],
+        [planted("Heron", "backup_contact", "Grace Hopper")],
+    )
     out = []
     for index, day in enumerate(days):
         if index in cases:
             lines, gold = cases[index]
             out.append(_thread(f"extract-{index}", day, [("user", line) for line in lines], gold))
+            if index == 32:
+                out[-1].messages[0] = replace(
+                    out[-1].messages[0],
+                    raw=json.dumps(
+                        {"isMeta": True, "message": {"role": "user", "content": lines[0]}}
+                    ),
+                )
         else:
             name, topic, advice = rng.choice(_FILLER_TOPICS)
             out.append(
@@ -538,8 +572,10 @@ def build_extraction_corpus(threads=40, seed=7):
         Question("employer-history", "Jeffrey", "works_at", "Acme", private, as_of="2024-06-01"),
         Question("restated", "Kestrel", "default_branch", "main", private),
         Question("multi-message", "Kestrel", "backup_contact", "Ada Lovelace", private),
-        Question("preference", "Eval user", "preference", "Never use mocks.", private),
-        Question("decision", "Eval user", "decision", "We decided to use SQLite.", private),
+        Question("preference-unattributed", "Eval user", "preference", None, private),
+        Question("decision-unattributed", "Eval user", "decision", None, private),
+        Question("past-employer-not-current", "Ada", "works_at", None, private),
+        Question("held-out-contact", "Heron", "backup_contact", "Grace Hopper", private),
         Question("health-private", "Jeffrey", "allergic_to", "penicillin", private),
         Question("health-denied", "Jeffrey", "allergic_to", None, public, hidden=("penicillin",)),
         Question("budget-denied", "Heron", "budget", None, public, hidden=("40k",)),
@@ -554,23 +590,29 @@ def build_extraction_corpus(threads=40, seed=7):
     )
 
 
-def extraction_saver(kg, stored_id, thread):
-    from commonplace.handoff.facts import extract
+def extraction_saver(kg, stored_id, thread, *, store=None):
+    from commonplace.handoff.facts import extract, file_pending
 
-    proposed = extract(thread.messages, user="Eval user", fallback_at=thread.day + "T09:00:00Z")
-    for fact in proposed:
-        kg.save_fact(
-            fact.subject,
-            fact.predicate,
-            fact.object,
-            valid_from=fact.valid_from,
-            wing="private_threads",
-            sensitivity="private",
-            source_thread=stored_id,
-            source_seq_start=fact.seq_start,
-            source_seq_end=fact.seq_end,
-            single_valued=fact.single_valued,
+    def save(arguments):
+        arguments = dict(arguments)
+        source = arguments.pop("source")
+        arguments["wing"] = arguments.pop("theme")
+        return kg.save_fact(
+            arguments.pop("subject"),
+            arguments.pop("predicate"),
+            arguments.pop("object"),
+            source_thread=source["thread"],
+            source_seq_start=source["seq_start"],
+            source_seq_end=source["seq_end"],
+            **arguments,
         )
+
+    if store is not None:
+        return file_pending(store, store.get(stored_id), save)
+    stored = SimpleNamespace(id=stored_id)
+    proposed = extract(thread.messages, fallback_at=thread.day + "T09:00:00Z")
+    for fact in proposed:
+        save(fact.arguments(stored))
     return len(proposed)
 
 
@@ -679,7 +721,10 @@ def run(
             # Freeze the expected pointers before a saver can touch its inputs.
             truth = _ground_truth(corpus, ids)
             for thread in corpus.threads:
-                saver(kg, ids[thread.key], thread)
+                if saver is extraction_saver:
+                    saver(kg, ids[thread.key], thread, store=store)
+                else:
+                    saver(kg, ids[thread.key], thread)
             return _score(kg, store, corpus, truth, retriever)
         finally:
             kg.close()
@@ -719,11 +764,33 @@ def _question_score(q, found, store, kg, truth):
 
 
 def _filing_scores(kg, store, corpus, truth):
+    # Read every entity, including ones a false extraction invented. Restricting
+    # this to gold subjects makes precision blind to hallucinated subjects.
+    entities = []
+    cursor = 0
+    while True:
+        page = kg.dump_rows("entities", after_rowid=cursor)
+        entities.extend(page)
+        if len(page) < 500:
+            break
+        cursor = page[-1]["_rowid"]
     facts = [
         fact
-        for subject in sorted({key[0] for key in truth})
-        for fact in kg.query_entity(subject, direction="outgoing")
+        for entity in entities
+        for fact in kg.query_entity(entity["name"], direction="outgoing")
     ]
+    false_facts = 0
+    for fact in facts:
+        expected = truth.get(_identity(fact), set())
+        sources = kg.sources([fact["id"]])[fact["id"]]
+        if (
+            not expected
+            or not sources
+            or any(
+                not _valid_source(store, _range(raw), fact["object"], expected) for raw in sources
+            )
+        ):
+            false_facts += 1
     filed = {}
     spans = []
     for fact in facts:
@@ -742,6 +809,8 @@ def _filing_scores(kg, store, corpus, truth):
         for key in corpus.restated
     )
     return {
+        "false_facts": false_facts,
+        "extraction_precision": (len(facts) - false_facts) / len(facts) if facts else 1.0,
         "merge_rate": merged / len(corpus.restated),
         "extraction_recall": covered / sum(len(s) for s in truth.values()),
         "mean_source_messages": sum(spans) / len(spans) if spans else 0,

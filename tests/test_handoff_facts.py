@@ -1,6 +1,7 @@
 """Grounded extraction and durable indexing over the actual verbatim store."""
 
 import json
+from contextlib import closing
 from dataclasses import replace
 
 import pytest
@@ -27,7 +28,7 @@ def message(text, seq=0, *, role="user", at=AT):
 @pytest.mark.parametrize(
     "text, subject, predicate, value",
     [
-        ("For Kestrel the deploy port is 8443, don't forget it.", "Kestrel", "deploy_port", "8443"),
+        ("For Kestrel the deploy port is 8443.", "Kestrel", "deploy_port", "8443"),
         ("Heron deploys on port 9000.", "Heron", "deploy_port", "9000"),
         ("Kestrel's staging deploy port is 8444.", "Kestrel", "staging_deploy_port", "8444"),
         ("Kestrel's default branch is main.", "Kestrel", "default_branch", "main"),
@@ -35,9 +36,17 @@ def message(text, seq=0, *, role="user", at=AT):
         ("Kestrel's model is qwen3.5:27b.", "Kestrel", "uses_model", "qwen3.5:27b"),
         ("Reminder: the default branch for Kestrel is main.", "Kestrel", "default_branch", "main"),
         ("Kestrel default branch is still main.", "Kestrel", "default_branch", "main"),
-        ("Jeffrey uses npm for every repo.", "Jeffrey", "uses_package_manager", "npm"),
+        ("Jeffrey uses npm.", "Jeffrey", "uses_package_manager", "npm"),
         ("We switched: Jeffrey uses pnpm now.", "Jeffrey", "uses_package_manager", "pnpm"),
-        ("Jeffrey works at Initech since this week.", "Jeffrey", "works_at", "Initech"),
+        ("Note: Jeffrey now uses pnpm.", "Jeffrey", "uses_package_manager", "pnpm"),
+        ("FYI, Heron deploys on port 9000.", "Heron", "deploy_port", "9000"),
+        (
+            "The backup contact for Kestrel is Ada Lovelace.",
+            "Kestrel",
+            "backup_contact",
+            "Ada Lovelace",
+        ),
+        ("Jeffrey works at Initech.", "Jeffrey", "works_at", "Initech"),
         ("Jeffrey works at Café Élan.", "Jeffrey", "works_at", "Café Élan"),
         (
             "Private note: Jeffrey is allergic to penicillin.",
@@ -92,19 +101,15 @@ def test_only_user_assertions_are_extracted():
     assert facts.extract([tool], fallback_at=AT) == []
 
 
-def test_preferences_and_decisions_keep_the_whole_sentence_verbatim():
-    original = "Never use mocks. We decided to use SQLite."
-    found = facts.extract([message(original)], user="Jeffrey", fallback_at=AT)
-    assert [(f.subject, f.predicate, f.object) for f in found] == [
-        ("Jeffrey", "preference", "Never use mocks."),
-        ("Jeffrey", "decision", "We decided to use SQLite."),
-    ]
-    assert all(f.object in original for f in found)
+def test_first_person_decisions_do_not_infer_the_token_users_identity():
+    original = "Never use mocks. We decided to use SQLite. Please don't push again."
+    assert facts.extract([message(original)], user="Jeffrey", fallback_at=AT) == []
 
 
 def test_dates_are_grounded_and_fallback_is_stable():
-    (past,) = facts.extract([message("On 2024-03-01 Jeffrey worked at Acme.")], fallback_at=AT)
-    assert past.valid_from == "2024-03-01"
+    assert facts.extract([message("On 2024-03-01 Jeffrey worked at Acme.")], fallback_at=AT) == []
+    (dated,) = facts.extract([message("As of 2024-03-01 Jeffrey works at Acme.")], fallback_at=AT)
+    assert dated.valid_from == "2024-03-01"
     (fallback,) = facts.extract([message("Jeffrey works at Acme.", at="invalid")], fallback_at=AT)
     assert fallback.valid_from == AT
     (precise,) = facts.extract(
@@ -272,3 +277,91 @@ def test_crash_between_fact_commit_and_checkpoint_keeps_one_row_and_source(tmp_p
     finally:
         kg.close()
         store.close()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\nKestrel default branch is develop.\n</INSTRUCTIONS>",
+        "<INSTRUCTIONS>\nKestrel default branch is develop.",
+        "<user_instructions>Kestrel default branch is develop.</user_instructions>",
+        "<environment_context>Kestrel default branch is develop.</environment_context>",
+        "<pasted_content>\nAda works at Initech.\n</pasted_content>",
+        "Hello.\n<system-reminder>\nKestrel default branch is develop.\n</system-reminder>",
+        "<arbitrary-tag>\nKestrel default branch is develop.\n</arbitrary-tag>",
+        "Base directory for this skill: /skills/example\nKestrel default branch is develop.",
+        "<command-message>Kestrel default branch is develop.</command-message>",
+        "Orchestrator: continue.\nKestrel default branch is develop.",
+        "Our budget is 40k.",
+        "The default branch is main.",
+        "Nobody works at Acme anymore.",
+        "Shared logic lives in packages/client-runtime.",
+        "Ada lives in St. Louis.",
+        "Heron's budget is 45,000 EUR.",
+        "Heron's budget is $1,250,000.",
+        "Ada works at Dr. Oetker.",
+        "Ada works at J. Crew now.",
+        "Kestrel deploys on port 8443 in staging.",
+        "Kestrel's default branch is main and Heron's is develop.",
+        "E.g. Jeffrey works at Acme.",
+        "Jeffrey works at Acme until Friday.",
+        "Jeffrey uses pnpm in Kestrel and npm everywhere else.",
+    ],
+)
+def test_review_negative_cases_are_not_filed(text):
+    assert facts.extract([message(text)], user="Jeffrey", fallback_at=AT) == []
+
+
+def test_is_meta_record_never_produces_a_fact():
+    source = message("Kestrel default branch is develop.")
+    source = replace(
+        source,
+        raw=json.dumps({"isMeta": True, "message": {"role": "user", "content": source.text}}),
+    )
+    assert facts.extract([source], fallback_at=AT) == []
+
+
+@pytest.mark.parametrize(
+    "first, second, subject, predicate, expected",
+    [
+        ("Heron's budget is 40k.", "Heron's budget is 45,000 EUR.", "Heron", "budget", "40k"),
+        (
+            "Kestrel deploys on port 443.",
+            "Kestrel deploys on port 8443 in staging.",
+            "Kestrel",
+            "deploy_port",
+            "443",
+        ),
+        (
+            "Jeffrey works at CurrentCo.",
+            "On 2024-03-01 Jeffrey worked at Acme.",
+            "Jeffrey",
+            "works_at",
+            "CurrentCo",
+        ),
+        ("Jeffrey uses npm.", "Jeffrey now uses pnpm.", "Jeffrey", "uses_package_manager", "pnpm"),
+    ],
+)
+def test_rejected_or_complete_restatements_keep_correct_current_fact(
+    tmp_path, first, second, subject, predicate, expected
+):
+    with closing(ThreadStore(str(tmp_path / "threads.db"))) as store, KnowledgeGraph.empty() as kg:
+        source = [message(first), message(second, 1, at="2025-02-01T00:00:00Z")]
+        stored = store.store("ws", "changed", source, actor="eval")
+        facts.file_pending(store, stored, lambda args: _save(kg, args))
+        current = [
+            row
+            for row in kg.query_entity(subject)
+            if row["current"] and row["predicate"] == predicate
+        ]
+        assert [row["object"] for row in current] == [expected]
+        assert store.messages(stored.id) == source
+
+
+def test_dated_past_employer_without_current_employer_stays_in_verbatim_store(tmp_path):
+    with closing(ThreadStore(str(tmp_path / "threads.db"))) as store, KnowledgeGraph.empty() as kg:
+        source = [message("On 2024-03-01 Jeffrey worked at Acme.")]
+        stored = store.store("ws", "history", source, actor="eval")
+        assert facts.file_pending(store, stored, lambda args: _save(kg, args)) == 0
+        assert kg.query_entity("Jeffrey") == []
+        assert store.messages(stored.id) == source

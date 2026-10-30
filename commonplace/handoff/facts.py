@@ -1,46 +1,40 @@
 """Deterministic facts from user messages, with exact source ranges.
 
 No model and no I/O in ``extract``. The source chat is authoritative; these
-triples and verbatim decision/preference sentences are only an index. Rules
+triples are only an index; transcript roles do not verify their speakers. Rules
 are deliberately narrow: unsupported prose stays in the chat and its mirror.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from commonplace.privacy import scan
 from mempalace.config import MAX_NAME_LENGTH
-from mempalace.general_extractor import DECISION_MARKERS, PREFERENCE_MARKERS
 
 from .models import MIRROR_WING
 from .writer import _is_user_message
 
 VERSION = 1
-_NAME = r"(?P<subject>[^\W\d_][\w .-]{0,79}?)"
+_NAME = r"(?P<subject>[^\W\d_][\w .’'-]{0,79}?)"
 _VALUE = r"(?P<object>[^\n,;!?]{1,180}?)"
-_END = r"(?=\s+(?:since|from|now|for|today|this week)\b|[,;!?]|\.(?:\s|$)|$)"
-_PREFIX = re.compile(r"^(?:Reminder:|Private note:|Between us:|We switched:)\s*", re.I)
+_PREFIX = re.compile(r"^(?:[A-Za-z]+(?: [A-Za-z]+){0,2}:|FYI,)\s*", re.I)
 _DATED = re.compile(r"^(?:On|As of) (\d{4}-\d{2}-\d{2})[, :]\s*", re.I)
 _UNCERTAIN = re.compile(
-    r"\b(?:if|suppose|hypothetically|example|maybe|might|could|would|should|"
-    r"not|never|no longer|used to)\b",
+    r"\b(?:if|suppose|hypothetically|example|imagine|maybe|might|could|would|should|"
+    r"not|never|no longer|used to|anymore)\b|\be\.g\.",
     re.I,
 )
-_HYPOTHETICAL = re.compile(
-    r"\b(?:if|suppose|hypothetically|example|maybe|might|could|would|should)\b", re.I
+_WRAPPER = re.compile(
+    r"<[/!A-Za-z]|(?im:^\s*#*\s*AGENTS\.md instructions)|"
+    r"Base directory for this skill:|(?im:^\s*(?:Orchestrator|Chief|Agent|Assistant|Steer from Chief)\s*:)",
 )
-_PREFERENCE = re.compile("|".join(PREFERENCE_MARKERS), re.I)
-_DECISION = re.compile("|".join(DECISION_MARKERS), re.I)
-_PREFERENCE_STATEMENT = re.compile(
-    r"^(?:I prefer|I like|I hate|Always use|Never use|Don't|Please|My (?:rule|preference|style|convention)|We (?:always|never))\b",
-    re.I,
-)
-_DECISION_STATEMENT = re.compile(
-    r"^(?:We (?:decided|chose|picked|settled on)|Let's (?:use|go with|pick|choose|switch to))\b",
-    re.I,
+_ABBREVIATION = re.compile(r"(?:\b(?:st|dr|mr|mrs|ms|prof|sr|jr|e\.g|i\.e)|\b[A-Z])\.$", re.I)
+_VALUE_SCOPE = re.compile(
+    r"\b(?:and|but|or|since|from|for|until|in|on|during|except|unless|anymore)\b", re.I
 )
 _PROPERTIES = {
     "deploy port": "deploy_port",
@@ -55,20 +49,77 @@ _PROPERTY_WORDS = "|".join(_PROPERTIES)
 _RULES = [
     (
         "property",
-        rf"(?:For )?{_NAME}(?:['’]s)? (?:the )?(?P<property>{_PROPERTY_WORDS}) is (?:still )?{_VALUE}{_END}",
+        rf"(?:For )?{_NAME}(?:['’]s)? (?:the )?(?P<property>{_PROPERTY_WORDS}) is (?:still )?{_VALUE}\.?",
     ),
-    ("default_branch", rf"the default branch for {_NAME} is {_VALUE}{_END}"),
-    ("deploy_port", rf"{_NAME} deploys on port (?P<object>\d{{1,5}})\b"),
-    ("works_at", rf"{_NAME} works at {_VALUE}{_END}"),
-    ("works_at", rf"{_NAME} worked at {_VALUE}{_END}"),
-    ("lives_in", rf"{_NAME} lives in {_VALUE}{_END}"),
-    ("allergic_to", rf"{_NAME} is allergic to {_VALUE}{_END}"),
-    ("uses_package_manager", rf"{_NAME} uses (?P<object>npm|pnpm|yarn|bun)\b"),
+    ("default_branch", rf"the default branch for {_NAME} is {_VALUE}\.?"),
+    ("backup_contact", rf"the backup contact for {_NAME} is {_VALUE}\.?"),
+    ("deploy_port", rf"{_NAME} deploys on port (?P<object>\d{{1,5}})\.?"),
+    ("works_at", rf"{_NAME} works at {_VALUE}\.?"),
+    ("allergic_to", rf"{_NAME} is allergic to {_VALUE}\.?"),
+    ("uses_package_manager", rf"{_NAME} uses (?P<object>npm|pnpm|yarn|bun)(?: now)?\.?"),
 ]
 _RULES = [(predicate, re.compile(pattern, re.I)) for predicate, pattern in _RULES]
 _CONTACT = re.compile(rf"For {_NAME}, record the backup contact[.!]?\Z", re.I)
 _CONTACT_VALUE = re.compile(r"(?P<object>[^\n.!?]{1,180}?) is the person[.!]?\Z", re.I)
-_PRONOUNS = {"i", "we", "you", "he", "she", "they", "it", "this", "that"}
+_NOT_NAMES = {
+    "i",
+    "we",
+    "you",
+    "he",
+    "she",
+    "they",
+    "it",
+    "this",
+    "that",
+    "the",
+    "a",
+    "an",
+    "our",
+    "my",
+    "your",
+    "their",
+    "nobody",
+    "somebody",
+    "someone",
+    "everybody",
+    "everyone",
+    "anyone",
+    "all",
+    "none",
+    "no",
+    "these",
+    "those",
+    "shared",
+    "default",
+}
+
+
+def _proper_name(value):
+    words = value.split()
+    return (
+        bool(words)
+        and len(words) <= 5
+        and words[0].lower() not in _NOT_NAMES
+        and all(re.fullmatch(r"[^\W\d_][\w’'-]*", word) and word[0].isupper() for word in words)
+    )
+
+
+def _literal_value(predicate, value):
+    if _VALUE_SCOPE.search(value) or re.search(r"\b(?:St|Dr|Mr|Mrs|Ms|Prof)\.|\b[A-Z]\.", value):
+        return False
+    if predicate.endswith("deploy_port"):
+        return value.isdigit() and 1 <= int(value) <= 65535
+    if predicate in ("works_at", "backup_contact"):
+        return _proper_name(value)
+    if predicate == "default_branch":
+        return re.fullmatch(r"[\w][\w./-]*", value) is not None
+    if predicate == "uses_model":
+        return re.fullmatch(r"[\w][\w.:/-]*", value) is not None
+    if predicate == "uses_package_manager":
+        return value.lower() in {"npm", "pnpm", "yarn", "bun"}
+    if predicate == "budget":
+        return re.fullmatch(r"[$€£]?\d+(?:\.\d+)?(?:[kKmMbB]| (?:EUR|USD|GBP))?", value) is not None
+    return re.fullmatch(r"[\w-]+(?: [\w-]+){0,2}", value) is not None
 
 
 @dataclass(frozen=True)
@@ -118,15 +169,31 @@ def _sentences(text):
             continue
         if fenced or line.startswith((">", "<", '"', "'")):
             continue
-        yield from re.split(r"(?<=[.!?])\s+", line)
+        start = 0
+        for boundary in re.finditer(r"[.!?](?:\s+|$)", line):
+            candidate = line[start : boundary.start() + 1]
+            if _ABBREVIATION.search(candidate):
+                continue
+            yield candidate
+            start = boundary.end()
+        if line[start:]:
+            yield line[start:]
 
 
 def _safe(message):
-    if not _is_user_message(message) or "\x00" in message.text:
+    if not _is_user_message(message) or "\x00" in message.text or _WRAPPER.search(message.text):
         return False
     try:
         message.text.encode("utf-8")
+        raw = json.loads(message.raw)
     except UnicodeEncodeError:
+        return False
+    except (ValueError, TypeError, RecursionError):
+        raw = {}
+    if isinstance(raw, dict) and any(
+        isinstance(record, dict) and record.get("isMeta")
+        for record in (raw, raw.get("message"), raw.get("payload"))
+    ):
         return False
     return not any(flag.startswith(("secret:", "injection:")) for flag in scan(message.text))
 
@@ -143,17 +210,18 @@ def _structured(sentence, message, at):
             return None
         text = text[dated.end() :]
     for predicate, pattern in _RULES:
-        match = pattern.match(text)
+        match = pattern.fullmatch(text)
         if match is None:
             continue
-        if predicate == "works_at" and " worked at " in text.lower() and not dated:
-            return None  # A past employer without a date must not replace today's one.
-        subject, obj = match["subject"].strip(), match["object"].strip()
-        if subject.lower() in _PRONOUNS or not obj or len(obj) > MAX_NAME_LENGTH:
-            return None
+        subject = match["subject"].strip().removesuffix(" now")
+        obj = match["object"].strip()
         if predicate == "property":
             predicate = _PROPERTIES[match["property"].lower()]
-        if predicate.endswith("deploy_port") and (not obj.isdigit() or not 1 <= int(obj) <= 65535):
+        if (
+            not _proper_name(subject)
+            or len(obj) > MAX_NAME_LENGTH
+            or not _literal_value(predicate, obj)
+        ):
             return None
         return Fact(
             subject,
@@ -168,10 +236,11 @@ def _structured(sentence, message, at):
 
 
 def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
-    """Extract from messages and trusted user/time metadata, never eval answers.
+    """Index complete named assertions, never infer a deciding speaker.
 
-    Structured rules require a named subject. Verbatim decision/preference
-    sentences use the authenticated user's identity when one is supplied.
+    ``user`` is retained for caller compatibility, but cannot establish who
+    authored a transcript. First-person preferences/decisions, past-tense
+    employers, ambiguous locations and qualified values stay in the chat.
     """
     out = []
     previous = None
@@ -180,8 +249,6 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
             previous = None
             continue
         at = _instant(message.at, fallback_at)
-        # The only cross-message rule requires adjacent user messages and an
-        # explicit named subject; no pronoun or topic guessing.
         contact = _CONTACT.fullmatch(previous.text.strip()) if previous else None
         value = _CONTACT_VALUE.fullmatch(message.text.strip())
         if (
@@ -190,7 +257,8 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
             and previous.seq + 1 == message.seq
             and not _UNCERTAIN.search(message.text)
             and not _UNCERTAIN.search(previous.text)
-            and contact["subject"].lower() not in _PRONOUNS
+            and _proper_name(contact["subject"])
+            and _proper_name(value["object"])
             and len(value["object"]) <= MAX_NAME_LENGTH
         ):
             out.append(
@@ -208,19 +276,6 @@ def extract(messages, *, user: str = "", fallback_at: str) -> list[Fact]:
             fact = _structured(sentence, message, at)
             if fact:
                 out.append(fact)
-            elif (
-                user
-                and 1 <= len(sentence) <= MAX_NAME_LENGTH
-                and not sentence.endswith("?")
-                and not _HYPOTHETICAL.search(sentence)
-            ):
-                kind = None
-                if _PREFERENCE_STATEMENT.match(sentence) and _PREFERENCE.search(sentence):
-                    kind = "preference"
-                elif _DECISION_STATEMENT.match(sentence) and _DECISION.search(sentence):
-                    kind = "decision"
-                if kind:
-                    out.append(Fact(user, kind, sentence, message.seq, message.seq, at))
         previous = message
     return list(dict.fromkeys(out))
 

@@ -358,3 +358,25 @@ def test_extractor_receives_only_messages_and_trusted_metadata(monkeypatch):
 def test_the_cli_runs_actual_extraction(capsys):
     assert bench.main(["--saver", "extract", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["extraction_recall"] == 1.0
+
+
+def test_false_facts_bar_counts_invented_subjects_outside_the_gold_queries():
+    corpus = bench.build_extraction_corpus()
+
+    def extra_fact(kg, stored_id, thread):
+        bench.oracle_saver(kg, stored_id, thread)
+        if thread.key == "extract-0":
+            kg.save_fact(
+                "Invented",
+                "works_at",
+                "FakeCo",
+                source_thread=stored_id,
+                source_seq_start=0,
+                wing="private_threads",
+                sensitivity="private",
+            )
+
+    report = bench.run(corpus=corpus, saver=extra_fact)
+    assert report["recall_at_1"] == 1.0 and report["extraction_recall"] == 1.0
+    assert report["false_facts"] == 1 and report["extraction_precision"] < 1.0
+    assert not report["passed"]
