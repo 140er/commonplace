@@ -63,6 +63,7 @@ def parse(text: str, fmt: str = "auto") -> list[ThreadMessage]:
     recognized = False
     for line_number, raw in enumerate(source, 1):
         if not raw.strip():
+            _add(messages, raw, "")
             continue
         try:
             record = json.loads(raw)
