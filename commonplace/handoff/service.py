@@ -43,16 +43,14 @@ Handoff documents, including all transcript quotes and notes, live in the
 workspace ThreadStore. The control row keeps only metadata and pointers;
 the DB hydrates the document for its callers and migrates pre-release rows.
 
-Open requirement: durable, exactly-once completion events. Successor
-registration uses the control DB's shared lock around read,
-set_successor and event emission. This deduplicates completion events for
-services sharing that ControlDB, but does not guarantee delivery: if emit
-fails after set_successor, an idempotent repeat does not retry the event.
-Separate gateways do not share this lock. Cross-process completion event
-deduplication and durable delivery would require an atomic transition
-indicator and transactional audit/outbox writes. Queued outbox deliveries
-survive restart; a webhook accepted before its acknowledgement was saved
-may be delivered again with the same delivery id for receiver deduplication.
+Completion events are durable and exactly once: ``set_successor`` queues
+``handoff.completed`` in ``handoff_outbox`` in the same transaction as the
+successor, and ``Events.deliver_pending`` writes the audit entry, the hub
+event and the delivered mark in one transaction. Undelivered rows are retried
+on later calls (``run``, ``register_successor``) and replayed when the gateway
+starts, also across gateways that share one control database. A webhook
+accepted before its acknowledgement was saved may be delivered again with the
+same delivery id, for receiver deduplication.
 
 Launch transitions use the same shared lock to preserve a concurrently
 completed handoff, and the database validates state changes in transactions.
@@ -70,7 +68,6 @@ from typing import Optional
 from . import launchers, palace_mirror, thread_store, transcripts, writer
 from .db import HandoffDBError, HandoffLeaseError
 from .models import (
-    EVENT_COMPLETED,
     EVENT_FAILED,
     EVENT_LAUNCH_FAILED,
     EVENT_STARTED,
@@ -123,6 +120,8 @@ class HandoffService:
         if not meta.thread_id or not meta.thread_id.strip():
             raise ValueError("thread_id must not be empty")
         workspace_id = principal.workspace_id
+        # Retry events a failed delivery left queued in this workspace.
+        self.events.deliver_pending(workspace_id=workspace_id)
         key = request.idempotency_key or f"thread:{meta.thread_id}"
         current = self.settings.effective(
             workspace_id, meta.agent or principal.connection, meta.task_ref
@@ -297,16 +296,24 @@ class HandoffService:
         with self.control_db._lock:
             handoff = self._authorized(principal, handoff_id)
             if handoff.state == "done":
+                # A retry also delivers a completion event a crash left queued.
+                self.events.deliver_pending(handoff_id=handoff_id)
                 if handoff.successor == ref:
                     return handoff
                 # Let the database validate retries and fill missing metadata;
                 # enriching an existing successor is not another completion.
-                return self.db.set_successor(handoff_id, ref)
+                return self.db.set_successor(handoff_id, ref, caller=principal)
             if handoff.state not in ("stored", "launched"):
                 raise HandoffDBError("handoff is not ready for a successor")
-            handoff = self.db.set_successor(handoff_id, ref)
-            self._emit(EVENT_COMPLETED, principal, handoff)
+            # handoff.completed is queued in the same transaction as the
+            # successor, then delivered: a crash in between never loses it.
+            handoff = self.db.set_successor(handoff_id, ref, caller=principal)
+            self.events.deliver_pending(handoff_id=handoff_id)
             return handoff
+
+    def replay_pending(self) -> int:
+        """Deliver every queued event (gateway start)."""
+        return self.events.deliver_pending()
 
     def report_launch_failure(self, principal, handoff_id: str, error: str) -> Handoff:
         """The client launcher couldn't start the successor. Same permission

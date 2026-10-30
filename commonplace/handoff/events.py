@@ -61,30 +61,110 @@ class Events:
         """Record ids only, independently attempting the audit entry and the event.
 
         Unknown reasons become controlled diagnostics, since exception text can
-        contain verbatim user data.
+        contain verbatim user data. Never raises.
         """
         try:
-            if event not in EVENTS:
-                _LOG.warning("Unknown handoff event ignored")
-                return
-            successor = getattr(handoff, "successor", None)
-            payload = {
-                "event": event,
-                "workspace": workspace_id,
-                "handoff_id": getattr(handoff, "id", "") or ids.get("handoff_id", ""),
-                "stored_thread_id": getattr(handoff, "stored_thread_id", "")
-                or ids.get("stored_thread_id", ""),
-                "task_ref": getattr(handoff, "task_ref", "") or ids.get("task_ref", ""),
-                "successor_agent_ref": getattr(successor, "agent_ref", "")
-                or ids.get("successor_agent_ref", ""),
-                "at": _iso(_now()),
-            }
-            safe_reason = _safe_reason(event, reason)
-            if event in _FAILURE_REASONS or decision != "ok":
-                payload.update(decision=decision, reason=safe_reason)
+            self._write(
+                event,
+                workspace_id=workspace_id,
+                handoff=handoff,
+                principal=principal,
+                decision=decision,
+                reason=reason,
+                strict=False,
+                **ids,
+            )
         except Exception:
             _LOG.error("Handoff event preparation failed")
-            return
+
+    def deliver_pending(self, *, handoff_id: str = "", workspace_id: str = "") -> int:
+        """Deliver queued events (``HandoffDB.set_successor`` queues
+        ``handoff.completed``): the audit entry,
+        the hub event and the delivered mark commit together, so each one is
+        recorded exactly once, also across gateways on one control database
+        and across restarts. A failure rolls back and leaves the row for the
+        next try. Returns how many were delivered. Never raises."""
+        from commonplace import events as hub_events
+
+        delivered = 0
+        try:
+            # executescript commits: never inside the delivery transaction.
+            hub_events.ensure_schema(self.control_db)
+            rows = self.handoff_db.pending_events(handoff_id=handoff_id, workspace_id=workspace_id)
+        except Exception:
+            _LOG.error("Handoff outbox read failed")
+            return 0
+        for row in rows:
+            try:
+                with self.control_db._lock, self.control_db._tx() as conn:
+                    fresh = conn.execute(
+                        "SELECT delivered_at FROM handoff_outbox WHERE id = ?", (row["id"],)
+                    ).fetchone()
+                    if fresh is None or fresh["delivered_at"]:
+                        continue
+                    handoff = self.handoff_db.get(row["handoff_id"])
+                    stored = self._write(
+                        row["event"],
+                        workspace_id=row["workspace_id"],
+                        handoff=handoff,
+                        principal=_Recorded(row),
+                        strict=True,
+                    )
+                    conn.execute(
+                        "UPDATE handoff_outbox SET delivered_at = ?, attempts = attempts + 1 "
+                        "WHERE id = ?",
+                        (_iso(_now()), row["id"]),
+                    )
+                delivered += 1
+            except Exception:
+                _LOG.error("Handoff event delivery failed; it stays queued")
+                try:
+                    self.handoff_db.event_attempted(row["id"])
+                except Exception:
+                    pass
+                continue
+            # Listeners (webhooks) run after the commit, never inside it. A
+            # missed notice is caught up from the event log by the dispatcher.
+            if stored is not None:
+                try:
+                    hub_events.notify(stored)
+                except Exception:
+                    _LOG.error("Handoff event listener failed")
+        return delivered
+
+    def _write(
+        self,
+        event: str,
+        *,
+        workspace_id: str,
+        handoff=None,
+        principal=None,
+        decision: str = "ok",
+        reason: str = "",
+        strict: bool,
+        **ids,
+    ):
+        """``strict``: raise on failure and record the hub event without
+        telling its listeners (the caller's transaction is open); return the
+        stored hub event for ``events.notify`` after commit."""
+        if event not in EVENTS:
+            _LOG.warning("Unknown handoff event ignored")
+            return None
+        successor = getattr(handoff, "successor", None)
+        payload = {
+            "event": event,
+            "workspace": workspace_id,
+            "handoff_id": getattr(handoff, "id", "") or ids.get("handoff_id", ""),
+            "stored_thread_id": getattr(handoff, "stored_thread_id", "")
+            or ids.get("stored_thread_id", ""),
+            "task_ref": getattr(handoff, "task_ref", "") or ids.get("task_ref", ""),
+            "successor_agent_ref": getattr(successor, "agent_ref", "")
+            or ids.get("successor_agent_ref", ""),
+            "at": _iso(_now()),
+        }
+        safe_reason = _safe_reason(event, reason)
+        if event in _FAILURE_REASONS or decision != "ok":
+            payload.update(decision=decision, reason=safe_reason)
 
         try:
             self.control_db.audit(
@@ -104,6 +184,8 @@ class Events:
                 ],
             )
         except Exception:
+            if strict:
+                raise
             _LOG.error("Handoff audit write failed")
 
         try:
@@ -124,7 +206,8 @@ class Events:
             }
             if payload["task_ref"].lstrip("#").isdigit():
                 data["number"] = int(payload["task_ref"].lstrip("#"))
-            hub_events.emit(
+            write = hub_events.record if strict else hub_events.emit
+            return write(
                 self.control_db,
                 workspace_id,
                 event,
@@ -133,4 +216,17 @@ class Events:
                 data=data,
             )
         except Exception:
+            if strict:
+                raise
             _LOG.error("Handoff event write failed")
+            return None
+
+
+class _Recorded:
+    """The caller of a queued event, as recorded when it was queued."""
+
+    def __init__(self, row):
+        self.user_id = row["user_id"] or None
+        self.connection_id = row["connection_id"] or None
+        self.auth = row["auth"] or None
+        self.actor = row["actor"] or ""

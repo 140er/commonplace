@@ -88,4 +88,6 @@ def install(gateway, data_dir=None, **_ignored) -> HandoffContext:
     gateway.handoff = ctx
     api.register(ctx)
     web.register(ctx)
+    # Events a crash left queued (handoff.completed) go out now.
+    ctx.service.replay_pending()
     return ctx

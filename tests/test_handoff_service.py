@@ -41,6 +41,7 @@ class FakeDB:
         self.keys = {}
         self.claims = set()
         self.created = 0
+        self.outbox = []
 
     def by_key(self, workspace_id, idempotency_key):
         with self.lock:
@@ -131,7 +132,7 @@ class FakeDB:
                     return row
             return None
 
-    def set_successor(self, handoff_id, ref):
+    def set_successor(self, handoff_id, ref, *, caller=None):
         with self.lock:
             self.trace.append("set_successor")
             row = self.rows[handoff_id]
@@ -141,7 +142,24 @@ class FakeDB:
                 return row
             if row.state not in ("stored", "launched"):
                 raise HandoffDBError("handoff is not ready for a successor")
+            # Queued in the same step as the successor, like the real outbox.
+            self.outbox.append(
+                {
+                    "handoff_id": handoff_id,
+                    "event": EVENT_COMPLETED,
+                    "caller": caller,
+                    "done": False,
+                }
+            )
             return self.update(handoff_id, state="done", successor=ref)
+
+    def pending_events(self, *, handoff_id="", workspace_id=""):
+        with self.lock:
+            return [
+                row
+                for row in self.outbox
+                if not row["done"] and (not handoff_id or row["handoff_id"] == handoff_id)
+            ]
 
     def get(self, handoff_id):
         with self.lock:
@@ -241,6 +259,24 @@ class FakeEvents:
     def count(self, event):
         return sum(call[0] == event for call in self.calls)
 
+    def deliver_pending(self, *, handoff_id="", workspace_id=""):
+        """Like Events.deliver_pending: a failed delivery stays queued."""
+        delivered = 0
+        for row in self.db.pending_events(handoff_id=handoff_id, workspace_id=workspace_id):
+            handoff = self.db.get(row["handoff_id"])
+            try:
+                self.emit(
+                    row["event"],
+                    workspace_id=handoff.workspace_id,
+                    handoff=handoff,
+                    principal=row["caller"],
+                )
+            except RuntimeError:
+                continue
+            row["done"] = True
+            delivered += 1
+        return delivered
+
 
 def make_request(thread_id="source-1", **changes):
     return replace(
@@ -258,13 +294,16 @@ def make_request(thread_id="source-1", **changes):
 def rig(monkeypatch, tmp_path):
     trace = []
     control = SimpleNamespace(_lock=threading.RLock())
+    db = FakeDB(control, trace)
+    events = FakeEvents(trace)
+    events.db = db
     value = SimpleNamespace(
         trace=trace,
         control=control,
-        db=FakeDB(control, trace),
+        db=db,
         store=FakeStore(trace),
         settings=FakeSettings(trace),
-        events=FakeEvents(trace),
+        events=events,
         principal=SimpleNamespace(
             workspace_id="ws_1",
             connection_id="conn_1",
@@ -1123,10 +1162,6 @@ def test_cross_instance_stored_retry_honors_settings_captured_before_disable(rig
     assert (result.action, result.launch) == ("handoff", True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Completion transition and audit/outbox must commit atomically for guaranteed event delivery",
-)
 def test_completed_event_is_not_lost_when_emit_fails_before_idempotent_retry(rig):
     first = rig.service.run(rig.principal, make_request())
     ref = SuccessorRef("registered")

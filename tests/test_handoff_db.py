@@ -176,7 +176,7 @@ def test_upgrade_existing_control_database(open_control):
         for row in upgraded._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     assert {"handoff_settings", "handoffs"} <= tables
-    assert not {"handoff_webhooks", "handoff_outbox"} & tables
+    assert "handoff_webhooks" not in tables and "handoff_outbox" in tables
     assert dict(upgraded.user(owner)) == dict(original.user(owner))
     assert upgraded.workspace(workspace)["name"] == "Memory"
     assert upgraded._conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[

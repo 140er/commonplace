@@ -8,8 +8,10 @@ Bind ``document_store_for`` (or call ``set_document_store``) before storing
 documents. Hydrated Handoff values contain quotes; their control rows do not.
 
 Tables: ``handoff_settings`` (unique workspace_id+scope+ref),
-``handoffs`` (unique workspace_id+idempotency_key; launch claim and lease token).
-Events go to the hub's event log (``commonplace.events``), not a table here.
+``handoffs`` (unique workspace_id+idempotency_key; launch claim and lease token),
+``handoff_outbox`` (events that must not be lost, written in the same
+transaction as the change they report; ``events.Events.deliver_pending``
+moves them to the audit log and the hub's event log).
 
 State graph (see ``models.STATES``)::
 
@@ -35,7 +37,15 @@ from typing import Optional
 
 from commonplace.control_db import ControlDB, _iso, _new_id, _now, _parse
 
-from .models import SETTING_SCOPES, Handoff, LauncherConfig, SettingRow, SuccessorRef, ThreadMeta
+from .models import (
+    EVENT_COMPLETED,
+    SETTING_SCOPES,
+    Handoff,
+    LauncherConfig,
+    SettingRow,
+    SuccessorRef,
+    ThreadMeta,
+)
 
 PENDING_LEASE_S = 600
 
@@ -84,6 +94,22 @@ CREATE TABLE IF NOT EXISTS handoffs (
 CREATE INDEX IF NOT EXISTS idx_handoffs_task ON handoffs(workspace_id, task_ref);
 CREATE INDEX IF NOT EXISTS idx_handoffs_stored ON handoffs(stored_thread_id);
 CREATE INDEX IF NOT EXISTS idx_handoffs_successor ON handoffs(workspace_id, successor_thread_id);
+CREATE TABLE IF NOT EXISTS handoff_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    handoff_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT '',
+    connection_id TEXT NOT NULL DEFAULT '',
+    auth TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    delivered_at TEXT,
+    UNIQUE (handoff_id, event)
+);
+CREATE INDEX IF NOT EXISTS idx_handoff_outbox_pending
+    ON handoff_outbox(workspace_id, id) WHERE delivered_at IS NULL;
 """
 
 
@@ -410,10 +436,12 @@ class HandoffDB:
             handoff_id, "stored", ("launch_failed",), repeat=False, launch_claimed=0, error=""
         )
 
-    def set_successor(self, handoff_id: str, ref: SuccessorRef) -> Handoff:
+    def set_successor(self, handoff_id: str, ref: SuccessorRef, *, caller=None) -> Handoff:
         """Record the successor, state ``done``. Same ref again: no-op.
         Empty URL/thread fields may be filled once. Conflicting populated
         fields, including the agent reference, raise ``HandoffDBError``.
+        The first registration also queues ``handoff.completed`` in the same
+        transaction (``caller``: the principal, recorded for the audit entry).
         """
         if not ref.agent_ref:
             raise HandoffDBError("successor not found")
@@ -447,7 +475,49 @@ class HandoffDB:
                 "WHERE id = ?",
                 (ref.agent_ref, ref.url, ref.thread_id, _iso(_now()), handoff_id),
             )
+            self._queue(conn, row, EVENT_COMPLETED, caller)
             return self._handoff(self._required(handoff_id))
+
+    # ── outbox ──
+    @staticmethod
+    def _queue(conn, row, event: str, caller) -> None:
+        conn.execute(
+            "INSERT OR IGNORE INTO handoff_outbox(handoff_id, workspace_id, event, user_id, "
+            "connection_id, auth, actor, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                row["id"],
+                row["workspace_id"],
+                event,
+                getattr(caller, "user_id", "") or "",
+                getattr(caller, "connection_id", "") or row["connection_id"] or "",
+                getattr(caller, "auth", "") or "",
+                getattr(caller, "actor", "") or "",
+                _iso(_now()),
+            ),
+        )
+
+    def pending_events(self, *, handoff_id: str = "", workspace_id: str = "", limit: int = 100):
+        """Queued events not yet delivered, oldest first."""
+        sql = "SELECT * FROM handoff_outbox WHERE delivered_at IS NULL"
+        params: list = []
+        if handoff_id:
+            sql += " AND handoff_id = ?"
+            params.append(handoff_id)
+        if workspace_id:
+            sql += " AND workspace_id = ?"
+            params.append(workspace_id)
+        sql += " ORDER BY id LIMIT ?"
+        params.append(max(1, int(limit)))
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def event_attempted(self, outbox_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE handoff_outbox SET attempts = attempts + 1 WHERE id = ? "
+                "AND delivered_at IS NULL",
+                (outbox_id,),
+            )
 
     def get(self, handoff_id: str) -> Optional[Handoff]:
         with self._lock:

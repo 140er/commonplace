@@ -909,15 +909,19 @@ def test_forged_storage_cycle_cannot_loop_recall_or_handoff_doc(harness):
     assert len(harness.ctx.recall.chain(harness.principal, third.handoff.stored_thread_id)) == 3
 
 
-def test_completion_crash_window_is_preserved_without_duplicate_successor(harness):
+def test_completion_survives_a_crash_and_is_delivered_once(harness):
     row = prepared(harness)
     ref = SuccessorRef("already:running")
-    # Process died after set_successor committed and before Events.emit began.
+    # Process died after set_successor committed and before delivery began:
+    # the completion event is queued in the same transaction.
     harness.ctx.handoff_db.set_successor(row.id, ref)
-    harness.restart()
-    assert harness.ctx.service.register_successor(harness.principal, row.id, ref).successor == ref
-    # Known durable event gap, per orchestration decision.
     harness.assert_event_count(EVENT_COMPLETED, 0)
+    harness.restart()  # gateway start replays the queue
+    harness.assert_event_count(EVENT_COMPLETED, 1)
+    assert harness.ctx.service.register_successor(harness.principal, row.id, ref).successor == ref
+    harness.restart()
+    harness.assert_event_count(EVENT_COMPLETED, 1)
+    assert not harness.ctx.handoff_db.pending_events()
     assert not harness.ctx.service.run(harness.principal, request()).launch
 
 
@@ -925,11 +929,6 @@ class DuplicateCompletion(AssertionError):
     """The known race wrote two completion records to each persistence seam."""
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DuplicateCompletion,
-    reason="Completion event deduplication needs a durable transition shared by gateways",
-)
 def test_separate_gateways_emit_only_one_completion(harness):
     row = prepared(harness)
 
@@ -1095,3 +1094,30 @@ def test_two_real_hook_processes_share_lock_and_server_claim(harness, tmp_path):
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
+
+
+def test_failed_completion_delivery_rolls_back_and_retries_once(harness, monkeypatch):
+    from commonplace import events as hub_events
+
+    row = prepared(harness)
+    ref = SuccessorRef("retry:once")
+    original = hub_events.record
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(hub_events, "record", broken)
+    done = harness.ctx.service.register_successor(harness.principal, row.id, ref)
+    assert done.state == "done"
+    # The audit entry rolled back with the failed hub event: nothing half-written.
+    harness.assert_event_count(EVENT_COMPLETED, 0)
+    [pending] = harness.ctx.handoff_db.pending_events(handoff_id=row.id)
+    assert pending["attempts"] == 1
+    monkeypatch.setattr(hub_events, "record", original)
+    # The idempotent retry delivers it; later retries and restarts don't repeat it.
+    harness.ctx.service.register_successor(harness.principal, row.id, ref)
+    harness.assert_event_count(EVENT_COMPLETED, 1)
+    harness.ctx.service.register_successor(harness.principal, row.id, ref)
+    harness.restart()
+    harness.assert_event_count(EVENT_COMPLETED, 1)
+    assert not harness.ctx.handoff_db.pending_events()
