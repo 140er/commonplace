@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -213,6 +214,11 @@ def _search(ctx, args, store=None):
 
 
 def _emit(ctx, kind, memory_id, **data):
+    if kind == "fact.saved":
+        # KG ids contain the subject and object verbatim. Events and default
+        # webhook deliveries must only carry opaque change references.
+        memory_id = "fact_" + hashlib.sha256(str(memory_id).encode("utf-8")).hexdigest()
+        data = {"action": data.get("action")}
     events.emit(
         ctx.db,
         ctx.principal.workspace_id,

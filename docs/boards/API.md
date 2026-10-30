@@ -187,6 +187,13 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 
 ## HTTP JSON for the web UI
 
+### Open tasks
+
+`GET /api/cards` returns `{cards, total}`: the `todo`, `doing` and `review` cards
+on the boards the caller can see, each with its `need`, most urgent first (by
+`need`, then number). Cards are slim (no `body`, no share `url`). `limit`
+defaults to 200 (1 to 500); `total` counts them all. Home's task table reads it.
+
 ### Spoken Needs you digest
 
 `GET /api/needs-me/digest` accepts the same owner session or bearer token as
@@ -197,8 +204,8 @@ card number, and limited to five spoken items. Titles stay verbatim. No LLM or e
 is used. `needs_me(format="digest")` returns the same JSON in its MCP text reply;
 omitting `format` keeps the existing grouped reply.
 
-The Needs you header's Speak button uses an installed local browser voice. Press
-it again to stop. Captions appear during speech; leaving Needs you or signing out
+The Speak button in Home's Needs you box uses an installed local browser voice. Press
+it again to stop. Captions appear during speech; leaving Home or signing out
 stops it. Browsers without speech synthesis hide the button. If no local voice
 is installed, install an English voice in the device's speech settings.
 
