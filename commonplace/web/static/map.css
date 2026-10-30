@@ -29,7 +29,7 @@
 
 .legend { position: absolute; top: var(--gap); left: var(--gap); display: flex; flex-direction: column; gap: 2px; }
 .legend button {
-  width: 188px; height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 10px;
+  width: 232px; height: 30px; white-space: nowrap; overflow: hidden; padding: 0 10px; display: flex; align-items: center; gap: 10px;
   background: var(--surface); color: var(--ink); cursor: pointer; text-align: left;
 }
 .legend button:hover { background: var(--surface-2); }
