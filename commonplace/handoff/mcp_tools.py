@@ -6,7 +6,7 @@ visible only to tokens with ``threads:read`` whose tool list allows them
 them). Names and arguments are new, never renamed later.
 
 thread_recall(thread_id, query, limit=8, follow_chain=true)
-thread_get(thread_id, start=0, end=null)
+thread_get(thread_id, start=0, end=null, include_raw=false)
 thread_chain(thread_id)
 """
 
