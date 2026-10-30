@@ -252,7 +252,7 @@ PANEL_142 = f"""<aside class="panel">
         {ev("agent:editor", "expire", "13:42", "warn")}
         {ev("agent:builder", "claim", "13:48")}
         {ev("agent:builder", "comment", "13:55", said="Reproduced on Windows: the lock is ours, not Defender. Closing the PersistentClient before os.replace fixes 9 of 10 runs.")}
-        {ev("agent:builder", "comment", "14:00", said="Retry with backoff covers the 10th. Running the full suite on win now.")}
+        {ev("agent:builder", "comment", "14:00", said="Retry with backoff covers the 10th. Running the full suite on Windows now.")}
       </ol>
       <div class="composer"><label class="field">Check the coverage gate on Windows too<span class="cursor"></span></label><span class="send go">↵</span></div>
     </aside>"""

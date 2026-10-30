@@ -1,3 +1,4 @@
+# name: <existing project name>
 services:
   commonplace:
     image: commonplace:${COMMONPLACE_IMAGE_TAG:-local}

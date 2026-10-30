@@ -155,7 +155,7 @@
   {
     "board": "commonplace",
     "title": "Nightly consistent backups",
-    "body": "restic over Tailscale to hub, 30 daily / 12 weekly kept\n\nSource: docs/mvp/CONTRACT.md",
+    "body": "Nightly consistent backups with host-managed retention\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",

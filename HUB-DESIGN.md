@@ -41,7 +41,7 @@ Two notes:
  │  mempalace serve  --host 127.0.0.1 --port 8765                     │
  │   - one process owns the palace (ChromaDB + SQLite KG)             │
  │   - token -> client identity, allowed wings, allowed tools (new)   │
- │  palace on local storage, nightly backup                         │
+ │  palace on local storage, nightly backup                           │
  └────────────────────────────────────────────────────────────────────┘
 ```
 

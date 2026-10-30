@@ -42,7 +42,7 @@ def test_model_is_preloaded_as_runtime_user_outside_data_volume():
 
 def test_compose_uses_repo_root_and_exact_loopback_publication():
     text = COMPOSE.read_text()
-    assert re.search(r"^services:\n  commonplace:\n", text)
+    assert re.search(r"^services:\n  commonplace:\n", text, re.MULTILINE)
     assert "context: ${COMMONPLACE_SOURCE_DIR:?" in text
     assert "dockerfile: deploy/commonplace/Dockerfile" in text
     ports = re.search(r"    ports:\n((?:      .+\n)+)", text)[1]

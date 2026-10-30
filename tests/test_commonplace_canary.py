@@ -71,7 +71,7 @@ def seeded(hub):
     )
     ids["tunnel"] = (result or {}).get("tunnel_id") or (result or {}).get("id") or "tunnel"
     result, _ = hub.call(
-        owner, "mempalace_kg_add", subject="jeff", predicate="likes", object="CANARYKGFACT"
+        owner, "mempalace_kg_add", subject="avery", predicate="likes", object="CANARYKGFACT"
     )
     assert result["success"], result
     result, _ = hub.call(
@@ -109,7 +109,7 @@ def _value(prop, schema, ids, wing, agent):
     if prop == "agent_name":
         return agent
     if prop in ("entity", "subject"):
-        return "jeff"
+        return "avery"
     if prop in ("object", "old_object", "new_object", "predicate"):
         return "likes"
     if prop == "tunnel_id":
@@ -253,7 +253,7 @@ def test_scoped_token_changes_no_canary(hub, seeded, kind):
     after, _ = hub.call(owner, "mempalace_list_wings")
     for wing in FORBIDDEN_WINGS + ("wing_spy2", "private_notes", "linux_workstation"):
         assert after["wings"].get(wing) == before["wings"].get(wing), (wing, before, after)
-    facts, _ = hub.call(owner, "mempalace_kg_query", entity="jeff")
+    facts, _ = hub.call(owner, "mempalace_kg_query", entity="avery")
     # Adding facts may be allowed; changing the canary fact never is.
     canary = [f for f in facts["facts"] if f["object"] == "CANARYKGFACT"]
     assert len(canary) == 1 and canary[0]["current"], facts

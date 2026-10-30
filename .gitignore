@@ -49,6 +49,8 @@ target/
 
 .taste-skill/
 
+/tests/e2e_handoff/out/
+
 # Operator-owned deployment files; commit only the example templates.
 /deploy/compose.*.yml
 /deploy/compose.yml
