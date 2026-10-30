@@ -55,6 +55,9 @@ TRUST_LEVELS = ("trusted", "standard", "untrusted")
 #   diary_write  files into ``wing`` or the agent's own wing
 #   diary_read   reads ``wing`` or the agent's own wing
 #   tunnel_write links two wings
+#   kg_read      reads facts; the gateway limits them to the readable wings
+#                and sensitivities
+#   kg_write     adds or changes facts in the ``wing`` argument
 RULES = (
     "none",
     "all_wings",
@@ -67,6 +70,8 @@ RULES = (
     "diary_write",
     "diary_read",
     "tunnel_write",
+    "kg_read",
+    "kg_write",
 )
 
 TOOL_RULES = {
@@ -75,14 +80,15 @@ TOOL_RULES = {
     "mempalace_list_rooms": ("memory:read", "read_wing"),
     "mempalace_get_taxonomy": ("memory:read", "wing_list"),
     "mempalace_get_aaak_spec": ("memory:read", "none"),
-    # The knowledge graph has no wings: facts filed from a private wing sit
-    # beside the rest. Reading it, or changing a fact someone else wrote,
-    # needs every wing. Adding a fact needs only kg:write.
-    "mempalace_kg_query": ("kg:read", "all_wings"),
-    "mempalace_kg_add": ("kg:write", "none"),
-    "mempalace_kg_invalidate": ("kg:write", "all_wings"),
-    "mempalace_kg_supersede": ("kg:write", "all_wings"),
-    "mempalace_kg_timeline": ("kg:read", "all_wings"),
+    # Facts live in wings. A read returns only facts in readable wings and of
+    # allowed sensitivities; facts filed before facts had wings, and secret
+    # ones, only for a token that sees every wing. A write lands in a
+    # writable wing. Stats count every wing.
+    "mempalace_kg_query": ("kg:read", "kg_read"),
+    "mempalace_kg_add": ("kg:write", "kg_write"),
+    "mempalace_kg_invalidate": ("kg:write", "kg_write"),
+    "mempalace_kg_supersede": ("kg:write", "kg_write"),
+    "mempalace_kg_timeline": ("kg:read", "kg_read"),
     "mempalace_kg_stats": ("kg:read", "all_wings"),
     "mempalace_traverse": ("memory:read", "all_wings"),
     "mempalace_find_tunnels": ("memory:read", "all_wings"),
@@ -159,8 +165,7 @@ PROFILES = {"slim": _SLIM, "standard": _STANDARD, "full": _FULL}
 
 # Scopes a profile grants when a token is made without explicit scopes.
 DEFAULT_SCOPES = {
-    # The knowledge graph has no wings, so kg:read sees all of it: never a default.
-    # It only works for a token that reads every wing anyway.
+    # kg:read is not a default yet: existing tokens keep their tool lists.
     "slim": ("memory:read", "memory:write"),
     "standard": ("memory:read", "memory:write", "threads:read", "handoff:write"),
     "full": (
@@ -358,6 +363,15 @@ class Policy:
             and self.has_scope("memory:read")
             and self.has_scope("private:read")
         )
+
+    def fact_sensitivities(self) -> list:
+        """Sensitivities of the facts this token may read in its readable wings."""
+        if self.sees_all_wings:
+            return ["public", "internal", "private", "secret"]
+        allowed = ["public", "internal"]
+        if self.has_scope("private:read"):
+            allowed.append("private")
+        return allowed
 
     @property
     def writes_all_wings(self) -> bool:

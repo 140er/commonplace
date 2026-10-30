@@ -109,6 +109,8 @@ def test_tools_list_follows_the_profile(hub):
         "mempalace_add_drawer",
         "mempalace_diary_write",
         "mempalace_diary_read",
+        # Facts are wing-scoped, so kg:read on a scoped token reads its wings.
+        "mempalace_kg_query",
     }
     coder = hub.tool_names(hub.token("coder", **CODER))
     assert "mempalace_kg_add" in coder and "mempalace_list_drawers" in coder
@@ -204,7 +206,14 @@ def test_standard_token_writes_only_its_wings(hub):
 
 def test_kg_writes_are_stamped(hub):
     token = hub.token("coder", **CODER)
-    hub.call(token, "mempalace_kg_add", subject="api", predicate="uses", object="sqlite")
+    hub.call(
+        token,
+        "mempalace_kg_add",
+        subject="api",
+        predicate="uses",
+        object="sqlite",
+        wing="project_api",
+    )
     facts, _ = hub.call(hub.owner_token(), "mempalace_kg_query", entity="api")
     assert facts["facts"][0]["hub_connection"] == "coder"
 

@@ -518,6 +518,12 @@ class BoardService:
                     "at": r["created_at"],
                     "choice": r["choice"],
                     "target": r["target"],
+                    # Events that opened an ask carry the choices offered, verbatim.
+                    **(
+                        {"options": json.loads(r["options"] or "[]")}
+                        if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
+                        else {}
+                    ),
                 }
                 for r in conn.execute(
                     "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
@@ -596,7 +602,15 @@ class BoardService:
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
         if status == "review":
-            self._log(conn, number, "ask", text=ask, target=target, to_status="review")
+            self._log(
+                conn,
+                number,
+                "ask",
+                text=ask,
+                target=target,
+                to_status="review",
+                options=options or [],
+            )
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
         return card(conn, task_row(conn, number), self.principal)
 
@@ -896,12 +910,22 @@ class BoardService:
                 return card(conn, row, self.principal)
             self._set(conn, row, updates)
             moved = updates.get("status", row["status"]) != row["status"]
+            ask = (
+                {
+                    "text": updates["ask"],
+                    "target": updates["ask_to"],
+                    "options": json.loads(updates["ask_options"]),
+                }
+                if moved and updates["status"] == "review"
+                else {}
+            )
             self._log(
                 conn,
                 row["id"],
                 "move" if moved else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
+                **ask,
             )
             self._emit(
                 conn,
@@ -950,6 +974,7 @@ class BoardService:
             from_status=row["status"],
             to_status=status,
             flags=flags_for(note),
+            options=options if person else None,
         )
         self._emit(
             conn,
@@ -1129,7 +1154,14 @@ class BoardService:
             row = task_row(conn, created["number"])
             self._set(conn, row, updates)
             if status != row["status"]:
-                self._log(conn, row["id"], "move", from_status=row["status"], to_status=status)
+                ask = (
+                    {"text": updates["ask"], "target": updates["ask_to"], "options": []}
+                    if status == "review"
+                    else {}
+                )
+                self._log(
+                    conn, row["id"], "move", from_status=row["status"], to_status=status, **ask
+                )
                 self._emit(conn, row["id"], "card.moved", **{"from": row["status"], "to": status})
             if status == "review":
                 self._emit(conn, row["id"], "card.review_needed")

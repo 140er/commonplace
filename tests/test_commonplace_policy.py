@@ -200,24 +200,38 @@ def test_kg_is_never_a_default_scope_and_untrusted_never_rewrites_facts():
     assert bot.tool_visible("mempalace_kg_query")
 
 
-def test_kg_reads_need_every_wing():
-    """The graph has no wings: a wing-scoped token never reads it (review blocker)."""
+def test_kg_reads_and_writes_are_wing_scoped():
+    """Facts live in wings: a scoped token reads and writes its own wings' facts."""
     scoped = _p(
-        profile="full", scopes=["memory:read", "kg:read", "kg:write"], read_wings=["shared"]
+        profile="full",
+        scopes=["memory:read", "memory:write", "kg:read", "kg:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
     )
-    for name in ("mempalace_kg_query", "mempalace_kg_timeline", "mempalace_kg_stats"):
-        assert scoped.refusal(name) == "needs read access to every wing", name
-    for name in ("mempalace_kg_invalidate", "mempalace_kg_supersede"):
-        assert not scoped.tool_visible(name), name
-    assert scoped.tool_visible("mempalace_kg_add")
-    # The full profile's defaults no longer carry kg:read at all.
+    for name in (
+        "mempalace_kg_query",
+        "mempalace_kg_timeline",
+        "mempalace_kg_add",
+        "mempalace_kg_invalidate",
+        "mempalace_kg_supersede",
+    ):
+        assert scoped.tool_visible(name), name
+    # Stats count every wing's facts.
+    assert scoped.refusal("mempalace_kg_stats") == "needs read access to every wing"
+    assert scoped.fact_sensitivities() == ["public", "internal"]
+    private = _p(
+        profile="full", scopes=["memory:read", "private:read", "kg:read"], read_wings=["shared"]
+    )
+    assert private.fact_sensitivities() == ["public", "internal", "private"]
+    # The full profile's defaults still carry no kg:read.
     assert (
         "kg:read" not in Policy.build(profile="full", read_wings=["shared"], trust="trusted").scopes
     )
     everything = _p(
         profile="full", scopes=["memory:read", "private:read", "kg:read"], read_wings=["*"]
     )
-    assert everything.tool_visible("mempalace_kg_query")
+    assert everything.tool_visible("mempalace_kg_stats")
+    assert everything.fact_sensitivities() == ["public", "internal", "private", "secret"]
 
 
 def test_untrusted_write_wing_cannot_be_private():
