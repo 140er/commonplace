@@ -169,6 +169,7 @@ input, select, button { min-height: 32px; }
 .space-bar .opt { margin-left: auto; }
 .space-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 20px; }
 .space-message { margin-bottom: 24px; }
+.space-stream > .space-message:last-child { margin-bottom: 0; }
 .space-stamp { display: flex; align-items: center; gap: 12px; font-size: 12px; margin-bottom: 8px; }
 .space-stamp time { margin-left: auto; color: var(--quiet); }
 .from-person > .space-stamp .actor { color: var(--ink); font-weight: 600; }
@@ -186,6 +187,8 @@ input, select, button { min-height: 32px; }
 .space-asks .ev.ask .hit { grid-column: 1 / -1; margin: 8px 0 0; background: var(--term); padding: 14px; }
 .space-asks .opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 .space-asks .reply-form { grid-column: 1 / -1; min-width: 0; }
+.space-asks .reply-form input { background: var(--surface-2); }
+.space-asks .ev time, .space-task .trow .tm, .space-task .trow > time { color: var(--muted); }
 .space-asks .reply-form select { flex-basis: 100%; }
 .space-composer { display: flex; gap: 6px; padding: 12px; background: var(--surface-2); flex: none; }
 .space-composer textarea { flex: 1; min-height: 64px; max-height: 180px; resize: vertical; }
@@ -207,12 +210,15 @@ input, select, button { min-height: 32px; }
   .space[data-tab="chat"] .space-tasks, .space[data-tab="tasks"] .space-chat { display: none; }
   .space-chat > .space-bar { display: none; }
   .space-stream { padding: 12px; }
-  .space-message { margin-bottom: 16px; }
+  .space-message { margin-bottom: 12px; }
+  .space-stamp { margin-bottom: 4px; }
   .space-text { font-size: 14px; line-height: 21px; }
-  .space-task { padding: 10px; }
+  .space-task { padding: 8px 10px; }
+  .space-message > .space-task:first-of-type { margin-top: 10px; }
   .space-task .trow .tt { font-size: 13px; }
   .space-message .task-meta { display: none; }
-  .space-asks .ev.ask .hit { padding: 12px; gap: 10px; }
+  .space-asks { margin: 4px 0 6px; }
+  .space-asks .ev.ask .hit { padding: 10px 12px; gap: 8px; }
   .space-asks .q { font-size: 14px; line-height: 21px; }
   .space-asks .opt, .space-asks input, .space-asks select { min-height: 44px; }
   .space-composer { padding: 6px; }
