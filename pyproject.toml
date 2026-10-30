@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "chromadb>=1.5.4,<2",
     "pyyaml>=6.0,<7",
+    "zstandard>=0.23,<1",
     "tomli>=2.0.0; python_version < '3.11'",
     # Multilingual embedding model deps (embeddinggemma-300m ONNX), kept as
     # core deps rather than optional extras so choosing the multilingual model
