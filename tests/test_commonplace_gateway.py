@@ -493,3 +493,44 @@ def test_scrub_drops_list_items_and_fails_closed_on_objects():
     }
     assert _scrub({"drawer": {"wing": "no"}}, can) is _DROP
     assert _scrub({"wing": "no", "text": "x"}, can) is _DROP
+
+
+def test_update_records_who_changed_it(hub):
+    author = hub.token("author", **CODER)
+    editor = hub.token("editor", **{**CODER, "profile": "full"})
+    added, _ = hub.call(author, "mempalace_add_drawer", wing="project_a", room="r", content="v1")
+    updated, _ = hub.call(
+        editor, "mempalace_update_drawer", drawer_id=added["drawer_id"], content="v2"
+    )
+    assert updated["success"], updated
+    drawer, _ = hub.call(author, "mempalace_get_drawer", drawer_id=added["drawer_id"])
+    meta = drawer["metadata"]
+    assert meta["hub_connection"] == "author" and meta["hub_updated_by"] == "editor"
+    assert meta["hub_updated_trust"] == "standard" and meta["hub_updated_at"]
+
+
+@pytest.mark.parametrize(
+    "ids",
+    [lambda d: json.dumps([d]), lambda d: [d, 1], lambda d: 5, lambda d: []],
+)
+def test_coerced_drawer_ids_are_refused_not_forwarded(hub, ids):
+    owner = hub.owner_token()
+    vault, _ = hub.call(owner, "mempalace_add_drawer", wing="vault", room="r", content="keep me")
+    trusted = hub.token(
+        "t",
+        profile="full",
+        scopes=["memory:read", "memory:write", "memory:delete"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+        trust="trusted",
+    )
+    result, _ = hub.call(trusted, "mempalace_delete_drawers", drawer_ids=ids(vault["drawer_id"]))
+    assert result.get("denied") or result.get("error"), result
+    still, _ = hub.call(owner, "mempalace_get_drawer", drawer_id=vault["drawer_id"])
+    assert still["content"] == "keep me"
+
+
+def test_non_string_wing_is_refused(hub):
+    token = hub.token("coder", **CODER)
+    result, _ = hub.call(token, "mempalace_list_drawers", wing=["project_a"])
+    assert result["denied"]

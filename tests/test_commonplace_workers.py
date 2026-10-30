@@ -35,6 +35,9 @@ def test_subprocess_worker_is_isolated_and_locked(tmp_path, monkeypatch):
     elsewhere = tmp_path / "operator-palace"
     monkeypatch.setenv("MEMPALACE_PALACE_PATH", str(elsewhere))
     monkeypatch.setenv("MEMPALACE_MCP_HTTP_TOKEN", "operator-token")
+    # A shared remote store would mix workspaces; the worker must not see it.
+    monkeypatch.setenv("MEMPALACE_BACKEND", "qdrant")
+    monkeypatch.setenv("MEMPALACE_QDRANT_URL", "http://127.0.0.1:1")
     sup = WorkerSupervisor(
         str(tmp_path / "data"), launcher=SubprocessLauncher(startup_timeout_s=120)
     )

@@ -30,7 +30,7 @@ def _result_date_fields(meta: dict) -> dict:
     }
 
 
-_AUTHOR_FIELDS = (*STAMP_FIELDS, "claimed_by")
+_AUTHOR_FIELDS = (*STAMP_FIELDS, *UPDATE_FIELDS, "claimed_by")
 
 
 def _result_author_fields(meta: dict) -> dict:

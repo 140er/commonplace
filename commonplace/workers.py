@@ -31,7 +31,13 @@ _STRIPPED_ENV = (
     "MEMPALACE_MCP_HTTP_ALLOW_INSECURE_NO_TOKEN",
     "MEMPALACE_MCP_EXTRA_ALLOWED_HOSTS",
     "MEMPALACE_HUB_FORWARD",
+    "MEMPALACE_BACKEND",
+    "MEMPALACE_LOG_FILE",
 )
+# Shared remote stores would put every workspace in one namespace. Workers
+# use the default local store in their own palace directory until each
+# workspace gets its own namespace.
+_STRIPPED_PREFIXES = ("MEMPALACE_QDRANT_", "MEMPALACE_PGVECTOR_", "MEMPALACE_MILVUS_")
 DEFAULT_IDLE_STOP_S = 15 * 60
 
 
@@ -106,7 +112,11 @@ class SubprocessLauncher:
         _share_model_cache(home)
         port = _free_loopback_port()
         token = secrets.token_urlsafe(32)
-        env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in _STRIPPED_ENV and not k.startswith(_STRIPPED_PREFIXES)
+        }
         env.update(
             {
                 "HOME": str(home),

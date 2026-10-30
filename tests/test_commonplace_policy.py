@@ -167,3 +167,36 @@ def test_round_trip_and_corrupt_policy_denies_all():
     for raw in ("", "{", "[]", '{"scopes": ["nope"]}', '{"trust": "god"}'):
         assert Policy.from_json(raw) is DENY_ALL
     assert DENY_ALL.visible_tools() == []
+
+
+def test_worker_aliases_decide_wing_access():
+    pol = _p(scopes=["memory:read", "memory:write"], read_wings=["*"], write_wings=["*"])
+    # The worker reads private_notes for any of these spellings.
+    for wing in ("private.notes", "Private-Notes", "PRIVATE NOTES", "wing_private.notes"):
+        assert P.is_private_wing(wing), wing
+        assert not pol.can_read_wing(wing) and not pol.can_write_wing(wing), wing
+    # Workstation wings widen to the worker's home diary wing.
+    assert not pol.can_read_wing("linux_workstation")
+    # A spelling that folds to nothing names no wing.
+    assert not pol.can_read_wing("!!!")
+    narrow = _p(scopes=["memory:read"], read_wings=["shared"])
+    assert narrow.can_read_wing("Shared") and narrow.can_read_wing("wing_shared")
+    assert not narrow.can_read_wing("shared.x")
+
+
+def test_kg_is_never_a_default_scope_and_untrusted_never_rewrites_facts():
+    for profile in ("slim", "standard"):
+        assert not {"kg:read", "kg:write"} & set(P.DEFAULT_SCOPES[profile])
+    bot = Policy.build(
+        profile="full", scopes=["kg:read", "kg:write"], read_wings=["*"], trust="untrusted"
+    )
+    assert bot.tool_visible("mempalace_kg_add") and bot.tool_visible("mempalace_kg_query")
+    assert not bot.tool_visible("mempalace_kg_invalidate")
+    assert not bot.tool_visible("mempalace_kg_supersede")
+
+
+def test_untrusted_write_wing_cannot_be_private():
+    with pytest.raises(PolicyError):
+        Policy.build(scopes=["memory:write"], write_wing="private", trust="untrusted")
+    with pytest.raises(PolicyError):
+        Policy.build(scopes=["memory:write"], write_wing="private.inbox", trust="untrusted")

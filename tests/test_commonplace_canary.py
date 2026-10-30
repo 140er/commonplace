@@ -15,11 +15,16 @@ import pytest
 from mempalace.tool_capabilities import TOOL_CAPABILITIES
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
-FORBIDDEN_WINGS = ("private", "vault_x")
+FORBIDDEN_WINGS = ("private", "vault_x", "private_notes")
 
 # Markers stored only in forbidden places, never sent by a caller.
 MARKERS = {
-    "private": ["CANARYPRIVATEDRAWER", "CANARYPRIVATEDIARY"],
+    "private": [
+        "CANARYPRIVATEDRAWER",
+        "CANARYPRIVATEDIARY",
+        "CANARYPRIVATENOTES",
+        "CANARYPRIVATENOTESDIARY",
+    ],
     "vault_x": ["CANARYVAULTDRAWER", "CANARYVAULTDIARY", "CANARYAGENTWING", "CANARYTUNNEL"],
     "kg": ["CANARYKGFACT"],
     "events": ["CANARYEVENT", "CANARYARTIFACT"],
@@ -40,10 +45,13 @@ def seeded(hub):
     ids["private"] = add("private", "zebra quartz harbour CANARYPRIVATEDRAWER")
     ids["vault"] = add("vault_x", "zebra quartz harbour CANARYVAULTDRAWER")
     ids["project"] = add("project_alpha", "zebra quartz project note")
+    # Stored under the slug the worker folds "private.notes" and "Private-Notes" into.
+    ids["private_notes"] = add("private_notes", "zebra quartz harbour CANARYPRIVATENOTES")
     for agent, wing, marker in (
         ("spy", "private", "CANARYPRIVATEDIARY"),
         ("spy", "vault_x", "CANARYVAULTDIARY"),
         ("spy2", "", "CANARYAGENTWING"),
+        ("spy", "private_notes", "CANARYPRIVATENOTESDIARY"),
     ):
         result, _ = hub.call(
             owner, "mempalace_diary_write", agent_name=agent, entry=f"zebra {marker}", wing=wing
@@ -130,11 +138,29 @@ def _variants(name, all_schemas, ids):
     props = schema.get("properties") or {}
     required = schema.get("required") or []
     out = []
-    for wing, agent in (("vault_x", "spy"), ("private", "spy"), ("", "spy2"), ("shared", "spy2")):
+    for wing, agent in (
+        ("vault_x", "spy"),
+        ("private", "spy"),
+        ("", "spy2"),
+        ("shared", "spy2"),
+        # Spellings the worker folds into a forbidden wing.
+        ("private.notes", "spy"),
+        ("Private-Notes", "spy"),
+        ("wing_vault-x", "spy"),
+        ("VAULT X", "spy"),
+        ("linux_workstation", "spy"),
+    ):
         full = {p: _value(p, s, ids, wing, agent) for p, s in props.items()}
         full = {k: v for k, v in full.items() if v != ""}
         out.append(full)
         out.append({p: full[p] for p in required if p in full})
+        # Shapes the worker coerces: ids as a JSON string, mixed with numbers.
+        for key in ("drawer_ids", "drawer_id"):
+            if key in full:
+                forbidden = [ids["vault"], ids["private"], ids["private_notes"]]
+                out.append({**full, key: json.dumps(forbidden) if key == "drawer_ids" else 7})
+                if key == "drawer_ids":
+                    out.append({**full, key: [*forbidden, 1]})
     return out
 
 
@@ -211,11 +237,11 @@ def test_scoped_token_changes_no_canary(hub, seeded, kind):
         for args in _variants(name, owner_schemas, ids):
             hub.call(token, name, **args)
 
-    for key in ("private", "vault"):
+    for key in ("private", "vault", "private_notes"):
         drawer, _ = hub.call(owner, "mempalace_get_drawer", drawer_id=ids[key])
         assert "CANARY" in drawer["content"], drawer
     after, _ = hub.call(owner, "mempalace_list_wings")
-    for wing in FORBIDDEN_WINGS + ("wing_spy2",):
+    for wing in FORBIDDEN_WINGS + ("wing_spy2", "private_notes", "linux_workstation"):
         assert after["wings"].get(wing) == before["wings"].get(wing), (wing, before, after)
     facts, _ = hub.call(owner, "mempalace_kg_query", entity="jeff")
     if kind != "standard_all_but_private":

@@ -1470,6 +1470,7 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
                 new_meta["room"] = room
 
         new_meta["last_modified"] = utc_now_iso()
+        _provenance.stamp_update(new_meta)
 
         chunk_size = max(1, int(getattr(_config, "chunk_size", 800) or 800))
         should_chunk = bool(record.get("chunked")) or len(new_doc) > chunk_size

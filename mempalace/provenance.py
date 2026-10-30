@@ -35,6 +35,8 @@ FIELDS = {
     "workspace": "hub_workspace",
 }
 STAMP_FIELDS = tuple(FIELDS.values()) + ("hub_written_at",)
+# Who last changed a record. The original author fields above never change.
+UPDATE_FIELDS = ("hub_updated_by", "hub_updated_user", "hub_updated_trust", "hub_updated_at")
 
 _MAX_FIELD_LEN = 200
 _current: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
@@ -106,6 +108,18 @@ def stamp_metadata(meta: dict) -> dict:
         meta["claimed_by"] = claimed
     meta["added_by"] = fields["hub_connection"]
     meta.update(fields)
+    return meta
+
+
+def stamp_update(meta: dict) -> dict:
+    """Record the verified identity that changed ``meta``, if there is one."""
+    fields = stamp()
+    if fields is None:
+        return meta
+    meta["hub_updated_by"] = fields["hub_connection"]
+    meta["hub_updated_user"] = fields["hub_user"]
+    meta["hub_updated_trust"] = fields["hub_trust"]
+    meta["hub_updated_at"] = fields["hub_written_at"]
     return meta
 
 

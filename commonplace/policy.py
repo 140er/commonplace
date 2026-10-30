@@ -6,10 +6,11 @@ missing from either is hidden from ``tools/list`` and refused in
 ``tools/call``. The same :func:`tool_visible` decides both, so a client never
 sees a tool it would be refused.
 
-Wing names are compared by their canonical slug (lower case, ``wing_``
-prefix dropped, ``-`` and spaces as ``_``), the same spellings MemPalace's own
-wing aliases fold together. A grant for ``shared`` therefore covers
-``wing_shared``, and a ``private`` wing stays private under any spelling.
+A wing argument passes only if every spelling the worker would match for it
+(``mempalace.config.wing_aliases``) passes, each compared by its slug. A grant
+for ``shared`` therefore covers ``wing_shared``, and ``private.notes`` is
+private because the worker also reads ``private_notes`` for it. Workstation
+wings, which the worker widens to the home diary wing, need every wing.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional
 
+from mempalace.config import WORKSTATION_WINGS, normalize_wing_name, wing_aliases
 from mempalace.tool_capabilities import TOOL_CAPABILITIES
 
 # ── Scopes ────────────────────────────────────────────────────────────────
@@ -152,8 +154,9 @@ PROFILES = {"slim": _SLIM, "standard": _STANDARD, "full": _FULL}
 
 # Scopes a profile grants when a token is made without explicit scopes.
 DEFAULT_SCOPES = {
-    "slim": ("memory:read", "memory:write", "kg:read"),
-    "standard": ("memory:read", "memory:write", "kg:read", "kg:write"),
+    # The knowledge graph has no wings, so kg:read sees all of it: never a default.
+    "slim": ("memory:read", "memory:write"),
+    "standard": ("memory:read", "memory:write"),
     "full": (
         "memory:read",
         "memory:write",
@@ -168,7 +171,10 @@ DEFAULT_SCOPES = {
 # Trust caps what scopes can do, whatever the token holds.
 _UNTRUSTED_BLOCKED = frozenset({"memory:delete", "private:write", "admin"})
 _STANDARD_BLOCKED = frozenset({"memory:delete", "admin"})
-_UPDATES = frozenset({"mempalace_update_drawer"})
+# Tools that change what someone else wrote. Untrusted tokens only add.
+_UPDATES = frozenset(
+    {"mempalace_update_drawer", "mempalace_kg_invalidate", "mempalace_kg_supersede"}
+)
 
 
 class PolicyError(ValueError):
@@ -176,15 +182,30 @@ class PolicyError(ValueError):
 
 
 def canonical_wing(name: str) -> str:
+    """The slug a wing name or pattern is compared by (patterns keep ``*?[]``)."""
     slug = str(name).strip().lower().replace("-", "_").replace(" ", "_")
     if slug.startswith("wing_"):
         slug = slug[len("wing_") :]
-    return slug
+    if any(c in slug for c in "*?["):
+        return slug
+    return normalize_wing_name(slug)
+
+
+def wing_spellings(name: str) -> set:
+    """Every slug the worker may match for ``name``: its own and its aliases'."""
+    return {canonical_wing(n) for n in wing_aliases(str(name).strip())} | {canonical_wing(name)}
+
+
+def _private_slug(slug: str) -> bool:
+    return slug == "private" or slug.startswith(("private_", "private.", "private'"))
 
 
 def is_private_wing(name: str) -> bool:
-    slug = canonical_wing(name)
-    return slug == "private" or slug.startswith("private_")
+    return any(_private_slug(s) for s in wing_spellings(name))
+
+
+def _workstation(name: str) -> bool:
+    return bool(wing_spellings(name) & WORKSTATION_WINGS)
 
 
 @dataclass(frozen=True)
@@ -234,6 +255,8 @@ class Policy:
             raise PolicyError("write_wing must be one wing, not a pattern")
         if trust == "untrusted" and "memory:write" in scope_list and not write_wing:
             raise PolicyError("an untrusted token that writes needs a write_wing (e.g. inbox)")
+        if write_wing and trust == "untrusted" and is_private_wing(write_wing):
+            raise PolicyError("an untrusted token can't write to a private wing")
         return cls(
             scopes=scope_list,
             tools=tool_spec,
@@ -279,6 +302,15 @@ class Policy:
         return True
 
     # ── wings ──
+    def _matches(self, wing: str, patterns) -> bool:
+        spellings = wing_spellings(wing)
+        if "" in spellings:
+            return False
+        return all(
+            any(fnmatch.fnmatchcase(slug, canonical_wing(p)) for p in patterns)
+            for slug in spellings
+        )
+
     def can_read_wing(self, wing: str) -> bool:
         if not isinstance(wing, str) or not wing.strip():
             return False
@@ -286,8 +318,9 @@ class Policy:
             return False
         if is_private_wing(wing) and not self.has_scope("private:read"):
             return False
-        slug = canonical_wing(wing)
-        return any(fnmatch.fnmatchcase(slug, canonical_wing(p)) for p in self.read_wings)
+        if _workstation(wing) and not self.sees_all_wings:
+            return False
+        return self._matches(wing, self.read_wings)
 
     def can_write_wing(self, wing: str) -> bool:
         if not isinstance(wing, str) or not wing.strip():
@@ -296,11 +329,12 @@ class Policy:
             return False
         if is_private_wing(wing) and not self.has_scope("private:write"):
             return False
-        slug = canonical_wing(wing)
+        if _workstation(wing) and not self.writes_all_wings:
+            return False
         if self.trust == "untrusted":
-            return bool(self.write_wing) and slug == canonical_wing(self.write_wing)
+            return bool(self.write_wing) and self._matches(wing, (self.write_wing,))
         patterns = self.write_wings + ((self.write_wing,) if self.write_wing else ())
-        return any(fnmatch.fnmatchcase(slug, canonical_wing(p)) for p in patterns)
+        return self._matches(wing, patterns)
 
     @property
     def sees_all_wings(self) -> bool:
