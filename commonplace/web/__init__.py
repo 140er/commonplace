@@ -128,7 +128,6 @@ def install(gateway):
                     "used_today": plans.transcription_used(gateway.db, account) if account else 0,
                     "limit": current.transcription_seconds if current else None,
                 },
-                "xai_voice": plans.allows(gateway.db, account, "xai_voice") if account else True,
                 "sync": {
                     "interval_seconds": plans.sync_interval(gateway.db, account) if account else 0
                 },

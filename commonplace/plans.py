@@ -23,20 +23,18 @@ class Plan:
     name: str
     storage_bytes: Optional[int]
     transcription_seconds: Optional[int]
-    xai_voice: bool
-    load_throttle: bool
     sync_interval_seconds: int
+    load_throttle: bool
 
 
 FREE = Plan(
     "free",
     250 * 1024 * 1024,
     10 * 60,
-    xai_voice=False,
-    load_throttle=False,
     sync_interval_seconds=15 * 60,
+    load_throttle=False,
 )
-PAID = Plan("paid", None, None, xai_voice=True, load_throttle=True, sync_interval_seconds=0)
+PAID = Plan("paid", None, None, sync_interval_seconds=0, load_throttle=True)
 PLANS = {plan.name: plan for plan in (FREE, PAID)}
 PAID_FOOTNOTE = "** zolang de server het aankan / as long as the server can handle it"
 
@@ -225,15 +223,6 @@ def use_transcription(db, user_id: str, seconds: int) -> None:
             "DELETE FROM transcription_usage WHERE day < ?",
             ((today - timedelta(days=40)).isoformat(),),
         )
-
-
-def allows(db, user_id: str, feature: str) -> bool:
-    if feature != "xai_voice":
-        raise ValueError("unknown plan feature")
-    if not enabled():
-        return True
-    plan = get_plan(db, user_id)
-    return plan is None or plan.xai_voice
 
 
 def sync_interval(db, user_id: str) -> int:

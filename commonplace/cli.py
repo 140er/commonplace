@@ -115,7 +115,7 @@ def cmd_plan_show(args) -> int:
         print(f"plan  {plan.name if plan else 'none'}")
         print(f"storage  {used} / {storage} bytes")
         print(f"transcription today  {plans.transcription_used(db, user['id'])} / {voice} seconds")
-        print(f"xai_voice  {str(plans.allows(db, user['id'], 'xai_voice')).lower()}")
+        print(f"sync interval  {plans.sync_interval(db, user['id'])} seconds")
         if plan and plan.name == "paid":
             print(plans.PAID_FOOTNOTE)
         if not plans.enabled():

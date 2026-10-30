@@ -267,7 +267,7 @@ def test_shared_workspace_ignores_members_plan_and_usage(hub, monkeypatch):
     assert status == 200 and payload["plan"] is None
     assert payload["storage"] == {"used": 0, "limit": None}
     assert payload["transcription"] == {"used_today": 0, "limit": None}
-    assert payload["xai_voice"] and payload["sync"] == {"interval_seconds": 0}
+    assert payload["sync"] == {"interval_seconds": 0}
 
 
 def test_transcription_boundaries_utc_reset_and_pruning(hub, monkeypatch):
@@ -328,14 +328,11 @@ def test_unlimited_transcription_records_nothing(hub, monkeypatch, switch, name)
 
 @pytest.mark.parametrize("switch", ["off", "on"])
 @pytest.mark.parametrize("name", ["free", "paid", "none"])
-def test_feature_and_sync_matrix(hub, monkeypatch, switch, name):
+def test_sync_interval_matrix(hub, monkeypatch, switch, name):
     monkeypatch.setenv("COMMONPLACE_PLANS", switch)
     assign(hub, name)
     limited = switch == "on" and name == "free"
-    assert plans.allows(hub.db, hub.admin, "xai_voice") is not limited
     assert plans.sync_interval(hub.db, hub.admin) == (900 if limited else 0)
-    with pytest.raises(ValueError):
-        plans.allows(hub.db, hub.admin, "unknown")
 
 
 @pytest.mark.parametrize("ratio,delay", [(0, 0), (0.6, 0), (0.7, 0.5), (0.9, 1.5), (1, 2), (4, 2)])
@@ -399,7 +396,6 @@ def test_plan_api_payload_for_tokens_and_people(hub, monkeypatch, name):
             "used_today": 123 if name == "free" else 0,
             "limit": 600 if name == "free" else None,
         },
-        "xai_voice": name != "free",
         "sync": {"interval_seconds": 900 if name == "free" else 0},
     }
     assert api(hub, hub.owner_token(), "GET", "/api/plan") == (200, expected)
@@ -439,14 +435,14 @@ def test_cli_set_show_none_off_and_admin_audits(hub, monkeypatch, capsys):
     capsys.readouterr()
     assert main(data + ["plan", "show", hub.admin]) == 0
     assert capsys.readouterr().out == (
-        "plan  free\nstorage  17 / 262144000 bytes\ntranscription today  2 / 600 seconds\nxai_voice  false\n"
+        "plan  free\nstorage  17 / 262144000 bytes\ntranscription today  2 / 600 seconds\nsync interval  900 seconds\n"
     )
     assert main(data + ["plan", "set", hub.admin, "paid", "--by", hub.admin]) == 0
     capsys.readouterr()
     assert main(data + ["plan", "show", hub.db.user(hub.admin)["email"]]) == 0
     out = capsys.readouterr().out
     assert out.count("unlimited**") == 2 and plans.PAID_FOOTNOTE in out
-    assert "xai_voice  true" in out
+    assert "sync interval  0 seconds" in out
     assert main(data + ["plan", "set", hub.admin, "none"]) == 0
     capsys.readouterr()
     assert main(data + ["plan", "show", hub.admin]) == 0

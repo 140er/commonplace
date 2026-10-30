@@ -18,7 +18,7 @@ Social sign-in: [provider setup](SETUP.md).
 Set `COMMONPLACE_PLANS=on` to enable hosted plans. New social sign-ups receive Free:
 250 MB storage per account and 10 minutes of server voice transcription per UTC day.
 The chat-sync interval hook is every 15 minutes for Free and live for Paid; sync is not built here.
-Paid has *unlimited*\*\* storage and transcription, the `xai_voice` flag, and a server-load throttle hook.
+Paid has *unlimited*\*\* storage and transcription and a server-load throttle hook.
 
 ** zolang de server het aankan / as long as the server can handle it
 
