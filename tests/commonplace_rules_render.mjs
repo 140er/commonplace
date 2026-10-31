@@ -75,7 +75,7 @@ assert.ok(html.includes('data-rule-action="suggestion-accept"') && html.includes
 assert.ok(html.includes('data-rule-form="new"') && html.includes('value="*">All agents'));
 assert.ok(html.includes('<details class="rule-retired"><summary>Retired (1)'));
 assert.ok(!html.includes('style="') && !html.includes("onclick="));
-const proposedActions = html.match(/data-rule-id="1"[\s\S]*?<div class="rule-actions">([\s\S]*?)<details/)[1];
+const proposedActions = html.match(/data-rule-id="1"[\s\S]*?<div class="rule-actions">([\s\S]*?)<details class="rule-clarify"/)[1];
 assert.equal((proposedActions.match(/class="blockbtn"/g) || []).length, 1);
 assert.ok(proposedActions.includes('data-rule-action="accept"'));
 for (const action of ["edit", "retire", "history"]) assert.ok(proposedActions.includes(`class="rule-text-button" data-rule-action="${action}"`));
@@ -353,3 +353,37 @@ for (const selector of ['.rule-clarify[open] [data-ask-agent]', '.rule-clarify[o
   assert.equal(exitUI.busy(), true);
 }
 console.log("Rules suggestion and deferred-render checks passed");
+
+// Owners move active rules between agents; proposals can be accepted for all agents at once.
+{
+  const moveHTML = rulesView(payload);
+  const row = (id) => moveHTML.match(new RegExp(`data-rule-id="${id}"[\\s\\S]*?<div data-rule-history hidden></div></article>`))[0];
+  const targets = (id) => [...row(id).matchAll(/data-rule-action="move" data-agent="([^"]+)">([^<]+)</g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(targets(1), [["*", "All agents"], ["conn:reader", "reader"]]);
+  assert.deepEqual(targets(5), [["conn:reader", "reader"], ["conn:writer", "writer"]]);
+  assert.ok(row(1).includes('<details class="rule-move"><summary class="rule-text-button">Applies to…</summary>'));
+  assert.ok(row(1).includes('class="rule-text-button" data-rule-action="accept-all" >Accept for all agents<'));
+  for (const id of [4, 5]) assert.ok(!row(id).includes('data-rule-action="accept-all"'));
+  assert.ok(!row(3).includes("rule-move"));
+  assert.ok(!rulesView(payload, { owner: false }).includes("rule-move") && !rulesView(payload, { owner: false }).includes("accept-all"));
+  assert.ok(!rulesView({ rules: [all] }).includes("rule-move"));
+
+  const sent = [];
+  let moveRefreshes = 0;
+  const moveHandlers = {};
+  const moveUI = rulesHandlers({ addEventListener: (type, fn) => { moveHandlers[type] = fn; }, querySelector: () => null }, async (path, options) => { sent.push([path, options]); return {}; }, async () => { moveRefreshes++; }, () => {});
+  moveUI.update(payload, { owner: true });
+  const moveRow = { dataset: { ruleId: "1", version: "3" }, querySelectorAll: () => [] };
+  const click = (dataset) => moveHandlers.click({ target: { closest: () => ({ dataset, closest: (selector) => selector === "[data-rule-id]" ? moveRow : null }) } });
+  await click({ ruleAction: "move", agent: "*" });
+  await click({ ruleAction: "accept-all" });
+  assert.deepEqual(sent, [
+    ["/api/rules/1/agent", { method: "POST", body: { agent: "*", version: 3 } }],
+    ["/api/rules/1/agent", { method: "POST", body: { agent: "*", version: 3, accept: true } }],
+  ]);
+  assert.equal(moveRefreshes, 2);
+  moveUI.update(payload, { owner: false });
+  await click({ ruleAction: "move", agent: "*" });
+  assert.equal(sent.length, 2);
+}
+console.log("Rules agent-target checks passed");

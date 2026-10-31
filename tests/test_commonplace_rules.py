@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -939,3 +940,222 @@ def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operati
     # A new request must recheck current visibility, including cached misses.
     boards.board_add(slug="missing", wing="shared")
     assert service(hub, env.agent)._board_visible("missing") is True
+
+
+def move(hub, env, current, agent, **extra):
+    return api(
+        hub,
+        env.cookie,
+        "POST",
+        f"/api/rules/{current['id']}/agent",
+        dict({"version": current["version"], "agent": agent}, **extra),
+    )
+
+
+def test_owner_moves_rule_to_all_agents_and_back(hub, env):
+    other = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('other')}"))
+    accepted = env.owner.action(publish(env)["id"], 1, "accept")
+    assert other.rules_get()["rules"] == []
+    status, shared = move(hub, env, accepted, "*")
+    assert status == 200, shared
+    assert shared["agent"] == "*" and shared["version"] == accepted["version"] + 1
+    assert shared["status"] == "accepted" and shared["source"] == "agent"
+    assert shared["text"] == accepted["text"] and shared["key"] == accepted["key"]
+    last = env.owner.history(accepted["id"])[-1]
+    assert last["agent"] == "*" and last["version"] == shared["version"]
+    assert last["note"] == f"Applies to: {env.agent.connection} → All agents"
+    assert env.worker.rules_get()["rules"] == [shared] == other.rules_get()["rules"]
+    assert other.rules_changed(0)["rules"] == [
+        {"key": shared["key"], "status": "accepted", "target": "all"}
+    ]
+    status, back = move(hub, env, shared, env.agent.actor, note="Only this one")
+    assert status == 200 and back["agent"] == env.agent.actor
+    assert env.owner.history(accepted["id"])[-1]["note"] == (
+        f"Applies to: All agents → {env.agent.connection}\nOnly this one"
+    )
+    assert env.worker.rules_get()["rules"] == [back]
+    assert other.rules_get()["rules"] == [] and other.rules_changed(0)["rules"] == []
+    status, elsewhere = move(hub, env, back, other.principal.actor)
+    assert status == 200 and env.worker.rules_get()["rules"] == []
+    assert other.rules_get()["rules"] == [elsewhere]
+    listing = env.owner.list_rules()["rules"]
+    assert [r["agent"] for r in listing] == [other.principal.actor]
+    assert [v["agent"] for v in env.owner.history(accepted["id"])] == [
+        env.agent.actor,
+        env.agent.actor,
+        "*",
+        env.agent.actor,
+        other.principal.actor,
+    ]
+
+
+def test_accept_for_all_agents_is_one_owner_change(hub, env):
+    proposed = publish(env)
+    seq = env.owner.store.seq
+    status, shared = move(hub, env, proposed, "*", accept=True)
+    assert status == 200, shared
+    assert shared["agent"] == "*" and shared["status"] == "accepted"
+    assert shared["version"] == 2 and env.owner.store.seq == seq + 1
+    history = env.owner.history(proposed["id"])
+    assert [(v["version"], v["status"], v["agent"]) for v in history] == [
+        (1, "proposed", env.agent.actor),
+        (2, "accepted", "*"),
+    ]
+    assert move(hub, env, shared, env.agent.actor, accept=True) == (
+        400,
+        {"error": "invalid action"},
+    )
+    assert move(hub, env, shared, env.agent.actor, accept="yes") == (
+        400,
+        {"error": "accept must be a boolean"},
+    )
+    assert env.owner.history(proposed["id"]) == history
+
+
+def test_move_refuses_stale_retired_duplicate_and_invalid_targets(hub, env):
+    current = publish(env)
+    edited = env.owner.edit(current["id"], 1, text="Owner text")
+    seq = env.owner.store.seq
+    status, conflict = move(hub, env, current, "*")
+    assert status == 409 and conflict == {"error": "rule changed", "current": edited}
+    for agent in ("", "conn:", "conn: ", "agent", 7, None):
+        assert move(hub, env, edited, agent) == (
+            400,
+            {"error": "agent must be * or conn:<name>"},
+        )
+    assert move(hub, env, edited, env.agent.actor) == (400, {"error": "nothing to change"})
+    assert api(hub, env.cookie, "POST", f"/api/rules/{current['id']}/agent", {"agent": "*"}) == (
+        400,
+        {"error": "version is required"},
+    )
+    assert move(hub, env, edited, "*", scope="board")[0] == 400
+    assert move(hub, env, {"id": 999, "version": 1}, "*") == (404, {"error": "rule not found"})
+    assert env.owner.store.seq == seq
+    # The same key under the target agent is refused, even when that rule is retired.
+    duplicate = env.owner.create("*", "Shared duplicate", "limit")
+    copy = publish(env, text=duplicate["text"], key=duplicate["key"])
+    refused = (400, {"error": "All agents already has a rule with this key"})
+    assert move(hub, env, copy, "*") == refused
+    env.owner.action(duplicate["id"], duplicate["version"], "retire")
+    assert move(hub, env, copy, "*", accept=True) == refused
+    retired = env.owner.action(edited["id"], edited["version"], "retire")
+    seq = env.owner.store.seq
+    history = env.owner.history(edited["id"])
+    assert move(hub, env, retired, "*") == (400, {"error": "restore the rule first"})
+    assert env.owner.store.seq == seq and env.owner.history(edited["id"]) == history
+
+
+def test_only_the_owner_session_can_move_rules(hub, env):
+    current = publish(env)
+    member_id = hub.db.create_user("member@example.test")
+    hub.db.add_member(hub.workspace, member_id, role="member", actor=hub.admin)
+    member = sessions.person_principal(hub.db, member_id, hub.workspace)
+    session = sessions.redeem_login_link(
+        hub.db, sessions.create_login_link(hub.db, member.user_email, hub.workspace)
+    )
+    for auth in ({"Cookie": f"{sessions.COOKIE}={session}"}, env.token):
+        status, _ = api(
+            hub,
+            auth,
+            "POST",
+            f"/api/rules/{current['id']}/agent",
+            {"version": 1, "agent": "*", "accept": True},
+        )
+        assert status == 403
+    for principal in (env.agent, member):
+        with pytest.raises(ToolError, match="owner"):
+            service(hub, principal).set_agent(current["id"], 1, "*")
+    assert {name for name in hub.tool_names(env.token) if name.startswith("rules")} == {
+        "rules_publish",
+        "rules_get",
+        "rules_changed",
+    }
+    assert not mcp(hub, env.token, "rules_publish", rules=[rule()], agent="*")[0]
+    assert env.owner.list_rules()["rules"] == [current]
+
+
+def test_move_emits_rule_changed_for_both_agents(hub, env, monkeypatch):
+    emitted = []
+    real_emit = events.emit
+
+    def emit(db, workspace, kind, **kwargs):
+        emitted.append((kind, kwargs["data"]))
+        return real_emit(db, workspace, kind, **kwargs)
+
+    current = publish(env)
+    monkeypatch.setattr(events, "emit", emit)
+    shared = env.owner.set_agent(current["id"], 1, "*", accept=True)
+    keys = {"ids": [current["id"]], "keys": [current["key"]]}
+    assert emitted == [
+        ("rule.changed", {"agent": "*", **keys}),
+        ("rule.changed", {"agent": env.agent.actor, **keys}),
+    ]
+    emitted.clear()
+    with pytest.raises(ToolError):
+        env.owner.set_agent(current["id"], shared["version"], "*")
+    assert emitted == []
+    env.owner.set_agent(current["id"], shared["version"], "conn:other")
+    assert emitted == [
+        ("rule.changed", {"agent": "conn:other", **keys}),
+        ("rule.changed", {"agent": "*", **keys}),
+    ]
+
+
+def test_republish_after_move_stays_with_the_moved_rule(hub, env):
+    proposed = publish(env)
+    kept = publish(env, key="kept", text="Stays with the agent")
+    shared = env.owner.set_agent(proposed["id"], 1, "*", accept=True)
+    seq = env.owner.store.seq
+    # The same wording is a no-op: no second proposal appears under the agent.
+    result = env.worker.rules_publish([rule(), rule(key="kept", text=kept["text"])], replace=True)
+    assert result["rules"] == [shared, kept] and env.owner.store.seq == seq
+    # New wording waits for the owner instead of changing a rule every agent follows.
+    pending = env.worker.rules_publish([rule(text="Agent rewrite", kind="limit")])["rules"][0]
+    assert pending["id"] == shared["id"] and pending["agent"] == "*"
+    assert pending["text"] == shared["text"] and pending["kind"] == shared["kind"]
+    assert pending["agent_text"] == "Agent rewrite" and pending["pending"] == 1
+    env.worker.rules_publish([], replace=True)
+    listing = {r["id"]: r for r in env.owner.list_rules()["rules"]}
+    assert listing[shared["id"]]["status"] == "accepted"
+    assert listing[kept["id"]]["status"] == "retired"
+    assert len(listing) == 2
+    taken = env.owner.action(shared["id"], pending["version"], "accept_agent")
+    assert taken["agent"] == "*" and taken["text"] == "Agent rewrite"
+    # Moved out of the agent's sight, its republishes are skipped without a new row.
+    hidden = env.owner.set_agent(shared["id"], taken["version"], "conn:other")
+    assert env.worker.rules_publish([rule(text="Again")])["rules"] == []
+    assert env.owner.list_rules()["rules"][0] == hidden
+    assert len(env.owner.list_rules()["rules"]) == 2
+
+
+def test_store_migration_adds_agent_columns_to_existing_files(tmp_path):
+    from commonplace.rules import store as rule_store
+
+    directory = tmp_path / "old"
+    directory.mkdir()
+    path = directory / "rules.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(Path(rule_store.__file__).with_name("schema.sql").read_text())
+        for agent, key in (("conn:writer", "one"), ("*", "two")):
+            conn.execute(
+                "INSERT INTO rules(agent,key,text,kind,scope,status,source,seq,created_at,"
+                "updated_at,updated_by) VALUES (?,?,'t','limit','global','accepted','owner',1,"
+                "'x','x','x')",
+                (agent, key),
+            )
+        conn.execute(
+            "INSERT INTO rule_versions(rule_id,version,text,kind,scope,status,source,stamp_user,"
+            "stamp_trust,created_at) VALUES (1,1,'t','limit','global','accepted','owner','u',"
+            "'trusted','x')"
+        )
+    opened = open_store(directory)
+    with opened.connection() as conn:
+        assert [tuple(r) for r in conn.execute("SELECT agent,origin_agent FROM rules")] == [
+            ("conn:writer", "conn:writer"),
+            ("*", None),
+        ]
+        assert conn.execute("SELECT agent FROM rule_versions").fetchone()[0] is None
+        with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+            conn.execute("UPDATE rule_versions SET agent='*'")
+    with closing(sqlite3.connect(path, isolation_level=None)) as conn:
+        rule_store.migrate(conn)  # A second run, e.g. from another process, changes nothing.

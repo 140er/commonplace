@@ -15,6 +15,23 @@ def sequence(conn):
     return conn.execute("SELECT value FROM meta WHERE key='seq'").fetchone()[0]
 
 
+def migrate(conn):
+    """Add the agent-target columns; existing rule_versions rows keep agent NULL."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if "origin_agent" not in {r[1] for r in conn.execute("PRAGMA table_info(rules)")}:
+            # The agent a rule first applied to keeps matching its republishes after a move.
+            conn.execute("ALTER TABLE rules ADD COLUMN origin_agent TEXT")
+            conn.execute("UPDATE rules SET origin_agent=agent WHERE agent!='*'")
+        if "agent" not in {r[1] for r in conn.execute("PRAGMA table_info(rule_versions)")}:
+            conn.execute("ALTER TABLE rule_versions ADD COLUMN agent TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS rules_by_origin ON rules(origin_agent, key)")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 class RuleStore:
     _initialized = set()
     _init_lock = threading.Lock()
@@ -27,6 +44,7 @@ class RuleStore:
             if self.path not in self._initialized or not Path(self.path).exists():
                 with self.connection() as conn:
                     conn.executescript(Path(__file__).with_name("schema.sql").read_text())
+                    migrate(conn)
                 self._initialized.add(self.path)
 
     @contextmanager
