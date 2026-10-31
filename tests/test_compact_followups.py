@@ -10,7 +10,6 @@ import pytest
 from mempalace.backends import BackendError
 from mempalace.backends._filters import matches_where
 from mempalace.backends.compact import (
-    _APPLICATION_ID,
     _SCHEMA_VERSION,
     KEYWORD_ONLY,
     CompactBackend,
@@ -32,14 +31,13 @@ def _query(col, where=None):
 def _assert_cache_matches_disk(col):
     cache = col._handle._vector_cache[1]
     rows = col._handle.conn.execute(
-        "SELECT rowid,embedding,scale FROM vectors WHERE collection_id=1"
+        "SELECT rowid,embedding FROM vectors WHERE collection_id=1"
     ).fetchall()
-    assert len(rows) == cache.size == len(cache.positions)
-    for rowid, blob, scale in rows:
-        pos = cache.positions[rowid]
+    assert len(rows) == cache.size == np.count_nonzero(cache.rowid_index >= 0)
+    for rowid, blob in rows:
+        pos = cache.positions([rowid])[0]
         assert cache.rowids[pos] == rowid
         assert cache.matrix[pos].tobytes() == blob
-        assert cache.scales[pos].tobytes() == scale
         assert cache.norms[pos] == pytest.approx(np.linalg.norm(np.frombuffer(blob, np.int8)))
 
 
@@ -111,9 +109,10 @@ def test_incremental_cache_capacity_deletes_and_multiple_collections(store):
 
 
 def test_external_process_write_reloads_cache(store):
-    _, col, directory = store
+    backend, col, directory = store
     col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]], metadatas=[{"wing": "w"}])
-    assert _query(col, {"wing": "w"}) == ["a"]
+    reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+    assert _query(reader, {"wing": "w"}) == ["a"]
     cache = col._handle._vector_cache[1]
     result = subprocess.run(
         [
@@ -135,10 +134,10 @@ b.close()
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert _query(col, {"wing": "w"}) == []
-    assert _query(col, {"wing": "x"}) == ["b", "a"]
+    assert _query(reader, {"wing": "w"}) == []
+    assert _query(reader, {"wing": "x"}) == ["b", "a"]
     assert col._handle._vector_cache[1] is not cache
-    _assert_cache_matches_disk(col)
+    _assert_cache_matches_disk(reader)
 
 
 @pytest.mark.parametrize(
@@ -217,23 +216,23 @@ def test_partial_schema_refused_and_empty_repaired_through_rebuild(store, popula
         other.close()
 
 
-@pytest.mark.parametrize("read_only", [False, True])
-def test_version_one_refused_without_modification(store, read_only):
-    backend, _, directory = store
+def test_version_one_upgrades_in_place_without_losing_drawers(store):
+    backend, col, directory = store
+    col.add(ids=["mcp-only"], documents=["original words"], embeddings=[[1, 0]])
+    before = list(col._handle.conn.execute("SELECT * FROM documents"))
     backend.close()
     conn = sqlite3.connect(directory / "compact.sqlite3")
+    conn.execute("DROP INDEX compact_room")
     conn.execute("PRAGMA user_version=1")
     conn.close()
     other = CompactBackend()
     try:
-        with pytest.raises(
-            BackendError, match="unsupported compact format version 1; rebuild with"
-        ):
-            other.get_collection(str(directory), "records", options={"read_only": read_only})
-        conn = sqlite3.connect(directory / "compact.sqlite3")
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
-        assert conn.execute("PRAGMA application_id").fetchone()[0] == _APPLICATION_ID
-        conn.close()
+        with pytest.raises(BackendError, match="writable once to upgrade in place"):
+            other.get_collection(str(directory), "records", options={"read_only": True})
+        col = other.get_collection(str(directory), "records")
+        assert list(col._handle.conn.execute("SELECT * FROM documents")) == before
+        assert col._handle.conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert col.get().documents == ["original words"]
     finally:
         other.close()
 
@@ -364,7 +363,7 @@ def test_bracket_values_and_bare_parent_lists_match_oracle_and_use_indexes(store
 
 
 def test_broad_code_masks_and_selective_sql_have_filter_parity(store, monkeypatch):
-    from mempalace.backends import compact as module
+    from mempalace.backends.compact import _VectorCache
 
     _, col, _ = store
     metas = [{"wing": "w" if i < 80 else "x", "room": "r" if i < 80 else "s"} for i in range(100)]
@@ -389,14 +388,17 @@ def test_broad_code_masks_and_selective_sql_have_filter_parity(store, monkeypatc
         {"$and": []},
         {"$or": []},
     ]
-    for threshold in [0, 2]:  # force each implementation independently
-        monkeypatch.setattr(module, "_BROAD_FILTER_FRACTION", threshold)
-        for where in filters:
-            assert (
-                _query(col, where)
-                == [str(i) for i, m in enumerate(metas) if matches_where(m, where)][:100]
-            )
-    monkeypatch.setattr(module, "_BROAD_FILTER_FRACTION", 0.2)
+    original = _VectorCache.filter
+    for sql_only in [False, True]:
+        with monkeypatch.context() as patch:
+            if sql_only:
+                patch.setattr(_VectorCache, "filter", lambda *_: None)
+            for where in filters:
+                assert (
+                    _query(col, where)
+                    == [str(i) for i, m in enumerate(metas) if matches_where(m, where)][:100]
+                )
+    assert _VectorCache.filter is original
     statements = []
     col._handle.conn.set_trace_callback(statements.append)
     _query(col, {"wing": "w"})
@@ -504,3 +506,274 @@ def test_partial_batch_rollback_never_changes_warm_cache(store):
     assert np.array_equal(cache.matrix, before[0])
     assert col.get(include=[]).ids == ["a"]
     assert _query(col) == ["a"]
+
+
+def test_read_only_search_shares_patched_cache_across_backend_instances(store):
+    _, writer, directory = store
+    writer.add(
+        ids=["a", "b"],
+        documents=["alpha", "beta"],
+        embeddings=[[1, 0], [0, 1]],
+        metadatas=[{"wing": "w"}] * 2,
+    )
+    backend = CompactBackend()
+    try:
+        reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+        assert _query(reader) == ["a", "b"]
+        cache = reader._handle._vector_cache[1]
+        writer.update(ids=["a"], embeddings=[[-1, 0]], metadatas=[{"wing": "x"}])
+        writer.add(ids=["c"], documents=["gamma"], embeddings=[[1, 0]], metadatas=[{"wing": "x"}])
+        statements = []
+        reader._handle.conn.set_trace_callback(statements.append)
+        assert _query(reader, {"wing": "x"}) == ["c", "a"]
+        reader._handle.conn.set_trace_callback(None)
+        assert reader._handle._vector_cache[1] is cache is writer._handle._vector_cache[1]
+        assert cache.rowid_index.dtype == np.int32
+        assert not any(sql.startswith("SELECT v.rowid,v.embedding") for sql in statements)
+        _assert_cache_matches_disk(reader)
+    finally:
+        backend.close()
+
+
+def test_noop_writes_and_analyze_preserve_generation_and_reader_cache(store):
+    backend, writer, directory = store
+    writer.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+    _query(reader)
+    cache = reader._handle._vector_cache[1]
+    generation = writer._generation(writer._handle.conn.cursor())
+    writer.update(ids=["missing"], metadatas=[{"wing": "none"}])
+    writer.run_maintenance("analyze")
+    assert writer._generation(writer._handle.conn.cursor()) == generation
+    assert _query(reader) == ["a"]
+    assert reader._handle._vector_cache[1] is cache
+
+
+def test_postcommit_cache_failure_does_not_report_a_committed_write_as_failed(
+    store, monkeypatch, caplog
+):
+    _, col, _ = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    _query(col)
+
+    def fail(*args):
+        raise RuntimeError("injected cache patch failure")
+
+    monkeypatch.setattr(col, "_patch_cache", fail)
+    col.add(ids=["b"], documents=["beta"], embeddings=[[0, 1]])
+    assert "Discarding compact cache after a committed write" in caplog.text
+    assert not col._handle._vector_cache
+    assert col.get(ids=["b"]).documents == ["beta"]
+    assert _query(col) == ["a", "b"]
+
+
+def test_reindex_cleanup_is_best_effort_and_preserves_original_error(store, monkeypatch, caplog):
+    from mempalace.backends import compact as module
+
+    _, col, directory = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    stale = directory / "compact-reindex-stale"
+    stale.mkdir()
+    original = module.shutil.rmtree
+
+    def denied(path, *args, **kwargs):
+        if "compact-reindex-" in str(path):
+            raise PermissionError("injected permission failure")
+        return original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module.shutil, "rmtree", denied)
+        other = CompactBackend()
+        try:
+            assert other.get_collection(str(directory), "records").count() == 1
+        finally:
+            other.close()
+
+        def embed(*args):
+            raise ValueError("original embedding failure")
+
+        with pytest.raises(ValueError, match="original embedding failure"):
+            col.reindex(embed)
+    assert "Could not remove an abandoned compact reindex stage" in caplog.text
+    assert col.get().documents == ["alpha"]
+
+
+def test_relative_palace_open_does_not_remove_live_reindex_stage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    backend = CompactBackend()
+    try:
+        col = backend.get_collection("relative", "records", create=True)
+        col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+
+        def embed(documents, metadatas):
+            stages = list((tmp_path / "relative").glob("compact-reindex-*"))
+            assert len(stages) == 1
+            other = CompactBackend()
+            try:
+                other.get_collection("relative", "records")
+                assert stages[0].exists()
+            finally:
+                other.close()
+            return [[1, 0, 0]] * len(documents)
+
+        col.reindex(embed)
+        assert col.query(query_embeddings=[[1, 0, 0]]).ids == [["a"]]
+    finally:
+        backend.close()
+
+
+def test_reindex_checks_each_batch_but_ignores_other_collection_writes(store):
+    backend, col, directory = store
+    col.add(ids=["a", "b", "c"], documents=["alpha"] * 3, embeddings=[[1, 0]] * 3)
+    other = backend.get_collection(str(directory), "other", create=True)
+    calls = []
+
+    def unrelated(documents, metadatas):
+        calls.append(1)
+        other.upsert(ids=["x"], documents=["changed"], embeddings=[[1, 0]])
+        return [[1, 0, 0]] * len(documents)
+
+    col.reindex(unrelated, batch_size=1)
+    assert len(calls) == 3
+    assert col.query(query_embeddings=[[1, 0, 0]]).ids == [["a", "b", "c"]]
+    assert other.query(query_embeddings=[[1, 0]]).ids == [["x"]]
+    calls.clear()
+
+    def changed(documents, metadatas):
+        calls.append(1)
+        col.update(ids=["c"], documents=["new words"])
+        return [[1, 0, 0]] * len(documents)
+
+    with pytest.raises(BackendError, match="changed during staging"):
+        col.reindex(changed, batch_size=1)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_populated_schema_restores_derived_indexes_and_triggers(store, repair):
+    backend, col, directory = store
+    col.add(ids=["a"], documents=["original words"], embeddings=[[1, 0]], metadatas=[{"room": "r"}])
+    before = [tuple(row) for row in col._handle.conn.execute("SELECT * FROM documents")]
+    backend.close()
+    conn = sqlite3.connect(directory / "compact.sqlite3")
+    conn.executescript("DROP INDEX compact_room; DROP TRIGGER delete_vector;")
+    conn.close()
+    other = CompactBackend()
+    try:
+        if repair:
+            assert other.repair_empty_schema(str(directory))
+        col = other.get_collection(str(directory), "records")
+        assert [tuple(row) for row in col._handle.conn.execute("SELECT * FROM documents")] == before
+        assert col.get(where={"room": "r"}).documents == ["original words"]
+        col.delete(ids=["a"])
+        assert not col._handle.conn.execute("SELECT 1 FROM vectors").fetchone()
+    finally:
+        other.close()
+
+
+def test_repair_missing_file_does_not_create_database(tmp_path):
+    backend = CompactBackend()
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            backend.repair_empty_schema(str(tmp_path))
+        assert not (tmp_path / "compact.sqlite3").exists()
+    finally:
+        backend.close()
+
+
+def test_format_stamp_is_durable_before_wal_switch(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sqlite3, sys
+from mempalace.backends.compact import CompactBackend
+conn=sqlite3.connect(sys.argv[1])
+conn.set_trace_callback(lambda sql: os._exit(73) if sql == 'PRAGMA journal_mode=WAL' else None)
+CompactBackend()._init_schema(conn)
+""",
+            str(tmp_path / "compact.sqlite3"),
+        ],
+        timeout=30,
+    )
+    assert result.returncode == 73
+    assert CompactBackend.detect(str(tmp_path))
+    backend = CompactBackend()
+    try:
+        assert backend.get_collection(str(tmp_path), "records", create=True).count() == 0
+    finally:
+        backend.close()
+
+
+@pytest.mark.parametrize("operation", ["get", "lexical", "facets", "count"])
+def test_immutable_read_race_does_not_leak_internal_exception(store, monkeypatch, operation):
+    backend, col, directory = store
+    col.add(ids=["a"], documents=["alpha"], metadatas=[{"wing": "w"}], embeddings=[[1, 0]])
+    backend.close_palace(str(directory))
+    readonly = CompactBackend()
+    reader = readonly.get_collection(str(directory), "records", options={"read_only": True})
+    assert reader._handle.immutable
+    changed = False
+
+    def commit_writer():
+        nonlocal changed
+        if changed:
+            return
+        changed = True
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from mempalace.backends.compact import CompactBackend
+b=CompactBackend()
+c=b.get_collection(sys.argv[1], 'records')
+c.update(ids=['a'], documents=['beta'], metadatas=[{'wing':'x'}])
+b.close()
+""",
+                str(directory),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+
+    try:
+        if operation in {"facets", "count"}:
+            conn = reader._handle.conn
+            factory = conn.row_factory
+
+            def row_factory(cur, row):
+                if any(field[0].upper() == "COUNT(*)" for field in cur.description):
+                    commit_writer()
+                return factory(cur, row)
+
+            conn.row_factory = row_factory
+            try:
+                assert (
+                    reader.facet_counts("wing") if operation == "facets" else reader.count()
+                ) == ({"w": 1} if operation == "facets" else 1)
+            finally:
+                conn.row_factory = factory
+        else:
+            hook = "_result" if operation == "get" else "_hydrate_rowids"
+            original = getattr(reader, hook)
+
+            def after_selection(*args, **kwargs):
+                commit_writer()
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(reader, hook, after_selection)
+            if operation == "get":
+                assert reader.get(where={"wing": "w"}).documents == ["alpha"]
+            else:
+                # The changed immutable view is rejected; the retry sees the
+                # committed replacement, which no longer matches alpha/w.
+                assert reader.lexical_search(query="alpha", where={"wing": "w"}).hits == []
+        assert changed
+        assert reader.get(ids=["a"]).documents == ["beta"]
+    finally:
+        readonly.close()

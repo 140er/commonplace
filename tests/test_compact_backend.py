@@ -777,6 +777,14 @@ def test_vector_wing_mask_after_analyze_reads_only_index_rowids(compact):
     statements = []
     conn.set_trace_callback(statements.append)
     assert col.query(**query).ids == expected
+    # Exercise the SQL mask builder directly: simple locus-only queries now
+    # always use cached arrays, while compound predicates still need SQL.
+    from mempalace.backends.base import _IncludeSpec
+
+    with col._cursor() as cur:
+        col._select(
+            cur, where=where, rowids_only=True, spec=_IncludeSpec(False, False, False, False)
+        )
     conn.set_trace_callback(None)
     sql = next(s for s in statements if s.startswith("SELECT d.rowid FROM documents d"))
     plan = [r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql)]
