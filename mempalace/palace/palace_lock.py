@@ -374,10 +374,10 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
                         # A child may inherit a descriptor before registration,
                         # so closing this descriptor alone may retain the flock.
                         try:
-                            hold.file.seek(0)
                             if os.name == "nt":
                                 import msvcrt
 
+                                hold.file.seek(0)
                                 msvcrt.locking(hold.file.fileno(), msvcrt.LK_UNLCK, 1)
                             else:
                                 import fcntl

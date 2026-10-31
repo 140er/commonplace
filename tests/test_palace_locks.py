@@ -563,12 +563,13 @@ finally:
 
 @pytest.mark.parametrize("body_error", [False, True], ids=["clean", "body-error"])
 @pytest.mark.parametrize("failure_at", ["seek", "unlock"])
-def test_unlock_error_preserves_body_outcome_and_closes_descriptor(
+def test_unlock_cleanup_preserves_body_outcome_and_closes_descriptor(
     tmp_path, monkeypatch, body_error, failure_at
 ):
     _isolate_home(monkeypatch, tmp_path)
     error = ValueError("body failure")
     files = []
+    unlocks = []
 
     def fail(*args):
         raise OSError("unlock failed")
@@ -579,6 +580,17 @@ def test_unlock_error_preserves_body_outcome_and_closes_descriptor(
             files.append(file)
             if failure_at == "seek":
                 monkeypatch.setattr(file, "seek", fail)
+                if os.name != "nt":
+                    import fcntl
+
+                    real_flock = fcntl.flock
+
+                    def flock(file, operation):
+                        assert operation == fcntl.LOCK_UN
+                        unlocks.append(True)
+                        return real_flock(file, operation)
+
+                    monkeypatch.setattr(fcntl, "flock", flock)
             elif os.name == "nt":
                 import msvcrt
 
@@ -597,6 +609,8 @@ def test_unlock_error_preserves_body_outcome_and_closes_descriptor(
     else:
         run()
     assert files[0].closed
+    if failure_at == "seek" and os.name != "nt":
+        assert unlocks == [True]
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is unavailable")
@@ -611,19 +625,28 @@ def test_forked_child_does_not_retain_crashed_holders_lease(tmp_path, monkeypatc
 import os, sys
 import mempalace.palace as palace
 
-with palace.mine_palace_lock(sys.argv[1]):
-    inherited_hold = next(iter(palace._palace_lock_keys.values()))
-    ready, release = os.pipe()
-    child = os.fork()
-    if child != 0:
-        os._exit(0)  # No context unwinding or explicit unlock.
+ready, release = os.pipe()
+holder = os.fork()
+if holder == 0:
     os.close(release)
-    assert os.read(ready, 1) == b""  # Wait for the holder to die.
-    os.close(ready)
-    # Retain inherited_hold: garbage collection must not free the descriptor.
     with palace.mine_palace_lock(sys.argv[1]):
-        print("released", flush=True)
-    os._exit(0)
+        inherited_hold = next(iter(palace._palace_lock_keys.values()))
+        child = os.fork()
+        if child != 0:
+            os._exit(0)  # No context unwinding or explicit unlock.
+        assert os.read(ready, 1) == b"1"
+        os.close(ready)
+        # Retain inherited_hold: garbage collection must not free the descriptor.
+        with palace.mine_palace_lock(sys.argv[1]):
+            print("released", flush=True)
+        os._exit(0)
+os.close(ready)
+_, status = os.waitpid(holder, 0)
+assert os.waitstatus_to_exitcode(status) == 0
+# waitpid returns after every holder descriptor has been released; pipe EOF alone
+# can arrive earlier, while the dying holder still owns the lease descriptor.
+os.write(release, b"1")
+os.close(release)
 """,
             str(tmp_path / "palace"),
         ],
