@@ -3,7 +3,8 @@
 
 The corpus mirrors the review probe: one source per fact, nine predicates,
 and entity names sharing common words. Queries cover broad, selective, and
-all-common terms, without scope, within one wing, and with all matches hidden.
+all-common terms, with broad gateway scopes, a small non-empty scope, and
+all matches hidden, as well as ordinary unscoped and single-wing reads.
 Timings exclude seeding and the one-time index build, and
 report the optional fact lookup's added wall time per search.
 """
@@ -24,7 +25,18 @@ from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.searcher.facts import search_facts
 
 QUERIES = ("what is the status of the project", "Entity 42", "entity project")
-SCOPES = (("unscoped", None), ("wing_3", ["wing_3"]), ("hidden", ["hidden"]))
+SCOPES = (
+    ("unscoped", None, None),
+    ("wing_3", ["wing_3"], None),
+    ("gateway_1wing", ["wing_3"], ["public", "internal"]),
+    (
+        "gateway",
+        ["wing_0", "wing_1", "wing_2", "wing_3", "sparse"],
+        ["public", "internal"],
+    ),
+    ("sparse", ["sparse"], None),
+    ("hidden", ["hidden"], None),
+)
 PREDICATES = (
     "is_a",
     "works_at",
@@ -71,15 +83,19 @@ def measure(size, repeats=3):
                     "INSERT INTO fact_sources(triple_id,source_thread,added_at) VALUES(?,?,?)",
                     ((f"t{i}", "thr_source", "2026-01-01T00:00:00+00:00") for i in range(size)),
                 )
+                conn.execute(
+                    "UPDATE triples SET wing='sparse', subject='e42', predicate='status_of' "
+                    "WHERE id IN ('t7', 't12', 't99')"
+                )
         with KnowledgeGraph(db_path=path) as kg:
             rows = []
-            for scope, wings in SCOPES:
+            for scope, wings, sensitivities in SCOPES:
                 for query in QUERIES:
-                    search_facts(kg, query, wings=wings)  # warm caches, outside the samples
+                    search_facts(kg, query, wings=wings, sensitivities=sensitivities)
                     samples = []
                     for _ in range(repeats):
                         start = time.perf_counter()
-                        facts = search_facts(kg, query, wings=wings)
+                        facts = search_facts(kg, query, wings=wings, sensitivities=sensitivities)
                         samples.append((time.perf_counter() - start) * 1000)
                     rows.append(
                         {

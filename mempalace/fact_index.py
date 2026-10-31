@@ -6,6 +6,7 @@ import logging
 from . import fact_provenance
 
 FALLBACK_SEED_MULTIPLIER = 20
+SMALL_SCOPE_LIMIT = 1000
 
 
 def _drop_triggers(conn):
@@ -126,9 +127,9 @@ def candidates(
 ):
     """One SQL query: distinct BM25 seed keys, scoped history, sources and IDF.
 
-    Selective terms start with the best BM25 matches. All-common queries and
-    duplicate-key top-ups use a bounded scoped prefix, before grouping by key.
-    Selected keys still expand to their full scoped, as-of history.
+    Selective terms start with BM25 seeds; refills use recent scoped matches.
+    Small scopes use bounded FTS rowids when cheaper than following matches.
+    Wide scopes check each FTS hit by primary key. History remains uncapped.
     """
     words = sorted(tokens)
     columns = (
@@ -142,21 +143,109 @@ def candidates(
     )
     source_json = ", ".join(f"'{key}', fs.{key}" for key in columns)
     scoped = bool(visible_sql or temporal_sql)
-    scope_cte = (
-        "scoped_facts AS MATERIALIZED (SELECT t.id FROM triples t WHERE 1"
-        + visible_sql
-        + temporal_sql
-        + "), "
-        if scoped
-        else ""
-    )
-    scope_filter = " AND triple_id IN (SELECT id FROM scoped_facts)" if scoped else ""
-    scope_exists = "EXISTS (SELECT 1 FROM scoped_facts)" if scoped else "1"
+    scope_sql = visible_sql + temporal_sql
+    scope_params = [*visible_params, *temporal_params]
+    scope_cte = ""
+    params = [*words, common_term_fraction]
+    scope_filter, scope_gate = "", "1"
+    scope_exists = "1"
+    if scoped:
+        scope_cte = (
+            "scope_bound AS MATERIALIZED (SELECT CASE "
+            "WHEN EXISTS (SELECT 1 FROM selective_terms) "
+            "AND (SELECT documents FROM match_estimate) > ? "
+            "THEN min(?, ?) ELSE ? END AS max_rows), "
+            "scope_size AS MATERIALIZED (SELECT count(*) AS size FROM "
+            "(SELECT 1 FROM triples t WHERE 1"
+            + scope_sql
+            + " LIMIT min((SELECT max_rows + 1 FROM scope_bound), "
+            "COALESCE((SELECT documents FROM match_estimate), 0) + 1))), "
+        )
+        params.extend(
+            [
+                limit * FALLBACK_SEED_MULTIPLIER,
+                limit,
+                SMALL_SCOPE_LIMIT,
+                SMALL_SCOPE_LIMIT,
+                *scope_params,
+            ]
+        )
+        scope_exists = "EXISTS (SELECT 1 FROM triples t WHERE 1" + scope_sql + ")"
+        scope_filter = scope_sql
+        small_gate = (
+            "(SELECT size FROM scope_size) BETWEEN 1 AND (SELECT max_rows FROM scope_bound) "
+            "AND (SELECT size FROM scope_size) < (SELECT documents FROM match_estimate)"
+        )
+        scope_gate = "NOT (" + small_gate + ")"
     match_sql = (
-        "SELECT triple_id, fact_search.rank AS relevance FROM fact_search "
+        "SELECT t.subject, t.predicate, fact_search.triple_id, "
+        "fact_search.rank AS relevance, fact_search.rowid AS docid FROM fact_search "
+        "JOIN triples t ON t.id=fact_search.triple_id "
         "WHERE fact_search MATCH COALESCE("
-        "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')" + scope_filter
+        "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')"
     )
+    if scoped:
+        # Bound the rowid range and test membership without restarting FTS
+        # for each id: those restarts recompute BM25's global term counts.
+        # Only small scopes materialize ids; wide scopes take the PK path.
+        scope_cte += (
+            "small_docids AS MATERIALIZED (SELECT k.docid FROM triples t "
+            "JOIN fact_search_keys k ON k.triple_id=t.id WHERE 1" + scope_sql + " "
+            "LIMIT CASE WHEN "
+            + small_gate
+            + " AND "
+            + scope_exists
+            + " THEN (SELECT max_rows FROM scope_bound) ELSE 0 END), "
+            "small_matches AS MATERIALIZED ("
+            + match_sql
+            + " AND fact_search.rowid >= (SELECT min(docid) FROM small_docids) "
+            "AND fact_search.rowid <= (SELECT max(docid) FROM small_docids) "
+            "AND +fact_search.rowid IN (SELECT docid FROM small_docids) "
+            "LIMIT (SELECT count(*) FROM small_docids)), "
+        )
+        params.extend([*scope_params, *scope_params])
+
+    def seed_query(order, term_gate, seed_limit):
+        queries = []
+        if scoped:
+            small_order = "relevance, docid" if order == "fact_search.rank" else "docid DESC"
+            queries.append(
+                "SELECT * FROM (SELECT * FROM small_matches ORDER BY "
+                + small_order
+                + " LIMIT CASE WHEN "
+                + term_gate
+                + " THEN ? ELSE 0 END)"
+            )
+            params.append(seed_limit)
+        queries.append(
+            "SELECT * FROM ("
+            + match_sql
+            + scope_filter
+            + " ORDER BY "
+            + order
+            + " LIMIT CASE WHEN "
+            + term_gate
+            + " AND "
+            + scope_gate
+            + " AND "
+            + scope_exists
+            + " THEN ? ELSE 0 END)"
+        )
+        if scoped:
+            params.extend([*scope_params, *scope_params])
+        params.append(seed_limit)
+        return " UNION ALL ".join(queries)
+
+    selective = "EXISTS (SELECT 1 FROM selective_terms)"
+    ranked_sql = seed_query("fact_search.rank", selective, limit)
+    params.append(limit)
+    recent_sql = seed_query(
+        "fact_search.rowid DESC",
+        "(NOT " + selective + " OR (SELECT count(*) FROM first_keys) "
+        "< (SELECT count(*) FROM first_matches))",
+        limit * FALLBACK_SEED_MULTIPLIER,
+    )
+    params.extend([limit, *scope_params])
     rows = conn.execute(
         "WITH words(term) AS (VALUES " + ",".join("(?)" for _ in words) + "), "
         "term_stats AS MATERIALIZED ("
@@ -169,26 +258,20 @@ def candidates(
         "SELECT term FROM term_stats WHERE doc > 0 AND doc <= ?*(SELECT documents FROM stats)), "
         "chosen_terms AS MATERIALIZED (SELECT term FROM selective_terms UNION ALL "
         "SELECT term FROM term_stats WHERE doc > 0 AND NOT EXISTS (SELECT 1 FROM selective_terms)), "
+        "match_estimate AS MATERIALIZED (SELECT sum(doc) AS documents FROM term_stats "
+        "WHERE term IN (SELECT term FROM chosen_terms)), "
         + scope_cte
-        + "first_seeds AS MATERIALIZED ("
-        + match_sql
-        + " ORDER BY fact_search.rank LIMIT CASE WHEN EXISTS (SELECT 1 FROM selective_terms) "
-        "AND " + scope_exists + " THEN ? ELSE 0 END), "
-        "first_matches AS MATERIALIZED (SELECT t.subject, t.predicate, m.relevance "
-        "FROM first_seeds m JOIN triples t ON t.id=m.triple_id), "
+        + "ranked_seeds AS MATERIALIZED ("
+        + ranked_sql
+        + "), "
+        "first_matches AS MATERIALIZED (SELECT subject, predicate, relevance "
+        "FROM ranked_seeds LIMIT ?), "
         "first_keys AS MATERIALIZED (SELECT DISTINCT subject, predicate FROM first_matches), "
-        "fallback_seeds AS MATERIALIZED ("
-        + match_sql
-        + " LIMIT CASE WHEN "
-        + scope_exists
-        + " AND ("
-        "NOT EXISTS (SELECT 1 FROM selective_terms) OR "
-        "(SELECT count(*) FROM first_keys) < (SELECT count(*) FROM first_matches)) "
-        "THEN ? ELSE 0 END), "
-        "extra_matches AS MATERIALIZED (SELECT t.subject, t.predicate, m.relevance "
-        "FROM fallback_seeds m JOIN triples t ON t.id=m.triple_id "
+        "fallback_seeds AS MATERIALIZED (" + recent_sql + "), "
+        "extra_matches AS MATERIALIZED (SELECT m.subject, m.predicate, m.relevance "
+        "FROM fallback_seeds m "
         "WHERE NOT EXISTS (SELECT 1 FROM first_keys k "
-        "WHERE k.subject=t.subject AND k.predicate=t.predicate)), "
+        "WHERE k.subject=m.subject AND k.predicate=m.predicate)), "
         "extra_keys AS MATERIALIZED ("
         "SELECT subject, predicate FROM extra_matches GROUP BY subject, predicate "
         "ORDER BY min(relevance), subject, predicate "
@@ -203,17 +286,7 @@ def candidates(
         "JOIN entities s ON s.id=t.subject JOIN entities o ON o.id=t.object "
         "CROSS JOIN stats LEFT JOIN fact_sources fs ON fs.triple_id=t.id "
         "WHERE 1" + visible_sql + temporal_sql + " GROUP BY t.id",
-        [
-            *words,
-            common_term_fraction,
-            *(visible_params if scoped else ()),
-            *(temporal_params if scoped else ()),
-            limit,
-            limit * FALLBACK_SEED_MULTIPLIER,
-            limit,
-            *visible_params,
-            *temporal_params,
-        ],
+        params,
     ).fetchall()
     return [
         {

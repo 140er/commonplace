@@ -10,6 +10,28 @@ from mempalace.searcher import facts as fact_search
 from tests._mcp_server_helpers import _patch_mcp_server
 
 
+def _search_steps(kg, tokens, **scope):
+    steps = 0
+
+    def progress():
+        nonlocal steps
+        steps += 100
+        return 0
+
+    conn = kg._conn()
+    conn.set_progress_handler(progress, 100)
+    try:
+        rows = kg.search_fact_rows(
+            tokens,
+            candidate_limit=fact_search.FACT_CANDIDATE_LIMIT,
+            common_term_fraction=fact_search.FACT_COMMON_TERM_FRACTION,
+            **scope,
+        )
+    finally:
+        conn.set_progress_handler(None, 0)
+    return {row["id"] for row in rows}, steps
+
+
 @pytest.mark.parametrize("entry", ["facts", "kg_search", "kg_query", "search"])
 def test_long_query_is_sanitized_once(monkeypatch, config, kg, caplog, entry):
     _patch_mcp_server(monkeypatch, config, kg)
@@ -84,31 +106,92 @@ def test_common_seed_sql_work_does_not_grow_with_unselected_matches():
                 ((f"t{i}", f"e{i}", "status", "e0", "shared") for i in range(start, end)),
             )
 
-        def lookup():
-            steps = 0
+        append(0, 2000)
+        initial, initial_steps = _search_steps(kg, {"entity", "project"})
+        append(2000, 10000)
+        expanded, expanded_steps = _search_steps(kg, {"entity", "project"})
+        assert len(initial) == fact_search.FACT_CANDIDATE_LIMIT
+        assert len(expanded) == len(initial)
+        assert expanded.isdisjoint(initial)  # The capped prefix keeps recent matches.
+        # Count VM work, not wall time: unrelated matches must not trigger
+        # another complete SQL scan.
+        assert expanded_steps <= initial_steps * 1.25
 
-            def progress():
-                nonlocal steps
-                steps += 100
-                return 0
 
-            conn.set_progress_handler(progress, 100)
-            try:
-                rows = kg.search_fact_rows(
-                    {"entity", "project"},
-                    candidate_limit=fact_search.FACT_CANDIDATE_LIMIT,
-                    common_term_fraction=fact_search.FACT_COMMON_TERM_FRACTION,
-                )
-            finally:
-                conn.set_progress_handler(None, 0)
-            return {row["id"] for row in rows}, steps
+@pytest.mark.parametrize("sparse", [False, True])
+def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
+    with KnowledgeGraph.empty() as kg:
+        conn = kg._conn()
+        conn.execute(
+            "INSERT INTO entities(id,name) VALUES"
+            "('target','Kestrel entity project'),('other','Unrelated entity project')"
+        )
+        conn.execute(
+            "INSERT INTO triples(id,subject,predicate,object,wing) "
+            "VALUES('target','target','deploy_port','target','shared')"
+        )
+        tokens = {"entity", "project"} if sparse else {"kestrel"}
+        growing_wing = "vault" if sparse else "shared"
+
+        def append(start, end):
+            conn.executemany(
+                "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+                ((f"t{i}", "other", "is_a", "other", growing_wing) for i in range(start, end)),
+            )
 
         append(0, 2000)
-        initial, initial_steps = lookup()
+        initial, initial_steps = _search_steps(
+            kg, tokens, wings=["shared"], sensitivities=["internal"]
+        )
         append(2000, 10000)
-        expanded, expanded_steps = lookup()
-        assert len(initial) == fact_search.FACT_CANDIDATE_LIMIT
-        assert expanded == initial
-        # Count VM work, not wall time: unrelated matches must not trigger
-        # another complete SQL scan or change the bounded candidate prefix.
-        assert expanded_steps <= initial_steps * 1.25
+        expanded, expanded_steps = _search_steps(
+            kg, tokens, wings=["shared"], sensitivities=["internal"]
+        )
+        assert initial == expanded == {"target"}
+        # Vocabulary accounting can cross FTS page boundaries; scope work
+        # must stay within a fixed allowance rather than grow per fact.
+        assert expanded_steps <= initial_steps + 1000
+
+
+@pytest.mark.parametrize("tokens", [{"entity", "project"}, {"needle"}])
+@pytest.mark.parametrize("as_of", [None, "2025-01-15"])
+@pytest.mark.parametrize("wings", [["shared"], ["shared", "vault"], []])
+@pytest.mark.parametrize("common_term_fraction", [0.0, 0.5])
+def test_small_and_wide_scope_strategies_return_identical_rows(
+    monkeypatch, tokens, as_of, wings, common_term_fraction
+):
+    with KnowledgeGraph.empty() as kg:
+        for wing in ("shared", "vault"):
+            for sensitivity in ("public", "internal", "private"):
+                for i in range(3):
+                    kg.add_triple(
+                        f"Entity project {i}",
+                        "status",
+                        "needle" if i == 0 else "other",
+                        wing=wing,
+                        sensitivity=sensitivity,
+                        valid_from="2025-01-01",
+                        valid_to="2025-02-01" if i == 0 else None,
+                        source_thread="source",
+                    )
+        # Keep enough global matches to exercise the rowid path, including
+        # selective queries, while the caller's visible scope stays small.
+        for i in range(12):
+            kg.add_triple(f"Outside {i}", "status", "needle", wing="outside")
+        for i in range(20):
+            kg.add_triple(f"Filler {i}", "status", "other", wing="outside")
+        results = []
+        for threshold in (1000, 0):
+            monkeypatch.setattr(fact_index, "SMALL_SCOPE_LIMIT", threshold)
+            results.append(
+                kg.search_fact_rows(
+                    tokens,
+                    candidate_limit=fact_search.FACT_CANDIDATE_LIMIT,
+                    common_term_fraction=common_term_fraction,
+                    wings=wings,
+                    sensitivities=["public", "internal"],
+                    as_of=as_of,
+                )
+            )
+        assert results[0] == results[1]
+        assert bool(results[0]) == bool(wings)

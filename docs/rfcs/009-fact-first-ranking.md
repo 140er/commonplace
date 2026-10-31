@@ -25,8 +25,9 @@ available. Known query terms contribute to final IDF relevance.
 
 Select at most 50 scoped subject/predicate seed keys in SQL. Selective queries
 start with 50 BM25 matches; if duplicate keys leave slots empty, fill from a
-bounded prefix of up to 1,000 scoped matches. All-common queries use that bounded
-prefix directly, avoiding a full BM25 sort. Scope and as-of filters run inside
+bounded prefix of up to 1,000 recent scoped matches (`ORDER BY rowid DESC`).
+All-common queries use that bounded prefix directly, avoiding a full BM25 sort.
+Scope and as-of filters run inside
 both seed lookups, before their limits. Empty scopes and selective prefixes with
 distinct keys skip the fallback lookup entirely. Group the prefix by key using
 each key's best BM25 score, then expand selected keys to retain their full visible
@@ -75,6 +76,17 @@ Search-mode KG queries use the same query sanitizer as drawer search, rather
 than the entity-name length limit. CLI capture omits an empty facts list unless
 there is a fact-side error marker, matching direct MCP search.
 
+Wide scopes check each FTS hit against the triple primary key instead of
+materializing every visible triple ID. Empty-scope checks stop at the first
+visible row. A capped visibility probe reads at most 1,001 rows; broad selective
+queries stop after 51, and rare terms can stop it earlier. Scopes of at most 1,000
+rows use bounded document IDs when they contain fewer rows than the estimated
+matching population; other queries follow FTS hits with primary-key checks.
+The small-scope path bounds the FTS rowid range and checks membership in that
+small ID set, then sorts its matches. This avoids recomputing BM25's global term
+counts for every individual rowid. Both paths enforce the same scope and as-of
+filters before limiting seeds and when expanding selected keys' history.
+
 ## Known limits
 
 Dutch stop words are out of scope; there is currently no Dutch locale. Without
@@ -107,6 +119,7 @@ boost in this step. Facts remain index entries pointing to the verbatim source.
   FTS index setup, source ordering, generic error isolation, and VACUUM.
 - The seeded latency probe reports before/after added lookup time at 5k, 20k,
   50k and 200k facts. Broad, selective and all-common queries run unscoped,
-  within one wing, and with all matches hidden, targeting at most 50 ms at 50k
-  for every case.
+  within one wing, with gateway wing/sensitivity filters, within a small
+  non-empty scope, and with all matches hidden, targeting at most 50 ms at
+  50k for every case.
 - Run lint, format and the requested broad suite without changing budget tests.
