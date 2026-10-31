@@ -298,8 +298,6 @@ def test_native_client_path_alias_keeps_anchor_until_last_close(tmp_path):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX read-anchor lifecycle")
 def test_interleaved_palaces_close_only_their_own_locks_and_guards(tmp_path, monkeypatch):
-    from contextlib import contextmanager
-
     from mempalace.backends import _inproc_sqlite, chroma
 
     paths = [str(tmp_path / name) for name in ("p", "q")]
@@ -310,11 +308,9 @@ def test_interleaved_palaces_close_only_their_own_locks_and_guards(tmp_path, mon
     lock = chroma.palace_db_lock
     release = _inproc_sqlite.release_transient
 
-    @contextmanager
     def record_lock(path):
         calls.append(path)
-        with lock(path):
-            yield
+        return lock(path)
 
     def record_release(path):
         released.append(path)
