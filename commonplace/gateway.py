@@ -502,8 +502,8 @@ class Mediator:
                 if not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
             asked = {canonical_wing(w) for w in asked}
-        stats = self.workers.call_tool(principal, "mempalace_kg_stats", {})
-        known = stats.get("wings") if isinstance(stats, dict) else None
+        result = self.workers.call_tool(principal, "mempalace_kg_list_wings", {})
+        known = result.get("wings") if isinstance(result, dict) else None
         if not isinstance(known, list):
             raise Denied("could not check which wings the facts are in")
         args["wings"] = [

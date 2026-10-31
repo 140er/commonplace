@@ -92,17 +92,17 @@ def _read_only(path: str) -> sqlite3.Connection:
 
 
 def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -> dict:
-    """Copy one graph file's entities and triples into another, keeping what is there.
+    """Copy facts and their evidence in one transaction, preserving target history.
 
-    The source is only read. An entity the target already has (same id) is left
-    as it is; so is a fact it already records with the same subject, predicate,
-    object and validity window, whenever it was recorded. A current fact whose
-    subject and predicate already hold a different current object in the target
-    is not copied but listed under ``conflicts``, so the two never both read as
-    current. A reused fact id with different content or validity is kept in
-    the target and listed under ``id_conflicts``. With ``apply`` false the
-    import runs against an in-memory snapshot: no stored facts change and a
-    missing target is not created. The counts say what would be copied.
+    Identity is subject/predicate/object, wing and validity window. An open
+    identical target may also acquire a source's superseded end, subject to
+    person-approval safety. Successor links and source observations use target
+    triple ids, never an unchecked id from the source graph. Unresolvable links
+    are omitted and reported with both ids and a count.
+
+    Current-value and reused-id conflicts are reported rather than overwritten.
+    Preview uses an in-memory target snapshot, including legacy migrations;
+    neither stored graph changes and a missing target is not created.
     """
     if paths.same_path(source_path, target_path):
         raise ValueError("the source and the target are the same knowledge graph")
@@ -110,11 +110,9 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
     target = None
     kg = None
 
-    def found(sql, args):
-        return target.execute(sql, args).fetchone() is not None
-
-    counts = {}
     try:
+        # Keep all passes on the same source snapshot, even if its writer appends.
+        source.execute("BEGIN")
         if apply:
             kg = KnowledgeGraph(db_path=target_path)
         else:
@@ -129,84 +127,431 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
                 # Preview those same changes only in the in-memory copy.
                 kg._init_db()
         target = kg._conn()
-        for table, columns in KnowledgeGraph._REPLICATION_TABLES.items():
-            available = {r["name"] for r in source.execute(f"PRAGMA table_info({table})")}
-            cols = [c for c in columns if c in available]
-            numbers = {"added": 0, "present": 0}
-            if table == "triples":
-                numbers["conflicts"] = []
-                numbers["id_conflicts"] = []
-            counts[table] = numbers
-            if "id" not in cols:
-                continue
-            insert = (
-                f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
-            )
-            for row in source.execute(f"SELECT {', '.join(cols)} FROM {table}"):
-                if table == "triples":
-                    fact = (row["subject"], row["predicate"], row["object"])
-                    window = (row["valid_from"], row["valid_to"])
-                    # A fact is the same fact only within one wing.
-                    wing = (row["wing"] if "wing" in cols else None,)
-                    if found(
-                        "SELECT 1 FROM triples WHERE subject = ? AND predicate = ? "
-                        "AND object = ? AND valid_from IS ? AND valid_to IS ? AND wing IS ?",
-                        fact + window + wing,
-                    ):
-                        if "sensitivity" in cols:
-                            # Keep the stricter sensitivity of the two copies.
-                            for found_row in target.execute(
-                                "SELECT id, sensitivity FROM triples WHERE subject = ? "
-                                "AND predicate = ? AND object = ? AND valid_from IS ? "
-                                "AND valid_to IS ? AND wing IS ?",
-                                fact + window + wing,
-                            ).fetchall():
-                                raised = strictest(found_row[1], row["sensitivity"])
-                                if raised != found_row[1]:
-                                    target.execute(
-                                        "UPDATE triples SET sensitivity = ? WHERE id = ?",
-                                        (raised, found_row[0]),
-                                    )
-                        numbers["present"] += 1
-                        continue
-                    if found("SELECT 1 FROM triples WHERE id = ?", (row["id"],)):
-                        numbers["id_conflicts"].append(row["id"])
-                        continue
-                    clash = (
-                        target.execute(
-                            "SELECT object FROM triples WHERE subject = ? AND predicate = ? "
-                            "AND object != ? AND wing IS ? AND valid_to IS NULL",
-                            fact + wing,
-                        ).fetchone()
-                        if row["valid_to"] is None
-                        else None
-                    )
-                    if clash is not None:
-                        numbers["conflicts"].append(
-                            {
-                                "subject": row["subject"],
-                                "predicate": row["predicate"],
-                                "object": row["object"],
-                                "current_object": clash[0],
-                            }
-                        )
-                        continue
-                elif found(f"SELECT 1 FROM {table} WHERE id = ?", (row["id"],)):
-                    numbers["present"] += 1
-                    continue
-                inserted = target.execute(insert, tuple(row)).rowcount
-                if inserted != 1:
-                    raise sqlite3.IntegrityError(
-                        f"knowledge graph import did not insert {table} row {row['id']!r}"
-                    )
-                numbers["added"] += inserted
-        if apply:
-            target.commit()
+        target.execute("BEGIN IMMEDIATE")
+        with target:
+            entities = {"added": 0, "present": 0}
+            for row in _graph_import_rows(source, "entities"):
+                if target.execute("SELECT 1 FROM entities WHERE id=?", (row["id"],)).fetchone():
+                    entities["present"] += 1
+                else:
+                    _insert_import_row(target, "entities", row)
+                    entities["added"] += 1
+            rows = _graph_import_rows(source, "triples")
+            triples, id_map = _import_triples(target, rows)
+            sources = _import_fact_sources(source, target, rows, id_map)
+        return {"entities": entities, "triples": triples, "fact_sources": sources}
     finally:
         source.close()
         if kg is not None:
             kg.close()
-    return counts
+
+
+def _graph_import_rows(conn, table):
+    available = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    columns = [c for c in KnowledgeGraph._REPLICATION_TABLES[table] if c in available]
+    if "id" not in columns:
+        return []
+    return [
+        dict(r) for r in conn.execute(f"SELECT {', '.join(columns)} FROM {table} ORDER BY rowid")
+    ]
+
+
+def _insert_import_row(conn, table, row):
+    inserted = conn.execute(
+        f"INSERT INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
+        tuple(row.values()),
+    ).rowcount
+    if inserted != 1:
+        raise sqlite3.IntegrityError(
+            f"knowledge graph import did not insert {table} row {row.get('id')!r}"
+        )
+
+
+_TRIPLE_IDENTITY = ("subject", "predicate", "object", "valid_from", "valid_to", "wing")
+
+
+def _same_triple_instance(conn, row, candidate, source_ids):
+    if candidate["id"] == row.get("id"):
+        return True
+    return (
+        candidate["id"] not in source_ids
+        and not conn.execute("SELECT 1 FROM triples WHERE id=?", (row.get("id"),)).fetchone()
+    )
+
+
+def _identical_triples(conn, row, *, source_ids=(), allow_superseded_end=False):
+    columns = [c for c in _TRIPLE_IDENTITY if c != "valid_to"]
+    where = " AND ".join(f"{c} IS ?" for c in columns)
+    args = [row.get(c) for c in columns]
+    exact = conn.execute(
+        f"SELECT * FROM triples WHERE {where} AND valid_to IS ? ORDER BY id=? DESC, id LIMIT 1",
+        (*args, row.get("valid_to"), row.get("id")),
+    ).fetchall()
+    if exact or not (
+        allow_superseded_end and row.get("status") == "superseded" and row.get("valid_to")
+    ):
+        return exact if exact and _same_triple_instance(conn, row, exact[0], source_ids) else []
+    # A reassertion can share the old fact's start (including NULL). An exact
+    # history row always wins; an ambiguous open instance is never reconciled.
+    opened = conn.execute(
+        f"SELECT * FROM triples WHERE {where} AND valid_to IS NULL AND status='active' LIMIT 2",
+        args,
+    ).fetchall()
+    if len(opened) != 1:
+        return []
+    # A remap is safe only when neither graph already identifies the other
+    # instance. This applies to exact matches and open fallbacks alike.
+    if not _same_triple_instance(conn, row, opened[0], source_ids):
+        return []
+    return opened
+
+
+def _import_triples(conn, rows):
+    numbers = {
+        "added": 0,
+        "present": 0,
+        "superseded": 0,
+        "conflicts": [],
+        "id_conflicts": [],
+        "unresolved_link_count": 0,
+        "unresolved_links": [],
+        "end_not_carried": [],
+    }
+    by_id = {r["id"]: r for r in rows}
+    source_ids = set(by_id)
+    native_ids = {
+        source_id
+        for source_id in source_ids
+        if conn.execute("SELECT 1 FROM triples WHERE id=?", (source_id,)).fetchone()
+    }
+    id_map, links, pending_ends = {}, [], {}
+    claimed, duplicates = {}, {}
+    # Stage history first. A current successor may replace only the open rows
+    # waiting for that very successor; carry their ends after it is accepted.
+    # Prefer native instances so duplicate aliases also work when the target
+    # holds a later duplicate's id rather than the first source row's id.
+    for raw in sorted(rows, key=lambda r: (r.get("valid_to") is None, r["id"] not in native_ids)):
+        row = {**raw, **fact_provenance.imported_fields(raw)}
+        duplicate_key = tuple(row.get(c) for c in (*_TRIPLE_IDENTITY, "status", "superseded_by"))
+        duplicate_id = duplicates.get(duplicate_key)
+        if (
+            duplicate_id is not None
+            and not conn.execute("SELECT 1 FROM triples WHERE id=?", (row["id"],)).fetchone()
+        ):
+            # Legacy duplicates in this source alias the accepted instance for
+            # observations only. Never stage another end or copy fact metadata.
+            id_map[row["id"]] = id_map[duplicate_id]
+            numbers["present"] += 1
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
+            continue
+        same = _identical_triples(conn, row, source_ids=source_ids, allow_superseded_end=True)
+        if same:
+            existing = same[0]
+            if existing["id"] in claimed:
+                numbers["conflicts"].append(
+                    {
+                        **{k: row[k] for k in ("subject", "predicate", "object")},
+                        "id": row["id"],
+                        "target_id": existing["id"],
+                        "current_object": existing["object"],
+                        "reason": "target_already_claimed",
+                        "claimed_by": claimed[existing["id"]],
+                    }
+                )
+                continue
+            claimed[existing["id"]] = row["id"]
+            id_map[row["id"]] = existing["id"]
+            duplicates.setdefault(duplicate_key, row["id"])
+            _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends)
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row.get("superseded_by"))
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
+            numbers["present"] += 1
+            continue
+        if conn.execute("SELECT 1 FROM triples WHERE id=?", (row["id"],)).fetchone():
+            numbers["id_conflicts"].append(row["id"])
+            continue
+        clash = None
+        if row.get("valid_to") is None:
+            waiting = {target_id for _, target_id in pending_ends.get(row["id"], [])}
+            rivals = conn.execute(
+                "SELECT id, object FROM triples WHERE subject=? AND predicate=? "
+                "AND object != ? AND wing IS ? AND valid_to IS NULL",
+                (row["subject"], row["predicate"], row["object"], row.get("wing")),
+            ).fetchall()
+            clash = next((r for r in rivals if r["id"] not in waiting), None)
+        if clash:
+            numbers["conflicts"].append(
+                {
+                    **{k: row[k] for k in ("subject", "predicate", "object")},
+                    "current_object": clash["object"],
+                }
+            )
+            continue
+        successor = row.get("superseded_by")
+        row["superseded_by"] = None
+        _insert_import_row(conn, "triples", row)
+        id_map[row["id"]] = row["id"]
+        claimed[row["id"]] = row["id"]
+        duplicates.setdefault(duplicate_key, row["id"])
+        numbers["added"] += 1
+        if successor:
+            links.append((row["id"], row["id"], successor))
+        _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
+    for source_id, target_id, successor in links:
+        mapped = id_map.get(successor)
+        if mapped is None or mapped == target_id:
+            numbers["unresolved_links"].append({"id": source_id, "superseded_by": successor})
+            continue
+        conn.execute("UPDATE triples SET superseded_by=? WHERE id=?", (mapped, target_id))
+    numbers["unresolved_link_count"] = len(numbers["unresolved_links"])
+    numbers["end_not_carried"].extend(
+        {"id": row["id"], "target_id": target_id, "superseded_by": successor}
+        for successor, ends in pending_ends.items()
+        for row, target_id in ends
+    )
+    return numbers, id_map
+
+
+def _carry_imported_ends(conn, pending, id_map, numbers, successor):
+    mapped = id_map.get(successor)
+    if mapped is None:
+        return
+    for row, target_id in pending.pop(successor, []):
+        if mapped == target_id:
+            numbers["end_not_carried"].append(
+                {"id": row["id"], "target_id": target_id, "superseded_by": successor}
+            )
+            continue
+        conn.execute(
+            "UPDATE triples SET status='superseded', valid_to=?, superseded_by=? WHERE id=?",
+            (row.get("valid_to"), mapped, target_id),
+        )
+        numbers["superseded"] += 1
+
+
+def _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends):
+    raised = strictest(existing["sensitivity"], row.get("sensitivity"))
+    if raised != existing["sensitivity"]:
+        conn.execute("UPDATE triples SET sensitivity=? WHERE id=?", (raised, existing["id"]))
+    ending = row.get("status") == "superseded" and existing["status"] == "active"
+    if ending:
+        successor = by_id.get(row.get("superseded_by"))
+        approved_end = row["approval_status"] == "approved" and (
+            successor is None
+            or fact_provenance.imported_fields(successor)["approval_status"] == "approved"
+        )
+        if existing["approval_status"] == "approved" and not approved_end:
+            numbers["conflicts"].append(
+                {
+                    **{k: row[k] for k in ("subject", "predicate", "object")},
+                    "id": row["id"],
+                    "target_id": existing["id"],
+                    "current_object": existing["object"],
+                    "reason": "approved_target",
+                }
+            )
+            return
+        pending_ends.setdefault(row.get("superseded_by"), []).append((row, existing["id"]))
+    fact_provenance.merge_imported_approval(conn, existing["id"], row)
+    if (
+        row.get("superseded_by")
+        and not existing["superseded_by"]
+        and existing["status"] == "superseded"
+    ):
+        links.append((row["id"], existing["id"], row["superseded_by"]))
+
+
+def _import_fact_sources(source, target, triples, id_map):
+    numbers = {"added": 0, "present": 0, "skipped": []}
+    rows = _graph_import_rows(source, "fact_sources")
+    if not source.execute("PRAGMA table_info(fact_sources)").fetchall():
+        # Old peers have only the first observation on each triple. Preserve
+        # that pointer, with unknown evidence just like the legacy migration.
+        rows = [
+            {
+                **{
+                    k: r.get(k)
+                    for k in (
+                        "source_thread",
+                        "source_seq_start",
+                        "source_seq_end",
+                        "source_drawer_id",
+                        "source_file",
+                    )
+                },
+                "id": r["id"],
+                "triple_id": r["id"],
+                "added_at": r.get("extracted_at") or utc_now_iso(),
+            }
+            for r in triples
+            if any(
+                r.get(k) is not None for k in ("source_thread", "source_drawer_id", "source_file")
+            )
+        ]
+    for row in rows:
+        target_id = id_map.get(row["triple_id"])
+        if target_id is None:
+            numbers["skipped"].append(row["id"])
+            continue
+        added = _merge_imported_source(target, row, target_id)
+        numbers["added" if added else "present"] += 1
+    return numbers
+
+
+def _merge_imported_source(conn, row, triple_id):
+    """Graph-local observation ids never cross the import/replication boundary."""
+    fields = {
+        k: row[k]
+        for k in KnowledgeGraph._REPLICATION_TABLES["fact_sources"]
+        if k in row and k not in ("id", "triple_id")
+    }
+    fields.update(fact_provenance.imported_fields(row))
+    fields["triple_id"] = triple_id
+    inserted = conn.execute(
+        f"INSERT INTO fact_sources ({', '.join(fields)}) "
+        f"VALUES ({', '.join('?' for _ in fields)}) ON CONFLICT DO NOTHING",
+        tuple(fields.values()),
+    ).rowcount
+    if not inserted and fields["approval_status"] == "approved":
+        key = (
+            "triple_id",
+            "source_thread",
+            "source_seq_start",
+            "source_seq_end",
+            "source_drawer_id",
+            "source_file",
+        )
+        # Match the expression-based unique key, including its NULL sentinels.
+        where = " AND ".join(f"COALESCE({k}, ?) = COALESCE(?, ?)" for k in key)
+        args = []
+        for k in key:
+            default = -1 if k in ("source_seq_start", "source_seq_end") else ""
+            args.extend((default, fields.get(k), default))
+        conn.execute(
+            "UPDATE fact_sources SET approval_status='approved', approved_by=?, approval_link=? "
+            "WHERE approval_status != 'approved' AND " + where,
+            (fields["approved_by"], fields["approval_link"], *args),
+        )
+    fact_provenance.merge_imported_approval(conn, triple_id, fields)
+    return inserted == 1
+
+
+_REPLICATED_AUTHORSHIP = {
+    "origin_kind",
+    "origin_id",
+    "origin_link",
+    "source_closet",
+    "source_file",
+    "source_drawer_id",
+    "adapter_name",
+    "extracted_at",
+    "source_thread",
+    "source_seq_start",
+    "source_seq_end",
+}
+
+
+def _replicated_lifecycle_regresses(existing, row):
+    if existing is None:
+        return False
+    # Once an end or successor is known it is history, not a peer-editable
+    # field. Missing keys from old peers still leave the stored value alone.
+    for column in ("valid_to", "superseded_by"):
+        if existing[column] is not None and column in row and row[column] != existing[column]:
+            return True
+    return (
+        existing["status"] != "active"
+        and "status" in row
+        and (row["status"] or "active") != existing["status"]
+    )
+
+
+def _prepare_replicated_triple(conn, incoming):
+    """Validate peer authority and links against the local row before any write."""
+    row = dict(incoming)
+    evidence = fact_provenance.imported_fields(row)
+    for col in fact_provenance.COLUMNS:
+        if col in row or ("approval_status" in row and col in ("approved_by", "approval_link")):
+            row[col] = evidence[col]
+    report = {"id": row["id"], "applied": True, "unresolved_links": []}
+    existing = conn.execute("SELECT * FROM triples WHERE id=?", (row["id"],)).fetchone()
+    if existing and any(
+        c in row and row[c] != existing[c] for c in _TRIPLE_IDENTITY if c != "valid_to"
+    ):
+        return row, {**report, "applied": False, "reason": "id_conflict"}
+    successor_id = row.get("superseded_by")
+    successor = (
+        conn.execute("SELECT * FROM triples WHERE id=?", (successor_id,)).fetchone()
+        if successor_id and successor_id != row["id"]
+        else None
+    )
+    if successor_id and successor is None:
+        report["unresolved_links"].append({"id": row["id"], "superseded_by": successor_id})
+    if _replicated_lifecycle_regresses(existing, row):
+        return row, {**report, "applied": False, "reason": "lifecycle_regression"}
+    lifecycle_changed = existing is not None and any(
+        c in row and row[c] != existing[c] for c in ("status", "valid_to", "superseded_by")
+    )
+    approved_change = evidence["approval_status"] == "approved" and (
+        successor is None
+        or fact_provenance.imported_fields(dict(successor))["approval_status"] == "approved"
+    )
+    if (
+        existing
+        and existing["approval_status"] == "approved"
+        and lifecycle_changed
+        and not approved_change
+    ):
+        return row, {**report, "applied": False, "reason": "approved_target"}
+    closes_open = (
+        existing is not None
+        and existing["valid_to"] is None
+        and (row.get("valid_to") is not None or row.get("status", "active") != "active")
+    )
+    if closes_open and successor is None and (successor_id or row.get("status") == "superseded"):
+        return row, {
+            **report,
+            "applied": False,
+            "reason": "unresolved_successor",
+            "end_not_carried": {"id": row["id"], "superseded_by": successor_id},
+        }
+    if successor_id and successor is None:
+        if existing:
+            row.pop("superseded_by")  # Preserve any already recorded local link.
+        else:
+            row["superseded_by"] = None
+    return row, report
+
+
+def _upsert_replicated_row(conn, table, row, columns):
+    sent = [col for col in columns if col in row]
+    defaults = {
+        "status": "active",
+        "sensitivity": DEFAULT_SENSITIVITY,
+        "origin_kind": "unknown",
+        "origin_id": "unknown",
+        "approval_status": "unknown",
+    }
+    values = [row[col] if row[col] is not None else defaults.get(col) for col in sent]
+    updates = []
+    for col in sent:
+        if col == "id" or (table == "triples" and col in _REPLICATED_AUTHORSHIP):
+            continue
+        if col == "sensitivity" and table == "triples":
+            updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
+        elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
+            updates.append(
+                f"{col} = CASE WHEN triples.approval_status='approved' "
+                f"THEN triples.{col} ELSE excluded.{col} END"
+            )
+        else:
+            updates.append(f"{col} = excluded.{col}")
+    conflict = "DO UPDATE SET " + ", ".join(updates) if updates else "DO NOTHING"
+    conn.execute(
+        f"INSERT INTO {table} ({', '.join(sent)}) VALUES ({', '.join('?' for _ in sent)}) "
+        f"ON CONFLICT(id) {conflict}",
+        values,
+    )
 
 
 def _escape_like(value: str) -> str:
@@ -1905,6 +2250,18 @@ class KnowledgeGraph:
             "sensitivity",
             *fact_provenance.COLUMNS,
         ),
+        "fact_sources": (
+            "id",
+            "triple_id",
+            "source_thread",
+            "source_seq_start",
+            "source_seq_end",
+            "source_drawer_id",
+            "source_file",
+            "added_at",
+            "hub_stamp",
+            *fact_provenance.COLUMNS,
+        ),
     }
 
     def dump_rows(self, table: str, after_rowid: int = 0, limit: int = 500) -> list:
@@ -1919,61 +2276,96 @@ class KnowledgeGraph:
             raise ValueError(f"table must be one of {sorted(self._REPLICATION_TABLES)}")
         with self._lock:
             conn = self._conn()
+            extra, join = "", ""
+            if table == "fact_sources":
+                # A receiver can have the same fact under a different id, or
+                # an unrelated observation under this row's integer id.
+                extra = ", " + ", ".join(f"t.{c} AS _triple_{c}" for c in _TRIPLE_IDENTITY)
+                join = " JOIN triples t ON t.id=s.triple_id"
             rows = conn.execute(
-                f"SELECT rowid, {', '.join(columns)} FROM {table} "
-                "WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+                "SELECT s.rowid AS _rowid, "
+                + ", ".join(f"s.{c}" for c in columns)
+                + extra
+                + f" FROM {table} s"
+                + join
+                + " WHERE s.rowid > ? ORDER BY s.rowid ASC LIMIT ?",
                 (int(after_rowid), max(1, min(int(limit), 1000))),
             ).fetchall()
-        return [dict(row) | {"_rowid": row["rowid"]} for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            if table == "fact_sources":
+                item["_triple"] = {
+                    "id": item["triple_id"],
+                    **{c: item.pop(f"_triple_{c}") for c in _TRIPLE_IDENTITY},
+                }
+            result.append(item)
+        return result
 
-    def apply_row(self, table: str, row: dict) -> None:
-        """Fold one replicated KG row in, keyed by id (INSERT OR REPLACE).
+    def apply_row(self, table: str, row: dict) -> dict:
+        """Apply a peer row and return an ``applied`` flag and any skip reason.
 
-        REPLACE makes invalidations (valid_to updates) and entity edits
-        converge on re-pull; rows are never deleted by replication.
+        Existing fact identity, authorship, first source and approval proof are
+        retained. Set end dates and successor links are never replaced or
+        cleared, and non-active statuses are not rewritten. Only person-approved
+        peer evidence may advance an approved
+        fact's lifecycle. Missing successor links are omitted and reported;
+        an open target stays open until its successor resolves. Retry those
+        rows after applying their dependencies.
+
+        Observations dedupe by source key after resolving exact triple identity
+        and checking the source fact id for divergent local history; their
+        integer ids are graph-local. An orphan returns a skip report so
+        replication can continue. Missing row ids or source identity still
+        raise ValueError.
         """
         columns = self._REPLICATION_TABLES.get(table)
         if columns is None:
             raise ValueError(f"table must be one of {sorted(self._REPLICATION_TABLES)}")
         if not row.get("id"):
             raise ValueError("replicated row is missing 'id'")
+        if table == "fact_sources":
+            identity = row.get("_triple")
+            if not isinstance(identity, dict) or any(c not in identity for c in _TRIPLE_IDENTITY):
+                raise ValueError("replicated fact source is missing triple identity")
+            # Older snapshots already carry the source fact id in triple_id.
+            # It is not the graph-local integer observation id.
+            identity = {**identity, "id": row.get("triple_id")}
+            with self._lock:
+                conn = self._conn()
+                with conn:
+                    same = _identical_triples(conn, identity)
+                    if not same:
+                        return {
+                            "id": row["id"],
+                            "triple_id": row.get("triple_id"),
+                            "applied": False,
+                            "reason": "no_matching_triple",
+                        }
+                    _merge_imported_source(conn, row, same[0]["id"])
+                    return {"id": row["id"], "triple_id": same[0]["id"], "applied": True}
         # A peer that predates a column sends no key for it. Leave the local
         # value alone then, so an older replica cannot erase a supersede link.
-        sent = [col for col in columns if col in row]
-        values = [row[col] for col in sent]
-        for col, default in (
-            ("status", "active"),
-            ("sensitivity", DEFAULT_SENSITIVITY),
-            ("origin_kind", "unknown"),
-            ("origin_id", "unknown"),
-            ("approval_status", "unknown"),
-        ):
-            if col in sent and values[sent.index(col)] is None:
-                values[sent.index(col)] = default
-        updates = []
-        for col in sent:
-            if col == "id":
-                continue
-            if col == "sensitivity" and table == "triples":
-                updates.append(f"sensitivity = {_STRICTER_SENSITIVITY}")
-            elif table == "triples" and col in ("approval_status", "approved_by", "approval_link"):
-                updates.append(
-                    f"{col} = CASE WHEN triples.approval_status='approved' "
-                    "AND COALESCE(excluded.approval_status, 'unknown') != 'approved' "
-                    f"THEN triples.{col} ELSE excluded.{col} END"
-                )
-            else:
-                updates.append(f"{col} = excluded.{col}")
-        updates = ", ".join(updates)
         with self._lock:
             conn = self._conn()
             with conn:
-                conn.execute(
-                    f"INSERT INTO {table} ({', '.join(sent)}) "
-                    f"VALUES ({', '.join('?' for _ in sent)}) "
-                    f"ON CONFLICT(id) DO UPDATE SET {updates}",
-                    values,
+                report = {"id": row["id"], "applied": True}
+                if table == "triples":
+                    row, report = _prepare_replicated_triple(conn, row)
+                    if not report["applied"]:
+                        return report
+                _upsert_replicated_row(conn, table, row, columns)
+                return report
+
+    def list_wings(self):
+        """Fact wings in one covering-index query, without graph-wide statistics."""
+        with self._lock:
+            return [
+                r["wing"]
+                for r in self._conn().execute(
+                    "SELECT DISTINCT wing FROM triples WHERE wing IS NOT NULL ORDER BY wing"
                 )
+            ]
 
     def stats(self):
         with self._lock:

@@ -324,6 +324,11 @@ TOOLS = {
         },
         "handler": tool_kg_timeline,
     },
+    "mempalace_kg_list_wings": {
+        "description": "List the wings that contain knowledge graph facts.",
+        "input_schema": {"type": "object", "properties": {}},
+        "handler": tool_kg_list_wings,
+    },
     "mempalace_kg_stats": {
         "description": "Knowledge graph overview: entities, triples, current vs expired facts, relationship types.",
         "input_schema": {"type": "object", "properties": {}},

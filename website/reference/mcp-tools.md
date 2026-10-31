@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Detailed parameter schemas for all 48 MCP tools.
+Detailed parameter schemas for all 49 MCP tools.
 
 ## Palace — Read Tools
 
@@ -438,6 +438,14 @@ Chronological timeline of facts.
 | `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, timeline: [{ subject, predicate, object, valid_from, valid_to, current }], count }`
+
+---
+
+### `mempalace_kg_list_wings`
+
+**List the wings that contain knowledge graph facts.** Uses one indexed query without calculating graph statistics. Scoped queries and timelines use this internally to discover readable fact wings; calling the list directly through the gateway requires read access to every wing.
+
+No parameters. Returns `{"wings": ["project", "shared"]}` in sorted order. Facts without a wing are omitted.
 
 ---
 

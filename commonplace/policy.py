@@ -91,6 +91,7 @@ TOOL_RULES = {
     "mempalace_kg_save": ("kg:write", "kg_write"),
     "mempalace_kg_timeline": ("kg:read", "kg_read"),
     "mempalace_kg_stats": ("kg:read", "all_wings"),
+    "mempalace_kg_list_wings": ("kg:read", "all_wings"),
     "mempalace_traverse": ("memory:read", "all_wings"),
     "mempalace_find_tunnels": ("memory:read", "all_wings"),
     "mempalace_graph_stats": ("memory:read", "all_wings"),
