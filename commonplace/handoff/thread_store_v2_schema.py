@@ -80,17 +80,32 @@ CREATE TABLE fact_extraction (
 CREATE TRIGGER dict_replace BEFORE INSERT ON dict
 WHEN EXISTS(SELECT 1 FROM dict WHERE id=new.id)
 BEGIN SELECT RAISE(ABORT, 'Thread dictionaries are immutable'); END;
-CREATE TRIGGER sealed_block_replace BEFORE INSERT ON block
-WHEN EXISTS(SELECT 1 FROM block WHERE thread_id=new.thread_id AND idx=new.idx)
- AND new.idx < (SELECT MAX(idx) FROM block WHERE thread_id=new.thread_id)
-BEGIN SELECT RAISE(ABORT, 'Only the last thread block may be extended'); END;
 CREATE TRIGGER used_dict_update BEFORE UPDATE ON dict
 BEGIN SELECT RAISE(ABORT, 'A used thread dictionary is immutable'); END;
 CREATE TRIGGER used_dict_delete BEFORE DELETE ON dict
 BEGIN SELECT RAISE(ABORT, 'A used thread dictionary is immutable'); END;
+"""
+
+# Refreshed on every open, including files created by earlier v2 binaries.
+BLOCK_TRIGGERS = {
+    "sealed_block_replace": """
+CREATE TRIGGER sealed_block_replace BEFORE INSERT ON block
+WHEN EXISTS(SELECT 1 FROM block WHERE rowid=new.rowid)
+ OR EXISTS(SELECT 1 FROM block WHERE thread_id=new.thread_id AND idx=new.idx
+   AND (idx < (SELECT MAX(idx) FROM block WHERE thread_id=new.thread_id)
+        OR first_line IS NOT new.first_line OR first_seq IS NOT new.first_seq))
+BEGIN SELECT RAISE(ABORT, 'Only the last thread block may be extended'); END;
+""",
+    "sealed_block_update": """
 CREATE TRIGGER sealed_block_update BEFORE UPDATE ON block
 WHEN old.idx < (SELECT MAX(idx) FROM block WHERE thread_id=old.thread_id)
+ OR new.rowid IS NOT old.rowid
+ OR new.thread_id IS NOT old.thread_id OR new.idx IS NOT old.idx
+ OR new.first_line IS NOT old.first_line OR new.first_seq IS NOT old.first_seq
 BEGIN SELECT RAISE(ABORT, 'Only the last thread block may be extended'); END;
+""",
+    "block_delete": """
 CREATE TRIGGER block_delete BEFORE DELETE ON block
 BEGIN SELECT RAISE(ABORT, 'Thread blocks are append-only'); END;
-"""
+""",
+}
