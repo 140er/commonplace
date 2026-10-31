@@ -323,7 +323,7 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
         assert col.get(ids=old.ids, include=["documents", "metadatas"]) == old
         assert old_ids[0] not in new_ids
         new = col.get(ids=new_ids, include=["metadatas", "embeddings"])
-        assert [meta["source_seq_start"] for meta in new.metadatas] == [2, 3, 4]
+        assert [meta["source_seq_start"] for meta in new.metadatas] == [1, 3, 4]
         assert all(
             meta["source_file"].startswith(f"handoff:{stored.id}#v2:") for meta in new.metadatas
         )
@@ -348,7 +348,7 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
             ),
         )
         hits = palace_search(call, principal, [stored.id], "ZXQ739251", 10)
-        assert (hits[0].seq_start, hits[0].seq_end) == (2, 2)
+        assert (hits[0].seq_start, hits[0].seq_end) == (1, 2)
         recall = Recall(lambda workspace: store, call_tool=call)
         merged = recall.recall(principal, stored.id, "ZXQ739251", limit=10)
         assert any(hit.seq_start <= 2 <= hit.seq_end for hit in merged)
@@ -358,6 +358,68 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
             for b in merged[i + 1 :]
         )
         assert recall.get(principal, stored.id, 2, 2) == [messages[2]]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_partial_message_replays_its_missing_tail(writer, tmp_path, monkeypatch, version):
+    from commonplace.handoff.models import ThreadMessage
+    from commonplace.handoff.palace_mirror import mirror, mirror_pending, palace_search
+    from commonplace.handoff.recall import Recall
+    from commonplace.handoff.thread_store import ThreadStore, chunk_messages
+    from commonplace.handoff.thread_store_v2 import ThreadStoreV2
+    from mempalace import provenance, searcher
+
+    server, col, _, _ = writer
+    cls = ThreadStore if version == 1 else ThreadStoreV2
+    path = tmp_path / ("threads.sqlite3" if version == 1 else "threads.v2.sqlite3")
+    store = cls(str(path))
+    messages = [
+        ThreadMessage(0, "user", "message", "Complete earlier request", "raw"),
+        ThreadMessage(1, "tool", "tool_result", "routine output\n" * 700 + "TAIL_ZXQ739251", "raw"),
+        ThreadMessage(2, "user", "message", "Appended request", "raw"),
+    ]
+
+    def call(principal, name, args):
+        with provenance.verified(dict.fromkeys(provenance.FIELDS, "gateway")):
+            return (
+                server.write_mirror_units(**args)
+                if name == "write_mirror_units"
+                else server.TOOLS[name]["handler"](**args)
+            )
+
+    try:
+        stored = store.store("workspace", "source", messages[:2], actor="actor")
+        legacy = chunk_messages(messages[:2])
+        assert len(legacy) > 2
+        mirror(call, None, stored, legacy[:2])
+        old = col.get(include=["documents", "metadatas"])
+        assert all("TAIL_ZXQ739251" not in text for text in old.documents)
+        stored = store.append(stored.id, messages)
+        ids = mirror_pending(call, None, stored, store)
+        assert store.mirror_progress(stored.id) == (2, 2)
+        assert col.get(ids=old.ids, include=["documents", "metadatas"]) == old
+        new = col.get(include=["metadatas"])
+        assert all(
+            meta["source_seq_start"] >= 1 for meta in new.metadatas if "#v2:" in meta["source_file"]
+        )
+        monkeypatch.setattr(searcher, "get_collection", lambda *args, **kwargs: col)
+        monkeypatch.setattr(searcher, "get_closets_collection", lambda *args, **kwargs: None)
+        hits = palace_search(call, None, [stored.id], "TAIL_ZXQ739251", 10)
+        assert hits and "TAIL_ZXQ739251" in hits[0].text
+        assert (hits[0].seq_start, hits[0].seq_end) == (1, 1)
+        principal = SimpleNamespace(
+            workspace_id="workspace",
+            policy=SimpleNamespace(has_scope=lambda scope: True, can_read_wing=lambda wing: True),
+        )
+        recall = Recall(lambda workspace: store, call_tool=call)
+        hits = recall.recall(principal, stored.id, "TAIL_ZXQ739251", limit=10)
+        assert len([hit for hit in hits if hit.seq_start <= 1 <= hit.seq_end]) == 1
+        assert recall.get(principal, stored.id, 1, 1) == [messages[1]]
+        count = col.count()
+        assert ids and mirror_pending(call, None, stored, store) == []
+        assert col.count() == count
     finally:
         store.close()
 

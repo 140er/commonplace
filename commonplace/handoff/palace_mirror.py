@@ -162,7 +162,10 @@ def _legacy_mirrored_seq(call_tool, principal, stored):
                 completed = max(completed, label[1])
         offset += len(drawers)
         if not drawers or offset >= page.get("total", offset):
-            return min(completed, stored.message_count - 1)
+            # Legacy writes were ordered, but the final message may have only
+            # some continuation pieces. Replay it in full without rewriting
+            # any legacy drawers; overlap deduplication handles the excerpts.
+            return max(-1, min(completed, stored.message_count - 1) - 1)
 
 
 def mirror_pending(call_tool, principal, stored, store):
