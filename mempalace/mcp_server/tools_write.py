@@ -3,6 +3,8 @@ if __name__ != "mempalace.mcp_server":
     raise ImportError(f"{__name__} is an implementation fragment; import mempalace.mcp_server")
 
 
+from ..stored_text import INDEX_SPANS, IndexSource, public_metadata
+
 # ==================== WRITE TOOLS ====================
 
 
@@ -22,7 +24,7 @@ def _chunk_index(meta):
 
 
 def _response_safe_meta(meta):
-    safe_meta = dict(_safe_meta(meta))
+    safe_meta = public_metadata(_safe_meta(meta))
     if not safe_meta.get("last_modified") and safe_meta.get("filed_at"):
         safe_meta["last_modified"] = safe_meta["filed_at"]
     if safe_meta.get("source_file"):
@@ -474,6 +476,7 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
     chunk_docs = []
     chunk_metas = []
 
+    index_source = IndexSource(content)
     for start, chunk_doc in spans:
         chunk_index = start // chunk_size
         chunk_ids.append(f"{drawer_id}_chunk_{chunk_index:06d}")
@@ -481,7 +484,8 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
 
         chunk_meta = dict(base_meta)
         chunk_meta["chunk_index"] = chunk_index
-        chunk_metas.append(chunk_meta)
+        chunk_meta[INDEX_SPANS] = None
+        chunk_metas.append(index_source.metadata(start, start + len(chunk_doc), chunk_meta))
 
     return chunk_ids, chunk_docs, chunk_metas
 
@@ -547,6 +551,7 @@ def tool_add_drawer(
     )
 
     chunk_size = _config.chunk_size
+    index_source = IndexSource(content)
     base_meta = {
         "wing": wing,
         "room": room,
@@ -609,7 +614,7 @@ def tool_add_drawer(
             col.upsert(
                 ids=[drawer_id],
                 documents=[content],
-                metadatas=[{**base_meta, "chunk_index": 0}],
+                metadatas=[index_source.metadata(0, len(content), {**base_meta, "chunk_index": 0})],
             )
             inserted = col.get(ids=[drawer_id], include=[])
             if not _get_result_ids(inserted):
@@ -644,6 +649,10 @@ def tool_add_drawer(
             chunk_metas.append(
                 {**base_meta, "chunk_index": chunk_idx, "parent_drawer_id": drawer_id}
             )
+        chunk_metas = [
+            index_source.metadata(i * chunk_size, i * chunk_size + len(doc), meta)
+            for i, (doc, meta) in enumerate(zip(chunk_docs, chunk_metas))
+        ]
         assert_no_collisions(list(zip(chunk_ids, chunk_metas)), col)
         col.upsert(ids=chunk_ids, documents=chunk_docs, metadatas=chunk_metas)
         # Probe the LAST chunk id, not the first — its presence confirms
@@ -1567,6 +1576,9 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
             update_kwargs = {"ids": [record["ids"][0]]}
             if content is not None:
                 update_kwargs["documents"] = [new_doc]
+                new_meta = IndexSource(new_doc).metadata(
+                    0, len(new_doc), {**new_meta, INDEX_SPANS: None}
+                )
             update_kwargs["metadatas"] = [new_meta]
 
             col.update(**update_kwargs)

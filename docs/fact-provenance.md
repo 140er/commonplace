@@ -1,6 +1,6 @@
 # Fact provenance
 
-A fact's deciding source is separate from the account an agent uses. An agent token belonging to Jeffrey still writes an agent proposal.
+A fact's deciding source is separate from the account an agent uses. An agent token belonging to Avery still writes an agent proposal.
 
 `fact_save` requires `source: {thread, seq_start, seq_end}`. For a chat outside Commonplace or T3, include `source.url` with its chat link. Stored `thr_…` IDs link to `/app/threads/<id>`; T3 `mcp:…` IDs link to `t3-thread://v1/<id>`. The exact source messages remain verbatim.
 
@@ -12,7 +12,7 @@ Every KG recall returns:
 - `fact_status`: approval status while active, or lifecycle status such as `superseded`. `superseded_by` identifies the successor. Existing `status` and validity dates retain their lifecycle meaning.
 - `sources`: exact observed thread ranges, with each observation's origin and approval evidence. Approval citing an already recorded range updates its approval evidence while keeping the range's original author; a later agent restatement cannot clear that evidence.
 
-Agent saves default to `proposal`. A transcript's `role=user`, an agent claiming “Jeffrey approved”, and an account's `hub_user` stamp cannot establish approval. Client-supplied authority fields are refused.
+Agent saves default to `proposal`. A transcript's `role=user`, an agent claiming “Avery approved”, and an account's `hub_user` stamp cannot establish approval. Client-supplied authority fields are refused.
 
 A signed-in person saves or approves a fact with `POST /api/facts`, using the same subject, predicate, object, theme and source shape as `fact_save`. Saving the existing triple adds the person's approval and preserves its original author. Person sessions use the gateway's JSON and same-origin checks. Agent bearer requests to this endpoint remain proposals. Approval needs a navigable source link.
 

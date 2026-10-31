@@ -342,6 +342,7 @@ def _finalize_candidate_hits(
         hit.pop("_chunk_index", None)
         hit.pop("_parent_drawer_id", None)
         hit.pop("_stored_id", None)
+        hit.pop("_index_metadata", None)
 
     return hits, None
 

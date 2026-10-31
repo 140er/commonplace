@@ -686,6 +686,9 @@ def _file_chunks_locked(
             if entities:
                 meta["entities"] = entities
             drawer_id = make_drawer_id_from_chunk(wing, room, source_file, chunk["chunk_index"])
+            from .stored_text import chunk_index_metadata
+
+            meta.update(chunk_index_metadata(chunk))
             drawers.append((drawer_id, text, meta))
         drawers_added = write_file_drawers(
             collection, source_file, drawers, extract_mode="format", aaak_col=aaak_col

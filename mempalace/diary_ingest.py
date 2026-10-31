@@ -200,6 +200,9 @@ def ingest_diaries(
             drawers = []
             for entry_idx, (header, body) in enumerate(entries):
                 entry_text = f"{header}\n{body}" if body else header
+                from .stored_text import IndexSource
+
+                index_source = IndexSource(entry_text)
                 for entry_chunk_idx, start in enumerate(range(0, len(entry_text), chunk_size)):
                     meta = {
                         **base_meta,
@@ -209,6 +212,9 @@ def ingest_diaries(
                         "entry_header_preview": header[:120],
                     }
                     drawer_id = _diary_drawer_id_entry(wing, date_str, entry_idx, entry_chunk_idx)
+                    meta = index_source.metadata(
+                        start, min(start + chunk_size, len(entry_text)), meta
+                    )
                     drawers.append((drawer_id, entry_text[start : start + chunk_size], meta))
 
             # A full rebuild writes the new drawers, then drops the file's

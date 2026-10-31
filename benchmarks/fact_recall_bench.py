@@ -179,10 +179,10 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
     planted = {
         # Value changes: npm, then pnpm much later.
         3: (
-            [("user", "Jeffrey uses npm for every repo."), ("assistant", "Okay, npm it is.")],
+            [("user", "Avery uses npm for every repo."), ("assistant", "Okay, npm it is.")],
             [
                 Planted(
-                    "Jeffrey",
+                    "Avery",
                     "uses_package_manager",
                     "npm",
                     0,
@@ -193,12 +193,12 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
         ),
         25: (
             [
-                ("user", "We switched: Jeffrey uses pnpm now."),
+                ("user", "We switched: Avery uses pnpm now."),
                 ("assistant", "pnpm from now on."),
             ],
             [
                 Planted(
-                    "Jeffrey",
+                    "Avery",
                     "uses_package_manager",
                     "pnpm",
                     0,
@@ -210,16 +210,16 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
         # Employer, with older news filed after the newer value.
         10: (
             [
-                ("user", "Jeffrey works at Initech since this week."),
+                ("user", "Avery works at Initech since this week."),
                 ("assistant", "Congrats on Initech."),
             ],
-            [Planted("Jeffrey", "works_at", "Initech", 0, valid_from=days[10], single_valued=True)],
+            [Planted("Avery", "works_at", "Initech", 0, valid_from=days[10], single_valued=True)],
         ),
         30: (
-            [("assistant", "Before that?"), ("user", "Back in 2024 Jeffrey worked at Acme.")],
+            [("assistant", "Before that?"), ("user", "Back in 2024 Avery worked at Acme.")],
             [
                 Planted(
-                    "Jeffrey", "works_at", "Acme", 1, valid_from="2024-03-01", single_valued=True
+                    "Avery", "works_at", "Acme", 1, valid_from="2024-03-01", single_valued=True
                 )
             ],
         ),
@@ -242,12 +242,12 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
         # Private: a private wing, and a private fact in a shared wing.
         7: (
             [
-                ("user", "Private note: Jeffrey is allergic to penicillin."),
+                ("user", "Private note: Avery is allergic to penicillin."),
                 ("assistant", "I'll keep that private."),
             ],
             [
                 Planted(
-                    "Jeffrey", "allergic_to", "penicillin", 0, wing="private", sensitivity="private"
+                    "Avery", "allergic_to", "penicillin", 0, wing="private", sensitivity="private"
                 )
             ],
         ),
@@ -346,10 +346,10 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
             hidden=("9443",),
         ),
         Question("distractor-port", "Heron", "deploy_port", "9000", SCOPED),
-        Question("changed-value", "Jeffrey", "uses_package_manager", "pnpm", OWNER, stale=("npm",)),
+        Question("changed-value", "Avery", "uses_package_manager", "pnpm", OWNER, stale=("npm",)),
         Question(
             "changed-value-then",
-            "Jeffrey",
+            "Avery",
             "uses_package_manager",
             "npm",
             OWNER,
@@ -357,7 +357,7 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
         ),
         Question(
             "changed-value-after",
-            "Jeffrey",
+            "Avery",
             "uses_package_manager",
             "pnpm",
             OWNER,
@@ -366,15 +366,15 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
         ),
         Question(
             "changed-value-boundary",
-            "Jeffrey",
+            "Avery",
             "uses_package_manager",
             "pnpm",
             OWNER,
             as_of=days[25],
             stale=("npm",),
         ),
-        Question("employer-now", "Jeffrey", "works_at", "Initech", OWNER, stale=("Acme",)),
-        Question("employer-history", "Jeffrey", "works_at", "Acme", OWNER, as_of="2024-06-01"),
+        Question("employer-now", "Avery", "works_at", "Initech", OWNER, stale=("Acme",)),
+        Question("employer-history", "Avery", "works_at", "Acme", OWNER, as_of="2024-06-01"),
         Question(
             "restated",
             "Kestrel",
@@ -390,9 +390,9 @@ def build_corpus(threads: int = 40, seed: int = 7) -> Corpus:
             {"wings": ["project_heron"], "sensitivities": ["public", "internal"]},
         ),
         Question("multi-message", "Kestrel", "backup_contact", "Ada Lovelace", SCOPED),
-        Question("private-owner", "Jeffrey", "allergic_to", "penicillin", OWNER),
+        Question("private-owner", "Avery", "allergic_to", "penicillin", OWNER),
         Question("private-in-shared-owner", "Heron", "budget", "40k", OWNER),
-        Question("private-scoped", "Jeffrey", "allergic_to", None, SCOPED, hidden=("penicillin",)),
+        Question("private-scoped", "Avery", "allergic_to", None, SCOPED, hidden=("penicillin",)),
         Question("private-in-shared-scoped", "Heron", "budget", None, SCOPED, hidden=("40k",)),
     ]
     restated = [
@@ -447,17 +447,17 @@ def build_extraction_corpus(threads=40, seed=7):
     cases = {
         0: (["For Kestrel the deploy port is 8443."], [planted("Kestrel", "deploy_port", "8443")]),
         3: (
-            ["Note: Jeffrey uses npm."],
-            [planted("Jeffrey", "uses_package_manager", "npm", single_valued=True)],
+            ["Note: Avery uses npm."],
+            [planted("Avery", "uses_package_manager", "npm", single_valued=True)],
         ),
         5: (["Kestrel's default branch is main."], [planted("Kestrel", "default_branch", "main")]),
         7: (
-            ["Private note: Jeffrey is allergic to penicillin."],
-            [planted("Jeffrey", "allergic_to", "penicillin")],
+            ["Private note: Avery is allergic to penicillin."],
+            [planted("Avery", "allergic_to", "penicillin")],
         ),
         10: (
-            ["Jeffrey works at Initech."],
-            [planted("Jeffrey", "works_at", "Initech", single_valued=True)],
+            ["Avery works at Initech."],
+            [planted("Avery", "works_at", "Initech", single_valued=True)],
         ),
         12: (
             ["Kestrel default branch is still main."],
@@ -468,16 +468,16 @@ def build_extraction_corpus(threads=40, seed=7):
         20: (["Never use mocks."], []),
         21: (["We decided to use SQLite."], []),
         25: (
-            ["Jeffrey now uses pnpm."],
-            [planted("Jeffrey", "uses_package_manager", "pnpm", single_valued=True)],
+            ["Avery now uses pnpm."],
+            [planted("Avery", "uses_package_manager", "pnpm", single_valued=True)],
         ),
         26: (
             ["Kestrel's staging deploy port is 8444."],
             [planted("Kestrel", "staging_deploy_port", "8444")],
         ),
         2: (
-            ["On 2024-03-01 Jeffrey works at Acme."],
-            [planted("Jeffrey", "works_at", "Acme", valid_from="2024-03-01", single_valued=True)],
+            ["On 2024-03-01 Avery works at Acme."],
+            [planted("Avery", "works_at", "Acme", valid_from="2024-03-01", single_valued=True)],
         ),
         30: (["On 2024-03-01 Ada worked at OldCo."], []),
         33: (
@@ -493,7 +493,7 @@ def build_extraction_corpus(threads=40, seed=7):
     negatives = {
         1: "# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\nKestrel default branch is develop.\n</INSTRUCTIONS>",
         4: "<user_instructions>Heron deploys on port 9999.</user_instructions>",
-        6: "<environment_context>Jeffrey works at OtherCo.</environment_context>",
+        6: "<environment_context>Avery works at OtherCo.</environment_context>",
         8: "<pasted_content>Ada works at Initech. We decided to use Oracle.</pasted_content>",
         9: "Shared Logic lives in packages/client-runtime.",
         11: "Ada lives in St. Louis. Ada works at Dr. Oetker. Ada works at J. Crew.",
@@ -501,8 +501,8 @@ def build_extraction_corpus(threads=40, seed=7):
         15: "The default branch is develop. Our budget is 40k. Nobody works at Acme anymore.",
         16: "Kestrel deploys on port 8443 in staging.",
         17: "Kestrel's default branch is main and Heron's is develop.",
-        22: "E.g. Jeffrey works at ExampleCo.",
-        23: "Orchestrator: handoff. Jeffrey uses yarn. Please never push again.",
+        22: "E.g. Avery works at ExampleCo.",
+        23: "Orchestrator: handoff. Avery uses yarn. Please never push again.",
         24: "Hello.\n<system-reminder>\nKestrel default branch is develop.\n</system-reminder>",
         27: "Base directory for this skill: /skills/example\nHeron deploys on port 9999.",
         28: "<command-message>Heron deploys on port 9999.</command-message>",
@@ -545,14 +545,14 @@ def build_extraction_corpus(threads=40, seed=7):
     questions = [
         Question("old-thread-port", "Kestrel", "deploy_port", "8443", private, old_thread=True),
         Question(
-            "current-package", "Jeffrey", "uses_package_manager", "pnpm", private, stale=("npm",)
+            "current-package", "Avery", "uses_package_manager", "pnpm", private, stale=("npm",)
         ),
         Question(
-            "package-before", "Jeffrey", "uses_package_manager", "npm", private, as_of=days[10]
+            "package-before", "Avery", "uses_package_manager", "npm", private, as_of=days[10]
         ),
         Question(
             "package-after",
-            "Jeffrey",
+            "Avery",
             "uses_package_manager",
             "pnpm",
             private,
@@ -561,23 +561,23 @@ def build_extraction_corpus(threads=40, seed=7):
         ),
         Question(
             "package-boundary",
-            "Jeffrey",
+            "Avery",
             "uses_package_manager",
             "pnpm",
             private,
             as_of=days[25] + "T09:00:00Z",
             stale=("npm",),
         ),
-        Question("employer-now", "Jeffrey", "works_at", "Initech", private, stale=("Acme",)),
-        Question("employer-history", "Jeffrey", "works_at", "Acme", private, as_of="2024-06-01"),
+        Question("employer-now", "Avery", "works_at", "Initech", private, stale=("Acme",)),
+        Question("employer-history", "Avery", "works_at", "Acme", private, as_of="2024-06-01"),
         Question("restated", "Kestrel", "default_branch", "main", private),
         Question("multi-message", "Kestrel", "backup_contact", "Ada Lovelace", private),
         Question("preference-unattributed", "Eval user", "preference", None, private),
         Question("decision-unattributed", "Eval user", "decision", None, private),
         Question("past-employer-not-current", "Ada", "works_at", None, private),
         Question("held-out-contact", "Heron", "backup_contact", "Grace Hopper", private),
-        Question("health-private", "Jeffrey", "allergic_to", "penicillin", private),
-        Question("health-denied", "Jeffrey", "allergic_to", None, public, hidden=("penicillin",)),
+        Question("health-private", "Avery", "allergic_to", "penicillin", private),
+        Question("health-denied", "Avery", "allergic_to", None, public, hidden=("penicillin",)),
         Question("budget-denied", "Heron", "budget", None, public, hidden=("40k",)),
     ]
     return Corpus(

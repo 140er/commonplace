@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tests.e2e_handoff.ui_server import Browser, Devtools, stop_process, ui_server
 
-DEFAULT_OUTPUT = Path.home() / "work/mempalace-notes/handoff-system/png"
+DEFAULT_OUTPUT = Path(__file__).resolve().parent / "out"
 # Name suffix and window size; the phone width is below the 760px breakpoint.
 VIEWPORTS = (("", "1440,900"), ("-phone", "390,844"))
 _FLAGS = [

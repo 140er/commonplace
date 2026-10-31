@@ -21,7 +21,13 @@ from chromadb.config import Settings as _ChromaSettings
 from chromadb.errors import NotFoundError as _ChromaNotFoundError
 
 from ..lexical import bm25_scores
-from ..stored_text import encode_filter, encode_where, prepare_stored_write, restore_rows
+from ..stored_text import (
+    encode_filter,
+    encode_where,
+    index_text,
+    prepare_stored_write,
+    restore_rows,
+)
 from ..timeutil import filename_stamp
 from ._filters import validate_where
 from ._inproc_sqlite import (
@@ -2377,7 +2383,9 @@ class ChromaCollection(BaseCollection):
             metas.extend(meta or {} for meta in batch.metadatas)
             offset += len(batch.ids)
 
-        scores = bm25_scores(query, docs)
+        scores = bm25_scores(
+            query, [index_text(doc, meta, stored_form=False) for doc, meta in zip(docs, metas)]
+        )
         hits = [
             LexicalHit(id=doc_id, document=doc, metadata=meta, score=float(score))
             for doc_id, doc, meta, score in zip(ids, docs, metas, scores)
@@ -2416,7 +2424,10 @@ class ChromaCollection(BaseCollection):
             limit=max(max_candidates, n_results),
         )
         docs = [doc or "" for _, doc, _ in rows]
-        scores = bm25_scores(query, docs)
+        scores = bm25_scores(
+            query,
+            [index_text(doc, meta, stored_form=False) for (_, _, meta), doc in zip(rows, docs)],
+        )
         hits = [
             LexicalHit(id=drawer_id, document=doc, metadata=meta or {}, score=float(score))
             for (drawer_id, _, meta), doc, score in zip(rows, docs, scores)

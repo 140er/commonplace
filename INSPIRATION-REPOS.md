@@ -32,12 +32,12 @@ MiniMax Code team's daily skills (code quality bar, subagent decisions, long com
 
 ## Kanzo-style board in Commonplace (sketch)
 1. Tables next to memories in the same DB: boards(project, repo links), tasks(id, board, title, body, status todo|doing|done|backlog, position, assignee, created_by, updated_by, timestamps), task_comments(author, body).
-2. Authorship: server stamps created_by/author from the caller's token (e.g. jeffrey, grokbot, claude-code@vm), never from tool args. Same as memories.
+2. Authorship: server stamps created_by/author from the caller's token (e.g. avery, grokbot, claude-code@vm), never from tool args. Same as memories.
 3. MCP tools (~6, terse plain text): board_list, task_list, task_show, task_add, task_update(status/fields), task_comment, task_take_next. Project from git remote or explicit name.
 4. Link tasks and memories: task_show returns related memories; finishing a task can file a memory ("decision/lesson") with a backlink.
 5. Permissions: boards live in the same scopes as memories (private / shared / team); token scopes limit which boards an agent sees. Sealed tier does not apply to boards in v1.
 6. Backlog column agents ignore; "take next" claims atomically so two agents never grab the same card.
-7. Live updates: change counter or SSE from the hub; no git sync needed since the hub is central on zurvur.
+7. Live updates: change counter or SSE from the hub; no git sync needed since the hub is the central service.
 8. Web UI: kanban page in the Commonplace web app (same auth), drag-drop, ⌘K search across tasks and memories, comments thread showing which agent wrote what.
 9. Self-host gets it free; hosted runs the same code.
 10. Reimplement in our stack (MIT), no kanzo code copied because of AGPL.

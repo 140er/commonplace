@@ -156,7 +156,7 @@ def test_untrusted_writes_land_in_the_inbox_with_a_stamp(hub):
         "mempalace_add_drawer",
         wing="shared",
         room="facts",
-        content="Jeffrey likes tea",
+        content="Avery likes tea",
         added_by="claude",
     )
     assert result["success"] and result["wing"] == "inbox"
@@ -799,3 +799,28 @@ def test_multiwing_rerank_uses_worker_query_and_locale(monkeypatch):
     )
     assert result["query"] == clean
     assert result["results"][0]["drawer_id"] == "needle"
+
+
+def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypatch):
+    from commonplace.gateway import WorkerClient
+    from mempalace.stored_text import RESERVED_METADATA
+
+    forwarded = []
+    original = WorkerClient.post
+
+    def record(self, principal, request):
+        if request.get("method") == "tools/call":
+            forwarded.append(request["params"]["arguments"])
+        return original(self, principal, request)
+
+    monkeypatch.setattr(WorkerClient, "post", record)
+    result, _ = hub.call(
+        hub.owner_token(),
+        "mempalace_add_drawer",
+        wing="shared",
+        room="notes",
+        content="verbatim imported document",
+        **dict.fromkeys(RESERVED_METADATA, "forged"),
+    )
+    assert result["success"]
+    assert forwarded and all(not RESERVED_METADATA.intersection(args) for args in forwarded)

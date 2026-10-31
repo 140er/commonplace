@@ -25,7 +25,7 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo`), `assignee?` | slim, standard, full |
 | `task_comment` | `task`, `text` | slim, standard, full |
 | `task_take_next` | `board?`, `task?` | standard, full |
-| `task_update` | `task`, `title?`, `body?`, `status?` (`doing` \| `done` \| `backlog`), `before?`, `after?`, `link?`, `unlink?`, `lesson?` | standard, full |
+| `task_update` | `task`, `title?`, `body?`, `status?` (`backlog` \| `todo` \| `doing` \| `review` \| `done`), `before?`, `after?`, `link?`, `unlink?`, `lesson?` | standard, full |
 | `task_handoff` | `task`, `to`, `note`, `options?` | standard, full |
 
 `untrusted` tokens never get `task_take_next`, `task_update` or `task_handoff`, whatever their profile.
@@ -43,7 +43,7 @@ Default: `todo`, `doing` and `review`. `backlog` and `done` only when asked for 
 
 ```
 #142 doing need:working  Fix the Windows lock on repair  conn:codex:vm  until 14:30Z
-#145 review need:you  Pick the token expiry default  conn:claude-code:vm  asks user:jeffrey
+#145 review need:you  Pick the token expiry default  conn:claude-code:vm  asks user:avery
 #147 todo need:idle  Canary for board tools
 #148 todo need:idle  Split the hook output  for conn:claude-code:vm
 ```
@@ -66,12 +66,12 @@ Card, then the last 10 events, then links. Event text is quoted and attributed, 
 
 ```
 #145 review need:you  Pick the token expiry default  board mempalace
-asks user:jeffrey: "1 year or 90 days for personal tokens?"  options: 1y | 90d
+asks user:avery: "1 year or 90 days for personal tokens?"  options: 1y | 90d
 by conn:claude-code:vm (trusted) 2026-10-30T13:02Z
 body: "PRODUCT-DESIGN §6 says 1 year. Security review asked for 90 days."
 - 13:02Z conn:claude-code:vm claim
 - 13:40Z conn:claude-code:vm comment: "Both paths written, tests green on each."
-- 13:41Z conn:claude-code:vm handoff → user:jeffrey
+- 13:41Z conn:claude-code:vm handoff → user:avery
 links: drawer_7f3a "Token lifecycle notes", drawer_91c0 (invalidated)
 ```
 
@@ -98,7 +98,7 @@ The claim. Without `task`: the caller's reserved `todo` card with the lowest pos
 ```
 #142 Fix the Windows lock on repair  yours until 14:30Z
 body: "repair leaves a lock file on Windows after a crash …"
-decision by user:jeffrey: 90d  "Go with 90 days, keep 1 year as an option."
+decision by user:avery: 90d  "Go with 90 days, keep 1 year as an option."
 ```
 
 The `decision` line appears only on a card that came back from `review`. Empty column: `nothing to take on mempalace`.
@@ -142,6 +142,7 @@ COMMIT;
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
 
+- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Leaving `review` requires `decide`; agents cannot answer their own asks.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with the ask `Done?` and options `ship | redo`.
 - `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
@@ -161,12 +162,12 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 |---|---|---|
 | `anyone` | `todo` | nobody |
 | a connection, e.g. `codex:vm` | `todo` | that connection |
-| a person, e.g. `jeffrey` | `review`, with `note` as the ask | — (comes back to the caller after the decision) |
+| a person, e.g. `avery` | `review`, with `note` as the ask | — (comes back to the caller after the decision) |
 
 `options` (people only) is a list of up to 6 short choices shown as buttons. Without it, the person answers in free text.
 
 ```
-ok #145 → user:jeffrey  review
+ok #145 → user:avery  review
 ```
 
 An agent can also hand off a card it does not hold, but only from `todo` and only to a person: that is how an agent asks a question before starting work.
@@ -178,11 +179,12 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 | backlog → todo | no | yes |
 | todo → doing | `task_take_next` only | yes (holds it, no expiry) |
 | doing → todo | `task_handoff` (holder) | yes |
-| doing → review | `task_handoff` to a person (holder) | yes |
+| doing → review | `task_update` or `task_handoff` to a person (holder) | yes |
 | doing → done | `task_update` (holder) | yes |
 | review → anything | no | `decide` only |
-| todo → review | `task_handoff` to a person | yes |
-| done → todo | no | yes |
+| todo → review | `task_update` or `task_handoff` to a person | yes |
+| todo → done | `task_update` | no |
+| done → todo | status-only `task_update` | yes |
 | any → backlog | holder, or a free `todo` card | yes |
 
 ## HTTP JSON for the web UI
@@ -313,3 +315,7 @@ REST aliases, with the same tool visibility and wing rules:
 `#/space/<slug>` shows chat and linked task rows plus the board's task list. Phone
 uses Chat/Tasks tabs. Existing `/api/events` polling updates task states and inline
 asks; answered asks stay in the conversation. `#/board/<slug>` keeps the kanban view.
+
+Webhook authentication may reference an operator-defined environment variable,
+for example `env:COMMONPLACE_WEBHOOK_AUTH_COORDINATOR`. Set the variable only
+in the server environment; the database stores the reference, not its value.

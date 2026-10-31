@@ -12,4 +12,4 @@ KG recall and handoff output show source and status alongside the exact words. H
 
 Tests cover legacy migration, agent/user defaults, forged approval attempts, merge and supersession safety, scoped reads, caller-versus-speaker attribution, handoff labels, and import/replication compatibility. A small recall eval plants an agent-invented performance gate and proves it is returned as a proposal rather than a user rule, then verifies explicit human approval and supersession.
 
-This is a separate PR from handoff extraction (#29), branched from develop at f9aac848 or later. Required gates: one Claude Opus review after the quota reset, at most one fix round, final-head pr-check, then merge into develop under the standing authorization.
+This builds on handoff extraction (#29). Run the project checks and obtain a separate review of the final revision before merging.

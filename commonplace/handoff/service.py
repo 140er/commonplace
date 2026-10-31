@@ -4,7 +4,7 @@ Hook contract: ``action=handoff`` means the thread is safely stored, so the
 agent may stop. ``action=compact`` means it must keep working or compact;
 in particular, another request's pending handoff is not safe to stop for.
 
-``run`` order (every step idempotent, see PLAN.md):
+``run`` order (every step idempotent, see docs/handoff.md):
 1. settings off → ``HandoffResult("compact", reason="off")``; nothing stored.
 2. ``HandoffDB.begin`` by idempotency key (default ``thread:<thread_id>``);
    an existing non-failed handoff is returned as-is with ``launch=False``

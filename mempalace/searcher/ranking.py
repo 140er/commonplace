@@ -209,7 +209,12 @@ def _hybrid_rank(
     if not results:
         return results
 
-    docs = [r.get("text", "") for r in results]
+    docs = [
+        index_text(
+            r.get("text") or "", r.get("metadata") or r.get("_index_metadata"), stored_form=False
+        )
+        for r in results
+    ]
     bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
     max_bm25 = max(bm25_raw) if bm25_raw else 0.0
     bm25_norm = [s / max_bm25 for s in bm25_raw] if max_bm25 > 0 else [0.0] * len(bm25_raw)

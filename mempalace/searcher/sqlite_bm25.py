@@ -290,11 +290,12 @@ def _bm25_only_via_sqlite(
                 # multiple chunks. Stripped before this helper returns.
                 "_source_file_full": full_source,
                 "_chunk_index": meta.get("chunk_index"),
+                "_index_metadata": {INDEX_SPANS: meta.get(INDEX_SPANS)},
             }
         )
 
     # Local BM25 over the candidate set.
-    docs = [c["text"] for c in candidates]
+    docs = [index_text(c["text"], c.get("_index_metadata"), stored_form=False) for c in candidates]
     bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
     max_bm25 = max(bm25_raw) if bm25_raw else 0.0
     for c, raw in zip(candidates, bm25_raw):
@@ -317,6 +318,7 @@ def _bm25_only_via_sqlite(
         if not _include_internal:
             h.pop("_source_file_full", None)
             h.pop("_chunk_index", None)
+            h.pop("_index_metadata", None)
 
     result = {
         "query": query,
@@ -445,6 +447,7 @@ def _merge_bm25_union_candidates(
             ),
             "closet_boost": 0.0,
             "matched_via": "bm25_backend",
+            "_index_metadata": {INDEX_SPANS: meta.get(INDEX_SPANS)},
             "bm25_score": round(float(hit.score), 3),
             "_source_file_full": full_source,
             "_chunk_index": meta.get("chunk_index"),

@@ -345,10 +345,12 @@ def _delete_collection_if_exists(backend, palace_path: str, collection_name: str
         return
 
 
-def _embeddinggemma2_collection(collection, enabled: bool):
-    """Wrap rebuild writes with EmbeddingGemma 2's metadata-aware encoder."""
-    if not enabled:
-        return collection
+def _text_embedding_collection(collection, enabled: bool):
+    """Use the core index-text encoder for every text rebuild.
+
+    ``enabled`` is retained for the existing model-selection call sites.
+    All models now need explicit vectors to keep raw documents out of inference.
+    """
     from .backends.embedding_wrapper import EmbeddingCollection
 
     return EmbeddingCollection(collection)
@@ -489,7 +491,7 @@ def _rebuild_collection_via_temp(
         asset_embedder = _asset_media_embedder() if media_assets else None
         temp_col = backend.create_collection(palace_path, temp_name)
         if not media_assets:
-            temp_col = _embeddinggemma2_collection(temp_col, embeddinggemma2)
+            temp_col = _text_embedding_collection(temp_col, embeddinggemma2)
         staged = 0
         for i in range(0, expected, batch_size):
             batch_ids = all_ids[i : i + batch_size]
@@ -514,7 +516,7 @@ def _rebuild_collection_via_temp(
         live_replaced = True
         new_col = backend.create_collection(palace_path, collection_name)
         if not media_assets:
-            new_col = _embeddinggemma2_collection(new_col, embeddinggemma2)
+            new_col = _text_embedding_collection(new_col, embeddinggemma2)
 
         rebuilt = 0
         for i in range(0, expected, batch_size):
@@ -594,7 +596,7 @@ def _promote_temp_collection(
     _delete_collection_if_exists(backend, palace_path, collection_name)
     new_col = backend.create_collection(palace_path, collection_name)
     if not media_assets:
-        new_col = _embeddinggemma2_collection(new_col, embeddinggemma2)
+        new_col = _text_embedding_collection(new_col, embeddinggemma2)
     promoted = 0
     for i in range(0, len(ids), batch_size):
         batch_docs = docs[i : i + batch_size]
@@ -1770,8 +1772,21 @@ def rebuild_index(
 
     if not os.path.isdir(palace_path):
         progress(f"\n  No palace found at {palace_path}")
-        return
+        return None
     _require_valid_embedding_model()
+    from .palace import get_backend_for_palace, mine_palace_lock
+
+    backend = get_backend_for_palace(palace_path)
+    if backend.name == "compact":
+        from .backends.embedding_wrapper import EmbeddingCollection
+
+        with mine_palace_lock(palace_path):
+            collection = backend.get_collection(palace_path, collection_name)
+            wrapper = EmbeddingCollection(collection)
+            collection.reindex(wrapper._compact_vectors)
+            _record_rebuilt_embedder_identity(collection, palace_path)
+            progress(f"  Rebuilt {collection.count()} compact records.")
+            return
 
     progress(f"\n{'=' * 55}")
     progress("  MemPalace Repair -- Index Rebuild")
@@ -1789,7 +1804,7 @@ def rebuild_index(
         sqlite_errors = maybe_autoheal_fts5_index(palace_path, sqlite_errors, progress=progress)
     if sqlite_errors:
         print_sqlite_integrity_abort(palace_path, sqlite_errors)
-        return
+        return None
 
     preflight = maybe_repair_poisoned_max_seq_id_before_rebuild(
         palace_path,
@@ -1797,7 +1812,7 @@ def rebuild_index(
         progress=progress,
     )
     if preflight is not None:
-        return
+        return None
 
     # Preflight HNSW divergence before opening the collection: status()
     # already has this same guard via hnsw_capacity_status (docstring above
@@ -1810,7 +1825,7 @@ def rebuild_index(
     if capacity_info.get("diverged"):
         progress(f"\n  HNSW index is diverged: {capacity_info.get('message', '')}")
         progress(index_read_recovery_guidance())
-        return
+        return None
 
     # Hold the palace writer lease for the complete snapshot -> rebuild/swap
     # -> cleanup cycle. A writer landing after the snapshot but before the
@@ -2077,7 +2092,7 @@ def _rebuild_one_collection(
             asset_embedder = _asset_media_embedder()
         col = backend.create_collection(dest_palace, collection_name)
         if not media_assets:
-            col = _embeddinggemma2_collection(col, embeddinggemma2)
+            col = _text_embedding_collection(col, embeddinggemma2)
 
         for emb_id, doc, meta in extract_via_sqlite(source_palace, collection_name):
             ids.append(emb_id)

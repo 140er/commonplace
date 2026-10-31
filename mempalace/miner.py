@@ -666,6 +666,9 @@ def chunk_text(
     if not content:
         return []
 
+    from .stored_text import IndexSource
+
+    index_source = IndexSource(content)
     chunks = []
     start = 0
     chunk_index = 0
@@ -731,6 +734,10 @@ def chunk_text(
             chunks.append(
                 {
                     "content": chunk,
+                    **index_source.metadata(
+                        start + len(content[start:end]) - len(content[start:end].lstrip()),
+                        end - (len(content[start:end]) - len(content[start:end].rstrip())),
+                    ),
                     "chunk_index": chunk_index,
                     "line_start": line_start,
                     "line_end": line_end,
@@ -1700,6 +1707,12 @@ def process_file(
                 ),
             )
             for chunk in chunks
+        ]
+        from .stored_text import chunk_index_metadata
+
+        drawers = [
+            (i, doc, {**meta, **chunk_index_metadata(chunk)})
+            for (i, doc, meta), chunk in zip(drawers, chunks)
         ]
         # Every drawer for this path is replaced, whichever miner filed it.
         # A failed stale-drawer purge is an error the mine counts, not a skip.

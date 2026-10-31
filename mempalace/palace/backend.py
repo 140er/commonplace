@@ -93,6 +93,8 @@ def get_backend_for_palace(palace_path: str, explicit: Optional[str] = None):
 
 
 def _backend_artifact_label(backend_name: Optional[str]) -> str:
+    if backend_name == "compact":
+        return "compact.sqlite3"
     if backend_name == "chroma":
         return "chroma.sqlite3"
     if backend_name == "qdrant":

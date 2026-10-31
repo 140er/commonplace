@@ -22,7 +22,7 @@ IDENTITY = {
 
 def test_header_round_trip_and_rejects_bad_values():
     assert provenance.decode_identity(provenance.encode_identity(IDENTITY)) == IDENTITY
-    unicode_name = {**IDENTITY, "connection": "jeffrey's büro"}
+    unicode_name = {**IDENTITY, "connection": "avery's büro"}
     assert provenance.decode_identity(provenance.encode_identity(unicode_name)) == unicode_name
     for bad in ("", "!!!", provenance.encode_identity(IDENTITY)[:-4]):
         with pytest.raises(ValueError):

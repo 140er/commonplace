@@ -25,7 +25,6 @@ done
 
 cat <<'INSTRUCTIONS'
 Set COMMONPLACE_TOKEN to your token. The default base URL is https://cmmn.dev.
-Current tailnet address: https://edge1.tail6cee8c.ts.net.
 Set COMMONPLACE_URL to override the default, then run:
 export COMMONPLACE_URL="${COMMONPLACE_URL:-https://cmmn.dev}"
 Claude Code:
