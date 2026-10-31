@@ -778,7 +778,11 @@ def test_registration_failure_after_external_launch_keeps_claim(harness, monkeyp
 
 
 @pytest.mark.parametrize("kind", ["command", "webhook"])
-def test_real_launcher_failure_then_concurrent_relaunch_once(harness, kind):
+def test_real_launcher_failure_then_concurrent_relaunch_once(harness, kind, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command,webhook")
+    # Exercise real retries against an isolated receiver after the policy gate.
+    monkeypatch.setattr(launchers, "validate_webhook_url", lambda _: None)
+    monkeypatch.setattr(launchers, "require_public_address", lambda _: None)
     mode = harness.root / "launch-mode"
     mode.write_text("fail")
     launches = harness.root / "launches"

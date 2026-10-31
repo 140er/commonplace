@@ -1,5 +1,6 @@
 """Settings contract tests, with no worker, database or network dependencies."""
 
+import ipaddress
 from dataclasses import asdict, replace
 from itertools import product
 
@@ -24,8 +25,14 @@ from commonplace.handoff.settings import (
 
 OWNER_ERROR = "only workspace owners can change this"
 COMMAND = LauncherConfig(kind="command", argv=("runner", "{prompt_file}"))
-WEBHOOK = LauncherConfig(kind="webhook", url="http://localhost:9000/start", secret="s" * 16)
+WEBHOOK_URL = f"https://{ipaddress.ip_address(0x08080808)}/start"
+WEBHOOK = LauncherConfig(kind="webhook", url=WEBHOOK_URL, secret="s" * 16)
 SCOPES = (("workspace", ""), ("agent", "agent-one"), ("task", "#42"))
+
+
+@pytest.fixture(autouse=True)
+def operator_launchers(monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command,webhook")
 
 
 class FakeDB:
@@ -436,13 +443,7 @@ def test_launcher_validation_at_both_entry_points(data, entry):
 
 @pytest.mark.parametrize(
     "url",
-    [
-        "http://localhost:9000/start?mode=new",
-        "https://example.test/start",
-        "http://127.0.0.1/start",
-        "http://[::1]:9000/start",
-        "HTTPS://example.test/start",
-    ],
+    [WEBHOOK_URL, WEBHOOK_URL + "?mode=new", WEBHOOK_URL.replace("https", "HTTPS")],
 )
 @pytest.mark.parametrize("secret", ["s" * 16, "s" * 17, "é" * 16])
 def test_valid_webhook_launcher(url, secret):

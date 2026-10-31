@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import subprocess
@@ -872,6 +873,30 @@ def test_bad_gateway_url_rejected(local, api, monkeypatch, capsys, server):
     assert out == ""
     assert err
     assert api.calls == []
+
+
+@pytest.mark.parametrize("scheme,remote", [("http", True), ("https", True), ("http", False)])
+def test_plain_remote_http_warns_without_blocking(local, api, monkeypatch, capsys, scheme, remote):
+    host = str(ipaddress.ip_address(0x08080808)) if remote else urlsplit(api.url).hostname
+    server = f"{scheme}://{host}"
+    monkeypatch.setenv("COMMONPLACE_URL", server)
+    original = hook._request
+    calls = []
+
+    def request(configured, token, route, body=None):
+        calls.append(configured)
+        return original(api.url, token, route, body)
+
+    monkeypatch.setattr(hook, "_request", request)
+    out, err = run_hook(local, monkeypatch, capsys)
+    assert calls and all(value == server for value in calls)
+    assert json.loads(out)["continue"] is False
+    if scheme == "http" and remote:
+        assert "use HTTPS or a loopback HTTP URL" in err
+        assert "continuing normally" in err
+        assert server not in err and "cmmn_test-secret" not in err
+    else:
+        assert err == ""
 
 
 def test_invalid_cli_arguments_return_zero(local, api, monkeypatch, capsys):

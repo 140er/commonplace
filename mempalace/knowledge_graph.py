@@ -855,12 +855,6 @@ class KnowledgeGraph:
 
     def _init_db(self):
         conn = self._conn()
-        had_sources = (
-            conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sources'"
-            ).fetchone()
-            is not None
-        )
         conn.executescript("""
             PRAGMA journal_mode=WAL;
 
@@ -931,18 +925,19 @@ class KnowledgeGraph:
         from .fact_index import try_install
 
         self._fact_index_ready = try_install(conn)
-        if not had_sources:
-            # Facts filed before fact_sources existed keep their first source.
-            conn.execute(
-                "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
-                "source_seq_start, source_seq_end, source_drawer_id, source_file, "
-                "added_at, hub_stamp) SELECT id, source_thread, source_seq_start, "
-                "source_seq_end, source_drawer_id, source_file, "
-                "COALESCE(extracted_at, ?), hub_stamp FROM triples WHERE "
-                "source_thread IS NOT NULL OR source_drawer_id IS NOT NULL "
-                "OR source_file IS NOT NULL",
-                (utc_now_iso(),),
-            )
+        # Retry interrupted upgrades on every open without duplicating evidence
+        # or adding a legacy source to facts that already have source records.
+        conn.execute(
+            "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
+            "source_seq_start, source_seq_end, source_drawer_id, source_file, "
+            "added_at, hub_stamp) SELECT t.id, t.source_thread, t.source_seq_start, "
+            "t.source_seq_end, t.source_drawer_id, t.source_file, "
+            "COALESCE(t.extracted_at, ?), t.hub_stamp FROM triples t WHERE "
+            "(t.source_thread IS NOT NULL OR t.source_drawer_id IS NOT NULL "
+            "OR t.source_file IS NOT NULL) AND NOT EXISTS "
+            "(SELECT 1 FROM fact_sources WHERE triple_id = t.id)",
+            (utc_now_iso(),),
+        )
         conn.commit()
 
     def _migrate_schema(self, conn):

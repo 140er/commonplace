@@ -52,9 +52,14 @@ export COMMONPLACE_TOKEN=cmmn_REPLACE_WITH_YOUR_TOKEN
 export COMMONPLACE_TASK='#142'
 ```
 
-`COMMONPLACE_TASK` is optional. The hook needs `handoff:write` to request a
-handoff and register its successor. The successor needs `threads:read`
+`COMMONPLACE_TASK` is optional. The hook needs `handoff:write` and `trusted`
+trust to request a handoff. Registering its successor needs `handoff:write`.
+The successor needs `threads:read`
 and access to the stored thread.
+
+Use HTTPS for a remote gateway. The hook warns on stderr when
+`COMMONPLACE_URL` uses plain HTTP with a non-loopback destination, then
+continues normally.
 
 The API uses the workspace attached to the bearer token. For example:
 
@@ -69,6 +74,9 @@ For an agent override, use `"scope":"agent"` and its connection name as
 `ref`. For a task override, use `"scope":"task"` and `"ref":"#142"`.
 An omitted or `null` setting inherits. Owners control workspace and agent
 settings and launchers. Members may change only a task's `enabled` field.
+Agent tokens also need `handoff:write` and `trusted` trust for settings
+writes, deletes and launches, including relaunch and `handoff_start`.
+Signed-in person sessions keep their existing workspace role permissions.
 
 To force handoff off for one run, regardless of saved settings:
 
@@ -216,7 +224,7 @@ The `handoff_start` MCP tool runs on the gateway machine and requires this
 map to bind the source checkout to the token's workspace. It accepts
 `thread_id`, `to`, and optional `effort`, `note`, `agent`, `task`, `dry_run`;
 it needs `handoff:write`, a `standard` or `full` tool profile (or an explicit
-`handoff_start` grant), and a connection that is not untrusted. It cannot
+`handoff_start` grant), and `trusted` trust. It cannot
 select another workspace. For example:
 
 ```json
@@ -412,8 +420,26 @@ The launched process inherits the environment and receives
 back to this one. The server's `command` launcher also supplies
 `COMMONPLACE_THREAD_ID` with the stored thread ID.
 
-Owners can instead configure a `command` launcher on the gateway machine,
-or a `webhook` launcher at their own URL. The command launcher also uses
+Gateway `command` and `webhook` launchers are disabled by default. An operator
+can enable either kind with `COMMONPLACE_HANDOFF_LAUNCHERS=command`,
+`COMMONPLACE_HANDOFF_LAUNCHERS=webhook`, or both:
+
+```bash
+export COMMONPLACE_HANDOFF_LAUNCHERS=command,webhook
+```
+
+Set this in the gateway's environment. Tokens and workspace settings cannot
+enable launcher kinds. Saving a disabled kind is refused; an already stored
+launcher records `launch_failed` without starting a command or sending a request
+if its kind is disabled when the handoff runs. The default `client` launcher
+and the hook's local `successor_argv` do not require this gateway opt-in.
+
+With operator opt-in, owners can configure a `command` launcher on the gateway,
+or a `webhook` launcher at a public destination. Webhook URLs must pass the event
+webhook URL rules and resolve only to public addresses. Private and other
+non-public addresses are refused when saving and launching, including when
+DNS changes after validation. Redirects are never followed.
+The command launcher also uses
 an argument array without a shell. A webhook launcher receives the prompt
 and must return an `agent_ref`, with optional `url` and `thread_id`.
 Event webhooks, described below, do not receive the prompt.
@@ -498,6 +524,8 @@ cannot read and stops safely if it encounters a cycle.
 Send `Authorization: Bearer cmmn_…`. Request and response bodies are JSON.
 The token selects the workspace. Thread and handoff resources outside its
 access return `404` with `{"error":"not found"}`, just like missing IDs.
+For agent tokens, every launch and settings write or delete also requires
+`handoff:write` and `trusted` trust. Missing this authority returns `403`.
 
 | Method | Path | Access | Body or result |
 |---|---|---|---|

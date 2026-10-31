@@ -472,6 +472,15 @@ def _run(argv, server: str, token: str):
         or address.fragment
     ):
         raise ValueError("Invalid gateway URL")
+    if address.scheme == "http":
+        from commonplace.oauth import _valid_redirect
+
+        if not _valid_redirect(server):
+            print(
+                "Commonplace handoff: use HTTPS or a loopback HTTP URL; "
+                "plain HTTP sends credentials and transcripts without encryption; continuing normally.",
+                file=sys.stderr,
+            )
     data = json.load(sys.stdin)
     if not isinstance(data, dict):
         raise ValueError("Invalid hook input")

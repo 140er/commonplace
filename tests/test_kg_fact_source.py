@@ -199,6 +199,34 @@ def test_a_legacy_graph_migrates_in_place(tmp_path):
         assert _row(kg, "t_old")["status"] == "superseded"
 
 
+def test_source_backfill_retries_after_interrupted_first_open(tmp_path, monkeypatch):
+    from mempalace import fact_index
+
+    path = str(tmp_path / "interrupted.sqlite3")
+    _legacy_graph(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE triples SET source_file = 'source.txt' WHERE id = 't_old'")
+
+    def crash_before_backfill(conn):
+        assert conn.execute("SELECT count(*) FROM fact_sources").fetchone()[0] == 0
+        conn.commit()
+        conn.close()
+        raise RuntimeError("interrupted upgrade")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fact_index, "try_install", crash_before_backfill)
+        with pytest.raises(RuntimeError, match="interrupted upgrade"):
+            KnowledgeGraph(db_path=path)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT count(*) FROM fact_sources").fetchone()[0] == 0
+    with KnowledgeGraph(db_path=path) as kg:
+        sources = kg.sources(["t_old"])["t_old"]
+        assert len(sources) == 1 and sources[0]["source_file"] == "source.txt"
+        assert _row(kg, "t_old")["source_file"] == "source.txt"
+    with KnowledgeGraph(db_path=path) as kg:
+        assert kg.sources(["t_old"])["t_old"] == sources
+
+
 def test_replication_carries_status_and_range(tmp_path):
     with KnowledgeGraph(db_path=str(tmp_path / "a.sqlite3")) as source:
         old = source.add_triple("Max", "loves", "chess", source_thread="t", source_seq_start=1)

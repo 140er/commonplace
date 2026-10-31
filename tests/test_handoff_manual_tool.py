@@ -53,6 +53,7 @@ def test_tool_registration_and_successful_local_start(writer):
     "options",
     [
         {"trust": "untrusted", "scopes": ["handoff:write"]},
+        {"trust": "standard", "scopes": ["handoff:write"]},
         {"trust": "trusted", "scopes": ["threads:read"]},
         {"trust": "trusted", "scopes": ["handoff:write"], "profile": "slim"},
         {"trust": "trusted", "scopes": ["handoff:write"], "tools": ["thread_get"]},
