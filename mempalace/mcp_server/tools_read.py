@@ -625,6 +625,12 @@ def _sanitize_search_wings(wings):
     return [_sanitize_optional_name(w, "wing") for w in wings]
 
 
+def _search_fact_wings(wing, wings):
+    if wing:
+        return [wing] if wings is None or wing in wings else []
+    return wings
+
+
 def tool_search(
     query: str,
     limit: int = 5,
@@ -729,11 +735,15 @@ def tool_search(
                 )
         except SearchError as exc:
             return {"error": str(exc)}
-        fact_wings = [wing] if wing else wings
-        if wing and wings is not None and wing not in wings:
-            fact_wings = []
         fact_result = (
-            tool_kg_search(query, limit=limit, wings=fact_wings) if include_facts else {"facts": []}
+            tool_kg_search(
+                sanitized["clean_query"],
+                limit=limit,
+                wings=_search_fact_wings(wing, wings),
+                query_is_sanitized=True,
+            )
+            if include_facts
+            else {"facts": []}
         )
         facts = fact_result["facts"]
         from ..fact_render import format_facts
@@ -813,7 +823,12 @@ def tool_search(
     if result.get("error"):
         return result
     fact_result = (
-        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)
+        tool_kg_search(
+            sanitized["clean_query"],
+            limit=limit,
+            wings=_search_fact_wings(wing, wings),
+            query_is_sanitized=True,
+        )
         if include_facts
         else {"facts": []}
     )

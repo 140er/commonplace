@@ -12,8 +12,8 @@ from dataclasses import replace
 from pathlib import PurePosixPath, PureWindowsPath
 from string import Formatter
 from typing import Optional
-from urllib.parse import urlsplit
 
+from .launcher_policy import LauncherPolicyError, require_enabled, validate_webhook_url
 from .models import (
     EVENT_SETTINGS,
     LAUNCHER_KINDS,
@@ -94,16 +94,10 @@ def _validate_command(argv: tuple) -> None:
 
 
 def _validate_webhook(url: str, secret: str) -> None:
-    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):
-        raise SettingsError("webhook launcher needs an http(s) URL with a host")
     try:
-        parsed = urlsplit(url)
-        valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
-        _ = parsed.port  # Validate a supplied port as well as the host.
-    except ValueError:
-        valid = False
-    if not valid:
-        raise SettingsError("webhook launcher needs an http(s) URL with a host")
+        validate_webhook_url(url)
+    except LauncherPolicyError as error:
+        raise SettingsError(str(error)) from None
     if len(secret) < 16:
         raise SettingsError("webhook launcher secret must be at least 16 characters")
 
@@ -113,6 +107,10 @@ def _validate_launcher(config: LauncherConfig) -> LauncherConfig:
         raise SettingsError("launcher must be a launcher configuration")
     if config.kind not in LAUNCHER_KINDS:
         raise SettingsError("launcher kind must be client, command or webhook")
+    try:
+        require_enabled(config.kind)
+    except LauncherPolicyError as error:
+        raise SettingsError(str(error)) from None
     if not isinstance(config.argv, (list, tuple)) or any(
         not isinstance(arg, str) or "\0" in arg for arg in config.argv
     ):

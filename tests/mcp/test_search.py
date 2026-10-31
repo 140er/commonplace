@@ -697,3 +697,38 @@ def test_2288_grouped_graph_stats_count_distinct_room_instances(monkeypatch):
         "matlab-drive",
         "octopus",
     }
+
+
+@pytest.mark.parametrize("cli_compatible", [False, True])
+@pytest.mark.parametrize(
+    "wing,wings,expected",
+    [
+        (None, ["notes"], ["notes"]),
+        ("notes", ["notes", "other"], ["notes"]),
+        ("notes", ["other"], []),
+        (None, [], []),
+    ],
+)
+def test_search_fact_attachment_preserves_wing_union_and_sanitized_query(
+    monkeypatch, config, palace_path, seeded_collection, kg, cli_compatible, wing, wings, expected
+):
+    _patch_mcp_server(monkeypatch, config, kg)
+    from mempalace import mcp_server
+
+    calls = []
+
+    def facts(query, **kwargs):
+        calls.append((query, kwargs))
+        return {"facts": []}
+
+    monkeypatch.setattr(mcp_server, "tool_kg_search", facts)
+    result = mcp_server.tool_search(
+        "JWT authentication", wing=wing, wings=wings, cli_compatible=cli_compatible
+    )
+    assert not result.get("error")
+    assert calls == [
+        (
+            "JWT authentication",
+            {"limit": 5, "wings": expected, "query_is_sanitized": True},
+        )
+    ]

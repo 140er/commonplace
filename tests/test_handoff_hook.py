@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import subprocess
@@ -874,11 +875,58 @@ def test_bad_gateway_url_rejected(local, api, monkeypatch, capsys, server):
     assert api.calls == []
 
 
+@pytest.mark.parametrize("scheme,remote", [("http", True), ("https", True), ("http", False)])
+def test_plain_remote_http_warns_without_blocking(local, api, monkeypatch, capsys, scheme, remote):
+    host = str(ipaddress.ip_address(0x08080808)) if remote else urlsplit(api.url).hostname
+    server = f"{scheme}://{host}"
+    monkeypatch.setenv("COMMONPLACE_URL", server)
+    original = hook._request
+    calls = []
+
+    def request(configured, token, route, body=None):
+        calls.append(configured)
+        return original(api.url, token, route, body)
+
+    monkeypatch.setattr(hook, "_request", request)
+    out, err = run_hook(local, monkeypatch, capsys)
+    assert calls and all(value == server for value in calls)
+    assert json.loads(out)["continue"] is False
+    if scheme == "http" and remote:
+        assert "use HTTPS or a loopback HTTP URL" in err
+        assert "continuing normally" in err
+        assert server not in err and "cmmn_test-secret" not in err
+    else:
+        assert err == ""
+
+
 def test_invalid_cli_arguments_return_zero(local, api, monkeypatch, capsys):
     assert hook.main(["--unknown"]) == 0
     out, err = capsys.readouterr()
     assert out == ""
     assert len(err.splitlines()) == 1
+
+
+def test_plain_http_hook_does_not_import_oauth(local, api):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from commonplace.handoff import hook
+from commonplace.handoff.models import HandoffSettings
+hook._settings = lambda *args: HandoffSettings(enabled=False)
+assert hook.main(['--client', 'claude-code']) == 0
+assert not any(name == 'commonplace.oauth' or name.startswith('commonplace.oauth.') for name in sys.modules)
+""",
+        ],
+        input=json.dumps(local.data),
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == result.stderr == ""
 
 
 def test_wrapper_honors_interpreter_and_forwards_arguments(local, tmp_path):

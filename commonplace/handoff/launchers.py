@@ -6,8 +6,8 @@ registers it (``POST /api/handoffs/<id>/successor``). ``command``: run
 ``COMMONPLACE_HANDOFF_ID`` and ``COMMONPLACE_THREAD_ID``. ``webhook``: POST
 JSON with an ``X-Commonplace-Signature: sha256=<hmac>`` header, 10 s
 timeout, expects ``{"agent_ref", "url"?, "thread_id"?}``.
-Webhook destinations are owner configured: local/private addresses are allowed;
-redirects are never followed.
+Gateway commands and webhooks need operator opt-in. Webhook destinations must
+be public; redirects are never followed.
 """
 
 from __future__ import annotations
@@ -21,18 +21,62 @@ import re
 import subprocess
 import tempfile
 import threading
-from http.client import HTTPException
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import (
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
+from .launcher_policy import (
+    LauncherPolicyError,
+    require_enabled,
+    require_public_address,
+    validate_webhook_url,
+)
 from .models import Handoff, LauncherConfig, SuccessorRef
 
 
 class LaunchError(RuntimeError):
     pass
+
+
+class LaunchPolicyError(LaunchError):
+    pass
+
+
+class _PublicConnection:
+    def connect(self):
+        super().connect()
+        try:
+            require_public_address(self.sock.getpeername()[0])
+        except LauncherPolicyError as error:
+            self.close()
+            raise LaunchPolicyError(str(error)) from None
+
+
+class _PublicHTTPConnection(_PublicConnection, HTTPConnection):
+    pass
+
+
+class _PublicHTTPSConnection(_PublicConnection, HTTPSConnection):
+    pass
+
+
+class _PublicHTTPHandler(HTTPHandler):
+    def http_open(self, request):
+        return self.do_open(_PublicHTTPConnection, request)
+
+
+class _PublicHTTPSHandler(HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(_PublicHTTPSConnection, request, context=self._context)
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -130,9 +174,6 @@ def _webhook(config: LauncherConfig, handoff: Handoff, prompt: str, timeout: flo
     if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise LaunchError("The webhook timeout must be positive and finite.")
     try:
-        target = urlsplit(config.url)
-        if target.scheme not in ("http", "https") or not target.hostname:
-            raise LaunchError("The webhook URL must use HTTP or HTTPS.")
         body = json.dumps(
             {
                 "handoff_id": handoff.id,
@@ -159,7 +200,11 @@ def _webhook(config: LauncherConfig, handoff: Handoff, prompt: str, timeout: flo
         )
         # Only contact the configured launcher; never an environment proxy or
         # a redirect target which could receive the prompt and its signature.
-        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        # Check the connected peer too, before sending a request: DNS may have
+        # changed since URL validation.
+        opener = build_opener(
+            ProxyHandler({}), _NoRedirect(), _PublicHTTPHandler(), _PublicHTTPSHandler()
+        )
         with opener.open(request, timeout=timeout) as response:
             if not 200 <= response.status < 300:
                 raise LaunchError(f"Handoff webhook returned status {response.status}.")
@@ -198,6 +243,12 @@ def launch(
 
     Commands run in ``handoff.cwd`` when it is a directory, else in ``prompt_dir``.
     """
+    try:
+        require_enabled(config.kind)
+        if config.kind == "webhook":
+            validate_webhook_url(config.url)
+    except LauncherPolicyError as error:
+        raise LaunchPolicyError(str(error)) from None
     if config.kind == "client":
         return None
     if config.kind == "command":

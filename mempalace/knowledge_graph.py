@@ -40,6 +40,7 @@ import re
 import sqlite3
 import threading
 import unicodedata
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,7 @@ from .timeutil import utc_now_iso, utc_now_z
 
 DEFAULT_KG_PATH = paths.legacy_knowledge_graph_path()
 _MIN_ENTITY_CANDIDATE_LEN = 3
+_FACT_SOURCES_BACKFILL_VERSION = 1
 
 
 def knowledge_graph_notice(
@@ -129,6 +131,7 @@ def import_graph_rows(source_path: str, target_path: str, apply: bool = False) -
         target = kg._conn()
         target.execute("BEGIN IMMEDIATE")
         with target:
+            kg._backfill_fact_sources(target, writing=True)
             entities = {"added": 0, "present": 0}
             for row in _graph_import_rows(source, "entities"):
                 if target.execute("SELECT 1 FROM entities WHERE id=?", (row["id"],)).fetchone():
@@ -855,11 +858,11 @@ class KnowledgeGraph:
 
     def _init_db(self):
         conn = self._conn()
-        had_sources = (
+        new_graph = (
             conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sources'"
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='triples'"
             ).fetchone()
-            is not None
+            is None
         )
         conn.executescript("""
             PRAGMA journal_mode=WAL;
@@ -931,19 +934,45 @@ class KnowledgeGraph:
         from .fact_index import try_install
 
         self._fact_index_ready = try_install(conn)
-        if not had_sources:
-            # Facts filed before fact_sources existed keep their first source.
+        with conn:
+            self._backfill_fact_sources(conn, writing=new_graph)
+
+    def _backfill_fact_sources(self, conn, *, writing=False):
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= _FACT_SOURCES_BACKFILL_VERSION:
+            return
+        missing = (
+            "(t.source_thread IS NOT NULL OR t.source_drawer_id IS NOT NULL "
+            "OR t.source_file IS NOT NULL) AND NOT EXISTS "
+            "(SELECT 1 FROM fact_sources WHERE triple_id = t.id)"
+        )
+        probe = "SELECT 1 FROM triples t WHERE " + missing + " LIMIT 1"
+        pending = conn.execute(probe).fetchone() is not None
+        if not pending and not writing:
+            # An already-sourced, unmarked graph stays read-only on open. Its
+            # next normal write records completion before accepting new facts.
+            return
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        # Another opener may have completed the migration while we waited.
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= _FACT_SOURCES_BACKFILL_VERSION:
+            return
+        if pending or conn.execute(probe).fetchone() is not None:
             conn.execute(
                 "INSERT OR IGNORE INTO fact_sources (triple_id, source_thread, "
                 "source_seq_start, source_seq_end, source_drawer_id, source_file, "
-                "added_at, hub_stamp) SELECT id, source_thread, source_seq_start, "
-                "source_seq_end, source_drawer_id, source_file, "
-                "COALESCE(extracted_at, ?), hub_stamp FROM triples WHERE "
-                "source_thread IS NOT NULL OR source_drawer_id IS NOT NULL "
-                "OR source_file IS NOT NULL",
+                "added_at, hub_stamp) SELECT t.id, t.source_thread, t.source_seq_start, "
+                "t.source_seq_end, t.source_drawer_id, t.source_file, "
+                "COALESCE(t.extracted_at, ?), t.hub_stamp FROM triples t WHERE " + missing,
                 (utc_now_iso(),),
             )
-        conn.commit()
+        # This marker and the recovered sources commit or roll back together.
+        conn.execute(f"PRAGMA user_version = {_FACT_SOURCES_BACKFILL_VERSION}")
+
+    @contextmanager
+    def _write(self, conn):
+        with conn:
+            self._backfill_fact_sources(conn, writing=True)
+            yield
 
     def _migrate_schema(self, conn):
         """Backwards-compatible schema migration for older triples tables.
@@ -1044,7 +1073,7 @@ class KnowledgeGraph:
         props = json.dumps(_drop_none(properties or {}))
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 eid = self._resolve_entity_id(conn, name)
                 row = conn.execute("SELECT name FROM entities WHERE id = ?", (eid,)).fetchone()
                 rename = row is None or entity_id_for_name(row["name"]) == eid
@@ -1134,7 +1163,7 @@ class KnowledgeGraph:
         # Auto-create entities if they don't exist
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 sub_id = self._resolve_entity_id(conn, subject)
                 obj_id = self._resolve_entity_id(conn, obj)
                 conn.execute(
@@ -1233,7 +1262,7 @@ class KnowledgeGraph:
 
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 sub_id = self._resolve_entity_id(conn, subject)
                 obj_id = self._resolve_entity_id(conn, obj)
                 rows = conn.execute(
@@ -1333,7 +1362,7 @@ class KnowledgeGraph:
 
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 sub_id = self._resolve_entity_id(conn, subject)
                 old_id = self._resolve_entity_id(conn, old_obj)
                 new_id = self._resolve_entity_id(conn, new_obj)
@@ -1556,7 +1585,7 @@ class KnowledgeGraph:
 
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 sub_id = self._resolve_entity_id(conn, subject)
                 obj_id = self._resolve_entity_id(conn, obj)
                 for name, eid in ((subject, sub_id), (obj, obj_id)):
@@ -1815,7 +1844,7 @@ class KnowledgeGraph:
 
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 obj_id = self._resolve_entity_id(conn, obj)
                 row = conn.execute(
                     "SELECT * FROM triples WHERE id=? AND valid_to IS NULL",
@@ -2333,7 +2362,7 @@ class KnowledgeGraph:
             identity = {**identity, "id": row.get("triple_id")}
             with self._lock:
                 conn = self._conn()
-                with conn:
+                with self._write(conn):
                     same = _identical_triples(conn, identity)
                     if not same:
                         return {
@@ -2348,7 +2377,7 @@ class KnowledgeGraph:
         # value alone then, so an older replica cannot erase a supersede link.
         with self._lock:
             conn = self._conn()
-            with conn:
+            with self._write(conn):
                 report = {"id": row["id"], "applied": True}
                 if table == "triples":
                     row, report = _prepare_replicated_triple(conn, row)

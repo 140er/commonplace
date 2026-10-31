@@ -72,7 +72,7 @@ ROUTES = [
         "PUT",
         "/api/settings/handoff",
         {"scope": "task", "ref": "#142", "enabled": True},
-        "any",
+        "manage",
         200,
     ),
     (
@@ -290,7 +290,7 @@ class _Harness:
                 user_ref=user,
                 name=name,
                 client="test",
-                policy=Policy.build(scopes=scopes, read_wings=wings, trust="standard"),
+                policy=Policy.build(scopes=scopes, read_wings=wings, trust="trusted"),
                 actor=owner,
             )[1]
         self.server = self.gateway.build_server("127.0.0.1", 0)
@@ -403,10 +403,13 @@ def test_every_route_happy_path(hub, route):
 
 @pytest.mark.parametrize("route", ROUTES, ids=[row[0] for row in ROUTES])
 def test_every_route_scope_or_role_boundary(hub, route):
-    _, method, path, body, access, expected = route
+    name, method, path, body, access, expected = route
     status, result, _ = hub.request(method, path, body, token="wrong")
     if access == "any":
         assert status == expected
+    elif name in ("create", "set", "clear", "relaunch"):
+        assert status == 403 and "handoff:write" in result["error"]
+        assert not hub.calls
     else:
         assert (status, result) == (404, NOT_FOUND)
         assert not hub.calls
@@ -1015,9 +1018,9 @@ def test_output_defense_rejects_foreign_records_and_truncates_chain(hub, monkeyp
     [row for row in ROUTES if row[4] == "owner"],
     ids=[row[0] for row in ROUTES if row[4] == "owner"],
 )
-def test_owner_routes_use_workspace_role_without_requiring_extra_scopes(hub, route):
-    _, method, path, body, _, expected = route
-    assert hub.request(method, path, body, token="owner_empty")[0] == expected
+def test_owner_routes_require_handoff_scope(hub, route):
+    _, method, path, body, _, _ = route
+    assert hub.request(method, path, body, token="owner_empty")[0] == 403
 
 
 @pytest.mark.parametrize(

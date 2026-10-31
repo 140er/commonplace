@@ -65,16 +65,28 @@ def _query_stop_words(query, stop_words):
     return stop_words - names
 
 
-def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=None, now=None):
+def search_facts(
+    kg,
+    query,
+    *,
+    wings=None,
+    sensitivities=None,
+    limit=5,
+    as_of=None,
+    now=None,
+    query_is_sanitized=False,
+):
     """Readable, whole-word fact matches, with original source and authority.
 
     KG visibility and temporal predicates run in SQL before ranking. No fact
     score can consume a drawer slot. A source's latest observation controls
-    decay; approved facts never decay, including approved history.
+    decay; approved facts never decay, including approved history. Tool callers
+    can pass their already sanitized query without running the sanitizer again.
     """
     from . import _resolve_stop_words
 
-    query = sanitize_query(query)["clean_query"]
+    if not query_is_sanitized:
+        query = sanitize_query(query)["clean_query"]
     stop_words = _query_stop_words(query, FACT_STOP_WORDS | _resolve_stop_words(None))
     words = _words(query, stop_words)
     if not words:

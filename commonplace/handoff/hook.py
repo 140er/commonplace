@@ -25,6 +25,7 @@ unavailable locking falls back to normal compaction.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -472,6 +473,17 @@ def _run(argv, server: str, token: str):
         or address.fragment
     ):
         raise ValueError("Invalid gateway URL")
+    if address.scheme == "http":
+        try:
+            loopback = ipaddress.ip_address(address.hostname).is_loopback
+        except ValueError:
+            loopback = address.hostname.rstrip(".") == "localhost"
+        if not loopback:
+            print(
+                "Commonplace handoff: use HTTPS or a loopback HTTP URL; "
+                "plain HTTP sends credentials and transcripts without encryption; continuing normally.",
+                file=sys.stderr,
+            )
     data = json.load(sys.stdin)
     if not isinstance(data, dict):
         raise ValueError("Invalid hook input")

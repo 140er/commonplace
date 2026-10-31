@@ -29,6 +29,7 @@ from commonplace.handoff.models import (
     ThreadMeta,
 )
 from commonplace.handoff.thread_store import Chunk, ThreadConflict
+from commonplace.policy import Policy
 
 
 class FakeDB:
@@ -324,6 +325,7 @@ def rig(monkeypatch, tmp_path):
             connection="agent-1",
             role="member",
             actor="conn:agent-1",
+            policy=Policy.build(scopes=["handoff:write"], trust="trusted"),
         ),
         parse_calls=[],
         mirror_calls=[],

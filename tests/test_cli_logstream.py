@@ -126,6 +126,15 @@ def _task_workspace(path, branch="fix/search-starvation"):
 
 
 class TestLogstreamCli:
+    def test_append_preserves_drawer_reserved_keys_in_event_metadata(self, palace_path, capsys):
+        from mempalace.stored_text import RESERVED_METADATA
+
+        metadata = {**dict.fromkeys(RESERVED_METADATA, "literal"), "topic": "test"}
+        cmd_logstream(_append_args(palace_path, metadata=json.dumps(metadata)))
+        assert json.loads(capsys.readouterr().out)["metadata"] == metadata
+        cmd_logstream(_list_args(palace_path))
+        assert json.loads(capsys.readouterr().out)["events"][0]["metadata"] == metadata
+
     def test_append_then_list_json_round_trip(self, palace_path, capsys):
         cmd_logstream(_append_args(palace_path))
         appended = json.loads(capsys.readouterr().out)
@@ -449,6 +458,23 @@ class TestTaskCli:
 
 
 class TestArtifactCli:
+    def test_put_preserves_drawer_reserved_keys_in_artifact_metadata(self, palace_path, capsys):
+        from mempalace.stored_text import RESERVED_METADATA
+
+        metadata = {**dict.fromkeys(RESERVED_METADATA, "literal"), "topic": "test"}
+        cmd_artifact(_put_args(palace_path, "verbatim", metadata=json.dumps(metadata)))
+        artifact = json.loads(capsys.readouterr().out)
+        cmd_artifact(
+            SimpleNamespace(
+                palace=palace_path,
+                artifact_action="get",
+                artifact_id=artifact["id"],
+                out=None,
+                json=True,
+            )
+        )
+        assert json.loads(capsys.readouterr().out)["metadata"] == metadata
+
     PATCH = "diff --git a/x b/x\n+cli\n"
 
     def test_put_then_get_stdout_is_exact(self, palace_path, capsys):

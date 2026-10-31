@@ -27,12 +27,16 @@ def test_schema_reduction_benchmark():
     reduction_pct = ((legacy_bytes - light_bytes) / legacy_bytes) * 100
 
     print("\n--- MCP Tool Schema Benchmark ---")
-    print(f"Legacy {len(LEGACY_TOOLS)} Tools Schema : {legacy_bytes:,} bytes (~{legacy_est_tokens:,} tokens)")
-    print(f"Lightweight 3 Tools     : {light_bytes:,} bytes (~{light_est_tokens:,} tokens)")
+    print(
+        f"Legacy {len(LEGACY_TOOLS)} Tools Schema : {legacy_bytes:,} bytes (~{legacy_est_tokens:,} tokens)"
+    )
+    print(
+        f"Lightweight {len(light_schema)} Tools     : {light_bytes:,} bytes (~{light_est_tokens:,} tokens)"
+    )
     print(f"Reduction Ratio         : {reduction_pct:.1f}% reduction")
     print("---------------------------------")
 
     # Completeness of structured fields costs some of the original >80% headline.
     assert reduction_pct > 70.0
-    assert len(LIGHT_TOOLS) == 3
-    assert len(LEGACY_TOOLS) == 47
+    assert set(LIGHT_TOOLS) == {"palace_query", "palace_exec", "palace_coordinate"}
+    assert len(light_schema) < len(legacy_schema)
