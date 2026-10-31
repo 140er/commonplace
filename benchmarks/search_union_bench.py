@@ -46,7 +46,10 @@ COMMON_QUERIES = (
 
 
 def _latency(samples):
-    return {"p50": float(np.percentile(samples, 50)), "p95": float(np.percentile(samples, 95))}
+    return {
+        "p50": float(np.percentile(samples, 50)),
+        "p95": float(np.percentile(samples, 95, method="inverted_cdf")),
+    }
 
 
 def run(drawers=20_000, repeats=5, backend="sqlite_exact", wing="engineering", room="notes"):
