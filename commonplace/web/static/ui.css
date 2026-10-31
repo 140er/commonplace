@@ -263,14 +263,14 @@ button.cs-row:hover { filter: none; background: var(--surface); }
 @media (max-width: 640px) { .cs { --row: 28px; } .cs-head { padding: 12px 12px 6px; } .cs-body { max-height: 30vh; padding: 4px 12px 12px; } }
 
 /* Voice shares the composer's send row; recording uses its own red token. */
-.voice-control { position: relative; display: flex; flex: none; align-self: flex-end; gap: 1px; background: var(--bg); }
-.voice-control button { display: grid; place-items: center; min-width: 40px; min-height: 44px; padding: 6px 10px; background: var(--surface-3); color: var(--ink); font: inherit; }
-.voice-control [data-voice="language"] { font-size: 12px; }
+.voice-control { position: relative; display: flex; flex: none; align-self: flex-end; gap: 0; }
+.voice-control button { display: grid; place-items: center; min-width: 36px; min-height: 44px; padding: 6px 8px; background: none; color: var(--muted); font: inherit; }
+.voice-control [data-voice="language"] { min-width: 30px; padding: 6px 4px; font-size: 11px; font-weight: 700; }
+@media (hover: hover) { .voice-control > button:hover:not(:disabled) { color: var(--ink); } }
 .voice-control[data-state="recording"] [data-voice="mic"] { background: var(--rec); color: var(--accent-ink); }
+.voice-control[data-state="recording"] [data-voice="language"]:disabled { opacity: 1; cursor: default; }
+form:has(> .voice-control[data-state="recording"]) [data-draft] { box-shadow: inset 3px 0 0 var(--rec); }
 .voice-stop { width: 12px; height: 12px; background: currentColor; }
-.voice-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; min-width: 84px; padding: 1px; gap: 1px; background: var(--wait); }
-.voice-control .voice-menu button { align-self: stretch; width: 100%; justify-content: start; }
-.voice-menu [aria-checked="true"] { background: var(--ink); color: var(--bg); }
 .composer input, .space-composer textarea { width: 0; min-width: 0; }
 .reply-form:has(.voice-control) { flex-wrap: wrap; }
 .reply-form:has(.voice-control) input { min-width: 50px; }
@@ -278,3 +278,8 @@ button.cs-row:hover { filter: none; background: var(--surface); }
 .reply-form:has(.voice-control) > button { min-width: 36px; }
 .item.sel .voice-control button { background: var(--bg); color: var(--accent); }
 .item.sel .voice-control[data-state="recording"] [data-voice="mic"] { background: var(--rec); color: var(--accent-ink); }
+.voice-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; min-width: 72px; padding: 4px 0; gap: 0; background: var(--term); outline: 1px solid var(--wait); }
+.voice-control .voice-menu button[data-language] { display: flex; align-items: center; align-self: stretch; width: 100%; gap: 10px; min-height: 40px; padding: 6px 12px; background: none; color: var(--quiet); }
+.voice-menu button::before { content: ""; width: 6px; height: 6px; outline: 1px solid var(--wait); }
+.voice-control .voice-menu button[aria-checked="true"] { color: var(--ink); }
+.voice-menu [aria-checked="true"]::before { background: var(--ink); outline-color: var(--ink); }
