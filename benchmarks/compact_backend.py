@@ -14,8 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["OMP_NUM_THREADS"] = "2"
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 import numpy as np
 import zstandard as zstd
@@ -176,13 +176,13 @@ def storage_and_latency(root, size, *, chroma=False, progress=None, dominant=Fal
             "first_query_with_load_ms": round(load_ms, 3),
         }
         if backend.name == "compact":
+            from mempalace.mcp_server import _bulk_drawer_records, _collection_logical_drawer_record
             from mempalace.search_util import build_where_filter
-            from mempalace.mcp_server import _collection_logical_drawer_record, _bulk_drawer_records
 
             wing = build_where_filter("w7", known=[f"w{i}" for i in range(25)])
             where = build_where_filter("w7", "r9", known=[f"w{i}" for i in range(25)])
 
-            def phase():
+            def phase(col=col, q=q, wing=wing, where=where):
                 return {
                     "vector": timed(lambda: col.query(query_embeddings=[q], n_results=10)),
                     "vector_wing": timed(
@@ -237,6 +237,205 @@ def storage_and_latency(root, size, *, chroma=False, progress=None, dominant=Fal
     return results
 
 
+def drawer_metadata(i, wing, room):
+    """Seventeen synthetic fields, approximately 440 bytes when serialized."""
+    return {
+        "wing": wing,
+        "room": room,
+        "parent_drawer_id": f"p{i // 4}",
+        "source_file": f"source/file{i // 50}.md",
+        "filed_at": "2026-10-01T00:00:00Z",
+        "hall": "hall_events",
+        "chunk_index": i % 9,
+        "added_by": "convo-miner",
+        "entities": "topic-a;topic-b;project-c",
+        "authored_at": "2026-10-01T00:00:00Z",
+        "ingest_mode": "convos",
+        "extract_mode": "exchange",
+        "normalize_version": 4,
+        "id_recipe": 2,
+        "convo_chunker_version": 3,
+        "source_mtime": 1793390223.5,
+        "source_dir_id": f"dir-{i // 5000:04d}-0123456789abcdef",
+    }
+
+
+_LATENCY_WORKER = r"""
+import importlib.util, json, sys, time, threading
+import numpy as np
+import psutil
+if sys.argv[3] != '-':
+    spec=importlib.util.spec_from_file_location('mempalace.backends._compact_benchmark', sys.argv[3])
+    module=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=module
+    spec.loader.exec_module(module)
+    Backend=module.CompactBackend
+else:
+    from mempalace.backends.compact import CompactBackend as Backend
+b=Backend()
+try:
+    c=b.get_collection(sys.argv[2], 'bench', options={'read_only':sys.argv[1].startswith('probe')})
+    q=json.loads(sys.argv[4])
+    if sys.argv[1]=='write':
+        c.upsert(ids=['external'], documents=['synthetic external write'], metadatas=[json.loads(sys.argv[5])], embeddings=[q])
+    else:
+        loci=[]
+        if hasattr(c,'_load_loci'):
+            original=c._load_loci
+            def tracked(*args):
+                begin=time.perf_counter()
+                try:
+                    return original(*args)
+                finally:
+                    loci.append((time.perf_counter()-begin)*1000)
+            c._load_loci=tracked
+        process=psutil.Process()
+        peak=[process.memory_info().rss]
+        stopped=threading.Event()
+        def sample():
+            while not stopped.wait(.002):
+                peak[0]=max(peak[0],process.memory_info().rss)
+        sampler=threading.Thread(target=sample)
+        sampler.start()
+        try:
+            begin=time.perf_counter()
+            where={'wing':{'$in':['w3']}} if sys.argv[1]=='probe_filtered' else None
+            c.query(query_embeddings=[q], n_results=10, where=where, include=[])
+            elapsed=(time.perf_counter()-begin)*1000
+        finally:
+            peak[0]=max(peak[0],process.memory_info().rss)
+            stopped.set()
+            sampler.join()
+        cache=c._handle._vector_cache[1]
+        arrays=[getattr(cache, name) for name in ('matrix','rowids','norms','wing','room','rowid_index')] if hasattr(cache,'matrix') else list(cache[1:])
+        result={'cold_query_ms':elapsed,'cache_mib':sum(a.nbytes for a in arrays if isinstance(a,np.ndarray))/2**20}
+        result['peak_rss_mib']=peak[0]/2**20
+        result['loci_build_ms']=sum(loci)
+        print(json.dumps(result))
+finally:
+    b.close()
+"""
+
+
+def read_only_latency(
+    root, size, *, dominant=False, repeats=7, backend_type=CompactBackend, baseline_module=None
+):
+    """Time the searcher's read-only path; one synthetic disk store per case."""
+    import statistics
+    import subprocess
+    import sys
+
+    root = Path(root).resolve()
+    temporary = Path(tempfile.gettempdir()).resolve()
+    if root == temporary or temporary in root.parents:
+        raise ValueError(
+            "choose an explicit on-disk work directory outside the system temp directory"
+        )
+    if root.exists():
+        raise ValueError("benchmark store already exists")
+    backend = backend_type()
+    try:
+        writer = backend.get_collection(str(root), "bench", create=True)
+        rng = np.random.default_rng(77)
+        for start in range(0, size, 2000):
+            count = min(2000, size - start)
+            writer.add(
+                ids=[str(i) for i in range(start, start + count)],
+                documents=["synthetic searchable record"] * count,
+                metadatas=[
+                    drawer_metadata(
+                        i,
+                        "w0" if dominant and i < size * 0.8 else f"w{i % 25}",
+                        f"r{(i // 25) % 30}",
+                    )
+                    for i in range(start, start + count)
+                ],
+                embeddings=rng.normal(size=(count, 384)).tolist(),
+            )
+        query = rng.normal(size=384).tolist()
+
+        def worker(mode):
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _LATENCY_WORKER,
+                    mode,
+                    str(root),
+                    str(baseline_module) if baseline_module else "-",
+                    json.dumps(query),
+                    json.dumps(drawer_metadata(size, "w0", "r0")),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            return json.loads(completed.stdout) if mode.startswith("probe") else None
+
+        cold = [worker("probe") for _ in range(3)]
+        measurements = {key: statistics.median(sample[key] for sample in cold) for key in cold[0]}
+        filtered_cold = [worker("probe_filtered") for _ in range(3)]
+        measurements["cold_first_filtered_ms"] = statistics.median(
+            sample["cold_query_ms"] for sample in filtered_cold
+        )
+        measurements["loci_build_ms"] = statistics.median(
+            sample["loci_build_ms"] for sample in filtered_cold
+        )
+        measurements["metadata_keys"] = len(drawer_metadata(size // 2, "w0", "r0"))
+        measurements["metadata_bytes"] = len(
+            json.dumps(drawer_metadata(size // 2, "w0", "r0"), separators=(",", ":"))
+        )
+        reader = backend.get_collection(str(root), "bench", options={"read_only": True})
+
+        def query_ms(where=None):
+            start = time.perf_counter()
+            reader.query(query_embeddings=[query], n_results=10, where=where, include=[])
+            return (time.perf_counter() - start) * 1000
+
+        query_ms()
+        measurements["first_wing_filter_ms"] = query_ms({"wing": "w0"})
+        for name, where in {
+            "unfiltered": None,
+            "wing": {"wing": "w0"},
+            "room": {"room": "r0"},
+            "wing_room": {"wing": "w0", "room": "r0"},
+        }.items():
+            query_ms(where)
+            measurements[name + "_ms"] = statistics.median(query_ms(where) for _ in range(repeats))
+        own, own_filtered, writes = [], [], []
+        for _ in range(repeats):
+            begin = time.perf_counter()
+            writer.upsert(
+                ids=["own"],
+                documents=["synthetic own write"],
+                metadatas=[drawer_metadata(size, "w0", "r0")],
+                embeddings=[query],
+            )
+            writes.append((time.perf_counter() - begin) * 1000)
+            own_filtered.append(query_ms({"wing": {"$in": ["w3"]}}))
+            own.append(query_ms())
+        measurements["own_write_ms"] = statistics.median(writes)
+        measurements["unfiltered_after_filtered_own_write_ms"] = statistics.median(own)
+        measurements["filtered_after_own_write_ms"] = statistics.median(own_filtered)
+        external, filtered, fanout = [], [], []
+        for _ in range(5):
+            worker("write")
+            filtered.append(query_ms({"wing": {"$in": ["w3"]}}))
+            worker("write")
+            fanout.append(sum(query_ms({"wing": {"$in": [wing]}}) for wing in ("w3", "w7", "w11")))
+            worker("write")
+            external.append(query_ms())
+        measurements["query_after_external_write_ms"] = statistics.median(external)
+        measurements["filtered_after_external_write_ms"] = statistics.median(filtered)
+        measurements["fanout3_after_external_write_ms"] = statistics.median(fanout)
+        return {key: round(value, 3) for key, value in measurements.items()}
+    finally:
+        backend.close()
+        if root.exists():
+            shutil.rmtree(root)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sizes", type=int, nargs="*", default=[100000, 1000000])
@@ -256,7 +455,22 @@ def main():
         action="store_true",
         help="80 percent of drawers share one wing; compact only",
     )
+    parser.add_argument(
+        "--read-only-latency",
+        action="store_true",
+        help="Measure synthetic balanced and 80-percent-wing read-only search paths",
+    )
     args = parser.parse_args()
+    if args.read_only_latency:
+        result = {}
+        for size in args.sizes:
+            for dominant in (False, True):
+                name = f"{size}-{'dominant' if dominant else 'balanced'}"
+                result[name] = read_only_latency(args.work_dir / name, size, dominant=dominant)
+                print(json.dumps({name: result[name]}), flush=True)
+                if args.output:
+                    args.output.write_text(json.dumps(result, indent=2) + "\n")
+        return
     args.work_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="compact-gates-", dir=args.work_dir) as tmp:
         root = Path(tmp)
