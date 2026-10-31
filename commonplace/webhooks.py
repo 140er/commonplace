@@ -431,7 +431,7 @@ def _payload(db, event):
         message = f"test wake {event['subject']} {url}"
     return json.dumps(
         {
-            # Read by agents' own wake endpoints (Chief, Grok routines, T3).
+            # Read by agents' configured wake endpoints.
             "agent": "commonplace",
             "task": f"{event['subject']} {title}" if title else event["subject"],
             "need": "decision" if decision else "info",

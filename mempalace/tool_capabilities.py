@@ -40,6 +40,7 @@ TOOL_CAPABILITIES = {
     "mempalace_kg_save": ("write", "mutating peer_exempt lock_free"),
     "mempalace_kg_timeline": ("read", "lock_free"),
     "mempalace_kg_stats": ("read", "lock_free"),
+    "mempalace_kg_list_wings": ("read", "lock_free"),
     "mempalace_traverse": ("read", ""),
     "mempalace_find_tunnels": ("read", ""),
     "mempalace_graph_stats": ("read", ""),

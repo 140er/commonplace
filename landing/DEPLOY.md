@@ -2,7 +2,7 @@
 
 The site is plain static files in `landing/public/`. There is no build step: the
 folder you check is the folder nginx serves. One `commonplace-site` container on
-zurvur serves both domains. `landing/nginx.conf` routes by host:
+a deployment server serves both domains. `landing/nginx.conf` routes by host:
 
 | Host | Answer |
 |---|---|
@@ -25,38 +25,38 @@ The request check opens each page at 1440 and 390 px in headless Chrome, scrolls
 clicks every tab and row, and fails on any request to another host. That is milestone
 W's done test.
 
-## 1. The container on zurvur
+## 1. The site container
 
 ```bash
-mkdir -p /mnt/cache/appdata/commonplace-site
+mkdir -p /path/to/data/commonplace-site
 git clone --depth 1 --branch develop https://github.com/140er/mempalace.git \
-  /mnt/cache/appdata/commonplace-site/repo
+  /path/to/data/commonplace-site/repo
 
 docker run -d --name commonplace-site --restart unless-stopped \
   --network <the network Nginx Proxy Manager is on> \
-  -v /mnt/cache/appdata/commonplace-site/repo/landing/public:/usr/share/nginx/html:ro \
-  -v /mnt/cache/appdata/commonplace-site/repo/landing:/etc/nginx/conf.d:ro \
+  -v /path/to/data/commonplace-site/repo/landing/public:/usr/share/nginx/html:ro \
+  -v /path/to/data/commonplace-site/repo/landing:/etc/nginx/conf.d:ro \
   nginx:1.27-alpine
 ```
 
 - Mount the `landing` folder as `conf.d`, not the single `nginx.conf` file.
   `git pull` replaces files, and a single-file bind mount keeps serving the old copy.
   nginx only includes `*.conf`, so `nginx.conf` is the one file it reads from there.
-- The appdata share stays cache-only (PRODUCT-DESIGN §14).
+- Keep live files on persistent local storage (PRODUCT-DESIGN §14).
 - No port is published. NPM reaches the container as `commonplace-site:80` on the shared
   network. Find NPM's network with `docker inspect <npm container> -f '{{json .NetworkSettings.Networks}}'`.
-- Smoke test from zurvur:
+- Smoke test from the deployment server:
   ```bash
   docker run --rm --network <same network> curlimages/curl -sI -H 'Host: cmmn.dev' http://commonplace-site/gh
   # → HTTP/1.1 302, location: https://github.com/140er/mempalace
   ```
 
 **Updating** is a pull. Pages change at once; a changed `nginx.conf` needs a reload.
-For cron, use an Unraid User Scripts entry, every 15 minutes:
+For an optional scheduled update, run a host-managed job:
 
 ```bash
 #!/bin/bash
-cd /mnt/cache/appdata/commonplace-site/repo || exit 1
+cd /path/to/data/commonplace-site/repo || exit 1
 before=$(git rev-parse HEAD:landing/nginx.conf)
 git pull --ff-only -q
 [ "$(git rev-parse HEAD:landing/nginx.conf)" != "$before" ] && docker exec commonplace-site nginx -s reload
@@ -74,32 +74,26 @@ Turn on HSTS once it has run cleanly for a week. `.dev` is on the browsers' HSTS
 list, so `cmmn.dev` works over HTTPS only and does nothing until its certificate exists.
 
 Use the DNS challenge with a Cloudflare API token (Zone, DNS, Edit, on both zones). It works
-whether or not port 80 reaches zurvur, and whether or not the records are proxied.
+whether or not port 80 reaches the deployment server, and whether or not the records are proxied.
 
-## 3. Cloudflare: why commonplace.run fails today
+## 3. DNS and optional proxy service
 
-Checked on 2026-10-30 from t3code-home: both zones use Cloudflare's nameservers
-(`ed`, `sonia`), but neither has any A, AAAA or CNAME record, for the apex or for `www`.
-`dig +short commonplace.run` and `dig +short @1.1.1.1 cmmn.dev` return nothing, so from
-here the names don't resolve at all. A Cloudflare 500 can't come from a record that doesn't
-exist. If a browser shows one, something else in the zone is answering: a Worker route, a
-Pages custom domain, or a Redirect or Origin rule left over from registration. Remove it,
-then add the records. Fix it with
-one of these.
+Configure DNS for the deployment you operate. The following are example
+approaches, not an inventory of a running installation.
 
-**A. Proxied records to zurvur (the PRODUCT-DESIGN §14 path).** Use this when the router
+**A. Proxied records to the deployment server.** Use this when the router
 forwards 80/443 to NPM.
 
-- DNS, both zones: `A @ <zurvur's public IP>` and `CNAME www @`, both **Proxied**. That
+- DNS, both zones: `A @ <server-public-ip>` and `CNAME www @`, both **Proxied**. That
   keeps the home IP out of public DNS.
 - SSL/TLS mode: **Full (strict)**. NPM holds a real certificate, so strict works. "Flexible"
   combined with NPM's Force SSL loops forever.
-- A residential IP changes, so run a DDNS updater on zurvur (for example the
+- A residential IP changes, so run a DDNS updater on the deployment server (for example the
   `favonia/cloudflare-ddns` container) for `commonplace.run`, `www.commonplace.run`,
   `cmmn.dev` and `www.cmmn.dev`.
 
 **B. Cloudflare Tunnel.** Use this if there is no port forwarding (CGNAT, or a router you
-can't change). Run a `cloudflared` container on zurvur, and add public hostnames for all
+can't change). Run a `cloudflared` container on the deployment server, and add public hostnames for all
 four names pointing to `http://commonplace-site:80`. Cloudflare creates the DNS records and
 handles TLS, so NPM isn't needed for the site.
 

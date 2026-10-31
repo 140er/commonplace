@@ -33,7 +33,7 @@ def test_fact_save_merges_and_replaces(hub):
     text, error = _save(
         hub,
         token,
-        subject="Jeffrey",
+        subject="Avery",
         predicate="works_at",
         object="Acme",
         source={"thread": "mcp:t1", "seq_start": 3},
@@ -44,7 +44,7 @@ def test_fact_save_merges_and_replaces(hub):
     text, _ = _save(
         hub,
         token,
-        subject="Jeffrey",
+        subject="Avery",
         predicate="works_at",
         object="Acme",
         source={"thread": "mcp:t2", "seq_start": 8},
@@ -53,13 +53,13 @@ def test_fact_save_merges_and_replaces(hub):
     text, _ = _save(
         hub,
         token,
-        subject="Jeffrey",
+        subject="Avery",
         predicate="works_at",
         object="Initech",
         valid_from="2026-01-01",
     )
     assert text.endswith('replacing "Acme"')
-    facts = {f["object"]: f for f in _facts(hub, "Jeffrey")}
+    facts = {f["object"]: f for f in _facts(hub, "Avery")}
     assert facts["Acme"]["status"] == "superseded" and facts["Acme"]["wing"] == "shared"
     assert [s["source_thread"] for s in facts["Acme"]["sources"]] == ["mcp:t1", "mcp:t2"]
     assert facts["Initech"]["current"]

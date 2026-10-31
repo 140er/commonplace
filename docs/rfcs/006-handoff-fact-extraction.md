@@ -13,4 +13,4 @@ Design before implementation:
 
 The deterministic pass is deliberately conservative. Unsupported wording remains searchable in the verbatim chat and drawer fallback. Step 6 will rank facts ahead of drawers while preserving that fallback.
 
-The single Opus fix round adds precision scoring over every filed subject, adversarial wrapper/qualifier fixtures, opaque fact event references, scheduler failure isolation, and production shutdown of background indexing before permanent worker shutdown. Speaker attribution is deferred rather than inferred from a token owner or transcript role.
+The review fixes add precision scoring over every filed subject, adversarial wrapper/qualifier fixtures, opaque fact event references, scheduler failure isolation, and production shutdown of background indexing before permanent worker shutdown. Speaker attribution is deferred rather than inferred from a token owner or transcript role.

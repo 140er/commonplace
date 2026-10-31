@@ -152,7 +152,7 @@ def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
 
 def test_mcp_decide_without_a_version_still_works(hub, owner, agent):
     created = agent.ask("Proceed?", options=["yes"], board="work")
-    token = hub.owner_token("chief")
+    token = hub.owner_token("coordinator")
     response = hub.rpc(
         token,
         "tools/call",

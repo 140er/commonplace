@@ -83,13 +83,13 @@ gateway, using the gateway's `COMMONPLACE_DATA` directory. This also works
 when the source model has hit its session limit: it reads the saved native
 transcript without calling that model.
 
-Claude → Sol:
+Claude Code → Codex:
 
 ```bash
 commonplace handoff start --thread '<t3-thread-id>' --to codex/gpt-6.1-sol --effort max --workspace personal
 ```
 
-Sol → Claude Opus:
+Codex → Claude Code:
 
 ```bash
 commonplace handoff start --thread '<t3-thread-id>' --to claude-code/claude-opus-5-5 --effort high --workspace personal
@@ -98,8 +98,8 @@ commonplace handoff start --thread '<t3-thread-id>' --to claude-code/claude-opus
 Replace the thread ID with the source T3 ID, including `mcp:` when present.
 `claude-code` and `claude` map to T3's default `claudeAgent` instance;
 `codex` stays `codex`. Other configured T3 instance IDs pass through.
-Models use their exact T3 catalog slug; the examples select Sol and Opus
-5.5. T3 validates the selected instance, model and effort.
+Models use their exact T3 catalog slug; the examples select explicit model
+IDs. T3 validates the selected instance, model and effort.
 
 Add `--note 'your exact continuation instructions'` for a verbatim note.
 `--dry-run` prints the resolved checkout, native transcript paths, settings
@@ -180,7 +180,7 @@ drivers, and mixed native formats instead of handing over a partial
 latest-message view. This state-schema dependency is covered by fake-T3
 tests and may need updating after a T3 schema change.
 
-### Setup on t3code-home
+### Local setup
 
 This is an opt-in setup recipe; installing the feature does not run it.
 Use the existing local gateway's data directory and workspace name in
@@ -197,9 +197,8 @@ any existing `successor_argv`):
 ```json
 {
   "workspaces": {
-    "~/work/mempalace": "personal",
-    "~/work/simsteer": "personal",
-    "~/work/schilderen-op-nummer": "personal"
+    "~/projects/example-app": "personal",
+    "~/projects/example-library": "personal"
   }
 }
 ```
@@ -228,13 +227,12 @@ For automatic threshold handoffs too, set `COMMONPLACE_URL` and a
 workspace-scoped `COMMONPLACE_TOKEN` in the environment that starts T3's
 agents, then merge the Claude and Codex hook definitions in the next section
 into **user-level** hook configuration. Use the absolute wrapper path
-`/home/jeffrey/work/mempalace/hooks/commonplace_handoff_hook.sh` and the
+`/path/to/commonplace/hooks/commonplace_handoff_hook.sh` and the
 appropriate `--client`. Review Codex's hook definitions as described below.
 Choose `successor_argv` only if automatic hooks should launch a static
-successor. All three checkouts then use those user-level hooks and the
-workspace setting. Keep credentials and local setup outside the public
-simsteer and schilderen-op-nummer repositories; do not commit hook
-configuration or this machine's paths there.
+successor. Mapped checkouts then use those user-level hooks and the
+workspace setting. Keep credentials and local setup outside public
+repositories; do not commit hook configuration or machine-specific paths.
 
 ## When it triggers
 

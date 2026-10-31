@@ -155,7 +155,7 @@ def test_untrusted_writes_land_in_the_inbox_with_a_stamp(hub):
         "mempalace_add_drawer",
         wing="shared",
         room="facts",
-        content="Jeffrey likes tea",
+        content="Avery likes tea",
         added_by="claude",
     )
     assert result["success"] and result["wing"] == "inbox"
