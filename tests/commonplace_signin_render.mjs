@@ -80,6 +80,7 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
     window: { addEventListener() {} },
     digestSpeech: () => ({ stop() {} }),
     voiceInput: () => voice,
+    rulesHandlers: () => ({ stale: false, force: false, busy: () => false, update() {} }),
     setInterval() {}, setTimeout() {}, clearTimeout() {},
     async api(path) {
       calls.push(path);

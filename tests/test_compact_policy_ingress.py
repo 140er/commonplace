@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from mempalace.stored_text import KEYWORD_ONLY, user_tool_arguments
+from mempalace.stored_text import KEYWORD_ONLY, RESERVED_METADATA, user_tool_arguments
 
 
 @pytest.mark.parametrize(
@@ -26,7 +26,9 @@ def test_mcp_ingress_strips_reserved_policy(name, arguments, monkeypatch):
 
     monkeypatch.setitem(server.TOOLS[name], "handler", handler)
     monkeypatch.setattr(server, "_mcp_tool_preflight_refusal", lambda *args: None)
-    error, _ = server.call_tool(1, {"name": name, "arguments": {**arguments, KEYWORD_ONLY: True}})
+    error, _ = server.call_tool(
+        1, {"name": name, "arguments": {**arguments, **dict.fromkeys(RESERVED_METADATA, True)}}
+    )
     assert error is None
     assert seen == [arguments]
 
@@ -34,7 +36,7 @@ def test_mcp_ingress_strips_reserved_policy(name, arguments, monkeypatch):
 def test_cli_metadata_strips_reserved_policy():
     from mempalace import cli
 
-    metadata = {KEYWORD_ONLY: True, "topic": "normal"}
+    metadata = {**dict.fromkeys(RESERVED_METADATA, True), "topic": "normal"}
     assert cli._parse_metadata_arg(json.dumps(metadata)) == {"topic": "normal"}
 
 
@@ -44,13 +46,16 @@ def test_hub_forwarding_strips_metadata_without_mutating_caller(monkeypatch):
     client = HubClient.__new__(HubClient)
     post = Mock(return_value={})
     monkeypatch.setattr(client, "post", post)
-    arguments = {KEYWORD_ONLY: True, "metadata": {KEYWORD_ONLY: True, "wing": "w"}}
+    arguments = {
+        **dict.fromkeys(RESERVED_METADATA, True),
+        "metadata": {**dict.fromkeys(RESERVED_METADATA, True), "wing": "w"},
+    }
     client.call_tool("mempalace_add_drawer", arguments)
     assert post.call_args.args[0]["params"]["arguments"] == {"metadata": {"wing": "w"}}
     assert arguments["metadata"][KEYWORD_ONLY] is True
-    assert user_tool_arguments({"metadatas": [{KEYWORD_ONLY: True, "wing": "w"}]}) == {
-        "metadatas": [{"wing": "w"}]
-    }
+    assert user_tool_arguments(
+        {"metadatas": [{**dict.fromkeys(RESERVED_METADATA, True), "wing": "w"}]}
+    ) == {"metadatas": [{"wing": "w"}]}
 
 
 def test_external_source_adapter_metadata_strips_reserved_policy(tmp_path):
@@ -59,12 +64,12 @@ def test_external_source_adapter_metadata_strips_reserved_policy(tmp_path):
 
     collection = Mock()
     context = PalaceContext(collection, Mock(), str(tmp_path))
-    metadata = {KEYWORD_ONLY: True, "wing": "w"}
+    metadata = {**dict.fromkeys(RESERVED_METADATA, True), "wing": "w"}
     context.upsert_drawer(
         DrawerRecord(content="verbatim", source_file="source.txt", metadata=metadata)
     )
     stored = collection.upsert.call_args.kwargs["metadatas"][0]
-    assert KEYWORD_ONLY not in stored
+    assert not RESERVED_METADATA.intersection(stored)
     assert metadata[KEYWORD_ONLY] is True
 
 

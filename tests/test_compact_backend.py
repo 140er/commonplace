@@ -722,6 +722,34 @@ def test_response_hides_keyword_only_marker():
     assert meta[KEYWORD_ONLY] is True
 
 
+@pytest.mark.parametrize("write", ["add", "upsert", "update"])
+def test_fts_uses_whole_content_span_hints(compact, write):
+    import base64
+    import random
+
+    from mempalace.index_hygiene import find_base64_spans
+    from mempalace.stored_text import IndexSource
+
+    _, _, col = compact
+    payload = base64.b64encode(random.Random(7).randbytes(900)).decode()
+    whole = 'screenshot="' + payload + '" searchable prose'
+    # A short boundary fragment cannot be detected without whole-content hints.
+    start, end = 11, 91
+    document = whole[start:end]
+    assert not find_base64_spans(document)
+    metadata = IndexSource(whole).metadata(start, end)
+    if write != "add":
+        col.add(ids=["chunk"], documents=["previous prose"], embeddings=[[1, 0]])
+    getattr(col, write)(
+        ids=["chunk"], documents=[document], metadatas=[metadata], embeddings=[[1, 0]]
+    )
+    hits = col.lexical_search(query="base64").hits
+    assert [hit.id for hit in hits] == ["chunk"]
+    assert hits[0].document == document
+    assert not col.lexical_search(query=document).hits
+    assert col.get(ids=["chunk"]).documents == [document]
+
+
 def test_vector_wing_mask_after_analyze_reads_only_index_rowids(compact):
     from mempalace.search_util import build_where_filter
 

@@ -331,7 +331,8 @@ class CompactCollection(SQLiteExactCollection):
                 self._put_vector(cur, rowid, cid, blob, scale, dim)
                 cur.execute("DELETE FROM docs_fts WHERE rowid=?", (rowid,))
                 cur.execute(
-                    "INSERT INTO docs_fts(rowid,document) VALUES (?,?)", (rowid, index_text(doc))
+                    "INSERT INTO docs_fts(rowid,document) VALUES (?,?)",
+                    (rowid, index_text(doc, meta)),
                 )
             self._train_dictionary(cur, cid)
             if prepared:
@@ -384,11 +385,11 @@ class CompactCollection(SQLiteExactCollection):
                     ).compress(raw)
                     sets.extend(["document=?", "dictionary_id=?", "raw_size=?"])
                     values.extend([compressed, did, len(raw)])
-                updates.append((row[0], sets, values, doc, dim, vector_update))
+                updates.append((row[0], sets, values, doc, dim, vector_update, metas[0]))
             self._ensure_collection_dimension(cur, cid, [u[4] for u in updates if u[4] is not None])
             if updates:
                 self._record_pending_identity(cur)
-            for rowid, sets, values, doc, _, vector_update in updates:
+            for rowid, sets, values, doc, _, vector_update, meta in updates:
                 if vector_update is not None:
                     self._put_vector(cur, rowid, cid, *vector_update)
                 cur.execute(
@@ -398,7 +399,7 @@ class CompactCollection(SQLiteExactCollection):
                     cur.execute("DELETE FROM docs_fts WHERE rowid=?", (rowid,))
                     cur.execute(
                         "INSERT INTO docs_fts(rowid,document) VALUES (?,?)",
-                        (rowid, index_text(doc)),
+                        (rowid, index_text(doc, meta)),
                     )
 
     def _select(

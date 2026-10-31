@@ -661,3 +661,28 @@ def test_audit_fields_are_capped(hub):
     hub.call(token, "mempalace_add_drawer", wing="w" * 5_000, room="r", content="c")
     for entry in hub.db.audit_entries(limit=5):
         assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200
+
+
+def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypatch):
+    from commonplace.gateway import WorkerClient
+    from mempalace.stored_text import RESERVED_METADATA
+
+    forwarded = []
+    original = WorkerClient.post
+
+    def record(self, principal, request):
+        if request.get("method") == "tools/call":
+            forwarded.append(request["params"]["arguments"])
+        return original(self, principal, request)
+
+    monkeypatch.setattr(WorkerClient, "post", record)
+    result, _ = hub.call(
+        hub.owner_token(),
+        "mempalace_add_drawer",
+        wing="shared",
+        room="notes",
+        content="verbatim imported document",
+        **dict.fromkeys(RESERVED_METADATA, "forged"),
+    )
+    assert result["success"]
+    assert forwarded and all(not RESERVED_METADATA.intersection(args) for args in forwarded)
