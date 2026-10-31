@@ -11,6 +11,7 @@ from mempalace.backends import embedding_wrapper as ew
 from mempalace.index_hygiene import find_base64_spans
 from mempalace.stored_text import (
     INDEX_SPANS,
+    RESERVED_METADATA,
     IndexSource,
     chunk_index_metadata,
     encode_record,
@@ -120,16 +121,21 @@ class Recorder:
         return [[1.0] + [0.0] * (self.dimension - 1) for _ in input]
 
 
-@pytest.mark.parametrize("backend", ["sqlite_exact", "chroma"])
+@pytest.mark.parametrize("backend", ["sqlite_exact", "chroma", "compact"])
 def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypatch, backend):
     from mempalace.backends.base import PalaceRef
     from mempalace.backends.chroma import ChromaBackend
+    from mempalace.backends.compact import CompactBackend
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
     recorder = Recorder()
     monkeypatch.setattr(ew, "_get_document_embedder", lambda: recorder)
     monkeypatch.setattr("mempalace.embedding.configured_embedding_function", lambda: recorder)
-    instance = SQLiteExactBackend() if backend == "sqlite_exact" else ChromaBackend()
+    instance = {
+        "sqlite_exact": SQLiteExactBackend,
+        "chroma": ChromaBackend,
+        "compact": CompactBackend,
+    }[backend]()
     inner = instance.get_collection(
         palace=PalaceRef(id=str(tmp_path), local_path=str(tmp_path)),
         collection_name="test_drawers",
@@ -239,7 +245,7 @@ def test_mcp_writes_and_update_preserve_full_text_and_hide_hints(
     )
 
 
-def test_mcp_ingress_strips_hint_before_dispatch(monkeypatch):
+def test_mcp_ingress_strips_all_reserved_metadata_before_dispatch(monkeypatch):
     from mempalace import mcp_server as mcp
 
     seen = {}
@@ -257,15 +263,15 @@ def test_mcp_ingress_strips_hint_before_dispatch(monkeypatch):
         {
             "name": "mempalace_add_drawer",
             "arguments": {
-                INDEX_SPANS: "forged",
-                "metadata": {INDEX_SPANS: "forged", "wing": "test"},
+                **dict.fromkeys(RESERVED_METADATA, "forged"),
+                "metadata": {**dict.fromkeys(RESERVED_METADATA, "forged"), "wing": "test"},
             },
         },
     )
     assert seen == {"metadata": {"wing": "test"}}
 
 
-def test_cli_hub_forwarding_strips_hint_before_serialization(monkeypatch):
+def test_cli_hub_forwarding_strips_all_reserved_metadata_before_serialization(monkeypatch):
     from mempalace.hub_client import HubClient
 
     client = object.__new__(HubClient)
@@ -273,7 +279,11 @@ def test_cli_hub_forwarding_strips_hint_before_serialization(monkeypatch):
     monkeypatch.setattr(client, "post", lambda request, **kwargs: seen.append(request))
     client.call_tool(
         "mempalace_add_drawer",
-        {"content": "verbatim", INDEX_SPANS: "forged", "metadata": {INDEX_SPANS: "forged"}},
+        {
+            "content": "verbatim",
+            **dict.fromkeys(RESERVED_METADATA, "forged"),
+            "metadata": dict.fromkeys(RESERVED_METADATA, "forged"),
+        },
     )
     assert seen[0]["params"]["arguments"] == {"content": "verbatim", "metadata": {}}
 
@@ -424,7 +434,7 @@ def test_adapter_and_exchange_metadata_cannot_forge_hints():
             content="verbatim",
             source_file="fixture.txt",
             chunk_index=0,
-            metadata={INDEX_SPANS: "forged"},
+            metadata=dict.fromkeys(RESERVED_METADATA, "forged"),
         )
     )
     file_conversation_exchange(
@@ -434,10 +444,10 @@ def test_adapter_and_exchange_metadata_cannot_forge_hints():
         text="verbatim exchange",
         source_file="fixture.txt",
         agent="fixture",
-        extra_metadata={INDEX_SPANS: "forged", "tag": "keep"},
+        extra_metadata={**dict.fromkeys(RESERVED_METADATA, "forged"), "tag": "keep"},
     )
     assert len(writes) == 2
-    assert all(INDEX_SPANS not in write["metadatas"][0] for write in writes)
+    assert all(not RESERVED_METADATA.intersection(write["metadatas"][0]) for write in writes)
     assert writes[1]["metadatas"][0]["tag"] == "keep"
 
 

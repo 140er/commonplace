@@ -87,3 +87,42 @@ def fields(row):
 
 def may_replace_approved(thread=None, url=None):
     return evidence(thread, url)["approval_status"] == "approved"
+
+
+def imported_fields(row):
+    """Read stored evidence without borrowing the importing caller's authority.
+
+    Approval can have an agent as its original author. It still needs the
+    separate person and navigable approval link minted by a person save.
+    Legacy caller stamps and an approval label alone establish nothing.
+    """
+    result = {key: row.get(key) for key in COLUMNS}
+    for key in ("origin_kind", "origin_id", "approval_status"):
+        result[key] = result[key] or "unknown"
+    approved_by = result["approved_by"]
+    try:
+        link = source_link(url=result["approval_link"])
+    except ValueError:
+        link = None
+    approved = (
+        result["approval_status"] == "approved"
+        and isinstance(approved_by, str)
+        and bool(approved_by.strip())
+        and link is not None
+    )
+    if not approved:
+        if result["approval_status"] == "approved":
+            result["approval_status"] = "unknown"
+        result["approved_by"] = result["approval_link"] = None
+    return result
+
+
+def merge_imported_approval(conn, triple_id, row):
+    """Add valid person approval without replacing any existing approval proof."""
+    fields = imported_fields(row)
+    if fields["approval_status"] == "approved":
+        conn.execute(
+            "UPDATE triples SET approval_status='approved', approved_by=?, approval_link=? "
+            "WHERE id=? AND approval_status != 'approved'",
+            (fields["approved_by"], fields["approval_link"], triple_id),
+        )

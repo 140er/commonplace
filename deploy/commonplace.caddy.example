@@ -1,8 +1,8 @@
-# Replaces /etc/caddy/sites/commonplace.caddy; imported by edge1's Caddyfile.
-edge1.tail6cee8c.ts.net {
-	bind 100.76.209.1
+# Example private site. Copy to an operator-owned Caddy configuration.
+hub.example.com {
+	bind 192.0.2.10
 	encode zstd gzip
-	# Tailscale HTTPS is already configured on edge1. Keep its Caddy global config.
+	# Configure HTTPS for your private hostname in the host Caddy configuration.
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
@@ -20,19 +20,19 @@ edge1.tail6cee8c.ts.net {
 	}
 
 	handle {
-		root * /srv/commonplace/app/landing/public
+		root * /path/to/commonplace/app/landing/public
 		header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
 		file_server
 	}
 }
 
 # Plain HTTP fallback on the tailnet IP.
-http://100.76.209.1 {
-	bind 100.76.209.1
+http://192.0.2.10 {
+	bind 192.0.2.10
 	reverse_proxy 127.0.0.1:8765
 }
 
-# Public hosts: enable only after Jeffrey's OK and DNS/TLS preparation.
+# Public hosts: enable after the operator prepares DNS and TLS.
 # Exact 302 short-link table from website PR #8's landing/nginx.conf.
 # These belong only to cmmn.dev; /connect/ on the tailnet serves the website.
 # cmmn.dev, www.cmmn.dev {

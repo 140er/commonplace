@@ -1,6 +1,6 @@
 # Social sign-in
 
-Buttons appear after all of a provider's variables are in `/srv/commonplace/.env` on edge1 and the gateway restarts.
+Buttons appear after all of a provider's variables are in the gateway's operator-owned env file and the gateway restarts.
 With none set, sign-in stays unchanged. Keep credentials in that file only.
 
 Use **Commonplace** as the app name and `https://commonplace.run` as the homepage/website URL where requested. The gateway requests the scopes below.
@@ -43,5 +43,5 @@ Set `COMMONPLACE_SIGNUP=closed` to turn off new-account sign-up; only existing a
 Known provider accounts return to the same user; a verified email matching an existing account links to it.
 Unverified email never links or creates an account; an already linked provider account uses its saved identity.
 
-Google, GitHub and Discord sign-in are free. Apple requires the paid Developer Program: US$99/year; local pricing is shown at checkout.
+Google, GitHub and Discord sign-in are free. Apple requires the paid Developer Program: US$99/year; local pricing is shown at checkout before the owner approves enrollment.
 X uses prepaid API credits: one `GET /2/users/me` per sign-in is approximately US$0.01 at the published user-read rate; repeat reads of the same user within a UTC day are generally deduplicated. Confirm the rate in the console before funding.

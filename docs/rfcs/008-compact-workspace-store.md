@@ -71,7 +71,7 @@ verbatim chunks without hints rather than losing the source. The hint is removed
 from drawer arguments and public responses; it never changes the document returned by `get_drawer`.
 
 The embedding wrapper supplies explicit vectors on Chroma and the other vector
-backends. SQLite's `docs_fts` receives the same core index view. Chroma's own FTS
+backends. The `sqlite_exact` and `compact` backends' `docs_fts` rows receive the same core index view, including persisted span hints. Chroma's own FTS
 continues to index the stored document: its internal FTS cannot be given separate
 index text. A0 therefore does not remove base64 from Chroma's internal word index. Remote
 plugin lexical paths (Qdrant, Milvus and pgvector) also retain their stored-text

@@ -12,6 +12,6 @@ agent's context passes the threshold:
    ``thread_recall`` / ``thread_get`` MCP tools, the REST API).
 
 If storing fails, no successor starts: the client compacts as usual and an
-error event goes out (``service``). Design and part owners: PLAN.md in the
-notes repo; contracts live in ``models``.
+error event goes out (``service``). See docs/handoff.md for setup and API;
+contracts live in ``models``.
 """

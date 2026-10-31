@@ -1772,8 +1772,21 @@ def rebuild_index(
 
     if not os.path.isdir(palace_path):
         progress(f"\n  No palace found at {palace_path}")
-        return
+        return None
     _require_valid_embedding_model()
+    from .palace import get_backend_for_palace, mine_palace_lock
+
+    backend = get_backend_for_palace(palace_path)
+    if backend.name == "compact":
+        from .backends.embedding_wrapper import EmbeddingCollection
+
+        with mine_palace_lock(palace_path):
+            collection = backend.get_collection(palace_path, collection_name)
+            wrapper = EmbeddingCollection(collection)
+            collection.reindex(wrapper._compact_vectors)
+            _record_rebuilt_embedder_identity(collection, palace_path)
+            progress(f"  Rebuilt {collection.count()} compact records.")
+            return
 
     progress(f"\n{'=' * 55}")
     progress("  MemPalace Repair -- Index Rebuild")
@@ -1791,7 +1804,7 @@ def rebuild_index(
         sqlite_errors = maybe_autoheal_fts5_index(palace_path, sqlite_errors, progress=progress)
     if sqlite_errors:
         print_sqlite_integrity_abort(palace_path, sqlite_errors)
-        return
+        return None
 
     preflight = maybe_repair_poisoned_max_seq_id_before_rebuild(
         palace_path,
@@ -1799,7 +1812,7 @@ def rebuild_index(
         progress=progress,
     )
     if preflight is not None:
-        return
+        return None
 
     # Preflight HNSW divergence before opening the collection: status()
     # already has this same guard via hnsw_capacity_status (docstring above
@@ -1812,7 +1825,7 @@ def rebuild_index(
     if capacity_info.get("diverged"):
         progress(f"\n  HNSW index is diverged: {capacity_info.get('message', '')}")
         progress(index_read_recovery_guidance())
-        return
+        return None
 
     # Hold the palace writer lease for the complete snapshot -> rebuild/swap
     # -> cleanup cycle. A writer landing after the snapshot but before the

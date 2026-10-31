@@ -21,10 +21,10 @@ def _call(hub, token, args):
 
 
 def test_owner_agent_token_does_not_establish_user_approval(hub):
-    owner = hub.owner_token(name="sol-builder")
+    owner = hub.owner_token(name="build-agent")
     assert not _call(hub, owner, FACT).get("isError")
     row = hub.call(owner, "mempalace_kg_query", entity="SimSteer")[0]["facts"][0]
-    assert row["origin_kind"] == "agent" and row["origin_id"] == "sol-builder"
+    assert row["origin_kind"] == "agent" and row["origin_id"] == "build-agent"
     assert row["fact_status"] == "proposal" and row["approved_by"] is None
     assert row["origin_link"] == "t3-thread://v1/mcp:agent-proposal"
 
@@ -35,7 +35,7 @@ def test_owner_agent_token_does_not_establish_user_approval(hub):
         {"origin_kind": "user"},
         {"approval_status": "approved"},
         {"person": True},
-        {"approved_by": "Jeffrey"},
+        {"approved_by": "Avery"},
         {"status": "approved"},
     ],
 )

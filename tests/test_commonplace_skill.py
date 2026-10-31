@@ -21,7 +21,7 @@ def test_frontmatter_and_size():
     description = fields["description"].strip('"')
     assert 0 < len(description) < 300
     assert len(text.splitlines()) < 120
-    for phrase in ("picking up work", "reporting status", "remembering", "asking Jeffrey"):
+    for phrase in ("picking up work", "reporting status", "remembering", "asking the user"):
         assert phrase in description
     assert body.strip()
 
@@ -80,7 +80,6 @@ def test_installer_dry_run_is_non_mutating_and_safe(tmp_path):
     for root in (".claude", ".codex", ".agents"):
         assert f"{root}/skills/commonplace/SKILL.md" in result.stdout
     assert 'export COMMONPLACE_URL="${COMMONPLACE_URL:-https://cmmn.dev}"' in result.stdout
-    assert "https://edge1.tail6cee8c.ts.net" in result.stdout
     assert '"$COMMONPLACE_URL/mcp"' in result.stdout
     assert '"Authorization: Bearer $COMMONPLACE_TOKEN"' in result.stdout
     assert 'bearer_token_env_var = "COMMONPLACE_TOKEN"' in result.stdout

@@ -1183,13 +1183,13 @@ class BoardService:
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             _owner(self.principal)
-            # Jeffrey decides in the app, or through one of his own trusted
-            # agents relaying his answer (Chief, voice). An agent never
+            # The owner decides in the app, or through a trusted
+            # agent relaying the answer. An agent never
             # answers a question it asked itself.
             if not self.principal.person and (
                 self.principal.policy.trust != "trusted" or row["return_to"] == self.principal.actor
             ):
-                raise ToolError("no: only Jeffrey or his trusted agent can answer this")
+                raise ToolError("no: only the owner or a trusted agent can answer this")
             self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":

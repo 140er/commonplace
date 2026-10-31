@@ -155,7 +155,7 @@ def test_untrusted_writes_land_in_the_inbox_with_a_stamp(hub):
         "mempalace_add_drawer",
         wing="shared",
         room="facts",
-        content="Jeffrey likes tea",
+        content="Avery likes tea",
         added_by="claude",
     )
     assert result["success"] and result["wing"] == "inbox"
@@ -663,9 +663,9 @@ def test_audit_fields_are_capped(hub):
         assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200
 
 
-def test_reserved_index_hint_is_removed_before_worker_forwarding(hub, monkeypatch):
+def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypatch):
     from commonplace.gateway import WorkerClient
-    from mempalace.stored_text import INDEX_SPANS
+    from mempalace.stored_text import RESERVED_METADATA
 
     forwarded = []
     original = WorkerClient.post
@@ -682,7 +682,7 @@ def test_reserved_index_hint_is_removed_before_worker_forwarding(hub, monkeypatc
         wing="shared",
         room="notes",
         content="verbatim imported document",
-        **{INDEX_SPANS: "forged"},
+        **dict.fromkeys(RESERVED_METADATA, "forged"),
     )
     assert result["success"]
-    assert forwarded and all(INDEX_SPANS not in args for args in forwarded)
+    assert forwarded and all(not RESERVED_METADATA.intersection(args) for args in forwarded)

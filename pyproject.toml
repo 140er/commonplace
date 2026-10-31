@@ -59,6 +59,7 @@ commonplace = "commonplace.cli:main"
 
 [project.entry-points."mempalace.backends"]
 chroma = "mempalace.backends.chroma:ChromaBackend"
+compact = "mempalace.backends.compact:CompactBackend"
 milvus = "mempalace.backends.milvus:MilvusBackend"
 pgvector = "mempalace.backends.pgvector:PgVectorBackend"
 qdrant = "mempalace.backends.qdrant:QdrantBackend"
@@ -72,6 +73,7 @@ rust_exact = "mempalace.backends.rust_exact:RustExactBackend"
 [project.entry-points."mempalace.sources"]
 
 [project.optional-dependencies]
+voice = ["useful-moonshine-onnx>=20251121,<20260101", "faster-whisper>=1.2.1"]
 # Sign in with Apple signs its client secret with ES256.
 commonplace = ["cryptography>=42"]
 dev = [

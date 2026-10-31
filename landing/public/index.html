@@ -40,7 +40,7 @@
       <button role="tab" id="t-ag" aria-controls="s-ag" aria-selected="false" tabindex="-1">Antigravity</button>
     </div>
     <div class="screen">
-<pre role="tabpanel" id="s-claude" aria-labelledby="t-claude"><span class="line"><span class="p">$</span> docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/140er/commonplace</span><span class="line dim">setup  http://localhost:8765/setup/7c1e9a</span><span class="line"><span class="p">$</span> claude mcp add --transport http commonplace http://localhost:8765/mcp --header "Authorization: Bearer $COMMONPLACE_TOKEN"</span><span class="line dim">Added HTTP MCP server commonplace</span><span class="line"><span class="p">$</span> claude</span><span class="line you">&gt; why does the boards store live next to the palace?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "boards store palace"</span></span><span class="line hit">Boards live in the workspace's palace directory, in boards.sqlite3 next to knowledge_graph.sqlite3. One store per workspace, so tasks and memories are backed up, exported and deleted together.<span class="stamp">written by codex:zurvur:commonplace · trusted · 2 days ago</span></span><span class="line"><span class="cursor"></span></span></pre>
+<pre role="tabpanel" id="s-claude" aria-labelledby="t-claude"><span class="line"><span class="p">$</span> docker run -d -p 8765:8765 -v commonplace:/data ghcr.io/140er/commonplace</span><span class="line dim">setup  http://localhost:8765/setup/7c1e9a</span><span class="line"><span class="p">$</span> claude mcp add --transport http commonplace http://localhost:8765/mcp --header "Authorization: Bearer $COMMONPLACE_TOKEN"</span><span class="line dim">Added HTTP MCP server commonplace</span><span class="line"><span class="p">$</span> claude</span><span class="line you">&gt; why does the boards store live next to the palace?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "boards store palace"</span></span><span class="line hit">Boards live in the workspace's palace directory, in boards.sqlite3 next to knowledge_graph.sqlite3. One store per workspace, so tasks and memories are backed up, exported and deleted together.<span class="stamp">written by codex:hub:commonplace · trusted · 2 days ago</span></span><span class="line"><span class="cursor"></span></span></pre>
 <pre role="tabpanel" id="s-codex" aria-labelledby="t-codex" hidden><span class="line"><span class="p">$</span> cat &gt;&gt; ~/.codex/config.toml &lt;&lt;'EOF'
 [mcp_servers.commonplace]
 url = "http://localhost:8765/mcp"
@@ -49,7 +49,7 @@ EOF</span><span class="line"><span class="p">$</span> codex</span><span class="l
 <pre role="tabpanel" id="s-cursor" aria-labelledby="t-cursor" hidden><span class="line"><span class="p">$</span> cat ~/.cursor/mcp.json</span><span class="line">{"mcpServers": {"commonplace": {
   "url": "http://localhost:8765/mcp",
   "headers": {"Authorization": "Bearer ${env:COMMONPLACE_TOKEN}"}
-}}}</span><span class="line"><span class="ok">sessionStart</span> <span class="dim">search wing project_site before answering</span></span><span class="line you">&gt; what did grok file about the website?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "website" wing=project_site</span></span><span class="line hit">The site loads with zero third-party requests. No fonts, no scripts, no analytics from anyone else.<span class="stamp">written by grok:chief-of-staff · untrusted · inbox · 4 hours ago</span></span><span class="line"><span class="cursor"></span></span></pre>
+}}}</span><span class="line"><span class="ok">sessionStart</span> <span class="dim">search wing project_site before answering</span></span><span class="line you">&gt; what did grok file about the website?</span><span class="line"><span class="ok">recall</span> <span class="dim">mempalace_search "website" wing=project_site</span></span><span class="line hit">The site loads with zero third-party requests. No fonts, no scripts, no analytics from anyone else.<span class="stamp">written by grok:coordinator · untrusted · inbox · 4 hours ago</span></span><span class="line"><span class="cursor"></span></span></pre>
 <pre role="tabpanel" id="s-ag" aria-labelledby="t-ag" hidden><span class="line"><span class="p">$</span> cat ~/.gemini/antigravity/mcp_config.json</span><span class="line">{"mcpServers": {"commonplace": {
   "serverUrl": "http://localhost:8765/mcp",
   "headers": {"Authorization": "Bearer &lt;token&gt;"}
@@ -82,7 +82,7 @@ EOF</span><span class="line"><span class="p">$</span> codex</span><span class="l
     <div class="tile t62 head rise"><h2 id="close-h">Every memory says who wrote it</h2></div>
 
     <div class="tile t64 acc rise" style="--d:60ms">
-      <div class="zoom" data-ui style="--z:2.6em; top:28px; left:24px">grok:chief-of-staff<br>untrusted · inbox</div>
+      <div class="zoom" data-ui style="--z:2.6em; top:28px; left:24px">grok:coordinator<br>untrusted · inbox</div>
       <p class="cap"><b>Server-stamped author</b><span>Taken from the token, never from the client.</span></p>
     </div>
 

@@ -4,7 +4,7 @@ One gateway in front of MemPalace: accounts, workspaces, scoped tokens, verified
 
 ```bash
 commonplace init --admin-email you@example.com
-commonplace token add grok:cos --workspace personal --client grok \
+commonplace token add grok:coordinator --workspace personal --client grok \
   --profile slim --read-wings shared,inbox --write-wing inbox --trust untrusted
 commonplace serve --host 127.0.0.1 --port 8765
 ```
@@ -14,6 +14,20 @@ commonplace serve --host 127.0.0.1 --port 8765
 Social sign-in: [provider setup](SETUP.md).
 
 Claude Code: [local setup and repeatable fresh-install check](../docs/commonplace-client-setup.md).
+
+## Hosted plans
+
+Set `COMMONPLACE_PLANS=on` to enable hosted plans. New social sign-ups receive Free:
+250 MB storage per account and 10 minutes of server voice transcription per UTC day.
+The chat-sync interval hook is every 15 minutes for Free and live for Paid; sync is not built here.
+Paid has *unlimited*\*\* storage and transcription and a server-load throttle hook.
+
+** zolang de server het aankan / as long as the server can handle it
+
+Admins manage plans with `commonplace plan set <user email|id> free|paid|none` and inspect
+usage with `commonplace plan show <user email|id>`. Payment is not built. The transcription
+meter is a hook for a future endpoint. Accounts without a plan have no limits and every feature.
+Unset, empty or `off` keeps plans off: self-hosted installations have no limits or plan UI.
 
 ## Context handoff
 

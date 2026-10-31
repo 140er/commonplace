@@ -672,7 +672,7 @@ The original draft sequenced cleanup → spec → ChromaBackend → in-flight re
 ### Base64 index text (RFC 008 A0)
 
 Core embeddings use `stored_text.index_text` for every explicit-vector backend,
-including Chroma. Documents remain verbatim. Local `sqlite_exact` full-text rows
+including Chroma. Documents remain verbatim. Local `sqlite_exact` and `compact` full-text rows
 use that same index view, including whole-input provenance for split spans.
 
 Chroma's internal FTS and remote plugin full-text indexes still cover their
