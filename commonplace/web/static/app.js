@@ -4,6 +4,7 @@ import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
 import { planView } from "./plan.js";
+import { rulesView, rulesHandlers, waitingCount } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
 
 const signinParams = new URLSearchParams(location.search);
@@ -22,7 +23,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(),
+  toggled: new Set(), rules: [],
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -32,6 +33,7 @@ const options = (items, selected) => items.map((s) => `<option value="${e(s)}" $
 let speechState = { active: false, text: "" };
 const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
 const voice = voiceInput(root, api, showError);
+const rulesUI = rulesHandlers(root, api, refresh, showError);
 function speechView() {
   const button = root.querySelector('[data-action="speak-digest"]');
   if (button) {
@@ -172,7 +174,7 @@ async function signin(code = null) {
   root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
 function shell() {
-  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
+  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
   navigation();
 }
 function navigation() {
@@ -180,7 +182,8 @@ function navigation() {
   if (!boardNav) return;
   boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  const key = state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
+  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = waitingCount(state.rules); n.textContent = count; n.dataset.waiting = String(count > 0); });
+  const key = state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
 }
 function showError(text) {
@@ -444,9 +447,10 @@ async function refresh({ background = false, events = [] } = {}) {
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
     const home = state.base === "#/";
-    const [boards, needs, open] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null]);
+    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api("/api/rules").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
+    if (rules) state.rules = rules.rules;
     if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -476,7 +480,13 @@ async function refresh({ background = false, events = [] } = {}) {
     if (state.base.startsWith("#/board/")) boardView();
     else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
-    else if (state.base.startsWith("#/memory")) {
+    else if (state.base === "#/rules") {
+      title("Rules");
+      if (!background || !rulesUI.busy()) {
+        rulesUI.update(rules);
+        root.querySelector("#content").innerHTML = rulesView(rules);
+      }
+    } else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
       if (!background || changed) await memoryView(epoch, background && !changed);
     } else if (state.base === "#/settings") {
@@ -502,7 +512,7 @@ async function route() {
   const previousBase = state.base;
   state.screen++; state.route = hash;
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = /^#\/((?:board|space)\/[^/?]+|boards|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
+    state.base = /^#\/((?:board|space)\/[^/?]+|boards|rules|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
     state.card = null;
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
