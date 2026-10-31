@@ -11,6 +11,7 @@ from _chroma_palace_helper import make_minimal_chroma_sqlite, make_minimal_sqlit
 
 import mempalace.backends.sqlite_exact as sqlite_exact_module
 from mempalace.backends import (
+    BackendClosedError,
     BackendMismatchError,
     CollectionNotInitializedError,
     DimensionMismatchError,
@@ -426,6 +427,61 @@ def test_sqlite_exact_close_palace_marks_existing_collections_closed(tmp_path):
     assert not col.health().ok
     with pytest.raises(Exception):
         col.count()
+
+
+@pytest.mark.parametrize(
+    "backend_name,before_registration",
+    [("sqlite_exact", False), ("compact", False), ("compact", True)],
+)
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("shutdown", ["close_palace", "close"])
+def test_get_collection_racing_close_raises_contract_error(
+    tmp_path, monkeypatch, backend_name, before_registration, read_only, shutdown
+):
+    from mempalace.backends.compact import CompactBackend
+
+    backend = CompactBackend() if backend_name == "compact" else SQLiteExactBackend()
+    backend.get_collection(str(tmp_path), "records", create=True)
+    connected, resume = threading.Event(), threading.Event()
+    connect = super(CompactBackend, backend)._connect if before_registration else backend._connect
+    errors = []
+    collections = []
+
+    def paused_connect(*args, **kwargs):
+        handle = connect(*args, **kwargs)
+        connected.set()
+        assert resume.wait(10)
+        return handle
+
+    if before_registration:
+        monkeypatch.setattr(
+            SQLiteExactBackend, "_connect", lambda self, *args, **kw: paused_connect(*args, **kw)
+        )
+    else:
+        monkeypatch.setattr(backend, "_connect", paused_connect)
+
+    def open_collection():
+        try:
+            collections.append(
+                backend.get_collection(str(tmp_path), "records", options={"read_only": read_only})
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=open_collection)
+    worker.start()
+    try:
+        assert connected.wait(10)
+        if shutdown == "close":
+            backend.close()
+        else:
+            backend.close_palace(str(tmp_path))
+    finally:
+        resume.set()
+        worker.join(30)
+        backend.close()
+    assert not worker.is_alive() and not collections
+    assert len(errors) == 1 and isinstance(errors[0], BackendClosedError)
 
 
 def test_sqlite_exact_read_only_open_skips_schema_init_and_refuses_writes(tmp_path):
