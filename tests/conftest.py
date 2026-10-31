@@ -9,9 +9,9 @@ mempalace imports — so that module-level initialisations (e.g.
 ``_kg = KnowledgeGraph()`` in mcp_server) write to a throwaway location
 instead of the real user profile.
 
-Module-level code, hooks and autouse fixtures here never import mempalace:
-autouse fixtures act on a mempalace module only once a test has loaded it
-(``_when_imported``), and the fixtures that build mempalace objects import
+Module-level code, hooks and autouse fixtures here never import mempalace or
+commonplace: autouse fixtures act on such a module only once a test has loaded
+it (``_when_imported``), and the fixtures that build mempalace objects import
 them in their own bodies. A test then depends only on the modules it uses,
 which keeps the test-impact picture of a change honest.
 """
@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import tempfile
+from contextlib import ExitStack
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
@@ -246,17 +247,126 @@ def _reset_loaded_mcp_writer_state(mcp_server) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _release_palace_anchors():
-    """Close anchor connections on ``chroma.sqlite3`` after each test.
+def _close_test_storage_clients(monkeypatch):
+    """Own storage handles until teardown, including discarded references.
 
-    On Linux mempalace keeps one idle connection per database inode for the life
-    of the process; across thousands of temporary palaces that would run the
-    test process out of descriptors. Only acts when the module is loaded.
+    Chroma's shared System retains SQLite and index handles until every client
+    closes. Backend registries and SQLite connection cycles also outlive test
+    locals, so dereferencing temporary stores is not sufficient cleanup.
     """
+    from chromadb.api.client import Client
+
+    # The mempalace and commonplace modules are bound once they load (see
+    # ``_when_imported``), with the state they had then, so a test that never
+    # loads them neither imports nor depends on them.
+    before = {}
+
+    def remember_magic(magic):
+        before["magic"] = magic
+        before["probes"] = dict(magic._retained_conns)
+        before["positives"] = set(magic._positive)
+
+    def remember_inproc(inproc):
+        before["inproc"] = inproc
+        before["anchors"] = dict(inproc._anchors)
+        before["holders"] = dict(inproc._holders)
+
+    _when_imported(monkeypatch, "mempalace.backends._magic", remember_magic)
+    _when_imported(monkeypatch, "mempalace.backends._inproc_sqlite", remember_inproc)
+    resources = ExitStack()
+
+    def live_databases():
+        from chromadb.api.shared_system_client import SharedSystemClient
+
+        paths = set()
+        inodes = set()
+        for system in list(SharedSystemClient._identifier_to_system.values()):
+            if not system.settings.is_persistent:
+                continue
+            path = os.path.realpath(
+                os.path.join(system.settings.persist_directory, "chroma.sqlite3")
+            )
+            paths.add(os.path.normcase(path))
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            inodes.add((stat.st_dev, stat.st_ino))
+        return paths, inodes
+
+    def close_anchors():
+        inproc = before.get("inproc")
+        if inproc is None:
+            return
+        live_paths, _ = live_databases()
+        for current, previous in (
+            (inproc._anchors, before["anchors"]),
+            (inproc._holders, before["holders"]),
+        ):
+            for path, handle in list(current.items()):
+                if previous.get(path) is not handle and path not in live_paths:
+                    inproc.release(path)
+
+    def close_probes():
+        magic = before.get("magic")
+        if magic is None:
+            return
+        _, live_inodes = live_databases()
+        with magic._lock:
+            for key, connection in list(magic._retained_conns.items()):
+                if before["probes"].get(key) is connection or key in live_inodes:
+                    continue
+                connection.close()
+                magic._retained_conns.pop(key)
+            for key in set(magic._positive) - before["positives"] - live_inodes:
+                magic._positive.pop(key, None)
+
+    # ExitStack attempts every callback even when a client close raises.
+    # Its reverse order keeps clients before probes, then releases anchors.
+    resources.callback(close_anchors)
+    resources.callback(close_probes)
+    palaces = set()
+    original_client_init = Client.__init__
+
+    def tracked_client_init(client, *args, **kwargs):
+        original_client_init(client, *args, **kwargs)
+        resources.callback(client.close)
+
+    def track_control_db(control_db):
+        original_init = control_db.ControlDB.__init__
+
+        def tracked_control_init(database, *args, **kwargs):
+            original_init(database, *args, **kwargs)
+            resources.callback(database.close)
+
+        monkeypatch.setattr(control_db.ControlDB, "__init__", tracked_control_init)
+
+    def track_sqlite_exact(sqlite_exact):
+        original_connect = sqlite_exact.SQLiteExactBackend._connect
+
+        def tracked_connect(backend, palace_path, *args, **kwargs):
+            already_open = any(
+                handle is not None and not handle.closed
+                for handle in (
+                    backend._clients.get(palace_path),
+                    backend._read_only_clients.get(palace_path),
+                )
+            )
+            result = original_connect(backend, palace_path, *args, **kwargs)
+            key = (id(backend), palace_path)
+            if not already_open and key not in palaces:
+                palaces.add(key)
+                # Release handles without closing the reusable registry backend.
+                resources.callback(backend.close_palace, palace_path)
+            return result
+
+        monkeypatch.setattr(sqlite_exact.SQLiteExactBackend, "_connect", tracked_connect)
+
+    monkeypatch.setattr(Client, "__init__", tracked_client_init)
+    _when_imported(monkeypatch, "commonplace.control_db", track_control_db)
+    _when_imported(monkeypatch, "mempalace.backends.sqlite_exact", track_sqlite_exact)
     yield
-    inproc = sys.modules.get("mempalace.backends._inproc_sqlite")
-    if inproc is not None:
-        inproc.release_all()
+    resources.close()
 
 
 def _realign_default_backend(palace_module):
@@ -317,7 +427,7 @@ def _utc_local_zone(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_mcp_cache(monkeypatch):
+def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
     """Reset cached MCP state between tests without importing mcp_server.
 
     If mempalace.mcp_server is already imported, release its writer lease,

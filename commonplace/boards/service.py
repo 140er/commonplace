@@ -962,7 +962,7 @@ class BoardService:
         old = row["status"]
         if status == old:
             return
-        if old == "review":
+        if old == "review" and not (not self.principal.person and status == "done"):
             raise ToolError("no: use decide to move a card from review")
         if self.principal.person:
             allowed = {
@@ -982,6 +982,7 @@ class BoardService:
                 ("doing", "review"),
                 ("todo", "done"),
                 ("doing", "done"),
+                ("review", "done"),
                 ("done", "todo"),
                 ("doing", "backlog"),
             }:
@@ -1076,7 +1077,16 @@ class BoardService:
             )
             # The agent that asked for review may still refresh the PR's call tree.
             refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
-            if row["status"] == "review" and not self.principal.person and not refresh:
+            if (
+                row["status"] == "review"
+                and not self.principal.person
+                and not refresh
+                and not (
+                    row["return_to"] == self.principal.actor
+                    and set(args) <= {"status", "lesson"}
+                    and args.get("status") in ("review", "done")
+                )
+            ):
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")
@@ -1114,6 +1124,8 @@ class BoardService:
                 updates.update(
                     status=status, claim_until=None, done_at=now() if status == "done" else None
                 )
+                if row["status"] == "review":
+                    updates.update(ask=None, ask_options=None, ask_to=None, return_to=None)
                 if status == "doing":
                     updates["assignee"] = self.principal.actor
                 else:
@@ -1166,13 +1178,13 @@ class BoardService:
                     "target": updates["ask_to"],
                     "options": json.loads(updates["ask_options"]),
                 }
-                if moved and updates["status"] == "review"
+                if updates.get("ask") is not None
                 else {}
             )
             self._log(
                 conn,
                 row["id"],
-                "move" if moved else "edit",
+                "move" if moved or updates.get("ask") is not None else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
                 **ask,
@@ -1193,9 +1205,8 @@ class BoardService:
         person = target is not None and target.startswith("user:")
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        if row["status"] == "doing":
-            self._holder(row)
-        elif not person and not self.principal.person:
+        self._holder(row)
+        if row["status"] == "todo" and not person and not self.principal.person:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
         options = choices(options)
