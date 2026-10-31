@@ -12,6 +12,7 @@ from _chroma_palace_helper import make_minimal_chroma_sqlite, make_minimal_sqlit
 import mempalace.backends.sqlite_exact as sqlite_exact_module
 from mempalace.backends import (
     BackendClosedError,
+    BackendError,
     BackendMismatchError,
     CollectionNotInitializedError,
     DimensionMismatchError,
@@ -482,6 +483,125 @@ def test_get_collection_racing_close_raises_contract_error(
         backend.close()
     assert not worker.is_alive() and not collections
     assert len(errors) == 1 and isinstance(errors[0], BackendClosedError)
+
+
+@pytest.fixture(
+    params=[("sqlite_exact", False), ("compact", False), ("compact", True)],
+    ids=["sqlite_exact", "compact_collection", "compact_registration"],
+)
+def retirement_open(tmp_path, request):
+    from mempalace.backends.compact import CompactBackend
+
+    name, before_registration = request.param
+    backend = CompactBackend() if name == "compact" else SQLiteExactBackend()
+    try:
+        writer = backend.get_collection(str(tmp_path), "records", create=True)
+        writer.add(ids=["a"], documents=["alpha"], embeddings=[[1.0, 0.0]])
+        backend.close_palace(str(tmp_path))
+        old = backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+        assert old._handle.immutable
+        yield name, backend, old, before_registration
+    finally:
+        backend.close()
+
+
+def test_read_only_open_reconnects_when_another_thread_retires_its_handle(
+    tmp_path, monkeypatch, retirement_open
+):
+    from mempalace.backends.compact import CompactBackend
+
+    name, backend, old, before_registration = retirement_open
+    old_handle = old._handle
+    connect = super(CompactBackend, backend)._connect if before_registration else backend._connect
+    selected, resume = threading.Event(), threading.Event()
+    owner = threading.get_ident()
+    opened, errors = [], []
+
+    def paused_connect(*args, **kwargs):
+        handle = connect(*args, **kwargs)
+        if threading.get_ident() != owner and not selected.is_set():
+            selected.set()
+            assert resume.wait(30), "parent did not resume the selected reader"
+        return handle
+
+    if before_registration:
+        monkeypatch.setattr(
+            SQLiteExactBackend, "_connect", lambda self, *args, **kw: paused_connect(*args, **kw)
+        )
+    else:
+        monkeypatch.setattr(backend, "_connect", paused_connect)
+
+    def open_collection():
+        try:
+            opened.append(
+                backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=open_collection)
+    worker.start()
+    try:
+        assert selected.wait(30), "reader did not select the cached handle"
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from mempalace.backends.compact import CompactBackend
+from mempalace.backends.sqlite_exact import SQLiteExactBackend
+b = CompactBackend() if sys.argv[1] == 'compact' else SQLiteExactBackend()
+c = b.get_collection(sys.argv[2], 'records')
+c.add(ids=['b'], documents=['beta'], embeddings=[[0.0, 1.0]])
+b.close()
+""",
+                name,
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        # This open retires the handle already selected by the waiting thread.
+        fresh = backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+        assert old_handle.retired and old_handle.closed
+    finally:
+        resume.set()
+        worker.join(30)
+    assert not worker.is_alive() and not errors
+    assert len(opened) == 1 and opened[0]._handle is fresh._handle
+    assert opened[0].get(include=["documents"]).documents == ["alpha", "beta"]
+
+
+def test_read_only_open_bounds_retries_if_every_selected_handle_is_retired(
+    tmp_path, monkeypatch, retirement_open
+):
+    from mempalace.backends.compact import CompactBackend
+
+    _, backend, _, before_registration = retirement_open
+    connect = super(CompactBackend, backend)._connect if before_registration else backend._connect
+    calls = 0
+
+    def retiring_connect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        assert calls <= 3, "reader retirement retries were not bounded"
+        handle = connect(*args, **kwargs)
+        with backend._clients_lock:
+            backend._retire_read_only_handle(str(tmp_path), handle)
+        return handle
+
+    if before_registration:
+        monkeypatch.setattr(
+            SQLiteExactBackend, "_connect", lambda self, *args, **kw: retiring_connect(*args, **kw)
+        )
+    else:
+        monkeypatch.setattr(backend, "_connect", retiring_connect)
+    with pytest.raises(BackendError, match="changed repeatedly"):
+        backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+    assert calls == 3
 
 
 def test_sqlite_exact_read_only_open_skips_schema_init_and_refuses_writes(tmp_path):

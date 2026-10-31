@@ -1990,27 +1990,33 @@ class SQLiteExactBackend(BaseBackend):
             raise PalaceNotFoundError("SQLiteExactBackend requires PalaceRef.local_path")
         if not create and not os.path.isdir(palace_path):
             raise PalaceNotFoundError(palace_path)
-        handle = self._connect(palace_path, create=create, read_only=read_only)
-        with handle.lock:
-            if handle.closed:
-                raise BackendClosedError("SQLiteExactCollection has been closed")
-            row = handle.conn.execute(
-                "SELECT id FROM collections WHERE name = ?",
-                (collection_name,),
-            ).fetchone()
-            if row is None:
-                if not create:
-                    raise CollectionNotInitializedError(collection_name)
-                from ..palace import mine_palace_lock
+        for _ in range(3):
+            handle = self._connect(palace_path, create=create, read_only=read_only)
+            with handle.lock:
+                # Another reader may have retired this immutable snapshot
+                # after selection. Retirement keeps the palace lifetime open.
+                if handle.retired:
+                    continue
+                if handle.closed:
+                    raise BackendClosedError("SQLiteExactCollection has been closed")
+                row = handle.conn.execute(
+                    "SELECT id FROM collections WHERE name = ?",
+                    (collection_name,),
+                ).fetchone()
+                if row is None:
+                    if not create:
+                        raise CollectionNotInitializedError(collection_name)
+                    from ..palace import mine_palace_lock
 
-                with mine_palace_lock(palace_path):
-                    handle.conn.execute(
-                        "INSERT INTO collections(name, created_at) VALUES (?, ?)",
-                        (collection_name, _utcnow()),
-                    )
-                    _bump_write_generation(handle.conn)
-                    handle.conn.commit()
-        return SQLiteExactCollection(handle, collection_name, backend=self)
+                    with mine_palace_lock(palace_path):
+                        handle.conn.execute(
+                            "INSERT INTO collections(name, created_at) VALUES (?, ?)",
+                            (collection_name, _utcnow()),
+                        )
+                        _bump_write_generation(handle.conn)
+                        handle.conn.commit()
+                return SQLiteExactCollection(handle, collection_name, backend=self)
+        raise BackendError("Palace changed repeatedly while opening a collection; retry the open")
 
     @staticmethod
     def _normalize_args(args, kwargs):
@@ -2075,7 +2081,7 @@ class SQLiteExactBackend(BaseBackend):
                 self._close_handle(cached)
 
     def _close_handle(self, handle: _SQLiteExactHandle) -> None:
-        """Close a handle removed from the registry, outside its lock."""
+        """Close a handle removed from the registry, outside the registry lock."""
         with handle.lock:
             handle.closed = True
             handle.conn.close()
