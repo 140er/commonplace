@@ -23,6 +23,7 @@ RULE_FIELDS = (
 ).split()
 WAITING = "(status='proposed' OR pending=1) AND (status!='retired' OR retired_by='owner')"
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 
 def open_store(workspace_dir):
@@ -372,14 +373,14 @@ class RuleService:
             return {"rules": result, "seq": sequence(conn)}
 
     def rules_get(
-        self, board=None, repo=None, format="text", include_retired=False, effective=False
+        self, board=_UNSET, repo=_UNSET, format="text", include_retired=_UNSET, effective=False
     ):
         if type(effective) is not bool:
             raise ToolError("no: effective must be a boolean")
         if effective:
             if self.principal.person:
                 raise ToolError("no: effective=true is for agent connections")
-            if board is not None or repo is not None or include_retired:
+            if any(value is not _UNSET for value in (board, repo, include_retired)):
                 raise ToolError(
                     "no: effective=true always returns your full set and takes only format"
                 )
@@ -406,6 +407,9 @@ class RuleService:
                 return {
                     "reply": "rules_seq unavailable: could not build the complete rule set; keep your last copy"
                 }
+        board = None if board is _UNSET else board
+        repo = None if repo is _UNSET else repo
+        include_retired = False if include_retired is _UNSET else include_retired
         if format not in ("text", "md") or type(include_retired) is not bool:
             raise ToolError("no: invalid format or include_retired")
         if board is not None:

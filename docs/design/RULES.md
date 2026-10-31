@@ -218,9 +218,16 @@ routes return 409 with `store_lost: true`. `PATCH /api/rules/checks` and
 and clears missing ones; it does not invent missing rules. An unavailable
 complete view returns no rules or count and ends with `rules_seq unavailable`.
 Clients must keep their last complete copy on either marker.
+Each guarded request while a store is lost emits an ids-only loss event until
+owner acceptance. These repeated alerts are intentional; instruction injection
+emits none. An over-cap event is emitted only when the served state changes.
 
-At serving startup, present stores in every workspace without a binding row
-are migrated and bound together. Failures are logged and retried next start.
+At serving startup, present unbound stores are migrated and bound together.
+This also retries an unbound slot after an earlier partial failure, even when
+another store already has a binding. Bound stores remain untouched. Failures
+are logged and retried next start. The complete read view defaults to a 100 ms
+timeout, within the reconciliation writer's 200 ms ceiling; callers may pass a
+shorter remaining deadline.
 Before the first deployment, confirm each workspace's rules on the Rules
 screen: a file lost before binding, or a control-database rollback to before
 that file existed together with its loss, cannot be distinguished from an

@@ -918,7 +918,14 @@ def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operati
         [rule(key=f"rule-{i}", scope="board", board="visible") for i in range(3)]
     )
     original_lookup = RuleService._lookup_board_visible
+    original_connect = sqlite3.connect
     lookups = []
+    board_opens = []
+
+    def connect(path, *args, **kwargs):
+        if "boards.sqlite3" in str(path):
+            board_opens.append(str(path))
+        return original_connect(path, *args, **kwargs)
 
     def lookup(worker, slug):
         # Identity probes are separate from the cached authorization lookup.
@@ -926,6 +933,7 @@ def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operati
         return original_lookup(worker, slug)
 
     monkeypatch.setattr(RuleService, "_lookup_board_visible", lookup)
+    monkeypatch.setattr(sqlite3, "connect", connect)
     worker = service(hub, env.agent)
     if operation == "get":
         assert len(worker.rules_get(board="visible")["rules"]) == 3
@@ -934,9 +942,12 @@ def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operati
     else:
         assert len(worker.rules_publish([], replace=True)["rules"]) == 3
     assert len(lookups) == 1
+    # Two mandatory identity probes and one authorization lookup per request.
+    assert len(board_opens) == 3
     assert worker._board_visible("missing") is False
     assert worker._board_visible("missing") is False
     assert len(lookups) == 2
+    assert len(board_opens) == 4
     # A new request must recheck current visibility, including cached misses.
     boards.board_add(slug="missing", wing="shared")
     assert service(hub, env.agent)._board_visible("missing") is True

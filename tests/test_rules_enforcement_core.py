@@ -33,6 +33,23 @@ def served(worker):
         return dict(row) if row else None
 
 
+def test_effective_service_rejects_explicit_selection_arguments(hub, env):
+    for arguments in (
+        {"board": None},
+        {"board": "visible"},
+        {"repo": None},
+        {"repo": "example.test/org/app"},
+        {"include_retired": False},
+        {"include_retired": True},
+        {"include_retired": None},
+    ):
+        with pytest.raises(ToolError, match="full set and takes only format"):
+            env.worker.rules_get(effective=True, **arguments)
+    assert not Path(env.worker.ctx.workspace_dir(), "rules.sqlite3").exists()
+    assert env.worker.rules_get(board=None, repo=None, include_retired=False)["rules"] == []
+    assert env.worker.rules_get(effective=True, format="md")["state"] == "served"
+
+
 def test_authorized_effective_view_and_default_compatibility(hub, env):
     boards = BoardService(env.owner.ctx)
     for slug, wing in (("open", "shared"), ("secret", "private.notes"), ("old", "shared")):
@@ -87,11 +104,6 @@ def test_authorized_effective_view_and_default_compatibility(hub, env):
 
 def test_per_agent_versions_lifecycle_and_served(hub, env):
     other = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('other')}"))
-    initial = (
-        snapshot(env.worker)["rules_seq"]
-        if Path(env.worker.ctx.workspace_dir(), "rules.sqlite3").exists()
-        else None
-    )
     _ = env.worker.store
     a, b = snapshot(env.worker)["rules_seq"], snapshot(other)["rules_seq"]
     assert 100_000_000 <= a <= 999_999_999
@@ -123,7 +135,6 @@ def test_per_agent_versions_lifecycle_and_served(hub, env):
     assert snapshot(env.worker)["rules_seq"] != a3 and snapshot(other)["rules_seq"] != b3
     env.owner.action(retired["id"], retired["version"], "restore")
     assert snapshot(env.worker)["rules_seq"] != a3
-    assert initial is None  # The read-only view did not create a store.
 
 
 def test_visibility_reconciliation_triggers_and_restore(hub, env, tmp_path):
