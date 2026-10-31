@@ -224,6 +224,22 @@ def payload(size=300, prefix=b"", urlsafe=False):
     return data, encode(data).decode()
 
 
+def test_projection_emits_one_placeholder_across_two_continuation_pieces():
+    from mempalace.stored_text import IndexSource, index_text as hinted_index_text
+
+    _, encoded = payload(1950)
+    text = "before\n" + encoded + "\nafter"
+    source = IndexSource(text)
+    views = []
+    for start, end in [(0, 1300), (1300, len(text))]:
+        piece = text[start:end]
+        metadata = source.metadata(start, end)
+        # Exercise the mirror-to-drawer projection as well as direct hints.
+        projected = IndexSource(piece, metadata).metadata(0, len(piece))
+        views.append(hinted_index_text(piece, projected))
+    assert "".join(views) == "before\n[base64 binary 1950 B]\nafter"
+
+
 @pytest.mark.parametrize(
     ("prefix", "mime"),
     [

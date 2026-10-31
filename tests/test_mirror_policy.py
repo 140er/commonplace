@@ -149,7 +149,8 @@ def test_class_units_group_consecutive_classes_and_keep_exact_ranges():
     )
 
 
-def test_whole_message_hints_cross_mirror_and_physical_boundaries(writer):
+@pytest.mark.parametrize("payload_bytes", [300, 1950, 4500])
+def test_whole_message_hints_cross_mirror_and_physical_boundaries(writer, payload_bytes):
     import base64
     import random
 
@@ -158,18 +159,18 @@ def test_whole_message_hints_cross_mirror_and_physical_boundaries(writer):
     from mempalace.stored_text import index_text
 
     server, col, embedded, backend = writer
-    payload = base64.b64encode(random.Random(39).randbytes(300)).decode()
+    payload = base64.b64encode(random.Random(39).randbytes(payload_bytes)).decode()
     text = "preamble " + "x" * 3860 + "\n" + payload + "\nexact suffix"
     message = ThreadMessage(7, "tool", "tool_result", text, "raw")
     units = class_units([message])
-    assert len(units) == 2
+    assert len(units) == (len(f"[7] tool tool_result: {text}") + 3999) // 4000
     assert all((u.seq_start, u.seq_end) == (7, 7) for u in units)
     stored = StoredThread("thr_test", "workspace", "source", 8, 2, "digest")
     mirror(lambda who, name, args: server.write_mirror_units(**args), None, stored, units)
     records = col.get(include=["documents", "metadatas", "embeddings"])
     assert "".join(records.documents) == f"[7] tool tool_result: {text}"
     indexed = [index_text(doc, meta) for doc, meta in zip(records.documents, records.metadatas)]
-    assert sum(view.count("[base64 binary 300 B]") for view in indexed) == 1
+    assert sum(view.count(f"[base64 binary {payload_bytes} B]") for view in indexed) == 1
     assert "exact suffix" in "".join(indexed)
     assert all((m["source_seq_start"], m["source_seq_end"]) == (7, 7) for m in records.metadatas)
     assert all(m["source_thread"] == stored.id for m in records.metadatas)

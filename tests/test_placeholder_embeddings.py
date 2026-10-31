@@ -82,7 +82,7 @@ def test_index_changes_only_validated_span_intersections(size, width, prose, edg
                 if not text[max(start, span.start) : min(end, span.end)].strip("="):
                     continue
                 expected.append(text[cursor : max(start, span.start)])
-                if start <= span.start < end or span.start <= start < end <= span.end:
+                if start <= span.start < end:
                     expected.append(span.placeholder)
                 cursor = min(end, span.end)
             expected.append(text[cursor:end])
@@ -102,7 +102,7 @@ def test_boundary_tail_has_no_fragment_or_duplicate_placeholder():
     span = source.spans[0]
     start = span.end - 7
     assert index_text(text[start:], source.metadata(start, len(text))) == text[span.end :]
-    assert index_text(text[start : span.end], source.metadata(start, span.end)) == span.placeholder
+    assert index_text(text[start : span.end], source.metadata(start, span.end)) == ""
 
 
 @pytest.mark.parametrize("size", [151, 152])
@@ -617,7 +617,6 @@ def test_edge_fragments_with_long_format_stretches(count, emit, caplog):
     "rule",
     [
         "continuation",
-        "continuation-to-end",
         "start-complete",
         "short",
         "left-boundary",
@@ -637,8 +636,6 @@ def test_invalid_hint_spans_fall_back_to_chunk_detection(rule, caplog):
     before, after, emit = "before '", "' after", True
     if rule == "continuation":
         emit = False
-    elif rule == "continuation-to-end":
-        before, after, emit = "", "", False
     elif rule == "start-complete":
         before, run = "", run[:17]
     elif rule == "short":
@@ -932,7 +929,7 @@ def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, pr
                 if not view[max(start, left) : min(end, right)].strip("="):
                     continue
                 expected.append(view[cursor : max(start, left)])
-                if start <= left < end or left <= start < end <= right:
+                if start <= left < end:
                     expected.append(placeholder)
                 cursor = min(end, right)
             expected.append(view[cursor:end])

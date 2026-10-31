@@ -193,7 +193,7 @@ class IndexSource:
                     max(start, a) - start,
                     min(end, b) - start,
                     placeholder,
-                    (emit and start <= a < end) or a <= start and end <= b,
+                    emit and start <= a < end,
                 ]
                 for a, b, placeholder, emit in self._inherited_spans
                 if a < end and start < b and self.text[max(start, a)] != "="
@@ -209,7 +209,7 @@ class IndexSource:
                 max(start, s.start) - start,
                 min(end, s.end) - start,
                 s.placeholder,
-                start <= s.start < end or (s.start <= start and end <= s.end),
+                start <= s.start < end,
             ]
             for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
             if self.text[max(start, s.start)] != "="
@@ -345,6 +345,7 @@ def user_tool_arguments(arguments, *, tool_name=None):
         return dict(arguments)
     clean = user_metadata(arguments)
     clean.pop("lexical_only", None)
+    # Ignore obsolete forged identities before public argument validation.
     clean.pop("_mirror_unit", None)
     for key in ("metadata", "metadatas"):
         if key in clean:
@@ -375,6 +376,8 @@ def _validated_index_spans(text: str, hint: str) -> list:
         raise ValueError("version or content changed")
     cursor = 0
     for start, end, placeholder, emit in data["spans"]:
+        # A trusted continuation may occupy the whole fragment. Its run's
+        # placeholder was emitted in the earlier piece containing the start.
         if not (
             type(start) is int
             and type(end) is int
@@ -382,7 +385,7 @@ def _validated_index_spans(text: str, hint: str) -> list:
             and isinstance(placeholder, str)
             and _BASE64_FRAGMENT.fullmatch(text[start:end])
             and type(emit) is bool
-            and (emit or (start == 0 and end < len(text)))
+            and (emit or start == 0)
             and not run_touches_word(text, start, end)
         ):
             raise ValueError("invalid span")
