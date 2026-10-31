@@ -148,7 +148,9 @@ def lexical_query_terms(
     return sorted(candidates, key=lambda term: candidates[term])[:16], None
 
 
-def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
+def index_bm25_scores(
+    terms, documents, matched_terms=None, *, trigram=False, stop_words=frozenset()
+):
     """Scope-local BM25 with phrase tf and an index-confirmed match floor.
 
     ``matched_terms`` parallels documents. It records only terms whose bounded
@@ -163,7 +165,14 @@ def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
         originals = [getattr(term, "original", term) for term in terms]
         phrases = [tuple(normalize(term)) for term in originals]
         tokenized = [normalize(text) for text in documents]
-    lengths = [len(tokens) for tokens in tokenized]
+    # Hybrid ranking excludes palace stop words from length statistics, as
+    # its historical scorer does. Keep tf's original token positions so a
+    # phrase cannot match across an excluded word.
+    lengths = (
+        [sum(token not in stop_words for token in tokens) for tokens in tokenized]
+        if stop_words
+        else [len(tokens) for tokens in tokenized]
+    )
     avgdl = sum(lengths) / len(lengths) or 1.0
     frequencies = []
     for i, tokens in enumerate(tokenized):

@@ -228,6 +228,7 @@ def _hybrid_rank(
             docs,
             [r.get("_lexical_matches", ()) for r in results],
             trigram=trigram,
+            stop_words=stop_words,
         )
         for r in results:
             r.pop("_lexical_terms", None)

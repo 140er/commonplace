@@ -16,6 +16,34 @@ from mempalace.palace import get_collection
 from mempalace.searcher import search_memories
 
 
+def test_hybrid_full_query_preserves_stopword_length_statistics():
+    from mempalace.lexical import bm25_scores
+    from mempalace.searcher import _hybrid_rank
+
+    query = "texts def auth pass metadatas source"
+    docs = [
+        "texts def auth pass metadatas source " + "session summary source " * 20,
+        "auth pass extra ordinary words",
+        "metadatas source",
+    ]
+    stop_words = frozenset({"source", "session", "summary"})
+    expected = bm25_scores(query, docs, stop_words=stop_words)
+    hits = [
+        {
+            "drawer_id": str(i),
+            "text": text,
+            "distance": None,
+            "_lexical_terms": ["metadatas"],
+            "_lexical_trigram": True,
+        }
+        for i, text in enumerate(docs)
+    ]
+    ranked = _hybrid_rank(hits, query, stop_words=stop_words)
+    assert {hit["drawer_id"]: hit["bm25_score"] for hit in ranked} == {
+        str(i): round(score, 3) for i, score in enumerate(expected)
+    }
+
+
 def test_hybrid_union_keeps_full_query_signal_on_vector_candidates():
     from mempalace.searcher import _hybrid_rank
 
