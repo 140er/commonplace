@@ -67,6 +67,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from . import launchers, palace_mirror, thread_store, transcripts, writer
+from .authority import require_launch_authority
 from .db import HandoffDBError, HandoffLeaseError
 from .models import (
     EVENT_FAILED,
@@ -125,6 +126,7 @@ class HandoffService:
         self._snapshots: dict[tuple[str, str], _Snapshot] = {}
 
     def run(self, principal, request: HandoffRequest, *, manual: bool = False) -> HandoffResult:
+        require_launch_authority(principal)
         meta = request.meta
         if not meta.thread_id or not meta.thread_id.strip():
             raise ValueError("thread_id must not be empty")
@@ -426,6 +428,7 @@ class HandoffService:
             return handoff
 
     def relaunch(self, principal, handoff_id: str) -> HandoffResult:
+        require_launch_authority(principal)
         with self.control_db._lock:
             handoff = self._authorized(principal, handoff_id, owner_only=True)
             if handoff.state != "launch_failed":
@@ -511,11 +514,14 @@ class HandoffService:
                 launch=client_launch,
                 prompt=prompt if client_launch else "",
             )
+        except launchers.LaunchPolicyError as error:
+            return self._launch_failure(principal, handoff, claimed=claimed, reason=str(error))
         except Exception:
             return self._launch_failure(principal, handoff, claimed=claimed)
 
-    def _launch_failure(self, principal, handoff: Handoff, *, claimed: bool) -> HandoffResult:
-        reason = "successor launch failed"
+    def _launch_failure(
+        self, principal, handoff: Handoff, *, claimed: bool, reason: str = "successor launch failed"
+    ) -> HandoffResult:
         try:
             with self.control_db._lock:
                 current = self.db.get(handoff.id)

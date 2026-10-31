@@ -1,5 +1,6 @@
 """CLI adapters against signature-faithful handoff service fakes."""
 
+import ipaddress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,8 @@ from commonplace.handoff.models import (
     ThreadMessage,
 )
 from commonplace.handoff.recall import ThreadNotFound
+
+WEBHOOK_URL = f"https://{ipaddress.ip_address(0x08080808)}/wake"
 
 
 class FakeControl:
@@ -337,15 +340,16 @@ def test_setting_round_trip_and_inheritance(adapter, capsys):
                 "--launcher",
                 "webhook",
                 "--launcher-url",
-                "http://localhost:4321/wake",
+                WEBHOOK_URL,
                 "--launcher-secret-env",
                 "HANDOFF_TEST_SECRET",
             ],
-            LauncherConfig("webhook", (), "http://localhost:4321/wake", "secret test value"),
+            LauncherConfig("webhook", (), WEBHOOK_URL, "secret test value"),
         ),
     ],
 )
 def test_launcher_settings(adapter, monkeypatch, capsys, flags, expected):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command,webhook")
     monkeypatch.setenv("HANDOFF_TEST_SECRET", "secret test value")
     assert adapter.run("handoff", "enable", "--workspace", "home", *flags) == 0
     assert adapter.writes[-1][0].launcher == expected

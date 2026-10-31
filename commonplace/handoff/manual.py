@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
+from .authority import require_launch_authority
 from .hook import _atomic_text, _private_dir
 from .launchers import _write_prompt
 from .models import HandoffRequest, SuccessorRef, ThreadMeta
@@ -83,6 +84,7 @@ class ManualHandoff:
         source=None,
         require_binding=False,
     ):
+        require_launch_authority(principal)
         target = Target.parse(to, effort)
         if os.environ.get("COMMONPLACE_HANDOFF", "").lower() in ("off", "0", "false"):
             raise ManualHandoffError("handoff is off for this run (COMMONPLACE_HANDOFF)")

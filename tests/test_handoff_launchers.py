@@ -20,9 +20,17 @@ from urllib.error import URLError
 
 import pytest
 
-from commonplace.handoff import launchers
+from commonplace.handoff import launcher_policy, launchers
 from commonplace.handoff.launchers import LaunchError, launch
 from commonplace.handoff.models import Handoff, LauncherConfig, SuccessorRef
+
+
+@pytest.fixture(autouse=True)
+def operator_launchers(monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command,webhook")
+    # These transport tests use isolated receivers; security tests cover policy.
+    monkeypatch.setattr(launcher_policy, "require_public_address", lambda _: None)
+    monkeypatch.setattr(launchers, "require_public_address", lambda _: None)
 
 
 @pytest.fixture

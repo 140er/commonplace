@@ -19,6 +19,7 @@ import sqlite3
 
 from commonplace.extensions import WORK_PROFILES, LocalTool, ToolError, register
 
+from .authority import HandoffPermissionError, can_launch
 from .models import SCOPE_HANDOFF, SCOPE_THREADS_READ
 from .recall import ThreadNotFound, thread_provenance
 
@@ -237,7 +238,13 @@ def _start(tool_ctx, args):
         return ManualHandoff(tool_ctx.gateway.handoff.service).start(
             tool_ctx.principal, require_binding=True, **args
         )
-    except (ManualHandoffError, T3Error, SettingsError, HandoffDBError) as error:
+    except (
+        HandoffPermissionError,
+        ManualHandoffError,
+        T3Error,
+        SettingsError,
+        HandoffDBError,
+    ) as error:
         raise ToolError(str(error)) from None
     except OSError:
         raise ToolError("local handoff data is unavailable; source was not settled") from None
@@ -253,6 +260,8 @@ register(
         kind="write",
         profiles=WORK_PROFILES,
         trusted_only=True,
-        available=_available,
+        available=lambda principal, gateway: (
+            can_launch(principal) and _available(principal, gateway)
+        ),
     )
 )
