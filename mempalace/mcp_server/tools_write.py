@@ -3,6 +3,8 @@ if __name__ != "mempalace.mcp_server":
     raise ImportError(f"{__name__} is an implementation fragment; import mempalace.mcp_server")
 
 
+from ..stored_text import INDEX_SPANS, IndexSource, public_metadata
+
 # ==================== WRITE TOOLS ====================
 
 
@@ -22,7 +24,7 @@ def _chunk_index(meta):
 
 
 def _response_safe_meta(meta):
-    safe_meta = dict(_safe_meta(meta))
+    safe_meta = public_metadata(_safe_meta(meta))
     if not safe_meta.get("last_modified") and safe_meta.get("filed_at"):
         safe_meta["last_modified"] = safe_meta["filed_at"]
     if safe_meta.get("source_file"):
@@ -474,6 +476,7 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
     chunk_docs = []
     chunk_metas = []
 
+    index_source = IndexSource(content)
     for start, chunk_doc in spans:
         chunk_index = start // chunk_size
         chunk_ids.append(f"{drawer_id}_chunk_{chunk_index:06d}")
@@ -481,13 +484,21 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
 
         chunk_meta = dict(base_meta)
         chunk_meta["chunk_index"] = chunk_index
-        chunk_metas.append(chunk_meta)
+        chunk_meta[INDEX_SPANS] = None
+        chunk_metas.append(index_source.metadata(start, start + len(chunk_doc), chunk_meta))
 
     return chunk_ids, chunk_docs, chunk_metas
 
 
 def tool_add_drawer(
-    wing: str, room: str, content: str, source_file: str = None, added_by: str = "mcp"
+    wing: str,
+    room: str,
+    content: str,
+    source_file: str = None,
+    added_by: str = "mcp",
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
 ):
     """File verbatim content into a wing/room. Checks for duplicates first.
 
@@ -499,9 +510,16 @@ def tool_add_drawer(
     ``tool_get_drawer(drawer_id)`` automatically hydrates and reassembles all
     chunks, and ``tool_delete_drawer(drawer_id)`` removes both the logical group
     and all constituent physical chunks.
+
+    ``source_thread`` plus ``source_seq_start``/``source_seq_end`` record the
+    chat messages these words came from. A retry of identical content keeps
+    the first write's source.
     """
     global _metadata_cache
     try:
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
         wing = sanitize_name(wing, "wing")
         room = sanitize_name(room, "room")
         content = sanitize_content(content)
@@ -524,12 +542,16 @@ def tool_add_drawer(
             "wing": wing,
             "room": room,
             "added_by": added_by,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
             "content_length": len(content),
             "content_preview": content[:200],
         },
     )
 
     chunk_size = _config.chunk_size
+    index_source = IndexSource(content)
     base_meta = {
         "wing": wing,
         "room": room,
@@ -538,6 +560,11 @@ def tool_add_drawer(
         "filed_at": utc_now_iso(),
         "id_recipe": ID_RECIPE,
     }
+    if source_thread:
+        base_meta["source_thread"] = source_thread
+        if source_seq_start is not None:
+            base_meta["source_seq_start"] = source_seq_start
+            base_meta["source_seq_end"] = source_seq_end
     if source_file:
         # A drawer filed here names a source file the same way a mined one
         # does, and ``sync`` decides both by the same rule, so it records the
@@ -562,9 +589,18 @@ def tool_add_drawer(
         last_chunk_idx = (len(content) - 1) // chunk_size
         idempotency_probe_ids = [drawer_id, f"{drawer_id}_chunk_{last_chunk_idx:06d}"]
     try:
-        existing = col.get(ids=idempotency_probe_ids, include=[])
+        existing = col.get(ids=idempotency_probe_ids, include=["metadatas"])
         if _get_result_ids(existing):
             outcome = {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
+            stored = next(iter(existing.get("metadatas") or []), None) or {}
+            if stored.get("source_thread"):
+                # The first write's source is kept; say which, so a caller
+                # citing another chat knows its range was not recorded.
+                outcome["source_kept"] = {
+                    "thread": stored["source_thread"],
+                    "seq_start": stored.get("source_seq_start"),
+                    "seq_end": stored.get("source_seq_end"),
+                }
             _wal_result("add_drawer", outcome)
             return outcome
     except Exception as e:
@@ -578,7 +614,7 @@ def tool_add_drawer(
             col.upsert(
                 ids=[drawer_id],
                 documents=[content],
-                metadatas=[{**base_meta, "chunk_index": 0}],
+                metadatas=[index_source.metadata(0, len(content), {**base_meta, "chunk_index": 0})],
             )
             inserted = col.get(ids=[drawer_id], include=[])
             if not _get_result_ids(inserted):
@@ -613,6 +649,10 @@ def tool_add_drawer(
             chunk_metas.append(
                 {**base_meta, "chunk_index": chunk_idx, "parent_drawer_id": drawer_id}
             )
+        chunk_metas = [
+            index_source.metadata(i * chunk_size, i * chunk_size + len(doc), meta)
+            for i, (doc, meta) in enumerate(zip(chunk_docs, chunk_metas))
+        ]
         assert_no_collisions(list(zip(chunk_ids, chunk_metas)), col)
         col.upsert(ids=chunk_ids, documents=chunk_docs, metadatas=chunk_metas)
         # Probe the LAST chunk id, not the first — its presence confirms
@@ -1536,6 +1576,9 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
             update_kwargs = {"ids": [record["ids"][0]]}
             if content is not None:
                 update_kwargs["documents"] = [new_doc]
+                new_meta = IndexSource(new_doc).metadata(
+                    0, len(new_doc), {**new_meta, INDEX_SPANS: None}
+                )
             update_kwargs["metadatas"] = [new_meta]
 
             col.update(**update_kwargs)

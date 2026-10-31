@@ -12,15 +12,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy"
 DOCKERFILE = DEPLOY / "commonplace" / "Dockerfile"
-COMPOSE = DEPLOY / "compose.edge1.yml"
-CADDY = DEPLOY / "commonplace.caddy"
+COMPOSE = DEPLOY / "compose.host.yml.example"
+CADDY = DEPLOY / "commonplace.caddy.example"
 HOOK = ROOT / "backup-hook.sh"
 
 
 def test_image_installs_repo_and_runs_as_nonroot():
     text = DOCKERFILE.read_text()
     assert text.startswith("FROM python:3.12-slim\n")
-    assert "RUN pip install .\n" in text
+    assert 'RUN pip install ".[commonplace]"\n' in text
     users = re.findall(r"^USER (.+)$", text, re.MULTILINE)
     assert users == ["10001:10001"]
     assert "COMMONPLACE_DATA=/data" in text
@@ -42,8 +42,8 @@ def test_model_is_preloaded_as_runtime_user_outside_data_volume():
 
 def test_compose_uses_repo_root_and_exact_loopback_publication():
     text = COMPOSE.read_text()
-    assert re.search(r"^services:\n  commonplace:\n", text)
-    assert "context: ..\n" in text
+    assert re.search(r"\A(?:#[^\n]*\n)*services:\n  commonplace:\n", text)
+    assert "context: ${COMMONPLACE_SOURCE_DIR:?" in text
     assert "dockerfile: deploy/commonplace/Dockerfile" in text
     ports = re.search(r"    ports:\n((?:      .+\n)+)", text)[1]
     assert ports.splitlines() == ['      - "127.0.0.1:8765:8765"']
@@ -53,9 +53,10 @@ def test_compose_uses_repo_root_and_exact_loopback_publication():
 
 def test_compose_persists_data_limits_memory_and_loads_operator_env():
     text = COMPOSE.read_text()
-    assert "- /srv/commonplace/data:/data\n" in text
-    assert "- /srv/commonplace/.env\n" in text
-    assert "COMMONPLACE_BASE_URL:-https://edge1.tail6cee8c.ts.net" in text
+    assert "${COMMONPLACE_DATA_DIR:?" in text
+    assert "directory}:/data\n" in text
+    assert "- ${COMMONPLACE_ENV_FILE:?" in text
+    assert "COMMONPLACE_BASE_URL:-https://hub.example.com" in text
     assert "restart: unless-stopped\n" in text
     assert "mem_limit: 3g\n" in text
     assert "init: true\n" in text
@@ -73,7 +74,7 @@ def test_healthcheck_uses_python_stdlib_and_healthz_alias():
 
 def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
     active = "\n".join(line for line in CADDY.read_text().splitlines() if not line.startswith("#"))
-    assert active.count("edge1.tail6cee8c.ts.net {") == 1
+    assert active.count("hub.example.com {") == 1
     paths = re.search(r"@backend path (.+)", active)[1].split()
     assert set(paths) == {
         "/app*",
@@ -88,11 +89,11 @@ def test_caddy_preserves_api_paths_and_has_exclusive_static_fallback():
     assert "handle_path" not in active
     backend, fallback = active.split("handle @backend {", 1)[1].split("\n\thandle {", 1)
     fallback = fallback.split("\n}\n", 1)[0]
-    assert "bind 100.76.209.1" in active
+    assert "bind 192.0.2.10" in active
     assert "reverse_proxy 127.0.0.1:8765" in backend
     assert "flush_interval -1" in backend
     assert "Content-Security-Policy" not in backend
-    assert "root * /srv/commonplace/app/landing/public" in fallback
+    assert "root * /path/to/commonplace/app/landing/public" in fallback
     assert "file_server" in fallback
     assert "reverse_proxy" not in fallback
     assert "Content-Security-Policy" in fallback
@@ -127,8 +128,7 @@ def test_hook_is_executable_and_uses_only_host_managed_restic():
     assert HOOK.stat().st_mode & 0o111
     text = HOOK.read_text()
     assert "set -Eeuo pipefail" in text
-    assert "--env-file /srv/commonplace/.env" in text
-    assert '"$repo_dir/deploy/compose.edge1.yml"' in text
+    assert 'docker compose --env-file "$env_file" -f "$compose_file"' in text
     assert "exec -T commonplace commonplace backup --help" in text
     assert "stop --timeout 60 commonplace" in text
     assert '--volume "$staging_parent:/backup"' in text
@@ -182,7 +182,7 @@ else:
 """
 
 
-def run_hook(tmp_path, fail=""):
+def run_hook(tmp_path, fail="", env_overrides=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / "docker"
@@ -193,11 +193,18 @@ def run_hook(tmp_path, fail=""):
     backups.mkdir()
     commands = tmp_path / "commands.jsonl"
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    for key in ("COMMONPLACE_DEPLOY_DIR", "COMMONPLACE_ENV_FILE", "COMPOSE_FILE"):
+        env.pop(key, None)
     env.update(FAKE_COMMANDS=str(commands), FAKE_FAIL=fail)
+    env.update(env_overrides or {})
     result = subprocess.run(
         ["bash", str(HOOK), str(backups)], env=env, capture_output=True, text=True, timeout=10
     )
-    calls = [json.loads(line) for line in commands.read_text().splitlines()]
+    calls = (
+        [json.loads(line) for line in commands.read_text().splitlines()]
+        if commands.exists()
+        else []
+    )
     # Failure logs are deliberately preserved by the production hook; clean
     # up this test's log after checking the diagnostic points to a real file.
     log_match = re.search(r"details: (/tmp/commonplace-backup\.[^)]+)", result.stderr)
@@ -222,8 +229,35 @@ def test_hook_publishes_complete_snapshot_after_restarting_gateway(tmp_path):
     ]
     assert actions == ["ps", "exec", "stop", "run", "start"]
     for call in calls:
-        assert call[:4] == ["compose", "--env-file", "/srv/commonplace/.env", "-f"]
-        assert Path(call[4]) == ROOT / "deploy/compose.edge1.yml"
+        assert call[:4] == ["compose", "--env-file", str(ROOT.parent / ".env"), "-f"]
+        assert Path(call[4]) == ROOT.parent / "compose.yml"
+
+
+@pytest.mark.parametrize("individual_paths", [False, True])
+def test_hook_uses_external_operator_configuration(tmp_path, individual_paths):
+    operator_dir = tmp_path / "operator config"
+    env_file = operator_dir / "custom.env" if individual_paths else operator_dir / ".env"
+    compose_file = operator_dir / "custom.yml" if individual_paths else operator_dir / "compose.yml"
+    overrides = {"COMMONPLACE_DEPLOY_DIR": str(operator_dir)}
+    if individual_paths:
+        overrides.update(COMMONPLACE_ENV_FILE=str(env_file), COMPOSE_FILE=str(compose_file))
+    result, _, calls = run_hook(tmp_path, env_overrides=overrides)
+    assert result.returncode == 0, result.stderr
+    assert calls
+    for call in calls:
+        assert call[:5] == ["compose", "--env-file", str(env_file), "-f", str(compose_file)]
+
+
+@pytest.mark.parametrize("name", ["COMMONPLACE_DEPLOY_DIR", "COMMONPLACE_ENV_FILE", "COMPOSE_FILE"])
+@pytest.mark.parametrize("value", ["relative/config", "~/config"])
+def test_hook_rejects_relative_overrides_before_touching_gateway(tmp_path, name, value):
+    result, backups, calls = run_hook(tmp_path, env_overrides={name: value})
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.count("\n") == 1
+    assert f"{name} must be an absolute path" in result.stderr
+    assert calls == []
+    assert list(backups.iterdir()) == []
 
 
 @pytest.mark.parametrize(

@@ -12,7 +12,7 @@ Kinds in use (add, never rename):
 
     card.created  card.updated  card.moved  card.commented  card.claimed
     card.expired  card.handoff  card.review_needed  card.decided
-    memory.saved  memory.linked
+    memory.saved  memory.linked  fact.saved
     webhook.failed
 """
 
@@ -90,14 +90,35 @@ def emit(
 ) -> dict:
     """Append one event and tell the listeners. Returns the stored event."""
     ensure_schema(db)
-    payload = json.dumps(data or {}, ensure_ascii=False, sort_keys=True)
     with db._lock:
-        cur = db._conn.execute(
-            "INSERT INTO events(at, workspace_id, kind, subject, actor, data) VALUES (?,?,?,?,?,?)",
-            (_now(), workspace_id, kind, subject, actor, payload),
-        )
-        row = db._conn.execute("SELECT * FROM events WHERE seq = ?", (cur.lastrowid,)).fetchone()
-    event = _row(row)
+        event = record(db, workspace_id, kind, subject=subject, actor=actor, data=data)
+    notify(event)
+    return event
+
+
+def record(
+    db,
+    workspace_id: str,
+    kind: str,
+    *,
+    subject: str = "",
+    actor: str = "",
+    data: Optional[dict] = None,
+) -> dict:
+    """Append one event without telling the listeners, inside the caller's
+    transaction (the caller holds ``db._lock``). Call :func:`notify` after the
+    transaction commits, so a listener never waits on an open write."""
+    payload = json.dumps(data or {}, ensure_ascii=False, sort_keys=True)
+    cur = db._conn.execute(
+        "INSERT INTO events(at, workspace_id, kind, subject, actor, data) VALUES (?,?,?,?,?,?)",
+        (_now(), workspace_id, kind, subject, actor, payload),
+    )
+    row = db._conn.execute("SELECT * FROM events WHERE seq = ?", (cur.lastrowid,)).fetchone()
+    return _row(row)
+
+
+def notify(event: dict) -> None:
+    """Tell the listeners about a stored event."""
     with _listeners_lock:
         listeners = list(_listeners)
     for listener in listeners:
@@ -105,7 +126,6 @@ def emit(
             listener(event)
         except Exception as exc:
             log_failure(logger, "event listener failed", exc)
-    return event
 
 
 def after(db, workspace_id: str, seq: int = 0, limit: int = 200) -> list:

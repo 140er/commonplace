@@ -10,9 +10,12 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from commonplace import events, privacy
+from commonplace.callstack import LIMITS
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
+from .digest import digest
+from .display import stale_before
 from .store import (
     STATUSES,
     BoardStore,
@@ -41,6 +44,70 @@ def validate_text(value, name, *, required=False, limit=100_000):
     if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
         raise ToolError(f"no: {name} must be {'nonempty ' if required else ''}text")
     return value
+
+
+CALLSTACK_KEYS = {"base", "head", "stats", "roots", "files", "truncated", "more"}
+CALLSTACK_NODE = {"name", "file", "line", "change", "params", "children", "more", "seen"}
+
+
+def callstack_json(value):
+    """The PR call tree an agent reports, checked and stored as compact JSON (None clears)."""
+    if value is None:
+        return None
+    nodes = 0
+
+    def check(ok):
+        if not ok:
+            raise ToolError("no: invalid callstack")
+
+    def text(item, key, limit, required=False):
+        if key in item or required:
+            check(isinstance(item.get(key), str) and 0 < len(item[key]) <= limit)
+
+    def count(item, key):
+        if key in item:
+            check(type(item[key]) is int and 0 <= item[key] <= 1_000_000)
+
+    def node(item, depth):
+        nonlocal nodes
+        nodes += 1
+        check(isinstance(item, dict) and not set(item) - CALLSTACK_NODE)
+        check(
+            depth < LIMITS["depth"]
+            and nodes <= LIMITS["nodes"]
+            and item.get("change") in ("new", "changed", "unchanged")
+        )
+        text(item, "name", LIMITS["name"], required=True)
+        text(item, "file", LIMITS["file"])
+        text(item, "params", LIMITS["params"])
+        count(item, "line")
+        count(item, "more")
+        check(isinstance(item.get("seen", False), bool))
+        check(isinstance(item.get("children", []), list))
+        for child in item.get("children", []):
+            node(child, depth + 1)
+
+    check(isinstance(value, dict) and not set(value) - CALLSTACK_KEYS)
+    text(value, "base", LIMITS["base"])
+    text(value, "head", LIMITS["head"])
+    count(value, "more")
+    check(isinstance(value.get("truncated", False), bool))
+    stats = value.get("stats", {})
+    check(isinstance(stats, dict) and set(stats) <= {"new", "changed", "files"})
+    for key in stats:
+        count(stats, key)
+    check(isinstance(value.get("roots", []), list) and isinstance(value.get("files", []), list))
+    for root in value.get("roots", []):
+        node(root, 0)
+    check(len(value.get("files", [])) <= LIMITS["files"])
+    for item in value.get("files", []):
+        check(isinstance(item, dict) and set(item) == {"file", "change"})
+        text(item, "file", LIMITS["file"], required=True)
+        check(item["change"] in ("new", "changed", "deleted"))
+    stored = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(stored.encode()) > LIMITS["bytes"]:
+        raise ToolError("no: callstack is too large")
+    return stored
 
 
 def choices(value):
@@ -95,9 +162,7 @@ def needs_me(store, principal) -> dict:
     result = {
         key: [] for key in ("asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale")
     }
-    stale_before = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    cutoff = stale_before()
     with store.connection() as conn:
         rows = conn.execute(
             "SELECT t.*,b.slug AS board,b.wing AS board_wing FROM tasks t "
@@ -115,7 +180,7 @@ def needs_me(store, principal) -> dict:
             if row["pr_url"] and row["checks"] == "passing" and row["status"] != "done":
                 result["ready_to_merge"].append(item)
             if row["status"] == "doing" and row["assignee"].startswith("conn:"):
-                if (row["heartbeat_at"] or row["updated_at"]) < stale_before:
+                if (row["heartbeat_at"] or row["updated_at"]) < cutoff:
                     result["stale"].append(item)
     result["count"] = len({c["number"] for bucket in result.values() for c in bucket})
     return result
@@ -138,13 +203,13 @@ class BoardService:
             except VersionClash as exc:
                 # System expiries precede the version check; publish that current card.
                 conflict = exc
-        for kind, number, data, actor in self.pending:
+        for kind, subject, data, actor in self.pending:
             try:
                 events.emit(
                     self.ctx.db,
                     self.principal.workspace_id,
                     kind,
-                    subject=f"#{number}",
+                    subject=subject,
                     actor=actor,
                     data=data,
                 )
@@ -166,7 +231,7 @@ class BoardService:
             "actor": actor,
             **extra,
         }
-        self.pending.append((kind, number, data, actor))
+        self.pending.append((kind, f"#{number}", data, actor))
 
     def _log(self, conn, number, kind, **fields):
         append_event(
@@ -343,10 +408,10 @@ class BoardService:
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
-    def _holder(self, row, *, editing=False):
+    def _holder(self, row, *, editing=False, reopening=False):
         if self.principal.person:
             return
-        if row["status"] == "done":
+        if row["status"] == "done" and not reopening:
             raise ToolError("no: completed cards are frozen for connections")
         if (
             row["status"] == "doing"
@@ -392,6 +457,8 @@ class BoardService:
                         "slug": board["slug"],
                         "name": board["name"],
                         "wing": board["wing"],
+                        "coordinator": board["coordinator"],
+                        "can_configure": self.principal.role == "owner",
                         "counts": counts,
                     }
                 )
@@ -404,8 +471,151 @@ class BoardService:
                 "slug": board["slug"],
                 "name": board["name"],
                 "wing": board["wing"],
+                "coordinator": board["coordinator"],
                 "counts": dict.fromkeys(STATUSES, 0),
             }
+
+    def board_set(self, board, coordinator):
+        _owner(self.principal)
+        with self.transaction() as conn:
+            b = self._board(conn, board)
+            self._write(b)
+            actor = None
+            if coordinator is not None:
+                actor = self._actor(coordinator)
+                candidates = [
+                    self.ctx.db.authenticate_connection(c["id"])
+                    for c in self.ctx.db.connections(self.principal.workspace_id)
+                    if c["auth"] == "pat"
+                ]
+                if not any(
+                    p is not None
+                    and p.actor == actor
+                    and not _restricted(p)
+                    and p.policy.has_scope("memory:read")
+                    and p.policy.has_scope("memory:write")
+                    and p.policy.tool_visible("space_read")
+                    and p.policy.tool_visible("space_post")
+                    and p.policy.can_read_wing(b["wing"])
+                    and p.policy.can_write_wing(b["wing"])
+                    for p in candidates
+                ):
+                    raise ToolError(
+                        "no: coordinator must be an active agent with access to this board"
+                    )
+            conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
+            self.pending.append(
+                (
+                    "space_configured",
+                    f"space:{b['slug']}",
+                    {"board": b["slug"]},
+                    self.principal.actor,
+                )
+            )
+            result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None:
+            from commonplace import webhooks
+
+            if not webhooks.has_space_subscription(
+                self.ctx.db, self.ctx.gateway, self.principal.workspace_id, actor, b["slug"]
+            ):
+                result["warning"] = (
+                    "Coordinator has no active webhook matching space_message on this board. "
+                    f"Register webhook_add url=… events=space_message board={b['slug']}."
+                )
+        return result
+
+    @staticmethod
+    def _message(row):
+        return {
+            "id": row["id"],
+            "text": row["text"],
+            "actor": f"conn:{row['stamp_connection']}"
+            if row["stamp_connection"] is not None
+            else f"user:{row['stamp_user']}",
+            "stamp_user": row["stamp_user"],
+            "stamp_connection": row["stamp_connection"],
+            "stamp_trust": row["stamp_trust"],
+            "flags": json.loads(row["flags"]),
+            "at": row["created_at"],
+        }
+
+    def space_read(self, board, after=None, last=None, before=None):
+        if not self.principal.policy.has_scope("memory:read"):
+            raise ToolError("no: this connection cannot read this board")
+        for name, value in (("after", after), ("before", before)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**63
+            ):
+                raise ToolError(f"no: {name} must be a nonnegative message cursor")
+        if last is not None and (type(last) is not int or not 1 <= last <= 100):
+            raise ToolError("no: last must be between 1 and 100")
+        if after is not None and (last is not None or before is not None):
+            raise ToolError("no: after cannot be combined with last or before")
+        with self.store.connection() as conn:
+            b = self._board(conn, board)
+            backward = last is not None or before is not None
+            boundary = before if before is not None else 2**63 - 1
+            window = (
+                ("<?" if before is not None else "<=?") + " ORDER BY id DESC LIMIT ?"
+                if backward
+                else ">? ORDER BY id LIMIT ?"
+            )
+            messages = [
+                self._message(row)
+                for row in conn.execute(
+                    "SELECT * FROM space_messages WHERE board_id=? AND id" + window,
+                    (b["id"], boundary if backward else after or 0, last or 100),
+                )
+            ]
+            if backward:
+                messages.reverse()
+            oldest = messages[0]["id"] if messages else 0
+            return {
+                "board": b["slug"],
+                "coordinator": b["coordinator"],
+                "messages": messages,
+                "cursor": messages[-1]["id"] if messages else after or 0,
+                "oldest": oldest,
+                "has_more": bool(
+                    conn.execute(
+                        "SELECT 1 FROM space_messages WHERE board_id=? AND id<? LIMIT 1",
+                        (b["id"], oldest),
+                    ).fetchone()
+                ),
+            }
+
+    def space_post(self, board, text):
+        text = validate_text(text, "text", required=True)
+        p = self.principal
+        with self.transaction() as conn:
+            b = self._board(conn, board)
+            self._write(b)
+            cur = conn.execute(
+                "INSERT INTO space_messages(board_id,text,stamp_user,stamp_connection,"
+                "stamp_trust,flags,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    b["id"],
+                    text,
+                    p.user_id,
+                    None if p.person else p.connection,
+                    p.policy.trust,
+                    json.dumps(flags_for(text)),
+                    now(),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM space_messages WHERE id=?", (cur.lastrowid,)
+            ).fetchone()
+            self.pending.append(
+                (
+                    "space_message" if p.person else "space_replied",
+                    f"space:{b['slug']}",
+                    {"board": b["slug"], "message_id": row["id"], "coordinator": b["coordinator"]},
+                    p.actor,
+                )
+            )
+            return self._message(row)
 
     def task_list(self, board=None, status=None, mine=False, *, all_statuses=False):
         with self.transaction() as conn:
@@ -453,6 +663,12 @@ class BoardService:
                     "at": r["created_at"],
                     "choice": r["choice"],
                     "target": r["target"],
+                    # Events that opened an ask carry the choices offered, verbatim.
+                    **(
+                        {"options": json.loads(r["options"] or "[]")}
+                        if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
+                        else {}
+                    ),
                 }
                 for r in conn.execute(
                     "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
@@ -460,6 +676,7 @@ class BoardService:
                 if not (r["kind"] in ("link", "unlink") and r["target"] in hidden)
             ]
             result["linked"] = self.store.links(conn, row["id"], self.principal)
+            result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
             return result
 
     def _new_card(
@@ -475,8 +692,20 @@ class BoardService:
         ask=None,
         options=None,
         target=None,
+        message_id=None,
     ):
         p = self.principal
+        if message_id is not None:
+            if (
+                isinstance(message_id, bool)
+                or not isinstance(message_id, int)
+                or not 1 <= message_id < 2**63
+                or not conn.execute(
+                    "SELECT 1 FROM space_messages WHERE id=? AND board_id=?",
+                    (message_id, board["id"]),
+                ).fetchone()
+            ):
+                raise ToolError("no: message not found in this board")
         title = validate_text(title, "title", required=True, limit=5000)
         body = validate_text(body, "body")
         if labels is None:
@@ -500,8 +729,8 @@ class BoardService:
         at = now()
         cur = conn.execute(
             "INSERT INTO tasks(board_id,title,body,status,position,assignee,ask,ask_options,ask_to,return_to,flags,"
-            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks,message_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 board["id"],
                 title,
@@ -524,17 +753,28 @@ class BoardService:
                 repo[0] if repo else None,
                 json.dumps(labels),
                 "",
+                message_id,
             ),
         )
         number = cur.lastrowid
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
         if status == "review":
-            self._log(conn, number, "ask", text=ask, target=target, to_status="review")
+            self._log(
+                conn,
+                number,
+                "ask",
+                text=ask,
+                target=target,
+                to_status="review",
+                options=options or [],
+            )
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
         return card(conn, task_row(conn, number), self.principal)
 
-    def task_add(self, title, body="", board=None, status="todo", assignee=None, labels=None):
+    def task_add(
+        self, title, body="", board=None, status="todo", assignee=None, labels=None, message_id=None
+    ):
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -547,6 +787,7 @@ class BoardService:
                 status="backlog" if _restricted(self.principal) else status,
                 assignee=assignee,
                 labels=labels,
+                message_id=message_id,
             )
 
     def task_comment(self, task, text, version=None):
@@ -658,7 +899,14 @@ class BoardService:
             if status == "backlog" or (old, status) in allowed:
                 return
         else:
-            if old == "doing" and status in ("done", "backlog"):
+            if (old, status) in {
+                ("todo", "review"),
+                ("doing", "review"),
+                ("todo", "done"),
+                ("doing", "done"),
+                ("done", "todo"),
+                ("doing", "backlog"),
+            }:
                 return
             if old == "todo" and status == "backlog" and row["assignee"] is None:
                 return
@@ -735,6 +983,7 @@ class BoardService:
             "pr",
             "checks",
             "status_line",
+            "callstack",
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
@@ -742,8 +991,14 @@ class BoardService:
             self._version(conn, row, version)
             if set(args) - permitted:
                 raise ToolError("no: unknown update field")
-            self._holder(row, editing=bool(set(args) & {"title", "body", "labels"}))
-            if row["status"] == "review" and not self.principal.person:
+            self._holder(
+                row,
+                editing=bool(set(args) & {"title", "body", "labels"}),
+                reopening=set(args) == {"status"} and args["status"] == "todo",
+            )
+            # The agent that asked for review may still refresh the PR's call tree.
+            refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
+            if row["status"] == "review" and not self.principal.person and not refresh:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")
@@ -773,6 +1028,8 @@ class BoardService:
                 self._pr_updates(row, updates, args["pr"])
             if "status_line" in args:
                 updates["heartbeat_at"] = now()
+            if "callstack" in args:
+                updates["callstack"] = callstack_json(args["callstack"])
             status = args.get("status", row["status"])
             self._transition(row, status)
             if status != row["status"]:
@@ -814,7 +1071,8 @@ class BoardService:
                 if key in args:
                     self._link(conn, row, args[key], unlink=key == "unlink")
             new_flags = flags_for(
-                *(args.get(key) for key in ("title", "body", "lesson", "status_line"))
+                *(args.get(key) for key in ("title", "body", "lesson", "status_line")),
+                updates.get("callstack"),
             )
             if new_flags:
                 updates["flags"] = json.dumps(
@@ -824,12 +1082,22 @@ class BoardService:
                 return card(conn, row, self.principal)
             self._set(conn, row, updates)
             moved = updates.get("status", row["status"]) != row["status"]
+            ask = (
+                {
+                    "text": updates["ask"],
+                    "target": updates["ask_to"],
+                    "options": json.loads(updates["ask_options"]),
+                }
+                if moved and updates["status"] == "review"
+                else {}
+            )
             self._log(
                 conn,
                 row["id"],
                 "move" if moved else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
+                **ask,
             )
             self._emit(
                 conn,
@@ -878,6 +1146,7 @@ class BoardService:
             from_status=row["status"],
             to_status=status,
             flags=flags_for(note),
+            options=options if person else None,
         )
         self._emit(
             conn,
@@ -925,13 +1194,13 @@ class BoardService:
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             _owner(self.principal)
-            # Jeffrey decides in the app, or through one of his own trusted
-            # agents relaying his answer (Chief, voice). An agent never
+            # The owner decides in the app, or through a trusted
+            # agent relaying the answer. An agent never
             # answers a question it asked itself.
             if not self.principal.person and (
                 self.principal.policy.trust != "trusted" or row["return_to"] == self.principal.actor
             ):
-                raise ToolError("no: only Jeffrey or his trusted agent can answer this")
+                raise ToolError("no: only the owner or a trusted agent can answer this")
             self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":
@@ -987,8 +1256,11 @@ class BoardService:
             )
             return card(conn, task_row(conn, row["id"]), self.principal)
 
-    def needs_me(self):
-        return needs_me(self.store, self.principal)
+    def needs_me(self, format="list"):
+        if format not in ("list", "digest"):
+            raise ToolError("no: format must be list or digest")
+        groups = needs_me(self.store, self.principal)
+        return digest(groups) if format == "digest" else groups
 
     def seed_card(
         self,
@@ -1057,7 +1329,14 @@ class BoardService:
             row = task_row(conn, created["number"])
             self._set(conn, row, updates)
             if status != row["status"]:
-                self._log(conn, row["id"], "move", from_status=row["status"], to_status=status)
+                ask = (
+                    {"text": updates["ask"], "target": updates["ask_to"], "options": []}
+                    if status == "review"
+                    else {}
+                )
+                self._log(
+                    conn, row["id"], "move", from_status=row["status"], to_status=status, **ask
+                )
                 self._emit(conn, row["id"], "card.moved", **{"from": row["status"], "to": status})
             if status == "review":
                 self._emit(conn, row["id"], "card.review_needed")

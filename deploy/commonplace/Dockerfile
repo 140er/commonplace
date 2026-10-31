@@ -17,7 +17,7 @@ WORKDIR /opt/commonplace
 COPY pyproject.toml README.md ./
 COPY mempalace/ ./mempalace/
 COPY commonplace/ ./commonplace/
-RUN pip install .
+RUN pip install ".[commonplace]"
 
 USER 10001:10001
 # Warm MiniLM through the same factory the workers use. HOME's cache is

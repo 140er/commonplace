@@ -1,73 +1,189 @@
 import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
+import { digestSpeech } from "./digest.js";
+import { voiceInput } from "./voice.js";
+import { homeView, needItems } from "./home.js";
+import { planView } from "./plan.js";
+import { rulesView, rulesHandlers } from "./rules.js";
+import { signinView, signinMessage } from "./signin.js";
+
+const signinParams = new URLSearchParams(location.search);
+const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
+if (signinParams.has("signin") || signinParams.has("next")) {
+  signinParams.delete("signin"); signinParams.delete("next");
+  const search = signinParams.toString();
+  history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+}
+let providersPromise;
 
 const root = document.querySelector("#root");
 const state = {
-  me: null, boards: [], needs: {}, cards: [], card: null, route: "#/", base: "#/",
-  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0,
+  me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
+  selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
+  chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
+  chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
+  toggled: new Set(), rulesWaiting: 0,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
 const message = (text, retry = false) => `<div class="message" role="status">${e(text)}${retry ? '<button data-action="retry">Retry</button>' : ""}</div>`;
 const options = (items, selected) => items.map((s) => `<option value="${e(s)}" ${s === selected ? "selected" : ""}>${e(s)}</option>`).join("");
+let speechState = { active: false, text: "" };
+const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
+const voice = voiceInput(root, api, showError);
+const rulesUI = rulesHandlers(root, api, refresh, showError);
+function speechView() {
+  const button = root.querySelector('[data-action="speak-digest"]');
+  if (button) {
+    button.textContent = speechState.active ? "Stop" : "Speak";
+    button.dataset.active = String(speechState.active);
+    button.setAttribute("aria-label", speechState.active ? "Stop speaking" : "Speak what needs you today");
+  }
+  const captions = root.querySelector("#digest-captions");
+  if (captions) { captions.hidden = !speechState.text; captions.textContent = speechState.text; }
+}
 const prLink = (card) => {
   const href = safeLink(card.pr_url);
   return href ? `<a href="${e(href)}" target="_blank" rel="noopener noreferrer">PR #${e(card.pr_number || "↗")}</a>` : card.pr_number ? `<span>PR #${e(card.pr_number)}</span>` : "";
 };
+const needLabels = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", checks: "Checks running", working: "Working", idle: "Idle", done: "Done" };
 function dot(card) {
-  const ready = (state.needs.ready_to_merge || []).some((c) => c.number === card.number);
-  const kind = card.ask && (!card.ask_to || card.ask_to === state.me.actor) ? "ask" : card.checks === "pending" ? "pending" : ready ? "ready" : card.status === "review" || card.labels?.includes("plan") ? "review" : "";
-  const label = { ask: "Needs you", pending: "Checks pending", ready: "Ready to merge", review: "Review or plan" }[kind] || card.status;
-  return `<i class="status-dot ${kind}" role="img" aria-label="${e(label)}"></i>`;
+  const need = needLabels[card.need] ? card.need : "idle";
+  return `<i class="status-dot ${need}" data-need="${need}" role="img" aria-label="${needLabels[need]}"></i>`;
 }
+// One task row: dot, title, elapsed; then #N, context, branch and PR.
+const taskRow = (card, context = "") => `<div class="trow">${dot(card)}<a class="tt" href="#/card/${card.number}">${e(card.title)}</a><time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time><div class="tm"><a href="#/card/${card.number}">#${card.number}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}${context}${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}</div></div>`;
+const rowFoot = (card) => `${card.claim_until ? `<div class="task-meta">${claim(card)}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
 function claim(card) {
   if (!card.claim_until) return "";
   const end = Date.parse(card.claim_until), start = Date.parse(card.heartbeat_at || card.updated_at);
   const ratio = Math.max(0, Math.min(1, (end - Date.now()) / (end - start || 1800000)));
   return `<span class="claim ${ratio < .2 ? "low" : ""}" data-claim-until="${e(card.claim_until)}" data-claim-start="${e(card.heartbeat_at || card.updated_at)}" role="img" aria-label="Claim ${Math.round(ratio * 100)}% remaining">${Array.from({ length: 6 }, (_, i) => `<i class="${i < Math.ceil(ratio * 6) ? "on" : ""}"></i>`).join("")}</span>`;
 }
-const cardMeta = (card, full = true) => {
-  const fields = `${full ? `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>` : ""}${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}${full ? `<time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time>` : ""}${claim(card)}`;
-  return `${fields ? `<div class="task-meta">${fields}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
-};
+const cardMeta = (card) => `<div class="task-meta"><span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}<time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time>${claim(card)}</div>${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
+// Live transitions: rows keep their identity across a re-render, so a row that changed
+// group slides there and a dot whose need changed pops into its new state.
+function capture(view) {
+  const content = root.querySelector("#content");
+  const before = new Map();
+  if (content.dataset.view === view) content.querySelectorAll("[data-key]").forEach((row) => {
+    const d = row.querySelector(".status-dot");
+    if (!before.has(row.dataset.key)) before.set(row.dataset.key, { rect: row.getBoundingClientRect(), need: d?.dataset.need, color: d && getComputedStyle(d).backgroundColor });
+  });
+  return () => {
+    content.dataset.view = view;
+    const phase = `${-(Date.now() % 1000)}ms`;
+    content.querySelectorAll(".status-dot.checks").forEach((d) => { d.style.animationDelay = phase; });
+    if (!before.size || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const seen = new Set();
+    content.querySelectorAll("[data-key]").forEach((row) => {
+      const key = row.dataset.key, old = before.get(key);
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!old) { row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" }); return; }
+      const rect = row.getBoundingClientRect(), dx = old.rect.left - rect.left, dy = old.rect.top - rect.top;
+      if (Math.abs(dx) + Math.abs(dy) > 1) row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 240, easing: "cubic-bezier(.2, .7, .3, 1)" });
+      const d = row.querySelector(".status-dot");
+      if (d && old.need && old.need !== d.dataset.need) d.animate([{ transform: "scale(1.75)", backgroundColor: old.color }, { transform: "scale(1)" }], { duration: 240, easing: "ease-out" });
+    });
+  };
+}
+const changes = ["new", "changed", "unchanged", "deleted"];
+const csDot = (change) => { const kind = changes.includes(change) ? change : "unchanged"; return `<i class="cs-dot ${kind}" role="img" aria-label="${kind}"></i>`; };
+const csSize = (n) => (n.children || []).reduce((sum, child) => sum + 1 + csSize(child), n.more || 0);
+// The PR as a call tree (from the agent's `python -m commonplace.callstack`); nodes fold, files start folded.
+function callTree(card) {
+  const stack = card.callstack;
+  if (!stack || !(card.pr_url || card.pr_number)) return "";
+  const open = (path, folded = false) => folded === state.toggled.has(`${card.number}:${path}`);
+  const node = (n, path, parent) => {
+    const kids = n.children || [], expanded = open(path), cut = n.name.lastIndexOf(".");
+    const where = `${n.file && n.file !== parent ? n.file.split("/").pop() : ""}${n.line ? `:${n.line}` : ""}`;
+    const row = `${csDot(n.change)}<span class="cs-name">${cut > 0 ? `<span class="cs-q">${e(n.name.slice(0, cut + 1))}</span>` : ""}<b>${e(n.name.slice(cut + 1))}</b><span class="cs-q">(${e(n.params || "")})${n.seen ? " …" : ""}${kids.length && !expanded ? ` +${csSize(n)}` : ""}</span></span><span class="cs-loc" title="${e(n.file || "")}${n.line ? `:${n.line}` : ""}">${e(where)}</span>`;
+    const more = n.more ? `<li><span class="cs-row cs-q">+${n.more}</span></li>` : "";
+    return `<li>${kids.length ? `<button class="cs-row" data-action="cs-toggle" data-path="${path}" aria-expanded="${expanded}">${row}</button>` : `<div class="cs-row">${row}</div>`}${expanded && (kids.length || more) ? `<ul>${kids.map((k, i) => node(k, `${path}.${i}`, n.file)).join("")}${more}</ul>` : ""}</li>`;
+  };
+  const stats = stack.stats || {}, files = stack.files || [], filesOpen = open("files", true);
+  const head = `${stats.new ? `<span>${csDot("new")}${e(stats.new)} new</span>` : ""}${stats.changed ? `<span>${csDot("changed")}${e(stats.changed)} changed</span>` : ""}<span>${e(stats.files ?? files.length)} files</span>${stack.head ? `<span class="cs-sha" title="Head commit">${e(stack.head)}</span>` : ""}`;
+  const rest = files.length ? `<li><button class="cs-row" data-action="cs-toggle" data-path="files" aria-expanded="${filesOpen}"><span class="cs-name cs-q">${e(files.length)} other files${filesOpen ? "" : " +"}</span></button>${filesOpen ? `<ul>${files.map((f) => `<li><div class="cs-row">${csDot(f.change)}<span class="cs-name ${f.change === "deleted" ? "cs-gone" : ""}" title="${e(f.file)}">${e(f.file)}</span></div></li>`).join("")}</ul>` : ""}</li>` : "";
+  const cut = stack.truncated || stack.more ? `<li><span class="cs-row cs-q">${stack.more ? `+${e(stack.more)}` : "…"}</span></li>` : "";
+  return `<section class="cs" aria-label="Call tree"><div class="cs-head">${head}</div><div class="cs-body"><ul class="cs-tree">${(stack.roots || []).map((n, i) => node(n, String(i), "")).join("")}${cut}${rest}</ul></div></section>`;
+}
 
 function remember() {
+  voice.remember();
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
-  const active = document.activeElement;
+  const active = document.activeElement, ask = active?.closest?.("[data-ask]"), cols = root.querySelector(".cols");
   return {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
+    scope: active?.closest?.("#card-panel, #content")?.id,
+    ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
+    tree: root.querySelector(".cs-body")?.scrollTop,
+    view: root.querySelector("#content")?.dataset.view, cols: cols && [cols.scrollTop, cols.scrollLeft],
+    stacks: Object.fromEntries([...root.querySelectorAll(".col[data-status] .stack")].map((stack) => [stack.parentElement.dataset.status, stack.scrollTop])),
+    spaceTasks: root.querySelector(".space-tasks .stack")?.scrollTop,
+    chat: root.querySelector(".space-stream")?.scrollTop,
+    chatBottom: (() => { const el = root.querySelector(".space-stream"); return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 60; })(),
   };
 }
 function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
-    const input = root.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
+    const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
     input?.focus({ preventScroll: true });
-    if (input?.setSelectionRange && ["text", "search", "tel", "password"].includes(input.type)) input.setSelectionRange(saved.start, saved.end);
+    if (input?.setSelectionRange && (input.tagName === "TEXTAREA" || ["text", "search", "tel", "password"].includes(input.type))) input.setSelectionRange(saved.start, saved.end);
+  }
+  if (saved?.ask) {
+    const ask = scope.querySelector(`[data-ask="${CSS.escape(saved.ask.card)}"]`);
+    (saved.ask.option == null ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask.option)}"]`))?.focus({ preventScroll: true });
   }
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
+  const chat = root.querySelector(".space-stream");
+  if (chat) chat.scrollTop = saved?.view === state.base && saved.chatBottom === false ? saved.chat || 0 : chat.scrollHeight;
+  const tree = root.querySelector(".cs-body");
+  if (tree && saved?.tree != null) tree.scrollTop = saved.tree;
+  voice.view();
+  if (saved?.view !== state.base) return; // Board scroll belongs to the board it came from.
+  const cols = root.querySelector(".cols");
+  if (cols && saved.cols) [cols.scrollTop, cols.scrollLeft] = saved.cols;
+  root.querySelectorAll(".col[data-status] .stack").forEach((stack) => { const top = saved.stacks[stack.parentElement.dataset.status]; if (top) stack.scrollTop = top; });
+  const tasks = root.querySelector(".space-tasks .stack");
+  if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
-function signin() {
+async function signin(code = null) {
+  speech.stop(); voice.reset();
   state.mapDispose?.(); state.mapDispose = null;
-  root.innerHTML = `<main class="signin"><h1>Sign in</h1><form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${state.error ? message(state.error) : ""}</main>`;
+  state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
+  state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
+  providersPromise ||= api("/app/auth/providers").catch(() => ({}));
+  const { providers = [], paused = [] } = await providersPromise;
+  if (state.me) return;
+  const cookie = (document.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("cmmn_via="));
+  const value = cookie ? cookie.slice("cmmn_via=".length) : "";
+  const via = /^[a-z]{1,20}$/.test(value) ? value : "";
+  if (code !== null) state.error = signinMessage(code, paused, via);
+  const path = location.pathname + location.hash;
+  root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
 function shell() {
-  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Needs you <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Needs you</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Needs you <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
+  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="mark" href="#/" aria-label="Commonplace">c</a><span class="name">Commonplace</span></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
   navigation();
 }
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
-  boardNav.innerHTML = state.boards.map((b) => `<a href="#/board/${enc(b.slug)}" ${state.base === `#/board/${enc(b.slug)}` ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}</a>`).join("");
+  boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  const key = state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : state.base.startsWith("#/board") ? "boards" : "needs";
+  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
+  const key = state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
 }
 function showError(text) {
@@ -80,57 +196,192 @@ function title(text, actions = "") {
   root.querySelector("#head-actions").innerHTML = actions;
   document.title = `${text} · Commonplace`;
 }
-function decision(card, panel = false) {
+function decision(card, panel = false, answered = null) {
+  if (answered) return answered.options.length ? `<div class="opts">${answered.options.map((choice) => `<button class="opt ${choice === answered.choice ? "go" : ""}" aria-pressed="${choice === answered.choice}" disabled>${e(choice)}</button>`).join("")}</div>` : "";
   const busy = state.pending.has(`card-${card.number}`);
-  return `<div class="opts" data-decisions="${card.number}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+  return `<div class="opts" data-decisions="${card.number}" data-version="${e(card.version)}">${(card.ask_options || []).map((choice, i) => `<button class="opt" data-action="decide" data-card="${card.number}" data-option="${i}" data-choice="${e(choice)}" ${busy ? "disabled" : ""}>${e(choice)}${i < 6 ? `<span class="k">${i + 1}</span>` : ""}</button>`).join("")}<form class="reply-form" data-form="reply" data-card="${card.number}"><input name="reply" aria-label="Reply to card ${card.number}" data-draft="reply-${card.number}" autocomplete="off" required><button class="opt" aria-label="Send reply" ${busy ? "disabled" : ""}>↵</button>${panel ? `<select name="then" aria-label="After decision" data-draft="then-${card.number}"><option value="return">Return to ${e(actor(card.return_to))}</option><option value="todo">Anyone</option><option value="done">Done</option><option value="backlog">Backlog</option></select>` : ""}</form></div>`;
+}
+const clock = (at) => `<time datetime="${e(at)}" title="${e(at)}">${e(at?.slice(11, 16) || "")}</time>`;
+// An ask inside the conversation: the question verbatim and its choices. Answered asks keep
+// their place in time with the pick marked and who answered when; only the open ask is live.
+function askCard(card, ask, { answer = null, open = false, compact = false, controls = true } = {}) {
+  const offered = [...(open ? card.ask_options || [] : ask.options || [])];
+  if (answer?.choice && !offered.includes(answer.choice)) offered.push(answer.choice);
+  const question = ask.text ?? (open ? card.ask : null);
+  return `<li class="ev ask ${open ? "open" : "answered"}" ${open && controls ? `data-ask="${card.number}" tabindex="0"` : ""}>${clock(ask.at)}<span><span class="actor">${e(actor(ask.actor))}</span> <span class="v">ask${ask.target ? ` → ${e(actor(ask.target))}` : ""}</span></span><div class="hit">${question != null ? `<p class="q">${e(question)}</p>` : ""}${open ? (controls ? decision(card, !compact) : "") : decision(card, false, { options: offered, choice: answer?.choice })}${answer?.text != null ? `<p class="said">${e(answer.text)}</p>` : ""}${answer ? `<p class="stamp">${e(actor(answer.actor))} · ${clock(answer.at)}</p>` : ""}</div></li>`;
+}
+function conversation(card, { compact = false, controls = true } = {}) {
+  const items = [];
+  let ask = null;
+  for (const event of card.events || []) {
+    if (event.options) items.push(ask = { ask: event });
+    else if (event.kind === "decide" && ask) { ask.answer = event; ask = null; }
+    else items.push({ event });
+  }
+  if (card.ask != null) {
+    if (ask) ask.open = true;
+    else items.push({ ask: { kind: "ask", actor: card.return_to, target: card.ask_to, text: card.ask, at: card.updated_at }, open: true });
+  }
+  return items.map(({ event, ...item }) => event ? `<li class="ev">${clock(event.at)}<span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>` : askCard(card, item.ask, { ...item, compact, controls })).join("");
 }
 function needsCards() {
-  return ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"].flatMap((key) => state.needs[key] || []);
+  return needItems(state.needs).map((item) => item.card);
 }
 function needsView() {
-  title("Needs you");
-  const groups = [["asks", ""], ["done_review", "Done?"], ["backlog_from_agents", "Agent backlog"], ["ready_to_merge", "Ready to merge"], ["stale", "Stale"]];
+  title("Home");
   const cards = needsCards();
-  if (!cards.some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
-  root.querySelector("#content").innerHTML = `<section class="queue">${cards.length ? groups.map(([key, label]) => (state.needs[key]?.length ? `${label ? `<h2>${label}</h2>` : ""}${state.needs[key].map((card) => `<article class="item ${card.number === state.selected ? "sel" : ""}" data-row="${card.number}" tabindex="0"><div class="top"><a class="id" href="#/card/${card.number}">#${card.number}</a><h3>${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</h3><div class="meta"><a href="#/board/${enc(card.board)}">${e(card.board)}</a><span>${e(actor(card.return_to || card.assignee || card.created_by))}</span><time data-elapsed="${e(card.updated_at)}">${elapsed(card.updated_at)}</time></div></div>${card.ask ? `<blockquote class="q">${e(card.ask)}</blockquote>` : ""}${["asks", "done_review"].includes(key) ? decision(card) : key === "backlog_from_agents" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Todo</button><button class="opt" data-action="move" data-card="${card.number}" data-status="done">Close</button></div>` : key === "stale" ? `<div class="opts"><button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Return to todo</button></div>` : ""}${cardMeta(card, false)}</article>`).join("")}` : "")).join("") : message("Nothing needs you")}</section>`;
+  if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
+  // Keep the Speak/Stop node (and its focus) through live refreshes.
+  const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
+  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow });
+  if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
+  speechView();
 }
 function boardView() {
   const slug = decodeURIComponent(state.base.slice("#/board/".length));
   const board = state.boards.find((b) => b.slug === slug);
-  title(board?.name || slug, '<button class="blockbtn" data-action="new-card">New card</button>');
+  title(board?.name || slug, `<a class="opt" href="#/space/${enc(slug)}">Chat</a><button class="blockbtn" data-action="new-card">New card</button>`);
   root.querySelector("#content").innerHTML = `<div class="cols ${state.backlog ? "expanded" : ""}">${statuses.map((status) => {
     const all = state.cards.filter((c) => c.status === status);
     const list = status === "done" ? [...all].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 20) : all;
-    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}"><p class="ct">${dot(card)}<a href="#/card/${card.number}">${e(card.title)}</a></p><div class="meta"><a href="#/card/${card.number}">#${card.number}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}${card.links ? `<span>${card.links} memories</span>` : ""}</div>${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${cardMeta(card)}</article>`).join("")}</div></section>`;
+    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}</article>`).join("")}</div></section>`;
   }).join("")}</div>`;
+}
+function spaceTask(card) {
+  return `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
+}
+function syncSpaceTasks(parent, cards, inline = false) {
+  const nodes = new Map([...parent.children].filter((n) => n.dataset.task).map((n) => [Number(n.dataset.task), n]));
+  let next = parent.firstElementChild;
+  for (const card of cards) {
+    let node = nodes.get(card.number);
+    if (!node) { node = document.createElement("div"); node.dataset.task = card.number; }
+    nodes.delete(card.number);
+    const cached = state.chatTasks.get(card.number), detail = cached?.version === card.version;
+    const controls = state.route !== `#/card/${card.number}`;
+    const signature = JSON.stringify([card.version, card.need, inline && detail, inline && controls, state.pending.has(`card-${card.number}`)]);
+    if (node.dataset.signature !== signature) {
+      const full = inline && detail ? { ...cached, ...card } : card;
+      node.innerHTML = spaceTask(full) + (inline ? `<ol class="space-asks">${conversation({ ...full, events: (full.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls })}</ol>` : "");
+      node.dataset.signature = signature;
+    }
+    if (node !== next) parent.insertBefore(node, next);
+    next = node.nextElementSibling;
+  }
+  nodes.forEach((node) => node.remove());
+}
+async function hydrateSpaceTasks() {
+  const epoch = state.screen, board = state.chatBoard;
+  const current = () => epoch === state.screen && state.chatBoard === board && state.base === `#/space/${enc(board)}`;
+  const changed = await Promise.all(state.cards.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
+    if (state.chatTasks.get(card.number)?.version === card.version) return false;
+    const pending = state.chatTaskRequests.get(card.number);
+    if (pending?.version === card.version && pending.epoch === epoch) return false;
+    const request = { version: card.version, epoch };
+    state.chatTaskRequests.set(card.number, request);
+    try {
+      const detail = await api(`/api/cards/${card.number}`);
+      if (!current() || state.cards.find((c) => c.number === card.number)?.version !== detail.version) return false;
+      state.chatTasks.set(card.number, detail);
+      return true;
+    } catch (error) { if (current()) showError(error.message); return false; }
+    finally { if (state.chatTaskRequests.get(card.number) === request) state.chatTaskRequests.delete(card.number); }
+  }));
+  if (current() && changed.some(Boolean)) {
+    const saved = remember(), play = capture(state.base);
+    spaceView(); restore(saved); play();
+  }
+}
+function mergeChat(messages) {
+  state.chat = [...new Map([...state.chat, ...messages].map((m) => [m.id, m])).values()].sort((a, b) => a.id - b.id);
+}
+async function olderMessages() {
+  if (!state.chatHasMore || state.chatLoading || !state.chat.length) return;
+  const epoch = state.screen, board = state.chatBoard, before = state.chat[0].id;
+  state.chatLoading = true;
+  try {
+    const page = await api(`/api/boards/${enc(board)}/chat?before=${before}&last=50`);
+    if (epoch !== state.screen || board !== state.chatBoard) return;
+    const saved = remember(), stream = root.querySelector(".space-stream"), height = stream.scrollHeight, top = stream.scrollTop;
+    mergeChat(page.messages); state.chatHasMore = page.has_more;
+    spaceView(); restore(saved);
+    stream.scrollTop = top + stream.scrollHeight - height;
+  } catch (error) { if (epoch === state.screen) showError(error.message); }
+  finally { if (board === state.chatBoard) state.chatLoading = false; }
+}
+function spaceView() {
+  const slug = decodeURIComponent(state.base.slice("#/space/".length));
+  const board = state.boards.find((b) => b.slug === slug);
+  title(board?.name || slug, `<a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
+  const content = root.querySelector("#content");
+  if (content.querySelector(".space")?.dataset.board !== slug) {
+    state.chatObserver?.disconnect(); state.chatVisible.clear();
+    content.innerHTML = `<section class="space" data-board="${e(slug)}"><nav class="space-tabs" aria-label="Space view"><button data-action="space-tab" data-tab="chat">Chat</button><button data-action="space-tab" data-tab="tasks">Tasks <span data-task-count></span></button></nav><section class="space-chat" aria-label="Space chat"><header class="space-bar"><h2>Chat</h2><span data-coordinator></span></header><ol class="space-stream" aria-label="Messages"><li data-older hidden><button class="opt" data-action="older-messages">Older messages</button></li></ol><form class="space-composer" data-form="space-message" data-board="${e(slug)}"><textarea name="text" rows="2" aria-label="Message" data-draft="space-${e(slug)}" required></textarea><button class="blockbtn">Send</button></form></section><section class="space-tasks" aria-label="Tasks"><header class="space-bar"><h2>Tasks <span data-task-count></span></h2><button class="opt" data-action="new-card">New card</button></header><div class="stack"></div></section></section>`;
+    const stream = content.querySelector(".space-stream");
+    stream.addEventListener("scroll", () => { if (stream.clientHeight && stream.scrollTop < 40) void olderMessages(); });
+    state.chatObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const id = Number(entry.target.dataset.message);
+        if (entry.isIntersecting) state.chatVisible.add(id); else state.chatVisible.delete(id);
+      }
+      void hydrateSpaceTasks();
+    }, { root: stream, rootMargin: "100px" });
+  }
+  content.querySelector(".space").dataset.tab = state.spaceTab;
+  content.querySelectorAll(".space-tabs button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === state.spaceTab));
+  content.querySelectorAll("[data-task-count]").forEach((n) => { n.textContent = state.cards.length; });
+  content.querySelector("[data-coordinator]").textContent = board?.coordinator ? actor(board.coordinator) : "No coordinator";
+  const stream = content.querySelector(".space-stream"), older = stream.querySelector("[data-older]");
+  older.hidden = !state.chatHasMore;
+  const linked = new Map();
+  state.cards.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
+  let next = older.nextElementSibling;
+  for (const m of state.chat) {
+    let node = stream.querySelector(`[data-message="${m.id}"]`);
+    if (!node) {
+      node = document.createElement("li"); node.dataset.message = m.id;
+      node.className = `space-message ${m.actor.startsWith("user:") ? "from-person" : "from-agent"}`;
+      node.innerHTML = `<div class="space-stamp"><span class="actor">${e(actor(m.actor))}</span>${clock(m.at)}${m.flags.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}</div><p class="space-text">${e(m.text)}</p><div class="space-linked-tasks"></div>`;
+      state.chatObserver.observe(node);
+    }
+    syncSpaceTasks(node.querySelector(".space-linked-tasks"), linked.get(m.id) || [], true);
+    if (node !== next) stream.insertBefore(node, next);
+    next = node.nextElementSibling;
+  }
+  syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
   title("Boards", '<button class="blockbtn" data-action="new-board">New board</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No boards")}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/space/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No boards")}</section>`;
 }
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  if (state.card?.number !== number) panel.innerHTML = message("Loading card…");
+  const opening = state.card?.number !== number;
+  if (opening) panel.innerHTML = message("Loading card…");
+  const request = ++state.panelRequest;
   try {
     const card = await api(`/api/cards/${number}`);
-    if (epoch !== state.screen || state.route !== `#/card/${number}`) return;
+    if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}${card.ask ? `<div class="hit"><p class="q">${e(card.ask)}</p><p class="stamp">${e(actor(card.return_to))}</p>${decision(card, true)}</div>` : ""}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}</div><ol class="log">${(card.events || []).map((event) => `<li class="ev"><time title="${e(event.at)}">${e(event.at?.slice(11, 16) || "")}</time><span><span class="actor">${e(actor(event.actor))}</span> <span class="v">${e(event.kind)}${event.target ? ` → ${e(actor(event.target))}` : ""}</span></span>${event.text != null || event.choice ? `<p class="said">${e(event.choice || "")}${event.choice && event.text ? "\n" : ""}${e(event.text || "")}</p>` : ""}</li>`).join("")}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}${callTree(card)}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
+    if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
-    if (epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
+    if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
 function newCardForm(edit = null) {
+  voice.stop();
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  const slug = edit?.board || decodeURIComponent(state.base.slice("#/board/".length));
+  const slug = edit?.board || decodeURIComponent(state.base.split("/")[2]);
   panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(statuses, "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
   panel.querySelector("input").focus();
 }
 function handoffForm() {
+  voice.stop();
   const panel = root.querySelector("#card-panel");
   panel.innerHTML = `<form class="form-tile" data-form="handoff"><h2>Hand off #${state.card.number}</h2><label>To<input name="to" required></label><label>Note<textarea name="note" required></textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="retry">Cancel</button></form>`;
 }
@@ -138,10 +389,10 @@ async function settingsView(epoch) {
   title("Settings");
   const content = root.querySelector("#content");
   if (!content.querySelector(".settings")) content.innerHTML = message("Loading settings…");
-  const [connections, hooks] = await Promise.allSettled([api("/api/connections"), api("/api/webhooks")]);
+  const [connections, hooks, plan] = await Promise.allSettled([api("/api/connections"), api("/api/webhooks"), api("/api/plan")]);
   if (epoch !== state.screen) return;
   const saved = remember();
-  content.innerHTML = `<div class="settings"><section class="settings-section"><h2>Connections</h2>${connections.status === "fulfilled" ? (connections.value.connections || []).map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.last_used_at ? `Used ${elapsed(c.last_used_at)} ago` : "Unused"}</small></span></div>`).join("") || message("No connections") : message(connections.reason.message, true)}</section><section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : ""}${voice.settings()}<section class="settings-section"><h2>Connections</h2>${connections.status === "fulfilled" ? (connections.value.connections || []).map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.last_used_at ? `Used ${elapsed(c.last_used_at)} ago` : "Unused"}</small></span></div>`).join("") || message("No connections") : message(connections.reason.message, true)}</section><section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   restore(saved);
 }
 
@@ -192,33 +443,62 @@ async function search(form) {
 }
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
-  const epoch = state.screen;
+  const epoch = state.screen, request = ++state.refreshRequest;
+  const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
-    const [boards, needs] = await Promise.all([api("/api/boards"), api("/api/needs-me")]);
-    if (epoch !== state.screen) return;
+    const home = state.base === "#/";
+    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
+    if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
-    if (state.base.startsWith("#/board/")) {
-      const slug = decodeURIComponent(state.base.slice("#/board/".length));
+    if (rules) state.rulesWaiting = rules.waiting;
+    if (open) { state.open = open.cards; state.openTotal = open.total; }
+    if (/^#\/(board|space)\//.test(state.base)) {
+      const slug = decodeURIComponent(state.base.split("/")[2]);
       const result = await api(`/api/boards/${enc(slug)}/cards`);
-      if (epoch !== state.screen) return;
+      if (!current()) return;
       state.cards = result.cards;
+      if (state.base.startsWith("#/space/")) {
+        if (state.chatBoard !== slug) {
+          const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
+          if (!current()) return;
+          state.chat = page.messages; state.chatCursor = page.cursor; state.chatHasMore = page.has_more;
+          state.chatBoard = slug; state.chatLoading = false; state.chatTasks.clear(); state.chatTaskRequests.clear();
+        } else {
+          let cursor = state.chatCursor, batch;
+          const messages = [];
+          do {
+            batch = await api(`/api/boards/${enc(slug)}/chat?after=${cursor}`);
+            if (!current()) return;
+            messages.push(...batch.messages); cursor = batch.cursor;
+          } while (batch.messages.length === 100);
+          mergeChat(messages); state.chatCursor = cursor;
+        }
+      }
     }
-    const saved = remember();
+    const saved = remember(), play = capture(state.base);
     navigation();
     if (state.base.startsWith("#/board/")) boardView();
+    else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
-    else if (state.base.startsWith("#/memory")) {
+    else if (state.base === "#/rules") {
+      if (!background || rulesUI.force || !rulesUI.busy()) {
+        rulesUI.update(rules, { owner: rules.can_edit });
+        root.querySelector("#content").innerHTML = rulesView(rules, { owner: rules.can_edit });
+      } else rulesUI.stale = true;
+      title("Rules", rules.can_edit ? `<button type="button" class="blockbtn" data-rule-action="new" aria-controls="rule-new" aria-expanded="${!!root.querySelector('.rule-new:not([hidden])')}">New rule</button>` : "");
+    } else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
       if (!background || changed) await memoryView(epoch, background && !changed);
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
     } else needsView();
-    restore(saved);
+    restore(saved); play();
+    if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
     showError("");
     return true;
   } catch (error) {
-    if (epoch !== state.screen || !state.me) return;
+    if (!current() || !state.me) return;
     showError(error.message);
     if (!root.querySelector("#content").children.length) root.querySelector("#content").innerHTML = message(error.message, true);
     return false;
@@ -228,19 +508,27 @@ async function route() {
   if (!state.me) return;
   remember();
   const hash = location.hash || "#/";
+  if (hash !== state.route) voice.stop();
   const previousBase = state.base;
   state.screen++; state.route = hash;
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = /^#\/(board\/[^/?]+|boards|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
+    state.base = /^#\/((?:board|space)\/[^/?]+|boards|rules|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
     state.card = null;
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
+  if (state.base !== previousBase) { state.chatObserver?.disconnect(); state.chatVisible.clear(); }
+  if (state.base !== "#/") speech.stop();
   root.querySelector("#card-panel").hidden = !hash.startsWith("#/card/");
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
   await refresh();
 }
-function findCard(number) { return state.card?.number === number ? state.card : [...state.cards, ...needsCards()].find((c) => c.number === number); }
+// The current view's list first, so a write never sends a version left over from another view.
+function findCard(number) {
+  if (state.card?.number === number) return state.card;
+  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.open, needsCards()] : [state.open, needsCards(), state.cards];
+  return lists.flat().find((c) => c.number === number);
+}
 async function mutate(key, action) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
@@ -254,9 +542,11 @@ async function mutate(key, action) {
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
   }
 }
-async function decide(number, payload) {
+async function decide(number, payload, from) {
+  // The version the person saw: if the card was re-asked since, the server answers 409.
+  const version = Number(from.closest("[data-version]")?.dataset.version);
   await mutate(`card-${number}`, async () => {
-    await api(`/api/cards/${number}/decide`, { method: "POST", body: payload });
+    await api(`/api/cards/${number}/decide`, { method: "POST", body: { ...payload, version } });
     state.drafts.delete(`reply-${number}`);
     root.querySelectorAll(`[data-draft="reply-${number}"]`).forEach((input) => { input.value = ""; });
   });
@@ -284,14 +574,30 @@ root.addEventListener("click", async (event) => {
   const b = event.target.closest("[data-action]"); if (!b) return;
   const number = Number(b.dataset.card), action = b.dataset.action;
   try {
-    if (action === "decide") {
-      const card = findCard(number);
+    if (action === "speak-digest") await speech.toggle();
+    else if (action === "decide") {
       const reply = state.drafts.get(`reply-${number}`);
-      await decide(number, { choice: card.ask_options[Number(b.dataset.option)], ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" });
+      await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
-    else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
+    else if (action === "cs-toggle") {
+      const key = `${state.card.number}:${b.dataset.path}`, saved = remember();
+      if (!state.toggled.delete(key)) state.toggled.add(key);
+      b.closest(".cs").outerHTML = callTree(state.card);
+      restore(saved);
+      root.querySelector(`.cs [data-path="${CSS.escape(b.dataset.path)}"]`)?.focus({ preventScroll: true });
+    } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh();
+    else if (action === "older-messages") await olderMessages();
+    else if (action === "space-tab") {
+      voice.stop();
+      const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
+    } else if (action === "coordinator") {
+      voice.stop();
+      const slug = decodeURIComponent(state.base.split("/")[2]), board = state.boards.find((b) => b.slug === slug);
+      const panel = root.querySelector("#card-panel"); panel.hidden = false;
+      panel.innerHTML = `<form class="form-tile" data-form="coordinator" data-board="${e(slug)}"><h2>Coordinator</h2><label>Agent<input name="coordinator" value="${e(board?.coordinator || "")}" data-draft="coordinator-${e(slug)}"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>`;
+    }
     else if (action === "close-panel") {
       if (state.route.startsWith("#/card/")) location.hash = state.base;
       else root.querySelector("#card-panel").hidden = true;
@@ -307,6 +613,7 @@ root.addEventListener("click", async (event) => {
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
       panel.innerHTML = '<form class="form-tile" data-form="memory"><h2>Save memory</h2><label>Text<textarea name="text" required></textarea></label><label>Theme<input name="theme"></label><label>Topic<input name="topic"></label><label>Card<input name="task"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
     } else if (action === "logout") {
+      voice.stop();
       await api("/app/logout", { method: "POST" }); state.me = null; state.drafts.clear(); signin();
     } else if (action === "remove-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}`, { method: "DELETE" }));
     else if (action === "test-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}/test`, { method: "POST", body: {} }));
@@ -331,7 +638,7 @@ root.addEventListener("submit", async (event) => {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
-    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" });
+    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
       state.drafts.delete(`comment-${state.card.number}`); form.reset();
@@ -343,7 +650,21 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "handoff") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}/handoff`, { method: "POST", body: { ...payload, options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } }));
     else if (kind === "board") await mutate("new-board", async () => {
-      await api("/api/boards", { method: "POST", body: payload }); location.hash = `#/board/${enc(payload.slug)}`;
+      await api("/api/boards", { method: "POST", body: payload }); location.hash = `#/space/${enc(payload.slug)}`;
+    });
+    else if (kind === "space-message") await mutate(`chat-${form.dataset.board}`, async () => {
+      await api(`/api/boards/${enc(form.dataset.board)}/chat`, { method: "POST", body: payload });
+      state.drafts.delete(`space-${form.dataset.board}`); form.reset();
+      const stream = root.querySelector(".space-stream"); if (stream) stream.scrollTop = stream.scrollHeight;
+    });
+    else if (kind === "coordinator") await mutate(`coordinator-${form.dataset.board}`, async () => {
+      const result = await api(`/api/boards/${enc(form.dataset.board)}`, { method: "PATCH", body: { coordinator: payload.coordinator || null } });
+      state.drafts.delete(`coordinator-${form.dataset.board}`);
+      form.querySelector("[data-hook-warning]")?.remove();
+      if (result.warning) {
+        const warning = document.createElement("p"); warning.dataset.hookWarning = ""; warning.className = "message"; warning.setAttribute("role", "alert");
+        warning.textContent = result.warning; form.append(warning);
+      } else root.querySelector("#card-panel").hidden = true;
     });
     else if (kind === "search") await search(form);
     else if (kind === "memory") await mutate("new-memory", async () => {
@@ -377,7 +698,14 @@ root.addEventListener("drop", async (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
   if (event.key === "Escape") { root.querySelector('[data-action="close-panel"]')?.click(); return; }
+  const ask = event.target instanceof Element && event.target.closest("[data-ask]");
+  if (ask && /^[1-6]$/.test(event.key)) {
+    ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
+    event.preventDefault(); return;
+  }
   if (state.base !== "#/" || !state.me) return;
+  // With a card open, its keys answer and open that card, not the row selected behind it.
+  const target = /^#\/card\/\d+$/.test(state.route) ? Number(state.route.slice(7)) : state.selected;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
   const index = cards.findIndex((c) => c.number === state.selected);
   if (["j", "k"].includes(event.key) && cards.length) {
@@ -386,10 +714,16 @@ document.addEventListener("keydown", (event) => {
     root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
     root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
   } else if (/^[1-6]$/.test(event.key)) {
-    const card = findCard(state.selected), choice = card?.ask_options?.[Number(event.key) - 1];
-    if (choice != null) { event.preventDefault(); decide(card.number, { choice, then: "return", ...(state.drafts.get(`reply-${card.number}`) ? { reply: state.drafts.get(`reply-${card.number}`) } : {}) }); }
-  } else if (event.key === "o" && state.selected) location.hash = `#/card/${state.selected}`;
-  else if (event.key === "Enter" && state.selected && !(event.target instanceof Element && event.target.closest("button,a"))) { event.preventDefault(); root.querySelector(`[data-draft="reply-${state.selected}"]`)?.focus(); }
+    // Answer through the open card's own buttons, so its "After decision" select applies.
+    const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
+    const button = root.querySelector(`[data-ask="${target}"] ${option}`);
+    if (button) { event.preventDefault(); button.click(); }
+  } else if (event.key === "o" && target) location.hash = `#/card/${target}`;
+  else if (event.key === "Enter" && target && !(event.target instanceof Element && event.target.closest("button,a"))) {
+    event.preventDefault();
+    const reply = root.querySelector(`[data-draft="reply-${target}"]`);
+    if (reply) reply.focus(); else location.hash = `#/card/${target}`;
+  }
 });
 let timer = null, polling = false, retryDelay = 2000;
 function schedule(delay) { clearTimeout(timer); timer = setTimeout(poll, delay ?? (document.hidden ? 30000 : 2000)); }
@@ -412,6 +746,7 @@ async function poll() {
 document.addEventListener("visibilitychange", () => schedule(document.hidden ? 30000 : 0));
 document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
+window.addEventListener("pagehide", () => { speech.stop(); voice.stop(); });
 setInterval(() => {
   root.querySelectorAll("[data-elapsed]").forEach((time) => { time.textContent = elapsed(time.dataset.elapsed); });
   root.querySelectorAll("[data-claim-until]").forEach((bar) => {
@@ -421,10 +756,14 @@ setInterval(() => {
     bar.setAttribute("aria-label", `Claim ${Math.round(ratio * 100)}% remaining`);
     [...bar.children].forEach((block, i) => block.classList.toggle("on", i < Math.ceil(ratio * 6)));
   });
-}, 30000);
+}, 15000);
 async function boot() {
   try { state.me = await api("/api/me"); setPeople(state.me.people); }
-  catch (error) { state.error = error.status === 401 ? "" : error.message; signin(); return; }
-  shell(); await route(); schedule(0);
+  catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
+  if (!state.me) return;
+  shell(); void voice.load();
+  if (!state.me) return;
+  await route();
+  if (state.me) schedule(0);
 }
 boot();

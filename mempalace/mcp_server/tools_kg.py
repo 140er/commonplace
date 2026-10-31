@@ -6,6 +6,28 @@ if __name__ != "mempalace.mcp_server":
 # ==================== KNOWLEDGE GRAPH ====================
 
 
+def tool_kg_search(query: str, limit: int = 5, wings=None, sensitivities=None, as_of=None):
+    """Fact-only half of search, so gateway drawer fan-out needs one lookup."""
+    try:
+        from ..searcher.facts import search_facts
+
+        facts = _call_kg(
+            lambda kg: search_facts(
+                kg,
+                query,
+                limit=max(1, min(limit, _MAX_RESULTS)),
+                wings=wings,
+                sensitivities=sensitivities,
+                as_of=as_of,
+            ),
+            read=True,
+        )
+    except Exception:
+        logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
+        return {"facts": [], "facts_error": "unavailable"}
+    return {"facts": facts}
+
+
 def _temporal_bound_key(value, *, end: bool = False) -> Optional[str]:
     if not value:
         return None
@@ -25,19 +47,44 @@ def _fact_interval_bucket(row: dict, now_key: str) -> str:
     return "active"
 
 
-def tool_kg_query(entity: str, as_of: str = None, direction: str = "both"):
-    """Query the knowledge graph for an entity's relationships."""
+def tool_kg_query(
+    entity: str,
+    as_of: str = None,
+    direction: str = "both",
+    wings: list = None,
+    sensitivities: list = None,
+    search: bool = False,
+    limit: int = 5,
+):
+    """Query the knowledge graph for an entity's relationships.
+
+    ``wings`` / ``sensitivities`` limit the answer to facts in those wings and
+    of those sensitivities. Facts filed before facts had wings match no wing.
+    """
     try:
-        entity = sanitize_kg_value(entity, "entity")
+        entity = (
+            sanitize_query(entity)["clean_query"] if search else sanitize_kg_value(entity, "entity")
+        )
         as_of = sanitize_iso_temporal(as_of, "as_of")
+        wings, sensitivities = visibility(wings, sensitivities)
     except ValueError as e:
         return {"error": str(e)}
+
+    if search:
+        return tool_kg_search(entity, limit, wings, sensitivities, as_of)
 
     if direction not in ("outgoing", "incoming", "both"):
         return {"error": "direction must be 'outgoing', 'incoming', or 'both'"}
 
     results = _call_kg(
-        lambda kg: kg.query_entity(entity, as_of=as_of, direction=direction), read=True
+        lambda kg: kg.query_entity(
+            entity,
+            as_of=as_of,
+            direction=direction,
+            wings=wings,
+            sensitivities=sensitivities,
+        ),
+        read=True,
     )
     if as_of is None:
         now_key = utc_now_z()
@@ -56,6 +103,10 @@ def tool_kg_query(entity: str, as_of: str = None, direction: str = "both"):
         active = results
         historical = []
         future = []
+    if results:
+        found = _call_kg(lambda kg: kg.sources([r["id"] for r in results]), read=True)
+        for row in results:
+            row["sources"] = found.get(row["id"], [])
     payload = {
         "entity": entity,
         "as_of": as_of,
@@ -77,7 +128,9 @@ def tool_kg_query(entity: str, as_of: str = None, direction: str = "both"):
                 payload["resolved_from"] = entity
                 payload["entity"] = resolved
     else:
-        candidates = _call_kg(lambda kg: kg.find_entity_candidates(entity), read=True)
+        candidates = _call_kg(
+            lambda kg: kg.find_entity_candidates(entity, wings, sensitivities), read=True
+        )
         if candidates:
             payload["candidates"] = candidates
     return _with_kg_notice(payload)
@@ -92,6 +145,13 @@ def tool_kg_add(
     source_closet: str = None,
     source_file: str = None,
     source_drawer_id: str = None,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    source_url: str = None,
+    wing: str = None,
+    sensitivity: str = None,
+    sensitivities: list = None,
 ):
     """Add a relationship to the knowledge graph.
 
@@ -101,6 +161,10 @@ def tool_kg_add(
 
     Temporal values accept either ``YYYY-MM-DD`` or canonical UTC datetimes in
     the form ``YYYY-MM-DDTHH:MM:SSZ``.
+
+    ``source_thread`` plus ``source_seq_start``/``source_seq_end`` name the
+    chat messages the fact came from. ``wing`` scopes the fact and
+    ``sensitivity`` says how far it may travel.
     """
     try:
         subject = sanitize_kg_value(subject, "subject")
@@ -108,6 +172,12 @@ def tool_kg_add(
         object = sanitize_kg_value(object, "object")
         valid_from = sanitize_iso_temporal(valid_from, "valid_from")
         valid_to = sanitize_iso_temporal(valid_to, "valid_to")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -122,6 +192,12 @@ def tool_kg_add(
             "source_closet": source_closet,
             "source_file": source_file,
             "source_drawer_id": source_drawer_id,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
+            "source_url": source_url,
+            "wing": wing,
+            "sensitivity": sensitivity,
         },
     )
 
@@ -136,6 +212,13 @@ def tool_kg_add(
                 source_closet=source_closet,
                 source_file=source_file,
                 source_drawer_id=source_drawer_id,
+                source_thread=source_thread,
+                source_seq_start=source_seq_start,
+                source_seq_end=source_seq_end,
+                source_url=source_url,
+                wing=wing,
+                sensitivity=sensitivity,
+                sensitivities=sensitivities,
             )
         )
     except Exception as e:
@@ -150,12 +233,130 @@ def tool_kg_add(
         "success": True,
         "triple_id": triple_id,
         "fact": f"{subject} → {predicate} → {object}",
+        "wing": wing,
     }
     _wal_result("kg_add", outcome)
     return _with_kg_notice(outcome)
 
 
-def tool_kg_invalidate(subject: str, predicate: str, object: str, ended: str = None):
+def tool_kg_save(
+    subject: str,
+    predicate: str,
+    object: str,
+    valid_from: str = None,
+    confidence: float = 1.0,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    source_url: str = None,
+    source_drawer_id: str = None,
+    source_file: str = None,
+    wing: str = None,
+    sensitivity: str = None,
+    sensitivities: list = None,
+    single_valued: bool = None,
+):
+    """Save a fact, merging it into the same open fact or replacing a single value.
+
+    See :meth:`KnowledgeGraph.save_fact`. ``single_valued`` defaults to whether
+    the predicate is in ``single_valued_predicates``.
+    """
+    try:
+        subject = sanitize_kg_value(subject, "subject")
+        predicate = sanitize_name(predicate, "predicate")
+        object = sanitize_kg_value(object, "object")
+        valid_from = sanitize_iso_temporal(valid_from, "valid_from")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
+        if single_valued is not None and not isinstance(single_valued, bool):
+            raise ValueError("single_valued must be true or false")
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if single_valued is None:
+        single_valued = predicate.lower().replace(" ", "_") in _config.single_valued_predicates
+
+    _wal_log(
+        "kg_save",
+        {
+            "subject": subject,
+            "predicate": predicate,
+            "object": object,
+            "valid_from": valid_from,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
+            "source_url": source_url,
+            "source_drawer_id": source_drawer_id,
+            "source_file": source_file,
+            "confidence": confidence,
+            "wing": wing,
+            "sensitivity": sensitivity,
+            "sensitivities": sensitivities,
+            "single_valued": single_valued,
+        },
+    )
+    try:
+        outcome = _call_kg(
+            lambda kg: kg.save_fact(
+                subject,
+                predicate,
+                object,
+                valid_from=valid_from,
+                confidence=confidence,
+                source_thread=source_thread,
+                source_seq_start=source_seq_start,
+                source_seq_end=source_seq_end,
+                source_url=source_url,
+                source_drawer_id=source_drawer_id,
+                source_file=source_file,
+                wing=wing,
+                sensitivity=sensitivity,
+                sensitivities=sensitivities,
+                single_valued=single_valued,
+            )
+        )
+    except ValueError as e:
+        outcome = {"success": False, "error": str(e)}
+        _wal_result("kg_save", outcome)
+        return outcome
+    saved = _call_kg(
+        lambda kg: next(
+            (
+                row
+                for row in kg.query_entity(
+                    subject, wings=[wing] if wing else None, sensitivities=sensitivities
+                )
+                if row["id"] == outcome["triple_id"]
+            ),
+            {},
+        ),
+        read=True,
+    )
+    from mempalace.fact_provenance import COLUMNS
+
+    outcome = {
+        "success": True,
+        **{key: saved.get(key) for key in (*COLUMNS, "fact_status")},
+        **outcome,
+        "fact": f"{subject} → {predicate} → {object}",
+        "wing": wing,
+    }
+    _wal_result("kg_save", outcome)
+    return _with_kg_notice(outcome)
+
+
+def tool_kg_invalidate(
+    subject: str,
+    predicate: str,
+    object: str,
+    ended: str = None,
+    wing: str = None,
+    sensitivities: list = None,
+):
     """Mark a fact as no longer true.
 
     Returns the actual ``ended`` date/time that was stored. When the caller
@@ -170,6 +371,8 @@ def tool_kg_invalidate(subject: str, predicate: str, object: str, ended: str = N
         predicate = sanitize_name(predicate, "predicate")
         object = sanitize_kg_value(object, "object")
         ended = sanitize_iso_temporal(ended, "ended")
+        wing = fact_wing(wing)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -182,15 +385,26 @@ def tool_kg_invalidate(subject: str, predicate: str, object: str, ended: str = N
             "predicate": predicate,
             "object": object,
             "ended": resolved_ended,
+            "wing": wing,
         },
     )
 
-    _call_kg(lambda kg: kg.invalidate(subject, predicate, object, ended=resolved_ended))
+    closed = _call_kg(
+        lambda kg: kg.invalidate(
+            subject,
+            predicate,
+            object,
+            ended=resolved_ended,
+            wing=wing,
+            sensitivities=sensitivities,
+        )
+    )
     return _with_kg_notice(
         {
             "success": True,
             "fact": f"{subject} → {predicate} → {object}",
             "ended": resolved_ended,
+            "closed": closed,
         }
     )
 
@@ -201,6 +415,13 @@ def tool_kg_supersede(
     old_object: str,
     new_object: str,
     at: str = None,
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    source_url: str = None,
+    wing: str = None,
+    sensitivity: str = None,
+    sensitivities: list = None,
 ):
     """Atomically replace one fact with another at a single shared boundary.
 
@@ -219,6 +440,12 @@ def tool_kg_supersede(
         old_object = sanitize_kg_value(old_object, "old_object")
         new_object = sanitize_kg_value(new_object, "new_object")
         at = sanitize_iso_temporal(at, "at")
+        source_thread, source_seq_start, source_seq_end = source_range(
+            source_thread, source_seq_start, source_seq_end
+        )
+        wing = fact_wing(wing)
+        sensitivity = fact_sensitivity(sensitivity)
+        _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -230,6 +457,12 @@ def tool_kg_supersede(
             "old_object": old_object,
             "new_object": new_object,
             "at": at,
+            "source_thread": source_thread,
+            "source_seq_start": source_seq_start,
+            "source_seq_end": source_seq_end,
+            "source_url": source_url,
+            "wing": wing,
+            "sensitivity": sensitivity,
         },
     )
 
@@ -237,7 +470,22 @@ def tool_kg_supersede(
     # bubble to the dispatcher, matching tool_kg_add / tool_kg_invalidate: the
     # -32000 response carries error_class + message in error.data. Only input
     # sanitization above returns the {success: False} envelope.
-    triple_id = _call_kg(lambda kg: kg.supersede(subject, predicate, old_object, new_object, at=at))
+    triple_id = _call_kg(
+        lambda kg: kg.supersede(
+            subject,
+            predicate,
+            old_object,
+            new_object,
+            at=at,
+            source_thread=source_thread,
+            source_seq_start=source_seq_start,
+            source_seq_end=source_seq_end,
+            source_url=source_url,
+            wing=wing,
+            sensitivity=sensitivity,
+            sensitivities=sensitivities,
+        )
+    )
     return _with_kg_notice(
         {
             "success": True,
@@ -248,7 +496,13 @@ def tool_kg_supersede(
     )
 
 
-def tool_kg_timeline(entity: str = None, limit: int = 100, offset: int = 0):
+def tool_kg_timeline(
+    entity: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    wings: list = None,
+    sensitivities: list = None,
+):
     """Get chronological timeline of facts, optionally for one entity.
 
     Paginated with ``limit``/``offset`` following the ``tool_list_drawers``
@@ -256,16 +510,19 @@ def tool_kg_timeline(entity: str = None, limit: int = 100, offset: int = 0):
     """
     limit = max(1, min(limit, _MAX_RESULTS))
     offset = max(0, offset)
-    if entity is not None:
-        try:
+    try:
+        if entity is not None:
             entity = sanitize_kg_value(entity, "entity")
-        except ValueError as e:
-            return {"error": str(e)}
+        wings, sensitivities = visibility(wings, sensitivities)
+    except ValueError as e:
+        return {"error": str(e)}
 
     def _query(kg):
         return {
-            "timeline": kg.timeline(entity, limit=limit, offset=offset),
-            "total": kg.timeline_total(entity),
+            "timeline": kg.timeline(
+                entity, limit=limit, offset=offset, wings=wings, sensitivities=sensitivities
+            ),
+            "total": kg.timeline_total(entity, wings=wings, sensitivities=sensitivities),
         }
 
     result = _call_kg(_query, read=True)
@@ -284,3 +541,8 @@ def tool_kg_timeline(entity: str = None, limit: int = 100, offset: int = 0):
 def tool_kg_stats():
     """Knowledge graph overview: entities, triples, relationship types."""
     return _with_kg_notice(_call_kg(lambda kg: kg.stats(), read=True))
+
+
+def tool_kg_list_wings():
+    """List fact wings without counting entities, facts or predicates."""
+    return {"wings": _call_kg(lambda kg: kg.list_wings(), read=True)}

@@ -6,12 +6,20 @@ classifies is called through the gateway with arguments aimed at those
 canaries. No canary marker may appear in any response, and the canaries must
 be unchanged afterwards. New tools join the suite automatically from
 ``TOOL_CAPABILITIES``.
+
+The Grok profile also probes Commonplace's memory aliases, board links and
+decision queues, HTTP events, and the data reads behind short links.
 """
 
+import http.client
 import json
+from urllib.parse import urlsplit
 
 import pytest
 
+from commonplace import sessions, urls
+from commonplace.boards.service import BoardService
+from commonplace.extensions import ToolContext
 from mempalace.tool_capabilities import TOOL_CAPABILITIES
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
@@ -71,7 +79,7 @@ def seeded(hub):
     )
     ids["tunnel"] = (result or {}).get("tunnel_id") or (result or {}).get("id") or "tunnel"
     result, _ = hub.call(
-        owner, "mempalace_kg_add", subject="jeff", predicate="likes", object="CANARYKGFACT"
+        owner, "mempalace_kg_add", subject="avery", predicate="likes", object="CANARYKGFACT"
     )
     assert result["success"], result
     result, _ = hub.call(
@@ -109,7 +117,7 @@ def _value(prop, schema, ids, wing, agent):
     if prop == "agent_name":
         return agent
     if prop in ("entity", "subject"):
-        return "jeff"
+        return "avery"
     if prop in ("object", "old_object", "new_object", "predicate"):
         return "likes"
     if prop == "tunnel_id":
@@ -253,7 +261,7 @@ def test_scoped_token_changes_no_canary(hub, seeded, kind):
     after, _ = hub.call(owner, "mempalace_list_wings")
     for wing in FORBIDDEN_WINGS + ("wing_spy2", "private_notes", "linux_workstation"):
         assert after["wings"].get(wing) == before["wings"].get(wing), (wing, before, after)
-    facts, _ = hub.call(owner, "mempalace_kg_query", entity="jeff")
+    facts, _ = hub.call(owner, "mempalace_kg_query", entity="avery")
     # Adding facts may be allowed; changing the canary fact never is.
     canary = [f for f in facts["facts"] if f["object"] == "CANARYKGFACT"]
     assert len(canary) == 1 and canary[0]["current"], facts
@@ -278,3 +286,194 @@ def test_hidden_drawer_reads_exactly_like_a_missing_one(hub, seeded):
     missing, _ = hub.call(token, "mempalace_delete_drawer", drawer_id="drawer_none_r_000000000000")
     assert hidden == {"success": False, "error": f"Drawer not found: {ids['vault']}"}
     assert set(hidden) == set(missing)
+
+
+@pytest.fixture
+def grok(hub):
+    return hub.token("grok", client="grok", **SCOPED_TOKENS["untrusted_slim"])
+
+
+def _http_get(hub, token, path):
+    conn = http.client.HTTPConnection("127.0.0.1", hub.port, timeout=10)
+    try:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        conn.request("GET", path, headers=headers)
+        response = conn.getresponse()
+        return response.status, dict(response.getheaders()), response.read().decode("utf-8")
+    finally:
+        conn.close()
+
+
+def _local_read(hub, token, name, **arguments):
+    # Local tools return plain text, unlike MemPalace's JSON tool results.
+    response = hub.rpc(token, "tools/call", {"name": name, "arguments": arguments})
+    assert "error" not in response, response
+    assert not response["result"].get("isError"), response
+    return response["result"]["content"][0]["text"]
+
+
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+def test_grok_profile_sees_no_canary_through_memory_aliases(hub, seeded, grok, surface):
+    owner, ids = seeded
+    forbidden = _forbidden_markers("untrusted_slim")
+    for key in ("allowed", "private", "private_notes", "vault"):
+        if surface == "mcp":
+            owner_text = _local_read(hub, owner, "memory_get", id=ids[key])
+            response = hub.rpc(
+                grok, "tools/call", {"name": "memory_get", "arguments": {"id": ids[key]}}
+            )
+            assert "error" not in response, response
+            assert bool(response["result"].get("isError")) is (key != "allowed"), response
+            text = json.dumps(response)
+        else:
+            status, _, owner_text = _http_get(hub, owner, f"/api/memory/{ids[key]}")
+            assert status == 200, owner_text
+            status, _, text = _http_get(hub, grok, f"/api/memory/{ids[key]}")
+            assert status == (200 if key == "allowed" else 404), text
+        assert ("CANARY" in owner_text) is (key != "allowed"), owner_text
+        if key == "allowed":
+            assert "the allowed memory" in text
+        _assert_clean(text, forbidden, f"{surface}/memory_get/{key}")
+
+    for theme in (None, "private", "private_notes", "vault_x", "private.notes", "Private-Notes"):
+        args = {"query": "zebra quartz harbour", **({"theme": theme} if theme else {})}
+        if surface == "mcp":
+            response = hub.rpc(grok, "tools/call", {"name": "memory_search", "arguments": args})
+            assert "error" not in response, response
+            assert bool(response["result"].get("isError")) is (theme is not None), response
+            text = json.dumps(response)
+        else:
+            path = "/api/memory/search?q=zebra%20quartz%20harbour"
+            if theme:
+                path += f"&theme={theme}"
+            status, _, text = _http_get(hub, grok, path)
+            assert status == (403 if theme else 200), text
+        if theme is None:
+            assert ids["allowed"] in text and "the allowed memory" in text
+        _assert_clean(text, forbidden, f"{surface}/memory_search/{theme}")
+
+
+def test_grok_profile_sees_no_canary_through_memory_map(hub, seeded, grok):
+    owner, _ids = seeded
+    status, _, text = _http_get(hub, owner, "/api/memory/map")
+    assert status == 200 and "CANARYPRIVATEDRAWER" in text, text
+    # A slim token cannot call the list tools needed to build the map.
+    status, _, text = _http_get(hub, grok, "/api/memory/map")
+    assert status == 403, text
+    _assert_clean(text, _forbidden_markers("untrusted_slim"), "memory/map")
+
+
+@pytest.fixture
+def board_canaries(hub, seeded):
+    owner, ids = seeded
+    principal = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    service = BoardService(ToolContext(principal, hub.gateway))
+    service.board_add(slug="visible", wing="shared")
+    visible = service.seed_card(board="visible", title="Allowed card", status="review")
+    hidden = []
+    for wing, key in (
+        ("private", "private"),
+        ("private_notes", "private_notes"),
+        ("vault_x", "vault"),
+    ):
+        service.board_add(slug=wing, wing=wing)
+        drawer, _ = hub.call(owner, "mempalace_get_drawer", drawer_id=ids[key])
+        card = service.seed_card(
+            board=wing, title=drawer["content"], body=drawer["content"], status="review"
+        )
+        service.task_comment(card["number"], drawer["content"])
+        # A shared card caches the private drawer's first line as its link title.
+        service.task_update(visible["number"], link=ids[key])
+        # Also exercise backlinks from an allowed memory to a hidden card.
+        service.task_update(card["number"], link=ids["allowed"])
+        hidden.append(card)
+    return service, visible, hidden
+
+
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+def test_grok_profile_sees_no_canary_through_boards_or_needs_me(
+    hub, seeded, grok, board_canaries, surface
+):
+    owner, ids = seeded
+    _service, visible, hidden = board_canaries
+    forbidden = _forbidden_markers("untrusted_slim")
+    owner_text = _local_read(hub, owner, "task_show", task=visible["number"])
+    assert "CANARYPRIVATEDRAWER" in owner_text, owner_text
+    if surface == "mcp":
+        operations = [
+            ("board_list", {}),
+            ("task_list", {}),
+            ("task_list", {"board": "visible"}),
+            ("task_show", {"task": visible["number"]}),
+            ("memory_get", {"id": ids["allowed"]}),
+            ("needs_me", {}),
+            ("needs_me", {"format": "digest"}),
+        ]
+        for name, args in operations:
+            text = _local_read(hub, grok, name, **args)
+            _assert_clean(text, forbidden, f"{name}/{args}")
+            if name == "task_show":
+                assert "Allowed card" in text and ids["private"] not in text
+        for card in hidden:
+            response = hub.rpc(
+                grok, "tools/call", {"name": "task_show", "arguments": {"task": card["number"]}}
+            )
+            assert response["result"]["isError"], response
+            _assert_clean(json.dumps(response), forbidden, "hidden task_show")
+    else:
+        for path in (
+            "/api/boards",
+            "/api/cards",
+            "/api/boards/visible/cards",
+            f"/api/cards/{visible['number']}",
+            f"/api/memory/{ids['allowed']}",
+            "/api/needs-me",
+            "/api/needs-me/digest",
+            "/api/needs-me/digest?format=text",
+            "/api/needs-me/digest?format=ssml",
+        ):
+            status, _, text = _http_get(hub, grok, path)
+            assert status == 200, (path, text)
+            _assert_clean(text, forbidden, path)
+            if path == f"/api/cards/{visible['number']}":
+                assert "Allowed card" in text and ids["private"] not in text
+        for card in hidden:
+            for path in (f"/api/cards/{card['number']}", f"/api/boards/{card['board']}/cards"):
+                status, _, text = _http_get(hub, grok, path)
+                assert status == 404, (path, text)
+                _assert_clean(text, forbidden, path)
+
+
+def test_grok_profile_cannot_read_workspace_events(hub, seeded, grok, board_canaries):
+    owner, _ids = seeded
+    # Board events include private card titles, so the feed itself must be denied.
+    status, _, text = _http_get(hub, owner, "/api/events?after=0")
+    assert status == 200 and "CANARYPRIVATEDRAWER" in text, text
+    status, _, text = _http_get(hub, grok, "/api/events?after=0")
+    assert status == 403, text
+    _assert_clean(text, _forbidden_markers("untrusted_slim"), "api/events")
+
+
+def test_grok_profile_short_links_do_not_grant_private_access(hub, seeded, grok, board_canaries):
+    owner, ids = seeded
+    _service, _visible, hidden = board_canaries
+    targets = [
+        (f"/app/#/memory?id={ids['private']}", f"/api/memory/{ids['private']}"),
+        (f"/app/#/card/{hidden[0]['number']}", f"/api/cards/{hidden[0]['number']}"),
+    ]
+    for app_path, api_path in targets:
+        link = urls.share_link(hub.db, hub.workspace, app_path)
+        for token in (None, grok):
+            status, headers, text = _http_get(hub, token, urlsplit(link).path)
+            assert status == 302 and headers["Location"] == urls.app_link(app_path)
+            _assert_clean(json.dumps([headers, text]), _forbidden_markers("untrusted_slim"), link)
+            # The redirect only opens the app shell. Its data read still uses
+            # the caller's credentials, whether signed out or holding Grok's token.
+            status, _, text = _http_get(hub, token, urlsplit(headers["Location"]).path)
+            assert status == 200, text
+            _assert_clean(text, _forbidden_markers("untrusted_slim"), app_path)
+            status, _, text = _http_get(hub, token, api_path)
+            assert status == (401 if token is None else 404), text
+            _assert_clean(text, _forbidden_markers("untrusted_slim"), api_path)
+        status, _, text = _http_get(hub, owner, api_path)
+        assert status == 200 and "CANARYPRIVATEDRAWER" in text, text

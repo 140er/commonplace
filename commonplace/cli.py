@@ -8,8 +8,11 @@ import logging
 import os
 import sqlite3
 import sys
+from contextlib import ExitStack
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from . import plans
 from .backup import BackupError, data_lock
 from .control_db import ControlDB, ControlError
 from .extensions import ToolError
@@ -67,6 +70,59 @@ def cmd_user_list(args) -> int:
     for u in _db(args).users():
         print(f"{u['id']}  {u['email']}{'  admin' if u['is_admin'] else ''}")
     return 0
+
+
+def cmd_plan_set(args) -> int:
+    db = _db(args)
+    try:
+        user = db.user(args.user)
+        actor = db.user(_actor(db, args))
+        if not actor["is_admin"]:
+            raise ControlError("admin access required")
+        plans.set_plan(db, user["id"], args.plan, actor=actor["id"])
+        print(f"plan  {args.plan}")
+        if not plans.enabled():
+            print("Plans are off.")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_plan_show(args) -> int:
+    from .workers import WorkerSupervisor
+
+    db = _db(args)
+    try:
+        user = db.user(args.user)
+        plan = plans.get_plan(db, user["id"])
+        meter = plans.StorageMeter()
+        supervisor = WorkerSupervisor(str(_data_dir(args)))
+        used = sum(
+            meter.used(ws["id"], supervisor.workspace_dir(ws["id"]))
+            for ws in db.workspaces()
+            if ws["personal_of"] == user["id"]
+        )
+        storage = (
+            str(plan.storage_bytes) if plan and plan.storage_bytes is not None else "unlimited"
+        )
+        voice = (
+            str(plan.transcription_seconds)
+            if plan and plan.transcription_seconds is not None
+            else "unlimited"
+        )
+        if plan and plan.name == "paid":
+            storage = voice = "unlimited**"
+        print(f"plan  {plan.name if plan else 'none'}")
+        print(f"storage  {used} / {storage} bytes")
+        print(f"transcription today  {plans.transcription_used(db, user['id'])} / {voice} seconds")
+        print(f"sync interval  {plans.sync_interval(db, user['id'])} seconds")
+        if plan and plan.name == "paid":
+            print(plans.PAID_FOOTNOTE)
+        if not plans.enabled():
+            print("Plans are off.")
+        return 0
+    finally:
+        db.close()
 
 
 def cmd_workspace_add(args) -> int:
@@ -153,6 +209,338 @@ def cmd_audit(args) -> int:
     return 0
 
 
+def _owner(db, args, workspace_id):
+    user = db.user(_actor(db, args))
+    db.require_owner(workspace_id, user["id"])
+    return user
+
+
+def _settings(db, handoff_db):
+    from .handoff.events import Events
+    from .handoff.settings import SettingsService
+
+    return SettingsService(handoff_db, Events(db, handoff_db))
+
+
+def _setting_scope(args):
+    if args.agent is not None:
+        return "agent", args.agent
+    if args.task is not None:
+        return "task", args.task
+    return "workspace", ""
+
+
+def cmd_handoff_status(args) -> int:
+    from .handoff.db import HandoffDB
+
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    setting = _settings(db, HandoffDB(db)).effective(workspace, args.agent or "", args.task or "")
+    print(
+        f"handoff: {'on' if setting.enabled else 'off'} ({setting.source}), "
+        f"threshold {setting.threshold:.2f}, window {setting.context_window or 'auto'}, "
+        f"launcher {setting.launcher.kind}"
+    )
+    return 0
+
+
+def cmd_handoff_set(args) -> int:
+    from .handoff.db import HandoffDB
+    from .handoff.models import LauncherConfig, SettingRow
+
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    user = _owner(db, args, workspace)
+    scope, ref = _setting_scope(args)
+    launcher = None
+    if args.launcher is None:
+        if any(
+            value is not None
+            for value in (args.launcher_argv, args.launcher_url, args.launcher_secret_env)
+        ):
+            raise ControlError("--launcher is required with launcher options")
+    else:
+        secret = ""
+        if args.launcher_secret_env is not None:
+            secret = os.environ.get(args.launcher_secret_env, "")
+            if not secret:
+                raise ControlError(f"environment variable {args.launcher_secret_env} is not set")
+        launcher = LauncherConfig(
+            kind=args.launcher,
+            argv=tuple(args.launcher_argv or ()),
+            url=args.launcher_url or "",
+            secret=secret,
+        )
+    row = SettingRow(
+        workspace_id=workspace,
+        scope=scope,
+        ref=ref,
+        enabled=args.action == "enable",
+        threshold=args.threshold,
+        context_window=args.window,
+        launcher=launcher,
+    )
+    _settings(db, HandoffDB(db)).set(row, actor=user["id"], is_owner=True)
+    print(f"handoff: {'on' if row.enabled else 'off'} ({scope})")
+    return 0
+
+
+def cmd_handoff_clear(args) -> int:
+    from .handoff.db import HandoffDB
+
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    user = _owner(db, args, workspace)
+    scope, ref = _setting_scope(args)
+    _settings(db, HandoffDB(db)).clear(workspace, scope, ref, actor=user["id"], is_owner=True)
+    print(f"handoff: cleared ({scope})")
+    return 0
+
+
+def _handoff_record(handoff_db, handoff_id):
+    record = handoff_db.get(handoff_id)
+    if record is None:
+        raise ControlError("handoff not found")
+    return record
+
+
+def _print_handoff(record):
+    successor = record.successor.agent_ref if record.successor is not None else "-"
+    print(
+        f"{record.id}  {record.state}  thread {record.stored_thread_id or '-'}  successor {successor}"
+    )
+
+
+def cmd_handoff_list(args) -> int:
+    from .handoff.db import HandoffDB
+
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    for record in HandoffDB(db).list(workspace, task_ref=args.task or "", limit=args.limit):
+        _print_handoff(record)
+    return 0
+
+
+def cmd_handoff_show(args) -> int:
+    from .handoff.db import HandoffDB
+
+    db = _db(args)
+    with ExitStack() as stack:
+        documents = _stores(args, stack, root=Path(db.path).parent)
+        record = _handoff_record(HandoffDB(db, document_store_for=documents), args.handoff_id)
+        _print_handoff(record)
+        sys.stdout.write(record.doc_markdown)
+    return 0
+
+
+def _stores(args, stack, *, root=None):
+    from .handoff.thread_store import ThreadStore
+
+    stores = {}
+
+    def store_for(workspace_id):
+        if workspace_id not in stores:
+            path = (root or _data_dir(args)) / "workspaces" / workspace_id / "threads.sqlite3"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            store = stores[workspace_id] = ThreadStore(str(path))
+            stack.callback(store.close)
+        return stores[workspace_id]
+
+    return store_for
+
+
+def cmd_handoff_relaunch(args) -> int:
+    from .control_db import Principal
+    from .handoff.db import HandoffDB
+    from .handoff.events import Events
+    from .handoff.service import HandoffService
+
+    db = _db(args)
+    handoff_db = HandoffDB(db)
+    record = _handoff_record(handoff_db, args.handoff_id)
+    user = _owner(db, args, record.workspace_id)
+    principal = Principal(
+        user_id=user["id"],
+        user_email=user["email"],
+        workspace_id=record.workspace_id,
+        connection_id="",
+        connection="cli",
+        client="commonplace",
+        auth="local",
+        role="owner",
+        policy=Policy.build(
+            profile="full",
+            scopes=["memory:read", "private:read", "threads:read", "handoff:write", "admin"],
+            read_wings=["*"],
+            trust="trusted",
+        ),
+    )
+    events = Events(db, handoff_db)
+    with ExitStack() as stack:
+        service = HandoffService(
+            control_db=db,
+            handoff_db=handoff_db,
+            settings=_settings(db, handoff_db),
+            store_for=_stores(args, stack),
+            events=events,
+            prompt_dir=str(_data_dir(args) / "handoff-prompts"),
+        )
+        result = service.relaunch(principal, record.id)
+    if (
+        result.action != "handoff"
+        or result.handoff is None
+        or result.handoff.state in ("failed", "launch_failed")
+    ):
+        raise ControlError(
+            result.reason
+            or (result.handoff.error if result.handoff is not None else "")
+            or "handoff relaunch failed"
+        )
+    if result.launch:
+        sys.stdout.write(result.prompt)
+    elif result.handoff is not None:
+        _print_handoff(result.handoff)
+    return 0
+
+
+def cmd_handoff_start(args) -> int:
+    from .handoff.manual import run_cli
+
+    return run_cli(args)
+
+
+def cmd_thread(args) -> int:
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    if args.action == "get" and args.end is not None and args.end < args.start:
+        raise ControlError("end must be at least start")
+    with ExitStack() as stack:
+        store = _stores(args, stack)(workspace)
+        thread = store.get(args.thread_id)
+        if thread is None or thread.workspace_id != workspace:
+            raise ControlError("thread not found")
+        if args.action == "get":
+            entries = store.messages(args.thread_id, args.start, args.end)
+        else:
+            entries = store.search([args.thread_id], args.query)
+        for entry in entries:
+            sys.stdout.write(entry.text)
+    return 0
+
+
+def _positive_int(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return number
+
+
+def _nonnegative_int(value):
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be nonnegative")
+    return number
+
+
+def _threshold(value):
+    from .handoff.settings import THRESHOLD_MAX, THRESHOLD_MIN
+
+    number = float(value)
+    if not THRESHOLD_MIN <= number <= THRESHOLD_MAX:
+        raise argparse.ArgumentTypeError(f"must be between {THRESHOLD_MIN} and {THRESHOLD_MAX}")
+    return number
+
+
+def _launcher_argv(value):
+    try:
+        argv = json.loads(value)
+    except json.JSONDecodeError:
+        raise argparse.ArgumentTypeError("must be a JSON array of strings") from None
+    if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+        raise argparse.ArgumentTypeError("must be a JSON array of strings")
+    return argv
+
+
+def _webhook_url(value):
+    try:
+        url = urlsplit(value)
+        valid = (
+            url.scheme in ("http", "https")
+            and url.hostname
+            and url.port != 0
+            and url.username is None
+            and url.password is None
+            and not url.fragment
+            and not any(char.isspace() for char in value)
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise argparse.ArgumentTypeError("must be an HTTP URL without credentials")
+    return value
+
+
+def _handoff_parsers(sub):
+    handoff = sub.add_parser("handoff").add_subparsers(dest="action", required=True)
+    s = handoff.add_parser("start", help="hand a chosen T3 thread to another provider/model")
+    s.add_argument("--thread", required=True)
+    s.add_argument("--to", required=True)
+    s.add_argument("--effort", default="")
+    s.add_argument("--note", default="")
+    s.add_argument("--workspace")
+    s.add_argument("--agent", default="")
+    s.add_argument("--task", default="")
+    s.add_argument("--by")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_handoff_start)
+    s = handoff.add_parser("status")
+    s.add_argument("--workspace", required=True)
+    s.add_argument("--agent")
+    s.add_argument("--task")
+    s.set_defaults(func=cmd_handoff_status)
+    for action in ("enable", "disable", "clear"):
+        s = handoff.add_parser(action)
+        s.add_argument("--workspace", required=True)
+        scope = s.add_mutually_exclusive_group(required=action == "clear")
+        scope.add_argument("--agent")
+        scope.add_argument("--task")
+        s.add_argument("--by")
+        if action == "clear":
+            s.set_defaults(func=cmd_handoff_clear)
+            continue
+        s.add_argument("--threshold", type=_threshold)
+        s.add_argument("--window", type=_positive_int)
+        s.add_argument("--launcher", choices=("client", "command", "webhook"))
+        s.add_argument("--launcher-argv", type=_launcher_argv)
+        s.add_argument("--launcher-url", type=_webhook_url)
+        s.add_argument("--launcher-secret-env")
+        s.set_defaults(func=cmd_handoff_set)
+    s = handoff.add_parser("list")
+    s.add_argument("--workspace", required=True)
+    s.add_argument("--task")
+    s.add_argument("--limit", type=_positive_int, default=50)
+    s.set_defaults(func=cmd_handoff_list)
+    s = handoff.add_parser("show")
+    s.add_argument("handoff_id")
+    s.set_defaults(func=cmd_handoff_show)
+    s = handoff.add_parser("relaunch")
+    s.add_argument("handoff_id")
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_handoff_relaunch)
+
+    thread = sub.add_parser("thread").add_subparsers(dest="action", required=True)
+    for action in ("get", "recall"):
+        s = thread.add_parser(action)
+        s.add_argument("thread_id")
+        s.add_argument("--workspace", required=True)
+        if action == "get":
+            s.add_argument("--start", type=_nonnegative_int, default=0)
+            s.add_argument("--end", type=_nonnegative_int)
+        else:
+            s.add_argument("query")
+        s.set_defaults(func=cmd_thread)
+
+
 def cmd_serve(args) -> int:
     from .gateway import Gateway
     from .workers import WorkerSupervisor
@@ -232,6 +620,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_user_add)
     users.add_parser("list").set_defaults(func=cmd_user_list)
 
+    plan = sub.add_parser("plan").add_subparsers(dest="action", required=True)
+    s = plan.add_parser("set")
+    s.add_argument("user")
+    s.add_argument("plan", choices=["free", "paid", "none"])
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_plan_set)
+    s = plan.add_parser("show")
+    s.add_argument("user")
+    s.set_defaults(func=cmd_plan_show)
+
     ws = sub.add_parser("workspace").add_subparsers(dest="action", required=True)
     s = ws.add_parser("add")
     s.add_argument("name")
@@ -277,6 +675,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(func=cmd_audit)
 
+    _handoff_parsers(sub)
+
     s = sub.add_parser("serve")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
@@ -309,12 +709,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    errors = (ControlError, PolicyError, BackupError, ToolError, OSError, sqlite3.Error)
+    if args.command in ("handoff", "thread"):
+        from .handoff.db import HandoffDBError
+        from .handoff.manual import ManualHandoffError
+        from .handoff.recall import ThreadNotFound
+        from .handoff.settings import SettingsError
+        from .handoff.t3 import T3Error
+
+        errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
         if args.command in {"connect", "backup"}:
             return args.func(args)
         with data_lock(_data_dir(args)):
             return args.func(args)
-    except (ControlError, PolicyError, BackupError, ToolError, OSError, sqlite3.Error) as exc:
+    except errors as exc:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:

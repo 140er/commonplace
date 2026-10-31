@@ -4,7 +4,7 @@ Design, 2026-10-30. Nothing built yet. Milestone B in [PRODUCT-DESIGN.md](../../
 
 Files:
 
-- this doc: what the board is, how cards move, what Jeffrey sees
+- this doc: what the board is, how cards move, what Avery sees
 - [schema.sql](schema.sql): the data model (runs as is on SQLite 3.35+)
 - [API.md](API.md): the MCP tools agents call and the HTTP calls the web UI makes
 
@@ -12,13 +12,13 @@ This builds on PRODUCT-DESIGN.md §10 and keeps all of it: kanzo's design and no
 
 1. **Claims that expire.** An agent that crashes mid-task no longer holds its card forever.
 2. **Handoffs.** An agent can pass a card to another agent, back to the pool, or to a person, with a note.
-3. **A `review` column and a decide queue.** Anything waiting on Jeffrey sits in one place, and he answers it in one click.
+3. **A `review` column and a decide queue.** Anything waiting on Avery sits in one place, and he answers it in one click.
 
 ## Goals
 
 1. Agents from any provider pick up work, report progress and hand it on without a person relaying messages.
 2. Two agents never work on the same card.
-3. Everything waiting on Jeffrey is on one screen, oldest first, and each item takes one decision.
+3. Everything waiting on Avery is on one screen, oldest first, and each item takes one decision.
 4. Every card, move and comment shows who did it, stamped by the server.
 5. A task filed by an untrusted bot never reaches an agent with a shell until a person lets it through.
 
@@ -38,7 +38,7 @@ backlog │ todo │ doing │ review │ done
 | `review` | Waiting on a person: a question, or finished work to check. | `task_handoff` to a person |
 | `done` | Closed. Never deleted. | The holder, a person, or a decision |
 
-`review` is the one column added to kanzo's set. A question to Jeffrey could have been a flag on a `doing` card, but then waiting work looks like moving work, and the claim keeps ticking on a card nobody can move. A column makes waiting visible on the board and gives the decide queue a single query.
+`review` is the one column added to kanzo's set. A question to Avery could have been a flag on a `doing` card, but then waiting work looks like moving work, and the claim keeps ticking on a card nobody can move. A column makes waiting visible on the board and gives the decide queue a single query.
 
 ## Card lifecycle
 
@@ -70,7 +70,7 @@ The race check behind this: four processes claiming from 2,001 cards, interleave
 
 **Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to `todo`, free, with an `expire` event, so the next agent sees "conn:codex:vm lost this at 14:30Z" and the comments before it.
 
-People's holds never expire. Jeffrey dragging a card into `doing` means he is on it.
+People's holds never expire. Avery dragging a card into `doing` means he is on it.
 
 **Picking the board.** The hooks pass the git remote, and `board_repos` maps it to a board (kanzo's project detection). Agents outside a repo name the board.
 
@@ -81,12 +81,12 @@ People's holds never expire. Jeffrey dragging a card into `doing` means he is on
 - **Hand off** with `task_handoff to=… note=…`. The note is required.
   - `to=anyone`: back to `todo`, free.
   - `to=codex:vm`: back to `todo`, reserved for that connection. Only it (or a person) can start it.
-  - `to=jeffrey`: into `review`. The note becomes the question, `options` become buttons, and the card remembers who asked (`return_to`).
+  - `to=avery`: into `review`. The note becomes the question, `options` become buttons, and the card remembers who asked (`return_to`).
 - **Ask before starting:** an agent can hand a `todo` card it does not hold to a person. That is how it says "this is unclear" without claiming.
 
 After a decision, the card goes back to `todo`, reserved for the agent that asked. Its next `task_take_next` returns that card first, with the decision on a line of its own. The agent does not wait or poll: it hands off, ends its turn, and the session-start hook line tells it when something is back (API.md, "Hook line").
 
-## What Jeffrey sees
+## What Avery sees
 
 Two screens in the Commonplace web app, same login. The rule from the product brief applies: no taglines, no helper text, no secondary labels. Where a screen would need them, the layout carries the meaning.
 
@@ -104,7 +104,7 @@ Decide 4
 │ mempalace  #151  Done?  Split the hook output          codex:vm      40m │
 │ [ ship ]  [ redo ]  [________________________________]  ↩                │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ mempalace  #153  Add Grok calendar sync                grok:cos ⚠    1d  │
+│ mempalace  #153  Add Grok calendar sync                coordinator ⚠ 1d  │
 │ [ todo ]  [ close ]                                                      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -148,14 +148,14 @@ All from PRODUCT-DESIGN.md §6–§10, nothing new:
 - Board tools are tagged in our capability table, so fail-closed and the auto-generated canary suite cover them.
 - Agents can hand off to people who are members of the workspace only. A handoff to anyone else is refused.
 
-## Tests (in the pre-push hook and nightly on zurvur, no GitHub Actions)
+## Tests (in the pre-push hook and nightly on the test host, no GitHub Actions)
 
 - **Race:** N agents call `task_take_next` together; every card is claimed once.
 - **Expiry:** a claim past `claim_until` is freed on the next board call, with one `expire` event.
 - **Move rules:** every row of the API.md table, allowed and refused, over MCP and over HTTP, against the same service code.
 - **Canary:** a board, card, comment and ask in a forbidden wing never appear in any tool reply or HTTP response for a scoped token.
 - **Backlog guard:** a card from an untrusted token is never returned by `task_take_next` until a person triages it.
-- **B's done test** (PRODUCT-DESIGN.md §15) extended: the winning agent hands the card to Jeffrey with options, he decides on the Decide screen, and the same agent's next `task_take_next` returns it with the decision.
+- **B's done test** (PRODUCT-DESIGN.md §15) extended: the winning agent hands the card to Avery with options, he decides on the Decide screen, and the same agent's next `task_take_next` returns it with the decision.
 
 ## Decisions
 
@@ -170,5 +170,5 @@ Taken in this doc, easy to overrule:
 
 Open:
 
-- [ ] **Notify Jeffrey outside the web app?** The Decide count is the only signal in v1. A push to his phone needs a channel that keeps the "no external service" promise (a self-hosted ntfy on zurvur would). Decide before B ships.
+- [ ] **Notify Avery outside the web app?** The Decide count is the only signal in v1. A push to his phone needs a channel that keeps the "no external service" promise (a self-hosted notification service would). Decide before B ships.
 - [ ] **Reserve for an agent kind** (`to=codex`, any Codex connection) as well as one connection. Wait for real use.

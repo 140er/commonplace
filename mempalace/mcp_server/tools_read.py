@@ -88,6 +88,10 @@ def _sqlite_taxonomy():
             from ..backends.chroma_sqlite import _sqlite_wing_room_counts
 
             counts = _sqlite_wing_room_counts(_config.palace_path, _config.collection_name)
+        elif _selected_backend_name() == "compact":
+            from ..backends.compact import sqlite_wing_room_counts
+
+            counts = sqlite_wing_room_counts(_config.palace_path, _config.collection_name)
         elif _selected_backend_name() in {"sqlite_exact", "rust_exact"}:
             from ..backends.sqlite_exact import sqlite_wing_room_counts
 
@@ -143,6 +147,10 @@ def _sqlite_graph_stats():
     try:
         if _is_chroma_backend():
             rows = _chroma_room_wing_hall_counts()
+        elif _selected_backend_name() == "compact":
+            from ..backends.compact import sqlite_room_wing_hall_counts
+
+            rows = sqlite_room_wing_hall_counts(_config.palace_path, _config.collection_name)
         elif _selected_backend_name() in {"sqlite_exact", "rust_exact"}:
             from ..backends.sqlite_exact import sqlite_room_wing_hall_counts
 
@@ -620,6 +628,7 @@ def tool_search(
     cli_compatible: bool = False,
     include_media: bool = False,
     query_task: str = "search",
+    include_facts: bool = True,
 ):
     limit = max(1, min(limit, _MAX_RESULTS))
     try:
@@ -698,11 +707,22 @@ def tool_search(
                         since=since,
                         before=before,
                         collection=collection,
+                        facts=[],
                     )
                 )
         except SearchError as exc:
             return {"error": str(exc)}
-        result = {"query": query, "cli_output": output}
+        fact_result = (
+            tool_kg_search(query, limit=limit, wings=[wing] if wing else None)
+            if include_facts
+            else {"facts": []}
+        )
+        facts = fact_result["facts"]
+        from ..fact_render import format_facts
+
+        result = {"query": query, "cli_output": format_facts(facts) + output}
+        if facts or fact_result.get("facts_error"):
+            result = {**fact_result, **result}
         if error_output.getvalue():
             result["cli_error_output"] = error_output.getvalue()
         return result
@@ -734,6 +754,7 @@ def tool_search(
         vector_disabled=_vector_disabled,
         candidate_strategy=candidate_strategy,
         collection_name=_config.collection_name,
+        include_facts=False,
         **experimental,
     )
     if _is_transient_index_error(result):
@@ -756,6 +777,7 @@ def tool_search(
             vector_disabled=_vector_disabled,
             candidate_strategy=candidate_strategy,
             collection_name=_config.collection_name,
+            include_facts=False,
             **experimental,
         )
         if not _is_transient_index_error(result):
@@ -770,7 +792,14 @@ def tool_search(
         result["sanitizer"] = report
     if context:
         result["context_received"] = True
-    return result
+    if result.get("error"):
+        return result
+    fact_result = (
+        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)
+        if include_facts
+        else {"facts": []}
+    )
+    return {**fact_result, **{k: v for k, v in result.items() if k != "facts"}}
 
 
 def tool_check_duplicate(content: str, threshold: float = 0.9):

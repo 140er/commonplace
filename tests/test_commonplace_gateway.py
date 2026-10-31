@@ -109,6 +109,8 @@ def test_tools_list_follows_the_profile(hub):
         "mempalace_add_drawer",
         "mempalace_diary_write",
         "mempalace_diary_read",
+        # Facts are wing-scoped, so kg:read on a scoped token reads its wings.
+        "mempalace_kg_query",
     }
     coder = hub.tool_names(hub.token("coder", **CODER))
     assert "mempalace_kg_add" in coder and "mempalace_list_drawers" in coder
@@ -153,7 +155,7 @@ def test_untrusted_writes_land_in_the_inbox_with_a_stamp(hub):
         "mempalace_add_drawer",
         wing="shared",
         room="facts",
-        content="Jeffrey likes tea",
+        content="Avery likes tea",
         added_by="claude",
     )
     assert result["success"] and result["wing"] == "inbox"
@@ -204,7 +206,14 @@ def test_standard_token_writes_only_its_wings(hub):
 
 def test_kg_writes_are_stamped(hub):
     token = hub.token("coder", **CODER)
-    hub.call(token, "mempalace_kg_add", subject="api", predicate="uses", object="sqlite")
+    hub.call(
+        token,
+        "mempalace_kg_add",
+        subject="api",
+        predicate="uses",
+        object="sqlite",
+        wing="project_api",
+    )
     facts, _ = hub.call(hub.owner_token(), "mempalace_kg_query", entity="api")
     assert facts["facts"][0]["hub_connection"] == "coder"
 
@@ -652,3 +661,28 @@ def test_audit_fields_are_capped(hub):
     hub.call(token, "mempalace_add_drawer", wing="w" * 5_000, room="r", content="c")
     for entry in hub.db.audit_entries(limit=5):
         assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200
+
+
+def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypatch):
+    from commonplace.gateway import WorkerClient
+    from mempalace.stored_text import RESERVED_METADATA
+
+    forwarded = []
+    original = WorkerClient.post
+
+    def record(self, principal, request):
+        if request.get("method") == "tools/call":
+            forwarded.append(request["params"]["arguments"])
+        return original(self, principal, request)
+
+    monkeypatch.setattr(WorkerClient, "post", record)
+    result, _ = hub.call(
+        hub.owner_token(),
+        "mempalace_add_drawer",
+        wing="shared",
+        room="notes",
+        content="verbatim imported document",
+        **dict.fromkeys(RESERVED_METADATA, "forged"),
+    )
+    assert result["success"]
+    assert forwarded and all(not RESERVED_METADATA.intersection(args) for args in forwarded)

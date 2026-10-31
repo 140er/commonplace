@@ -85,6 +85,18 @@ CREATE TABLE IF NOT EXISTS connections (
     UNIQUE (workspace_id, name),
     FOREIGN KEY (workspace_id, user_id) REFERENCES memberships(workspace_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS account_plans (
+    user_id TEXT PRIMARY KEY REFERENCES users(id),
+    plan TEXT NOT NULL CHECK (plan IN ('free','paid')),
+    set_by TEXT NOT NULL,
+    set_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transcription_usage (
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    seconds INTEGER NOT NULL,
+    PRIMARY KEY(user_id, day)
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -154,6 +166,7 @@ class Principal:
     def identity(self) -> dict:
         """The verified identity the worker stamps on writes."""
         return {
+            **({"person": True} if self.person else {}),
             "user": self.user_id,
             "connection": self.connection,
             "client": self.client,
@@ -344,7 +357,7 @@ class ControlDB:
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
             raise ControlError(
-                "connection name: up to 120 of letters, digits and . _ : @ - (e.g. grok:cos)"
+                "connection name: up to 120 of letters, digits and . _ : @ - (e.g. grok:coordinator)"
             )
         if not client or len(client) > 60:
             raise ControlError("client must be 1-60 characters")

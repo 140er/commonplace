@@ -15,7 +15,7 @@ from commonplace.extensions import ToolContext, ToolError
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
 CARD_KEYS = set(
-    "number board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position".split()
+    "number board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position need message_id".split()
 )
 
 
@@ -126,13 +126,17 @@ MOVES = [
     ("todo", "doing", "take", True),
     ("doing", "todo", "update", False),
     ("doing", "todo", "handoff", True),
-    ("doing", "review", "update", False),
+    ("doing", "review", "update", True),
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
-    ("review", "done", "decide", True),  # a trusted owner agent relays Jeffrey's answer
+    ("review", "done", "update", False),
+    ("review", "backlog", "update", False),
+    ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
     ("todo", "review", "handoff", True),
-    ("done", "todo", "update", False),
+    ("todo", "review", "update", True),
+    ("todo", "done", "update", True),
+    ("done", "todo", "update", True),
     ("todo", "backlog", "update", True),
     ("doing", "backlog", "update", True),
 ]
@@ -181,7 +185,11 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
             )
         elif operation == "decide":
             status, _body = api(
-                hub, token, "POST", f"/api/cards/{number}/decide", {"choice": "yes", "then": "done"}
+                hub,
+                token,
+                "POST",
+                f"/api/cards/{number}/decide",
+                {"version": current["version"], "choice": "yes", "then": "done"},
             )
         else:
             status, _body = api(
@@ -194,6 +202,21 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
         ok = status == 200
     assert ok is allowed
     assert owner.task_show(number)["status"] == (new if allowed else old)
+    if allowed and operation == "update":
+        with owner.store.connection() as conn:
+            event = conn.execute(
+                "SELECT * FROM task_events WHERE task_id=? AND kind='move' ORDER BY id DESC",
+                (number,),
+            ).fetchone()
+        assert event["stamp_connection"] == agent.actor.removeprefix("conn:")
+        assert (event["from_status"], event["to_status"]) == (old, new)
+        emitted = [
+            e
+            for e in events.after(hub.db, hub.workspace)
+            if e["kind"] == "card.moved" and e["data"]["number"] == number
+        ]
+        assert emitted[-1]["data"]["from"] == old
+        assert emitted[-1]["data"]["to"] == new
 
 
 @pytest.mark.parametrize(
@@ -244,7 +267,7 @@ def test_review_only_decide_and_done_is_never_deleted(hub, env):
         cookie,
         "POST",
         f"/api/cards/{created['number']}/decide",
-        {"choice": "yes", "then": "done"},
+        {"version": created["version"], "choice": "yes", "then": "done"},
     )
     assert status == 200 and current["status"] == "done"
     assert api(hub, cookie, "DELETE", f"/api/cards/{created['number']}")[0] == 404
@@ -316,7 +339,7 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
         cookie,
         "POST",
         f"/api/cards/{card['number']}/decide",
-        {"choice": "90d", "reply": "Keep the other option."},
+        {"version": current["version"], "choice": "90d", "reply": "Keep the other option."},
     )
     assert status == 200 and result["assignee"] == agent.actor and result["ask"] is None
     ok, output = mcp(hub, token, "task_take_next", board="work")
@@ -329,10 +352,10 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
     assert "decision by" not in mcp(hub, token, "task_take_next", task=card["number"])[1]
 
 
-@pytest.mark.parametrize("ref", ["Jeffrey", "jeffrey@example.com", "id"])
+@pytest.mark.parametrize("ref", ["Avery", "avery@example.com", "id"])
 def test_workspace_people_resolution(hub, env, ref):
     token, _agent, _person, _cookie, owner = env
-    user = hub.db.create_user("jeffrey@example.com")
+    user = hub.db.create_user("avery@example.com")
     hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
     card = owner.task_add(title="Resolution", board="work")
     target = f"user:{user}" if ref == "id" else ref
@@ -501,7 +524,7 @@ def test_forbidden_board_canary_every_surface(hub, env):
         ("PATCH", f"/api/cards/{n}", {"version": -1, "status": "done"}),
         ("POST", f"/api/cards/{n}/comments", {"text": "attempt"}),
         ("POST", f"/api/cards/{n}/handoff", {"to": "owner@example.com", "note": "attempt"}),
-        ("POST", f"/api/cards/{n}/decide", {"reply": "attempt"}),
+        ("POST", f"/api/cards/{n}/decide", {"version": -1, "reply": "attempt"}),
     ]
     for method, path, body in requests:
         status, result = api(hub, scoped, method, path, body)
@@ -728,7 +751,7 @@ def test_an_agent_never_answers_its_own_question(hub, env):
     card = owner.task_show(number)
     assert card["status"] == "review"
     ok, text = mcp(hub, token, "decide", task=number, choice="yes")
-    assert not ok and "only Jeffrey" in text
+    assert not ok and "only the owner" in text
     assert owner.task_show(number)["status"] == "review"
 
 
@@ -776,8 +799,8 @@ def test_cards_carry_short_links_and_people_read_as_names(hub, env):
 
 def test_handoff_to_a_person_by_name_or_owner(hub, env):
     token, _agent, _person, _cookie, owner = env
-    hub.db._conn.execute("UPDATE users SET name='Jeffrey' WHERE id=?", (hub.admin,))
-    for to in ("jeffrey", "owner"):
+    hub.db._conn.execute("UPDATE users SET name='Avery' WHERE id=?", (hub.admin,))
+    for to in ("avery", "owner"):
         card = owner.task_add(title=f"hand to {to}", board="work")
         assert mcp(hub, token, "task_take_next", task=card["number"])[0]
         ok, text = mcp(
@@ -875,3 +898,27 @@ def test_board_flags_union_privacy_scan_without_changing_text(hub, env):
     owner.task_comment(created["number"], "https://user:password@example.com")
     shown = owner.task_show(created["number"])
     assert "secret:password_url" in shown["flags"]
+
+
+@pytest.mark.parametrize("old", ["todo", "doing"])
+def test_agent_done_routes_to_review_with_audit(hub, env, old):
+    _token, agent, _person, _cookie, owner = env
+    worker = service(hub, agent)
+    created = worker.task_add(board="work", title="Finish")
+    if old == "doing":
+        worker.task_take_next(task=created["number"])
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='work'")
+    changed = worker.task_update(created["number"], status="done")
+    assert changed["status"] == "review"
+    assert changed["ask"] == "Done?"
+    assert changed["ask_options"] == ["ship", "redo"]
+    with owner.store.connection() as conn:
+        event = conn.execute(
+            "SELECT * FROM task_events WHERE task_id=? AND kind='move' ORDER BY id DESC",
+            (created["number"],),
+        ).fetchone()
+    assert event["stamp_connection"] == agent.actor.removeprefix("conn:")
+    assert (event["from_status"], event["to_status"]) == (old, "review")
+    with pytest.raises(ToolError):
+        worker.decide(task=created["number"], choice="ship", then="done")

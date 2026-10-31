@@ -237,12 +237,17 @@ class HubClient:
 
     def call_tool(self, name: str, arguments: Mapping, *, timeout: float = HUB_PROXY_TIMEOUT_S):
         """Run one MCP tool in the hub; the raw JSON-RPC response."""
+        from .stored_text import user_tool_arguments
+
         return self.post(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
-                "params": {"name": name, "arguments": dict(arguments)},
+                "params": {
+                    "name": name,
+                    "arguments": user_tool_arguments(dict(arguments), tool_name=name),
+                },
             },
             timeout=timeout,
         )

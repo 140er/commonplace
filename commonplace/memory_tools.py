@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -11,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from mempalace import fact_provenance
+from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
 from . import events
@@ -123,6 +126,49 @@ def _cards(ctx, memory_id, store):
     ]
 
 
+def _source(args, *, fact=False):
+    """The chat range a save came from, as add_drawer arguments."""
+    value = args.get("source")
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        # Some MCP clients send an object argument as JSON text.
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError):
+            value = None
+    allowed = {"thread", "seq_start", "seq_end"} | ({"url"} if fact else set())
+    if not isinstance(value, dict) or set(value) - allowed:
+        shape = "{thread, seq_start, seq_end, url?}" if fact else "{thread, seq_start, seq_end}"
+        raise ToolError(f"no: source must be {shape}")
+    try:
+        thread, start, end = source_range(
+            value.get("thread"), value.get("seq_start"), value.get("seq_end")
+        )
+    except ValueError as exc:
+        raise ToolError(f"no: {exc}") from None
+    if thread is None:
+        raise ToolError("no: source needs a thread")
+    found = {"source_thread": thread, "source_seq_start": start, "source_seq_end": end}
+    if fact and "url" in value:
+        try:
+            found["source_url"] = fact_provenance.source_link(thread, value["url"])
+        except ValueError as exc:
+            raise ToolError(f"no: {exc}") from None
+    return {key: item for key, item in found.items() if item is not None}
+
+
+def _stored_source(metadata):
+    thread = metadata.get("source_thread")
+    if not thread:
+        return None
+    return {
+        "thread": thread,
+        "seq_start": metadata.get("source_seq_start"),
+        "seq_end": metadata.get("source_seq_end"),
+    }
+
+
 def _get(ctx, memory_id, store=None):
     record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": memory_id})
     metadata = record.get("metadata") or {}
@@ -134,6 +180,7 @@ def _get(ctx, memory_id, store=None):
         "author": metadata.get("hub_connection", ""),
         "trust": metadata.get("hub_trust", ""),
         "at": metadata.get("hub_written_at") or metadata.get("filed_at", ""),
+        "source": _stored_source(metadata),
         "cards": _cards(ctx, record["drawer_id"], store),
     }
 
@@ -143,7 +190,8 @@ def _quote(memory):
     # while preventing stored instructions from becoming output structure.
     fields = " ".join(
         f"{name}={json.dumps(memory[name], ensure_ascii=False)}"
-        for name in ("id", "theme", "author", "trust", "at")
+        for name in ("id", "theme", "author", "trust", "at", "source")
+        if name != "source" or memory.get("source")
     )
     return f"{fields}\nquoted data: {json.dumps(memory['text'], ensure_ascii=False)}"
 
@@ -152,6 +200,7 @@ def _search(ctx, args, store=None):
     params = {
         "query": _string(args, "query"),
         "limit": _limit(args.get("limit"), 5, 100),
+        "include_facts": False,
     }
     if args.get("theme"):
         params["wing"] = _string(args, "theme")
@@ -167,6 +216,11 @@ def _search(ctx, args, store=None):
 
 
 def _emit(ctx, kind, memory_id, **data):
+    if kind == "fact.saved":
+        # KG ids contain the subject and object verbatim. Events and default
+        # webhook deliveries must only carry opaque change references.
+        memory_id = "fact_" + hashlib.sha256(str(memory_id).encode("utf-8")).hexdigest()
+        data = {"action": data.get("action")}
     events.emit(
         ctx.db,
         ctx.principal.workspace_id,
@@ -208,13 +262,16 @@ def _save(ctx, args):
     theme = _string(args, "theme", ctx.principal.policy.write_wing or "shared")
     topic = _string(args, "topic", "general")
     task = _task(args) if args.get("task") is not None else None
+    source = _source(args)
     store = _boards(ctx, required=True) if task is not None else None
     if task is not None:
         _link_target(ctx, task, store)
     flags = _privacy_flags(text)
     if "health" in flags and ctx.principal.policy.can_write_wing("private"):
         theme = "private"
-    result = _memory(ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text})
+    result = _memory(
+        ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
+    )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
     if task is not None:
@@ -231,6 +288,54 @@ def _save(ctx, args):
 def memory_save(ctx, args):
     memory_id, task = _save(ctx, args)
     return f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
+
+
+def _file_fact(ctx, args):
+    """The server establishes authority; arguments cannot claim user approval."""
+    reserved = set(fact_provenance.COLUMNS) | {"person", "fact_status", "status", "superseded_by"}
+    if reserved.intersection(args):
+        raise ToolError("no: fact origin and approval come from the authenticated caller")
+    fact = {key: _string(args, key) for key in ("subject", "predicate", "object")}
+    flags = _privacy_flags(" ".join(fact.values()))
+    if any(flag.startswith("secret:") for flag in flags):
+        # The chat copy stays private; a fact is an index and travels further.
+        raise ToolError("no: that looks like a secret; facts never hold secrets")
+    call = dict(fact)
+    if args.get("theme") is not None:
+        call["wing"] = _string(args, "theme")
+    for key in ("valid_from", "sensitivity"):
+        if args.get(key) is not None:
+            call[key] = _string(args, key)
+    if args.get("single_valued") is not None:
+        if not isinstance(args["single_valued"], bool):
+            raise ToolError("no: single_valued must be true or false")
+        call["single_valued"] = args["single_valued"]
+    call.update(_source(args, fact=True))
+    if not call.get("source_thread"):
+        raise ToolError("no: fact_save needs a source thread")
+    if fact_provenance.source_link(call["source_thread"], call.get("source_url")) is None:
+        raise ToolError("no: source.url is required for a chat outside Commonplace or T3")
+    return _memory(ctx, "mempalace_kg_save", call)
+
+
+def fact_save(ctx, args):
+    """File one fact (subject, predicate, object), folded into what is known."""
+    result = _file_fact(ctx, args)
+    flags = _privacy_flags(
+        " ".join(_string(args, key) for key in ("subject", "predicate", "object"))
+    )
+    triple_id, action = result.get("triple_id"), result.get("action")
+    _emit(ctx, "fact.saved", triple_id, action=action, flags=flags)
+    if action == "merged":
+        return f"merged into {triple_id}" + (
+            "" if result.get("source_added") else " (source known)"
+        )
+    if action == "superseded":
+        previous = ", ".join(json.dumps(p, ensure_ascii=False) for p in result.get("previous", []))
+        return f"saved {triple_id}, replacing {previous}"
+    if action == "historical":
+        return f"saved {triple_id} as history: {result.get('current')} is newer"
+    return f"saved {triple_id}"
 
 
 def memory_search(ctx, args):
@@ -423,11 +528,32 @@ def install(gateway):
             log_failure(logger, "memory HTTP request failed", exc)
             send_json(h, 500, {"error": "memory request failed"})
 
+    def save_fact_http(h):
+        principal = require_principal(gateway, h)
+        if principal is None:
+            return
+        try:
+            if principal.policy.refusal("fact_save"):
+                raise ToolError("no: fact write refused")
+            ctx = ToolContext(principal=principal, gateway=gateway)
+            result = _file_fact(ctx, read_json(h))
+            _emit(ctx, "fact.saved", result.get("triple_id"), action=result.get("action"))
+            send_json(h, 201, result)
+        except BadRequest:
+            pass
+        except ToolError as exc:
+            send_json(h, 403, {"error": str(exc)})
+        except Exception as exc:
+            log_failure(logger, "fact HTTP request failed", exc)
+            send_json(h, 500, {"error": "fact request failed"})
+
+    gateway.add_route("POST", "/api/facts", save_fact_http)
+
     gateway.add_prefix_route("GET", "/api/memory/", handle)
     gateway.add_prefix_route("POST", "/api/memory/", handle)
 
 
-def _register(name, description, handler, properties, required, scope, kind="read"):
+def _register(name, description, handler, properties, required, scope, kind="read", **extra):
     register(
         LocalTool(
             name=name,
@@ -441,20 +567,52 @@ def _register(name, description, handler, properties, required, scope, kind="rea
             },
             scope=scope,
             kind=kind,
+            **extra,
         )
     )
 
 
 _STRING = {"type": "string", "minLength": 1}
 _TASK = {"oneOf": [_STRING, {"type": "integer", "minimum": 1}]}
+_SEQ = {"type": "integer", "minimum": 0}
+_SOURCE = {
+    "type": "object",
+    "properties": {"thread": _STRING, "seq_start": _SEQ, "seq_end": _SEQ},
+    "required": ["thread"],
+    "additionalProperties": False,
+}
 _register(
     "memory_save",
     "Save exact words as a memory, optionally linked to a card.",
     memory_save,
-    {"text": _STRING, "theme": _STRING, "topic": _STRING, "task": _TASK},
+    {"text": _STRING, "theme": _STRING, "topic": _STRING, "task": _TASK, "source": _SOURCE},
     ["text"],
     "memory:write",
     "write",
+)
+_register(
+    "fact_save",
+    "Save one fact with its originating chat source. Agent writes are proposals;"
+    " user approval comes from a signed-in person, never an agent's claim."
+    " Repeated facts gain sources; single-valued changes replace eligible older facts.",
+    fact_save,
+    {
+        "subject": _STRING,
+        "predicate": _STRING,
+        "object": _STRING,
+        "theme": _STRING,
+        "source": {**_SOURCE, "properties": {**_SOURCE["properties"], "url": _STRING}},
+        "valid_from": _STRING,
+        "sensitivity": {"type": "string", "enum": ["public", "internal", "private", "secret"]},
+        "single_valued": {"type": "boolean"},
+    },
+    ["subject", "predicate", "object", "source"],
+    "kg:write",
+    "write",
+    # The worker tool it calls is not in the slim profile and refuses
+    # untrusted tokens; list fact_save only where it can work.
+    profiles=frozenset({"standard", "full"}),
+    trusted_only=True,
 )
 _register(
     "memory_search",

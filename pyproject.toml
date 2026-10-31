@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "chromadb>=1.5.4,<2",
     "pyyaml>=6.0,<7",
+    "zstandard>=0.23,<1",
     "tomli>=2.0.0; python_version < '3.11'",
     # Multilingual embedding model deps (embeddinggemma-300m ONNX), kept as
     # core deps rather than optional extras so choosing the multilingual model
@@ -58,6 +59,7 @@ commonplace = "commonplace.cli:main"
 
 [project.entry-points."mempalace.backends"]
 chroma = "mempalace.backends.chroma:ChromaBackend"
+compact = "mempalace.backends.compact:CompactBackend"
 milvus = "mempalace.backends.milvus:MilvusBackend"
 pgvector = "mempalace.backends.pgvector:PgVectorBackend"
 qdrant = "mempalace.backends.qdrant:QdrantBackend"
@@ -71,7 +73,11 @@ rust_exact = "mempalace.backends.rust_exact:RustExactBackend"
 [project.entry-points."mempalace.sources"]
 
 [project.optional-dependencies]
+voice = ["useful-moonshine-onnx>=20251121,<20260101", "faster-whisper>=1.2.1"]
+# Sign in with Apple signs its client secret with ES256.
+commonplace = ["cryptography>=42"]
 dev = [
+    "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     # Offline media tests exercise real image objects and audio resampling
@@ -165,6 +171,7 @@ extract = [
 
 [dependency-groups]
 dev = [
+    "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pillow>=10.0",

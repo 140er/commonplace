@@ -37,6 +37,7 @@ from .base import (
     UnsupportedMaintenanceKindError,
 )
 from .chroma import ChromaBackend, ChromaCollection
+from .compact import CompactBackend, CompactCollection
 from .milvus import MilvusBackend, MilvusCollection
 from .pgvector import PgVectorBackend, PgVectorCollection
 from .qdrant import QdrantBackend, QdrantCollection
@@ -64,6 +65,8 @@ __all__ = [
     "BaseCollection",
     "ChromaBackend",
     "ChromaCollection",
+    "CompactBackend",
+    "CompactCollection",
     "CollectionNotInitializedError",
     "DimensionMismatchError",
     "EmbedderIdentityMismatchError",

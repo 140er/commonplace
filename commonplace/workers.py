@@ -213,6 +213,7 @@ class WorkerSupervisor:
         self._workers: dict = {}
         self._lock = threading.Lock()
         self._starting: dict = {}
+        self._closed = False
 
     def workspace_dir(self, workspace_id: str) -> Path:
         # Ids come from the control DB (``ws_`` + hex); refuse anything else
@@ -224,6 +225,8 @@ class WorkerSupervisor:
     def get(self, workspace_id: str) -> Worker:
         while True:
             with self._lock:
+                if self._closed:
+                    raise RuntimeError("worker supervisor is closed")
                 worker = self._workers.get(workspace_id)
                 if worker is not None and worker.alive():
                     worker.last_used = time.monotonic()
@@ -237,7 +240,12 @@ class WorkerSupervisor:
         try:
             worker = self.launcher.start(workspace_id, self.workspace_dir(workspace_id))
             with self._lock:
-                self._workers[workspace_id] = worker
+                closed = self._closed
+                if not closed:
+                    self._workers[workspace_id] = worker
+            if closed:
+                worker.stop()
+                raise RuntimeError("worker supervisor is closed")
             return worker
         finally:
             with self._lock:
@@ -263,3 +271,9 @@ class WorkerSupervisor:
             self._workers.clear()
         for worker in workers:
             worker.stop()
+
+    def close(self) -> None:
+        """Permanently stop workers, including ones whose launch is in flight."""
+        with self._lock:
+            self._closed = True
+        self.stop_all()

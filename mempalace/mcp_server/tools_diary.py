@@ -70,12 +70,15 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general", wing: 
             "date": now.strftime("%Y-%m-%d"),
         }
         _provenance.stamp_metadata(base_metadata)
+        index_source = IndexSource(entry)
         chunk_size = _config.chunk_size
         if len(entry) <= chunk_size:
             col.add(
                 ids=[entry_id],
                 documents=[entry],
-                metadatas=[{**base_metadata, "chunk_index": 0}],
+                metadatas=[
+                    index_source.metadata(0, len(entry), {**base_metadata, "chunk_index": 0})
+                ],
             )
             logger.info(f"Diary entry: {entry_id} -> {wing}/diary/{topic}")
             return {
@@ -123,6 +126,10 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general", wing: 
                     "parent_drawer_id": entry_id,
                 }
             )
+        chunk_metas = [
+            index_source.metadata(i * chunk_size, i * chunk_size + len(doc), meta)
+            for i, (doc, meta) in enumerate(zip(chunk_docs, chunk_metas))
+        ]
         col.add(ids=chunk_ids, documents=chunk_docs, metadatas=chunk_metas)
         logger.info(f"Diary entry: {entry_id} -> {wing}/diary/{topic} ({len(chunk_ids)} chunks)")
         return {

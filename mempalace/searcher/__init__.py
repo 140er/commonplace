@@ -15,6 +15,7 @@ hide drawers the direct path would have found.
 # this package's globals (the same namespace as the historical module).
 
 import functools
+import inspect
 import logging
 import math
 import os
@@ -64,7 +65,7 @@ from ..search_util import (
     chroma_known_wings,
     palace_wing_aliases,
 )
-from ..stored_text import decode_record, encode_filter
+from ..stored_text import INDEX_SPANS, decode_record, encode_filter, index_text
 from ..timeutil import localize
 
 logger = logging.getLogger(__name__)

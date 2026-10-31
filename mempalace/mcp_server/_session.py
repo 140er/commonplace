@@ -242,7 +242,7 @@ def _get_collection(create=False):
         # with a daemon/HTTP writer. _acquire_mcp_writer_lock() discards this
         # cached read-only collection before a promoted mutation is handled.
         collection_read_only = _READ_ONLY or (
-            backend_name in {"sqlite_exact", "rust_exact"}
+            backend_name in {"sqlite_exact", "rust_exact", "compact"}
             and getattr(_args, "transport", "stdio") == "stdio"
             and _MCP_WRITER_LOCK_CM is None
         )
@@ -521,7 +521,9 @@ def _checked_chroma_collection(raw, *, create):
     _enforce_embedder_identity(
         collection, _config.palace_path, _config.collection_name, create=create
     )
-    return collection
+    from ..backends.embedding_wrapper import EmbeddingCollection
+
+    return EmbeddingCollection(collection)
 
 
 def _model_mismatch_error(exc) -> dict:

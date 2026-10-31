@@ -38,6 +38,25 @@ CREATE TABLE IF NOT EXISTS board_repos (
     board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE
 );
 
+-- A space is a board. Messages are original words, never rewritten or removed.
+CREATE TABLE IF NOT EXISTS space_messages (
+    id INTEGER PRIMARY KEY,
+    board_id INTEGER NOT NULL REFERENCES boards(id),
+    text TEXT NOT NULL,
+    stamp_user TEXT NOT NULL,
+    stamp_connection TEXT,
+    stamp_trust TEXT NOT NULL,
+    flags TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS space_messages_by_board ON space_messages(board_id, id);
+CREATE TRIGGER IF NOT EXISTS space_messages_no_update BEFORE UPDATE ON space_messages
+BEGIN SELECT RAISE(ABORT, 'space_messages is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS space_messages_no_delete BEFORE DELETE ON space_messages
+BEGIN SELECT RAISE(ABORT, 'space_messages is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS space_messages_changed AFTER INSERT ON space_messages
+BEGIN UPDATE meta SET value = value + 1 WHERE key = 'changes'; END;
+
 CREATE TABLE IF NOT EXISTS tasks (
     id            INTEGER PRIMARY KEY,              -- shown as #142; one sequence per workspace
     board_id      INTEGER NOT NULL REFERENCES boards(id),
@@ -83,6 +102,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     to_status   TEXT,
     target     TEXT,                                -- actor ref (handoff, assign) or drawer id (link)
     choice     TEXT,                                -- decide: the option picked
+    options    TEXT,                                -- ask: JSON list of the choices offered, verbatim
     stamp_user       TEXT NOT NULL,
     stamp_connection TEXT,                          -- NULL for people in the web UI
     stamp_trust      TEXT NOT NULL,

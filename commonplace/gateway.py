@@ -27,27 +27,52 @@ import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from time import sleep
 from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
 from mempalace import provenance
 from mempalace.config import normalize_wing_name
+from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, ratelimit, sessions, urls
+from . import events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
-from .policy import TOOL_RULES, Policy
+from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
 from .workers import Worker, WorkerSupervisor
 
 logger = logging.getLogger("commonplace.gateway")
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
+# A whole agent transcript (context handoff); the handoff API checks it again.
+HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 MAX_FANOUT_WINGS = 64
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
+
+
+def _with_search_facts(result, facts, facts_error=None):
+    from mempalace.fact_render import format_facts
+
+    if result.get("error"):
+        return result
+    if (
+        not facts
+        and not facts_error
+        and not any(key in result for key in ("facts", "results", "cli_output"))
+    ):
+        return result
+    out = {k: v for k, v in result.items() if k != "facts"}
+    if facts or facts_error or "cli_output" not in out:
+        out = {"facts": facts, **out}
+    if facts_error:
+        out["facts_error"] = "unavailable"
+    if isinstance(out.get("cli_output"), str):
+        out["cli_output"] = format_facts(facts) + out["cli_output"]
+    return out
 
 
 def _rpc_error(req_id, code: int, message: str) -> dict:
@@ -194,17 +219,24 @@ class Mediator:
             return response
         response = copy.copy(response)
         response["result"] = dict(response["result"])
-        visible = [t for t in tools if policy.tool_visible(t.get("name"))]
-        for name in sorted(extensions.names()):
+        local_names = extensions.names()
+        # The gateway's own tools win over a worker tool of the same name, so a
+        # gated extension tool can't slip through as a worker tool.
+        visible = [
+            t
+            for t in tools
+            if t.get("name") not in local_names and policy.tool_visible(t.get("name"))
+        ]
+        for name in sorted(local_names):
             tool = extensions.get(name)
-            if policy.tool_visible(name) and (not tool.owner_only or principal.role == "owner"):
+            if policy.tool_visible(name) and tool.usable_by(principal, self.gateway):
                 visible.append(tool.schema())
         response["result"]["tools"] = visible
         return response
 
     def _local_call(self, principal: Principal, tool, req_id, args: dict) -> dict:
-        if tool.owner_only and principal.role != "owner":
-            self._audit(principal, tool.name, "deny", "owner only")
+        if not tool.usable_by(principal, self.gateway):
+            self._audit(principal, tool.name, "deny", "owner only" if tool.owner_only else "off")
             return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
         ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
         try:
@@ -239,18 +271,25 @@ class Mediator:
         params = params if isinstance(params, dict) else {}
         name = params.get("name")
         args = params.get("arguments")
-        args = dict(args) if isinstance(args, dict) else {}
+        from mempalace.stored_text import user_tool_arguments
+
+        args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
         policy = principal.policy
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
 
+        local = extensions.get(name)
         refusal = policy.refusal(name)
+        if local is not None and local.available is not None:
+            # A feature a workspace doesn't use is audited like a tool that
+            # doesn't exist, whatever the token holds.
+            if not local.usable_by(principal, self.gateway):
+                refusal = "unknown tool"
         if refusal is not None:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
 
-        local = extensions.get(name)
         if local is not None:
             return self._local_call(principal, local, req_id, args)
 
@@ -275,6 +314,12 @@ class Mediator:
             forwarded["params"] = {**params, "arguments": args}
             response = self.workers.post(principal, forwarded)
             response = self._after(principal, name, rule, args, response)
+            if isinstance(plan, dict) and "facts" in plan:
+                result = _tool_result(response)
+                if isinstance(result, dict):
+                    response = _replace_result(
+                        response, _with_search_facts(result, plan["facts"], plan.get("facts_error"))
+                    )
             if isinstance(plan, dict) and plan.get("unhide"):
                 unhide = plan["unhide"]
                 response = _unhide(response, unhide)
@@ -337,14 +382,49 @@ class Mediator:
 
     def _before_search(self, principal, name, args, notes):
         policy = principal.policy
-        if policy.sees_all_wings:
-            return None
         wing = args.get("wing")
-        if wing:
-            if not policy.can_read_wing(wing):
-                raise Denied(f"this connection can't read wing {wing!r}")
-            return None
-        return {"respond": self._fan_out_search(principal, name, args)}
+        if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
+            raise Denied(f"this connection can't read wing {wing!r}")
+        fact_result = (
+            self._search_facts(principal, args)
+            if args.get("include_facts", True)
+            else {"facts": []}
+        )
+        # A worker has workspace authority. Always suppress its unscoped fact
+        # search, including captured CLI output, and attach the scoped read.
+        args["include_facts"] = False
+        if policy.sees_all_wings or wing:
+            return fact_result
+        return {
+            "respond": _with_search_facts(
+                self._fan_out_search(principal, name, args),
+                fact_result["facts"],
+                fact_result.get("facts_error"),
+            )
+        }
+
+    def _search_facts(self, principal, args):
+        try:
+            if not principal.policy.tool_visible("mempalace_kg_query"):
+                return {"facts": []}
+            call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
+            if args.get("wing"):
+                call["wings"] = [args["wing"]]
+            self._before_kg_read(principal, "mempalace_kg_query", call, [])
+            result = self.workers.call_tool(principal, "mempalace_kg_query", call)
+            if (
+                not isinstance(result, dict)
+                or result.get("error")
+                or not isinstance(result.get("facts"), list)
+            ):
+                raise ValueError("Invalid fact search response")
+            return {
+                "facts": result["facts"],
+                **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
+            }
+        except Exception:
+            logger.warning("Fact search unavailable; preserving drawer search", exc_info=True)
+            return {"facts": [], "facts_error": "unavailable"}
 
     def _before_drawer_read(self, principal, name, args, notes):
         return None  # Checked on the way out, so a hidden drawer reads as missing.
@@ -414,6 +494,64 @@ class Mediator:
                 raise Denied(f"this connection can't link drawers in wing {wing!r}")
         return None
 
+    def _before_kg_read(self, principal, name, args, notes):
+        policy = principal.policy
+        if policy.sees_all_wings:
+            return None
+        asked = args.get("wings")
+        if asked is not None:
+            for wing in asked:
+                if not policy.can_read_wing(wing):
+                    raise Denied(f"this connection can't read wing {wing!r}")
+            asked = {canonical_wing(w) for w in asked}
+        result = self.workers.call_tool(principal, "mempalace_kg_list_wings", {})
+        known = result.get("wings") if isinstance(result, dict) else None
+        if not isinstance(known, list):
+            raise Denied("could not check which wings the facts are in")
+        args["wings"] = [
+            w
+            for w in known
+            if isinstance(w, str)
+            and policy.can_read_wing(w)
+            and (asked is None or canonical_wing(w) in asked)
+        ]
+        allowed = policy.fact_sensitivities()
+        given = args.get("sensitivities")
+        args["sensitivities"] = [s for s in allowed if given is None or s in given]
+        return None
+
+    def _before_kg_write(self, principal, name, args, notes):
+        policy = principal.policy
+        wing = args.get("wing")
+        if wing or not (policy.sees_all_wings and policy.writes_all_wings):
+            # Only a token that sees every wing may file a fact with no wing:
+            # only such a token can read one back.
+            self._pin_write_wing(policy, args, wing, notes)
+        if not policy.sees_all_wings:
+            # A fact write answers about what is stored (merged, replaced,
+            # closed), so it needs the wing to be readable as well.
+            if not policy.can_read_wing(args["wing"]):
+                raise Denied(f"this connection can't read facts in wing {args['wing']!r}")
+            # Only facts this token could read count as the same fact or can
+            # be changed, so a write never reveals or touches a hidden one.
+            args["sensitivities"] = policy.fact_sensitivities()
+            drawer_id = args.get("source_drawer_id")
+            if drawer_id:
+                drawer_wing = self._drawer_wings(principal, [drawer_id]).get(drawer_id)
+                if drawer_wing is None or not policy.can_read_wing(drawer_wing):
+                    raise Hidden({"success": False, "error": f"Drawer not found: {drawer_id}"})
+        if name == "mempalace_kg_invalidate":
+            return None
+        floor = _fact_floor(args)
+        try:
+            raised = strictest(args.get("sensitivity"), floor)
+        except ValueError as exc:
+            raise Denied(str(exc)) from None
+        if args.get("sensitivity") not in (None, "", raised):
+            notes.append(f"sensitivity raised to {raised!r}")
+        args["sensitivity"] = raised
+        return None
+
     def _pin_write_wing(self, policy: Policy, args: dict, wing, notes: list) -> None:
         if policy.trust == "untrusted":
             # Untrusted writes always land in the token's write wing (the inbox).
@@ -434,7 +572,15 @@ class Mediator:
         policy = principal.policy
         if not isinstance(response, dict) or "result" not in response or policy.sees_all_wings:
             return response
-        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read"):
+        if rule == "add_drawer" and not policy.can_read_wing(args.get("wing") or ""):
+            # A retry into a wing the caller can't read must not show whose
+            # chat the first copy came from.
+            result = _tool_result(response)
+            if isinstance(result, dict) and "source_kept" in result:
+                result = {k: v for k, v in result.items() if k != "source_kept"}
+                return _replace_result(response, result)
+            return response
+        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
             return response
         result = _tool_result(response)
         if result is None:
@@ -509,6 +655,22 @@ class Mediator:
 
 
 # ── pure helpers ──
+def _fact_floor(args: dict) -> str:
+    """The least sensitivity a fact may have: from its wing and its words."""
+    floor = "private" if args.get("wing") and is_private_wing(args["wing"]) else "internal"
+    words = " ".join(
+        str(args[key])
+        for key in ("subject", "predicate", "object", "old_object", "new_object")
+        if args.get(key) is not None
+    )
+    flags = privacy.scan(words)
+    if any(flag.startswith("secret:") for flag in flags):
+        return "secret"
+    if "health" in flags:
+        return strictest(floor, "private")
+    return floor
+
+
 def _wing_of(args: dict) -> Optional[str]:
     wing = args.get("wing")
     return wing if isinstance(wing, str) and wing else None
@@ -545,6 +707,12 @@ def _check_argument_types(args: dict) -> None:
     for key in _WING_ARGS + _ID_ARGS:
         if key in args and args[key] is not None and not isinstance(args[key], str):
             raise Denied(f"'{key}' must be a string")
+    for key in ("wings", "sensitivities"):
+        value = args.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(v, str) and v for v in value)
+        ):
+            raise Denied(f"'{key}' must be a list of names")
     if "drawer_ids" in args:
         ids = args["drawer_ids"]
         if isinstance(ids, str):
@@ -701,7 +869,10 @@ def _public_route(method: str, path: str) -> bool:
         return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
             ("/app/", "/s/", "/.well-known/")
         )
-    return method == "POST" and path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+    return method == "POST" and (
+        path.startswith("/app/auth/")
+        or path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+    )
 
 
 def _write_request(method: str, path: str, request) -> bool:
@@ -774,7 +945,12 @@ def _origin(value):
 
 def _session_write_allowed(gateway, handler):
     media = handler.headers.get_all("Content-Type", [])
-    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != "application/json":
+    expected = (
+        "application/octet-stream"
+        if handler.command == "POST" and urlparse(handler.path).path == "/api/voice/transcribe"
+        else "application/json"
+    )
+    if len(media) != 1 or media[0].split(";", 1)[0].strip().lower() != expected:
         return False
     origins = handler.headers.get_all("Origin", [])
     if not origins:
@@ -808,6 +984,7 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
             {_host_name(host.strip()) for host in allowed.split(",")} if allowed else None
@@ -916,7 +1093,12 @@ class Gateway:
         finally:
             stop.set()
             server.server_close()
-            self.supervisor.stop_all()
+            try:
+                handoff = getattr(self, "handoff", None)
+                if handoff is not None:
+                    handoff.close()
+            finally:
+                self.supervisor.close()
 
 
 class _GatewayHandler(BaseHTTPRequestHandler):
@@ -982,6 +1164,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         cap = (
             MAX_REQUEST_BYTES
             if path == "/mcp"
+            else HANDOFF_REQUEST_BYTES
+            if path == "/api/handoff"
+            else 1_920_000
+            if path == "/api/voice/transcribe"
             else 65536
             if path.startswith("/oauth/")
             else 1024 * 1024
@@ -998,8 +1184,11 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
-        if path == "/app/login" or (
-            self.command == "POST"
+        if (
+            path.startswith("/app/auth/")
+            and path != "/app/auth/providers"
+            or path == "/app/login"
+            or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
             policies.append((ratelimit.CREDENTIALS, ip))
@@ -1118,6 +1307,15 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
+        if principal is not None and not parse_error and plans.enabled():
+            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+            plan = plans.get_plan(self.server.gateway.db, account) if account else None
+            if self._plan_limit(path, principal, request, plan):
+                return
+            if path == "/mcp" or path.startswith("/api/"):
+                delay = plans.load_delay(plan)
+                if delay:
+                    sleep(delay)
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -1136,6 +1334,39 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         # remaining bytes cannot become another HTTP request.
         self.close_connection = True
         handler(self)
+
+    def _plan_limit(self, path, principal, request, plan):
+        if path != "/mcp" and not path.startswith("/api/"):
+            return False
+        if plan is None or plan.storage_bytes is None:
+            return False
+        if not _write_request(self.command, path, request) or self.command == "DELETE":
+            return False
+        if path == "/mcp":
+            name = request["params"]["name"]
+            if "delete" in name or "remove" in name:
+                return False
+        gateway = self.server.gateway
+        if (
+            gateway.storage_meter.used(
+                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+            )
+            < plan.storage_bytes
+        ):
+            return False
+        gateway.storage_meter.audit_limit(gateway.db, principal)
+        message = plans.storage_message(plan)
+        self.close_connection = True
+        if path == "/mcp":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {"content": [{"type": "text", "text": message}], "isError": True},
+            }
+            self._send_json(200, response)
+        else:
+            self._send_json(507, {"error": message, "limit": "storage"})
+        return True
 
     def _mcp(self, principal, request):
         try:

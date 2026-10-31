@@ -27,6 +27,7 @@ READ_ONLY_REFUSED = {
     "mempalace_kg_add",
     "mempalace_kg_invalidate",
     "mempalace_kg_supersede",
+    "mempalace_kg_save",
     "mempalace_memories_filed_away",
     "mempalace_mine",
     "mempalace_patch_submit",

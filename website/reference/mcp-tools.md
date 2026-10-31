@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Detailed parameter schemas for all 47 MCP tools.
+Detailed parameter schemas for all 49 MCP tools.
 
 ## Palace — Read Tools
 
@@ -60,19 +60,30 @@ Full wing → room → drawer count tree.
 
 ### `mempalace_search`
 
-Semantic search. Returns verbatim drawer content with similarity scores.
+Hybrid drawer search with matching facts first. Facts have a separate list;
+drawer content, ranking and limits remain unchanged.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | **Yes** | What to search for |
 | `limit` | integer | No | Max results (default: 5) |
+| `include_facts` | boolean | No | Include ranked facts (default: `true`); `false` skips the fact lookup |
 | `wing` | string | No | Filter by wing |
 | `room` | string | No | Filter by room |
 | `since` | string | No | Include drawers filed on or after this ISO date/datetime |
 | `before` | string | No | Include drawers filed strictly before this ISO date/datetime |
 | `max_distance` | number | No | Distance cutoff on the cosine scale (0 = identical, 2 = opposite), applied the same way whatever metric the palace uses. Default: no cutoff |
 
-**Returns:** `{ query, filters, results: [{ text, wing, room, source_file, similarity }] }`
+**Returns:** `{ facts: [...], query, filters, results: [{ text, wing, room, source_file, similarity }], facts_error? }`
+
+Each fact carries `subject`, `predicate`, `object`, `score`, `current`,
+`fact_status`, `approval_status`, `approved_by`, `approval_link`, `origin_kind`,
+`origin_id`, `origin_link`, `superseded_by`, and its verbatim source pointers:
+`source_link`, thread/range fields, `source_drawer_id`, and `sources`.
+Relevance weights rare whole words and ignores filler; status and observation
+age affect ranking. Facts use the caller's KG permissions and wing/sensitivity
+scope. A fact-side failure returns `facts: []` and
+`facts_error: "unavailable"` while preserving drawer results.
 
 When `max_distance` drops results, the response says how many in
 `filtered_by_max_distance`. With `candidate_strategy: "union"`, a lexical-only
@@ -132,6 +143,9 @@ File verbatim content into the palace. Identical content (same deterministic dra
 | `content` | string | **Yes** | Verbatim content to store |
 | `source_file` | string | No | Where this came from |
 | `added_by` | string | No | Who is filing (default: "mcp") |
+| `source_thread` | string | No | Chat thread these words came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
 
 **Returns:** `{ success, drawer_id, wing, room }`
 
@@ -302,15 +316,29 @@ Before the overwrite, the replaced text and metadata are appended verbatim to `d
 
 ### `mempalace_kg_query`
 
-Query entity relationships with time filtering.
+Query entity relationships with time filtering, or rank whole-word fact matches.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `entity` | string | **Yes** | Entity to query (e.g. "Max", "MyProject") |
+| `entity` | string | **Yes** | Entity to query, or free search text when `search` is `true` |
+| `search` | boolean | No | Use fact-first lexical/status/decay ranking (default: `false`) |
+| `limit` | integer | No | Result limit in search mode only (default: 5, max: 100) |
 | `as_of` | string | No | Date filter — only facts valid at this date (YYYY-MM-DD) |
 | `direction` | string | No | `outgoing`, `incoming`, or `both` (default: `both`) |
+| `wings` | string[] | No | Only facts in these wings (facts with no wing match none) |
+| `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, as_of, facts: [{ direction, subject, predicate, object, valid_from, valid_to, current }], count }`
+
+With `search: true`, returns `{ facts: [...], facts_error? }`. Facts have the
+same scoring, authority and source fields as `mempalace_search`, and the same KG
+wing/sensitivity filters apply. `as_of` restricts matches to facts valid at that
+instant. Invalid filters, including a malformed `as_of`, return the normal
+`{ error }` tool result. For example:
+
+```json
+{"entity": "Project deploy port", "search": true, "limit": 5, "wings": ["projects"]}
+```
 
 ---
 
@@ -325,8 +353,38 @@ Add a fact to the knowledge graph.
 | `object` | string | **Yes** | The entity being connected to |
 | `valid_from` | string | No | When this became true (YYYY-MM-DD) |
 | `source_closet` | string | No | Closet ID where this fact appears |
+| `source_thread` | string | No | Chat thread the fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `wing` | string | No | Wing the fact belongs to. The same words in two wings are two facts |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
 
 **Returns:** `{ success, triple_id, fact }`
+
+---
+
+### `mempalace_kg_save`
+
+Save a fact, folding it into what the graph holds. Same open fact in the same wing: **merged**. The new source is added to the fact's `sources` and `seen_count` goes up; sensitivity and confidence only rise. A new value of a single-valued predicate (`works_at`, `uses_model`, `lives_in`, `default_branch`, plus `single_valued_predicates` in config): **superseded** at `valid_from`. If the open value started later, the new fact is filed as **historical** instead. Otherwise: **added**.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `subject` | string | **Yes** | The entity doing/being something |
+| `predicate` | string | **Yes** | Relationship type |
+| `object` | string | **Yes** | The entity being connected to |
+| `valid_from` | string | No | When this became true; a replacement happens at this instant (default: now) |
+| `confidence` | number | No | 0 to 1 (default 1) |
+| `source_thread` | string | No | Chat thread the fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `source_drawer_id` | string | No | Drawer the fact came from |
+| `source_file` | string | No | Source file |
+| `wing` | string | No | Wing the fact belongs to |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
+| `sensitivities` | string[] | No | Only merge with or replace stored facts of these sensitivities |
+| `single_valued` | boolean | No | Override the predicate's config |
+
+**Returns:** `{ success, action, triple_id, fact, wing }`, plus `superseded` and `previous` on a replacement, `current` on history, and `source_added` on a merge.
 
 ---
 
@@ -340,6 +398,7 @@ Mark a fact as no longer true.
 | `predicate` | string | **Yes** | Relationship |
 | `object` | string | **Yes** | Connected entity |
 | `ended` | string | No | When it stopped being true (default: today) |
+| `wing` | string | No | Wing of the fact to end |
 
 **Returns:** `{ success, fact, ended }`
 
@@ -356,6 +415,13 @@ Atomically replace a fact with its successor at a single shared boundary. Use wh
 | `old_object` | string | **Yes** | Value being replaced |
 | `new_object` | string | **Yes** | New value |
 | `at` | string | No | Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ; default: now UTC) |
+| `source_thread` | string | No | Chat thread the new fact came from |
+| `source_seq_start` | integer | No | First message number in `source_thread` |
+| `source_seq_end` | integer | No | Last message number (default: `source_seq_start`) |
+| `wing` | string | No | Wing the fact belongs to. The same words in two wings are two facts |
+| `sensitivity` | string | No | `public`, `internal` (default), `private` or `secret` |
+
+The replaced fact keeps its row with `status: "superseded"` and `superseded_by` set to the new fact's id.
 
 **Returns:** `{ success, triple_id, fact, superseded }`
 
@@ -368,8 +434,18 @@ Chronological timeline of facts.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `entity` | string | No | Entity to get timeline for (omit for full timeline) |
+| `wings` | string[] | No | Only facts in these wings (facts with no wing match none) |
+| `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, timeline: [{ subject, predicate, object, valid_from, valid_to, current }], count }`
+
+---
+
+### `mempalace_kg_list_wings`
+
+**List the wings that contain knowledge graph facts.** Uses one indexed query without calculating graph statistics. Scoped queries and timelines use this internally to discover readable fact wings; calling the list directly through the gateway requires read access to every wing.
+
+No parameters. Returns `{"wings": ["project", "shared"]}` in sorted order. Facts without a wing are omitted.
 
 ---
 

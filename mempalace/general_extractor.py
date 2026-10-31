@@ -447,7 +447,9 @@ def extract_memories(
                 }
             )
 
-    return memories
+    from .stored_text import annotate_chunks
+
+    return annotate_chunks(text, memories)
 
 
 def _split_into_segments(text: str) -> List[str]:

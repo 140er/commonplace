@@ -32,12 +32,25 @@ A service that only takes valid Unicode (an embedder, an LLM API) gets
 ``config.strip_lone_surrogates``.
 """
 
+import hashlib
 import json
+import logging
 import re
+import threading
+import time
+from bisect import bisect_left, bisect_right
 
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
+INDEX_SPANS = "_mempalace_index_spans"
+KEYWORD_ONLY = "_mempalace_keyword_only"
+RESERVED_METADATA = frozenset({FLAG, KEYWORD_ONLY, INDEX_SPANS})
+INDEX_VERSION = 1
+logger = logging.getLogger(__name__)
+_hint_warning_times = {}
+_hint_warning_lock = threading.Lock()
+_BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/_\-]+={0,2}|={1,2})\Z")
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -125,13 +138,240 @@ def decode_value(value):
     return _decode(value)
 
 
-def index_text(stored: str) -> str:
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _warn_index_hint(message: str) -> None:
+    """At most one warning of each kind per minute, even during bulk repair."""
+    now = time.monotonic()
+    with _hint_warning_lock:
+        if now - _hint_warning_times.get(message, float("-inf")) < 60:
+            return
+        _hint_warning_times[message] = now
+    logger.warning(message)
+
+
+class IndexSource:
+    """Detect once on whole content, then project into unchanged chunk ranges."""
+
+    def __init__(self, text: str):
+        from .index_hygiene import base64_candidate_ranges, find_base64_spans
+
+        self.text = text
+        self.spans = find_base64_spans(text)
+        self.candidates = base64_candidate_ranges(text)
+        self._set_offsets()
+
+    def _set_offsets(self):
+        self._ends = [span.end for span in self.spans]
+        self._starts = [span.start for span in self.spans]
+        self._candidate_starts = [start for start, _ in self.candidates]
+        self._candidate_ends = [end for _, end in self.candidates]
+
+    def metadata(self, start: int, end: int, metadata=None) -> dict:
+        """Copy metadata with this range's acceptance or rejection provenance.
+
+        A removed hint is sent as a tombstone for backends that merge metadata.
+        Empty span lists preserve whole-input rejections across chunk boundaries.
+        """
+        result = dict(metadata or {})
+        if INDEX_SPANS in result:
+            result[INDEX_SPANS] = None
+        spans = [
+            [
+                max(start, s.start) - start,
+                min(end, s.end) - start,
+                s.placeholder,
+                start <= s.start < end or (s.start <= start and end <= s.end),
+            ]
+            for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
+        ]
+        touches_run = bisect_right(self._candidate_ends, start) < bisect_left(
+            self._candidate_starts, end
+        )
+        if spans or touches_run:
+            result[INDEX_SPANS] = json.dumps(
+                {"v": INDEX_VERSION, "sha256": _text_hash(self.text[start:end]), "spans": spans},
+                separators=(",", ":"),
+            )
+        return result
+
+    def _align(self, view: str):
+        """Map ranges across the whitespace edits conversation chunkers make.
+
+        Streaming alignment uses bounded extra memory. It is a rare fallback;
+        ordinary slices use substring offsets without a Python character walk.
+        """
+        from .index_hygiene import Base64Span
+
+        boundaries = {}
+        for start, end in self.candidates:
+            boundaries[start] = boundaries[end - 1] = None
+        for span in self.spans:
+            boundaries[span.start] = boundaries[span.end - 1] = None
+        original_pos = projected_pos = 0
+        while True:
+            while original_pos < len(self.text) and self.text[original_pos].isspace():
+                original_pos += 1
+            while projected_pos < len(view) and view[projected_pos].isspace():
+                projected_pos += 1
+            if original_pos == len(self.text) and projected_pos == len(view):
+                break
+            if (
+                original_pos == len(self.text)
+                or projected_pos == len(view)
+                or self.text[original_pos] != view[projected_pos]
+            ):
+                raise ValueError("chunker changed non-whitespace source text")
+            if original_pos in boundaries:
+                boundaries[original_pos] = projected_pos
+            original_pos += 1
+            projected_pos += 1
+
+        def mapped_range(start, end):
+            mapped_start, mapped_end = boundaries[start], boundaries[end - 1]
+            if (
+                mapped_start is None
+                or mapped_end is None
+                or mapped_end + 1 - mapped_start != end - start
+            ):
+                raise ValueError("chunker changed a base64-shaped run")
+            return mapped_start, mapped_end + 1
+
+        self.spans = [
+            Base64Span(*mapped_range(s.start, s.end), s.media_type, s.decoded_bytes)
+            for s in self.spans
+        ]
+        self.candidates = [mapped_range(start, end) for start, end in self.candidates]
+        self.text = view
+        self._set_offsets()
+
+
+def annotate_chunks(text: str, chunks: list) -> list:
+    """Attach index provenance without letting a hint failure prevent storage."""
+    try:
+        source = IndexSource(text)
+        if not source.candidates:
+            return chunks
+        cursor = 0
+        for chunk in chunks:
+            content = chunk["content"]
+            start = text.find(content, cursor)
+            if start < 0:
+                source._align("".join(item["content"] for item in chunks))
+                position = 0
+                for item in chunks:
+                    end = position + len(item["content"])
+                    item.pop(INDEX_SPANS, None)
+                    item.update(source.metadata(position, end))
+                    position = end
+                return chunks
+            chunk.update(source.metadata(start, start + len(content)))
+            cursor = start + len(content)
+    except Exception:
+        _warn_index_hint("Could not project index span hints; storing chunks without hints")
+        for chunk in chunks:
+            chunk.pop(INDEX_SPANS, None)
+    return chunks
+
+
+def chunk_index_metadata(chunk: dict) -> dict:
+    return {INDEX_SPANS: chunk[INDEX_SPANS]} if INDEX_SPANS in chunk else {}
+
+
+def user_metadata(metadata):
+    """Strip server-owned drawer markers; raw internal copies retain them."""
+    if isinstance(metadata, dict):
+        return {key: value for key, value in metadata.items() if key not in RESERVED_METADATA}
+    if isinstance(metadata, (list, tuple)):
+        return type(metadata)(user_metadata(item) for item in metadata)
+    return metadata
+
+
+public_metadata = user_metadata
+_DRAWER_WRITE_TOOLS = frozenset(
+    {
+        "mempalace_add_drawer",
+        "mempalace_update_drawer",
+        "mempalace_mine",
+        "mempalace_diary_write",
+    }
+)
+_DRAWER_READ_TOOLS = frozenset(
+    {
+        "mempalace_get_drawer",
+        "mempalace_get_drawers",
+        "mempalace_list_drawers",
+        "mempalace_search",
+        "mempalace_diary_read",
+        "mempalace_check_duplicate",
+        "mempalace_delete_drawer",
+        "mempalace_delete_drawers",
+    }
+)
+
+
+def user_tool_arguments(arguments, *, tool_name=None):
+    """Clean drawer metadata without rewriting event/artifact JSON payloads."""
+    if tool_name is not None and tool_name not in _DRAWER_WRITE_TOOLS:
+        return dict(arguments)
+    clean = user_metadata(arguments)
+    for key in ("metadata", "metadatas"):
+        if key in clean:
+            clean[key] = user_metadata(clean[key])
+    return clean
+
+
+def public_tool_result(result, *, tool_name=None):
+    if tool_name is not None and tool_name not in _DRAWER_READ_TOOLS | _DRAWER_WRITE_TOOLS:
+        return result
+    if isinstance(result, dict):
+        return {
+            key: user_metadata(value)
+            if key in {"metadata", "metadatas", "deleted_meta"}
+            else public_tool_result(value)
+            for key, value in result.items()
+        }
+    if isinstance(result, (list, tuple)):
+        return type(result)(public_tool_result(item) for item in result)
+    return result
+
+
+def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
     """The words of a stored document for a full-text index.
 
     NUL and lone surrogates become spaces: the index never returns text, and
     neither can be tokenized or UTF-8 encoded.
     """
-    return _BAD.sub(" ", _decode(stored))
+    from .index_hygiene import PLACEHOLDER_RE, index_text as detect_index_text
+
+    text = _decode(stored) if stored_form else stored
+    hint = (metadata or {}).get(INDEX_SPANS)
+    if hint:
+        try:
+            data = json.loads(hint)
+            if data["v"] != INDEX_VERSION or data["sha256"] != _text_hash(text):
+                raise ValueError("version or content changed")
+            parts, cursor = [], 0
+            for start, end, placeholder, emit in data["spans"]:
+                if not (
+                    type(start) is int
+                    and type(end) is int
+                    and cursor <= start < end <= len(text)
+                    and isinstance(placeholder, str)
+                    and PLACEHOLDER_RE.fullmatch(placeholder)
+                    and _BASE64_FRAGMENT.fullmatch(text[start:end])
+                    and type(emit) is bool
+                ):
+                    raise ValueError("invalid span")
+                parts.extend((text[cursor:start], placeholder if emit else ""))
+                cursor = end
+            parts.append(text[cursor:])
+            return _BAD.sub(" ", "".join(parts))
+        except (ValueError, TypeError, KeyError, RecursionError):
+            _warn_index_hint("Ignoring stale or invalid index span hint")
+    return _BAD.sub(" ", detect_index_text(text))
 
 
 _EQUALITY_OPS = ("$eq", "$ne", "$in", "$nin")

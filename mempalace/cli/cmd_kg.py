@@ -101,20 +101,27 @@ def _kg_import_legacy(args, config):
     for table, numbers in counts.items():
         print(
             f"  {verb} {numbers['added']} {table} from {source}; "
-            f"{numbers['present']} already in {target} were kept as they are."
+            f"{numbers['present']} already in {target}."
         )
+    ended = counts["triples"]["superseded"]
+    if ended:
+        print(f"  {'Carried' if apply else 'Would carry'} {ended} superseded fact end(s).")
     conflicts = counts["triples"]["conflicts"]
     if conflicts:
         print(
-            f"\n  {len(conflicts)} current fact(s) not copied: the target or an earlier "
-            "accepted source fact holds a "
-            "different current value for the same subject and predicate. Add the ones "
-            "you want by hand (kg_supersede or kg_add):"
+            f"\n  {len(conflicts)} current fact(s) not copied or superseded: a different current value or "
+            "an approved or already claimed target fact prevents the imported change. Review these facts:"
         )
         for c in conflicts:
+            reason = " (approved target kept as is)" if c.get("reason") == "approved_target" else ""
+            if c.get("reason") == "target_already_claimed":
+                reason = (
+                    f" (target {c['target_id']} already claimed by {c['claimed_by']}; "
+                    f"skipped {c['id']})"
+                )
             print(
                 f"    {c['subject']} | {c['predicate']} | {c['object']} "
-                f"(here: {c['current_object']})"
+                f"(here: {c['current_object']}){reason}"
             )
     id_conflicts = counts["triples"]["id_conflicts"]
     if id_conflicts:
@@ -125,5 +132,20 @@ def _kg_import_legacy(args, config):
         )
         for triple_id in id_conflicts:
             print(f"    {triple_id}")
+    unresolved = counts["triples"]["unresolved_links"]
+    if unresolved:
+        print(f"\n  {len(unresolved)} successor link(s) omitted: no identical target successor.")
+        for link in unresolved:
+            print(f"    {link['id']} -> {link['superseded_by']}")
+    not_carried = counts["triples"]["end_not_carried"]
+    if not_carried:
+        print(f"\n  {len(not_carried)} fact end(s) not carried: the successor did not resolve.")
+        for end in not_carried:
+            print(f"    {end['id']} (here: {end['target_id']}) -> {end['superseded_by']}")
+    skipped = counts["fact_sources"]["skipped"]
+    if skipped:
+        print(f"\n  {len(skipped)} source observation(s) skipped: no imported target fact.")
+        for source_id in skipped:
+            print(f"    {source_id}")
     if not apply:
         print("\n  Nothing written. Re-run with --yes to copy them.")

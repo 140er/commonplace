@@ -37,13 +37,23 @@ TOOLS = {
         "handler": tool_get_aaak_spec,
     },
     "mempalace_kg_query": {
-        "description": "Query the knowledge graph for an entity's relationships. Returns typed facts with temporal validity. E.g. 'Max' → child_of Alice, loves chess, does swimming. Filter by date with as_of to see what was true at a point in time.",
+        "description": "Query an entity's facts with temporal validity, deciding source and approval evidence. Check origin_kind, approval_status and approval_link before treating a fact as a user rule; agent proposals and unknown legacy facts are not user-approved. Filter by date with as_of.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "entity": {
                     "type": "string",
                     "description": "Entity to query (e.g. 'Max', 'MyProject', 'Alice')",
+                },
+                "search": {
+                    "type": "boolean",
+                    "description": "Rank whole-word matches across facts, using entity as search text (default false).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Fact-search result limit (default 5).",
                 },
                 "as_of": {
                     "type": "string",
@@ -52,6 +62,19 @@ TOOLS = {
                 "direction": {
                     "type": "string",
                     "description": "outgoing (entity→?), incoming (?→entity), or both (default: both)",
+                },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
                 },
             },
             "required": ["entity"],
@@ -89,10 +112,95 @@ TOOLS = {
                     "type": "string",
                     "description": "Drawer ID the fact was extracted from (optional, RFC 002 provenance)",
                 },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
+                },
             },
             "required": ["subject", "predicate", "object"],
         },
         "handler": tool_kg_add,
+    },
+    "mempalace_kg_save": {
+        "description": "Save a fact into the knowledge graph, folding it into what is there: the same open fact gains a source instead of a copy, and a new value of a single-valued predicate (works_at, uses_model, ...) replaces the open one. Returns action merged, superseded, historical or added.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "The entity doing/being something"},
+                "predicate": {"type": "string", "description": "The relationship type"},
+                "object": {"type": "string", "description": "The entity being connected to"},
+                "valid_from": {
+                    "type": "string",
+                    "description": "When this became true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; a replacement happens at this instant, default now)",
+                },
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {"type": "integer", "minimum": 0},
+                "source_seq_end": {"type": "integer", "minimum": 0},
+                "source_drawer_id": {
+                    "type": "string",
+                    "description": "Drawer the fact came from (optional)",
+                },
+                "source_file": {"type": "string", "description": "Source file (optional)"},
+                "wing": {"type": "string", "description": "Wing the fact belongs to (optional)"},
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only merge with or replace stored facts of these sensitivities (optional)",
+                },
+                "single_valued": {
+                    "type": "boolean",
+                    "description": "Replace the subject's open value for this predicate (default: from config)",
+                },
+            },
+            "required": ["subject", "predicate", "object"],
+        },
+        "handler": tool_kg_save,
     },
     "mempalace_kg_invalidate": {
         "description": "Mark a fact as no longer true. E.g. ankle injury resolved, job ended, moved house.",
@@ -105,6 +213,18 @@ TOOLS = {
                 "ended": {
                     "type": "string",
                     "description": "When it stopped being true (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, default: today)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "object"],
@@ -126,6 +246,41 @@ TOOLS = {
                 "at": {
                     "type": "string",
                     "description": "Boundary instant (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional; defaults to now UTC)",
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "Link to the originating chat or thread (optional; inferred for stored thread IDs)",
+                },
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread the fact came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Wing the fact belongs to (optional)",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["public", "internal", "private", "secret"],
+                    "description": "How far the fact may travel (default: internal)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only touch stored facts of these sensitivities (optional)",
                 },
             },
             "required": ["subject", "predicate", "old_object", "new_object"],
@@ -152,9 +307,27 @@ TOOLS = {
                     "description": "Offset for pagination (default 0)",
                     "minimum": 0,
                 },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only facts in these wings (optional)",
+                },
+                "sensitivities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["public", "internal", "private", "secret"],
+                    },
+                    "description": "Only facts of these sensitivities (optional)",
+                },
             },
         },
         "handler": tool_kg_timeline,
+    },
+    "mempalace_kg_list_wings": {
+        "description": "List the wings that contain knowledge graph facts.",
+        "input_schema": {"type": "object", "properties": {}},
+        "handler": tool_kg_list_wings,
     },
     "mempalace_kg_stats": {
         "description": "Knowledge graph overview: entities, triples, current vs expired facts, relationship types.",
@@ -296,9 +469,8 @@ TOOLS = {
     },
     "mempalace_search": {
         "description": (
-            "Search past-session memories. Returns matching drawers. "
-            "Not for the current conversation — if it happened in this "
-            "session, answer from context instead."
+            "Search past-session memories: facts with status/source links first, then verbatim drawers. "
+            "For the current conversation, answer from context."
         ),
         "input_schema": {
             "type": "object",
@@ -345,6 +517,10 @@ TOOLS = {
                 "max_distance": {
                     "type": "number",
                     "description": "Optional distance cutoff on the cosine scale (0=identical, 2=opposite), applied the same way whatever metric the palace uses. Results further than this are dropped and counted in filtered_by_max_distance. Lower = stricter. Default: no cutoff.",
+                },
+                "include_facts": {
+                    "type": "boolean",
+                    "description": "Include matching facts (default true); drawer results are unchanged.",
                 },
                 "candidate_strategy": {
                     "type": "string",
@@ -406,6 +582,20 @@ TOOLS = {
                 },
                 "source_file": {"type": "string", "description": "Where this came from (optional)"},
                 "added_by": {"type": "string", "description": "Who is filing this (default: mcp)"},
+                "source_thread": {
+                    "type": "string",
+                    "description": "Chat thread these words came from (optional)",
+                },
+                "source_seq_start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "First message number of the source range in source_thread (optional)",
+                },
+                "source_seq_end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Last message number of the source range (optional; defaults to source_seq_start)",
+                },
             },
             "required": ["wing", "room", "content"],
         },
