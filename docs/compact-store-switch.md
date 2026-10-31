@@ -76,8 +76,11 @@ active. Interruptions afterwards leave the fully verified generation active.
 Publication is recorded as `published` immediately after the pointer write and
 before sealing retired files. A seal failure remains `published` with sealing
 marked `failed`; doctor reports it, and the next maintenance run retries sealing.
-Recovery finishes publication when either pointer copy names the staging
-generation, including a crash before the publication state could be recorded.
+Recovery finishes publication when a pointer copy names the staging generation,
+including a crash before the publication state could be recorded. It never
+overrides a valid main pointer naming another existing generation: maintenance
+reports that conflict, refuses with a non-zero exit and changes nothing. Preserve
+both generations and reconcile their writes and pointers before retrying.
 A failed operation removes its unpublished staging copies immediately. After a
 process crash, rerunning either store command or pruning removes orphan staging
 copies and resets the interrupted backfill state. Cleanup validates the generation
@@ -91,16 +94,24 @@ preserves and reports unlisted generations carrying `.store-comparison.json`;
 named retained generations follow the fourteen-day and fingerprint checks.
 Recorded staging with a marker is removed only when its data is no newer than
 its markers. Newer data is preserved and listed by doctor and report-only pruning.
+This protection applies to base generations; disposable scratch copies are removed
+after interrupted backfills and rehearsals. Report-only pruning lists every
+leftover generation-related directory, including scratch copies.
 
-Every mutating switch, rollback and prune run atomically refreshes a recovery copy in
-`.store-pointer.prev.json` at the stable workspace root. To repair a lost pointer,
+The tool's pointer writes atomically update a last-good recovery copy in
+`.store-pointer.prev.json` at the stable workspace root. Maintenance preserves that
+copy after an external edit of the main pointer. It refreshes the copy only when
+it is missing or unreadable, or when the main pointer differs solely by removed
+retained entries whose directories are gone. To repair a lost pointer,
 stop the gateway, preserve all generation directories and inspect that copy or
 a full data-tree snapshot made with `commonplace backup`. The configured off-host
 command backs up only the active generation and does not retain the pointer or
 retirement history. Confirm the candidate's active generation exists
 and contains the latest writes before atomically restoring `.store-pointer.json`.
 A crash between the two writes can leave the recovery copy one update behind;
-doctor reports that stale copy without modifying it, and maintenance refreshes it.
+publication recovery handles that interrupted write. Doctor reports that the
+pointer differs from the prev copy and names the differing entries, without
+assuming that a hand edit is a stale copy or modifying either file.
 For manual pointer repair, verify the copy rather than treating it as a fallback.
 Restore the full retained
 list rather than writing a minimal pointer by hand. Unlisted published generations
@@ -148,8 +159,8 @@ commonplace workspace prune-stores <workspace> --report-only
 ```
 
 Report-only mode never changes workspace files or repairs pointers. It exits 0
-when no findings remain and 3 when it reports preserved generations, a stale
-pointer copy, incomplete backfill, failed sealing or corrupt state, so scheduled
+when no findings remain and 3 when it reports leftover directories, preserved
+generations, pointer differences, recovery conflicts, incomplete backfill, failed sealing or corrupt state, so scheduled
 checks can detect outstanding work. Ordinary command errors use exit code 2.
 If retirement evidence cannot be recovered from the pointer copy or a full
 `commonplace backup` snapshot, preserve the generation, recover its missing
