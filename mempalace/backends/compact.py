@@ -449,9 +449,10 @@ class CompactCollection(SQLiteExactCollection):
 
     @contextlib.contextmanager
     def _cursor(self, *, write=False):
-        self._refresh_read_handle()
-        handle = self._handle
-        with self._write_lock() if write else handle.lock:
+        if write:
+            self._refresh_read_handle()
+        with self._write_lock() if write else self._read_lock():
+            handle = self._handle
             self._ensure_open()
             shared = handle.compact_shared
             with shared.lock:
@@ -556,10 +557,9 @@ class CompactCollection(SQLiteExactCollection):
             try:
                 return operation()
             except _SnapshotChanged:
-                with self._handle.lock:
-                    self._ensure_open()
-                    with self._handle.compact_shared.lock:
-                        self._handle._vector_cache.clear()
+                with self._read_lock() as handle:
+                    with handle.compact_shared.lock:
+                        handle._vector_cache.clear()
         raise BackendError("Palace changed repeatedly during compact search; retry the query")
 
     def query(self, **kwargs):
@@ -1345,52 +1345,60 @@ class CompactBackend(SQLiteExactBackend):
     def _connect(self, palace_path, create, *, read_only=False):
         if sqlite3.sqlite_version_info < (3, 43, 0):
             raise BackendError("compact requires SQLite >= 3.43 (contentless_delete FTS5)")
-        handle = super()._connect(palace_path, create, read_only=read_only)
-        with handle.lock:
-            if handle.closed:
-                raise BackendClosedError("CompactCollection has been closed")
-            if getattr(handle, "compact_functions_registered", False):
+        for _ in range(3):
+            handle = super()._connect(palace_path, create, read_only=read_only)
+            with handle.lock:
+                if handle.retired:
+                    continue
+                if handle.closed:
+                    raise BackendClosedError("CompactCollection has been closed")
+                if getattr(handle, "compact_functions_registered", False):
+                    return handle
+                if handle.conn.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
+                    raise BackendError("not a compact palace database (application_id mismatch)")
+                self._validate_schema(handle.conn)
+                if not read_only:
+                    from ..palace import mine_palace_lock
+
+                    with mine_palace_lock(palace_path):
+                        _cleanup_reindex(palace_path)
+                from ..stored_text import decode_value
+                from ._filters import matches_where_document
+
+                handle.conn.create_function(
+                    "compact_compare",
+                    4,
+                    lambda metadata, key, op, operand: _compare(
+                        decode_value(json.loads(metadata).get(key)), op, json.loads(operand)
+                    ),
+                    deterministic=True,
+                )
+
+                def document_match(blob, did, metadata, predicate, *, handle=handle):
+                    col = CompactCollection(handle, "", backend=self)
+                    cursor = handle.conn.cursor()
+                    try:
+                        doc = col._decompress(cursor, blob, did)
+                    finally:
+                        cursor.close()
+                    doc, _ = decode_record(doc, _json_loads(metadata))
+                    return matches_where_document(doc, json.loads(predicate))
+
+                handle.conn.create_function("compact_document_match", 4, document_match)
+                # Old read-only files can lack a token until their next writable
+                # open. Keep those caches private to this connection lifetime.
+                file_id = handle.conn.execute(
+                    "SELECT value FROM meta WHERE key='file_id'"
+                ).fetchone()
+                handle.compact_shared = _file_cache(
+                    self._db_path(palace_path), file_id[0] if file_id else uuid.uuid4().hex
+                )
+                handle._vector_cache = handle.compact_shared.collections
+                handle.compact_functions_registered = True
                 return handle
-            if handle.conn.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
-                raise BackendError("not a compact palace database (application_id mismatch)")
-            self._validate_schema(handle.conn)
-            if not read_only:
-                from ..palace import mine_palace_lock
-
-                with mine_palace_lock(palace_path):
-                    _cleanup_reindex(palace_path)
-            from ..stored_text import decode_value
-            from ._filters import matches_where_document
-
-            handle.conn.create_function(
-                "compact_compare",
-                4,
-                lambda metadata, key, op, operand: _compare(
-                    decode_value(json.loads(metadata).get(key)), op, json.loads(operand)
-                ),
-                deterministic=True,
-            )
-
-            def document_match(blob, did, metadata, predicate):
-                col = CompactCollection(handle, "", backend=self)
-                cursor = handle.conn.cursor()
-                try:
-                    doc = col._decompress(cursor, blob, did)
-                finally:
-                    cursor.close()
-                doc, _ = decode_record(doc, _json_loads(metadata))
-                return matches_where_document(doc, json.loads(predicate))
-
-            handle.conn.create_function("compact_document_match", 4, document_match)
-            # Old read-only files can lack a token until their next writable
-            # open. Keep those caches private to this connection lifetime.
-            file_id = handle.conn.execute("SELECT value FROM meta WHERE key='file_id'").fetchone()
-            handle.compact_shared = _file_cache(
-                self._db_path(palace_path), file_id[0] if file_id else uuid.uuid4().hex
-            )
-            handle._vector_cache = handle.compact_shared.collections
-            handle.compact_functions_registered = True
-        return handle
+        raise BackendError(
+            "Palace changed repeatedly while opening a compact handle; retry the open"
+        )
 
     @staticmethod
     def _release_cache(handle):
