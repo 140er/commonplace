@@ -41,6 +41,7 @@ from .workspace_store import (
     resolve_workspace,
     settings_for,
     thread_path,
+    validate_pointer,
     worker_config,
     workspace_root,
 )
@@ -51,17 +52,75 @@ _ADMIN_FILES = frozenset({POINTER, POINTER_PREVIOUS, RECEIPT, STATE, BACKUP_STDE
 logger = logging.getLogger(__name__)
 
 
-def _write_pointer(root, pointer):
+def _write_pointer(root, pointer, *, store=None, checkpoint=lambda step: None):
     atomic_write_json(root / POINTER, pointer, follow_symlinks=False)
+    if store is not None:
+        checkpoint("pointer")
+        _record_published(root, pointer, store)
+        checkpoint("publish_state")
     atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
+    if store is not None:
+        checkpoint("pointer_mirrored")
+
+
+def _record_published(root, pointer, store):
+    atomic_write_json(
+        root / STATE,
+        {
+            "state": "published",
+            "staging": pointer["active"],
+            "store": store,
+            "pointer": pointer,
+            "sealing": "pending",
+        },
+        follow_symlinks=False,
+    )
+
+
+def _finish_publication(root, pointer, state):
+    try:
+        _seal_retired(root, pointer)
+    except BaseException:
+        atomic_write_json(root / STATE, dict(state, sealing="failed"), follow_symlinks=False)
+        raise
+    atomic_write_json(
+        root / STATE,
+        {"state": "complete", "store": state["store"], "sealing": "complete"},
+        follow_symlinks=False,
+    )
+
+
+def _recover_publication(root):
+    state = _backfill_state(root)
+    if state.get("state") not in ("copying", "published"):
+        return
+    candidates = []
+    if state.get("state") == "published":
+        candidates.append(state.get("pointer"))
+    for filename in (POINTER, POINTER_PREVIOUS):
+        try:
+            candidates.append(read_json(root / filename))
+        except ValueError:
+            continue
+    for pointer in candidates:
+        try:
+            validate_pointer(root, pointer)
+        except (ValueError, TypeError):
+            continue
+        if pointer["active"] != state["staging"]:
+            continue
+        store = settings_for(generation_path(root, pointer["active"])).get("store", "v1")
+        _write_pointer(root, pointer, store=store)
+        _finish_publication(root, pointer, _backfill_state(root))
+        return
 
 
 def _backfill_state(root):
     try:
         state = read_json(root / STATE)
-        if state and state.get("state") not in ("copying", "complete", "failed"):
+        if state and state.get("state") not in ("copying", "published", "complete", "failed"):
             raise ValueError
-        if state.get("state") == "copying":
+        if state.get("state") in ("copying", "published"):
             if generation_path(root, state["staging"]) == root:
                 raise ValueError
         return state
@@ -72,7 +131,7 @@ def _backfill_state(root):
         ) from None
 
 
-def newest_write(directory):
+def newest_write(directory, *, exclude=()):
     """Latest durable data mtime, excluding diagnostics and disposable model cache."""
     newest = 0
 
@@ -80,6 +139,7 @@ def newest_write(directory):
         nonlocal newest
         if (
             path.name in _ADMIN_FILES
+            or path.name in exclude
             or path.name == "worker.log"
             or path.name == "chroma"
             and path.parent.name == ".cache"
@@ -184,6 +244,17 @@ def _reset_staging_state(root, pointer):
     atomic_write_json(root / STATE, {"state": status}, follow_symlinks=False)
 
 
+def _writes_after_markers(directory):
+    markers = [
+        directory / ".store-comparison.json",
+        directory / "palace" / ".store-comparison.json",
+    ]
+    stamps = [path.stat().st_mtime_ns for path in markers if path.is_file()]
+    return bool(stamps) and newest_write(directory, exclude={".store-comparison.json"}) > min(
+        stamps
+    )
+
+
 def _cleanup_recorded_staging(root):
     """Without a valid pointer, remove only provably unpublished recorded work."""
     state = _backfill_state(root)
@@ -200,6 +271,7 @@ def _cleanup_recorded_staging(root):
 
 def _prepare_generations(root):
     """Validate publication evidence before allowing any orphan cleanup."""
+    _recover_publication(root)
     try:
         pointer = read_json(root / POINTER)
         if (root / POINTER).exists():
@@ -211,6 +283,8 @@ def _prepare_generations(root):
     except (ValueError, KeyError, TypeError):
         _cleanup_recorded_staging(root)
         raise ValueError(POINTER_REPAIR) from None
+    # Repair a crash between the two durable pointer writes on every maintenance run.
+    atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
     _cleanup_unpublished(root, pointer)
     return pointer
 
@@ -239,10 +313,10 @@ def _cleanup_unpublished(root, pointer):
             raise ValueError("Refusing symlink in staging cleanup")
         if path.is_dir():
             if (path / ".store-comparison.json").exists() and not (
-                base == recorded and base not in protected
+                base == recorded and base not in protected and not _writes_after_markers(path)
             ):
                 logger.warning(
-                    "Preserving unlisted published generation %s; recover its retained entry from %s or a verified backup",
+                    "Preserving unlisted published generation %s; recover its retained entry from %s or commonplace backup, or follow the documented manual removal procedure",
                     path.name,
                     POINTER_PREVIOUS,
                 )
@@ -261,6 +335,70 @@ def _seal_retired(root, pointer):
                 continue
             if path.is_file() and not path.is_symlink():
                 path.chmod(path.stat().st_mode & ~0o222)
+
+
+def _previous_pointer_stale(root, pointer):
+    try:
+        return bool(pointer) and read_json(root / POINTER_PREVIOUS) != pointer
+    except ValueError:
+        return bool(pointer)
+
+
+def _preserved_generations(root, pointer):
+    protected = {
+        root.name,
+        pointer.get("active"),
+        *(item["name"] for item in pointer.get("retained", [])),
+    }
+    preserved = []
+    for path in sorted(root.parent.glob(root.name + ".generation-*")):
+        if not re.fullmatch(re.escape(root.name) + r"\.generation-[0-9a-f]{24}", path.name):
+            continue
+        if path.name in protected or not (path / ".store-comparison.json").is_file():
+            continue
+        generation_path(root, path.name)
+        preserved.append({"name": path.name, "writes_after_markers": _writes_after_markers(path)})
+    return preserved
+
+
+def _prune_report(root, *, repair=None):
+    findings = []
+    try:
+        pointer = read_json(root / POINTER)
+        resolve_workspace(root)
+    except ValueError:
+        pointer = {}
+        repair = repair or POINTER_REPAIR
+        findings.append("invalid_pointer")
+    try:
+        state = _backfill_state(root)
+    except ValueError as error:
+        state = {}
+        repair = repair or str(error)
+        findings.append("corrupt_backfill_state")
+    preserved = _preserved_generations(root, pointer)
+    if preserved:
+        findings.append("unlisted_published_generations")
+    if _previous_pointer_stale(root, pointer):
+        findings.append("stale_previous_pointer")
+    if state.get("sealing") == "failed":
+        findings.append("sealing_failed")
+    if state.get("state") in ("copying", "published"):
+        findings.append("backfill_incomplete")
+    report = {
+        "state": "report_only",
+        "findings": findings,
+        "generations": sorted(
+            path.name
+            for path in [root, *root.parent.glob(root.name + ".generation-*")]
+            if path.is_dir()
+        ),
+        "preserved_generations": preserved,
+        "previous_pointer_stale": _previous_pointer_stale(root, pointer),
+    }
+    if repair:
+        report["repair"] = repair
+    return report
 
 
 def _preflight(source, target_store):
@@ -627,17 +765,11 @@ def switch_workspace(
         _verify_offline(data_dir)
         _backfill_state(root)
         pointer = _prepare_generations(root)
-        _seal_retired(root, pointer)
+        if _backfill_state(root).get("sealing") != "complete":
+            _seal_retired(root, pointer)
         source = resolve_workspace(root)
         source_store = settings_for(source).get("store", "v1")
         if source_store == target_store:
-            state = _backfill_state(root)
-            if state.get("staging") and state.get("staging") == pointer.get("active"):
-                atomic_write_json(
-                    root / STATE,
-                    {"state": "complete", "store": target_store},
-                    follow_symlinks=False,
-                )
             return {"store": source_store, "state": "unchanged"}
         from mempalace.palace import mine_palace_lock
 
@@ -694,14 +826,9 @@ def switch_workspace(
                     }
                 ]
                 published = {"active": name, "retained": retained}
-                _write_pointer(root, published)
-                _seal_retired(root, published)
+                _write_pointer(root, published, store=target_store, checkpoint=checkpoint)
+                _finish_publication(root, published, _backfill_state(root))
                 checkpoint("published")
-                atomic_write_json(
-                    root / STATE,
-                    {"state": "complete", "store": target_store},
-                    follow_symlinks=False,
-                )
                 checkpoint("complete")
                 return {"store": target_store, "state": "complete"}
             except BaseException:
@@ -715,29 +842,24 @@ def switch_workspace(
                 raise
 
 
-def prune_generations(data_dir, workspace_id, *, now=None, authorize=None):
+def prune_generations(data_dir, workspace_id, *, now=None, authorize=None, report_only=False):
     with data_lock(data_dir, exclusive=True):
         if authorize is not None:
             workspace_id = authorize(workspace_id)
         root = workspace_root(data_dir, workspace_id)
         _verify_offline(Path(data_dir).resolve())
+        if report_only:
+            return _prune_report(root)
         try:
             _backfill_state(root)
         except ValueError as error:
             logger.warning("%s", error)
-            return {
-                "state": "report_only",
-                "repair": str(error),
-                "generations": sorted(
-                    path.name
-                    for path in [root, *root.parent.glob(root.name + ".generation-*")]
-                    if path.is_dir()
-                ),
-            }
+            return _prune_report(root, repair=str(error))
         pointer = _prepare_generations(root)
         if not pointer:
             return None
-        _seal_retired(root, pointer)
+        if _backfill_state(root).get("sealing") != "complete":
+            _seal_retired(root, pointer)
         kept, modified = [], []
         for item in pointer.get("retained", []):
             path = generation_path(root, item["name"])
@@ -789,12 +911,16 @@ def doctor_workspace(data_dir, workspace_id):
     if palace.exists():
         with closing(sqlite3.connect(palace.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
             schema = conn.execute("PRAGMA user_version").fetchone()[0]
-    recorded = read_json(root / STATE)
+    repair = None
+    try:
+        recorded = _backfill_state(root)
+    except ValueError as error:
+        recorded = {"state": "corrupt"}
+        repair = str(error)
     state = recorded.get("state", "not_started")
-    if recorded.get("staging") == read_json(root / POINTER).get("active") and recorded.get(
-        "staging"
-    ):
-        state = "complete"
+    pointer = read_json(root / POINTER)
+    if state == "copying" and recorded.get("staging") == pointer.get("active"):
+        state = "published"
     retained = []
     for item in read_json(root / POINTER).get("retained", []):
         path = generation_path(root, item["name"])
@@ -813,4 +939,8 @@ def doctor_workspace(data_dir, workspace_id):
         "thread_index_version": index,
         "palace_schema_version": schema,
         "backfill": state,
+        "sealing": recorded.get("sealing", "pending" if state == "published" else None),
+        "previous_pointer_stale": _previous_pointer_stale(root, pointer),
+        "preserved_generations": _preserved_generations(root, pointer),
+        "repair": repair,
     }

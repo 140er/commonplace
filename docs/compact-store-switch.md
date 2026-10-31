@@ -73,6 +73,11 @@ a model or dimension mismatch refuses the transition. An atomic,
 durable generation pointer then publishes palace, threads, boards and settings
 together. Interruptions before that pointer leave the previous generation
 active. Interruptions afterwards leave the fully verified generation active.
+Publication is recorded as `published` immediately after the pointer write and
+before sealing retired files. A seal failure remains `published` with sealing
+marked `failed`; doctor reports it, and the next maintenance run retries sealing.
+Recovery finishes publication when either pointer copy names the staging
+generation, including a crash before the publication state could be recorded.
 A failed operation removes its unpublished staging copies immediately. After a
 process crash, rerunning either store command or pruning removes orphan staging
 copies and resets the interrupted backfill state. Cleanup validates the generation
@@ -84,20 +89,27 @@ generations exist, so they cannot resume writing into the original root.
 Completed retained generations are preserved. With a valid pointer, cleanup
 preserves and reports unlisted generations carrying `.store-comparison.json`;
 named retained generations follow the fourteen-day and fingerprint checks.
+Recorded staging with a marker is removed only when its data is no newer than
+its markers. Newer data is preserved and listed by doctor and report-only pruning.
 
-Every administrative pointer update also atomically records a recovery copy in
+Every mutating switch, rollback and prune run atomically refreshes a recovery copy in
 `.store-pointer.prev.json` at the stable workspace root. To repair a lost pointer,
 stop the gateway, preserve all generation directories and inspect that copy or
-the verified off-host backup. Confirm the candidate's active generation exists
+a full data-tree snapshot made with `commonplace backup`. The configured off-host
+command backs up only the active generation and does not retain the pointer or
+retirement history. Confirm the candidate's active generation exists
 and contains the latest writes before atomically restoring `.store-pointer.json`.
 A crash between the two writes can leave the recovery copy one update behind;
-it is a recovery candidate, never an automatic fallback. Restore the full retained
+doctor reports that stale copy without modifying it, and maintenance refreshes it.
+For manual pointer repair, verify the copy rather than treating it as a fallback.
+Restore the full retained
 list rather than writing a minimal pointer by hand. Unlisted published generations
 are preserved until their retirement evidence is recovered and checked.
 
 If `.store-backfill.json` is corrupt, switching refuses with a repair hint.
 Pruning instead returns a read-only generation report and changes no workspace
 files. Repair the state from verified evidence before retrying destructive cleanup.
+Doctor reports a corrupt state with the same repair hint.
 
 A sample of live thread reads, palace reads and searches is compared with the
 retained store. Comparison logs contain only match status and fixed diagnostic
@@ -122,17 +134,27 @@ also checks for writes newer than retirement and compares a retirement content
 fingerprint, detecting changes even within the filesystem timestamp resolution.
 A changed generation or missing retirement evidence refuses pruning. If pruning
 refuses, keep that generation intact, stop the gateway and compare it with the
-active generation and the off-host backup. Recover any missing records before
+active generation and a full data-tree `commonplace backup` snapshot. Recover any missing records before
 discarding anything. Restoring files can reset their timestamps: a quiet timestamp
 check in `doctor` does not prove that restored content matches retirement. Do not
-reset the retirement timestamp or fingerprint to bypass refusal. Preserve the
-recovered generation in a verified off-host backup before explicitly removing it;
+reset the retirement timestamp or fingerprint to bypass refusal. Preserve a
+verified full data-tree `commonplace backup` snapshot before explicitly removing it;
 a later prune drops entries for generations already removed. Run the offline
 retention command periodically:
 
 ```sh
 commonplace workspace prune-stores <workspace>
+commonplace workspace prune-stores <workspace> --report-only
 ```
+
+Report-only mode never changes workspace files or repairs pointers. It exits 0
+when no findings remain and 3 when it reports preserved generations, a stale
+pointer copy, incomplete backfill, failed sealing or corrupt state, so scheduled
+checks can detect outstanding work. Ordinary command errors use exit code 2.
+If retirement evidence cannot be recovered from the pointer copy or a full
+`commonplace backup` snapshot, preserve the generation, recover its missing
+records, verify a backup of those contents, then remove that generation manually.
+Do not add a new retirement timestamp or digest merely to make pruning accept it.
 
 Pruning removes abandoned staging directories and never removes the active
 generation. Existing off-host backups follow their own retention policy. `doctor` reports the selected format, thread index version,

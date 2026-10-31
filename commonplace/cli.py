@@ -643,9 +643,13 @@ def cmd_workspace_prune(args) -> int:
         finally:
             db.close()
 
-    report = prune_generations(_data_dir(args), args.workspace, authorize=authorize)
+    report = prune_generations(
+        _data_dir(args), args.workspace, authorize=authorize, report_only=args.report_only
+    )
     if report is not None:
         print(json.dumps(report, sort_keys=True))
+        if report.get("findings") or report.get("repair"):
+            return 3
     return 0
 
 
@@ -700,6 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = ws.add_parser("prune-stores")
     s.add_argument("workspace")
     s.add_argument("--by")
+    s.add_argument("--report-only", action="store_true")
     s.set_defaults(func=cmd_workspace_prune)
     s = sub.add_parser("doctor")
     s.add_argument("--workspace")

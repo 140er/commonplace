@@ -59,6 +59,15 @@ def resolve_workspace(root):
         return root
     try:
         pointer = read_json(root / POINTER)
+    except ValueError:
+        raise ValueError(POINTER_REPAIR) from None
+    return validate_pointer(root, pointer)
+
+
+def validate_pointer(root, pointer):
+    try:
+        if not isinstance(pointer, dict):
+            raise ValueError
         if not isinstance(pointer.get("active"), str):
             raise ValueError
         active = generation_path(root, pointer["active"])

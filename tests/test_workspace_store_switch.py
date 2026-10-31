@@ -380,6 +380,9 @@ def test_keyword_only_rollback_uses_configured_embedder(workspace, monkeypatch, 
         "copied",
         "rehearsed",
         "verified",
+        "pointer",
+        "publish_state",
+        "pointer_mirrored",
         "published",
         "complete",
     ],
@@ -403,7 +406,7 @@ switch.switch_workspace(Path(sys.argv[1]),sys.argv[2],'compact',checkpoint=check
         [sys.executable, "-c", code, str(data), WORKSPACE, step], capture_output=True, timeout=60
     )
     assert result.returncode == 91, result.stderr.decode()
-    committed = step in ("published", "complete")
+    committed = step in ("pointer", "publish_state", "pointer_mirrored", "published", "complete")
     assert (workspace_path(data, WORKSPACE) != root) == committed
     with data_lock(data), closing(open_threads(workspace_path(data, WORKSPACE))) as store:
         assert store.get(thread.id) is not None
@@ -534,6 +537,23 @@ def test_cli_store_doctor_and_rollback(workspace, monkeypatch, capsys):
     assert report["store"] == "compact" and report["thread_index_version"] == 0
     assert main(args + ["workspace", "store", "fixture", "v1"]) == 0
     assert main(args + ["workspace", "prune-stores", "fixture"]) == 0
+    capsys.readouterr()
+    stable = root.with_name(wid)
+    (stable / POINTER_PREVIOUS).write_text("{}")
+    assert switch.doctor_workspace(data, wid)["previous_pointer_stale"]
+    assert read_json(stable / POINTER_PREVIOUS) == {}
+    assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 3
+    assert "stale_previous_pointer" in json.loads(capsys.readouterr().out)["findings"]
+    assert read_json(stable / POINTER_PREVIOUS) == {}
+    assert main(args + ["workspace", "prune-stores", "fixture"]) == 0
+    assert read_json(stable / POINTER_PREVIOUS) == read_json(stable / POINTER)
+    assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 0
+    capsys.readouterr()
+    (stable / switch.STATE).write_text("{")
+    assert main(args + ["doctor", "--workspace", "fixture"]) == 0
+    corrupt = json.loads(capsys.readouterr().out)
+    assert corrupt["backfill"] == "corrupt" and "repair .store-backfill.json" in corrupt["repair"]
+    assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 3
 
 
 def test_failed_switch_removes_all_staging_and_unchanged_cleans_orphans(workspace):
@@ -619,7 +639,7 @@ def test_invalid_pointer_preserves_active_generation_and_post_switch_writes(
         assert store.messages(added.id)[0].text == "post-switch verbatim"
 
 
-def test_missing_pointer_preserves_generation_published_before_final_state(workspace):
+def test_missing_pointer_recovers_publication_from_previous_copy(workspace):
     data, root, _ = workspace
     switch.switch_workspace(data, WORKSPACE, "compact")
     active = workspace_path(data, WORKSPACE)
@@ -627,8 +647,9 @@ def test_missing_pointer_preserves_generation_published_before_final_state(works
         json.dumps({"state": "copying", "staging": active.name, "store": "compact"})
     )
     (root / POINTER).unlink()
-    with pytest.raises(ValueError, match="generation pointer"):
-        switch.prune_generations(data, WORKSPACE)
+    switch.prune_generations(data, WORKSPACE)
+    assert workspace_path(data, WORKSPACE) == active
+    assert read_json(root / switch.STATE)["state"] == "complete"
     assert (active / "threads.v2.sqlite3").exists()
 
 
@@ -694,8 +715,124 @@ def test_minimal_pointer_preserves_unlisted_published_generations_and_recovery_c
     switch.prune_generations(data, WORKSPACE)
     switch.switch_workspace(data, WORKSPACE, "v1")
     assert switch._retirement_digest(retained) == before
-    assert read_json(root / POINTER_PREVIOUS) == expected
+    assert read_json(root / POINTER_PREVIOUS) == {"active": active.name}
     assert "Preserving unlisted published generation " + retained.name in caplog.text
+
+
+def _write_after_publication(directory):
+    import os
+
+    with closing(open_threads(directory)) as store:
+        added = store.store(
+            WORKSPACE,
+            "after-publication",
+            [
+                ThreadMessage(
+                    0, "user", "message", "post-publication verbatim", "post-publication raw"
+                )
+            ],
+            actor="actor",
+        )
+    stamp = (directory / ".store-comparison.json").stat().st_mtime_ns + 1_000_000_000
+    os.utime(directory / "threads.v2.sqlite3", ns=(stamp, stamp))
+    return added
+
+
+@pytest.mark.parametrize("restore", ["stale_previous", "handwritten_root"])
+def test_seal_error_records_publication_and_never_deletes_new_writes(
+    workspace, monkeypatch, restore
+):
+    data, root, original_thread = workspace
+    seal = switch._seal_retired
+
+    def fail_seal(stable, pointer):
+        if pointer.get("active") and pointer["active"] != root.name:
+            raise OSError("injected seal failure")
+        seal(stable, pointer)
+
+    monkeypatch.setattr(switch, "_seal_retired", fail_seal)
+    with pytest.raises(OSError, match="injected seal failure"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    state = read_json(root / switch.STATE)
+    assert state["state"] == "published" and state["sealing"] == "failed"
+    doctor = switch.doctor_workspace(data, WORKSPACE)
+    assert doctor["backfill"] == "published" and doctor["sealing"] == "failed"
+    added = _write_after_publication(active)
+    stale = {"active": root.name, "retained": []}
+    if restore == "stale_previous":
+        (root / POINTER_PREVIOUS).write_text(json.dumps(stale))
+        (root / POINTER).write_bytes((root / POINTER_PREVIOUS).read_bytes())
+    else:
+        (root / POINTER).write_text(json.dumps({"active": root.name}))
+    monkeypatch.setattr(switch, "_seal_retired", seal)
+    seals = []
+
+    def retry_once(stable, pointer):
+        seals.append(pointer["active"])
+        seal(stable, pointer)
+
+    monkeypatch.setattr(switch, "_seal_retired", retry_once)
+    retired_at = state["pointer"]["retained"][-1]["retired_at"]
+    switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 24 * 60 * 60)
+    assert seals == [active.name]
+    assert workspace_path(data, WORKSPACE) == active
+    assert read_json(root / switch.STATE)["state"] == "complete"
+    with read_store(active / "threads.v2.sqlite3", compact=True) as store:
+        assert store.messages(added.id)[0].text == "post-publication verbatim"
+        assert store.messages(original_thread.id)[1].text == "second"
+
+
+def test_crash_after_pointer_then_stale_restore_preserves_written_staging_at_forty_days(workspace):
+    import subprocess
+    import time
+
+    data, root, original_thread = workspace
+    code = """
+import os,sys
+from pathlib import Path
+from commonplace import store_switch as switch
+switch._verify_offline = lambda path: None
+switch._embedder = lambda directory: lambda documents,metadatas,**kwargs: [[1.,.3,-.1] for _ in documents]
+def checkpoint(step):
+    if step == 'pointer':
+        os._exit(92)
+switch.switch_workspace(Path(sys.argv[1]),sys.argv[2],'compact',checkpoint=checkpoint)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(data), WORKSPACE], capture_output=True, timeout=60
+    )
+    assert result.returncode == 92, result.stderr.decode()
+    active = workspace_path(data, WORKSPACE)
+    assert read_json(root / switch.STATE)["state"] == "copying"
+    assert read_json(root / POINTER_PREVIOUS)["active"] == root.name
+    added = _write_after_publication(active)
+    (root / POINTER).write_bytes((root / POINTER_PREVIOUS).read_bytes())
+    switch.prune_generations(data, WORKSPACE, now=time.time() + 40 * 24 * 60 * 60)
+    assert active.is_dir()
+    with read_store(active / "threads.v2.sqlite3", compact=True) as store:
+        assert store.messages(added.id)[0].text == "post-publication verbatim"
+        assert store.messages(original_thread.id)[1].text == "second"
+    expected = [{"name": active.name, "writes_after_markers": True}]
+    assert switch.doctor_workspace(data, WORKSPACE)["preserved_generations"] == expected
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert report["preserved_generations"] == expected
+    assert "unlisted_published_generations" in report["findings"]
+
+
+@pytest.mark.parametrize("evidence", ["pointer", "previous"])
+def test_copying_state_finishes_publication_from_either_pointer(workspace, evidence):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    published = read_json(root / POINTER)
+    (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": active.name}))
+    filename = POINTER_PREVIOUS if evidence == "pointer" else POINTER
+    (root / filename).write_text(json.dumps({"active": root.name}))
+    switch.prune_generations(data, WORKSPACE)
+    assert read_json(root / POINTER) == published
+    assert read_json(root / POINTER_PREVIOUS) == published
+    assert read_json(root / switch.STATE)["state"] == "complete"
 
 
 def test_returned_retired_generation_is_preserved_after_entry_was_dropped(workspace, caplog):
@@ -790,6 +927,9 @@ def test_corrupt_state_prune_reports_without_modifying_any_generation(workspace,
     assert report["generations"] == sorted([root.name, active.name, staged.name])
     assert "repair .store-backfill.json" in report["repair"]
     assert "read-only report" in caplog.text
+    doctor = switch.doctor_workspace(data, WORKSPACE)
+    assert doctor["backfill"] == "corrupt"
+    assert "repair .store-backfill.json" in doctor["repair"]
     with pytest.raises(ValueError, match="Corrupt workspace backfill state"):
         switch.switch_workspace(data, WORKSPACE, "v1")
     assert (root / POINTER).read_bytes() == pointer
