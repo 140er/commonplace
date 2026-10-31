@@ -5,7 +5,7 @@ This file defines the module contracts. Product rules: the UI says Memory / memo
 ## The seam (already on feat/mvp, don't change without the coordinator)
 
 - `commonplace/extensions.py`: `LocalTool`, `register()`, `ToolContext`, `ToolError`. A module listed in `extensions.MODULES` registers its MCP tools at import time and its HTTP routes in `install(gateway)`.
-  - `ToolContext.principal` (a `control_db.Principal`), `.db` (ControlDB), `.workspace_dir()` (str path of `<data>/workspaces/<ws_id>`), `.memory(name, args)` (runs a `mempalace_*` tool through the caller's policy; raises `ToolError` on refusal).
+  - `ToolContext.principal` (a `control_db.Principal`), `.db` (ControlDB), `.workspace_dir()` (str path of the resolved active workspace generation), `.memory(name, args)` (runs a `mempalace_*` tool through the caller's policy; raises `ToolError` on refusal).
   - Handlers return `str` (sent as text) or JSON-able data. Raise `ToolError("no: …")` for refusals.
   - Profiles: `ALL_PROFILES` (slim, standard, full) or `WORK_PROFILES` (standard, full). `trusted_only=True` refuses untrusted tokens. `owner_only=True` hides the tool from non-owners.
 - `commonplace/events.py`: `emit(db, workspace_id, kind, subject=, actor=, data=)`, `after(db, ws, seq, limit)`, `latest_seq`, `add_listener(fn)`. Kinds listed in the module docstring. `data` never holds memory text.

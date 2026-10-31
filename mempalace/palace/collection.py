@@ -408,7 +408,9 @@ def get_collection(
         collection = EmbeddingCollection(collection)
     if not _skip_identity_check:
         _enforce_embedder_identity(collection, palace_path, collection_name, create=create)
-    return collection
+    from ..dual_read import observe_collection
+
+    return observe_collection(collection, palace_path, collection_name)
 
 
 def _backend_has_server_embedder(palace_path, backend) -> bool:
