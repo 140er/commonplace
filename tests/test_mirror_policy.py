@@ -362,7 +362,7 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
         store.close()
 
 
-def test_internal_writer_ids_keep_identical_bodies_as_distinct_parts(writer):
+def test_internal_writer_deduplicates_parts_but_keeps_distinct_ranges(writer, monkeypatch):
     server, col, embedded, _ = writer
     units = [
         {
@@ -374,12 +374,61 @@ def test_internal_writer_ids_keep_identical_bodies_as_distinct_parts(writer):
         }
         for part in range(2)
     ]
+    units.append({**units[0], "seq_start": 3, "seq_end": 3})
+    writes = []
+    original = server._write_drawer
+
+    def write(**arguments):
+        writes.append(arguments["drawer_id"])
+        return original(**arguments)
+
+    monkeypatch.setattr(server, "_write_drawer", write)
     first = server.write_mirror_units("thr_parts", units)
     assert first["success"] and len(set(first["drawer_ids"])) == 2
+    assert first["drawer_ids"][0] == first["drawer_ids"][1]
+    assert first["drawer_ids"][0] != first["drawer_ids"][2]
+    assert writes == [first["drawer_ids"][0], first["drawer_ids"][2]]
     count = len(embedded)
     assert server.write_mirror_units("thr_parts", units) == first
     assert len(embedded) == count
     assert col.count() == 2
+
+
+@pytest.mark.parametrize("size_mib,old_count,new_count", [(1, 7, 11), (20, 8, 15)])
+def test_repeated_message_deduplicates_before_transport_and_embedding(
+    writer, size_mib, old_count, new_count
+):
+    from commonplace.handoff.models import StoredThread, ThreadMessage
+    from commonplace.handoff.palace_mirror import class_units, mirror
+    from commonplace.handoff.thread_store import chunk_messages
+
+    server, col, embedded, _ = writer
+    message = ThreadMessage(0, "user", "message", "x" * (size_mib * 1024 * 1024), "raw")
+
+    def legacy_call(principal, name, arguments):
+        return server.TOOLS[name]["handler"](**arguments)
+
+    old = StoredThread("thr_old", "workspace", "source", 1, 1, "digest")
+    mirror(legacy_call, None, old, chunk_messages([message]))
+    assert col.count() == len(embedded) == old_count
+    count = len(embedded)
+    transported = []
+
+    def call(principal, name, arguments):
+        assert name == "write_mirror_units"
+        transported.extend(arguments["units"])
+        return server.write_mirror_units(**arguments)
+
+    stored = StoredThread("thr_new", "workspace", "source", 1, 1, "digest")
+    units = class_units([message])
+    ids = mirror(call, None, stored, units)
+    assert len(ids) == len(units)
+    assert len(set(ids)) == len(transported) == 3
+    assert col.count() - old_count == len(embedded) - count == new_count
+    assert len({u["text"] for u in transported}) == 3
+    count = len(embedded)
+    assert mirror(call, None, stored, units) == ids
+    assert len(embedded) == count and col.count() == old_count + new_count
 
 
 @pytest.mark.parametrize("verified", [False, True])
@@ -474,11 +523,13 @@ def test_crash_after_first_long_message_unit_resumes_without_regrouping(
         monkeypatch.setattr(store, "finish_mirror", record)
         ids = mirror_pending(call, None, stored, store)
         expected = class_units(messages[:1]) + class_units(messages[1:])
-        assert len(set(ids)) == len(expected) == 5
+        assert len(ids) == len(expected) == 5
+        distinct = {(u.seq_start, u.seq_end, u.message_class, u.text): u for u in expected}
+        assert len(set(ids)) == len(distinct) == 4
         assert completed == [0, 1]
         assert store.mirror_progress(stored.id) == (1, 1)
         assert col.get(ids=first.ids, include=["documents", "metadatas"]) == first
-        assert col.count() == sum((len(unit.text) + 799) // 800 for unit in expected)
+        assert col.count() == sum((len(unit.text) + 799) // 800 for unit in distinct.values())
         count = col.count()
         assert mirror_pending(call, None, stored, store) == []
         assert col.count() == count and completed == [0, 1]

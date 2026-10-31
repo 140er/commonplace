@@ -515,7 +515,7 @@ def tool_add_drawer(
 
 def write_mirror_units(thread_id: str, units: list):
     """Authenticated internal operation; not an MCP tool or client argument."""
-    from ..ids import make_drawer_id_from_chunk
+    from ..ids import make_mirror_unit_id
 
     if not isinstance(units, list) or not 1 <= len(units) <= 64:
         raise ValueError("Mirror batches must contain between 1 and 64 units")
@@ -550,16 +550,21 @@ def write_mirror_units(thread_id: str, units: list):
                 added_by=f"handoff:{start}-{end}:{len(text)}",
                 lexical_only=kind in {"tool_output", "system"},
                 _mempalace_index_spans=unit.get("index_spans"),
-                drawer_id=make_drawer_id_from_chunk("private_threads", thread_id, source, 0),
+                drawer_id=make_mirror_unit_id(thread_id, start, end, kind, text),
             )
         )
-    ids = []
+    committed = {}
     for arguments in prepared:
+        if arguments["drawer_id"] in committed:
+            continue
         result = _write_drawer(**arguments)
         if not result.get("success"):
             return result
-        ids.append(result["drawer_id"])
-    return {"success": True, "drawer_ids": ids}
+        committed[arguments["drawer_id"]] = result["drawer_id"]
+    return {
+        "success": True,
+        "drawer_ids": [committed[arguments["drawer_id"]] for arguments in prepared],
+    }
 
 
 def _write_drawer(

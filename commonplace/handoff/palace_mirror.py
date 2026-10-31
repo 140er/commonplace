@@ -186,9 +186,18 @@ def mirror_pending(call_tool, principal, stored, store):
 def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -> list[str]:
     """Return stable unit IDs; legacy chunks retain content-based deduplication."""
     if chunks and isinstance(chunks[0], MirrorUnit):
+        # Do not send thousands of identical continuations to the worker.
+        # The same content in another range/class remains a different unit.
+        unique = {}
+        keys = []
+        for unit in chunks:
+            key = (unit.seq_start, unit.seq_end, unit.message_class, unit.text)
+            unique.setdefault(key, unit)
+            keys.append(key)
+        units = list(unique.values())
         drawer_ids = []
-        for offset in range(0, len(chunks), 64):
-            batch = chunks[offset : offset + 64]
+        for offset in range(0, len(units), 64):
+            batch = units[offset : offset + 64]
             result = _call(
                 call_tool,
                 principal,
@@ -216,7 +225,8 @@ def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -
             ):
                 raise MirrorError("Memory worker returned invalid mirror ids")
             drawer_ids.extend(ids)
-        return drawer_ids
+        mapped = dict(zip(unique, drawer_ids))
+        return [mapped[key] for key in keys]
     drawer_ids = []
     mirrored = {}
     for chunk in chunks:
