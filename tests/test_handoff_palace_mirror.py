@@ -259,10 +259,10 @@ def test_thread_id_is_literal_and_full_source_path_is_used():
 def test_duplicates_keep_the_best_score_and_ties_keep_worker_order():
     worker = FakeWorker()
     worker.search_results["thr_first"] = [
-        _hit(index=7, similarity=0.9),
-        _hit(index=3, similarity=0.2),
-        _hit(index=3, similarity=0.9),
-        _hit(index=3, similarity=0.3),
+        _hit(index=7, text="[7] user message: exact text", similarity=0.9),
+        _hit(index=3, text="[3] user message: exact text", similarity=0.2),
+        _hit(index=3, text="[3] user message: exact text", similarity=0.9),
+        _hit(index=3, text="[3] user message: exact text", similarity=0.3),
     ]
     hits = palace_search(worker, object(), ["thr_first"], "needle")
     assert [(hit.chunk_index, hit.score) for hit in hits] == [(7, 0.9), (3, 0.9)]
@@ -487,7 +487,9 @@ def test_real_worker_mirrors_three_chunks_and_recalls_the_matching_chunk(
     assert hits[0].chunk_index == 1
     assert hits[0].text == chunks[1].text
     assert (hits[0].seq_start, hits[0].seq_end) == (1, 1)
-    assert {hit.chunk_index for hit in hits} == {0, 1, 2}
+    # Two legacy chunks cover message 1; range dedup keeps its stronger hit.
+    assert {hit.chunk_index for hit in hits} == {0, 1}
+    assert len({(hit.seq_start, hit.seq_end) for hit in hits}) == len(hits)
     continuation = palace_search(call_tool, principal, [stored.id], "spare lantern north gate", 1)[
         0
     ]

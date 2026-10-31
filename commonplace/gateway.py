@@ -165,12 +165,15 @@ class WorkerClient:
         """Run one tool internally and return its parsed result."""
         arguments = dict(arguments)
         params = {"name": name, "arguments": arguments}
+        method = "tools/call"
+        if name == "write_mirror_units":
+            method, params = "internal/write_mirror_units", arguments
         response = self.post(
             principal,
             {
                 "jsonrpc": "2.0",
                 "id": "commonplace-internal",
-                "method": "tools/call",
+                "method": method,
                 "params": params,
             },
         )

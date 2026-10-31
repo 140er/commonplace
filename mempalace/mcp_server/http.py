@@ -628,7 +628,19 @@ def _http_dispatch(request):
     # Same envelope trap as handle_request, on a dispatcher added after it: the
     # `or ""` fallback only rescues falsy values, so a truthy non-string method
     # reached .startswith() below and raised out of the handler thread.
-    method, _ = _normalize_envelope(request) if isinstance(request, dict) else ("", {})
+    method, params = _normalize_envelope(request) if isinstance(request, dict) else ("", {})
+    if method == "internal/write_mirror_units" and _provenance.current() is not None:
+        req_id = request.get("id")
+        with _http_embedding_release_installed("write"), _HTTP_REQUEST_LOCK:
+            refusal = _mcp_tool_preflight_refusal(req_id, "mempalace_add_drawer")
+            if refusal is not None:
+                return refusal
+            try:
+                with _write_stall_watch("mempalace_add_drawer"):
+                    result = write_mirror_units(**params)
+            except (TypeError, ValueError):
+                return _json_rpc_error(req_id, -32602, "Invalid mirror units")
+            return _tool_call_response(req_id, result)
     if method in _HTTP_PROTOCOL_METHODS or method.startswith("notifications/"):
         return handle_request(request)
     tool_name = None

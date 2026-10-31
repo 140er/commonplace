@@ -28,6 +28,14 @@ from typing import Optional
 
 from .models import CHUNK_MAX_CHARS, THREADS_WING, RecallHit, StoredThread, ThreadMessage
 
+MIRROR_PROGRESS_SQL = """
+CREATE TABLE IF NOT EXISTS mirror_progress (
+    thread_id TEXT PRIMARY KEY REFERENCES threads(id),
+    completed_seq INTEGER NOT NULL CHECK(completed_seq >= -1),
+    pending_seq INTEGER NOT NULL CHECK(pending_seq >= completed_seq)
+)
+"""
+
 
 class ThreadConflict(ValueError):
     """Same source thread id, different content."""
@@ -192,10 +200,42 @@ class ThreadStore:
                 );
                 """
             )
+            self._conn.execute(MIRROR_PROGRESS_SQL)
             self._fts_enabled = self._init_fts()
         except BaseException:
             self._conn.close()
             raise
+
+    def mirror_progress(self, stored_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT completed_seq, pending_seq FROM mirror_progress WHERE thread_id=?",
+                (stored_id,),
+            ).fetchone()
+            return tuple(row) if row is not None else None
+
+    def begin_mirror(self, stored_id: str, through: int, *, bootstrap: int = -1):
+        """Pin an append boundary until its idempotent mirror writes finish."""
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                "INSERT OR IGNORE INTO mirror_progress VALUES (?,?,?)",
+                (stored_id, bootstrap, max(through, bootstrap)),
+            )
+            self._conn.execute(
+                "UPDATE mirror_progress SET pending_seq=max(pending_seq,?) "
+                "WHERE thread_id=? AND completed_seq=pending_seq",
+                (through, stored_id),
+            )
+            return self.mirror_progress(stored_id)
+
+    def finish_mirror(self, stored_id: str, through: int):
+        """Advance only the pending batch whose units have all committed."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE mirror_progress SET completed_seq=? WHERE thread_id=? AND pending_seq=?",
+                (through, stored_id, through),
+            )
 
     def _init_fts(self) -> bool:
         with self._conn:

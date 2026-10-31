@@ -2020,3 +2020,84 @@ def test_size_gate_runs_before_backup(workspace, monkeypatch):
     )
     with pytest.raises(ValueError, match="positive integer"):
         switch.switch_workspace(data, WORKSPACE, "compact")
+
+
+def test_mirror_progress_survives_switch_rollback_and_resume(workspace, monkeypatch):
+    from types import SimpleNamespace
+
+    from commonplace.handoff.palace_mirror import mirror_pending
+    from mempalace import mcp_server as server
+    from mempalace.backends.embedding_wrapper import EmbeddingCollection
+
+    data, root, thread = workspace
+    messages = [
+        ThreadMessage(0, "user", "message", "first", "raw first"),
+        ThreadMessage(1, "assistant", "message", "second", "raw second"),
+    ]
+    monkeypatch.setattr(
+        "mempalace.backends.embedding_wrapper._embed_texts",
+        lambda texts, **kwargs: [[1.0, 0.3, -0.1] for _ in texts],
+    )
+    monkeypatch.setattr(server, "_wal_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "_wal_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "_invalidate_overview_caches", lambda: None)
+    monkeypatch.setattr(server, "_is_chroma_backend", lambda: False)
+    monkeypatch.setattr(server, "_palace_known_wings", lambda: frozenset({"private_threads"}))
+
+    def resume(directory, kind, extra=None):
+        backend = CompactBackend() if kind == "compact" else ChromaBackend()
+        try:
+            col = EmbeddingCollection(
+                open_collection(backend, directory / "palace", "mempalace_drawers", create=True)
+            )
+            monkeypatch.setattr(server, "_get_collection", lambda **kwargs: col)
+            monkeypatch.setattr(
+                server,
+                "_config",
+                SimpleNamespace(
+                    palace_path=str(directory / "palace"),
+                    collection_name="mempalace_drawers",
+                    chunk_size=800,
+                ),
+            )
+
+            def call(principal, name, arguments):
+                return (
+                    server.write_mirror_units(**arguments)
+                    if name == "write_mirror_units"
+                    else server.TOOLS[name]["handler"](**arguments)
+                )
+
+            with closing(open_threads(directory)) as store:
+                if extra is not None:
+                    messages.append(extra)
+                    store.append(thread.id, messages)
+                ids = mirror_pending(call, None, store.get(thread.id), store)
+                assert store.mirror_progress(thread.id) == (len(messages) - 1, len(messages) - 1)
+                assert mirror_pending(call, None, store.get(thread.id), store) == []
+                return ids, col.get(include=["documents", "metadatas"])
+        finally:
+            backend.close()
+
+    old_ids, old = resume(root, "v1")
+    assert len(old_ids) == 1
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    with closing(open_threads(active)) as store:
+        assert store.mirror_progress(thread.id) == (1, 1)
+    compact_ids, compact = resume(
+        active, "compact", ThreadMessage(2, "tool", "tool_result", "Tool output", "raw output")
+    )
+    assert len(compact_ids) == 1 and set(old.ids) <= set(compact.ids)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    restored = workspace_path(data, WORKSPACE)
+    with closing(open_threads(restored)) as store:
+        assert store.mirror_progress(thread.id) == (2, 2)
+    new_ids, final = resume(
+        restored,
+        "v1",
+        ThreadMessage(3, "assistant", "message", "After rollback", "raw after rollback"),
+    )
+    assert len(new_ids) == 1
+    assert set(final.ids) == set(old.ids) | set(compact_ids) | set(new_ids)
+    assert len(set(old_ids + compact_ids + new_ids)) == 3

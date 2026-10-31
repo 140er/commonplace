@@ -1,4 +1,4 @@
-"""Synthetic recall gate; production indexing is deliberately unchanged.
+"""Synthetic recall gate with the real compact writer and a legacy SQLite seam.
 
 Run ``uv run python -m benchmarks.index_hygiene_gate [--strategy union]``.
 Use ``--embedding minilm`` to measure the same corpus with the local CPU model
@@ -7,6 +7,9 @@ offline regression mode; it is not sufficient to authorize a production policy.
 Exit 1 means the policy is blocked, including the expected vector-only recall
 failure. ``default`` omits candidate_strategy at the real mempalace_search
 handler, so a future change to its default is measured without changing here.
+Use ``--backend compact`` to exercise real ``add_drawer`` writes and their
+physical splits, index provenance and server-side keyword-only policy. The
+default sqlite_exact mode retains the original benchmark-only policy seam.
 
 The offline embedder is a deterministic bag of hashed words with a small,
 query-independent synonym dictionary. This tests retrieval plumbing, not a
@@ -30,7 +33,7 @@ import sqlite3
 import sys
 import tempfile
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -38,6 +41,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from commonplace.handoff.transcripts import parse
+from mempalace.backends.embedding_wrapper import _embed_texts as _product_embed_texts
 from mempalace.index_hygiene import find_base64_spans, index_text
 from mempalace.lexical import tokenize
 
@@ -381,6 +385,89 @@ def product_search(directory, collection):
             yield mcp_server.tool_search
 
 
+@contextmanager
+def index_compact_chat(corpus: Corpus, *, policy: bool, embedder, work_dir=None):
+    """Exercise the real drawer writer, split handling and nullable vectors."""
+    from mempalace.backends.compact import CompactBackend
+    from mempalace.backends.embedding_wrapper import EmbeddingCollection
+
+    if work_dir is not None:
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+    workspace = (
+        nullcontext(tempfile.mkdtemp(prefix="compact-hygiene-", dir=work_dir))
+        if work_dir is not None
+        else tempfile.TemporaryDirectory(prefix="compact-hygiene-")
+    )
+    with workspace as directory:
+        backend = CompactBackend()
+        try:
+            inner = backend.create_collection(directory, "gate_drawers")
+            collection = SyntheticCollection(EmbeddingCollection(inner), embedder)
+            collection.message_ids = {}
+            with product_search(directory, collection):
+                from mempalace import mcp_server
+
+                config = SimpleNamespace(
+                    palace_path=directory, collection_name="gate_drawers", chunk_size=800
+                )
+                with (
+                    patch.object(mcp_server, "_config", config),
+                    patch.object(mcp_server, "_get_collection", lambda **kwargs: collection),
+                    patch.object(mcp_server, "_wal_log", lambda *args, **kwargs: None),
+                    patch.object(mcp_server, "_wal_result", lambda *args, **kwargs: None),
+                    patch.object(mcp_server, "_invalidate_overview_caches", lambda: None),
+                    patch(
+                        "mempalace.backends.embedding_wrapper._embed_texts",
+                        lambda texts, **kwargs: _product_embed_texts(
+                            texts, **kwargs, embedder=lambda input: embedder.documents(input)
+                        ),
+                    ),
+                ):
+                    for seq, message in enumerate(corpus.messages):
+                        if policy:
+                            kind = {
+                                "tool_result": "tool_output",
+                                "tool_call": "tool_call",
+                                "system": "system",
+                            }.get(message.kind, "conversation")
+                            result = mcp_server.write_mirror_units(
+                                "gate_chat",
+                                [
+                                    {
+                                        "seq_start": seq,
+                                        "seq_end": seq,
+                                        "message_class": kind,
+                                        "part": 0,
+                                        "text": message.text,
+                                    }
+                                ],
+                            )
+                            drawer_id = (result.get("drawer_ids") or [None])[0]
+                        else:
+                            result = mcp_server.tool_add_drawer(
+                                "private_threads",
+                                "gate_chat",
+                                message.text,
+                                source_file=message.id,
+                            )
+                            drawer_id = result.get("drawer_id")
+                        if not result.get("success"):
+                            raise RuntimeError("real compact drawer write failed")
+                        collection.message_ids[message.id] = drawer_id
+                        assert mcp_server.tool_get_drawer(drawer_id)["content"] == message.text
+            records = collection.get(include=["metadatas"])
+            kinds = {
+                collection.message_ids[message.id]: message.kind for message in corpus.messages
+            }
+            collection.record_kinds = {
+                record_id: kinds[meta.get("parent_drawer_id", record_id)]
+                for record_id, meta in zip(records.ids, records.metadatas)
+            }
+            yield directory, collection
+        finally:
+            backend.close()
+
+
 def token_diff(corpus: Corpus) -> dict:
     """Compare outside-run tokens with independent planted payload annotations.
 
@@ -422,10 +509,18 @@ def token_diff(corpus: Corpus) -> dict:
 
 
 def run_gate(
-    *, strategy: str = "default", seed: int = 38, noise: int = 24, embedding="synthetic"
+    *,
+    strategy: str = "default",
+    seed: int = 38,
+    noise: int = 24,
+    embedding="synthetic",
+    backend: str = "sqlite_exact",
+    work_dir=None,
 ) -> dict:
     if strategy not in {"default", "vector", "union"}:
         raise ValueError("strategy must be default, vector or union")
+    if backend not in {"sqlite_exact", "compact"}:
+        raise ValueError("backend must be sqlite_exact or compact")
     corpus = synthetic_corpus(seed=seed, noise=noise)
     embedder = GateEmbedder(embedding)
     # Each transcript format represents the same facts. Index them separately
@@ -444,7 +539,13 @@ def run_gate(
         vector_tools = vector_total = 0
         for fmt, chat in formats.items():
             kinds = {message.id: message.kind for message in chat.messages}
-            with index_chat(chat, policy=policy, embedder=embedder) as (directory, collection):
+            writer = index_compact_chat if backend == "compact" else index_chat
+            controls = {"work_dir": work_dir} if backend == "compact" else {}
+            with writer(chat, policy=policy, embedder=embedder, **controls) as (
+                directory,
+                collection,
+            ):
+                kinds = getattr(collection, "record_kinds", kinds)
                 with product_search(directory, collection) as search:
                     from mempalace import searcher
 
@@ -467,9 +568,10 @@ def run_gate(
                             if result.get("error") or result.get("candidate_strategy_fallback"):
                                 raise RuntimeError(f"product search failed: {result}")
                             ids = [hit["drawer_id"] for hit in result["results"]]
-                            ranks[limit] = (
-                                ids.index(needle.target) + 1 if needle.target in ids else None
+                            target = getattr(collection, "message_ids", {}).get(
+                                needle.target, needle.target
                             )
+                            ranks[limit] = ids.index(target) + 1 if target in ids else None
                         rows.append(
                             {
                                 "format": fmt,
@@ -489,10 +591,11 @@ def run_gate(
                         ids = vectors.ids[0]
                         vector_total += len(ids)
                         vector_tools += sum(kinds[drawer_id] == "tool_result" for drawer_id in ids)
-                    stored = collection.get(include=["documents"])
-                    assert dict(zip(stored.ids, stored.documents)) == {
-                        message.id: message.text for message in chat.messages
-                    }
+                    if backend != "compact":
+                        stored = collection.get(include=["documents"])
+                        assert dict(zip(stored.ids, stored.documents)) == {
+                            message.id: message.text for message in chat.messages
+                        }
         outcomes["policy" if policy else "today"] = {
             "needles": rows,
             "recall_at_10": sum(row["top10"] for row in rows) / len(rows),
@@ -528,7 +631,7 @@ def run_gate(
         "effective_strategy": effective,
         "embedding": embedder.label,
         "hybrid_weights": {"vector": vector_weight, "bm25": bm25_weight},
-        "backend": "sqlite_exact",
+        "backend": backend,
         "seed": seed,
         "messages": len(corpus.messages),
         "checks": checks,
@@ -580,10 +683,19 @@ def main(argv=None) -> int:
     parser.add_argument("--seed", type=int, default=38)
     parser.add_argument("--noise", type=int, default=24)
     parser.add_argument("--embedding", choices=("synthetic", "minilm"), default="synthetic")
+    parser.add_argument("--backend", choices=("sqlite_exact", "compact"), default="sqlite_exact")
+    parser.add_argument(
+        "--work-dir", type=Path, help="Keep compact benchmark palaces in this directory"
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     report = run_gate(
-        strategy=args.strategy, seed=args.seed, noise=args.noise, embedding=args.embedding
+        strategy=args.strategy,
+        seed=args.seed,
+        noise=args.noise,
+        embedding=args.embedding,
+        backend=args.backend,
+        work_dir=args.work_dir,
     )
     # The MCP server redirects sys.stdout on import; CLI reports still belong
     # on the original stdout stream, including machine-readable JSON.

@@ -209,6 +209,8 @@ def _hybrid_rank(
     if not results:
         return results
 
+    from ..stored_text import KEYWORD_ONLY
+
     docs = [
         index_text(
             r.get("text") or "", r.get("metadata") or r.get("_index_metadata"), stored_form=False
@@ -248,13 +250,16 @@ def _hybrid_rank(
             distance = _metric_scale_distance(boosted, metric)
         vec_sim = _distance_to_similarity(distance, metric)
         r["bm25_score"] = round(raw, 3)
-        score = vector_weight * vec_sim + bm25_weight * norm
+        keyword_only = (r.get("_index_metadata") or {}).get(KEYWORD_ONLY) is True
+        hit_vector_weight = 0.0 if keyword_only else vector_weight
+        hit_bm25_weight = 1.0 if keyword_only else bm25_weight
+        score = hit_vector_weight * vec_sim + hit_bm25_weight * norm
         r["score"] = round(score, 6)
         r["rank_components"] = {
             "vector_similarity": round(vec_sim, 6),
             "bm25": round(raw, 6),
-            "vector_weight": round(vector_weight, 6),
-            "bm25_weight": round(bm25_weight, 6),
+            "vector_weight": round(hit_vector_weight, 6),
+            "bm25_weight": round(hit_bm25_weight, 6),
         }
         scored.append((score, r))
 
