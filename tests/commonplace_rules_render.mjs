@@ -59,7 +59,7 @@ window.commonplaceDesktop = { version: 1 };
 assert.equal(desktopBridge(), null);
 const pending = rule(4, { status: "edited", pending: 1, text: "Keep mine", agent_text: "Try theirs" });
 const all = rule(5, { agent: "*", status: "accepted", text: '<script> "&' });
-const payload = { rules: [first, board, retired, pending, all], suggestions: [{ id: 8, rule_id: 1, text: "A clearer rule", from_agent: "reader" }], agents: ["writer", "reader"] };
+const payload = { waiting: 3, waiting_by_agent: { "conn:writer": 3 }, rules: [first, board, retired, pending, all], suggestions: [{ id: 8, rule_id: 1, text: "A clearer rule", from_agent: "reader" }], agents: ["writer", "reader"] };
 assert.equal(waitingCount(payload.rules), 3);
 assert.equal(waitingCount([rule(6, { pending: 1 })]), 1);
 assert.equal(waitingCount([]), 0);
@@ -76,7 +76,7 @@ assert.ok(html.includes('data-rule-form="new"') && html.includes('value="*">All 
 assert.ok(html.includes('<details class="rule-retired"><summary>Retired (1)'));
 assert.ok(!html.includes('style="') && !html.includes("onclick="));
 const readonly = rulesView(payload, { owner: false });
-for (const action of ["accept", "retire", "restore", "edit", "accept_agent", "suggestion-accept"]) assert.ok(!readonly.includes(`data-rule-action="${action}"`));
+for (const action of ["accept", "retire", "restore", "edit", "accept_agent", "keep_edit", "suggestion-accept", "suggestion-dismiss"]) assert.ok(!readonly.includes(`data-rule-action="${action}"`));
 window.commonplaceDesktop = { version: 1, ask() {} };
 assert.equal(desktopBridge(), window.commonplaceDesktop);
 assert.ok(rulesView(payload).includes("Ask an agent"));
@@ -116,7 +116,7 @@ control.closest = (selector) => selector === "[data-rule-id]" ? row : selector =
 for (const action of ["accept", "dismiss"]) {
   control.dataset.ruleAction = `suggestion-${action}`;
   await handlers.click(event);
-  assert.deepEqual(requests.at(-1), ["/api/rules/suggestions/8", { method: "POST", body: { action } }]);
+  assert.deepEqual(requests.at(-1), ["/api/rules/suggestions/8", { method: "POST", body: { action, ...(action === "accept" ? { version: 2 } : {}) } }]);
 }
 
 // Bridge results are stored as proposals, and an unstructured set reply is kept in place.
@@ -155,3 +155,70 @@ assert.deepEqual(bridgeErrors, ["Agent unavailable"]);
 assert.equal(reply.textContent, "");
 assert.equal(bridgePosts.length, 3);
 console.log("Rules actions and bridge checks passed");
+
+// Owner-retired proposals remain outside the collapsed retired list.
+const retiredProposal = rule(9, { status: "retired", retired_by: "owner", pending: 1, agent_text: "New proposal" });
+const retiredHTML = rulesView({ rules: [retired, retiredProposal], waiting: 1, waiting_by_agent: { "conn:writer": 1 } });
+assert.ok(retiredHTML.indexOf('data-rule-id="9"') < retiredHTML.indexOf('<details class="rule-retired">'));
+assert.ok(retiredHTML.indexOf('data-rule-id="3"') > retiredHTML.indexOf('<details class="rule-retired">'));
+assert.ok(retiredHTML.includes('data-waiting="1"'));
+assert.equal(waitingCount([retired, retiredProposal]), 1);
+assert.equal(waitingCount([rule(10, { status: "retired", retired_by: "agent", pending: 1 })]), 0);
+// Counts and sorting are supplied by the server, independent of rule text.
+const serverCounts = rulesView({ ...payload, waiting: 8, waiting_by_agent: { "*": 8 } });
+assert.ok(serverCounts.includes('data-waiting="8"'));
+assert.ok(serverCounts.indexOf('data-rule-agent="*"') < serverCounts.indexOf('data-rule-agent="conn:writer"'));
+assert.ok(!readonly.includes("New rule") && readonly.includes("Copy prompt"));
+
+// Suggestion conflicts use the same refresh-and-review path as rule writes.
+control.dataset.ruleAction = "suggestion-accept";
+fail = true;
+const previousRefreshes = refreshes;
+await handlers.click(event);
+assert.equal(refreshes, previousRefreshes + 1);
+assert.equal(errors.at(-1), "Rule changed. Review it and try again.");
+
+// Exercise the shell refresh itself: other screens request only the count;
+// rule events update both the badge and the screen even with a panel open.
+const shellSource = await read("app.js");
+const refreshSource = shellSource.slice(shellSource.indexOf("async function refresh("), shellSource.indexOf("async function route()"));
+const shellState = { me: {}, screen: 1, refreshRequest: 0, base: "#/rules", route: "#/rules" };
+const shellCalls = [], updates = [], badgeCounts = [], shellErrors = [];
+const content = { innerHTML: "", children: [{}] };
+let shellPayload = { ...payload, can_edit: false };
+const noWork = () => {};
+const shellDeps = {
+  state: shellState,
+  api: async (path) => {
+    shellCalls.push(path);
+    if (path === "/api/rules") return shellPayload;
+    if (path === "/api/rules/count") return { waiting: 7, seq: 12 };
+    return { boards: [] };
+  },
+  root: { querySelector: () => content },
+  rulesUI: { busy: () => true, update: (...args) => updates.push(args) },
+  rulesView,
+  navigation: () => badgeCounts.push(shellState.rulesWaiting),
+  title: noWork, remember: noWork, capture: () => noWork, restore: noWork,
+  boardsView: noWork, showError: (error) => { if (error) shellErrors.push(error); },
+};
+const shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
+assert.equal(await shellRefresh(), true);
+assert.deepEqual(updates.at(-1)[1], { owner: false });
+assert.ok(!content.innerHTML.includes("New rule") && !content.innerHTML.includes("Ask an agent"));
+assert.ok(content.innerHTML.includes("Copy prompt"));
+assert.ok(shellCalls.includes("/api/rules") && !shellCalls.includes("/api/rules/count"));
+shellPayload = { ...shellPayload, can_edit: true, waiting: 4 };
+for (const kind of ["rule.changed", "rule.suggestion"]) {
+  assert.equal(await shellRefresh({ background: true, events: [{ kind }] }), true);
+  assert.deepEqual(updates.at(-1)[1], { owner: true });
+  assert.ok(content.innerHTML.includes("New rule"));
+  assert.equal(badgeCounts.at(-1), 4);
+}
+shellState.base = shellState.route = "#/boards";
+shellCalls.length = 0;
+assert.equal(await shellRefresh({ background: true, events: [{ kind: "rule.changed" }] }), true);
+assert.ok(shellCalls.includes("/api/rules/count") && !shellCalls.includes("/api/rules"));
+assert.equal(badgeCounts.at(-1), 7);
+assert.deepEqual(shellErrors, []);
+console.log("Rules permissions, retirement, counts and shell refresh checks passed");

@@ -30,8 +30,8 @@ def install(gateway):
                 {"error": message},
             )
             return
-        except TypeError:
-            send_json(h, 400, {"error": "invalid arguments"})
+        except Exception:
+            send_json(h, 500, {"error": "internal error"})
             return
         send_json(h, status, result)
 
@@ -40,28 +40,45 @@ def install(gateway):
 
 
 def dispatch(service, h, parts, method):
+    def body(allowed, required=()):
+        value = read_json(h)
+        if value.keys() - set(allowed):
+            raise HTTPError(400, "unknown arguments")
+        for key in required:
+            if key not in value:
+                raise HTTPError(400, f"{key} is required")
+        return value
+
+    if parts == ["rules", "count"] and method == "GET":
+        return 200, service.count()
     if parts == ["rules"]:
         if method == "GET":
             return 200, service.list_rules()
         if method == "POST":
-            return 201, service.create(**read_json(h))
+            return 201, service.create(
+                **body(("agent", "text", "kind", "scope", "scope_ref"), ("agent", "text", "kind"))
+            )
     if len(parts) == 3 and parts[:2] == ["rules", "suggestions"] and method == "POST":
-        return 200, service.decide_suggestion(parts[2], **read_json(h))
+        values = body(("action", "version"), ("action",))
+        if values["action"] == "accept" and "version" not in values:
+            raise HTTPError(400, "version is required")
+        return 200, service.decide_suggestion(parts[2], **values)
     if len(parts) in (2, 3) and parts[0] == "rules":
         rule_id = parts[1]
         if len(parts) == 3 and parts[2] == "history" and method == "GET":
             return 200, service.history(rule_id)
         if len(parts) == 2 and method == "PATCH":
-            body = read_json(h)
-            if body.get("version") is None:
-                raise HTTPError(400, "version is required")
-            return 200, service.edit(rule_id, **body)
+            return 200, service.edit(
+                rule_id,
+                **body(("version", "text", "kind", "scope", "scope_ref", "note"), ("version",)),
+            )
         if len(parts) == 3 and method == "POST":
             if parts[2] == "action":
-                body = read_json(h)
-                if body.get("version") is None:
-                    raise HTTPError(400, "version is required")
-                return 200, service.action(rule_id, **body)
+                return 200, service.action(
+                    rule_id, **body(("version", "action"), ("version", "action"))
+                )
             if parts[2] == "suggestions":
-                return 201, service.suggest(rule_id, **read_json(h))
+                return 201, service.suggest(
+                    rule_id, **body(("text", "from_agent"), ("text", "from_agent"))
+                )
     raise HTTPError(404, "not found")

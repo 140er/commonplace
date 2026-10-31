@@ -10,11 +10,18 @@ STRING = {"type": "string"}
 
 
 def run(ctx, name, args):
+    allowed = {
+        "rules_publish": ({"rules", "replace"}, {"rules"}),
+        "rules_get": ({"board", "repo", "format", "include_retired"}, set()),
+        "rules_changed": ({"since"}, {"since"}),
+    }
+    if name not in allowed or not isinstance(args, dict):
+        raise ToolError("no: invalid arguments")
+    keys, required = allowed[name]
+    if args.keys() - keys or required - args.keys():
+        raise ToolError("no: invalid arguments")
     service = RuleService(ctx)
-    try:
-        result = getattr(service, name)(**args)
-    except TypeError:
-        raise ToolError("no: invalid arguments") from None
+    result = getattr(service, name)(**args)
     rows = result["rules"]
     if name == "rules_get":
         if args.get("format") == "md":

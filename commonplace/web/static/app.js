@@ -4,7 +4,7 @@ import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
 import { planView } from "./plan.js";
-import { rulesView, rulesHandlers, waitingCount } from "./rules.js";
+import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
 
 const signinParams = new URLSearchParams(location.search);
@@ -23,7 +23,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), rules: [],
+  toggled: new Set(), rulesWaiting: 0,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -182,7 +182,7 @@ function navigation() {
   if (!boardNav) return;
   boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = waitingCount(state.rules); n.textContent = count; n.dataset.waiting = String(count > 0); });
+  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
   const key = state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
 }
@@ -447,10 +447,10 @@ async function refresh({ background = false, events = [] } = {}) {
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
     const home = state.base === "#/";
-    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api("/api/rules").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
+    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
-    if (rules) state.rules = rules.rules;
+    if (rules) state.rulesWaiting = rules.waiting;
     if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -482,9 +482,9 @@ async function refresh({ background = false, events = [] } = {}) {
     else if (state.base === "#/boards") boardsView();
     else if (state.base === "#/rules") {
       title("Rules");
-      if (!background || !rulesUI.busy()) {
-        rulesUI.update(rules);
-        root.querySelector("#content").innerHTML = rulesView(rules);
+      if (!background || events.some((event) => event.kind.startsWith("rule.")) || !rulesUI.busy()) {
+        rulesUI.update(rules, { owner: rules.can_edit });
+        root.querySelector("#content").innerHTML = rulesView(rules, { owner: rules.can_edit });
       }
     } else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));

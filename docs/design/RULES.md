@@ -12,11 +12,11 @@ Every connected agent publishes the rules it follows: standing instructions, per
 
 ```sql
 -- rules.sqlite3, one per workspace
-CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);  -- 'seq': bumped on every change
+CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);  -- 'seq': bumped on every rule change
 CREATE TABLE rules (
   id          INTEGER PRIMARY KEY,
   agent       TEXT NOT NULL,         -- actor ref "conn:<name>", or "*" for an owner rule that applies to every agent
-  key         TEXT NOT NULL,         -- stable per agent; given by the agent, else derived from the text
+  key         TEXT NOT NULL,         -- stable per agent; matches [A-Za-z0-9._-]{1,100}, else derived from the text
   text        TEXT NOT NULL,         -- effective text: what the agent must follow
   agent_text  TEXT,                  -- the agent's latest published wording (NULL for owner-written rules)
   kind        TEXT NOT NULL CHECK (kind IN ('permission','limit','instruction','style')),
@@ -25,6 +25,7 @@ CREATE TABLE rules (
   status      TEXT NOT NULL CHECK (status IN ('proposed','accepted','edited','retired')),
   source      TEXT NOT NULL CHECK (source IN ('agent','owner')),  -- who wrote `text`
   pending     INTEGER NOT NULL DEFAULT 0,  -- 1: the agent republished wording that differs from an owner edit
+  retired_by  TEXT CHECK (retired_by IN ('agent','owner')), -- NULL unless retired
   version     INTEGER NOT NULL DEFAULT 1,
   seq         INTEGER NOT NULL,      -- meta.seq at the last change
   created_at  TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE rule_versions (        -- append-only (triggers refuse UPDATE and D
 CREATE TABLE rule_suggestions (     -- clarify replies brought back through the desktop bridge
   id INTEGER PRIMARY KEY, rule_id INTEGER NOT NULL REFERENCES rules(id),
   text TEXT NOT NULL, from_agent TEXT NOT NULL,       -- the connection the owner asked
+  base_version INTEGER NOT NULL,                     -- rule version when suggested
   status TEXT NOT NULL CHECK (status IN ('open','accepted','dismissed')),
   stamp_user TEXT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT
 );
@@ -52,17 +54,23 @@ Rules are never deleted. Retiring keeps the row and its history.
 | Event | Result |
 |---|---|
 | Agent publishes a new key | `proposed`, `source=agent`, `text=agent_text`. The agent follows it right away. "Proposed" means the owner hasn't reviewed it yet. |
-| Owner accepts | `accepted` |
+| Owner accepts a `proposed` rule | `accepted`; other states are refused |
 | Owner edits the text, kind or scope | `edited`, `source=owner`. `agent_text` stays, so the UI can show the diff. |
-| Agent republishes the same key and the text differs | If `source=agent`: the text updates, the status goes back to `proposed` and the version is bumped. If `source=owner`: only `agent_text` updates and `pending=1`. The owner's text stays in force. |
-| Owner takes the agent's wording (`accept_agent`) | `text=agent_text`, `source=agent`, `accepted`, `pending=0` |
-| Owner keeps the edit (`keep_edit`) | `pending=0` |
-| Agent publishes with `replace=true` and leaves out a key it published before | `retired` (note: "dropped by agent") |
-| Owner retires the rule | `retired`. Agents read it as "stop following this". |
-| Owner restores the rule | back to `accepted`, or `edited` when `source=owner` |
-| A suggestion is accepted | same as an owner edit, with `source=suggestion` in the history |
+| Agent republishes wording equal to `agent_text` | Full no-op: no version, sequence or history change; pending stays as it is. Exception: an agent-retired key revives as below. |
+| Agent republishes different wording on an active rule | If `source=agent`: updates text and returns to `proposed`. If `source=owner`: updates only `agent_text`; `pending=0` when it agrees with the owner's text, otherwise `pending=1`. Owner text, kind and scope stay in force. |
+| Owner takes the agent's wording (`accept_agent`, requires `pending=1`) | `text=agent_text`, `source=agent`, `accepted`, `pending=0`, `retired_by=NULL`; also restores an owner-retired rule |
+| Owner keeps the edit (`keep_edit`, requires `pending=1`) | `pending=0`; retirement, if any, stays in force. Repeating that agent wording remains a no-op. |
+| Agent publishes with `replace=true` and leaves out an active `source=agent` key | `retired`, `retired_by=agent` (note: "dropped by agent"). Never retires owner edits or owner-retired rules. |
+| Agent republishes an agent-retired key | Revives as `proposed`, `source=agent`, `text=agent_text`, `pending=0`, `retired_by=NULL`, even for identical wording |
+| Owner retires a non-retired rule | `retired`, `retired_by=owner`. Agents stop following it. Retiring again is refused. |
+| Agent republishes an owner-retired key | Stays retired. Different wording updates only `agent_text` and `pending`; it never restores the rule. A pending proposal appears in the active review list. |
+| Owner restores a retired rule | Back to `accepted`, or `edited` when `source=owner`; clears `retired_by`. Other states are refused. |
+| A suggestion is stored or dismissed | No rule, version, sequence or history change |
+| A suggestion is accepted | Requires the supplied version and stored `base_version` to match the current rule. Stale versions return 409 with the current rule. Retired rules are refused. Otherwise applies an owner edit, with `source=suggestion` in history. |
 
-Every change writes one `rule_versions` row and bumps `meta.seq`.
+Every actual rule change writes one `rule_versions` row and bumps `meta.seq`. An edit with unchanged text, kind and scope returns 400 "nothing to change". A publish transaction is refused atomically when its final set exceeds 500 non-retired rules or 2000 total rows per agent.
+
+After the rules transaction closes, each changed agent emits `rule.changed` with `{agent, ids, keys}` and no rule text. No-op publishes emit nothing. Storing or dismissing a suggestion emits `rule.suggestion` with `{rule_id, suggestion_id, action}` (`stored` or `dismissed`) without moving the rule sequence. Suggestion acceptance emits `rule.changed`.
 
 ### Visibility
 
@@ -87,28 +95,31 @@ Agent loop, as written in the skill: at the start of a session call `rules_chang
 
 | Method | Path | Body | Who |
 |---|---|---|---|
-| GET | `/api/rules` | — | any person. Returns `{rules: [...], suggestions: [...open], agents: [...connection names], seq}`, with every rule from every agent, retired ones included. |
+| GET | `/api/rules` | — | any person. Returns `{rules: [...], suggestions: [...open], agents: [...connection names], seq}`, with every rule from every agent, retired ones included. Also returns `can_edit`, server-computed `waiting` and `waiting_by_agent`. |
+| GET | `/api/rules/count` | — | any person. Returns only `{waiting, seq}` for badges outside the Rules screen. |
 | GET | `/api/rules/:id/history` | — | any person. Returns the `rule_versions` rows, oldest first. |
 | POST | `/api/rules` | `{agent: "*" or "conn:x", text, kind, scope, scope_ref?}` | owner. A rule written by the owner starts as `accepted` with `source=owner`. |
 | PATCH | `/api/rules/:id` | `{version, text?, kind?, scope?, scope_ref?, note?}` | owner. Answers 409 with the current rule when `version` is stale. |
 | POST | `/api/rules/:id/action` | `{version, action: accept\|retire\|restore\|accept_agent\|keep_edit}` | owner |
 | POST | `/api/rules/:id/suggestions` | `{text, from_agent}` | owner. This is where the web page stores a clarify reply that came back through the bridge. |
-| POST | `/api/rules/suggestions/:sid` | `{action: accept\|dismiss}` | owner |
+| POST | `/api/rules/suggestions/:sid` | `{action: accept\|dismiss, version?}` | owner; `version` is required for accept |
 
-Rule JSON: `{id, agent, key, text, agent_text, kind, scope, scope_ref, status, source, pending, version, seq, updated_at, updated_by}`.
+Rule JSON: `{id, agent, key, text, agent_text, kind, scope, scope_ref, status, source, pending, retired_by, version, seq, updated_at, updated_by}`.
 
 ## Owner UI
 
 The UI uses look B: the tokens, Geist Mono, tiles on the 6px gap and the v2 block logo from `app.css`/`ui.css`. No new colours.
 
-- **Nav:** "Rules" in the sidebar under Memory and in the phone tabs (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`), shown the same way Home shows its count.
+- **Nav:** "Rules" in the sidebar under Memory and in the phone tabs (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
 - **Screen:** the title is "Rules". There is one tile per agent (the connection name, with "All agents" for `*`), ordered by how many rules wait on the owner. The header row holds the agent's name, its waiting count and a "Help me clarify" button for the whole set.
-- **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), the rule text and a status chip. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff with "Use agent's" and "Keep mine". Retired rows sit folded at the bottom of each tile.
+- **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), the rule text and a status chip. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff with "Use agent's" and "Keep mine". Owner-retired rows with pending proposals appear in the active list; other retired rows sit folded at the bottom of each tile.
 - **Inline edit:** the text turns into a textarea, with selects for kind and scope, then Save and Cancel. Nothing opens in a modal.
 - **Help me clarify** (on a row and on a tile) opens a small inline panel:
   - **Copy prompt** (always there): copies the prompt below.
-  - **Ask an agent** (only when `window.commonplaceDesktop` exists): pick a connected agent and press Ask. While it waits the panel shows "Asking <agent>…". The reply is stored as a suggestion and shown under the rule as a diff with Accept and Dismiss. For a whole set, the reply is parsed as `key: text` lines and becomes one suggestion per matching rule. A reply that can't be parsed is shown as text, with Copy.
+  - **Ask an agent** (only for owners when `window.commonplaceDesktop` exists): pick a connected agent and press Ask. While it waits the panel shows "Asking <agent>…". The reply is stored as a suggestion and shown under the rule as a diff with Accept and Dismiss. For a whole set, the reply is parsed as `key: text` lines and becomes one suggestion per matching rule. A reply that can't be parsed is shown as text, with Copy.
 - **Phone (390px):** tiles stack, chips wrap above the text, and the actions become full-width blocks.
+
+People who are not owners see no write controls or Ask an agent; Copy prompt stays available. The shell fetches full rule data only on `#/rules`, uses `/api/rules/count` elsewhere, and refreshes the Rules screen and badge for `rule.*` events. Schema initialization runs once per store path per process and repeats if the file was removed.
 
 UI language: the app is English, so the step is called "Rules" and the button "Help me clarify". These are the English names for "Regels" and "Help me verduidelijken".
 

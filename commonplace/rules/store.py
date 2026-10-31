@@ -1,6 +1,7 @@
 """Per-workspace rules and transactional, append-only version snapshots."""
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,12 +16,18 @@ def sequence(conn):
 
 
 class RuleStore:
+    _initialized = set()
+    _init_lock = threading.Lock()
+
     def __init__(self, workspace_dir):
         directory = Path(workspace_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        self.path = str(directory / "rules.sqlite3")
-        with self.connection() as conn:
-            conn.executescript(Path(__file__).with_name("schema.sql").read_text())
+        self.path = str((directory / "rules.sqlite3").resolve())
+        with self._init_lock:
+            if self.path not in self._initialized or not Path(self.path).exists():
+                with self.connection() as conn:
+                    conn.executescript(Path(__file__).with_name("schema.sql").read_text())
+                self._initialized.add(self.path)
 
     @contextmanager
     def connection(self):

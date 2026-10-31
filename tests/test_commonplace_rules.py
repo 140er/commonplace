@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from commonplace import extensions, sessions
+from commonplace import events, extensions, sessions, webhooks
 from commonplace.boards import BoardService
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.rules import RuleService, open_store
@@ -213,10 +213,14 @@ def test_suggestions_accept_dismiss_and_history(hub, env):
     assert status == 201 and suggestion["status"] == "open"
     assert suggestion["stamp_user"] == env.person.user_id
     listing = env.owner.list_rules()
-    assert listing["suggestions"] == [suggestion] and listing["seq"] == current["seq"] + 1
+    assert listing["suggestions"] == [suggestion] and listing["seq"] == current["seq"]
     assert listing["rules"][0]["text"] == current["text"]
     status, accepted = api(
-        hub, env.cookie, "POST", f"/api/rules/suggestions/{suggestion['id']}", {"action": "accept"}
+        hub,
+        env.cookie,
+        "POST",
+        f"/api/rules/suggestions/{suggestion['id']}",
+        {"action": "accept", "version": current["version"]},
     )
     assert status == 200 and accepted["text"] == suggestion["text"]
     assert accepted["source"] == "owner" and accepted["status"] == "edited"
@@ -224,7 +228,7 @@ def test_suggestions_accept_dismiss_and_history(hub, env):
     assert env.owner.history(current["id"])[-1]["source"] == "suggestion"
     suggestion = env.owner.suggest(current["id"], "Dismiss me", "helper")
     result = env.owner.decide_suggestion(suggestion["id"], "dismiss")
-    assert result["text"] == accepted["text"] and result["seq"] == accepted["seq"] + 2
+    assert result["text"] == accepted["text"] and result["seq"] == accepted["seq"]
     assert env.owner.list_rules()["suggestions"] == []
     with env.owner.store.connection() as conn:
         stored = conn.execute(
@@ -235,7 +239,7 @@ def test_suggestions_accept_dismiss_and_history(hub, env):
         env.owner.decide_suggestion(suggestion["id"], "accept")
     status, history = api(hub, env.cookie, "GET", f"/api/rules/{current['id']}/history")
     assert status == 200 and history == env.owner.history(current["id"])
-    assert [r["version"] for r in history] == list(range(1, 6))
+    assert [r["version"] for r in history] == [1, 2]
     assert all(
         r["stamp_connection"] is None and r["stamp_user"] == env.person.user_id for r in history[1:]
     )
@@ -288,7 +292,11 @@ def test_rest_owner_only_people_read_and_agents_cannot_write(hub, env):
     for auth in (member_cookie, env.token):
         for method, path, body in requests:
             assert api(hub, auth, method, path, body)[0] == 403
-    assert api(hub, member_cookie, "GET", "/api/rules")[0] == 200
+    status, listing = api(hub, member_cookie, "GET", "/api/rules")
+    assert status == 200 and listing["can_edit"] is False
+    assert api(hub, env.cookie, "GET", "/api/rules")[1]["can_edit"] is True
+    assert api(hub, member_cookie, "GET", "/api/rules/count") == (200, {"waiting": 1, "seq": 1})
+    assert api(hub, env.token, "GET", "/api/rules/count")[0] == 403
     assert api(hub, member_cookie, "GET", f"/api/rules/{current['id']}/history")[0] == 200
     assert api(hub, env.token, "GET", "/api/rules")[0] == 403
     assert api(hub, env.token, "GET", f"/api/rules/{current['id']}/history")[0] == 403
@@ -454,3 +462,356 @@ def test_owner_creates_shared_rule_over_rest(hub, env):
         == 400
     )
     assert env.owner.store.seq == 1
+
+
+def test_republish_dismissed_wording_is_a_full_noop(hub, env):
+    original = publish(env)
+    edited = env.owner.edit(original["id"], original["version"], text="Owner wording")
+    # The original wording and even different metadata cannot reopen the proposal.
+    assert publish(env, kind="style") == edited
+    proposed = publish(env, text="Proposal X")
+    assert proposed["pending"] == 1
+    kept = env.owner.action(proposed["id"], proposed["version"], "keep_edit")
+    history = env.owner.history(kept["id"])
+    assert publish(env, text="Proposal X") == kept
+    assert env.owner.store.seq == kept["seq"]
+    assert env.owner.history(kept["id"]) == history
+    agreed = publish(env, text="Owner wording")
+    assert agreed["pending"] == 0 and agreed["agent_text"] == agreed["text"]
+    assert agreed["version"] == kept["version"] + 1
+    assert publish(env, text="Owner wording") == agreed
+
+
+def test_agent_retirement_revives_and_replace_protects_owner_edits(hub, env):
+    original = publish(env)
+    retired = env.worker.rules_publish([], replace=True)["rules"][0]
+    assert retired["retired_by"] == "agent" and retired["status"] == "retired"
+    revived = publish(env)
+    assert revived["text"] == original["text"]
+    assert revived["status"] == "proposed" and revived["source"] == "agent"
+    assert revived["retired_by"] is None and revived["version"] == retired["version"] + 1
+    edited = env.owner.edit(revived["id"], revived["version"], text="Owner edit")
+    assert env.worker.rules_publish([], replace=True)["rules"] == []
+    assert env.owner.list_rules()["rules"] == [edited]
+
+
+@pytest.mark.parametrize("decision", ["accept_agent", "keep_edit", "restore"])
+@pytest.mark.parametrize("owner_source", [False, True])
+def test_owner_retirement_survives_publication(hub, env, decision, owner_source):
+    current = publish(env)
+    if owner_source:
+        current = env.owner.edit(current["id"], current["version"], text="Owner wording")
+    retired = env.owner.action(current["id"], current["version"], "retire")
+    assert retired["retired_by"] == "owner"
+    assert publish(env) == retired
+    changed = publish(env, text="New proposal")
+    assert changed["status"] == "retired" and changed["retired_by"] == "owner"
+    assert changed["text"] == current["text"] and changed["pending"] == 1
+    assert env.worker.rules_get()["rules"] == []
+    assert env.worker.rules_publish([], replace=True)["rules"] == []
+    assert publish(env, text="New proposal") == changed
+    decided = env.owner.action(changed["id"], changed["version"], decision)
+    if decision == "keep_edit":
+        assert decided["status"] == "retired" and decided["retired_by"] == "owner"
+        assert publish(env, text="New proposal") == decided
+    else:
+        assert decided["status"] == (
+            "edited" if decision == "restore" and owner_source else "accepted"
+        )
+        assert decided["retired_by"] is None
+    if decision == "accept_agent":
+        assert decided["text"] == "New proposal" and decided["source"] == "agent"
+
+
+def test_suggestions_do_not_change_rules_and_acceptance_is_versioned(hub, env):
+    current = publish(env)
+    history = env.owner.history(current["id"])
+    suggestion = env.owner.suggest(current["id"], "Suggested", "helper")
+    assert suggestion["base_version"] == current["version"]
+    assert env.owner.list_rules()["rules"] == [current]
+    assert env.owner.store.seq == current["seq"]
+    assert env.owner.history(current["id"]) == history
+    path = f"/api/rules/suggestions/{suggestion['id']}"
+    assert api(hub, env.cookie, "POST", path, {"action": "accept"})[0] == 400
+    edited = env.owner.edit(current["id"], current["version"], text="New owner edit")
+    for version in (current["version"], edited["version"]):
+        assert api(hub, env.cookie, "POST", path, {"action": "accept", "version": version}) == (
+            409,
+            {"error": "rule changed", "current": edited},
+        )
+    assert env.owner.list_rules()["suggestions"] == [suggestion]
+    history = env.owner.history(current["id"])
+    assert env.owner.decide_suggestion(suggestion["id"], "dismiss") == edited
+    assert env.owner.store.seq == edited["seq"]
+    assert env.owner.history(current["id"]) == history
+    retired = env.owner.action(edited["id"], edited["version"], "retire")
+    suggestion = env.owner.suggest(retired["id"], "Restore silently", "helper")
+    assert api(
+        hub,
+        env.cookie,
+        "POST",
+        f"/api/rules/suggestions/{suggestion['id']}",
+        {
+            "action": "accept",
+            "version": retired["version"],
+        },
+    ) == (400, {"error": "cannot accept a suggestion on a retired rule"})
+    assert env.owner.list_rules()["rules"] == [retired]
+
+
+def test_rule_events_follow_commit_and_noops_emit_nothing(hub, env, monkeypatch):
+    emitted = []
+    real_emit = events.emit
+
+    def emit(db, workspace, kind, **kwargs):
+        # This would block if the service still held its SQLite write transaction.
+        with env.owner.store.transaction() as conn:
+            assert conn.execute("SELECT value FROM meta WHERE key='seq'").fetchone()[0] >= 1
+        emitted.append((kind, kwargs["data"]))
+        return real_emit(db, workspace, kind, **kwargs)
+
+    monkeypatch.setattr(events, "emit", emit)
+    current = publish(env)
+    expected = {"agent": env.agent.actor, "ids": [current["id"]], "keys": [current["key"]]}
+    assert emitted == [("rule.changed", expected)]
+    emitted.clear()
+    assert publish(env) == current
+    assert emitted == []
+    accepted = env.owner.action(current["id"], current["version"], "accept")
+    edited = env.owner.edit(current["id"], accepted["version"], text="Owner edit")
+    assert emitted == [("rule.changed", expected)] * 2
+    emitted.clear()
+    suggestion = env.owner.suggest(current["id"], "Suggestion", "helper")
+    assert env.owner.store.seq == edited["seq"]
+    env.owner.decide_suggestion(suggestion["id"], "dismiss")
+    assert emitted == [
+        (
+            "rule.suggestion",
+            {"rule_id": current["id"], "suggestion_id": suggestion["id"], "action": "stored"},
+        ),
+        (
+            "rule.suggestion",
+            {"rule_id": current["id"], "suggestion_id": suggestion["id"], "action": "dismissed"},
+        ),
+    ]
+    emitted.clear()
+    suggestion = env.owner.suggest(current["id"], "Suggestion", "helper")
+    emitted.clear()
+    env.owner.decide_suggestion(suggestion["id"], "accept", version=edited["version"])
+    assert emitted == [("rule.changed", expected)]
+    emitted.clear()
+    env.owner.create("*", "Shared owner rule", "limit")
+    assert emitted[0][0] == "rule.changed" and emitted[0][1]["agent"] == "*"
+
+
+def test_scoped_wildcard_webhook_cannot_receive_rule_changes(hub, env):
+    token = hub.token(
+        "scoped",
+        profile="full",
+        trust="trusted",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+    )
+    principal = hub.gateway.authenticate(f"Bearer {token}")
+    hook = webhooks.add(hub.db, principal, "https://example.test/hook", kinds=["*"])
+    current = publish(env)
+    event = next(e for e in events.after(hub.db, hub.workspace) if e["kind"] == "rule.changed")
+    assert event["data"] == {
+        "agent": env.agent.actor,
+        "ids": [current["id"]],
+        "keys": [current["key"]],
+    }
+    row = hub.db._conn.execute("SELECT * FROM webhooks WHERE id=?", (hook["id"],)).fetchone()
+    assert webhooks._matches(row, event)
+    assert not webhooks._can_receive(hub.db, hub.gateway, row, event)
+    dispatcher = webhooks.Dispatcher(hub.db, gateway=hub.gateway)
+    dispatcher.on_event(event)
+    assert webhooks.deliveries(hub.db, principal, hook["id"]) == []
+
+
+def test_waiting_count_matches_visible_review_rows(hub, env):
+    first, second, third = env.worker.rules_publish([rule(key=str(i)) for i in range(3)])["rules"]
+    env.owner.action(first["id"], first["version"], "accept")
+    retired = env.owner.action(second["id"], second["version"], "retire")
+    assert env.owner.count()["waiting"] == 1
+    env.worker.rules_publish([rule(key=second["key"], text="Changed while retired")])
+    assert env.owner.count()["waiting"] == 2
+    # Only the third rule is eligible for agent retirement.
+    env.worker.rules_publish([], replace=True)
+    listing = env.owner.list_rules()
+    assert listing["waiting"] == 1
+    assert listing["waiting_by_agent"] == {env.agent.actor: 1}
+    assert api(hub, env.cookie, "GET", "/api/rules/count") == (
+        200,
+        {"waiting": listing["waiting"], "seq": listing["seq"]},
+    )
+    current = next(r for r in listing["rules"] if r["id"] == retired["id"])
+    env.owner.action(current["id"], current["version"], "keep_edit")
+    assert env.owner.count()["waiting"] == 0
+    assert third["key"] != current["key"]
+
+
+def test_store_initializes_once_and_recovers_deleted_file(tmp_path, monkeypatch):
+    from commonplace.rules.store import RuleStore
+
+    reads = []
+    read_text = Path.read_text
+
+    def read(path, *args, **kwargs):
+        if path.name == "schema.sql":
+            reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    store = RuleStore(tmp_path)
+    assert RuleStore(tmp_path / ".").seq == 0
+    assert len(reads) == 1
+    Path(store.path).unlink()
+    assert RuleStore(tmp_path).seq == 0
+    assert len(reads) == 2
+
+
+@pytest.mark.parametrize("key", ["has space", "a/b", "a:b", "é", "a\n", "x" * 101, None, 7])
+def test_keys_use_a_bounded_ascii_identifier(hub, env, key):
+    with pytest.raises(ToolError, match="no: key must match"):
+        env.worker.rules_publish([rule(key=key)])
+    assert env.owner.store.seq == 0
+
+
+@pytest.mark.parametrize("key", ["a", "Ab9._-", "x" * 100])
+def test_valid_keys(hub, env, key):
+    assert publish(env, key=key)["key"] == key
+
+
+@pytest.mark.parametrize("retired,total", [(False, 500), (True, 2000)])
+def test_publish_caps_are_atomic_and_count_retired_rows(hub, env, retired, total):
+    current = publish(env)
+    with env.owner.store.transaction() as conn:
+        # Populate the boundary without thousands of redundant public calls.
+        conn.executemany(
+            "INSERT INTO rules(agent,key,text,agent_text,kind,scope,status,source,seq,created_at,updated_at,updated_by,retired_by) "
+            "VALUES (?,?,'text','text','instruction','global',?,'agent',1,'stamp','stamp',?,?)",
+            [
+                (
+                    env.agent.actor,
+                    f"limit-{i}",
+                    "retired" if retired else "proposed",
+                    env.agent.actor,
+                    "agent" if retired else None,
+                )
+                for i in range(total - 1)
+            ],
+        )
+    history = env.owner.history(current["id"])
+    with pytest.raises(ToolError, match="no: agent rule limit exceeded"):
+        env.worker.rules_publish([rule(text="Must roll back"), rule(key="extra")])
+    assert env.owner.store.seq == current["seq"]
+    assert env.owner.history(current["id"]) == history
+    assert env.worker.rules_get()["rules"][0] == current
+    assert len(env.owner.list_rules()["rules"]) == total
+    if retired:
+        # Reviving an existing key consumes no extra row.
+        assert publish(env, key="limit-0")["status"] == "proposed"
+    else:
+        # Replacement is evaluated as a whole, after dropped keys retire.
+        assert (
+            env.worker.rules_publish([rule(key="replacement")], replace=True)["rules"][0]["status"]
+            == "proposed"
+        )
+
+
+@pytest.mark.parametrize(
+    "action_name,status,pending",
+    [
+        ("accept", "accepted", 0),
+        ("accept", "edited", 0),
+        ("accept", "retired", 0),
+        ("retire", "retired", 0),
+        ("restore", "proposed", 0),
+        ("restore", "accepted", 0),
+        ("keep_edit", "edited", 0),
+        ("accept_agent", "edited", 0),
+    ],
+)
+def test_invalid_actions_are_400_without_writes(hub, env, action_name, status, pending):
+    current = publish(env)
+    with env.owner.store.transaction() as conn:
+        conn.execute(
+            "UPDATE rules SET status=?,pending=? WHERE id=?", (status, pending, current["id"])
+        )
+    history = env.owner.history(current["id"])
+    assert api(
+        hub,
+        env.cookie,
+        "POST",
+        f"/api/rules/{current['id']}/action",
+        {
+            "version": current["version"],
+            "action": action_name,
+        },
+    ) == (400, {"error": "invalid action"})
+    assert env.owner.store.seq == current["seq"]
+    assert env.owner.history(current["id"]) == history
+
+
+def test_identical_owner_edits_are_400(hub, env):
+    current = publish(env)
+    for changes in (
+        {},
+        {"text": current["text"]},
+        {"kind": current["kind"]},
+        {"note": "Only a note"},
+    ):
+        assert api(
+            hub,
+            env.cookie,
+            "PATCH",
+            f"/api/rules/{current['id']}",
+            {
+                "version": current["version"],
+                **changes,
+            },
+        ) == (400, {"error": "nothing to change"})
+    assert env.owner.store.seq == current["seq"]
+    assert len(env.owner.history(current["id"])) == 1
+
+
+def test_unknown_arguments_and_internal_type_errors(hub, env, monkeypatch):
+    from commonplace.rules.tools import run
+
+    current = publish(env)
+    for method, path, body in [
+        ("POST", "/api/rules", {"agent": "*", "text": "Text", "kind": "limit"}),
+        ("PATCH", f"/api/rules/{current['id']}", {"version": 1, "text": "Edit"}),
+        ("POST", f"/api/rules/{current['id']}/action", {"version": 1, "action": "accept"}),
+        (
+            "POST",
+            f"/api/rules/{current['id']}/suggestions",
+            {"text": "Text", "from_agent": "helper"},
+        ),
+        ("POST", "/api/rules/suggestions/1", {"action": "dismiss"}),
+    ]:
+        assert api(hub, env.cookie, method, path, {**body, "unknown": True}) == (
+            400,
+            {"error": "unknown arguments"},
+        )
+    for name, arguments in [
+        ("rules_get", {}),
+        ("rules_publish", {"rules": []}),
+        ("rules_changed", {"since": 0}),
+    ]:
+        with pytest.raises(ToolError, match="invalid arguments"):
+            run(env.worker.ctx, name, {**arguments, "unknown": True})
+    for name in ("rules_publish", "rules_changed"):
+        with pytest.raises(ToolError, match="invalid arguments"):
+            run(env.worker.ctx, name, {})
+
+    def broken(*args, **kwargs):
+        raise TypeError("internal bug")
+
+    monkeypatch.setattr(RuleService, "rules_get", broken)
+    with pytest.raises(TypeError, match="internal bug"):
+        run(env.worker.ctx, "rules_get", {})
+    monkeypatch.setattr(RuleService, "list_rules", broken)
+    assert api(hub, env.cookie, "GET", "/api/rules") == (500, {"error": "internal error"})
