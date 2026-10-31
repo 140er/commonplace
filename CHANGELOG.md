@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Commonplace can send mail over SMTP, configured with `COMMONPLACE_SMTP_*` and off by default. `commonplace login-link --send` emails the sign-in link and never prints it ([mail setup](commonplace/README.md#mail)).
 - Commonplace rules: the owner can change who a rule applies to, between one agent and All agents (or another agent), from an "Applies to…" menu, and accept an agent's proposal for all agents in one step. The move keeps the rule's history, and the agent's later republishes of that key stay with the moved rule for the owner to review ([design](docs/design/RULES.md)).
 - Optional context handoff in Commonplace, off by default: verbatim thread storage, successor agents, thread recall, settings and webhooks ([guide](docs/handoff.md)).
 - Commonplace gateway, milestone 1 (`commonplace/`): accounts, workspaces with owner/member roles, `cmmn_` personal access tokens stored as SHA-256, per-token policy (scopes, tool profiles, wing scopes, trust levels, fail closed), an append-only audit log, and one `mempalace` worker per workspace behind it. Workers started with `MEMPALACE_MCP_TRUSTED_IDENTITY=1` stamp the gateway's verified author (`hub_user`, `hub_connection`, `hub_client`, `hub_auth`, `hub_trust`, `hub_workspace`, `hub_written_at`) on drawers, diary entries and KG facts, keep the client's `added_by` as `claimed_by`, and return the stamp in search, get_drawer and kg_query results.
