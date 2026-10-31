@@ -99,7 +99,9 @@ class PalaceContext:
         this machine's filesystem, and a value from anywhere else would be a
         number ``sync`` weighs a removal against.
         """
-        meta = dict(record.metadata)
+        from ..stored_text import user_metadata
+
+        meta = user_metadata(dict(record.metadata))
         meta.setdefault("source_file", record.source_file)
         meta.setdefault("chunk_index", record.chunk_index)
         # A drawer an adapter files names a source the same way a mined one

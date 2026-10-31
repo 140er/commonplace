@@ -232,12 +232,15 @@ def resolve_backend_for_palace(
 def _register_builtins() -> None:
     """Register chroma as the in-tree default."""
     from .chroma import ChromaBackend
+    from .compact import CompactBackend
     from .milvus import MilvusBackend
     from .pgvector import PgVectorBackend
     from .qdrant import QdrantBackend
     from .sqlite_exact import SQLiteExactBackend
 
     # Use setdefault semantics so a caller that pre-registered for tests wins.
+    if "compact" not in _registry:
+        _registry["compact"] = CompactBackend
     if "chroma" not in _registry:
         _registry["chroma"] = ChromaBackend
     if "milvus" not in _registry:

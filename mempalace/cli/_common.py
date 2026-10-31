@@ -26,6 +26,14 @@ def _selected_backend_for_palace(palace_path: str) -> str:
     return resolve_backend_name(palace_path, explicit=os.environ.get(_EXPLICIT_BACKEND_ENV))
 
 
+def _compact_maintenance_backend(palace_path: str) -> bool:
+    try:
+        return _selected_backend_for_palace(palace_path) == "compact"
+    except Exception:
+        # The existing maintenance guard renders resolution failures.
+        return False
+
+
 def _maintenance_requires_chroma(palace_path: str, command_name: str) -> bool:
     try:
         backend_name = _selected_backend_for_palace(palace_path)

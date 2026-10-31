@@ -81,7 +81,9 @@ def cmd_split(args):
 def cmd_migrate(args):
     """Migrate palace from a different ChromaDB version."""
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
-    if not _maintenance_requires_chroma(palace_path, "migrate"):
+    if not _compact_maintenance_backend(palace_path) and not _maintenance_requires_chroma(
+        palace_path, "migrate"
+    ):
         raise SystemExit(2)
     from ..migrate import migrate
 

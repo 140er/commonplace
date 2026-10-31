@@ -924,8 +924,10 @@ def call_tool(req_id, params: dict, internal: bool = False):
             -32602,
             "Invalid params: 'name' must be a string and 'arguments' an object",
         ), None
+    from ..stored_text import user_tool_arguments
+
     tool_name = params.get("name")
-    tool_args = params.get("arguments") or {}
+    tool_args = user_tool_arguments(params.get("arguments") or {})
     if tool_name not in TOOLS:
         return _json_rpc_error(req_id, -32601, f"Unknown tool: {tool_name}"), None
     # Whitelist arguments to declared schema properties only.

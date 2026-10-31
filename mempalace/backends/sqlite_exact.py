@@ -264,7 +264,7 @@ def _cosine_distances(
 
 
 def sqlite_wing_room_counts(
-    palace_path: str, collection_name: str
+    palace_path: str, collection_name: str, *, db_filename: str = _DB_FILENAME
 ) -> Optional[tuple[int, dict[str, dict[str, int]]]]:
     """Tally drawers by wing/room from ``sqlite_exact.sqlite3`` without paging.
 
@@ -272,7 +272,7 @@ def sqlite_wing_room_counts(
     cannot be trusted. ``None``/missing wing-or-room values are stored as
     ``"?"`` so ``mcp_server._sqlite_taxonomy`` can map them to ``"unknown"``.
     """
-    db_path = os.path.join(palace_path, _DB_FILENAME)
+    db_path = os.path.join(palace_path, db_filename)
     if not os.path.isfile(db_path):
         return None
     try:
@@ -322,7 +322,9 @@ def sqlite_wing_room_counts(
         return None
 
 
-def sqlite_wing_source_counts(palace_path: str, collection_name: str) -> Optional[list[tuple]]:
+def sqlite_wing_source_counts(
+    palace_path: str, collection_name: str, *, db_filename: str = _DB_FILENAME
+) -> Optional[list[tuple]]:
     """Grouped ``(wing, source_file, n)`` for transcript-mined drawers, or ``None``.
 
     Scoped to ``collection_name``: drawers and closets share the
@@ -332,7 +334,7 @@ def sqlite_wing_source_counts(palace_path: str, collection_name: str) -> Optiona
     ``mempalace audit`` needs to see whether one wing mixes several
     projects, and what ``wings split`` plans over.
     """
-    db_path = os.path.join(palace_path, _DB_FILENAME)
+    db_path = os.path.join(palace_path, db_filename)
     if not os.path.isfile(db_path):
         return None
     try:
@@ -370,13 +372,15 @@ def sqlite_wing_source_counts(palace_path: str, collection_name: str) -> Optiona
     return [(decode_value(wing), decode_value(source), n) for wing, source, n in rows]
 
 
-def sqlite_room_wing_hall_counts(palace_path: str, collection_name: str) -> Optional[list[tuple]]:
+def sqlite_room_wing_hall_counts(
+    palace_path: str, collection_name: str, *, db_filename: str = _DB_FILENAME
+) -> Optional[list[tuple]]:
     """Grouped ``(room, wing, hall, n, last_date)`` rows, or ``None``.
 
     ``last_date`` is the newest ``date`` metadata value in the group — enough
     for ``find_tunnels``' ``recent`` field without paging every drawer.
     """
-    db_path = os.path.join(palace_path, _DB_FILENAME)
+    db_path = os.path.join(palace_path, db_filename)
     if not os.path.isfile(db_path):
         return None
     try:

@@ -242,7 +242,7 @@ def _get_collection(create=False):
         # with a daemon/HTTP writer. _acquire_mcp_writer_lock() discards this
         # cached read-only collection before a promoted mutation is handled.
         collection_read_only = _READ_ONLY or (
-            backend_name in {"sqlite_exact", "rust_exact"}
+            backend_name in {"sqlite_exact", "rust_exact", "compact"}
             and getattr(_args, "transport", "stdio") == "stdio"
             and _MCP_WRITER_LOCK_CM is None
         )

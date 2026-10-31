@@ -38,6 +38,34 @@ import re
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
+KEYWORD_ONLY = "_mempalace_keyword_only"
+
+
+def user_metadata(metadata):
+    """Strip server-owned policy markers at external metadata ingress.
+
+    Backend writes and raw migration/replication copies deliberately do not
+    call this function: they carry the trusted stored policy with the record.
+    """
+    if not isinstance(metadata, dict):
+        return metadata
+    return {key: value for key, value in metadata.items() if key != KEYWORD_ONLY}
+
+
+def user_tool_arguments(arguments):
+    """Copy external tool arguments, stripping policy metadata before routing."""
+    clean = user_metadata(arguments)
+    for key in ("metadata", "metadatas"):
+        if key in clean:
+            value = clean[key]
+            clean[key] = (
+                [user_metadata(meta) for meta in value]
+                if isinstance(value, list)
+                else user_metadata(value)
+            )
+    return clean
+
+
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
