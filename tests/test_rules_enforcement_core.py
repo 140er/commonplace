@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -360,6 +360,99 @@ def test_owner_checks_permissions_kill_switch_and_accept_missing(hub, env, monke
     assert mcp(hub, env.token, "rules_get", effective=True)[1].startswith("effective rules: 0\n")
 
 
+def test_check_overrides_canonicalize_ids_and_audit_only_ids(hub, env):
+    row = hub.db.connection(env.agent.connection, hub.workspace)
+    key = "conn:" + row["name"]
+    assert env.owner.set_check(key, "warn")["checks"] == {key: "warn"}
+    assert env.owner.set_check("conn:" + row["id"], "enforce")["checks"] == {key: "enforce"}
+    assert checks.mode(hub.gateway, env.agent) == "enforce"
+    assert env.owner.set_check("conn:" + row["id"], "default")["checks"] == {}
+    env.owner.set_check("*", "warn")
+    audits = [r for r in hub.db.audit_entries() if r["action"] == "rules.check"]
+    assert [json.loads(r["target_ids"]) for r in audits] == [
+        [hub.workspace],
+        [row["id"]],
+        [row["id"]],
+        [row["id"]],
+    ]
+    changes = [
+        json.loads(r[0])
+        for r in hub.db._conn.execute(
+            "SELECT data FROM events WHERE kind='rule.check' ORDER BY seq"
+        )
+    ]
+    assert [r["agent"] for r in changes] == [key, key, key, "*"]
+
+
+def test_served_uses_one_transaction_then_none_and_guards_fast_path(hub, env, monkeypatch):
+    env.owner.create("*", "A rule", "limit")
+    snapshot(env.worker)  # Finish reconciliation before counting served writes.
+    statements = []
+    original = checks.connection
+
+    @contextmanager
+    def connection(path, **kwargs):
+        with original(path, **kwargs) as conn:
+            if kwargs.get("write") and Path(path).name == "rules.sqlite3":
+                conn.set_trace_callback(statements.append)
+            yield conn
+
+    monkeypatch.setattr(checks, "connection", connection)
+    env.worker.rules_get(effective=True)
+    assert statements[0] == "BEGIN IMMEDIATE"
+    assert sum(sql == "BEGIN IMMEDIATE" for sql in statements) == 1
+    assert sum(sql == "COMMIT" for sql in statements) == 1
+    assert next(i for i, sql in enumerate(statements) if "CREATE TABLE" in sql) > 0
+    statements.clear()
+    env.worker.rules_get(effective=True)
+    assert statements == []
+    prior = served(env.worker)
+    Path(env.worker.store.path).unlink()
+    with pytest.raises(checks.StoreLost):
+        checks.record_served(env.worker.ctx, prior["rules_seq"], prior["state"], prior=prior)
+
+
+def test_too_large_alerts_only_on_transition(hub, env):
+    rules = [env.owner.create("*", str(i) + "é" * 2400, "instruction") for i in range(7)]
+
+    def count():
+        return hub.db._conn.execute(
+            "SELECT count(*) FROM events WHERE kind='rule.too_large'"
+        ).fetchone()[0]
+
+    assert env.worker.rules_get(effective=True)["state"] == "too_large"
+    assert env.worker.rules_get(effective=True)["state"] == "too_large"
+    assert count() == 1
+    retired = env.owner.action(rules[-1]["id"], rules[-1]["version"], "retire")
+    retired2 = env.owner.action(rules[-2]["id"], rules[-2]["version"], "retire")
+    retired3 = env.owner.action(rules[-3]["id"], rules[-3]["version"], "retire")
+    assert env.worker.rules_get(effective=True)["state"] == "served"
+    for rule in (retired, retired2, retired3):
+        env.owner.action(rule["id"], rule["version"], "restore")
+    assert env.worker.rules_get(effective=True)["state"] == "too_large"
+    assert count() == 2
+
+
+def test_unavailable_replies_reveal_exception_class_only(hub, env, monkeypatch):
+    env.owner.create("*", "A private rule", "limit")
+    private_marker = "/private-marker/config/token"
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError(private_marker)
+
+    for attribute in ("reconcile", "record_served"):
+        with monkeypatch.context() as patch:
+            patch.setattr(checks, attribute, broken)
+            reply = env.worker.rules_get(effective=True)["reply"]
+            assert reply.startswith("rules_seq unavailable: OperationalError;")
+            assert private_marker not in reply and "A private rule" not in reply
+    with monkeypatch.context() as patch:
+        patch.setattr(checks, "guard", broken)
+        ok, reply = mcp(hub, env.token, "rules_get", effective=True)
+        assert ok and reply.startswith("rules_seq unavailable: OperationalError;")
+        assert private_marker not in reply and "A private rule" not in reply
+
+
 def test_internal_call_is_thread_local_and_nested_memory_is_marked(hub, env, monkeypatch):
     assert not checks.is_internal_call()
     with checks.internal_call():
@@ -539,6 +632,108 @@ def test_migration_deploy_backfill_and_generation_copy(hub, env, tmp_path, monke
         "https://example.test/org/repo/-/merge_requests/3",
     ):
         assert pr_repository(url) == "example.test/org/repo"
+
+
+def test_deploy_retries_partial_binding_after_board_request(hub, env, monkeypatch):
+    directory = Path(env.worker.ctx.workspace_dir())
+    RuleStore(directory)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            checks, "migrate", lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("locked"))
+        )
+        checks.deploy(hub.gateway)
+    assert hub.db.rule_stores(hub.workspace) is None
+    BoardService(env.owner.ctx).board_add(slug="partial", wing="shared")
+    bound = hub.db.rule_stores(hub.workspace)
+    assert bound["boards_store_id"] is not None and bound["rules_store_id"] is None
+    checks.deploy(hub.gateway)
+    assert hub.db.rule_stores(hub.workspace)["rules_store_id"] == checks.meta(
+        directory / "rules.sqlite3", "store_id"
+    )
+
+
+def test_deploy_retry_never_opens_bound_replacement(hub, env, monkeypatch):
+    directory = Path(env.worker.ctx.workspace_dir())
+    env.owner.create("*", "Original", "limit")
+    bound_id = hub.db.rule_stores(hub.workspace)["rules_store_id"]
+    path = directory / "rules.sqlite3"
+    path.unlink()
+    RuleStore(directory)
+    with checks.connection(path, write=True) as conn:
+        conn.execute("DROP TABLE agent_seq")
+        conn.execute("DROP TABLE agent_served")
+        conn.execute("DELETE FROM meta WHERE key='boards_visibility_seen'")
+    before = path.read_bytes()
+    BoardStore(directory)  # PRESENT unbound boards forces the deploy retry.
+    assert hub.db.rule_stores(hub.workspace)["boards_store_id"] is None
+    original = checks.connection
+    opened = []
+
+    @contextmanager
+    def connection(target, **kwargs):
+        opened.append(Path(target).name)
+        with original(target, **kwargs) as conn:
+            yield conn
+
+    with monkeypatch.context() as patch:
+        patch.setattr(checks, "connection", connection)
+        checks.deploy(hub.gateway)
+    assert "rules.sqlite3" not in opened
+    assert path.read_bytes() == before
+    bound = hub.db.rule_stores(hub.workspace)
+    assert bound["rules_store_id"] == bound_id and bound["boards_store_id"] is not None
+    with pytest.raises(checks.StoreLost):
+        checks.guard(hub.db, hub.workspace, directory)
+
+
+def test_deploy_logs_workspace_enumeration_failure(hub, monkeypatch, caplog):
+    def broken():
+        raise sqlite3.OperationalError("enumeration failed")
+
+    monkeypatch.setattr(hub.db, "workspaces", broken)
+    checks.deploy(hub.gateway)
+    assert "rules store deployment enumeration failed" in caplog.text
+
+
+def test_second_board_open_does_not_write_store_bindings(hub, env):
+    BoardService(env.owner.ctx).board_add(slug="first", wing="shared")
+    statements = []
+    hub.db._conn.set_trace_callback(statements.append)
+    try:
+        BoardService(env.owner.ctx)
+    finally:
+        hub.db._conn.set_trace_callback(None)
+    assert not [
+        sql
+        for sql in statements
+        if "rule_stores" in sql and sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+    ]
+
+
+def test_pr_repo_index_migrates_old_column_and_backfills_later_writes(hub, env):
+    boards = BoardService(env.owner.ctx)
+    boards.board_add(slug="legacy", wing="shared")
+    card = boards.task_add(board="legacy", title="Legacy PR")
+    with boards.store.transaction() as conn:
+        conn.execute("DROP INDEX tasks_pending_pr_repo")
+        conn.execute("ALTER TABLE tasks DROP COLUMN pr_repo")
+        conn.execute(
+            "UPDATE tasks SET pr_url=? WHERE id=?",
+            ("https://example.test/org/one/pull/1", card["number"]),
+        )
+    store = BoardStore(env.worker.ctx.workspace_dir())
+    with store.transaction() as conn:
+        assert conn.execute("SELECT pr_repo FROM tasks").fetchone()[0] == "example.test/org/one"
+        predicate = "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
+        plan = conn.execute("EXPLAIN QUERY PLAN SELECT id,pr_url FROM tasks WHERE " + predicate)
+        assert "tasks_pending_pr_repo" in " ".join(str(tuple(row)) for row in plan)
+        conn.execute(
+            "UPDATE tasks SET pr_repo='',pr_url=? WHERE id=?",
+            ("https://example.test/org/two/pull/2", card["number"]),
+        )
+    store = BoardStore(env.worker.ctx.workspace_dir())
+    with store.connection() as conn:
+        assert conn.execute("SELECT pr_repo FROM tasks").fetchone()[0] == "example.test/org/two"
 
 
 @pytest.mark.parametrize(

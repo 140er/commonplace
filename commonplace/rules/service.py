@@ -396,8 +396,10 @@ class RuleService:
                 reply, state = render.effective(
                     result["rules"], result["seq"], result["rules_seq"], format=format, mode=mode
                 )
-                checks.record_served(self.ctx, result["rules_seq"], state)
-                if state == "too_large":
+                changed = checks.record_served(
+                    self.ctx, result["rules_seq"], state, prior=result["served"]
+                )
+                if changed and state == "too_large":
                     self._emit("rule.too_large", {"agent": self.principal.actor})
                 return dict(result, reply=reply, state=state)
             except checks.StoreLost:
@@ -405,7 +407,7 @@ class RuleService:
             except Exception as exc:
                 log_failure(logger, "effective rules unavailable", exc)
                 return {
-                    "reply": "rules_seq unavailable: could not build the complete rule set; keep your last copy"
+                    "reply": f"rules_seq unavailable: {type(exc).__name__}; keep your last copy"
                 }
         board = None if board is _UNSET else board
         repo = None if repo is _UNSET else repo
@@ -496,6 +498,7 @@ class RuleService:
             agent == "*" and mode == "default"
         ):
             raise ToolError("no: invalid check mode")
+        target_id = self.principal.workspace_id
         if agent != "*":
             from commonplace.control_db import ControlError
             from commonplace.policy import Policy
@@ -504,9 +507,13 @@ class RuleService:
                 row = self.ctx.db.connection(agent[5:], self.principal.workspace_id)
             except ControlError:
                 raise ToolError("no: connection not found") from None
+            agent = "conn:" + row["name"]
+            target_id = row["id"]
             if mode == "enforce" and not Policy.from_json(row["policy"]).tool_visible("rules_get"):
                 raise ToolError("no: this connection cannot read rules")
-        self.ctx.db.set_rule_check(self.principal.workspace_id, agent, mode, self.principal)
+        self.ctx.db.set_rule_check(
+            self.principal.workspace_id, agent, mode, self.principal, target_id=target_id
+        )
         self._emit("rule.check", {"agent": agent, "mode": mode})
         return {"checks": self.ctx.db.rule_checks(self.principal.workspace_id)}
 

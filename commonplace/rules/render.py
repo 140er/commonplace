@@ -62,21 +62,62 @@ def text(rows):
 
 def effective(rows, seq, rules_seq, *, format="text", mode="off", budget=REPLY_BYTES):
     """Count is the total authorized set; truncation never splits a rule."""
-    render = md if format == "md" else text
+    markdown = format == "md"
     header = f"effective rules: {len(rows)}"
     marker = f"rules_seq {rules_seq}" if mode != "off" else "rules_seq off"
+    sequence = f"seq {seq}"
+    frame_bytes = length(header) + length(sequence) + 3
+    headings = {kind: f"## {heading}" for kind, heading in HEADINGS}
+    prepared = []
+    for row in rows:
+        quoted = quote(row["text"])
+        line = (
+            "- " + label(row) + quoted
+            if markdown
+            else f"{row['key']} [{row['kind']} {row['scope']} {row['status']} "
+            f"{row['source']} v{row['version']}] " + quoted
+        )
+        prepared.append((row["kind"], line, length(line)))
+
+    def addition(item, count, groups):
+        kind, _, size = item
+        if not markdown:
+            return size + bool(count)
+        if kind not in headings:
+            return 0  # md() omits unknown kinds.
+        return size + 1 + (length(headings[kind]) + 2 + bool(groups) if kind not in groups else 0)
 
     def reply(selected, tail):
-        return "\n".join([header, render(selected), f"seq {seq}", tail])
+        if markdown:
+            groups = {kind: [] for kind in headings}
+            for kind, line, _ in selected:
+                if kind in groups:
+                    groups[kind].append(line)
+            body = "\n".join(
+                headings[kind] + "\n\n" + "\n".join(lines) + "\n"
+                for kind, lines in groups.items()
+                if lines
+            )
+        else:
+            body = "\n".join(line for _, line, _ in selected)
+        return "\n".join([header, body, sequence, tail])
 
-    complete = reply(rows, marker)
-    if length(complete) <= budget:
-        return complete, "served"
-    shown = []
-    for row in rows:
-        candidate = [*shown, row]
-        tail = f"Incomplete: {len(rows) - len(candidate)} rules not shown.\n{TOO_LARGE}"
-        if length(reply(candidate, tail)) <= budget:
-            shown.append(row)
+    size, groups = 0, set()
+    for count, item in enumerate(prepared):
+        size += addition(item, count, groups)
+        if item[0] in headings:
+            groups.add(item[0])
+    if frame_bytes + size + length(marker) <= budget:
+        return reply(prepared, marker), "served"
+
+    shown, groups, size = [], set(), 0
+    for item in prepared:
+        candidate_size = size + addition(item, len(shown), groups)
+        tail = f"Incomplete: {len(rows) - len(shown) - 1} rules not shown.\n{TOO_LARGE}"
+        if frame_bytes + candidate_size + length(tail) <= budget:
+            shown.append(item)
+            size = candidate_size
+            if item[0] in headings:
+                groups.add(item[0])
     tail = f"Incomplete: {len(rows) - len(shown)} rules not shown.\n{TOO_LARGE}"
     return reply(shown, tail), "too_large"

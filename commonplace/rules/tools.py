@@ -28,11 +28,9 @@ def run(ctx, name, args):
         if name == "rules_publish":
             raise
         return checks.STORE_LOST
-    except Exception:
+    except Exception as exc:
         if name == "rules_get" and args.get("effective"):
-            return (
-                "rules_seq unavailable: could not build the complete rule set; keep your last copy"
-            )
+            return f"rules_seq unavailable: {type(exc).__name__}; keep your last copy"
         raise
     result = getattr(service, name)(**args)
     if "reply" in result:

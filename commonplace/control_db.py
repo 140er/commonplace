@@ -588,7 +588,7 @@ class ControlDB:
                 )
             )
 
-    def set_rule_check(self, workspace_id, agent, mode, principal):
+    def set_rule_check(self, workspace_id, agent, mode, principal, *, target_id):
         if mode not in ("default", "off", "warn", "enforce"):
             raise ControlError("invalid check mode")
         with self._lock, self._tx() as conn:
@@ -610,7 +610,7 @@ class ControlDB:
                 user_id=principal.user_id,
                 connection_id=principal.connection_id,
                 auth=principal.auth,
-                target_ids=(agent,),
+                target_ids=(target_id,),
             )
 
     def rule_stores(self, workspace_id):

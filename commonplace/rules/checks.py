@@ -151,20 +151,23 @@ def reconcile(db, workspace_id, directory, *, timeout=0.2, bind=True, emit=True)
             raise
 
 
-def record_served(ctx, rules_seq, state):
+def record_served(ctx, rules_seq, state, *, prior=None):
     directory = ctx.workspace_dir()
     guard(ctx.db, ctx.principal.workspace_id, directory)
+    if prior is not None and prior["state"] == state and prior["rules_seq"] == rules_seq:
+        return False
     with connection(Path(directory) / "rules.sqlite3", write=True, timeout=0.2) as conn:
-        migrate(conn, visibility(directory))
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
+            migrate(conn, visibility(directory))
+            cursor = conn.execute(
                 "INSERT INTO agent_served VALUES (?,?,?,?) ON CONFLICT(agent) DO UPDATE SET "
                 "state=excluded.state,rules_seq=excluded.rules_seq,at=excluded.at "
                 "WHERE agent_served.state!=excluded.state OR agent_served.rules_seq IS NOT excluded.rules_seq",
                 (ctx.principal.actor, state, rules_seq, now()),
             )
             conn.commit()
+            return cursor.rowcount != 0
         except BaseException:
             conn.rollback()
             raise
@@ -175,25 +178,40 @@ def migrate_workspace(db, workspace_id, directory, *, accept=False):
     directory = Path(directory)
     boards = directory / "boards.sqlite3"
     rules = directory / "rules.sqlite3"
-    if boards.exists():
+    bound = {} if accept else (db.rule_stores(workspace_id) or {})
+    if boards.exists() and bound.get("boards_store_id") is None:
         from commonplace.boards.store import BoardStore
 
         BoardStore(directory, create=False)
-    if rules.exists():
+    if rules.exists() and bound.get("rules_store_id") is None:
         with connection(rules, write=True, timeout=0.2) as conn:
-            migrate(conn, visibility(directory))
-    ids = [meta(path, "store_id") for path in (rules, boards)]
+            # Bound boards need no probe here; effective reconciliation catches
+            # any visibility change on the next rules read.
+            current = 0 if bound.get("boards_store_id") is not None else visibility(directory)
+            migrate(conn, current)
+    ids = [
+        bound[key] if bound.get(key) is not None else meta(path, "store_id")
+        for path, key in ((rules, "rules_store_id"), (boards, "boards_store_id"))
+    ]
     db.bind_rule_stores(workspace_id, *ids, accept=accept)
     return {"accepted": True} if accept else None
 
 
 def deploy(gateway):
-    for workspace in gateway.db.workspaces():
+    try:
+        workspaces = gateway.db.workspaces()
+    except Exception as exc:
+        log_failure(logger, "rules store deployment enumeration failed", exc)
+        return
+    for workspace in workspaces:
         try:
-            if gateway.db.rule_stores(workspace["id"]) is None:
-                migrate_workspace(
-                    gateway.db, workspace["id"], gateway.workspace_dir(workspace["id"])
-                )
+            bound = gateway.db.rule_stores(workspace["id"])
+            directory = Path(gateway.workspace_dir(workspace["id"]))
+            if bound is None or any(
+                bound.get(f"{name}_store_id") is None and (directory / f"{name}.sqlite3").exists()
+                for name in ("rules", "boards")
+            ):
+                migrate_workspace(gateway.db, workspace["id"], directory)
         except Exception as exc:
             log_failure(logger, "rules store deployment migration failed", exc)
 

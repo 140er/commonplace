@@ -267,8 +267,15 @@ class BoardStore:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
                     )
+                pending_pr_repo = (
+                    "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS tasks_pending_pr_repo ON tasks(id) WHERE "
+                    + pending_pr_repo
+                )
                 for row in conn.execute(
-                    "SELECT id,pr_url FROM tasks WHERE pr_repo IS NULL OR pr_repo=''"
+                    "SELECT id,pr_url FROM tasks WHERE " + pending_pr_repo
                 ).fetchall():
                     repo = pr_repository(row["pr_url"])
                     if repo:

@@ -1,0 +1,181 @@
+{
+  "rows": [
+    {
+      "id": 0,
+      "key": "0",
+      "kind": "style",
+      "text": "long 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠",
+      "scope": "global",
+      "scope_ref": null,
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    },
+    {
+      "id": 1,
+      "key": "1",
+      "kind": "limit",
+      "text": "Keep exact words",
+      "scope": "global",
+      "scope_ref": null,
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    },
+    {
+      "id": 2,
+      "key": "2",
+      "kind": "instruction",
+      "text": "Scoped @instructions",
+      "scope": "repo",
+      "scope_ref": "example.test/org/app@v1",
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    },
+    {
+      "id": 3,
+      "key": "3",
+      "kind": "permission",
+      "text": "Allowed\nwith control‮",
+      "scope": "board",
+      "scope_ref": "ops space",
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    },
+    {
+      "id": 4,
+      "key": "4",
+      "kind": "limit",
+      "text": "Next hard limit",
+      "scope": "global",
+      "scope_ref": null,
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    },
+    {
+      "id": 5,
+      "key": "5",
+      "kind": "style",
+      "text": "Short style",
+      "scope": "global",
+      "scope_ref": null,
+      "status": "accepted",
+      "source": "owner",
+      "version": 1
+    }
+  ],
+  "cases": [
+    {
+      "format": "md",
+      "budget": 180,
+      "shown": [
+        1
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n## Hard limits\n\n- \"Keep exact words\"\n\nseq 9\nIncomplete: 5 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "md",
+      "budget": 240,
+      "shown": [
+        1,
+        4,
+        5
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n## Hard limits\n\n- \"Keep exact words\"\n- \"Next hard limit\"\n\n## Style\n\n- \"Short style\"\n\nseq 9\nIncomplete: 3 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "md",
+      "budget": 320,
+      "shown": [
+        1,
+        2,
+        4
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n## Hard limits\n\n- \"Keep exact words\"\n- \"Next hard limit\"\n\n## Standing instructions\n\n- [repo \"example.test/org/app\\u0040v1\"] \"Scoped \\u0040instructions\"\n\nseq 9\nIncomplete: 3 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "md",
+      "budget": 900,
+      "shown": [
+        0,
+        5
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n## Style\n\n- \"long 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠\"\n- \"Short style\"\n\nseq 9\nIncomplete: 4 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "md",
+      "budget": 2000,
+      "shown": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "state": "served",
+      "reply": "effective rules: 6\n## Hard limits\n\n- \"Keep exact words\"\n- \"Next hard limit\"\n\n## Permissions\n\n- [board \"ops space\"] \"Allowed\\nwith control\\u202e\"\n\n## Standing instructions\n\n- [repo \"example.test/org/app\\u0040v1\"] \"Scoped \\u0040instructions\"\n\n## Style\n\n- \"long 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠\"\n- \"Short style\"\n\nseq 9\nrules_seq 123456789"
+    },
+    {
+      "format": "text",
+      "budget": 180,
+      "shown": [],
+      "state": "too_large",
+      "reply": "effective rules: 6\n\nseq 9\nIncomplete: 6 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "text",
+      "budget": 240,
+      "shown": [
+        1
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n1 [limit global accepted owner v1] \"Keep exact words\"\nseq 9\nIncomplete: 5 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "text",
+      "budget": 320,
+      "shown": [
+        1,
+        2,
+        4
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n1 [limit global accepted owner v1] \"Keep exact words\"\n2 [instruction repo accepted owner v1] \"Scoped \\u0040instructions\"\n4 [limit global accepted owner v1] \"Next hard limit\"\nseq 9\nIncomplete: 3 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "text",
+      "budget": 900,
+      "shown": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "state": "too_large",
+      "reply": "effective rules: 6\n1 [limit global accepted owner v1] \"Keep exact words\"\n2 [instruction repo accepted owner v1] \"Scoped \\u0040instructions\"\n3 [permission board accepted owner v1] \"Allowed\\nwith control\\u202e\"\n4 [limit global accepted owner v1] \"Next hard limit\"\n5 [style global accepted owner v1] \"Short style\"\nseq 9\nIncomplete: 1 rules not shown.\nrules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
+    },
+    {
+      "format": "text",
+      "budget": 2000,
+      "shown": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "state": "served",
+      "reply": "effective rules: 6\n0 [style global accepted owner v1] \"long 🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠🧠\"\n1 [limit global accepted owner v1] \"Keep exact words\"\n2 [instruction repo accepted owner v1] \"Scoped \\u0040instructions\"\n3 [permission board accepted owner v1] \"Allowed\\nwith control\\u202e\"\n4 [limit global accepted owner v1] \"Next hard limit\"\n5 [style global accepted owner v1] \"Short style\"\nseq 9\nrules_seq 123456789"
+    }
+  ]
+}

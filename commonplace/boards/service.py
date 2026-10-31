@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def open_store(workspace_dir, *, legacy_origin=None, db=None, workspace_id=None) -> BoardStore:
     store = BoardStore(workspace_dir, legacy_origin=legacy_origin)
-    if db is not None:
+    if db is not None and (db.rule_stores(workspace_id) or {}).get("boards_store_id") is None:
         from commonplace.rules.checks import meta
 
         db.bind_rule_stores(workspace_id, None, meta(store.path, "store_id"))
