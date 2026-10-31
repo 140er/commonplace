@@ -2,6 +2,7 @@
 
 import base64
 import random
+import re
 import time
 
 import pytest
@@ -12,10 +13,20 @@ from mempalace.index_hygiene import base64_candidate_ranges, find_base64_spans, 
 
 def test_candidate_detection_is_bounded_on_adversarial_short_runs():
     # Without the start boundary, each 199-character run is retried 199 times.
-    text = ("A" * 199 + " ") * 200_000
-    start = time.perf_counter()
-    assert base64_candidate_ranges(text) == []
-    assert time.perf_counter() - start < 2.0
+    text = ("A" * 199 + " ") * 20_000
+    linear_scan = re.compile(r"[A-Za-z0-9+/_\-]+").findall
+    candidate_times, baseline_times = [], []
+    for _ in range(3):
+        start = time.perf_counter()
+        assert base64_candidate_ranges(text) == []
+        candidate_times.append(time.perf_counter() - start)
+        start = time.perf_counter()
+        assert len(linear_scan(text)) == 20_000
+        baseline_times.append(time.perf_counter() - start)
+    # Scale to the machine's speed; the old regex takes about 50x the
+    # linear scan, while the boundary-checked regex takes about 5x.
+    assert min(candidate_times) < 20 * min(baseline_times)
+    assert min(candidate_times) < 2.0
 
 
 def test_candidate_ranges_keep_rejected_runs_whole():

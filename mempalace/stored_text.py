@@ -369,7 +369,7 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     and PLACEHOLDER_RE.fullmatch(placeholder)
                     and _BASE64_FRAGMENT.fullmatch(text[start:end])
                     and type(emit) is bool
-                    and (emit or start == 0)
+                    and (emit or (start == 0 and end < len(text)))
                     and (start == 0 or not _BASE64_CHAR.fullmatch(text[start - 1]))
                     and (
                         end == len(text)
@@ -377,9 +377,9 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     )
                 ):
                     raise ValueError("invalid span")
-                if start > 0 and end < len(text):
-                    # Only edge fragments can rely on unavailable source context.
-                    # Interior spans must satisfy the detector's complete rule,
+                if emit and end < len(text):
+                    # Emitting spans with a visible end are complete runs,
+                    # even at offset zero. They must satisfy the detector's rule,
                     # including its threshold, alphabets, pad bits and entropy.
                     spans = find_base64_spans(text[start:end])
                     if len(spans) != 1 or spans[0].placeholder != placeholder:

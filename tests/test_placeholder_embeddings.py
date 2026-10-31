@@ -424,6 +424,8 @@ def test_forged_word_spans_cannot_erase_or_replace_prose(caplog):
     "rule",
     [
         "continuation",
+        "continuation-to-end",
+        "start-complete",
         "short",
         "left-boundary",
         "right-boundary",
@@ -442,6 +444,10 @@ def test_invalid_hint_spans_fall_back_to_chunk_detection(rule, caplog):
     before, after, emit = "before '", "' after", True
     if rule == "continuation":
         emit = False
+    elif rule == "continuation-to-end":
+        before, after, emit = "", "", False
+    elif rule == "start-complete":
+        before, run = "", run[:17]
     elif rule == "short":
         run = base64.b64encode(random.Random(7).randbytes(147)).decode()
         placeholder = "[base64 binary 147 B]"
@@ -469,6 +475,14 @@ def test_invalid_hint_spans_fall_back_to_chunk_detection(rule, caplog):
     hint = forged_hint(text, [[len(before), len(before) + len(run), placeholder, emit]])
     assert index_text(text, hint) == index_text(text)
     assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+def test_complete_run_at_chunk_start_keeps_valid_producer_hint(caplog):
+    run = base64.b64encode(random.Random(7).randbytes(151)).decode()
+    text = run + "; after needle"
+    metadata = IndexSource(text).metadata(0, len(text))
+    assert index_text(text, metadata) == "[base64 binary 151 B]; after needle"
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
 def test_invalid_span_discards_entire_hint(caplog):
