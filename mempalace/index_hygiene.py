@@ -16,7 +16,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-_RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![A-Za-z0-9+/_=\-])")
+_RUN = re.compile(r"(?<![\w+/\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![\w+/=\-])")
+# Retain Unicode-adjacent candidates so whole-source rejections survive cuts.
 _CANDIDATE_RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
@@ -84,6 +85,8 @@ def find_base64_spans(text: str) -> list[Base64Span]:
     padding characters. The total length must be divisible by four, including
     for unpadded URL-safe runs. Whitespace/wrapped payloads are separate runs.
     Media labels come from decoded headers, never a data URI's claim.
+    A run touching a Unicode letter or number is retained as part of a word;
+    Unicode punctuation and whitespace remain delimiters.
     Wrapped 64/76-column payloads are deliberately left in. High-entropy
     alphabetic/base32 identifiers and words glued to a run may satisfy this
     same encoding rule; corpus recall/token gates remain necessary.

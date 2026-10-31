@@ -3,11 +3,13 @@
 import base64
 import json
 import random
+import sys
 from collections import UserDict
 from types import MappingProxyType
+from unittest.mock import patch
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import example, given, settings, strategies as st
 
 from mempalace.backends import embedding_wrapper as ew
 from mempalace.index_hygiene import find_base64_spans
@@ -35,32 +37,56 @@ def corpus(size=1831):
     return 'Before screenshot="' + payload + '"; after needle.\n'
 
 
-@given(st.integers(150, 3000), st.integers(1, 900), st.text(alphabet="abc \nΩ", max_size=40))
+@given(
+    size=st.one_of(st.sampled_from([150, 151, 152, 153]), st.integers(150, 3000)),
+    width=st.one_of(st.integers(1, 12), st.integers(13, 900)),
+    prose=st.text(alphabet="abc \nΩ\t=", max_size=40),
+    edges=st.sampled_from(
+        [
+            ("'", "'"),
+            (" ", "\t"),
+            ("\n", "\r\n"),
+            ("=", ";"),
+            ("key=", ";"),
+            ("Ω", "é"),
+            ("٢", "Ⅳ"),
+            ("…", "🧭"),
+        ]
+    ),
+)
 @settings(max_examples=80, deadline=None)
-def test_index_changes_only_validated_span_intersections(size, width, prose):
-    text = prose + corpus(size) + prose
-    source = IndexSource(text)
-    assert source.spans == find_base64_spans(text)
-    for start in range(0, len(text), width):
-        end = min(start + width, len(text))
-        document = text[start:end]
-        metadata = source.metadata(start, end)
-        cursor, expected = start, []
-        for span in source.spans:
-            if span.start >= end or span.end <= start:
-                continue
-            expected.append(text[cursor : max(start, span.start)])
-            if start <= span.start < end or span.start <= start < end <= span.end:
-                expected.append(span.placeholder)
-            cursor = min(end, span.end)
-        expected.append(text[cursor:end])
-        assert index_text(document, metadata, stored_form=False) == "".join(expected)
-        stored, stored_meta = encode_record(document, metadata)
-        assert index_text(stored, stored_meta) == "".join(expected)
-        assert document == text[start:end]
-        assert bool(INDEX_SPANS in metadata) == any(
-            s.start < end and s.end > start for s in source.spans
-        )
+@example(size=150, width=1, prose="", edges=("=", "\t"))
+@example(size=151, width=2, prose="\n", edges=("key=", ";"))
+@example(size=152, width=3, prose="", edges=("Ω", "é"))
+@example(size=153, width=12, prose="", edges=("…", "🧭"))
+@example(size=150, width=7, prose="", edges=("٢", "Ⅳ"))
+def test_index_changes_only_validated_span_intersections(size, width, prose, edges):
+    with patch("mempalace.stored_text._warn_index_hint") as warn:
+        run = base64.b64encode(random.Random(size).randbytes(size)).decode()
+        text = prose + edges[0] + run + edges[1] + prose
+        source = IndexSource(text)
+        assert source.spans == find_base64_spans(text)
+        for start in range(0, len(text), width):
+            end = min(start + width, len(text))
+            document = text[start:end]
+            metadata = source.metadata(start, end)
+            cursor, expected = start, []
+            for span in source.spans:
+                if span.start >= end or span.end <= start:
+                    continue
+                expected.append(text[cursor : max(start, span.start)])
+                if start <= span.start < end or span.start <= start < end <= span.end:
+                    expected.append(span.placeholder)
+                cursor = min(end, span.end)
+            expected.append(text[cursor:end])
+            assert index_text(document, metadata, stored_form=False) == "".join(expected)
+            stored, stored_meta = encode_record(document, metadata)
+            assert index_text(stored, stored_meta) == "".join(expected)
+            assert document == text[start:end]
+            assert bool(INDEX_SPANS in metadata) == any(
+                left < end and right > start for left, right in source.candidates
+            )
+    warn.assert_not_called()
 
 
 def test_boundary_tail_has_no_fragment_or_duplicate_placeholder():
@@ -405,17 +431,92 @@ def test_deep_hint_json_cannot_crash_decoder(caplog):
     assert "Ignoring stale or invalid index span hint" in caplog.text
 
 
-def test_forged_word_spans_cannot_erase_or_replace_prose(caplog):
-    # Synthetic example: every forged fragment uses the base64 alphabet.
+@pytest.mark.parametrize(
+    "start,end,emit,accepted",
+    [
+        (5, 10, False, False),
+        (14, 29, False, False),
+        (31, 39, True, True),
+        (0, 4, False, True),
+    ],
+)
+def test_each_word_hint_pins_the_trusted_edge_contract(start, end, emit, accepted, caplog):
+    # Synthetic prose: edge fragments rely on trusted whole-source provenance.
     text = "Meet Alice at Kubernetes-east; password"
-    hint = forged_hint(
-        text,
-        [
-            [5, 10, "[base64 binary 0 B]", False],
-            [14, 29, "[base64 binary 0 B]", False],
-            [31, 39, "[base64 binary 0 B]", True],
-        ],
-    )
+    placeholder = "[base64 binary 150 B]"
+    hint = forged_hint(text, [[start, end, placeholder, emit]])
+    expected = text
+    if accepted:
+        expected = text[:start] + (placeholder if emit else "") + text[end:]
+    assert index_text(text, hint) == expected
+    assert ("Ignoring stale or invalid index span hint" in caplog.text) == (not accepted)
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        "[base64 binary 150 B]",
+        "[base64 image/png 300 B]",
+        "[base64 application/pdf 151 B]",
+        f"[base64 binary {sys.maxsize} B]",
+    ],
+)
+def test_a_single_token_chunk_can_be_a_trusted_edge_fragment(placeholder, caplog):
+    hint = forged_hint("password", [[0, 8, placeholder, True]])
+    assert index_text("password", hint) == placeholder
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        "[base64 binary 0 B]",
+        "[base64 binary 149 B]",
+        "[base64 binary -1 B]",
+        "[base64 binary 0150 B]",
+        f"[base64 binary {sys.maxsize + 1} B]",
+        "[base64 text/plain 150 B]",
+        "[base64 image/unknown 150 B]",
+        "[base64 binary 150 bytes]",
+    ],
+)
+def test_edge_hints_reject_impossible_placeholders(placeholder, caplog):
+    text = "prefix password"
+    hint = forged_hint(text, [[7, len(text), placeholder, True]])
+    assert index_text(text, hint) == text
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "two words",
+        "naïve",
+        "abc=def",
+        "abc===",
+        "abc+_",
+        "abc==",
+        "A" * 201,
+    ],
+)
+def test_edge_hints_require_a_possible_fragment_of_the_declared_run(fragment, caplog):
+    text = "prefix " + fragment
+    hint = forged_hint(text, [[7, len(text), "[base64 binary 150 B]", True]])
+    assert index_text(text, hint) == text
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "text,start,end,emit",
+    [
+        ("naïve", 0, 2, False),
+        ("naïve", 3, 5, True),
+        ("wordⅣ", 0, 4, False),
+        ("٢word", 1, 5, True),
+    ],
+)
+def test_edge_hints_cannot_split_unicode_words(text, start, end, emit, caplog):
+    hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
     assert index_text(text, hint) == text
     assert "Ignoring stale or invalid index span hint" in caplog.text
 
@@ -642,85 +743,107 @@ def test_event_and_artifact_metadata_remain_verbatim_at_client_boundaries():
 
 @pytest.mark.parametrize("chunker", ["project", "exchange", "general"])
 @given(
-    size=st.integers(200, 1800),
-    width=st.integers(37, 850),
+    size=st.one_of(st.sampled_from([150, 151, 152, 153]), st.integers(200, 1800)),
+    width=st.one_of(st.integers(1, 12), st.integers(37, 850)),
     kind=st.sampled_from(["valid", "unpadded", "glued", "mixed", "padding", "identifier"]),
     prefix=st.sampled_from(
         ["Ω 🧭", "lone\udcff byte", "NUL\0value", "line\u2028separator", "CRLF\r\ntext"]
     ),
+    edges=st.sampled_from(
+        [
+            ("'", "'"),
+            (" ", "\t"),
+            ("\n", "\r\n"),
+            ("=", ";"),
+            ("key=", ";"),
+            ("Ω", "é"),
+            ("٢", "Ⅳ"),
+            ("…", "🧭"),
+        ]
+    ),
 )
 @settings(max_examples=200, deadline=None)
-def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, prefix):
-    import re
-    from bisect import bisect_left
+@example(size=150, width=1, kind="valid", prefix="Ω", edges=("=", "\t"))
+@example(size=151, width=2, kind="valid", prefix="NUL\0value", edges=("key=", ";"))
+@example(size=152, width=3, kind="valid", prefix="Ω", edges=("Ω", "é"))
+@example(size=153, width=12, kind="unpadded", prefix="Ω", edges=("…", "🧭"))
+@example(size=150, width=7, kind="valid", prefix="Ω", edges=("٢", "Ⅳ"))
+def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, prefix, edges):
+    with patch("mempalace.stored_text._warn_index_hint") as warn:
+        import re
+        from bisect import bisect_left
 
-    payload = base64.urlsafe_b64encode(random.Random(size).randbytes(size)).decode()
-    run = {
-        "valid": payload,
-        "unpadded": payload.rstrip("="),
-        "glued": "word" + payload.rstrip("=") + "tailx",
-        "mixed": payload.rstrip("=") + "+/_-",
-        "padding": payload + "===",
-        "identifier": "abcdef0123456789" * 30,
-    }[kind]
-    text = (
-        f"  > {prefix} first   \r\nBefore '{run}' after needle.\r\n> second\nreply\n> third\nreply"
-    )
-    spans = find_base64_spans(text)
-    if chunker == "project":
-        from mempalace.miner import chunk_text
-
-        chunks = chunk_text(
-            text, "fixture.txt", chunk_size=width, chunk_overlap=width // 5, min_chunk_size=0
+        payload = base64.urlsafe_b64encode(random.Random(size).randbytes(size)).decode()
+        run = {
+            "valid": payload,
+            "unpadded": payload.rstrip("="),
+            "glued": "word" + payload.rstrip("=") + "tailx",
+            "mixed": payload.rstrip("=") + "+/_-",
+            "padding": payload + "===",
+            "identifier": "abcdef0123456789" * 30,
+        }[kind]
+        text = (
+            f"  > {prefix} first   \r\nBefore {edges[0]}{run}{edges[1]} after needle."
+            "\r\n> second\nreply\n> third\nreply"
         )
-        view, ranges, cursor = text, [], 0
-        for chunk in chunks:
-            start = text.find(chunk["content"], cursor)
-            assert start >= 0
-            ranges.append((start, start + len(chunk["content"])))
-            cursor = start + 1
-        projected = [(s.start, s.end, s.placeholder) for s in spans]
-    else:
-        if chunker == "exchange":
-            from mempalace.convo_miner import chunk_exchanges
+        spans = find_base64_spans(text)
+        if chunker == "project":
+            from mempalace.miner import chunk_text
 
-            chunks = chunk_exchanges(text, chunk_size=width, min_chunk_size=0)
+            chunks = chunk_text(
+                text, "fixture.txt", chunk_size=width, chunk_overlap=width // 5, min_chunk_size=0
+            )
+            view, ranges, cursor = text, [], 0
+            for chunk in chunks:
+                start = text.find(chunk["content"], cursor)
+                assert start >= 0
+                ranges.append((start, start + len(chunk["content"])))
+                cursor = start + 1
+            projected = [(s.start, s.end, s.placeholder) for s in spans]
         else:
-            from mempalace.general_extractor import extract_memories
+            if chunker == "exchange":
+                from mempalace.convo_miner import chunk_exchanges
 
-            chunks = extract_memories(text, chunk_size=width)
-        view = "".join(c["content"] for c in chunks)
-        # Independent oracle: map non-whitespace character ordinals using
-        # small fixture arrays, then project only original validated spans.
-        source_positions = [i for i, c in enumerate(text) if not c.isspace()]
-        view_positions = [i for i, c in enumerate(view) if not c.isspace()]
-        assert "".join(text[i] for i in source_positions) == "".join(
-            view[i] for i in view_positions
-        )
-        projected = []
-        for span in spans:
-            first = bisect_left(source_positions, span.start)
-            last = bisect_left(source_positions, span.end) - 1
-            projected.append((view_positions[first], view_positions[last] + 1, span.placeholder))
-        ranges, start = [], 0
-        for chunk in chunks:
-            ranges.append((start, start + len(chunk["content"])))
-            start += len(chunk["content"])
-    for chunk, (start, end) in zip(chunks, ranges):
-        expected, cursor = [], start
-        for left, right, placeholder in projected:
-            if left >= end or right <= start:
-                continue
-            expected.append(view[cursor : max(start, left)])
-            if start <= left < end or left <= start < end <= right:
-                expected.append(placeholder)
-            cursor = min(end, right)
-        expected.append(view[cursor:end])
-        expected_text = re.sub(r"[\x00\ud800-\udfff]", " ", "".join(expected))
-        assert (
-            index_text(chunk["content"], chunk_index_metadata(chunk), stored_form=False)
-            == expected_text
-        )
+                chunks = chunk_exchanges(text, chunk_size=width, min_chunk_size=0)
+            else:
+                from mempalace.general_extractor import extract_memories
+
+                chunks = extract_memories(text, chunk_size=width)
+            view = "".join(c["content"] for c in chunks)
+            # Independent oracle: map non-whitespace character ordinals using
+            # small fixture arrays, then project only original validated spans.
+            source_positions = [i for i, c in enumerate(text) if not c.isspace()]
+            view_positions = [i for i, c in enumerate(view) if not c.isspace()]
+            assert "".join(text[i] for i in source_positions) == "".join(
+                view[i] for i in view_positions
+            )
+            projected = []
+            for span in spans:
+                first = bisect_left(source_positions, span.start)
+                last = bisect_left(source_positions, span.end) - 1
+                projected.append(
+                    (view_positions[first], view_positions[last] + 1, span.placeholder)
+                )
+            ranges, start = [], 0
+            for chunk in chunks:
+                ranges.append((start, start + len(chunk["content"])))
+                start += len(chunk["content"])
+        for chunk, (start, end) in zip(chunks, ranges):
+            expected, cursor = [], start
+            for left, right, placeholder in projected:
+                if left >= end or right <= start:
+                    continue
+                expected.append(view[cursor : max(start, left)])
+                if start <= left < end or left <= start < end <= right:
+                    expected.append(placeholder)
+                cursor = min(end, right)
+            expected.append(view[cursor:end])
+            expected_text = re.sub(r"[\x00\ud800-\udfff]", " ", "".join(expected))
+            assert (
+                index_text(chunk["content"], chunk_index_metadata(chunk), stored_form=False)
+                == expected_text
+            )
+    warn.assert_not_called()
 
 
 def test_hybrid_keyword_scores_use_hinted_index_view_and_preserve_text(monkeypatch):

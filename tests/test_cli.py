@@ -2387,7 +2387,7 @@ def test_cmd_compress_with_config(mock_config_cls, tmp_path, capsys):
 @patch("mempalace.cli.MempalaceConfig")
 def test_cmd_compress_stores_results(mock_config_cls, capsys):
     """Non-dry-run compress stores to the mempalace_aaak collection."""
-    from mempalace.stored_text import RESERVED_METADATA
+    from mempalace.stored_text import INDEX_SPANS, RESERVED_METADATA
 
     mock_config_cls.return_value.palace_path = "/fake/palace"
     args = argparse.Namespace(palace=None, wing=None, dry_run=False, config=None)
@@ -2435,7 +2435,9 @@ def test_cmd_compress_stores_results(mock_config_cls, capsys):
     assert "Total:" in out
     mock_comp_col.upsert.assert_called_once()
     assert mock_comp_col.upsert.call_args.kwargs["metadatas"][0]["kind"] == "aaak"
-    assert not RESERVED_METADATA.intersection(mock_comp_col.upsert.call_args.kwargs["metadatas"][0])
+    stored_metadata = mock_comp_col.upsert.call_args.kwargs["metadatas"][0]
+    assert stored_metadata[INDEX_SPANS] is None
+    assert not (RESERVED_METADATA - {INDEX_SPANS}).intersection(stored_metadata)
     assert all(source_metadata[key] == "source-only" for key in RESERVED_METADATA)
     assert "mempalace_aaak" in out
 
@@ -2446,6 +2448,7 @@ def test_cmd_compress_output_lands_in_the_aaak_collection(tmp_path, capsys):
     from mempalace.backends import CollectionNotInitializedError
     from mempalace.backends.chroma import ChromaBackend
     from mempalace.palace import get_aaak_collection, get_closets_collection, get_collection
+    from mempalace.stored_text import INDEX_SPANS, IndexSource
 
     palace_path = str(tmp_path / "palace")
 
@@ -2456,6 +2459,17 @@ def test_cmd_compress_output_lands_in_the_aaak_collection(tmp_path, capsys):
         documents=["The quick brown fox jumps over the lazy dog."],
         metadatas=[{"wing": "test", "room": "demo", "source_file": "fox.txt"}],
     )
+    # A merging backend must clear the hint already on a previous AAAK row.
+    import base64
+
+    old_text = base64.b64encode(bytes(range(256))).decode()
+    aaak = get_aaak_collection(palace_path, create=True)
+    aaak.upsert(
+        ids=["drawer-1"],
+        documents=[old_text],
+        metadatas=[IndexSource(old_text).metadata(0, len(old_text))],
+    )
+    assert aaak.get(ids=["drawer-1"], include=["metadatas"])["metadatas"][0][INDEX_SPANS]
 
     args = argparse.Namespace(palace=palace_path, wing=None, dry_run=False, config=None)
     with patch("mempalace.cli.MempalaceConfig") as mock_config_cls:
@@ -2473,6 +2487,7 @@ def test_cmd_compress_output_lands_in_the_aaak_collection(tmp_path, capsys):
     assert got["ids"] == ["drawer-1"]
     assert got["documents"] and got["documents"][0], "empty compressed doc"
     meta = got["metadatas"][0]
+    assert meta.get(INDEX_SPANS) is None
     assert meta.get("wing") == "test"
     assert meta.get("kind") == "aaak"
     assert "compression_ratio" in meta

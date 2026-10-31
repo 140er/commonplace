@@ -302,7 +302,7 @@ def cmd_compress(args):
 
     # Store compressed versions (unless dry-run)
     if not args.dry_run:
-        from ..stored_text import user_metadata
+        from ..stored_text import INDEX_SPANS, user_metadata
 
         try:
             moved = move_aaak_out_of_closets(palace_path)
@@ -317,6 +317,7 @@ def cmd_compress(args):
                     metadatas=[
                         {
                             **user_metadata(meta),
+                            INDEX_SPANS: None,
                             "kind": "aaak",
                             "compression_ratio": round(stats["size_ratio"], 1),
                             "original_tokens": stats["original_tokens_est"],

@@ -56,6 +56,9 @@ range: a span emits its placeholder where it starts, continuation fragments are
 removed, and a chunk wholly inside a span indexes the placeholder. No vectors are
 removed in A0; the vector count is unchanged. Keyword-only message policy is B1c.
 Queries use the same placeholder rule when they contain validated base64.
+Runs touching a Unicode letter or number on either side are part of a word,
+so `é<run>é` is no longer treated as base64. Unicode punctuation and whitespace
+remain delimiters. The detector and hint validator apply the same boundary rule.
 The index view also replaces NUL and lone surrogates with spaces for inference,
 rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
 strings retain those characters through the existing reversible encoding.
@@ -65,7 +68,18 @@ SHA-256 of the verbatim chunk and clipped local spans. This preserves boundary
 context during repair, migration and replication without storing another prose
 copy. An empty span list records a whole-input rejection of a base64-shaped
 run, so a valid-looking fragment cannot override that decision after splitting.
-Removed hints are tombstoned on merging writes. A stale version or content hash
+Hints are trusted provenance from server code or a replicated palace belonging
+to the same owner; drawer ingress strips caller-supplied hints. The SHA-256 binds
+a hint to its chunk but does not authenticate it. Complete runs are revalidated
+by the detector. Fragments at chunk edges cannot be fully validated without the
+whole content, so their acceptance, media label and decoded size rely on that
+trusted provenance. Validation still checks fragment characters, visible word
+boundaries and placeholder format and size bounds (150 to `sys.maxsize` decoded
+bytes, with an implied encoded length large enough to cover the fragment).
+Edge fragments can therefore remove or replace short tokens in the index;
+hints are not a security boundary
+against a malicious palace writer. Stored documents remain verbatim.
+Removed hints are tombstoned on merging writes. A stale or invalid hint
 logs a rate-limited warning and falls back to detection on the supplied document. A projection failure logs a warning and stores the
 verbatim chunks without hints rather than losing the source. The hint is removed
 from drawer arguments and public responses; it never changes the document returned by `get_drawer`.

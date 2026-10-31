@@ -35,6 +35,32 @@ def test_candidate_ranges_keep_rejected_runs_whole():
     assert base64_candidate_ranges(text) == [(200, 200 + len(rejected))]
 
 
+@pytest.mark.parametrize("size", [150, 151, 152])
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("é", ""),
+        ("", "é"),
+        ("Ω", "漢"),
+        ("٢", ""),
+        ("", "Ⅳ"),
+    ],
+)
+def test_unicode_letters_and_numbers_preserve_adjacent_runs(size, before, after):
+    _, encoded = payload(size)
+    text = before + encoded + after
+    assert find_base64_spans(text) == []
+    assert index_text(text) == text
+    assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
+
+
+@pytest.mark.parametrize("before,after", [("…", "—"), ("«", "»"), ("\u2003", "\n"), ("🧭", "🌿")])
+def test_unicode_punctuation_and_whitespace_delimit_runs(before, after):
+    _, encoded = payload()
+    [span] = find_base64_spans(before + encoded + after)
+    assert (span.start, span.end) == (len(before), len(before) + len(encoded))
+
+
 def payload(size=300, prefix=b"", urlsafe=False):
     data = prefix + random.Random(size).randbytes(size - len(prefix))
     encode = base64.urlsafe_b64encode if urlsafe else base64.b64encode

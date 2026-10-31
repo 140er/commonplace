@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import threading
 import time
 from bisect import bisect_left, bisect_right
@@ -51,8 +52,8 @@ INDEX_VERSION = 1
 logger = logging.getLogger(__name__)
 _hint_warning_times = {}
 _hint_warning_lock = threading.Lock()
-_BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/_\-]+={0,2}|={1,2})\Z")
-_BASE64_CHAR = re.compile(r"[A-Za-z0-9+/_\-]")
+_BASE64_FRAGMENT = re.compile(r"(?:(?:[A-Za-z0-9+/]+|[A-Za-z0-9_\-]+)={0,2}|={1,2})\Z")
+_RUN_BOUNDARY_CHAR = re.compile(r"[\w+/\-]")
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -366,17 +367,29 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     and type(end) is int
                     and cursor <= start < end <= len(text)
                     and isinstance(placeholder, str)
-                    and PLACEHOLDER_RE.fullmatch(placeholder)
                     and _BASE64_FRAGMENT.fullmatch(text[start:end])
                     and type(emit) is bool
                     and (emit or (start == 0 and end < len(text)))
-                    and (start == 0 or not _BASE64_CHAR.fullmatch(text[start - 1]))
+                    and (start == 0 or not _RUN_BOUNDARY_CHAR.fullmatch(text[start - 1]))
                     and (
                         end == len(text)
-                        or not (_BASE64_CHAR.fullmatch(text[end]) or text[end] == "=")
+                        or not (_RUN_BOUNDARY_CHAR.fullmatch(text[end]) or text[end] == "=")
                     )
                 ):
                     raise ValueError("invalid span")
+                match = PLACEHOLDER_RE.fullmatch(placeholder)
+                if match is None:
+                    raise ValueError("invalid placeholder")
+                size = int(match["decoded_bytes"])
+                # The detector requires 200 payload characters (150 bytes).
+                # A full run must fit in a Python bytes object and cover this
+                # fragment, including only the padding its byte count permits.
+                if not (
+                    150 <= size <= sys.maxsize
+                    and end - start <= 4 * ((size + 2) // 3)
+                    and text[start:end].count("=") <= -size % 3
+                ):
+                    raise ValueError("invalid placeholder size")
                 if emit and end < len(text):
                     # Emitting spans with a visible end are complete runs,
                     # even at offset zero. They must satisfy the detector's rule,
