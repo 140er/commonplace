@@ -37,7 +37,7 @@ def _restamp_palace_db() -> None:
     _note_own_db_stamp(_config.palace_path, (_palace_db_inode, _palace_db_mtime))
 
 
-def _drop_session_client_for_system_reset() -> None:
+def _drop_session_client_for_system_reset(palace_path=None) -> None:
     """Close the session client before the shared Chroma System is dropped.
 
     Search goes through ``ChromaBackend`` and the other tools through this
@@ -56,6 +56,11 @@ def _drop_session_client_for_system_reset() -> None:
         _collection_cache_backend, \
         _collection_cache_palace, \
         _collection_open_error
+    if palace_path is not None:
+        from ..backends.chroma import _same_palace
+
+        if _config is None or not _same_palace(palace_path, _config.palace_path):
+            return
     cached = _client_cache
     _client_cache = None
     _collection_cache = None
@@ -66,9 +71,9 @@ def _drop_session_client_for_system_reset() -> None:
     if cached is None:
         return
     try:
-        close = getattr(cached, "close", None)
-        if callable(close):
-            close()
+        from ..backends.chroma import _close_client
+
+        _close_client(cached, _config.palace_path)
     except Exception:
         logger.debug(
             "Failed to close session Chroma client before system reset",

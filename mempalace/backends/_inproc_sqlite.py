@@ -236,6 +236,12 @@ def palace_db_lock(db_path) -> threading.RLock:
     return _lock_for_key(_key(os.fspath(db_path)))
 
 
+def held_palace_db_paths() -> frozenset[str]:
+    """Snapshot database locks owned by this thread without acquiring any."""
+    with _registry_lock:
+        return frozenset(path for path, lock in _locks.items() if lock._is_owned())
+
+
 class PalaceSqliteConnection:
     """A ``sqlite3.Connection`` stand-in that holds :func:`palace_db_lock`.
 
