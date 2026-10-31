@@ -906,6 +906,29 @@ def test_invalid_cli_arguments_return_zero(local, api, monkeypatch, capsys):
     assert len(err.splitlines()) == 1
 
 
+def test_plain_http_hook_does_not_import_oauth(local, api):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from commonplace.handoff import hook
+from commonplace.handoff.models import HandoffSettings
+hook._settings = lambda *args: HandoffSettings(enabled=False)
+assert hook.main(['--client', 'claude-code']) == 0
+assert not any(name == 'commonplace.oauth' or name.startswith('commonplace.oauth.') for name in sys.modules)
+""",
+        ],
+        input=json.dumps(local.data),
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == result.stderr == ""
+
+
 def test_wrapper_honors_interpreter_and_forwards_arguments(local, tmp_path):
     marker = tmp_path / "wrapper-args.json"
     interpreter = tmp_path / "custom python"

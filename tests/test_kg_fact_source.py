@@ -219,7 +219,9 @@ def test_source_backfill_retries_after_interrupted_first_open(tmp_path, monkeypa
             KnowledgeGraph(db_path=path)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT count(*) FROM fact_sources").fetchone()[0] == 0
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
     with KnowledgeGraph(db_path=path) as kg:
+        assert kg._conn().execute("PRAGMA user_version").fetchone()[0] == 1
         sources = kg.sources(["t_old"])["t_old"]
         assert len(sources) == 1 and sources[0]["source_file"] == "source.txt"
         assert _row(kg, "t_old")["source_file"] == "source.txt"

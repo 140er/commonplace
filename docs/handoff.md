@@ -434,6 +434,11 @@ launcher records `launch_failed` without starting a command or sending a request
 if its kind is disabled when the handoff runs. The default `client` launcher
 and the hook's local `successor_argv` do not require this gateway opt-in.
 
+Command and webhook launcher rows stored before this fix stay inert while
+their kinds are disabled. Review those rows, including their `updated_by`
+actors, before setting `COMMONPLACE_HANDOFF_LAUNCHERS`: enabling a kind can
+activate an older stored launcher.
+
 With operator opt-in, owners can configure a `command` launcher on the gateway,
 or a `webhook` launcher at a public destination. Webhook URLs must pass the event
 webhook URL rules and resolve only to public addresses. Private and other
@@ -529,12 +534,12 @@ For agent tokens, every launch and settings write or delete also requires
 
 | Method | Path | Access | Body or result |
 |---|---|---|---|
-| POST | `/api/handoff` | `handoff:write` | Handoff request → action, record, launch flag and prompt |
+| POST | `/api/handoff` | agent tokens: `handoff:write` + `trusted` | Handoff request → action, record, launch flag and prompt |
 | GET | `/api/handoffs?task=%23142` | `threads:read` | Handoffs for the task; task filter is optional |
 | GET | `/api/handoffs/<id>` | `threads:read` | Handoff record |
 | POST | `/api/handoffs/<id>/successor` | `handoff:write` | `{agent_ref, url?, thread_id?}` |
 | POST | `/api/handoffs/<id>/launch-failed` | `handoff:write` | `{error}` |
-| POST | `/api/handoffs/<id>/relaunch` | owner | Retry a failed launch |
+| POST | `/api/handoffs/<id>/relaunch` | owner; agent tokens: `handoff:write` + `trusted` | Retry a failed launch |
 | GET | `/api/threads/<id>` | `threads:read` | Stored thread metadata |
 | GET | `/api/threads/<id>/messages?start=0&end=99` | `threads:read` | Verbatim messages in the inclusive range |
 | POST | `/api/threads/<id>/recall` | `threads:read` | `{query, limit?, follow_chain?}` → search hits |

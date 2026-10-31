@@ -14,7 +14,7 @@ import math
 import re
 import secrets
 import ssl
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -22,9 +22,9 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from commonplace import sessions
 
-from .models import SCOPE_THREADS_READ, SettingRow
+from .models import SCOPE_THREADS_READ, LauncherConfig, SettingRow
 from .recall import ThreadNotFound
-from .settings import THRESHOLD_MAX, THRESHOLD_MIN, SettingsError
+from .settings import THRESHOLD_MAX, THRESHOLD_MIN, SettingsError, parse_launcher
 
 _LIFETIME = 12 * 60 * 60
 _ANONYMOUS_LIFETIME = 10 * 60
@@ -66,6 +66,15 @@ def _safe_link(url, label):
 
 def _field(name, value):
     return f'<input type="hidden" name="{escape(name)}" value="{escape(str(value))}">'
+
+
+def _safe_launcher(config):
+    if config is None:
+        return None
+    try:
+        return parse_launcher(asdict(config))
+    except SettingsError:
+        return LauncherConfig()
 
 
 def _switch(enabled, *, disabled=False):
@@ -307,7 +316,9 @@ class _Pages:
                     ),
                     SettingRow(workspace, scope, ref),
                 )
-                updated = replace(existing, enabled=enabled == "on")
+                updated = replace(
+                    existing, enabled=enabled == "on", launcher=_safe_launcher(existing.launcher)
+                )
                 if scope == "workspace":
                     updated = replace(updated, threshold=threshold)
                 self.ctx.settings.set(
