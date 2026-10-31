@@ -142,7 +142,7 @@ COMMIT;
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
 
-- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Leaving `review` requires `decide`; agents cannot answer their own asks.
+- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Only the asking agent (`return_to` matches the caller) may close a `review` card with `status: "done"` (subject to `done_needs_review`), or keep it in `review`. Other exits from `review` require `decide`; agents cannot answer their own asks.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with the ask `Done?` and options `ship | redo`.
 - `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
@@ -170,7 +170,7 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 ok #145 → user:avery  review
 ```
 
-An agent can also hand off a card it does not hold, but only from `todo` and only to a person: that is how an agent asks a question before starting work.
+An agent can also hand off a card it does not hold, but only from `todo`, only when it is free or reserved for that agent, and only to a person: that is how an agent asks a question before starting work.
 
 ## Move rules
 
@@ -181,8 +181,9 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 | doing → todo | `task_handoff` (holder) | yes |
 | doing → review | `task_update` or `task_handoff` to a person (holder) | yes |
 | doing → done | `task_update` (holder) | yes |
-| review → anything | no | `decide` only |
-| todo → review | `task_update` or `task_handoff` to a person | yes |
+| review → done | `task_update` (asking agent only; subject to `done_needs_review`) | `decide` only |
+| review → other columns | `decide` only (never own asks) | `decide` only |
+| todo → review | `task_update` or `task_handoff` to a person (free or self-reserved) | yes |
 | todo → done | `task_update` | no |
 | done → todo | status-only `task_update` | yes |
 | any → backlog | holder, or a free `todo` card | yes |

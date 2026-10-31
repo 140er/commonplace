@@ -184,7 +184,8 @@ def add(name, properties, required=(), *, work=False, trusted=False, owner=False
                 "task_add": "Add a card; submissions from untrusted connections enter backlog.",
                 "task_comment": "Append a comment and renew your claim.",
                 "task_take_next": "Claim a ready card reserved for you or free for anyone.",
-                "task_update": "Update a card, move todo/held doing to review or done, or reopen done to todo (status only). Save a lesson with done. "
+                "task_update": "Update a card, move todo/held doing to review or done, or close your own review card with done. "
+                "Reopen done to todo (status only). Save a lesson with done. "
                 "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
                 "ask": "Ask the workspace owner and end the turn.",

@@ -54,7 +54,7 @@ backlog │ todo │ doing │ review │ done
 
 The full table of who may make each move is in [API.md](API.md#move-rules). Three rules carry the design:
 
-- **Only people move cards out of `backlog` and `review`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
+- **Only people move cards out of `backlog`. Only the asking agent may close a `review` card via `task_update`; other review exits require `decide`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
 - **Only the holder changes a `doing` card.** Others can comment.
 - **Cards are never deleted.** Closing one with a reason is a move to `done`. The event log is append-only (enforced by triggers in `schema.sql`).
 
@@ -82,7 +82,7 @@ People's holds never expire. Avery dragging a card into `doing` means he is on i
   - `to=anyone`: back to `todo`, free.
   - `to=codex:vm`: back to `todo`, reserved for that connection. Only it (or a person) can start it.
   - `to=avery`: into `review`. The note becomes the question, `options` become buttons, and the card remembers who asked (`return_to`).
-- **Ask before starting:** an agent can hand a `todo` card it does not hold to a person. That is how it says "this is unclear" without claiming.
+- **Ask before starting:** an agent can hand a free or self-reserved `todo` card to a person. That is how it says "this is unclear" without claiming.
 
 After a decision, the card goes back to `todo`, reserved for the agent that asked. Its next `task_take_next` returns that card first, with the decision on a line of its own. The agent does not wait or poll: it hands off, ends its turn, and the session-start hook line tells it when something is back (API.md, "Hook line").
 
