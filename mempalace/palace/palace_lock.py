@@ -205,12 +205,6 @@ def _holder_keys_locked():
     return _palace_lock_keys
 
 
-def _held_by_this_process(lock_key: str) -> bool:
-    """Return True if this process already holds ``mine_palace_lock`` for ``lock_key``."""
-    with _palace_lock_guard:
-        return lock_key in _holder_keys_locked()
-
-
 def _mark_held(lock_key: str, hold: _PalaceLockHold) -> None:
     """Register an acquired lease; caller holds ``_palace_lock_guard``."""
     _holder_keys_locked()[lock_key] = hold
@@ -271,7 +265,7 @@ def _acquire_palace_lock_file(lock_path: str, resolved: str):
     """Acquire an OS lease; caller serializes process-local registration."""
     # Never truncate the prior holder's identity before acquiring the lock.
     # Byte zero is the lock sentinel, including on Windows.
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0), 0o600)
     # No buffered I/O mutex may be inherited locked by a forked child.
     lf = os.fdopen(fd, "r+b", buffering=0)
     try:
@@ -350,9 +344,10 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
     try:
         with _palace_lock_guard:
             holds = _holder_keys_locked()
-            hold = holds.get(lock_key)
-            if hold is not None:
-                hold.users += 1
+            existing = holds.get(lock_key)
+            if existing is not None:
+                existing.users += 1
+                hold = existing
             else:
                 # Keep acquisition and registration atomic with respect to
                 # other threads. OS acquisition is non-blocking, so this guard
@@ -376,9 +371,20 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
                     hold.users -= 1
                     if hold.users == 0:
                         del holds[lock_key]
-                        # Closing releases the byte-range lock on Windows and
-                        # the flock on POSIX, including exceptional exits.
-                        hold.file.close()
+                        # A child may inherit a descriptor before registration,
+                        # so closing this descriptor alone may retain the flock.
+                        try:
+                            hold.file.seek(0)
+                            if os.name == "nt":
+                                import msvcrt
+
+                                msvcrt.locking(hold.file.fileno(), msvcrt.LK_UNLCK, 1)
+                            else:
+                                import fcntl
+
+                                fcntl.flock(hold.file, fcntl.LOCK_UN)
+                        finally:
+                            hold.file.close()
 
 
 # Backward-compatible alias (previous patch iteration used a single global

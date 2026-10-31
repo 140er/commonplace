@@ -411,9 +411,8 @@ def test_holder_set_not_orphaned_by_interrupt_after_mark_held(tmp_path, monkeypa
 
     Registration is protected by cleanup on every exceptional exit. A
     ``KeyboardInterrupt``/signal after ``_mark_held`` must not strand the key
-    after cleanup frees the flock, or ``_held_by_this_process`` would report
-    a hold the OS lock no longer backs,
-    and the next re-entrant acquire in this process would pass through and
+    after cleanup frees the flock, or the next re-entrant acquire in this
+    process would pass through and
     write without the flock (two concurrent writers into one palace).
     """
     _isolate_home(monkeypatch, tmp_path)
@@ -483,6 +482,77 @@ if pid == 0:
     os._exit(code)
 """,
             str(tmp_path / "palace"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is unavailable")
+@pytest.mark.parametrize("before_registration", [False, True], ids=["registered", "unregistered"])
+def test_final_release_with_live_forked_child(tmp_path, monkeypatch, before_registration):
+    """Release and close the final lease even while a child retains a copy."""
+    _isolate_home(monkeypatch, tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import fcntl, os, sys
+import mempalace.palace as palace
+
+before_registration = sys.argv[2] == "True"
+files = []
+child = None
+release = None
+real_acquire = palace._acquire_palace_lock_file
+
+def fork_child():
+    global child, release
+    ready, release = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(release)
+        os.read(ready, 1)
+        os._exit(0)
+    os.close(ready)
+
+def acquire(*args):
+    file = real_acquire(*args)
+    files.append(file)  # Keep a reference: garbage collection must not close it for us.
+    if before_registration:
+        fork_child()
+    return file
+
+palace._acquire_palace_lock_file = acquire
+try:
+    with palace.mine_palace_lock(sys.argv[1]):
+        lock_path = next(iter(palace._palace_lock_keys))
+        if not before_registration:
+            fork_child()
+        assert os.waitpid(child, os.WNOHANG) == (0, 0)
+        with open(lock_path, "r+b") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise AssertionError("lease released before the final exit")
+    assert files[0].closed, "final exit did not close the lease descriptor"
+    assert os.waitpid(child, os.WNOHANG) == (0, 0)
+    with open(lock_path, "r+b") as probe:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(probe, fcntl.LOCK_UN)
+finally:
+    if release is not None:
+        os.close(release)
+        _, status = os.waitpid(child, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+""",
+            str(tmp_path / "palace"),
+            str(before_registration),
         ],
         capture_output=True,
         text=True,

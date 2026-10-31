@@ -114,8 +114,11 @@ def test_concurrent_writable_open_waits_for_lease_registration(writers, monkeypa
 
 def test_closing_original_opener_keeps_other_threads_writer_lease(writers, monkeypatch):
     path, backends = writers
-    registered, finish_open, writing, finish_write = (threading.Event() for _ in range(4))
+    registered, finish_open, other_registered, finish_other_open = (
+        threading.Event() for _ in range(4)
+    )
     real_init = backends[0]._init_schema
+    other_init = backends[1]._init_schema
     errors = []
 
     def pause_open(conn):
@@ -129,17 +132,21 @@ def test_closing_original_opener_keeps_other_threads_writer_lease(writers, monke
         except BaseException as exc:
             errors.append(exc)
 
+    def pause_other_open(conn):
+        other_init(conn)
+        other_registered.set()
+        _wait(finish_other_open)
+
     def overlapping_writer():
         try:
             col = backends[1].get_collection(path, "drawers", create=False)
             with col._cursor(write=True) as cur:
                 cur.execute("INSERT INTO meta(key,value) VALUES ('overlap_test','committed')")
-                writing.set()
-                _wait(finish_write)
         except BaseException as exc:
             errors.append(exc)
 
     monkeypatch.setattr(backends[0], "_init_schema", pause_open)
+    monkeypatch.setattr(backends[1], "_init_schema", pause_other_open)
     threads = [
         threading.Thread(target=original_opener),
         threading.Thread(target=overlapping_writer),
@@ -148,13 +155,13 @@ def test_closing_original_opener_keeps_other_threads_writer_lease(writers, monke
         threads[0].start()
         _wait(registered)
         threads[1].start()
-        _wait(writing)
+        _wait(other_registered)
         finish_open.set()
         _join(threads[:1])
         assert errors == []
         backends[0].close()
         assert _probe_writer(path, backends[1]) == "busy"
-        finish_write.set()
+        finish_other_open.set()
         _join(threads[1:])
         assert errors == []
         assert (
@@ -168,7 +175,7 @@ def test_closing_original_opener_keeps_other_threads_writer_lease(writers, monke
         assert _probe_writer(path, backends[1]) == "ok"
     finally:
         finish_open.set()
-        finish_write.set()
+        finish_other_open.set()
         _join([thread for thread in threads if thread.ident is not None])
 
 
@@ -182,9 +189,9 @@ def test_shared_handle_serializes_writers(writers):
 
     class ObservedHandleLock:
         def __enter__(self):
-            if threading.current_thread() is threads[1]:
+            if not real_lock.acquire(blocking=False):
                 attempted.set()
-            real_lock.acquire()
+                real_lock.acquire()
 
         def __exit__(self, *exc):
             real_lock.release()
