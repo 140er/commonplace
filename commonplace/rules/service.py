@@ -232,7 +232,8 @@ class RuleService:
                     result.append(self._create(conn, self.principal.actor, key, values))
                     continue
                 if not self._visible(row):
-                    raise ToolError("no: rule not found")
+                    # The owner moved it out of this agent's sight: skip it, reveal nothing.
+                    continue
                 if row["retired_by"] == "agent":
                     updates = dict(
                         values,

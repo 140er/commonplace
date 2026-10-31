@@ -89,7 +89,7 @@ All tools are registered from a new extension module, `commonplace.rules` (added
 
 Untrusted tokens may publish: what they publish starts as a proposal for the owner, and nothing else is written. Rule text is stored verbatim, and replies quote it as data the way board tools do.
 
-Agent loop, as written in the skill: at the start of a session call `rules_changed since=<last seq>`. When something changed, call `rules_get` and follow `text`: owner edits win, and retired rules no longer apply. When your own rules change, call `rules_publish` with `replace=true`.
+Agent loop, as written in the skill: at the start of a session call `rules_changed since=<last seq>`. Whenever `seq` advanced, call `rules_get` and follow `text`: owner edits win, and retired rules no longer apply. When your own rules change, call `rules_publish` with `replace=true`.
 
 ## REST (web app, cookie auth)
 

@@ -115,9 +115,10 @@ export function rulesHandlers(root, api, refresh, showError) {
     pending.add(key);
     const buttons = [...element.querySelectorAll("button")];
     buttons.forEach((button) => { button.disabled = true; });
-    try { if (await work() !== false) await refresh(); }
+    // A finished write renders once even if a background refresh overtakes this one.
+    try { if (await work() !== false) { ui.force = true; await refresh(); } }
     catch (error) {
-      if (error.status === 409) { await refresh(); showError("Rule changed. Review it and try again."); }
+      if (error.status === 409) { ui.force = true; await refresh(); showError("Rule changed. Review it and try again."); }
       else showError(error.message);
     } finally { pending.delete(key); buttons.forEach((button) => { button.disabled = false; }); await refreshIfStale(); }
   }
@@ -207,7 +208,8 @@ export function rulesHandlers(root, api, refresh, showError) {
   });
   const ui = {
     stale: false,
-    update(next, options = {}) { payload = next; owner = options.owner ?? true; ui.stale = false; },
+    force: false,
+    update(next, options = {}) { payload = next; owner = options.owner ?? true; ui.stale = false; ui.force = false; },
     busy() { return pending.size > 0 || !!root.querySelector('.rules-view .rule-new:not([hidden]), .rules-view form[data-rule-form="edit"], .rules-view details[open], .rules-view [data-rule-history]:not([hidden]), .rules-view .rule-clarify[open] [data-ask-agent], .rules-view .rule-clarify[open] [data-reply-text]'); },
   };
   return ui;

@@ -263,6 +263,25 @@ assert.deepEqual(updates.at(-1)[1], { owner: true });
 assert.equal(shellDeps.rulesUI.stale, false);
 assert.notEqual(content.innerHTML, busyHTML);
 assert.ok(headerActions.includes('data-rule-action="new"'));
+// A finished write renders even when a background refresh overtakes its own
+// refresh while the edit form is still open; the force is used up by that render.
+shellBusy = true;
+shellPayload = { ...shellPayload, waiting: 2 };
+const beforeRace = updates.length;
+shellUI.force = true;
+const own = shellRefresh();
+const overtaking = shellRefresh({ background: true, events: [{ kind: "rule.changed" }] });
+await Promise.all([own, overtaking]);
+assert.equal(updates.length, beforeRace + 1);
+assert.equal(shellUI.force, false);
+assert.equal(shellUI.stale, false);
+const afterRace = content.innerHTML;
+shellPayload = { ...shellPayload, waiting: 3 };
+assert.equal(await shellRefresh({ background: true, events: [{ kind: "rule.changed" }] }), true);
+assert.equal(updates.length, beforeRace + 1);
+assert.equal(content.innerHTML, afterRace);
+assert.equal(shellUI.stale, true);
+shellBusy = false;
 shellState.base = shellState.route = "#/boards";
 shellCalls.length = 0;
 assert.equal(await shellRefresh({ background: true, events: [{ kind: "rule.changed" }] }), true);

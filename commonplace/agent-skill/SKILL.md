@@ -15,7 +15,7 @@ Commonplace is the shared board and Memory for you and your agents. The MCP serv
 
 ## Rules
 
-At session start, call `rules_changed since=<last seq>`; when changed, call `rules_get`.
+At session start, call `rules_changed since=<last seq>`; whenever `seq` advanced, call `rules_get`.
 Follow the effective `text`: owner edits win, and retired rules mean stop following them.
 When your own rules change, call `rules_publish` with `replace=true`.
 

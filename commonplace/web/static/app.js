@@ -481,7 +481,7 @@ async function refresh({ background = false, events = [] } = {}) {
     else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
     else if (state.base === "#/rules") {
-      if (!background || !rulesUI.busy()) {
+      if (!background || rulesUI.force || !rulesUI.busy()) {
         rulesUI.update(rules, { owner: rules.can_edit });
         root.querySelector("#content").innerHTML = rulesView(rules, { owner: rules.can_edit });
       } else rulesUI.stale = true;

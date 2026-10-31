@@ -335,14 +335,18 @@ def test_board_visibility_repo_normalization_and_other_agents(hub, env):
     other = publish(env, text="Other connection", key="other")
     assert other["key"] not in {r["key"] for r in scoped.rules_changed(0)["rules"]}
     own_edited = env.owner.edit(own["id"], own["version"], scope="board", scope_ref="hidden")
-    with pytest.raises(ToolError, match="rule not found"):
-        scoped.rules_publish([rule(text="Attempt")])
+    skipped = scoped.rules_publish([rule(text="Attempt"), rule(text="Still applies", key="next")])
+    assert [r["key"] for r in skipped["rules"]] == ["next"]
+    assert (
+        next(r for r in env.owner.list_rules()["rules"] if r["id"] == own_edited["id"])["text"]
+        == own_edited["text"]
+    )
     scoped.rules_publish([], replace=True)
     assert (
         next(r for r in env.owner.list_rules()["rules"] if r["id"] == own_edited["id"])["status"]
         == "edited"
     )
-    assert len(env.owner.list_rules()["rules"]) == 5
+    assert len(env.owner.list_rules()["rules"]) == 6
 
 
 def test_untrusted_publish_and_append_only_history(hub, env):
