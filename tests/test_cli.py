@@ -2387,13 +2387,21 @@ def test_cmd_compress_with_config(mock_config_cls, tmp_path, capsys):
 @patch("mempalace.cli.MempalaceConfig")
 def test_cmd_compress_stores_results(mock_config_cls, capsys):
     """Non-dry-run compress stores to the mempalace_aaak collection."""
+    from mempalace.stored_text import RESERVED_METADATA
+
     mock_config_cls.return_value.palace_path = "/fake/palace"
     args = argparse.Namespace(palace=None, wing=None, dry_run=False, config=None)
     mock_col = MagicMock()
+    source_metadata = {
+        "wing": "w",
+        "room": "r",
+        "source_file": "f.txt",
+        **dict.fromkeys(RESERVED_METADATA, "source-only"),
+    }
     mock_col.get.side_effect = [
         {
             "documents": ["text"],
-            "metadatas": [{"wing": "w", "room": "r", "source_file": "f.txt"}],
+            "metadatas": [source_metadata],
             "ids": ["id1"],
         },
         {"documents": [], "metadatas": [], "ids": []},
@@ -2427,6 +2435,8 @@ def test_cmd_compress_stores_results(mock_config_cls, capsys):
     assert "Total:" in out
     mock_comp_col.upsert.assert_called_once()
     assert mock_comp_col.upsert.call_args.kwargs["metadatas"][0]["kind"] == "aaak"
+    assert not RESERVED_METADATA.intersection(mock_comp_col.upsert.call_args.kwargs["metadatas"][0])
+    assert all(source_metadata[key] == "source-only" for key in RESERVED_METADATA)
     assert "mempalace_aaak" in out
 
 

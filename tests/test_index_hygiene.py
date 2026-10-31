@@ -2,11 +2,26 @@
 
 import base64
 import random
+import time
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from mempalace.index_hygiene import find_base64_spans, index_text
+from mempalace.index_hygiene import base64_candidate_ranges, find_base64_spans, index_text
+
+
+def test_candidate_detection_is_bounded_on_adversarial_short_runs():
+    # Without the start boundary, each 199-character run is retried 199 times.
+    text = ("A" * 199 + " ") * 200_000
+    start = time.perf_counter()
+    assert base64_candidate_ranges(text) == []
+    assert time.perf_counter() - start < 2.0
+
+
+def test_candidate_ranges_keep_rejected_runs_whole():
+    rejected = "A" * 200 + "_+/==="
+    text = "A" * 199 + " " + rejected + " end"
+    assert base64_candidate_ranges(text) == [(200, 200 + len(rejected))]
 
 
 def payload(size=300, prefix=b"", urlsafe=False):

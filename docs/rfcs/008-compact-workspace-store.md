@@ -90,6 +90,9 @@ A base64 run already split at the upstream 4,000-character boundary can leave
 short fragments without enough context for validation. B1c replaces that mirror
 unit with message-class groups and supplies whole-message context; A0 does not
 change the mirror transport or the ThreadStore lexical policy.
+Source adapters that split their own input before calling `upsert_drawer` have
+the same limitation: each supplied chunk lacks whole-source context, so A0 can
+only detect base64 independently within that chunk.
 
 ## B1a: Thread store v2
 

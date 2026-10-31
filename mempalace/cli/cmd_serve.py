@@ -302,6 +302,8 @@ def cmd_compress(args):
 
     # Store compressed versions (unless dry-run)
     if not args.dry_run:
+        from ..stored_text import user_metadata
+
         try:
             moved = move_aaak_out_of_closets(palace_path)
             if moved:
@@ -314,7 +316,7 @@ def cmd_compress(args):
                     documents=[compressed for _, compressed, _, _ in batch],
                     metadatas=[
                         {
-                            **meta,
+                            **user_metadata(meta),
                             "kind": "aaak",
                             "compression_ratio": round(stats["size_ratio"], 1),
                             "original_tokens": stats["original_tokens_est"],

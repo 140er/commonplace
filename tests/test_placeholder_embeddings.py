@@ -3,6 +3,8 @@
 import base64
 import json
 import random
+from collections import UserDict
+from types import MappingProxyType
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -376,21 +378,111 @@ def test_invalid_hint_warnings_are_rate_limited(caplog):
     assert caplog.text.count("Ignoring stale or invalid index span hint") == 1
 
 
-@pytest.mark.parametrize("forged", ["prose", "deep-json"])
-def test_untrusted_hint_cannot_erase_prose_or_crash_json_decoder(forged):
+def forged_hint(text, spans):
     import hashlib
 
+    return {
+        INDEX_SPANS: json.dumps(
+            {
+                "v": 1,
+                "sha256": hashlib.sha256(text.encode()).hexdigest(),
+                "spans": spans,
+            }
+        )
+    }
+
+
+def test_hint_with_spaces_cannot_erase_prose(caplog):
     text = "the secret needle word"
-    hint = json.dumps(
-        {
-            "v": 1,
-            "sha256": hashlib.sha256(text.encode()).hexdigest(),
-            "spans": [[4, 18, "[base64 binary 300 B]", False]],
-        }
+    hint = forged_hint(text, [[4, 18, "[base64 binary 300 B]", True]])
+    assert index_text(text, hint) == text
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+def test_deep_hint_json_cannot_crash_decoder(caplog):
+    hint = "[" * 2000 + "0" + "]" * 2000
+    assert index_text("plain document", {INDEX_SPANS: hint}) == "plain document"
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+def test_forged_word_spans_cannot_erase_or_replace_prose(caplog):
+    # Synthetic example: every forged fragment uses the base64 alphabet.
+    text = "Meet Alice at Kubernetes-east; password"
+    hint = forged_hint(
+        text,
+        [
+            [5, 10, "[base64 binary 0 B]", False],
+            [14, 29, "[base64 binary 0 B]", False],
+            [31, 39, "[base64 binary 0 B]", True],
+        ],
     )
-    if forged == "deep-json":
-        hint = "[" * 2000 + "0" + "]" * 2000
-    assert index_text(text, {INDEX_SPANS: hint}) == text
+    assert index_text(text, hint) == text
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "continuation",
+        "short",
+        "left-boundary",
+        "right-boundary",
+        "padding-boundary",
+        "interior-clipping",
+        "entropy",
+        "alphabet",
+        "length",
+        "pad-bits",
+        "placeholder",
+    ],
+)
+def test_invalid_hint_spans_fall_back_to_chunk_detection(rule, caplog):
+    run = base64.b64encode(random.Random(7).randbytes(151)).decode()
+    placeholder = "[base64 binary 151 B]"
+    before, after, emit = "before '", "' after", True
+    if rule == "continuation":
+        emit = False
+    elif rule == "short":
+        run = base64.b64encode(random.Random(7).randbytes(147)).decode()
+        placeholder = "[base64 binary 147 B]"
+    elif rule == "left-boundary":
+        before += "X"
+        after = ""  # Even an edge fragment must have maximal visible boundaries.
+    elif rule == "right-boundary":
+        before, after = "", "X" + after
+    elif rule == "padding-boundary":
+        before, after = "", "=" + after
+    elif rule == "interior-clipping":
+        run = run[:17]
+    elif rule == "entropy":
+        run = "A" * 204
+    elif rule == "alphabet":
+        run = run[:-4] + "+_-A"
+    elif rule == "length":
+        run = run[:-1]
+    elif rule == "pad-bits":
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        run = run[:-3] + alphabet[alphabet.index(run[-3]) + 1] + "=="
+    elif rule == "placeholder":
+        placeholder = "[base64 binary 0 B]"
+    text = before + run + after
+    hint = forged_hint(text, [[len(before), len(before) + len(run), placeholder, emit]])
+    assert index_text(text, hint) == index_text(text)
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+def test_invalid_span_discards_entire_hint(caplog):
+    text = corpus() + "short word."
+    [span] = find_base64_spans(text)
+    hint = forged_hint(
+        text,
+        [
+            [span.start, span.end, span.placeholder, True],
+            [len(text) - 5, len(text) - 1, "[base64 binary 0 B]", True],
+        ],
+    )
+    assert index_text(text, hint) == index_text(text)
+    assert "Ignoring stale or invalid index span hint" in caplog.text
 
 
 @pytest.mark.parametrize("kind", ["unpadded", "glued", "mixed", "padding"])
@@ -413,7 +505,8 @@ def test_rejected_whole_runs_are_not_reclassified_on_chunk_fragments(kind):
         assert index_text(chunk["content"], meta) == chunk["content"]
 
 
-def test_adapter_and_exchange_metadata_cannot_forge_hints():
+@pytest.mark.parametrize("mapping", [dict, UserDict, MappingProxyType])
+def test_adapter_and_exchange_metadata_cannot_forge_hints(mapping):
     from types import SimpleNamespace
 
     from mempalace.convo_miner import file_conversation_exchange
@@ -429,12 +522,14 @@ def test_adapter_and_exchange_metadata_cannot_forge_hints():
         adapter_name="fixture",
         adapter_version="1",
     )
+    original = {**dict.fromkeys(RESERVED_METADATA, "forged"), "tag": "keep"}
+    metadata = mapping(original)
     context.upsert_drawer(
         DrawerRecord(
             content="verbatim",
             source_file="fixture.txt",
             chunk_index=0,
-            metadata=dict.fromkeys(RESERVED_METADATA, "forged"),
+            metadata=metadata,
         )
     )
     file_conversation_exchange(
@@ -447,6 +542,8 @@ def test_adapter_and_exchange_metadata_cannot_forge_hints():
         extra_metadata={**dict.fromkeys(RESERVED_METADATA, "forged"), "tag": "keep"},
     )
     assert len(writes) == 2
+    assert dict(metadata) == original
+    assert writes[0]["metadatas"][0]["tag"] == "keep"
     assert all(not RESERVED_METADATA.intersection(write["metadatas"][0]) for write in writes)
     assert writes[1]["metadatas"][0]["tag"] == "keep"
 
@@ -518,7 +615,8 @@ def test_event_and_artifact_metadata_remain_verbatim_at_client_boundaries():
         KEYWORD_ONLY: "user value",
         "nested": {INDEX_SPANS: "also literal"},
     }
-    for name in ("mempalace_event_append", "mempalace_artifact_put", "mempalace_emit_patch"):
+    for name in ("mempalace_event_append", "mempalace_artifact_put", "mempalace_patch_submit"):
+        assert name in mcp.TOOLS
         arguments = {"metadata": metadata, "content": "verbatim"}
         assert user_tool_arguments(arguments, tool_name=name) == arguments
         result = mcp._tool_call_response(1, arguments, tool_name=name)

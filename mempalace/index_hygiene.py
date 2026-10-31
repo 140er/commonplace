@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 _RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![A-Za-z0-9+/_=\-])")
-_CANDIDATE_RUN = re.compile(r"[A-Za-z0-9+/_\-]{200,}=*")
+_CANDIDATE_RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
 
