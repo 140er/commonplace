@@ -1082,7 +1082,9 @@ class BoardService:
                 and not self.principal.person
                 and not refresh
                 and not (
-                    set(args) <= {"status", "lesson"} and args.get("status") in ("review", "done")
+                    row["return_to"] == self.principal.actor
+                    and set(args) <= {"status", "lesson"}
+                    and args.get("status") in ("review", "done")
                 )
             ):
                 raise ToolError("no: card is waiting on a person")
@@ -1203,9 +1205,8 @@ class BoardService:
         person = target is not None and target.startswith("user:")
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        if row["status"] == "doing":
-            self._holder(row)
-        elif not person and not self.principal.person:
+        self._holder(row)
+        if row["status"] == "todo" and not person and not self.principal.person:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
         options = choices(options)

@@ -61,6 +61,24 @@ def env(hub):
     return token, principal, person, cookie, owner
 
 
+@pytest.fixture(params=[False, True], ids=["standard-agent", "member-agent"])
+def standard_agent(hub, request):
+    user = hub.admin
+    if request.param:
+        user = hub.db.create_user("member@example.com")
+        hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
+    token = hub.token(
+        "standard-worker",
+        user=user,
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+        trust="standard",
+    )
+    return token, hub.gateway.authenticate(f"Bearer {token}")
+
+
 def test_registration_real_worker_and_profiles(hub, env):
     token, _agent, _person, _cookie, _owner = env
     names = hub.tool_names(token)
@@ -146,7 +164,11 @@ MOVES = [
 @pytest.mark.parametrize("old,new,operation,allowed", MOVES)
 def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
     token, agent, _person, _cookie, owner = env
-    card = owner.seed_card(board="work", title="move", status=old)
+    card = (
+        service(hub, agent).ask("move", board="work")
+        if old == "review" and operation == "update"
+        else owner.seed_card(board="work", title="move", status=old)
+    )
     number = card["number"]
     if old == "doing":
         with owner.store.transaction() as conn:
@@ -698,6 +720,74 @@ def test_board_autocreate_write_scope_and_reserved_card(hub, env):
     assert mcp(hub, other, "task_comment", task=card["number"], text="Allowed comment")[0]
 
 
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+@pytest.mark.parametrize("reserved_for", ["other-agent", "owner", "returned-to-agent"])
+def test_handoff_respects_todo_reservations(hub, env, standard_agent, surface, reserved_for):
+    _token, agent, person, _cookie, owner = env
+    token, _principal = standard_agent
+    assert mcp(hub, token, "task_add", board="work", title="Can write to this board")[0]
+    if reserved_for == "returned-to-agent":
+        card = service(hub, agent).ask("Continue?", board="work")
+        card = owner.decide(card["number"], reply="Continue", then="return")
+    else:
+        card = owner.task_add(
+            title="Reserved",
+            board="work",
+            assignee=person.actor if reserved_for == "owner" else agent.actor,
+        )
+    number = card["number"]
+    before = owner.task_show(number)
+    assert before["status"] == "todo"
+    if surface == "mcp":
+        ok, refused = mcp(hub, token, "ask", task=number, question="May I finish?")
+        assert not ok and "reserved for another connection" in refused
+        assert owner.task_show(number) == before
+    for name, method, suffix, arguments in (
+        ("task_handoff", "POST", "/handoff", {"to": "owner", "note": "May I finish?"}),
+        ("task_update", "PATCH", "", {"status": "done"}),
+    ):
+        if surface == "mcp":
+            ok, refused = mcp(hub, token, name, task=number, **arguments)
+            assert not ok
+        else:
+            code, refused = api(
+                hub,
+                token,
+                method,
+                f"/api/cards/{number}{suffix}",
+                {"version": before["version"], **arguments},
+            )
+            assert code == 403
+        assert "reserved for another connection" in str(refused)
+        assert owner.task_show(number) == before
+
+
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+@pytest.mark.parametrize("reserved", [False, True], ids=["free", "self-reserved"])
+def test_handoff_accepts_free_and_self_reserved_todo(hub, env, standard_agent, surface, reserved):
+    _token, _agent, person, _cookie, owner = env
+    token, principal = standard_agent
+    card = owner.task_add(
+        title="Available", board="work", assignee=principal.actor if reserved else None
+    )
+    number = card["number"]
+    if surface == "mcp":
+        assert mcp(hub, token, "task_handoff", task=number, to="owner", note="Ready?")[0]
+    else:
+        code, _result = api(
+            hub,
+            token,
+            "POST",
+            f"/api/cards/{number}/handoff",
+            {"version": card["version"], "to": "owner", "note": "Ready?"},
+        )
+        assert code == 200
+    current = owner.task_show(number)
+    assert current["status"] == "review" and current["assignee"] is None
+    assert current["ask"] == "Ready?" and current["ask_to"] == person.actor
+    assert current["return_to"] == principal.actor
+
+
 def test_expired_version_conflict_returns_committed_card(hub, env):
     token, _agent, _person, _cookie, owner = env
     created = owner.task_add(title="Expired version", board="work")
@@ -924,8 +1014,9 @@ def test_agent_done_routes_to_review_with_audit(hub, env, old):
         worker.decide(task=created["number"], choice="ship", then="done")
 
 
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
 @pytest.mark.parametrize("needs_review", [False, True])
-def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs_review):
+def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs_review, surface):
     token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
     waiting = worker.ask("Ready to close?", board="work")
@@ -936,8 +1027,19 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         worker.decide(task=number, choice="yes", then="done")
     with pytest.raises(ToolError, match="card is waiting on a person"):
         worker.task_update(number, status="review", checks="passing")
-    assert mcp(hub, token, "task_update", task=number, status="review")[0]
-    assert mcp(hub, token, "task_update", task=number, status="done")[0]
+    current = waiting
+    for status in ("review", "done"):
+        if surface == "mcp":
+            assert mcp(hub, token, "task_update", task=number, status=status)[0]
+        else:
+            code, current = api(
+                hub,
+                token,
+                "PATCH",
+                f"/api/cards/{number}",
+                {"version": current["version"], "status": status},
+            )
+            assert code == 200
     current = owner.task_show(number)
     assert current["status"] == ("review" if needs_review else "done")
     with owner.store.connection() as conn:
@@ -966,5 +1068,50 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         assert last["target"] == current["ask_to"]
         assert current["ask"] == "Done?"
         assert current["ask_options"] == ["ship", "redo"]
+        assert number in {card["number"] for card in owner.needs_me()["done_review"]}
         with pytest.raises(ToolError):
             worker.decide(task=number, choice="ship", then="done")
+
+
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+@pytest.mark.parametrize("needs_review", [False, True])
+@pytest.mark.parametrize("member", [False, True], ids=["other-owner-agent", "member-agent"])
+@pytest.mark.parametrize("status", ["done", "todo"])
+def test_other_agents_cannot_move_review(hub, env, surface, needs_review, member, status):
+    _token, agent, _person, _cookie, owner = env
+    if member:
+        user = hub.db.create_user("member@example.com")
+        hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
+        token = hub.token(
+            "member",
+            user=user,
+            profile="full",
+            scopes=["memory:read", "memory:write"],
+            read_wings=["shared"],
+            write_wings=["shared"],
+            trust="standard",
+        )
+    else:
+        token = hub.owner_token("other")
+    assert mcp(hub, token, "task_add", board="work", title="Can write to this board")[0]
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE boards SET done_needs_review=? WHERE slug='work'", (needs_review,))
+    for asker in (service(hub, agent), owner):
+        waiting = asker.ask("Keep this question?", options=["yes", "no"], board="work")
+        number = waiting["number"]
+        before = owner.task_show(number)
+        if surface == "mcp":
+            ok, refused = mcp(hub, token, "task_update", task=number, status=status)
+            assert not ok
+        else:
+            code, refused = api(
+                hub,
+                token,
+                "PATCH",
+                f"/api/cards/{number}",
+                {"version": before["version"], "status": status},
+            )
+            assert code == 403
+        assert "card is waiting on a person" in str(refused)
+        assert owner.task_show(number) == before
+        assert number in {card["number"] for card in owner.needs_me()["asks"]}
