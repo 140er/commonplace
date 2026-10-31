@@ -27,6 +27,7 @@ import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from time import sleep
 from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
@@ -35,7 +36,7 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, privacy, ratelimit, sessions, urls
+from . import events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
@@ -976,6 +977,7 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
             {_host_name(host.strip()) for host in allowed.split(",")} if allowed else None
@@ -1296,6 +1298,15 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
+        if principal is not None and not parse_error and plans.enabled():
+            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+            plan = plans.get_plan(self.server.gateway.db, account) if account else None
+            if self._plan_limit(path, principal, request, plan):
+                return
+            if path == "/mcp" or path.startswith("/api/"):
+                delay = plans.load_delay(plan)
+                if delay:
+                    sleep(delay)
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -1314,6 +1325,39 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         # remaining bytes cannot become another HTTP request.
         self.close_connection = True
         handler(self)
+
+    def _plan_limit(self, path, principal, request, plan):
+        if path != "/mcp" and not path.startswith("/api/"):
+            return False
+        if plan is None or plan.storage_bytes is None:
+            return False
+        if not _write_request(self.command, path, request) or self.command == "DELETE":
+            return False
+        if path == "/mcp":
+            name = request["params"]["name"]
+            if "delete" in name or "remove" in name:
+                return False
+        gateway = self.server.gateway
+        if (
+            gateway.storage_meter.used(
+                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+            )
+            < plan.storage_bytes
+        ):
+            return False
+        gateway.storage_meter.audit_limit(gateway.db, principal)
+        message = plans.storage_message(plan)
+        self.close_connection = True
+        if path == "/mcp":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {"content": [{"type": "text", "text": message}], "isError": True},
+            }
+            self._send_json(200, response)
+        else:
+            self._send_json(507, {"error": message, "limit": "storage"})
+        return True
 
     def _mcp(self, principal, request):
         try:
