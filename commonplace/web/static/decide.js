@@ -339,6 +339,13 @@ function answerable(session) {
   return item && ["open", "later"].includes(item.kind) ? item : null;
 }
 
+// A swipe carries the question it started on; if the queue moved or the question changed under it, it answers nothing.
+function drawn(item, event) {
+  if (event.number == null) return true;
+  return item.number === event.number && item.question === event.question
+    && JSON.stringify(item.card.ask_options || []) === event.options && item.screen === "card";
+}
+
 function startHold(session, item, body, effects) {
   release(session, effects);
   item.kind = "hold";
@@ -450,7 +457,7 @@ export function reduce(session, event) {
   }
   if (event.type === "no") {
     const item = answerable(next);
-    if (!item || next.offline || proposal(item.card) < 0) return done();
+    if (!item || next.offline || proposal(item.card) < 0 || !drawn(item, event)) return done();
     item.screen = "list";
     return done();
   }
@@ -551,7 +558,7 @@ export function reduce(session, event) {
   if (event.type === "yes") {
     // An answer has to match the version on screen. A send from a dead connection is refused, not queued.
     const item = answerable(next);
-    if (!item || next.offline || item.screen !== "card") return done();
+    if (!item || next.offline || item.screen !== "card" || !drawn(item, event)) return done();
     const index = proposal(item.card);
     if (index < 0) return done();
     item.asking = false;

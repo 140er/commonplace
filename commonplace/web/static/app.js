@@ -609,10 +609,13 @@ function paintQueue() {
     content.querySelector(".decide-field input")?.focus({ preventScroll: true });
   } else focusRestore(mark, changed || (!mark && Boolean(nextFocus) && previous !== nextFocus));
   if (card?.dataset.swipe === "on" && !stillMotion()) {
+    // The swipe answers the question it was drawn from, as shown, or nothing.
+    const item = state.queue.items[state.queue.cursor];
+    const number = Number(card.dataset.card), shown = item ? { question: item.question, options: JSON.stringify(item.card.ask_options || []) } : {};
     bindSwipe(card, content.querySelector(".decide-dock"), {
       armedAt: state.queueShownAt + SWIPE.arm,
       labels: { yes: DECIDE_COPY.releaseYes, no: DECIDE_COPY.releaseNo },
-      onCommit: (side) => queueApply({ type: side }),
+      onCommit: (side) => queueApply({ type: side, number, ...shown }),
       onSettle: () => { if (state.queueDirty) paintQueue(); },
     });
   }

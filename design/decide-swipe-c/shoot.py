@@ -127,7 +127,9 @@ class Phone:
         self.b.wait(f"!!document.querySelector({json.dumps(selector)})", timeout=timeout)
 
     def click(self, selector):
+        # Answers wait out the 300 ms arm delay of a new screen, like a person would.
         self.ready(selector)
+        time.sleep(0.35)
         self.b.evaluate(f"document.querySelector({json.dumps(selector)}).click()")
         time.sleep(0.45)
 

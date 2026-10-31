@@ -420,6 +420,28 @@ assert.equal(recoveredAsk.session.asked[1].at, "2026-10-31T09:00:00Z");
 const backAgain = step(recoveredAsk.session, { type: "sync", cards: [reAsked, cards[1]] }).session;
 assert.equal(backAgain.items.find((item) => item.number === 1).fresh, true);
 
+// A swipe answers only the question it was drawn from, as shown.
+const drawnAs = (item) => ({ number: item.number, question: item.question, options: JSON.stringify(item.card.ask_options) });
+let held = step(load(cards.slice(0, 3)), { type: "yes" }).session;
+held = step(held, { type: "flush" }).session;
+const onTwo = drawnAs(held.items[1]);
+assert.equal(held.items[held.cursor].number, 2);
+const moved409 = step(held, { type: "result", number: 1, status: 409, card: { ...cards[0], ask: "Changed?", ask_options: ["New (advised)"], version: 9, events: [] } }).session;
+assert.equal(moved409.items[moved409.cursor].number, 1);
+const crossed = step(moved409, { type: "yes", ...onTwo });
+assert.equal(crossed.session.items[0].kind, "open");
+assert.equal(crossed.session.items[1].kind, "open");
+assert.equal(step(moved409, { type: "no", ...onTwo }).session.items[0].screen, "card");
+const fresh1 = load(cards.slice(0, 2));
+const onOne = drawnAs(fresh1.items[0]);
+assert.equal(step(fresh1, { type: "yes", ...onOne }).session.items[0].kind, "hold");
+const reworded = step(fresh1, { type: "sync", cards: [{ ...cards[0], ask_options: ["Other (advised)", "Change 1"], version: 2 }, cards[1]] }).session;
+assert.equal(step(reworded, { type: "yes", ...onOne }).session.items[0].kind, "open");
+const bumpedOnly = step(fresh1, { type: "sync", cards: [{ ...cards[0], version: 2 }, cards[1]] }).session;
+const bumpedYes = step(bumpedOnly, { type: "yes", ...onOne }).session;
+assert.equal(bumpedYes.items[0].kind, "hold");
+assert.equal(bumpedYes.items[0].pending.version, 2);
+
 // Swipe rules.
 const { swipeAxis, swipeResult, swipeLook, swipeAllowed, SWIPE } = swipe;
 assert.equal(swipeAxis(4, 3), null);
