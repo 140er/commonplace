@@ -228,3 +228,22 @@ def test_function_words_do_not_make_everyday_question_long():
         "can you remind me what we agreed on for the release notes of the mobile app"
     )
     assert skip is None and {"agreed", "release", "mobile", "app"} <= set(terms)
+
+
+@pytest.mark.parametrize("backend", ["sqlite_exact", "compact"])
+def test_unicode61_closet_accents_match_develop_without_match_floor(tmp_path, monkeypatch, backend):
+    from mempalace.palace import get_closets_collection
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    col = get_closets_collection(str(tmp_path), create=True)
+    col.add(
+        ids=["accent", "plain", "underscore", "confuser"],
+        documents=["café opening hours", "cafe menu update", "foo_bar identifier", "foo alpha"],
+        embeddings=[[1.0, 0.0]] * 4,
+        metadatas=[{"wing": "public"}] * 4,
+    )
+    for query in ("cafe", "foo_bar"):
+        before = col.lexical_search(query=query, where={"wing": "public"})
+        after = col.union_lexical_search(query=query, where={"wing": "public"}, closet=True)
+        assert [h.id for h in after.hits] == [h.id for h in before.hits]
+        assert all(h.score > 0 for h in after.hits)

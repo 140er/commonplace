@@ -117,7 +117,7 @@ def scope_local_search(
         else:
             ordered = sorted(ids)
         texts = scope.load_texts(ordered)
-        if closet:
+        if closet and getattr(collection, "lexical_min_token_length", 2) == 3:
             # Preserve develop's full-query word scorer, including dropping
             # trigram substring-only matches with zero word-level signal.
             rank_query = " ".join(term[:64] for term in tokenize(query)[:256])
@@ -127,7 +127,7 @@ def scope_local_search(
                 selected,
                 [texts.get(row_id, "") for row_id in ordered],
                 [evidence[row_id] for row_id in ordered]
-                if getattr(collection, "lexical_min_token_length", 2) != 3
+                if not closet and getattr(collection, "lexical_min_token_length", 2) != 3
                 else None,
             )
         ranked = sorted(
