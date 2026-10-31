@@ -408,10 +408,10 @@ class BoardService:
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
-    def _holder(self, row, *, editing=False):
+    def _holder(self, row, *, editing=False, reopening=False):
         if self.principal.person:
             return
-        if row["status"] == "done":
+        if row["status"] == "done" and not reopening:
             raise ToolError("no: completed cards are frozen for connections")
         if (
             row["status"] == "doing"
@@ -899,7 +899,14 @@ class BoardService:
             if status == "backlog" or (old, status) in allowed:
                 return
         else:
-            if old == "doing" and status in ("done", "backlog"):
+            if (old, status) in {
+                ("todo", "review"),
+                ("doing", "review"),
+                ("todo", "done"),
+                ("doing", "done"),
+                ("done", "todo"),
+                ("doing", "backlog"),
+            }:
                 return
             if old == "todo" and status == "backlog" and row["assignee"] is None:
                 return
@@ -984,7 +991,11 @@ class BoardService:
             self._version(conn, row, version)
             if set(args) - permitted:
                 raise ToolError("no: unknown update field")
-            self._holder(row, editing=bool(set(args) & {"title", "body", "labels"}))
+            self._holder(
+                row,
+                editing=bool(set(args) & {"title", "body", "labels"}),
+                reopening=set(args) == {"status"} and args["status"] == "todo",
+            )
             # The agent that asked for review may still refresh the PR's call tree.
             refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
             if row["status"] == "review" and not self.principal.person and not refresh:
