@@ -130,7 +130,7 @@ MOVES = [
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
-    ("review", "done", "decide", True),  # a trusted owner agent relays Jeffrey's answer
+    ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
     ("todo", "review", "handoff", True),
     ("done", "todo", "update", False),
     ("todo", "backlog", "update", True),
@@ -333,10 +333,10 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
     assert "decision by" not in mcp(hub, token, "task_take_next", task=card["number"])[1]
 
 
-@pytest.mark.parametrize("ref", ["Jeffrey", "jeffrey@example.com", "id"])
+@pytest.mark.parametrize("ref", ["Avery", "avery@example.com", "id"])
 def test_workspace_people_resolution(hub, env, ref):
     token, _agent, _person, _cookie, owner = env
-    user = hub.db.create_user("jeffrey@example.com")
+    user = hub.db.create_user("avery@example.com")
     hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
     card = owner.task_add(title="Resolution", board="work")
     target = f"user:{user}" if ref == "id" else ref
@@ -732,7 +732,7 @@ def test_an_agent_never_answers_its_own_question(hub, env):
     card = owner.task_show(number)
     assert card["status"] == "review"
     ok, text = mcp(hub, token, "decide", task=number, choice="yes")
-    assert not ok and "only Jeffrey" in text
+    assert not ok and "only the owner" in text
     assert owner.task_show(number)["status"] == "review"
 
 
@@ -780,8 +780,8 @@ def test_cards_carry_short_links_and_people_read_as_names(hub, env):
 
 def test_handoff_to_a_person_by_name_or_owner(hub, env):
     token, _agent, _person, _cookie, owner = env
-    hub.db._conn.execute("UPDATE users SET name='Jeffrey' WHERE id=?", (hub.admin,))
-    for to in ("jeffrey", "owner"):
+    hub.db._conn.execute("UPDATE users SET name='Avery' WHERE id=?", (hub.admin,))
+    for to in ("avery", "owner"):
         card = owner.task_add(title=f"hand to {to}", board="work")
         assert mcp(hub, token, "task_take_next", task=card["number"])[0]
         ok, text = mcp(

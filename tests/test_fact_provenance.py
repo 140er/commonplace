@@ -8,14 +8,14 @@ from mempalace import fact_provenance, provenance
 from mempalace.knowledge_graph import KnowledgeGraph
 
 AGENT = dict(
-    user="jeffrey",
-    connection="sol:builder",
+    user="avery",
+    connection="agent:builder",
     client="codex",
     auth="pat",
     trust="trusted",
     workspace="memory",
 )
-PERSON = {**AGENT, "connection": "web:jeffrey", "client": "web", "auth": "session", "person": True}
+PERSON = {**AGENT, "connection": "web:avery", "client": "web", "auth": "session", "person": True}
 
 
 def save(kg, value="5%", **args):
@@ -38,12 +38,12 @@ def test_agent_owned_by_user_is_still_a_proposal_and_merge_keeps_origin():
     with KnowledgeGraph.empty() as kg:
         with provenance.verified(AGENT):
             first = save(kg)
-        with provenance.verified({**AGENT, "connection": "opus:successor"}):
+        with provenance.verified({**AGENT, "connection": "agent:successor"}):
             again = save(kg)
         row = facts(kg)["5%"]
         assert again["triple_id"] == first["triple_id"]
         assert row["approval_status"] == row["fact_status"] == "proposal"
-        assert row["origin_kind"] == "agent" and row["origin_id"] == "sol:builder"
+        assert row["origin_kind"] == "agent" and row["origin_id"] == "agent:builder"
         assert row["origin_link"] == "t3-thread://v1/mcp:origin"
         assert row["approved_by"] is None
 
@@ -62,8 +62,8 @@ def test_person_approval_has_separate_evidence_and_agent_cannot_undo_it():
                 single_valued=True,
             )
         approved = facts(kg)["5%"]
-        assert approved["origin_id"] == "sol:builder"
-        assert approved["approved_by"] == "jeffrey"
+        assert approved["origin_id"] == "agent:builder"
+        assert approved["approved_by"] == "avery"
         assert approved["approval_link"] == "t3-thread://v1/mcp:approval"
         assert approved["fact_status"] == "approved"
         with provenance.verified(AGENT):
@@ -77,7 +77,9 @@ def test_person_approval_has_separate_evidence_and_agent_cannot_undo_it():
         assert rows["5%"]["valid_to"] is None and rows["5%"]["fact_status"] == "approved"
         assert rows["2%"]["fact_status"] == "proposal"
         assert rival["action"] == "added"
-        assert kg.sources([first["triple_id"]])[first["triple_id"]][0]["origin_id"] == "sol:builder"
+        assert (
+            kg.sources([first["triple_id"]])[first["triple_id"]][0]["origin_id"] == "agent:builder"
+        )
 
 
 def test_approving_existing_proposal_retires_competitor_without_changing_origin():
@@ -93,7 +95,7 @@ def test_approving_existing_proposal_retires_competitor_without_changing_origin(
         assert rows["5%"]["superseded_by"] == proposed["triple_id"]
         assert rows["5%"]["valid_to"] == "2026-03-01T00:00:00Z"
         assert rows["2%"]["fact_status"] == "approved"
-        assert rows["2%"]["origin_id"] == "sol:builder"
+        assert rows["2%"]["origin_id"] == "agent:builder"
 
 
 @pytest.mark.parametrize("approve_existing", [False, True], ids=["new-fact", "existing-proposal"])
@@ -129,7 +131,7 @@ def test_person_approval_retires_agent_proposal_regardless_of_its_start(
         assert approved["action"] == ("merged" if approve_existing else "superseded")
         assert decision["approval_status"] == decision["fact_status"] == "approved"
         assert decision["current"] and decision["valid_to"] is None
-        assert decision["approved_by"] == "jeffrey"
+        assert decision["approved_by"] == "avery"
         assert proposal["id"] == proposed["triple_id"]
         assert not proposal["current"] and proposal["fact_status"] == "superseded"
         assert proposal["valid_to"] == proposal_end
@@ -137,7 +139,7 @@ def test_person_approval_retires_agent_proposal_regardless_of_its_start(
         assert proposal["approval_status"] == "proposal"
         if approve_existing:
             assert approved["triple_id"] == existing["triple_id"]
-            assert decision["origin_id"] == "sol:builder"
+            assert decision["origin_id"] == "agent:builder"
         for as_of in ("2026-10-30T12:00:00Z", "2027-01-01", "2027-02-01"):
             (current,) = kg.query_entity("SimSteer", as_of=as_of)
             assert current["id"] == approved["triple_id"]
@@ -171,10 +173,10 @@ def test_same_range_approval_keeps_visible_evidence_and_original_author():
         (source,) = kg.sources([first["triple_id"]])[first["triple_id"]]
         assert source["source_thread"] == "mcp:origin"
         assert source["source_seq_start"] == 1 and source["source_seq_end"] == 2
-        assert source["origin_kind"] == "agent" and source["origin_id"] == "sol:builder"
-        assert source["approval_status"] == "approved" and source["approved_by"] == "jeffrey"
+        assert source["origin_kind"] == "agent" and source["origin_id"] == "agent:builder"
+        assert source["approval_status"] == "approved" and source["approved_by"] == "avery"
         assert source["approval_link"] == "t3-thread://v1/mcp:origin"
-        assert facts(kg)["5%"]["origin_id"] == "sol:builder"
+        assert facts(kg)["5%"]["origin_id"] == "agent:builder"
 
 
 def test_legacy_author_stamp_never_implies_approval(tmp_path):
@@ -216,7 +218,7 @@ def test_normalization_retains_authority_and_origin():
             old = save(kg, valid_from="2026-01-01")
         kg.rewrite(old["triple_id"], "performance_gate", "5%", at="2026-02-01")
         new = next(r for r in kg.query_entity("SimSteer") if r["predicate"] == "performance_gate")
-        assert new["fact_status"] == "approved" and new["approved_by"] == "jeffrey"
+        assert new["fact_status"] == "approved" and new["approved_by"] == "avery"
         assert new["origin_link"] == "t3-thread://v1/mcp:origin"
 
 
@@ -297,7 +299,7 @@ def test_import_preserves_decision_source_and_explicit_approval(tmp_path):
     import_graph_rows(src, dst, apply=True)
     with KnowledgeGraph(dst) as kg:
         row = facts(kg)["5%"]
-        assert row["fact_status"] == "approved" and row["approved_by"] == "jeffrey"
+        assert row["fact_status"] == "approved" and row["approved_by"] == "avery"
         assert row["origin_link"] == "t3-thread://v1/mcp:origin"
 
 
@@ -311,6 +313,4 @@ def test_stale_proposal_snapshot_cannot_erase_user_approval():
         kg.apply_row("triples", stale)
         row = facts(kg)["5%"]
         assert row["fact_status"] == "approved"
-        assert (
-            row["approved_by"] == "jeffrey" and row["approval_link"] == "t3-thread://v1/mcp:origin"
-        )
+        assert row["approved_by"] == "avery" and row["approval_link"] == "t3-thread://v1/mcp:origin"

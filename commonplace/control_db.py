@@ -357,7 +357,7 @@ class ControlDB:
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
             raise ControlError(
-                "connection name: up to 120 of letters, digits and . _ : @ - (e.g. grok:cos)"
+                "connection name: up to 120 of letters, digits and . _ : @ - (e.g. grok:coordinator)"
             )
         if not client or len(client) > 60:
             raise ControlError("client must be 1-60 characters")

@@ -65,8 +65,9 @@ test("messages match the contract and unknown codes never get reflected", () => 
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProviders = () => ({ providers }) } = {}) {
-  const listeners = new Map(), calls = [], replacements = [];
-  const root = { innerHTML: "", addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+  const listeners = new Map(), rootListeners = new Map(), calls = [], replacements = [];
+  const voice = { resets: 0, stops: 0, reset() { this.resets++; }, stop() { this.stops++; } };
+  const root = { innerHTML: "", addEventListener: (name, handler) => rootListeners.set(name, handler), querySelector: () => null, querySelectorAll: () => [] };
   const location = { search, pathname, hash };
   const history = { state: { retained: true }, replaceState(state, unused, path) {
     replacements.push({ state, path });
@@ -78,9 +79,11 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
     document, location, history, URLSearchParams, signinView, signinMessage, e: escape,
     window: { addEventListener() {} },
     digestSpeech: () => ({ stop() {} }),
+    voiceInput: () => voice,
     setInterval() {}, setTimeout() {}, clearTimeout() {},
     async api(path) {
       calls.push(path);
+      if (path === "/app/logout") { assert.equal(voice.stops, 1); return {}; }
       if (path === "/api/me") {
         listeners.get("session-expired")();
         throw Object.assign(new Error("Unauthorized"), { status: 401 });
@@ -90,7 +93,7 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
     },
   });
   runInContext(appSource, context);
-  return { root, calls, replacements, location, context, expire: () => listeners.get("session-expired")() };
+  return { root, calls, replacements, location, context, voice, expire: () => listeners.get("session-expired")(), logout: () => rootListeners.get("click")({ target: { closest: () => ({ dataset: { action: "logout" } }) } }) };
 }
 
 test("boot maps callback errors, clears auth parameters and caches providers across expiry", async () => {
@@ -149,6 +152,32 @@ test("a late provider response cannot replace an authenticated screen", async ()
   resolve({ providers });
   await settle();
   assert.equal(page.root.innerHTML, "Authenticated screen");
+});
+
+test("session expiry resets voice before the provider request finishes", async () => {
+  let resolve;
+  const page = app({ loadProviders: () => new Promise((done) => { resolve = done; }) });
+  await settle();
+  const resets = page.voice.resets;
+  assert.ok(resets > 0);
+  page.expire();
+  assert.equal(page.voice.resets, resets + 1);
+  resolve({ providers });
+  await settle();
+  assert.ok(page.root.innerHTML.includes('class="signin"'));
+});
+
+test("sign-out stops voice before the request and resets it on return to sign-in", async () => {
+  const page = app();
+  await settle();
+  const resets = page.voice.resets;
+  runInContext('state.me = { user: "test-user" }; state.drafts.set("message", "draft");', page.context);
+  await page.logout();
+  assert.equal(page.calls.at(-1), "/app/logout");
+  assert.equal(page.voice.stops, 1);
+  assert.equal(page.voice.resets, resets + 1);
+  assert.equal(runInContext("state.me === null && state.drafts.size === 0", page.context), true);
+  assert.ok(page.root.innerHTML.includes('class="signin"'));
 });
 
 const paused = [{ id: "x", name: "X", until: "2026-11-01T00:00:00Z" }];

@@ -185,13 +185,99 @@ class EmbeddingCollection(BaseCollection):
     def run_maintenance(self, kind: str):
         return self._inner.run_maintenance(kind)
 
+    def _compact_vectors(self, documents, metadatas):
+        """Embed only vector records; the reserved marker survives internal copies."""
+        from .compact import KEYWORD_ONLY
+
+        positions = [
+            i for i, meta in enumerate(metadatas) if (meta or {}).get(KEYWORD_ONLY) is not True
+        ]
+        vectors = [None] * len(documents)
+        if positions:
+            embedded = _embed_texts(
+                [documents[i] for i in positions],
+                metadatas=[metadatas[i] for i in positions],
+            )
+            for i, vector in zip(positions, embedded):
+                vectors[i] = vector
+        return vectors
+
+    def _compact_update(self, *, ids, documents, metadatas, embeddings):
+        from .compact import KEYWORD_ONLY
+
+        existing = self._inner.get(ids=ids, include=["documents", "metadatas"])
+        old = {
+            record_id: (doc, meta)
+            for record_id, doc, meta in zip(existing.ids, existing.documents, existing.metadatas)
+        }
+        effective = [
+            _merged_metadata(
+                old.get(record_id, ("", {}))[1], metadatas[i] if metadatas is not None else None
+            )
+            for i, record_id in enumerate(ids)
+        ]
+        if embeddings is None:
+            patches = metadatas or [{} for _ in ids]
+            for record_id, patch in zip(ids, patches):
+                previous = old.get(record_id, ("", {}))[1]
+                if _is_native_media(previous) and (
+                    documents is not None
+                    or {"source_path", "source_file", "media_type"}.intersection(patch or {})
+                ):
+                    raise ValueError(
+                        "native media changes require explicit embeddings or re-ingesting the source"
+                    )
+            embedder = None
+            title_change = any(_metadata_can_change_embedding(patch) for patch in patches)
+            if title_change:
+                embedder = _resolve_document_embedder()
+            needs_vectors = (
+                documents is not None
+                or any(
+                    old.get(record_id, ("", {}))[1].get(KEYWORD_ONLY) is True
+                    and effective[i].get(KEYWORD_ONLY) is not True
+                    for i, record_id in enumerate(ids)
+                )
+                or (
+                    title_change
+                    and _supports_metadata_aware_documents(embedder)
+                    and any(
+                        not _is_native_media(old.get(record_id, ("", {}))[1])
+                        and _metadata_title(old.get(record_id, ("", {}))[1])
+                        != _metadata_title(effective[i])
+                        for i, record_id in enumerate(ids)
+                    )
+                )
+            )
+            if needs_vectors:
+                if any(_is_native_media(meta) for _, meta in old.values()):
+                    raise ValueError(
+                        "mixed native media and text updates require explicit embeddings"
+                    )
+                texts = (
+                    documents
+                    if documents is not None
+                    else [old.get(record_id, ("", {}))[0] for record_id in ids]
+                )
+                embedding_meta = [
+                    meta if record_id in old else {KEYWORD_ONLY: True}
+                    for record_id, meta in zip(ids, effective)
+                ]
+                embeddings = self._compact_vectors(texts, embedding_meta)
+        return self._inner.update(
+            ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
+        )
+
     def add(self, *, documents, ids, metadatas=None, embeddings=None):
         documents = _as_list(documents)
         ids = _as_list(ids)
         if metadatas is not None:
             metadatas = initialize_last_modified_metadata(_as_list(metadatas))
         if embeddings is None:
-            embeddings = _embed_texts(documents, metadatas=metadatas)
+            if getattr(self._inner, "supports_keyword_only", False) is True:
+                embeddings = self._compact_vectors(documents, metadatas or [{} for _ in ids])
+            else:
+                embeddings = _embed_texts(documents, metadatas=metadatas)
         return self._inner.add(
             documents=documents,
             ids=ids,
@@ -205,6 +291,8 @@ class EmbeddingCollection(BaseCollection):
         if metadatas is not None:
             metadatas = initialize_last_modified_metadata(_as_list(metadatas))
         validate_write_batch(ids, documents=documents, metadatas=metadatas)
+        if embeddings is None and getattr(self._inner, "supports_keyword_only", False) is True:
+            embeddings = self._compact_vectors(documents, metadatas or [{} for _ in ids])
         expected = None
         if embeddings is None:
             embedder = _resolve_document_embedder()
@@ -351,6 +439,10 @@ class EmbeddingCollection(BaseCollection):
         if documents is not None:
             documents = _as_list(documents)
         validate_write_batch(ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
+        if getattr(self._inner, "supports_keyword_only", False) is True:
+            return self._compact_update(
+                ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
+            )
         expected = None
         if documents is not None and embeddings is None:
             embedder = _resolve_document_embedder()

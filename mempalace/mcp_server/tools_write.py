@@ -35,6 +35,9 @@ def _response_safe_meta(meta):
     # still holds would drop it from whatever that writer filed next. No caller
     # passes a record it goes on to write through here today.
     safe_meta.pop("source_dir_ino", None)
+    from ..stored_text import KEYWORD_ONLY
+
+    safe_meta.pop(KEYWORD_ONLY, None)
     return safe_meta
 
 
