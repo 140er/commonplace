@@ -3,7 +3,7 @@ import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
-import { ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, toolsHTML } from "./decide.js";
+import { ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } from "./decide.js";
 import { bindSwipe, SWIPE } from "./decide-swipe.js";
 import { planView } from "./plan.js";
 import { rulesView, rulesHandlers } from "./rules.js";
@@ -25,7 +25,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false,
+  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -583,6 +583,9 @@ function focusRestore(mark, questionChanged) {
 function paintQueue() {
   const content = root.querySelector("#content");
   if (!content || !state.queue) return;
+  // Never rebuild the card under a finger: repaint once the drag settles.
+  if (content.querySelector(".decide-card.dragging")) { state.queueDirty = true; queueArm(); return; }
+  state.queueDirty = false;
   const mark = focusMark();
   const previous = state.queueFocus;
   content.innerHTML = renderDecide(state.queue, { drafts: Object.fromEntries(state.drafts) });
@@ -610,9 +613,22 @@ function paintQueue() {
       armedAt: state.queueShownAt + SWIPE.arm,
       labels: { yes: DECIDE_COPY.releaseYes, no: DECIDE_COPY.releaseNo },
       onCommit: (side) => queueApply({ type: side }),
+      onSettle: () => { if (state.queueDirty) paintQueue(); },
     });
   }
   queueArm();
+}
+// The hold counts down in the status line only, so the card, the field and focus stay put.
+function patchStatus() {
+  const old = root.querySelector(".decide-status .blocks");
+  const template = document.createElement("template");
+  template.innerHTML = statusHTML(state.queue);
+  const fresh = template.content.querySelector(".blocks");
+  if (!old || !fresh) return false;
+  old.replaceWith(fresh);
+  const label = root.querySelector(".decide-status .sr-only");
+  if (label) label.textContent = template.content.querySelector(".sr-only")?.textContent || "";
+  return true;
 }
 function queueApply(event) {
   if (!state.queue) return;
@@ -625,8 +641,10 @@ function queueApply(event) {
     else if (effect.type === "asked") askedWrite(effect.asked);
     else if (effect.type === "home") location.hash = "#/";
   }
-  if (state.base === "#/decide" && state.queue && state.queue.phase !== "empty") paintQueue();
-  else queueArm();
+  if (state.base === "#/decide" && state.queue && state.queue.phase !== "empty") {
+    if (event.type === "tick" && !effects.length && patchStatus()) queueArm();
+    else paintQueue();
+  } else queueArm();
 }
 function queueFlush(keepalive) {
   if (!state.queue) return;
@@ -695,7 +713,7 @@ async function route() {
   remember();
   const hash = location.hash || "#/";
   if (hash !== state.route) voice.stop();
-  const previousBase = state.base;
+  const previousBase = state.base, previousRoute = state.route;
   state.screen++; state.route = hash;
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
@@ -706,7 +724,8 @@ async function route() {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
   }
   if (state.base === "#/decide" && !hash.startsWith("#/card/")) {
-    const sameVisit = previousBase === "#/decide" && state.queue && state.queue.start === start;
+    // Back from a card opened inside the queue is the same visit, whatever deep link started it.
+    const sameVisit = previousBase === "#/decide" && state.queue && (state.queue.start === start || (previousRoute.startsWith("#/card/") && start === null));
     if (!sameVisit) {
       queueFlush(true); queueStop(); state.queueFocus = "";
       state.queue = createSession(start, state.me.actor || "", { asked: askedRead(), list: /\?list=1$/.test(hash) });
@@ -773,6 +792,8 @@ root.addEventListener("click", async (event) => {
   const b = event.target.closest("[data-action]"); if (!b) return;
   const number = Number(b.dataset.card), action = b.dataset.action;
   if (action.startsWith("queue-")) {
+    // A double tap must not answer the next question too: answers wait out the arm delay.
+    if (["queue-yes", "queue-no", "queue-answer", "queue-ask-new"].includes(action) && performance.now() < state.queueShownAt + SWIPE.arm) return;
     const current = state.queue?.items[state.queue.cursor]?.number;
     if (action === "queue-answer") {
       const reply = queueDraft(current);
@@ -939,10 +960,12 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault(); return;
   }
   if (state.base === "#/decide" && state.queue && !panelOpen) {
-    const queueAction = queueKey(event.key, false);
+    const onControl = event.target instanceof Element && event.target.closest("button, a, summary, [role=button]");
+    const queueAction = event.repeat || (event.key === "Enter" && onControl) ? null : queueKey(event.key, false);
     if (queueAction) {
       event.preventDefault();
       if (queueAction.type === "answer") {
+        if (performance.now() < state.queueShownAt + SWIPE.arm) return;
         const current = state.queue.items[state.queue.cursor]?.number;
         queueApply({ type: "answer", optionIndex: queueAction.optionIndex, reply: current ? queueDraft(current) : "" });
       } else if (queueAction.type === "yes") root.querySelector('[data-action="queue-yes"]:not(:disabled)')?.click();
@@ -1009,7 +1032,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) queue
 document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
 window.addEventListener("pagehide", () => { queueFlush(true); speech.stop(); voice.stop(); });
-window.addEventListener("online", queueNoteOffline);
+window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {
   root.querySelectorAll("[data-elapsed]").forEach((time) => { time.textContent = elapsed(time.dataset.elapsed); });

@@ -129,7 +129,7 @@ class Phone:
     def click(self, selector):
         self.ready(selector)
         self.b.evaluate(f"document.querySelector({json.dumps(selector)}).click()")
-        time.sleep(0.35)
+        time.sleep(0.45)
 
     def type(self, selector, text):
         self.b.evaluate(

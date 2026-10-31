@@ -34,7 +34,7 @@ export function swipeAllowed(pointerType, now, armedAt) {
   return (pointerType === "touch" || pointerType === "pen") && now >= armedAt;
 }
 
-export function bindSwipe(card, dock, { armedAt, onCommit, labels }) {
+export function bindSwipe(card, dock, { armedAt, onCommit, onSettle, labels }) {
   let start = null, axis = null, samples = [], busy = false;
   const track = dock?.querySelector(".decide-track");
   const label = track?.querySelector(".label");
@@ -61,7 +61,7 @@ export function bindSwipe(card, dock, { armedAt, onCommit, labels }) {
     card.style.transition = `transform ${SWIPE.spring}ms ease-out`;
     card.style.transform = "";
     clear();
-    setTimeout(() => { card.style.transition = ""; }, SWIPE.spring);
+    setTimeout(() => { card.style.transition = ""; onSettle?.(); }, SWIPE.spring);
   };
   card.addEventListener("pointerdown", (event) => {
     if (busy || !event.isPrimary || !swipeAllowed(event.pointerType, performance.now(), armedAt)) return;

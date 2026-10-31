@@ -382,6 +382,44 @@ const deep = step(createSession(2, "", { list: true }), { type: "load", cards })
 assert.equal(deep.items[0].number, 2);
 assert.equal(deep.items[0].screen, "list");
 
+// A retry that succeeds on the card on screen moves the queue on (no dead end).
+let retried = step(load(cards.slice(0, 3)), { type: "yes" }).session;
+retried = step(retried, { type: "flush" }).session;
+retried = step(retried, { type: "result", number: 1, status: 500 }).session;
+retried = step(retried, { type: "later" }).session;
+assert.equal(retried.items[retried.cursor].number, 1);
+retried = step(retried, { type: "retry" }).session;
+retried = step(retried, { type: "result", number: 1, status: 200 }).session;
+assert.equal(retried.phase, "queue");
+assert.equal(retried.items[retried.cursor].number, 3);
+// A lost response found on the card on screen counts as sent and moves on.
+let found = step(load(cards.slice(0, 3)), { type: "yes" }).session;
+found = step(found, { type: "flush" }).session;
+found = step(found, { type: "move", delta: -1 }).session;
+assert.equal(found.items[found.cursor].number, 1);
+found = step(found, { type: "card", number: 1, card: { ...cards[0], status: "todo", ask: null, events: [{ kind: "decide", actor: "user:me", choice: "Keep 1 (advised)", text: null, at: "2026-10-31T09:00:00Z" }] } }).session;
+assert.equal(found.items[0].kind, "sent");
+assert.equal(found.items[found.cursor].number, 2);
+// Ask for new options fails, is retried on screen, and lands on the next open question, not on done.
+let askRetry = step(step(load(cards.slice(0, 3)), { type: "no" }).session, { type: "ask-new", reply: "" }).session;
+askRetry = step(askRetry, { type: "flush" }).session;
+askRetry = step(askRetry, { type: "result", number: 1, status: 500 }).session;
+askRetry = step(askRetry, { type: "later" }).session;
+assert.equal(askRetry.items[askRetry.cursor].number, 1);
+askRetry = step(askRetry, { type: "retry" }).session;
+askRetry = step(askRetry, { type: "result", number: 1, status: 200, card: { ...cards[0], status: "todo" } }).session;
+assert.equal(askRetry.phase, "queue");
+assert.equal(askRetry.items[askRetry.cursor].number, 3);
+assert.equal(askRetry.items[askRetry.items.length - 1].kind, "waiting");
+// A recovered ask stores the time of the ask, so a re-ask that already landed still counts as new.
+let lostAsk = step(step(load([advisedCard, cards[1]]), { type: "no" }).session, { type: "ask-new", reply: "" }).session;
+lostAsk = step(lostAsk, { type: "flush" }).session;
+const reAsked = { ...advisedCard, ask: "Again?", ask_options: ["X", "Y"], version: 5, updated_at: "2026-10-31T10:00:00Z", events: [{ kind: "decide", actor: "user:me", choice: null, text: lostAsk.items[0].pending.reply, at: "2026-10-31T09:00:00Z" }] };
+const recoveredAsk = step(lostAsk, { type: "result", number: 1, status: 409, card: reAsked });
+assert.equal(recoveredAsk.session.asked[1].at, "2026-10-31T09:00:00Z");
+const backAgain = step(recoveredAsk.session, { type: "sync", cards: [reAsked, cards[1]] }).session;
+assert.equal(backAgain.items.find((item) => item.number === 1).fresh, true);
+
 // Swipe rules.
 const { swipeAxis, swipeResult, swipeLook, swipeAllowed, SWIPE } = swipe;
 assert.equal(swipeAxis(4, 3), null);

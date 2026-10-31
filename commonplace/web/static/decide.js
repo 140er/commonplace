@@ -198,6 +198,9 @@ function advance(session) {
   }
   const index = session.items.findIndex((item, i) => i > session.cursor && landable(item));
   if (index >= 0) { land(session, index); return true; }
+  // Questions skipped with j/k, a jump or a replay are still open before the cursor.
+  const before = session.items.findIndex((item, i) => i < session.cursor && item.kind === "open");
+  if (before >= 0) { land(session, before); return true; }
   return false;
 }
 
@@ -230,7 +233,7 @@ function sameAnswer(event, pending) {
   return (event.choice ?? null) === choice && (event.text || "") === reply;
 }
 
-function settle(session, item, effects, card) {
+function settle(session, item, effects, card, at) {
   item.holdLeft = 0;
   item.again = false;
   item.visited = true;
@@ -240,15 +243,20 @@ function settle(session, item, effects, card) {
     item.kind = "sent";
     item.fresh = false;
     forget(session, item.number, effects);
-    return;
+  } else {
+    item.kind = "waiting";
+    item.seen = false;
+    item.fresh = false;
+    // The time of the ask itself, so an agent that already asked again still counts as new.
+    session.asked[item.number] = { at: at || card?.updated_at || new Date().toISOString(), rejected: [...item.rejected] };
+    effects.push({ type: "asked", asked: { ...session.asked } });
+    toEnd(session, session.items.indexOf(item));
   }
-  item.kind = "waiting";
-  item.seen = false;
-  item.fresh = false;
-  const at = card?.updated_at || new Date().toISOString();
-  session.asked[item.number] = { at, rejected: [...item.rejected] };
-  effects.push({ type: "asked", asked: { ...session.asked } });
-  toEnd(session, session.items.indexOf(item));
+  // A retry or a recovered send on the card on screen moves the queue on.
+  if (session.phase === "queue" && session.items[session.cursor] === item) {
+    const get = finish(session);
+    if (get) effects.push(get);
+  }
 }
 
 function applyCard(session, number, card, focus, effects) {
@@ -258,7 +266,7 @@ function applyCard(session, number, card, focus, effects) {
   const show = Boolean(focus) || session.cursor === index;
   const last = [...(card.events || [])].reverse().find((event) => event.kind === "decide");
   if (last && item.pending && last.actor === session.me && sameAnswer(last, item.pending)) {
-    settle(session, item, effects, card);
+    settle(session, item, effects, card, last.at);
     return;
   }
   const previous = item.question;
@@ -625,7 +633,7 @@ function blocksHTML(left) {
   return `<span class="blocks" aria-hidden="true">${Array.from({ length: HOLD_SECONDS }, (_, i) => `<i class="${i < left ? "on" : ""}"></i>`).join("")}</span>`;
 }
 
-function statusHTML(session) {
+export function statusHTML(session) {
   const item = hold(session);
   if (item) {
     const said = item.asking ? `<b>${e(shown(item))}</b>` : `<span class="num">#${item.number}</span> <b>${e(shown(item))}</b>`;
