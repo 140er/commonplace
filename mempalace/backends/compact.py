@@ -412,6 +412,7 @@ class CompactCollection(SQLiteExactCollection):
         offset=None,
         spec=None,
         order="d.rowid",
+        rowids_only=False,
     ):
         spec = spec or _IncludeSpec.resolve(None, default_distances=False)
         sql, params = _where_sql(where)
@@ -423,7 +424,7 @@ class CompactCollection(SQLiteExactCollection):
             validate_where(where_document)
             sql += " AND compact_document_match(d.document,d.dictionary_id,d.metadata_json,?)"
             params.append(json.dumps(where_document, ensure_ascii=True))
-        cols = ["d.rowid", "d.id"]
+        cols = ["d.rowid"] if rowids_only else ["d.rowid", "d.id"]
         if spec.documents:
             cols.extend(["d.document", "d.dictionary_id"])
         if spec.documents or spec.metadatas:
@@ -554,6 +555,7 @@ class CompactCollection(SQLiteExactCollection):
                     where=where,
                     where_document=where_document,
                     spec=_IncludeSpec(False, False, False, False),
+                    rowids_only=True,
                 )
                 selected = np.fromiter(
                     (r["rowid"] for r in found), dtype=np.int64, count=len(found)

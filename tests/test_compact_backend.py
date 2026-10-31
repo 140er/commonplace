@@ -720,3 +720,39 @@ def test_response_hides_keyword_only_marker():
     meta = {KEYWORD_ONLY: True, "wing": "w"}
     assert _response_safe_meta(meta) == {"wing": "w"}
     assert meta[KEYWORD_ONLY] is True
+
+
+def test_vector_wing_mask_after_analyze_reads_only_index_rowids(compact):
+    from mempalace.search_util import build_where_filter
+
+    _, _, col = compact
+    rng = np.random.default_rng(7)
+    col.add(
+        ids=[str(i) for i in range(1000)],
+        documents=["searchable document"] * 1000,
+        metadatas=[{"wing": f"w{i % 25}", "room": f"r{(i // 25) % 30}"} for i in range(1000)],
+        embeddings=rng.normal(size=(1000, 4)).tolist(),
+    )
+    where = build_where_filter("w7", known=[f"w{i}" for i in range(25)])
+    assert len(where["wing"]["$in"]) > 1
+    query = {"query_embeddings": [[1, 0, 0, 0]], "where": where, "n_results": 10}
+    expected = col.query(**query).ids
+    col.run_maintenance("analyze")
+    statements = []
+    conn = col._handle.conn
+    conn.set_trace_callback(statements.append)
+    assert col.query(**query).ids == expected
+    conn.set_trace_callback(None)
+    sql = next(s for s in statements if s.startswith("SELECT d.rowid FROM documents d"))
+    plan = [r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql)]
+    assert len(plan) == 2, plan
+    assert plan[0].startswith("SEARCH d USING INDEX idx_documents_coll_wing_"), plan
+    assert plan[0].endswith("(collection_id=? AND wing=?)"), plan
+    assert plan[1] == "USE TEMP B-TREE FOR ORDER BY", plan
+    bytecode = list(conn.execute("EXPLAIN " + sql))
+    root = conn.execute("SELECT rootpage FROM sqlite_master WHERE name='documents'").fetchone()[0]
+    document_cursors = {r[2] for r in bytecode if r[1] == "OpenRead" and r[3] == root}
+    assert document_cursors
+    assert not any(r[1] == "Column" and r[2] in document_cursors for r in bytecode)
+    # The public get path must still project stable caller-facing IDs.
+    assert len(col.get(where=where, limit=10, include=[]).ids) == 10
