@@ -522,6 +522,7 @@ PATHOLOGICAL = (
 )  # fmt: skip
 
 
+@pytest.mark.timing
 def test_pathological_source_is_fast(tmp_path):
     started = time.monotonic()
     funcs = callstack.js_functions("evil.js", PATHOLOGICAL)

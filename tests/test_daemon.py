@@ -1660,6 +1660,7 @@ def test_get_client_if_running_uses_short_probe_timeout(monkeypatch):
     assert captured["timeout"] == daemon.HOOK_PROBE_TIMEOUT
 
 
+@pytest.mark.timing
 def test_wedged_daemon_probe_stays_under_hook_budget(tmp_path, monkeypatch):
     """A socket that accepts and never answers must not burn the 500ms budget."""
     import socket

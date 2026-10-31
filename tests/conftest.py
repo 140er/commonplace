@@ -22,13 +22,14 @@ from contextlib import ExitStack
 _original_env = {}
 _session_tmp = tempfile.mkdtemp(prefix="mempalace_session_")
 
-for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"):
     _original_env[_var] = os.environ.get(_var)
 
 os.environ["HOME"] = _session_tmp
 os.environ["USERPROFILE"] = _session_tmp
 os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
+os.environ.pop("XDG_CONFIG_HOME", None)
 
 # Now it is safe to import mempalace modules that trigger initialisation.
 import chromadb  # noqa: E402

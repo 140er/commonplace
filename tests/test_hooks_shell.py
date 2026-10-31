@@ -209,6 +209,7 @@ def _wait_for(path: Path, timeout: float = 15.0) -> bool:
 
 
 class TestSessionEndWrapper:
+    @pytest.mark.timing
     def test_foreground_returns_before_worker_finishes(self, tmp_path):
         """Budget contract: the foreground must return well before the (slow)
         worker completes, otherwise SessionEnd's ~1.5s budget would kill the
@@ -282,6 +283,7 @@ exit 1
 
 
 class TestPluginSessionEndWrapper:
+    @pytest.mark.timing
     def test_foreground_returns_before_worker_finishes(self, tmp_path):
         args_file = tmp_path / "args.log"
         done_file = tmp_path / "worker.done"
