@@ -1755,7 +1755,7 @@ _PENDING_CLIENT_CLOSES: dict[int, tuple[str, Any]] = {}
 _pending_close_worker: threading.Thread | None = None
 
 
-def _drain_pending_clients(palace_path=None) -> None:
+def _drain_pending_clients(palace_path=None, *, blocking=True) -> int:
     """Close deferred owners under their own palace lock, outside the registry."""
     held = held_palace_db_paths()
     with _CLIENT_REGISTRY_LOCK:
@@ -1765,12 +1765,20 @@ def _drain_pending_clients(palace_path=None) -> None:
             if (palace_path is None or _same_palace(path, palace_path))
             and all(_same_palace(path, os.path.dirname(lock)) for lock in held)
         ]
+    closed = 0
     for key, path in pending:
-        with palace_db_lock(os.path.join(path, "chroma.sqlite3")):
+        lock = palace_db_lock(os.path.join(path, "chroma.sqlite3"))
+        if not lock.acquire(blocking=blocking):
+            continue
+        try:
             with _CLIENT_REGISTRY_LOCK:
                 owner = _PENDING_CLIENT_CLOSES.pop(key, None)
             if owner is not None:
                 _close_client(owner[1], path)
+                closed += 1
+        finally:
+            lock.release()
+    return closed
 
 
 def _close_pending_clients() -> None:
@@ -1780,8 +1788,12 @@ def _close_pending_clients() -> None:
             if not _PENDING_CLIENT_CLOSES:
                 _pending_close_worker = None
                 return
-            path, _ = next(iter(_PENDING_CLIENT_CLOSES.values()))
-        _drain_pending_clients(palace_path=path)
+            paths = list(dict.fromkeys(path for path, _ in _PENDING_CLIENT_CLOSES.values()))
+        closed = sum(_drain_pending_clients(palace_path=path, blocking=False) for path in paths)
+        if not closed:
+            # A writer can own one palace for a long time. Retry without
+            # keeping other palaces' clients queued behind that lock.
+            threading.Event().wait(0.05)
 
 
 def _schedule_pending_closes() -> None:

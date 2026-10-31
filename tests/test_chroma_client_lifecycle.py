@@ -395,3 +395,38 @@ fresh_backend.close()
 chroma._drain_pending_clients()
 """,
     )
+
+
+def test_busy_palace_does_not_block_another_pending_close(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+backend = ChromaBackend()
+for path in paths:
+    backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+closed = threading.Event()
+checked_close = Client.close
+def observe_close(client):
+    result = checked_close(client)
+    if client._identifier == paths[1]:
+        closed.set()
+    return result
+Client.close = observe_close
+def close_backend():
+    with _inproc_sqlite.palace_db_lock(os.path.join(paths[2], 'chroma.sqlite3')):
+        backend.close()
+with _inproc_sqlite.palace_db_lock(os.path.join(paths[0], 'chroma.sqlite3')):
+    thread = threading.Thread(target=close_backend, daemon=True)
+    thread.start()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert closed.wait(2), 'busy P blocked the close of Q'
+    assert not SharedSystemClient._identifier_to_refcount.get(paths[1], 0)
+with chroma._CLIENT_REGISTRY_LOCK:
+    worker = chroma._pending_close_worker
+if worker is not None:
+    worker.join(5)
+    assert not worker.is_alive()
+check_released()
+""",
+    )
