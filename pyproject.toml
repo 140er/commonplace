@@ -59,6 +59,7 @@ commonplace = "commonplace.cli:main"
 
 [project.entry-points."mempalace.backends"]
 chroma = "mempalace.backends.chroma:ChromaBackend"
+compact = "mempalace.backends.compact:CompactBackend"
 milvus = "mempalace.backends.milvus:MilvusBackend"
 pgvector = "mempalace.backends.pgvector:PgVectorBackend"
 qdrant = "mempalace.backends.qdrant:QdrantBackend"

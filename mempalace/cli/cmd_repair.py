@@ -198,7 +198,49 @@ def _exit_if_writer_active(result) -> None:
         raise SystemExit(2)
 
 
-def cmd_repair(args):
+def _cmd_repair_compact(args, palace_path, collection_name):
+    mode = getattr(args, "mode", "legacy") or "legacy"
+    if mode != "legacy" or any(
+        getattr(args, field, None)
+        for field in (
+            "archive_existing",
+            "source",
+            "from_sidecar",
+            "segment",
+        )
+    ):
+        print(
+            "  Compact supports repair and repair rebuild-index only; "
+            "from-sqlite, max-seq-id and archive/rebuild options require Chroma.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if getattr(args, "dry_run", False):
+        from ..backends import get_backend
+        from ..backends.base import PalaceRef
+
+        ref = PalaceRef(id=palace_path, local_path=palace_path)
+        collection = get_backend("compact").get_collection(
+            palace=ref,
+            collection_name=collection_name,
+            create=False,
+            options={"read_only": True},
+        )
+        print(
+            f"  Would reindex {collection.count()} compact records; keyword-only records stay unembedded."
+        )
+        return
+    from ..palace import MineAlreadyRunning
+    from ..repair import rebuild_index
+
+    try:
+        rebuild_index(palace_path, collection_name=collection_name)
+    except MineAlreadyRunning as exc:
+        print(f"  Repair stopped: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+def _cmd_repair_chroma(args):
     """Rebuild palace vector index from SQLite metadata.
 
     On success the palace SQLite file is VACUUMed and the FTS5 index is
@@ -241,7 +283,7 @@ def cmd_repair(args):
             assume_yes=getattr(args, "yes", False),
         )
         _exit_if_writer_active(result)
-        return
+        return None
 
     if not getattr(args, "dry_run", False):
         _exit_on_misspelled_embedding_model()
@@ -282,7 +324,7 @@ def cmd_repair(args):
                 "Rebuild from SQLite", palace_path, assume_yes=getattr(args, "yes", False)
             )
         ):
-            return
+            return None
 
         try:
             counts = rebuild_from_sqlite(
@@ -317,16 +359,16 @@ def cmd_repair(args):
         if not counts:
             sys.exit(1)
         move_aaak_after_rebuild(palace_path, dry_run=dry_run)
-        return
+        return None
 
     db_path = os.path.join(palace_path, "chroma.sqlite3")
 
     if not os.path.isdir(palace_path):
         print(f"\n  No palace found at {palace_path}")
-        return
+        return None
     if not contains_palace_database(palace_path):
         print(f"\n No palace database found at {db_path}")
-        return
+        return None
 
     # Run the SQLite integrity preflight before any chromadb client open.
     # ChromaDB's rust binding raises pyo3_runtime.PanicException on a
@@ -354,7 +396,7 @@ def cmd_repair(args):
     )
     if preflight is not None:
         _exit_if_writer_active(preflight)
-        return
+        return None
 
     print(f"\n{'=' * 55}")
     print(" MemPalace Repair")
@@ -377,7 +419,7 @@ def cmd_repair(args):
             confirm_truncation_ok=getattr(args, "confirm_truncation_ok", False),
         ):
             sys.exit(1)
-        return
+        return None
 
     backend = ChromaBackend()
 
@@ -401,15 +443,15 @@ def cmd_repair(args):
             except Exception as e:
                 print(f"  Error reading palace: {e}")
                 print(index_read_recovery_guidance())
-                return
+                return None
 
             if total == 0:
                 print("  Nothing to repair.")
-                return
+                return None
 
             if assume_yes:
                 if not confirm_destructive_action("Repair", palace_path, assume_yes=True):
-                    return
+                    return None
             else:
                 # Drop the client before the lease. A live client with the
                 # lease released is the race this lock exists to close.
@@ -421,7 +463,7 @@ def cmd_repair(args):
                     backend, palace_path, collection_name, col, total, args
                 )
                 if finished is None:
-                    return
+                    return None
                 filed, backup_path = finished
     except MineAlreadyRunning as exc:
         print(f"  Another writer already holds this palace: {exc}")
@@ -431,9 +473,20 @@ def cmd_repair(args):
     if not assume_yes:
         finished = _legacy_repair_after_prompt(backend, palace_path, collection_name, args)
         if finished is None:
-            return
+            return None
         filed, backup_path = finished
 
     print(f"\n  Repair complete. {filed} drawers rebuilt.")
     print(f"  Backup saved at {backup_path}")
     print(f"\n{'=' * 55}\n")
+
+
+def cmd_repair(args):
+    """Route reindexing to the selected backend's maintenance path."""
+    config = MempalaceConfig()
+    palace_path = os.path.abspath(
+        os.path.expanduser(args.palace) if args.palace else config.palace_path
+    )
+    if _compact_maintenance_backend(palace_path):
+        return _cmd_repair_compact(args, palace_path, config.collection_name)
+    return _cmd_repair_chroma(args)
