@@ -568,6 +568,7 @@ def test_disk_space_gate_precedes_backup(workspace, monkeypatch):
 
 
 def test_prune_refuses_writes_in_retired_generation(workspace):
+    import os
 
     data, root, _ = workspace
     switch.switch_workspace(data, WORKSPACE, "compact")
@@ -575,10 +576,134 @@ def test_prune_refuses_writes_in_retired_generation(workspace):
     # Simulate an older binary restoring write permissions and adding content.
     (root / "late-record").write_text("new verbatim data")
     retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    stamp = int((retired_at + 1) * 1_000_000_000)
+    os.utime(root / "late-record", ns=(stamp, stamp))
     with pytest.raises(ValueError, match="newer writes"):
         switch.prune_generations(data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS + 1)
     assert (root / "late-record").read_text() == "new verbatim data"
     assert switch.doctor_workspace(data, WORKSPACE)["retained_generations"][0]["newer_writes"]
+
+
+@pytest.mark.parametrize("damage", ["missing", "missing_active", "nonexistent"])
+@pytest.mark.parametrize("operation", ["prune", "compact", "v1"])
+def test_invalid_pointer_preserves_active_generation_and_post_switch_writes(
+    workspace, damage, operation
+):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    with closing(open_threads(active)) as store:
+        added = store.store(
+            WORKSPACE,
+            "after-switch",
+            [ThreadMessage(0, "user", "message", "post-switch verbatim", "raw")],
+            actor="actor",
+        )
+    pointer = read_json(root / POINTER)
+    if damage == "missing":
+        (root / POINTER).unlink()
+    else:
+        if damage == "missing_active":
+            pointer.pop("active")
+        else:
+            pointer["active"] = root.name + ".generation-" + "f" * 24
+        (root / POINTER).write_text(json.dumps(pointer))
+    with pytest.raises(ValueError, match="generation pointer"):
+        if operation == "prune":
+            switch.prune_generations(data, WORKSPACE)
+        else:
+            switch.switch_workspace(data, WORKSPACE, operation)
+    assert active.is_dir()
+    with read_store(active / "threads.v2.sqlite3", compact=True) as store:
+        assert store.messages(added.id)[0].text == "post-switch verbatim"
+
+
+def test_missing_pointer_preserves_generation_published_before_final_state(workspace):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    (root / switch.STATE).write_text(
+        json.dumps({"state": "copying", "staging": active.name, "store": "compact"})
+    )
+    (root / POINTER).unlink()
+    with pytest.raises(ValueError, match="generation pointer"):
+        switch.prune_generations(data, WORKSPACE)
+    assert (active / "threads.v2.sqlite3").exists()
+
+
+def test_invalid_pointer_only_cleans_recorded_unpublished_staging(workspace):
+    data, root, _ = workspace
+    staged = root.with_name(root.name + ".generation-" + "b" * 24)
+    protected = root.with_name(root.name + ".generation-" + "c" * 24)
+    protected.mkdir()
+    (protected / "post-switch-data").write_text("preserve")
+    for path in switch._staging_paths(staged):
+        path.mkdir()
+        (path / "payload").write_text("unfinished")
+    (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": staged.name}))
+    (root / POINTER).write_text("{}")
+    with pytest.raises(ValueError, match="generation pointer"):
+        switch.prune_generations(data, WORKSPACE)
+    assert all(not path.exists() for path in switch._staging_paths(staged))
+    assert (protected / "post-switch-data").read_text() == "preserve"
+    assert read_json(root / switch.STATE)["state"] == "failed"
+
+
+def test_doctor_and_unexpired_prune_do_not_hash_retained_data(workspace, monkeypatch):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    monkeypatch.setattr(
+        switch, "_retirement_digest", lambda *args: pytest.fail("Hashed unexpired generation")
+    )
+    assert not switch.doctor_workspace(data, WORKSPACE)["retained_generations"][0]["newer_writes"]
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    switch.prune_generations(data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS - 1)
+    assert (root / "threads.sqlite3").exists()
+
+
+def test_prune_drops_missing_generation_and_resets_crash_state(workspace):
+    import shutil
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    compact = workspace_path(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    shutil.rmtree(compact)
+    staged = root.with_name(root.name + ".generation-" + "d" * 24)
+    staged.mkdir()
+    (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": staged.name}))
+    switch.prune_generations(data, WORKSPACE)
+    assert compact.name not in [item["name"] for item in read_json(root / POINTER)["retained"]]
+    assert not staged.exists()
+    assert switch.doctor_workspace(data, WORKSPACE)["backfill"] == "failed"
+
+
+def test_corrupt_retained_thread_database_does_not_block_live_store(workspace):
+    data, root, thread = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    (root / "threads.sqlite3").chmod(0o600)
+    (root / "threads.sqlite3").write_bytes(b"corrupt retired database")
+    with closing(open_threads(workspace_path(data, WORKSPACE))) as store:
+        assert store.get(thread.id)
+
+
+def test_prune_cli_authorizes_inside_exclusive_lock(workspace, monkeypatch, capsys):
+    import commonplace.cli as cli
+
+    data, _, _ = workspace
+    original = cli._db
+    opened = []
+
+    def locked_db(args):
+        with pytest.raises(BackupError):
+            with data_lock(data):
+                pytest.fail("Control database opened outside exclusive lock")
+        opened.append(True)
+        return original(args)
+
+    monkeypatch.setattr(cli, "_db", locked_db)
+    assert cli.main(["--data", str(data), "workspace", "prune-stores", "missing"]) == 2
+    assert opened and "no such workspace" in capsys.readouterr().err
 
 
 def test_palace_dual_read_skips_chroma_without_touching_retired_files(workspace):

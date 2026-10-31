@@ -3,7 +3,7 @@
 Each worker binds loopback on a free port and requires a random bearer token
 that only the gateway knows, and trusts the gateway's verified-identity header
 (``MEMPALACE_MCP_TRUSTED_IDENTITY=1``). Its palace, home and config live under
-``<data>/workspaces/<id>/`` so no two workspaces share a file.
+the resolved active workspace generation, so no two workspaces share a file.
 """
 
 from __future__ import annotations

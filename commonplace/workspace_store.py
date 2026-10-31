@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 
 POINTER = ".store-pointer.json"
@@ -109,7 +110,7 @@ def open_threads(directory, *, sample_every=100):
             context = read_store(thread_path(previous), compact=comparison["store"] == "compact")
             try:
                 old = context.__enter__()
-            except (OSError, ValueError):
+            except (OSError, ValueError, sqlite3.Error):
                 return store
             reader = SampledReads(
                 store,

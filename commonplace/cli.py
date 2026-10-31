@@ -632,13 +632,18 @@ def cmd_doctor(args) -> int:
 def cmd_workspace_prune(args) -> int:
     from .store_switch import prune_generations
 
-    db = _db(args)
-    try:
-        workspace = db.workspace(args.workspace)["id"]
-        _owner(db, args, workspace)
-    finally:
-        db.close()
-    prune_generations(_data_dir(args), workspace)
+    def authorize(ref):
+        db = _db(args)
+        try:
+            row = db.workspace(ref)
+            if row is None:
+                raise ControlError("no such workspace")
+            _owner(db, args, row["id"])
+            return row["id"]
+        finally:
+            db.close()
+
+    prune_generations(_data_dir(args), args.workspace, authorize=authorize)
     return 0
 
 

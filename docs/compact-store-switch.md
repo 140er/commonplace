@@ -75,7 +75,11 @@ together. Interruptions before that pointer leave the previous generation
 active. Interruptions afterwards leave the fully verified generation active.
 A failed operation removes its unpublished staging copies immediately. After a
 process crash, rerunning either store command or pruning removes orphan staging
-copies. Completed retained generations are preserved.
+copies and resets the interrupted backfill state. Cleanup validates the generation
+pointer first. If it is missing or invalid, only the state file's provably
+unpublished staging copy can be removed; other generations are preserved and
+the operation refuses until the pointer is restored. Completed retained
+generations are preserved.
 
 A sample of live thread reads, palace reads and searches is compared with the
 retained store. Comparison logs contain only match status and fixed diagnostic
@@ -98,7 +102,15 @@ Retired generations have their data files made read-only and are retained for at
 least fourteen days. An older binary can restore write permissions, so pruning
 also checks for writes newer than retirement and compares a retirement content
 fingerprint, detecting changes even within the filesystem timestamp resolution.
-A changed generation or missing retirement evidence refuses pruning. Run the offline retention command periodically:
+A changed generation or missing retirement evidence refuses pruning. If pruning
+refuses, keep that generation intact, stop the gateway and compare it with the
+active generation and the off-host backup. Recover any missing records before
+discarding anything. Restoring files can reset their timestamps: a quiet timestamp
+check in `doctor` does not prove that restored content matches retirement. Do not
+reset the retirement timestamp or fingerprint to bypass refusal. Preserve the
+recovered generation in a verified off-host backup before explicitly removing it;
+a later prune drops entries for generations already removed. Run the offline
+retention command periodically:
 
 ```sh
 commonplace workspace prune-stores <workspace>
@@ -107,7 +119,8 @@ commonplace workspace prune-stores <workspace>
 Pruning removes abandoned staging directories and never removes the active
 generation. Existing off-host backups follow their own retention policy. `doctor` reports the selected format, thread index version,
 palace schema version, backfill state, active path and retained generations older
-than fourteen days for each workspace.
+than fourteen days for each workspace. Doctor uses timestamps without hashing
+retained content; pruning checks fingerprints only after the retention period.
 
 To restore from an off-host backup, stop the gateway and prepare a fresh data
 directory with the matching control database and workspace id. Restore the

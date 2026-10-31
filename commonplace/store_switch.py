@@ -145,6 +145,64 @@ def _remove_staging(staging):
             shutil.rmtree(path)
 
 
+def _reset_staging_state(root, pointer):
+    state = read_json(root / STATE)
+    if state.get("state") != "copying" or not state.get("staging"):
+        return
+    if state["staging"] == pointer.get("active"):
+        status = "complete"
+    else:
+        staging = generation_path(root, state["staging"])
+        if staging.exists():
+            return
+        status = "failed"
+    atomic_write_json(root / STATE, {"state": status}, follow_symlinks=False)
+
+
+def _cleanup_recorded_staging(root):
+    """Without a valid pointer, remove only provably unpublished recorded work."""
+    state = read_json(root / STATE)
+    if state.get("state") != "copying" or not state.get("staging"):
+        return
+    staging = generation_path(root, state["staging"])
+    # Publication can precede the final state update. A fully prepared generation
+    # may have been active before the pointer was lost; preserve it for recovery.
+    if staging == root or (staging / ".store-comparison.json").exists():
+        return
+    _remove_staging(staging)
+    _reset_staging_state(root, {})
+
+
+def _prepare_generations(root):
+    """Validate publication evidence before allowing any orphan cleanup."""
+    try:
+        pointer = read_json(root / POINTER)
+        if (root / POINTER).exists():
+            resolve_workspace(root)
+            retained = pointer.get("retained", [])
+            if not isinstance(retained, list):
+                raise ValueError("Invalid retained generations")
+            for item in retained:
+                generation_path(root, item["name"])
+                if item["name"] == pointer["active"]:
+                    raise ValueError("Active generation cannot be retained")
+                float(item["retired_at"])
+        else:
+            _cleanup_recorded_staging(root)
+            if any(root.parent.glob(root.name + ".generation-*")):
+                raise ValueError(
+                    "Workspace generation pointer is missing; restore it before proceeding"
+                )
+            return {}
+    except (ValueError, KeyError, TypeError):
+        _cleanup_recorded_staging(root)
+        raise ValueError(
+            "Invalid or missing workspace generation pointer; restore it before proceeding"
+        ) from None
+    _cleanup_unpublished(root, pointer)
+    return pointer
+
+
 def _cleanup_unpublished(root, pointer):
     protected = {
         root.name,
@@ -167,6 +225,7 @@ def _cleanup_unpublished(root, pointer):
             raise ValueError("Refusing symlink in staging cleanup")
         if path.is_dir():
             shutil.rmtree(path)
+    _reset_staging_state(root, pointer)
 
 
 def _seal_retired(root, pointer):
@@ -543,8 +602,7 @@ def switch_workspace(
         root = workspace_root(data_dir, workspace_id)
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         _verify_offline(data_dir)
-        pointer = read_json(root / POINTER)
-        _cleanup_unpublished(root, pointer)
+        pointer = _prepare_generations(root)
         _seal_retired(root, pointer)
         source = resolve_workspace(root)
         source_store = settings_for(source).get("store", "v1")
@@ -565,6 +623,9 @@ def switch_workspace(
             _preflight(source, target_store)
             receipt = backup_workspace(root, source, workspace_id)
             checkpoint("backup")
+            if not pointer:
+                pointer = {"active": root.name, "retained": []}
+                atomic_write_json(root / POINTER, pointer, follow_symlinks=False)
             name = root.name + ".generation-" + secrets.token_hex(12)
             staging = generation_path(root, name)
             atomic_write_json(
@@ -636,8 +697,7 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None):
             workspace_id = authorize(workspace_id)
         root = workspace_root(data_dir, workspace_id)
         _verify_offline(Path(data_dir).resolve())
-        pointer = read_json(root / POINTER)
-        _cleanup_unpublished(root, pointer)
+        pointer = _prepare_generations(root)
         if not pointer:
             return
         _seal_retired(root, pointer)
@@ -646,12 +706,14 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None):
             path = generation_path(root, item["name"])
             if path.name == pointer.get("active"):
                 raise ValueError("Refusing to delete the active workspace generation")
-            if _retired_changed(path, item):
-                kept.append(item)
-                modified.append(path.name)
+            if not path.exists():
                 continue
             if (time.time() if now is None else now) - item["retired_at"] < RETENTION_SECONDS:
                 kept.append(item)
+                continue
+            if _retired_changed(path, item):
+                kept.append(item)
+                modified.append(path.name)
                 continue
             if path == root:
                 for child in path.iterdir():
@@ -701,7 +763,7 @@ def doctor_workspace(data_dir, workspace_id):
             {
                 "name": item["name"],
                 "older_than_14_days": time.time() - item["retired_at"] >= RETENTION_SECONDS,
-                "newer_writes": _retired_changed(path, item),
+                "newer_writes": newest_write(path) > int(item["retired_at"] * 1_000_000_000),
             }
         )
     return {
