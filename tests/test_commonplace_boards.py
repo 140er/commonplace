@@ -130,7 +130,7 @@ MOVES = [
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
-    ("review", "done", "update", False),
+    ("review", "done", "update", True),
     ("review", "backlog", "update", False),
     ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
     ("todo", "review", "handoff", True),
@@ -922,3 +922,49 @@ def test_agent_done_routes_to_review_with_audit(hub, env, old):
     assert (event["from_status"], event["to_status"]) == (old, "review")
     with pytest.raises(ToolError):
         worker.decide(task=created["number"], choice="ship", then="done")
+
+
+@pytest.mark.parametrize("needs_review", [False, True])
+def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs_review):
+    token, agent, _person, _cookie, owner = env
+    worker = service(hub, agent)
+    waiting = worker.ask("Ready to close?", board="work")
+    number = waiting["number"]
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE boards SET done_needs_review=? WHERE slug='work'", (needs_review,))
+    with pytest.raises(ToolError):
+        worker.decide(task=number, choice="yes", then="done")
+    with pytest.raises(ToolError, match="card is waiting on a person"):
+        worker.task_update(number, status="review", checks="passing")
+    assert mcp(hub, token, "task_update", task=number, status="review")[0]
+    assert mcp(hub, token, "task_update", task=number, status="done")[0]
+    current = owner.task_show(number)
+    assert current["status"] == ("review" if needs_review else "done")
+    with owner.store.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM task_events WHERE task_id=? AND kind='decide'", (number,)
+            ).fetchone()[0]
+            == 0
+        )
+    with owner.store.connection() as conn:
+        last = conn.execute(
+            "SELECT * FROM task_events WHERE task_id=? ORDER BY id DESC", (number,)
+        ).fetchone()
+    assert (last["from_status"], last["to_status"]) == (
+        "review",
+        "review" if needs_review else "done",
+    )
+    assert last["stamp_connection"] == agent.actor.removeprefix("conn:")
+    if not needs_review:
+        assert current["ask"] is None and current["ask_to"] is None
+        assert current["return_to"] is None and current["ask_options"] == []
+    if needs_review:
+        assert last["text"] == "Done?"
+        assert json.loads(last["options"]) == ["ship", "redo"]
+        assert current["events"][-1]["options"] == ["ship", "redo"]
+        assert last["target"] == current["ask_to"]
+        assert current["ask"] == "Done?"
+        assert current["ask_options"] == ["ship", "redo"]
+        with pytest.raises(ToolError):
+            worker.decide(task=number, choice="ship", then="done")

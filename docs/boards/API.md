@@ -142,7 +142,7 @@ COMMIT;
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
 
-- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Leaving `review` requires `decide`; agents cannot answer their own asks.
+- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Agents may also close `review` cards with `status: "done"` (subject to `done_needs_review`), or keep them in `review`. Other exits from `review` require `decide`; agents cannot answer their own asks.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with the ask `Done?` and options `ship | redo`.
 - `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
@@ -181,7 +181,8 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 | doing → todo | `task_handoff` (holder) | yes |
 | doing → review | `task_update` or `task_handoff` to a person (holder) | yes |
 | doing → done | `task_update` (holder) | yes |
-| review → anything | no | `decide` only |
+| review → done | `task_update` (subject to `done_needs_review`) | `decide` only |
+| review → other columns | `decide` only (never own asks) | `decide` only |
 | todo → review | `task_update` or `task_handoff` to a person | yes |
 | todo → done | `task_update` | no |
 | done → todo | status-only `task_update` | yes |
