@@ -8,7 +8,7 @@ import re
 from functools import lru_cache
 
 TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
-_QUERY_PART_RE = re.compile(r"[/\w]+(?:[.\-:/][/\w]+)*", re.UNICODE)
+_QUERY_PART_RE = re.compile(r"[/\w\u0300-\u036f]+(?:[.\-:/][/\w\u0300-\u036f]+)*", re.UNICODE)
 
 
 @lru_cache(maxsize=1)
@@ -95,7 +95,7 @@ def lexical_query_terms(
     ignored = stop_words if closet else _query_stop_words() | stop_words
     query = query or ""
     # Quoted spans take precedence over bare words, retaining punctuation.
-    parts = re.finditer(r'"([^"\n]+)"|“([^”\n]+)”|[/\w]+(?:[.\-:/][/\w]+)*', query)
+    parts = re.finditer(r'"([^"\n]+)"|“([^”\n]+)”|' + _QUERY_PART_RE.pattern, query)
     candidates = {}
     start, last_end, token_count, seen_tokens = True, 0, 0, 0
     with IndexWordNormalizer() as normalize:
@@ -165,7 +165,7 @@ def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
         row = []
         for term, phrase in zip(terms, phrases):
             size = len(phrase)
-            if trigram and any(c in term for c in "_/.: "):
+            if trigram and any(c in term for c in "_/.:- "):
                 # Trigram literals are whole substrings, including separators.
                 # Keep the historical word rules for ordinary word matches.
                 freq = (documents[i] or "").lower().count(term)

@@ -3,6 +3,7 @@
 import logging
 import math
 from contextlib import contextmanager
+from heapq import nsmallest
 
 from ..lexical import bm25_scores, index_bm25_scores, lexical_query_terms, tokenize
 from ..stored_text import INDEX_SPANS, decode_record, index_text
@@ -85,7 +86,7 @@ def scope_local_search(
         return LexicalResult(hits=[], skip_reason=skip)
     with collection.lexical_scope(where) as scope:
         cutoff = min(2000, max(1000, scope.count // 20))
-        selected, ids, evidence = [], set(), {}
+        selected, ids, postings, weights = [], set(), {}, {}
         for term in terms:
             matches = scope.fetch(term, 5000 if closet else cutoff + 1)
             if closet and len(matches) >= 5000:
@@ -95,8 +96,11 @@ def scope_local_search(
             if matches and (closet or len(matches) <= cutoff):
                 selected.append(term)
                 ids.update(matches)
-                for row_id in matches:
-                    evidence.setdefault(row_id, set()).add(term)
+                if not closet:
+                    postings[term] = set(matches)
+                    idf = math.log((scope.count + 1) / (len(matches) + 0.5))
+                    for row_id in matches:
+                        weights[row_id] = weights.get(row_id, 0.0) + idf
                 if not closet and len(selected) == 8:
                     break
         # Every accepted term's complete match set is present. Drawer pools
@@ -104,18 +108,19 @@ def scope_local_search(
         # First stage needs only rowids. It bounds text decoding and Python
         # scoring independently of the accepted terms' full match counts.
         if not closet:
-            idf = {
-                term: math.log(
-                    (max(scope.count, len(ids)) + 1)
-                    / (sum(term in e for e in evidence.values()) + 0.5)
-                )
-                for term in selected
-            }
-            ordered = sorted(
-                ids, key=lambda row_id: (-sum(idf[t] for t in evidence[row_id]), row_id)
-            )[: max(100, 10 * n_results)]
+            ordered = nsmallest(
+                max(100, 10 * n_results), weights, key=lambda row_id: (-weights[row_id], row_id)
+            )
         else:
             ordered = sorted(ids)
+        evidence = (
+            {
+                row_id: tuple(term for term in selected if row_id in postings[term])
+                for row_id in ordered
+            }
+            if not closet and getattr(collection, "lexical_min_token_length", 2) != 3
+            else {}
+        )
         hydrated = None
         if (
             not closet

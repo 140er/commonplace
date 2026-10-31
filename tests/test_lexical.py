@@ -186,6 +186,7 @@ def test_index_literals_are_single_phrases_among_subword_confusers(
         ("cafe", "cafe", ["coffee", "crema"]),
         ("项目部署配置", "项目部署配置", ["项目", "部署", "配置"]),
         ("x" * 81, "x" * 81, ["xenon", "xavier"]),
+        ("re\u0301sume\u0301", "re\u0301sume\u0301", ["resin", "linen"]),
     ]
     count = 1005 if saturated else 20
     rows = [(f"n{i}", text, [0.0, 0.0]) for i, (_, text, _) in enumerate(shapes)]
@@ -248,7 +249,18 @@ def test_unicode61_closet_accents_match_develop_without_match_floor(tmp_path, mo
         assert all(h.score > 0 for h in after.hits)
 
 
-def test_chroma_literal_keeps_separators_and_word_normalization(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "literal,confuser",
+    [
+        ("foo_bar", "foo bar"),
+        ("PR-38", "PR 38"),
+        ("src/main.py", "src main py"),
+        ("server:8473", "server 8473"),
+    ],
+)
+def test_chroma_literal_keeps_separators_and_word_normalization(
+    tmp_path, monkeypatch, literal, confuser
+):
     from mempalace.backends import embedding_wrapper
     from mempalace.palace import get_collection
     from mempalace.searcher import search_memories
@@ -260,12 +272,12 @@ def test_chroma_literal_keeps_separators_and_word_normalization(tmp_path, monkey
     col = get_collection(str(tmp_path), create=True)
     col.add(
         ids=[f"v{i}" for i in range(30)] + ["needle"],
-        documents=["foo bar" + "!" * (i + 1) for i in range(30)] + ["foo_bar"],
+        documents=[confuser + "!" * (i + 1) for i in range(30)] + [literal],
         embeddings=[[0.01, 1.0]] * 30 + [[0.0, 0.0]],
         metadatas=[{"wing": "public"}] * 31,
     )
     result = search_memories(
-        "foo_bar", str(tmp_path), wing="public", n_results=1, include_facts=False
+        literal, str(tmp_path), wing="public", n_results=1, include_facts=False
     )
     assert result["results"][0]["drawer_id"] == "needle"
     assert result["results"][0]["matched_via"] == "bm25_backend"
@@ -273,3 +285,11 @@ def test_chroma_literal_keeps_separators_and_word_normalization(tmp_path, monkey
 
     assert index_bm25_scores(["cafe"], ["café"], trigram=True) == [0]
     assert index_bm25_scores(["src/main.py"], ["src main py", "src/main.py"], trigram=True)[0] == 0
+
+
+def test_decomposed_accents_keep_the_native_index_word_together():
+    assert lexical_query_terms("re\u0301sume\u0301 cafe\u0301 foo_bar")[0] == [
+        "foo_bar",
+        "resume",
+        "cafe",
+    ]
