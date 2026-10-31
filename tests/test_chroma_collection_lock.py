@@ -84,18 +84,20 @@ def _hold_lock(palace_path, ready, release):
     """Keep the lock until the parent finishes the operation under test."""
     with mine_palace_lock(palace_path):
         ready.set()
-        assert release.wait(_WAIT_SECONDS), "parent did not release the lock holder"
+        if not release.wait(_WAIT_SECONDS):
+            raise TimeoutError("parent did not release the lock holder")
 
 
 def _join_children(*children):
     """Reap every child, including when synchronization or an assertion fails."""
     for child in children:
-        child.join(timeout=5)
+        child.join(timeout=_WAIT_SECONDS)
         if child.is_alive():
             child.terminate()
-            child.join(timeout=5)
-    for child in children:
-        assert child.exitcode == 0, f"{child.name} failed or timed out: exit {child.exitcode}"
+            child.join(timeout=_WAIT_SECONDS)
+    failures = [f"{child.name}: exit {child.exitcode}" for child in children if child.exitcode != 0]
+    if failures:
+        pytest.fail("Children failed or timed out: " + "; ".join(failures))
 
 
 @contextmanager
@@ -206,12 +208,15 @@ class _HeldFakeChromaCollection(_FakeChromaCollection):
 
     def upsert(self, **kwargs):
         self._acquired.set()
-        assert self._release.wait(_WAIT_SECONDS), "parent did not release the first writer"
+        if not self._release.wait(_WAIT_SECONDS):
+            raise TimeoutError("parent did not release the first writer")
         super().upsert(**kwargs)
 
 
-def _writer_target(palace_path, tmp_path_str, pid, ready, start, acquired, release, result_q):
-    """Finish imports before readiness, then try one upsert on command."""
+def _writer_target(
+    palace_path, tmp_path_str, pid, ready, start, acquired, release, retry, finished, result_q
+):
+    """Finish imports before readiness, then attempt writes on command."""
     os.environ["HOME"] = tmp_path_str
     # Fresh import inside child so HOME monkeypatch routes the lock dir.
     from mempalace.backends.chroma import ChromaCollection as _CC
@@ -220,12 +225,25 @@ def _writer_target(palace_path, tmp_path_str, pid, ready, start, acquired, relea
     fake = _HeldFakeChromaCollection(acquired, release) if pid == 1 else _FakeChromaCollection()
     col = _CC(fake, palace_path=palace_path)
     ready.set()
-    assert start.wait(_WAIT_SECONDS), f"parent did not start writer {pid}"
-    try:
-        col.upsert(documents=[f"d{pid}"], ids=[f"i{pid}"])
-        result_q.put(("ok", pid))
-    except _MAR:
-        result_q.put(("busy", pid))
+    if not start.wait(_WAIT_SECONDS):
+        raise TimeoutError(f"parent did not start writer {pid}")
+
+    def attempt():
+        try:
+            col.upsert(documents=[f"d{pid}"], ids=[f"i{pid}"])
+            result_q.put(("ok", pid))
+        except _MAR:
+            result_q.put(("busy", pid))
+
+    attempt()
+    if pid == 1:
+        # Keep the owner alive so process exit cannot release a leaked lock.
+        if not finished.wait(_WAIT_SECONDS):
+            raise TimeoutError("parent did not finish the post-release check")
+    else:
+        if not retry.wait(_WAIT_SECONDS):
+            raise TimeoutError("parent did not request the second writer's retry")
+        attempt()
 
 
 def test_concurrent_writers_serialize(tmp_path, monkeypatch):
@@ -240,6 +258,7 @@ def test_concurrent_writers_serialize(tmp_path, monkeypatch):
 
     Both children finish importing before the parent starts either write.
     The first writer holds its lock until the second reports its attempt.
+    The second retries after release while the first process is still alive.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     palace = str(tmp_path / "palace")
@@ -249,10 +268,22 @@ def test_concurrent_writers_serialize(tmp_path, monkeypatch):
     ready = [ctx.Event(), ctx.Event()]
     start = [ctx.Event(), ctx.Event()]
     acquired, release = ctx.Event(), ctx.Event()
+    retry, finished = ctx.Event(), ctx.Event()
     children = [
         ctx.Process(
             target=_writer_target,
-            args=(palace, str(tmp_path), i + 1, ready[i], start[i], acquired, release, result_q),
+            args=(
+                palace,
+                str(tmp_path),
+                i + 1,
+                ready[i],
+                start[i],
+                acquired,
+                release,
+                retry,
+                finished,
+                result_q,
+            ),
         )
         for i in range(2)
     ]
@@ -268,8 +299,13 @@ def test_concurrent_writers_serialize(tmp_path, monkeypatch):
         assert attempt[1] == 2, f"expected the second writer's attempt, got {attempt}"
         release.set()
         outcomes = [attempt, result_q.get(timeout=_WAIT_SECONDS)]
+        assert outcomes == [("busy", 2), ("ok", 1)]
+        retry.set()
+        assert result_q.get(timeout=_WAIT_SECONDS) == ("ok", 2)
     finally:
         release.set()
+        retry.set()
+        finished.set()
         for event in start:
             event.set()
         try:
@@ -277,9 +313,6 @@ def test_concurrent_writers_serialize(tmp_path, monkeypatch):
         finally:
             result_q.close()
             result_q.join_thread()
-
-    statuses = sorted(o[0] for o in outcomes)
-    assert statuses == ["busy", "ok"], f"expected one ok + one busy, got {outcomes}"
 
 
 def test_read_path_does_not_acquire_lock(tmp_path, monkeypatch):
