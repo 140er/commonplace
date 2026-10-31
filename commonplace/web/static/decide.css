@@ -1,0 +1,115 @@
+/* Decide queue. Phone is one question with the answers pinned. Desktop keeps the shell. */
+.decide { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); }
+.decide-bar { display: flex; gap: var(--gap); flex: none; }
+.decide-bar .mark {
+  width: 40px; height: 40px; background: var(--accent); color: var(--bg);
+  display: grid; place-items: center; font-size: 22px; font-weight: 800; text-decoration: none;
+}
+.decide-bar-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
+  background: var(--surface); min-height: 64px; padding: 0 8px 0 16px;
+}
+.decide-bar h1 { font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.05em; }
+.decide-bar .meter, .decide-tools .meter { margin-left: auto; }
+.meter { display: inline-flex; gap: 3px; align-items: center; }
+.meter i { width: 10px; height: 14px; background: var(--surface-3); }
+.meter i.done { background: var(--ink); }
+.meter i.now { background: var(--accent); }
+.frac { font-size: 12px; color: var(--muted); }
+.decide .close, .decide-tools .close {
+  min-width: 44px; min-height: 44px; display: grid; place-items: center;
+  background: var(--surface-2); color: var(--ink); text-decoration: none; font-size: 18px;
+}
+.decide-tools { display: flex; align-items: center; gap: 10px; }
+.decide-list { display: none; }
+.decide-main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); border-left: 2px solid var(--accent); }
+.decide-card {
+  flex: 1; min-height: 0; overflow: auto; background: var(--surface); padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.decide-card.swap { animation: decide-in 120ms linear; }
+@keyframes decide-in { from { opacity: 0; } to { opacity: 1; } }
+.decide-card .meta { font-size: 12px; color: var(--quiet); }
+.decide-title { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.decide-card h2 {
+  font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.035em;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.decide-card.stale h2, .decide-card.stale .decide-title { color: var(--muted); }
+.decide-card .said { color: var(--muted); }
+.decide-status { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px 0 16px; background: var(--surface); font-size: 12px; color: var(--muted); flex: none; }
+.decide-status.bad { border-left: 2px solid var(--rec); }
+.decide-status .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.decide-status .end { display: flex; align-items: center; gap: 10px; flex: none; }
+.decide-status button, .decide-actions > .opt, .decide-reply .later, .decide-reply .card-link, .decide-reply .send {
+  min-width: 44px; min-height: 44px;
+}
+.decide-status button { padding: 0 12px; background: var(--surface-2); }
+.blocks { display: inline-flex; gap: 3px; }
+.blocks i { width: 10px; height: 14px; background: var(--surface-3); }
+.blocks i.on { background: var(--ink); }
+.decide-dot { width: 8px; height: 8px; background: var(--accent); flex: none; }
+.decide-dot.ok { background: var(--ok); }
+.decide-dot.bad { background: var(--rec); }
+.decide-dot.hollow { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.decide-actions {
+  flex: none; display: flex; flex-direction: column; gap: var(--gap);
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+}
+.decide-actions > .opt {
+  width: 100%; min-height: 56px; justify-content: flex-start; gap: 12px;
+  padding: 0 16px; font-size: 15px; font-weight: 600; text-align: left;
+}
+.decide-actions > .opt > span:first-child { margin-right: auto; overflow-wrap: anywhere; }
+.decide-actions > .opt.go { background: var(--ink); color: var(--bg); }
+.decide-actions .advise { font-size: 11px; font-weight: 400; color: var(--quiet); }
+.decide-actions > .opt.go .advise, .decide-actions > .opt.go .k { color: var(--bg); opacity: 0.55; }
+.decide-actions > .opt.go .k { background: transparent; }
+.decide-actions .opt:disabled, .decide-actions > .opt.go:disabled, .decide-reply .send:disabled { opacity: 1; color: var(--wait); background: var(--surface-2); cursor: default; }
+.decide-actions .opt:disabled .advise, .decide-actions .opt:disabled .k { color: var(--wait); opacity: 1; }
+.decide-reply { display: flex; gap: var(--gap); min-height: 56px; }
+.decide-reply form { flex: 1; min-width: 0; display: flex; background: var(--term); }
+.decide-reply input { flex: 1; width: 0; min-height: 44px; background: transparent; }
+.decide-reply .send { background: transparent; color: var(--ink); }
+.decide-reply .later, .decide-reply .card-link {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 0 16px; background: var(--surface-2); color: var(--ink); font-weight: 600; text-decoration: none;
+}
+.decide-done { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+.done-title { font-size: 32px; line-height: 42px; font-weight: 600; letter-spacing: -0.045em; display: flex; flex-direction: column; }
+.decide-done ol { display: flex; flex-direction: column; gap: 2px; }
+.decide-done li { display: flex; align-items: center; gap: 12px; min-height: 44px; background: var(--surface); padding: 8px 16px; }
+.decide-done .num { color: var(--muted); }
+.decide-list { margin: 0; padding: 0; list-style: none; }
+.decide-list li button {
+  width: 100%; min-height: 44px; display: grid; grid-template-columns: 8px minmax(0, 1fr);
+  column-gap: 12px; row-gap: 2px; text-align: left; padding: 10px 16px; background: transparent; color: inherit;
+}
+.decide-list .decide-dot { grid-row: 1 / span 2; align-self: center; }
+.decide-list .lt { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.decide-list .ls { color: var(--quiet); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.decide-list li.sel button { background: var(--surface-2); border-left: 2px solid var(--accent); }
+
+@media (max-width: 640px) {
+  .app[data-screen="decide"] { grid-template-rows: minmax(0, 1fr); height: 100dvh; }
+  .app[data-screen="decide"] :is(.head, .mtabs, #connection-state) { display: none; }
+  .app[data-screen="decide"] #content { overflow: hidden; }
+  .decide .k, .decide .card-link { display: none; }
+}
+
+@media (min-width: 641px) {
+  .decide { display: grid; grid-template-columns: 360px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .decide-bar { display: none; }
+  .decide-list { display: block; grid-column: 1; grid-row: 1; overflow: auto; background: var(--surface); min-height: 0; }
+  .decide-main { grid-column: 2; grid-row: 1; background: var(--surface); padding: 32px 40px; min-height: 0; }
+  .decide-card { background: transparent; padding: 0; }
+  .decide-card h2 { font-size: 32px; line-height: 42px; letter-spacing: -0.045em; }
+  .decide-actions { max-width: 560px; margin-top: auto; padding-bottom: 0; }
+  .decide-actions > .opt, .decide-reply, .decide-reply .later, .decide-reply .card-link, .decide-reply .send { min-height: 52px; }
+  .decide-done li { background: var(--surface-2); }
+  .decide-tools .frac:not(.only) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decide-card.swap { animation: none; }
+}

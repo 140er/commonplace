@@ -3,6 +3,7 @@ import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
+import { createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, toolsHTML } from "./decide.js";
 import { planView } from "./plan.js";
 import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
@@ -23,7 +24,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), rulesWaiting: 0,
+  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "",
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -159,6 +160,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
@@ -183,6 +185,7 @@ function navigation() {
   boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
   root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
+  root.querySelector(".app")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   const key = state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
 }
@@ -497,7 +500,11 @@ async function refresh({ background = false, events = [] } = {}) {
       if (!background || changed) await memoryView(epoch, background && !changed);
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
+    } else if (state.base === "#/decide") {
+      if (state.queue) queueApply(state.queue.ready ? { type: "sync", cards: decideQueue(state.needs) } : { type: "load", cards: decideQueue(state.needs) });
+      queueNoteOffline();
     } else needsView();
+    if (!current()) return true;
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
@@ -510,6 +517,140 @@ async function refresh({ background = false, events = [] } = {}) {
     return false;
   }
 }
+function decideStart(hash) {
+  const match = /^#\/decide(?:\/([1-9]\d*))?$/.exec(hash);
+  if (!match) return undefined;
+  return match[1] ? Number(match[1]) : null;
+}
+let queueTimer = null, queueSlowTimer = null;
+function queueStop() {
+  clearTimeout(queueTimer); queueTimer = null;
+  clearTimeout(queueSlowTimer); queueSlowTimer = null;
+}
+function queueArmSlow() {
+  clearTimeout(queueSlowTimer);
+  queueSlowTimer = setTimeout(() => {
+    if (state.base === "#/decide" && state.queue && !state.queue.ready) queueApply({ type: "slow" });
+  }, 10000);
+}
+function queueArm() {
+  const holding = state.queue?.items.some((item) => item.kind === "hold");
+  if (holding && !queueTimer) queueTimer = setInterval(() => queueApply({ type: "tick" }), 1000);
+  else if (!holding && queueTimer) { clearTimeout(queueTimer); queueTimer = null; }
+}
+function queueDraft(number) {
+  const field = root.querySelector(`[data-draft="reply-${number}"]`);
+  if (field) return field.value;
+  return state.drafts.get(`reply-${number}`) || "";
+}
+function focusMark() {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.closest(".decide, #head-actions")) return null;
+  if (el.dataset.draft) return { kind: "draft", key: el.dataset.draft, start: el.selectionStart, end: el.selectionEnd, value: el.value };
+  if (el.dataset.question) return { kind: "question" };
+  if (el.dataset.action) return { kind: "action", action: el.dataset.action, option: el.dataset.option || "", card: el.dataset.card || "" };
+  if (el.classList.contains("close")) return { kind: "close" };
+  return null;
+}
+function focusRestore(mark, questionChanged) {
+  if (mark?.kind === "draft") {
+    const input = root.querySelector(`[data-draft="${CSS.escape(mark.key)}"]`);
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    if (mark.value != null && input.value !== mark.value) input.value = mark.value;
+    if (mark.start != null) input.setSelectionRange(mark.start, mark.end);
+    return;
+  }
+  if (!questionChanged && mark?.kind === "action") {
+    const selector = mark.option !== "" ? `[data-action="${CSS.escape(mark.action)}"][data-option="${CSS.escape(mark.option)}"]` : mark.card ? `[data-action="${CSS.escape(mark.action)}"][data-card="${CSS.escape(mark.card)}"]` : `[data-action="${CSS.escape(mark.action)}"]`;
+    root.querySelector(selector)?.focus({ preventScroll: true });
+    return;
+  }
+  if (!questionChanged && mark?.kind === "close") { root.querySelector(".decide .close, .decide-tools .close")?.focus({ preventScroll: true }); return; }
+  if (questionChanged || mark?.kind === "question") root.querySelector("[data-question]")?.focus({ preventScroll: true });
+}
+function paintQueue() {
+  const content = root.querySelector("#content");
+  if (!content || !state.queue) return;
+  const mark = focusMark();
+  const previous = state.queueFocus;
+  content.innerHTML = renderDecide(state.queue, { drafts: Object.fromEntries(state.drafts) });
+  const count = leftCount(state.queue);
+  title("Decide", toolsHTML(state.queue));
+  if (count != null) {
+    const n = document.createElement("span");
+    n.className = "n";
+    n.textContent = String(count);
+    root.querySelector("#title")?.append(document.createTextNode(" "), n);
+  }
+  const question = content.querySelector("[data-question]");
+  const nextFocus = question?.dataset.question || "";
+  const changed = Boolean(previous && nextFocus && previous !== nextFocus);
+  if (changed) content.querySelector(".decide-card")?.classList.add("swap");
+  state.queueFocus = nextFocus;
+  focusRestore(mark, changed || (!mark && Boolean(nextFocus) && previous !== nextFocus));
+  queueArm();
+}
+function queueApply(event) {
+  if (!state.queue) return;
+  const { session, effects } = reduce(state.queue, event);
+  state.queue = session;
+  for (const effect of effects) {
+    if (effect.type === "post") void sendDecide(effect, false);
+    else if (effect.type === "get") void loadQueueCard(effect.number);
+    else if (effect.type === "home") location.hash = "#/";
+  }
+  if (state.base === "#/decide" && state.queue && state.queue.phase !== "empty") paintQueue();
+  else queueArm();
+}
+function queueFlush(keepalive) {
+  if (!state.queue) return;
+  const { session, effects } = reduce(state.queue, { type: "flush" });
+  state.queue = session;
+  for (const effect of effects) if (effect.type === "post") void sendDecide(effect, keepalive);
+  if (state.base === "#/decide" && state.queue.phase !== "empty") paintQueue();
+  else queueArm();
+}
+function queueNoteOffline() {
+  if (state.base !== "#/decide" || !state.queue?.ready) return;
+  const offline = offlineNow(navigator.onLine, state.pollFails);
+  if (offline !== Boolean(state.queue.offline)) queueApply({ type: "offline", offline });
+}
+async function loadQueueCard(number) {
+  try {
+    const card = await api(`/api/cards/${number}`);
+    if (state.base !== "#/decide" || !state.queue) return;
+    queueApply({ type: "card", number, card });
+  } catch (error) {
+    if (error.status === 401 || state.base !== "#/decide" || !state.queue) return;
+    queueApply({ type: "result", number, status: error.status || 0, error: error.message });
+  }
+}
+async function sendDecide(effect, keepalive) {
+  const { number, body } = effect;
+  try {
+    await api(`/api/cards/${number}/decide`, { method: "POST", body, keepalive: Boolean(keepalive) });
+    if (state.base !== "#/decide" || !state.queue) return;
+    state.drafts.delete(`reply-${number}`);
+    queueApply({ type: "result", number, status: 200 });
+  } catch (error) {
+    if (error.status === 401 || state.base !== "#/decide" || !state.queue) return;
+    const reload = error.status === 409 || (error.status === 403 && RELOAD_ERRORS.has(error.message));
+    if (reload) {
+      try {
+        const card = await api(`/api/cards/${number}`);
+        if (state.base !== "#/decide" || !state.queue) return;
+        queueApply({ type: "result", number, status: error.status, error: error.message, card });
+        return;
+      } catch (loadError) {
+        if (loadError.status === 401 || state.base !== "#/decide" || !state.queue) return;
+        queueApply({ type: "result", number, status: loadError.status || 0, error: loadError.message });
+        return;
+      }
+    }
+    queueApply({ type: "result", number, status: error.status || 0, error: error.message });
+  }
+}
 async function route() {
   if (!state.me) return;
   remember();
@@ -517,9 +658,21 @@ async function route() {
   if (hash !== state.route) voice.stop();
   const previousBase = state.base;
   state.screen++; state.route = hash;
+  const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = /^#\/((?:board|space)\/[^/?]+|boards|rules|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/";
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board|space)\/[^/?]+|boards|rules|memory(?:\?.*)?|settings)$/.test(hash) ? hash : "#/");
     state.card = null;
+  }
+  if (previousBase === "#/decide" && state.base !== "#/decide") {
+    queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
+  }
+  if (state.base === "#/decide" && !hash.startsWith("#/card/")) {
+    const sameVisit = previousBase === "#/decide" && state.queue && state.queue.start === start;
+    if (!sameVisit) {
+      queueFlush(true); queueStop(); state.queueFocus = "";
+      state.queue = createSession(start, state.me.actor || "");
+      queueArmSlow();
+    }
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
   if (state.base !== previousBase) { state.chatObserver?.disconnect(); state.chatVisible.clear(); }
@@ -580,6 +733,20 @@ root.addEventListener("focusin", (event) => {
 root.addEventListener("click", async (event) => {
   const b = event.target.closest("[data-action]"); if (!b) return;
   const number = Number(b.dataset.card), action = b.dataset.action;
+  if (action.startsWith("queue-")) {
+    const current = state.queue?.items[state.queue.cursor]?.number;
+    if (action === "queue-answer") {
+      const reply = queueDraft(current);
+      if (current) state.drafts.set(`reply-${current}`, reply);
+      queueApply({ type: "answer", optionIndex: Number(b.dataset.option), reply });
+    } else if (action === "queue-later") queueApply({ type: "later" });
+    else if (action === "queue-undo") queueApply({ type: "undo" });
+    else if (action === "queue-retry") queueApply({ type: "retry" });
+    else if (action === "queue-next") queueApply({ type: "next" });
+    else if (action === "queue-show-later") queueApply({ type: "show-later" });
+    else if (action === "queue-jump") queueApply({ type: "jump", number });
+    return;
+  }
   try {
     if (action === "speak-digest") await speech.toggle();
     else if (action === "decide") {
@@ -633,6 +800,13 @@ root.addEventListener("click", async (event) => {
 root.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-form]"); if (!form) return;
   event.preventDefault();
+  if (form.dataset.form === "queue-reply") {
+    const cardNumber = Number(form.dataset.card);
+    const reply = queueDraft(cardNumber);
+    state.drafts.set(`reply-${cardNumber}`, reply);
+    queueApply({ type: "reply", reply });
+    return;
+  }
   const payload = data(form), kind = form.dataset.form;
   const formKey = `form-${kind}-${form.dataset.card || ""}`;
   if (state.pending.has(formKey)) return;
@@ -704,11 +878,34 @@ root.addEventListener("drop", async (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
-  if (event.key === "Escape") { root.querySelector('[data-action="close-panel"]')?.click(); return; }
+  const panel = root.querySelector("#card-panel");
+  const panelOpen = panel && !panel.hidden;
+  if (event.key === "Escape") {
+    if (panelOpen) { panel.querySelector('[data-action="close-panel"]')?.click(); return; }
+    if (state.base === "#/decide") { location.hash = "#/"; return; }
+    root.querySelector('[data-action="close-panel"]')?.click();
+    return;
+  }
   const ask = event.target instanceof Element && event.target.closest("[data-ask]");
   if (ask && /^[1-6]$/.test(event.key)) {
     ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
     event.preventDefault(); return;
+  }
+  if (state.base === "#/decide" && state.queue && !panelOpen) {
+    const queueAction = queueKey(event.key, false);
+    if (queueAction) {
+      event.preventDefault();
+      if (queueAction.type === "answer") root.querySelector(`[data-action="queue-answer"][data-option="${queueAction.optionIndex}"]:not(:disabled)`)?.click();
+      else if (queueAction.type === "later") root.querySelector('[data-action="queue-later"]')?.click();
+      else if (queueAction.type === "undo") root.querySelector('[data-action="queue-undo"]')?.click();
+      else if (queueAction.type === "open") {
+        const item = state.queue.items[state.queue.cursor];
+        if (item) location.hash = `#/card/${item.number}`;
+      } else if (queueAction.type === "focus-reply") root.querySelector(".decide-reply input")?.focus();
+      else if (queueAction.type === "home") location.hash = "#/";
+      else if (queueAction.type === "move") queueApply({ type: "move", delta: queueAction.delta });
+      return;
+    }
   }
   if (state.base !== "#/" || !state.me) return;
   // With a card open, its keys answer and open that card, not the row selected behind it.
@@ -742,18 +939,21 @@ async function poll() {
     if (!state.me) return;
     if (feed.events.length && await refresh({ background: true, events: feed.events }) === false) throw new Error("Refresh failed");
     state.seq = feed.seq;
-    retryDelay = 2000; state.pollError = false;
-  } catch { state.pollError = true; retryDelay = Math.min(30000, retryDelay * 2); }
+    retryDelay = 2000; state.pollError = false; state.pollFails = 0;
+  } catch { state.pollError = true; state.pollFails += 1; retryDelay = Math.min(30000, retryDelay * 2); }
   finally {
     polling = false;
     const indicator = root.querySelector("#connection-state"); if (indicator) indicator.hidden = !state.pollError;
+    queueNoteOffline();
     if (state.me) schedule(state.pollError ? retryDelay : undefined);
   }
 }
-document.addEventListener("visibilitychange", () => schedule(document.hidden ? 30000 : 0));
-document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.error = ""; signin(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
+document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("online", queueNoteOffline);
+window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {
   root.querySelectorAll("[data-elapsed]").forEach((time) => { time.textContent = elapsed(time.dataset.elapsed); });
   root.querySelectorAll("[data-claim-until]").forEach((bar) => {

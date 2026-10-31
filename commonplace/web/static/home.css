@@ -7,7 +7,9 @@
 .needbox { padding: 6px 0 10px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .needbox.waiting { box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
 .needbox header { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 20px; }
-.needbox header .speak { margin-left: auto; }
+.needbox header .need-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.needbox .ink { min-width: 44px; min-height: 44px; padding: 0 14px; background: var(--ink); color: var(--bg); font-weight: 700; }
+.needbox .speak { min-width: 44px; min-height: 44px; }
 .needbox .digest-captions { margin: 4px 20px 8px; }
 .nline { display: grid; grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); align-items: center; column-gap: 12px; min-height: 36px; padding: 6px 20px; }
 .nline .tt { font-weight: 700; letter-spacing: -0.015em; overflow-wrap: break-word; color: var(--strong); }
