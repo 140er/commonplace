@@ -56,3 +56,36 @@ class SampledReads:
             return result
 
         return read
+
+
+class CollectionReads(SampledReads):
+    def __init__(self, current, previous_backend, previous_path, collection_name):
+        from .backend_copy import open_collection
+
+        previous = open_collection(previous_backend, previous_path, collection_name)
+        super().__init__(current, previous, reads=("get", "query", "lexical_search"))
+
+    def close(self):
+        self._current.close()
+
+
+def observe_collection(collection, palace_path, collection_name):
+    """The marker is written only by a successfully verified workspace cutover."""
+    from pathlib import Path
+
+    from .backends import get_backend
+
+    marker = Path(palace_path) / ".store-comparison.json"
+    try:
+        config = json.loads(marker.read_text(encoding="utf-8"))
+        previous = Path(config["previous"])
+        if not previous.is_dir():
+            return collection
+        backend = get_backend(config["backend"])
+        try:
+            return CollectionReads(collection, backend, previous, collection_name)
+        except Exception:
+            pass
+    except (OSError, ValueError, KeyError):
+        pass
+    return collection

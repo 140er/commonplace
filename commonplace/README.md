@@ -52,3 +52,5 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 - Searches without a wing run once per readable wing and merge by score.
 
 The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
+
+Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.

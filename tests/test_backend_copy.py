@@ -97,3 +97,86 @@ def test_sampled_reads_log_hashes_and_leave_live_result_unchanged(caplog):
     assert "previous_hash=" in caplog.text
     assert "private content" not in caplog.text
     assert "sensitive query" not in caplog.text
+
+
+def test_vector_verification_rejects_errors_beyond_rounding():
+    from mempalace.backend_copy import verify_records
+    from mempalace.backends import GetResult
+
+    original = GetResult(ids=["a"], documents=["text"], metadatas=[{}], embeddings=[[1.0, 0.5]])
+    rounded = GetResult(ids=["a"], documents=["text"], metadatas=[{}], embeddings=[[1.0, 64 / 127]])
+    verify_records(original, rounded, quantized=True)
+    rounded = GetResult(ids=["a"], documents=["text"], metadatas=[{}], embeddings=[[1.0, 0.6]])
+    with pytest.raises(CopyMismatch, match="quantisation"):
+        verify_records(original, rounded, quantized=True)
+
+
+def test_sampled_comparison_error_never_logs_exception_payload(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    from mempalace.dual_read import SampledReads
+
+    def unavailable():
+        raise ValueError("sensitive exception payload")
+
+    reader = SampledReads(
+        SimpleNamespace(get=lambda: "value"),
+        SimpleNamespace(get=unavailable),
+        reads=["get"],
+        sample_every=1,
+    )
+    with caplog.at_level(logging.INFO, logger="mempalace.dual_read"):
+        assert reader.get() == "value"
+    assert "comparison_unavailable" in caplog.text
+    assert "sensitive exception payload" not in caplog.text
+
+
+def test_copy_never_loads_operator_embedder(tmp_path, monkeypatch):
+    seed(tmp_path / "old")
+
+    def unavailable(**kwargs):
+        raise AssertionError("The operator embedder must not be resolved during a copy")
+
+    monkeypatch.setattr(ChromaBackend, "_resolve_embedding_function", staticmethod(unavailable))
+    copy_palace(tmp_path / "old", tmp_path / "compact", "chroma", "compact")
+    copy_palace(tmp_path / "compact", tmp_path / "restored", "compact", "chroma")
+
+
+def test_rollback_preserves_empty_metadata_and_unknown_identity_dimension(tmp_path):
+    from mempalace.backends.base import EmbedderIdentity
+
+    source = tmp_path / "compact"
+    backend = CompactBackend()
+    try:
+        col = open_collection(backend, source, "mempalace_drawers", create=True)
+        col.add(
+            ids=["empty", "legacy"],
+            documents=["first", "second"],
+            metadatas=[{}, {"wing": "test"}],
+            embeddings=[[1.0, 2.0], [2.0, 1.0]],
+        )
+        col.set_embedder_identity(EmbedderIdentity("fixture-model", 0))
+    finally:
+        backend.close()
+    copy_palace(source, tmp_path / "chroma", "compact", "chroma")
+    verify_palaces(source, tmp_path / "chroma", "compact", "chroma")
+    copy_palace(tmp_path / "chroma", tmp_path / "compact-again", "chroma", "compact")
+
+
+def test_legacy_unknown_embedder_dimension_survives_both_directions(tmp_path):
+    from mempalace.backends.base import EmbedderIdentity
+
+    source = tmp_path / "old"
+    seed(source)
+    backend = ChromaBackend()
+    try:
+        open_collection(backend, source, "mempalace_drawers").set_embedder_identity(
+            EmbedderIdentity("fixture-model", 0)
+        )
+    finally:
+        backend.close()
+    identity = (source / "mempalace_embedder.json").read_bytes()
+    copy_palace(source, tmp_path / "compact", "chroma", "compact")
+    copy_palace(tmp_path / "compact", tmp_path / "restored", "compact", "chroma")
+    assert (tmp_path / "restored" / "mempalace_embedder.json").read_bytes() == identity

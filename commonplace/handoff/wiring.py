@@ -31,19 +31,20 @@ class HandoffContext:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def store_for(self, workspace_id: str):
-        from .thread_store import ThreadStore
+        from commonplace.workspace_store import open_threads, workspace_path
 
         with self._lock:
             store = self._stores.get(workspace_id)
             if store is None:
-                path = self.data_dir / "workspaces" / workspace_id / "threads.sqlite3"
-                os.makedirs(path.parent, exist_ok=True)
-                store = self._stores[workspace_id] = ThreadStore(str(path))
+                directory = workspace_path(self.data_dir, workspace_id)
+                os.makedirs(directory, exist_ok=True)
+                store = self._stores[workspace_id] = open_threads(directory)
             return store
 
     def has_threads(self, workspace_id: str) -> bool:
-        path = self.data_dir / "workspaces" / workspace_id / "threads.sqlite3"
-        return path.exists()
+        from commonplace.workspace_store import thread_path, workspace_path
+
+        return thread_path(workspace_path(self.data_dir, workspace_id)).exists()
 
     def call_tool(self, principal, name: str, arguments: dict):
         return self.gateway.mediator.workers.call_tool(principal, name, arguments)

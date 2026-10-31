@@ -1,4 +1,4 @@
-"""Verified v1 -> v2 row copy. Explicit utility; no production switch.
+"""Verified bidirectional row copies for explicit workspace transitions.
 
 The source is opened read-only in a snapshot. The destination must be empty.
 Any mismatch rolls back every copied row, keeping the original file intact.
@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from .thread_frames import sql_string
+from .thread_frames import sql_string, string
 from .thread_store import ThreadStore, canonical_sha256
 from .thread_store_v2 import ThreadStoreV2
 from .thread_store_v2_schema import FILENAME
@@ -55,7 +55,8 @@ def verify_stores(source, target):
         items = source.messages(row["id"])
         chunks = source.chunks(row["id"])
         if (
-            len(items) != row["message_count"]
+            not items
+            or len(items) != row["message_count"]
             or len(chunks) != row["chunk_count"]
             or any(item.seq != seq for seq, item in enumerate(items))
             or any(chunk.index != idx for idx, chunk in enumerate(chunks))
@@ -72,6 +73,33 @@ def migrate_v2(source: str, destination: str) -> int:
     if Path(source).resolve() == Path(destination).resolve():
         raise ValueError("Migration needs a separate v1 file")
     with read_store(source, compact=True) as old:
+        unsupported = 0
+        for row in old._conn.execute("SELECT id FROM threads"):
+            try:
+                for item in old.messages(row["id"]):
+                    for value in (
+                        item.role,
+                        item.kind,
+                        item.name,
+                        item.call_id,
+                        item.at,
+                        item.text,
+                        item.raw,
+                    ):
+                        value.encode("utf-8")
+            except UnicodeEncodeError:
+                unsupported += 1
+        unsupported_docs = 0
+        for row in old._conn.execute("SELECT markdown FROM handoff_docs"):
+            try:
+                string(row[0]).encode("utf-8")
+            except UnicodeEncodeError:
+                unsupported_docs += 1
+        if unsupported or unsupported_docs:
+            raise MigrationMismatch(
+                f"Rollback refused: {unsupported} threads and {unsupported_docs} documents "
+                "cannot be represented by v1"
+            )
         new = ThreadStore(destination)
         try:
             with new._lock, new._conn:

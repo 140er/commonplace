@@ -115,6 +115,10 @@ class SubprocessLauncher:
         self.startup_timeout_s = startup_timeout_s
 
     def start(self, workspace_id: str, workspace_dir: Path) -> Worker:
+        from .workspace_store import resolve_workspace, worker_config
+
+        workspace_dir = resolve_workspace(workspace_dir)
+        worker_config(workspace_dir)
         palace = workspace_dir / "palace"
         home = workspace_dir / "home"
         config = workspace_dir / "config"
@@ -216,11 +220,9 @@ class WorkerSupervisor:
         self._closed = False
 
     def workspace_dir(self, workspace_id: str) -> Path:
-        # Ids come from the control DB (``ws_`` + hex); refuse anything else
-        # so no id can name a path outside the data directory.
-        if not workspace_id.startswith("ws_") or not workspace_id[3:].isalnum():
-            raise ValueError(f"bad workspace id {workspace_id!r}")
-        return self.root / workspace_id
+        from .workspace_store import workspace_path
+
+        return workspace_path(self.root.parent, workspace_id)
 
     def get(self, workspace_id: str) -> Worker:
         while True:

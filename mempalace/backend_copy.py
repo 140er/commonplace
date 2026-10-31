@@ -1,4 +1,4 @@
-"""Verified, embedding-free palace copies for explicit store transitions.
+"""Verified palace copies for explicit store transitions.
 
 The caller owns the writer lease. Destinations are fresh sibling directories;
 this module never publishes them or changes the source's backend selection.
@@ -6,14 +6,19 @@ this module never publishes them or changes the source's backend selection.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 from .backends import ChromaBackend, CompactBackend, PalaceRef
+from .backends.compact import KEYWORD_ONLY
 from .migrate import _carry_over_palace_files
+
+logger = logging.getLogger(__name__)
 
 BACKENDS = {"chroma": ChromaBackend, "compact": CompactBackend}
 INCLUDE = ["documents", "metadatas", "embeddings"]
@@ -32,28 +37,35 @@ def collection_names(path, backend):
         return [row[0] for row in conn.execute("SELECT name FROM collections ORDER BY name")]
 
 
-def open_collection(backend, path, name, *, create=False):
+def open_collection(backend, path, name, *, create=False, vectors_only=False):
     path = str(Path(path).resolve())
     return backend.get_collection(
         palace=PalaceRef(id=path, local_path=path),
         collection_name=name,
         create=create,
-        options={"read_only": not create},
+        options={"read_only": not create, "_migration_vectors": vectors_only},
     )
 
 
-def verify_records(original, copied, *, quantized):
+def verify_records(original, copied, *, quantized, reembedded=False):
     if set(original.ids) != set(copied.ids) or len(original.ids) != len(copied.ids):
         raise CopyMismatch("Copied record ids mismatch")
     positions = {record_id: i for i, record_id in enumerate(copied.ids)}
     for i, record_id in enumerate(original.ids):
         j = positions[record_id]
-        if (original.documents[i], original.metadatas[i]) != (
+        expected_meta = dict(original.metadatas[i] or {})
+        if reembedded and expected_meta.get(KEYWORD_ONLY) is True:
+            expected_meta.pop(KEYWORD_ONLY)
+        if (original.documents[i], expected_meta) != (
             copied.documents[j],
-            copied.metadatas[j],
+            copied.metadatas[j] or {},
         ):
             raise CopyMismatch("Copied document or metadata mismatch")
         left, right = original.embeddings[i], copied.embeddings[j]
+        if reembedded and (original.metadatas[i] or {}).get(KEYWORD_ONLY) is True:
+            if right is None or not np.isfinite(right).all():
+                raise CopyMismatch("Re-embedded vector missing or invalid")
+            continue
         if left is None or right is None:
             if left is not None or right is not None:
                 raise CopyMismatch("Copied vector presence mismatch")
@@ -78,8 +90,8 @@ def verify_palaces(source, destination, source_backend, target_backend, *, batch
         if names != collection_names(destination, target_backend):
             raise CopyMismatch("Copied collection names mismatch")
         for name in names:
-            src = open_collection(old, source, name)
-            dst = open_collection(new, destination, name)
+            src = open_collection(old, source, name, vectors_only=True)
+            dst = open_collection(new, destination, name, vectors_only=True)
             if src.count() != dst.count():
                 raise CopyMismatch("Copied collection count mismatch")
             for offset in range(0, src.count(), batch_size):
@@ -88,15 +100,26 @@ def verify_palaces(source, destination, source_backend, target_backend, *, batch
                     batch,
                     dst.get(ids=batch.ids, include=INCLUDE),
                     quantized=target_backend == "compact",
+                    reembedded=target_backend == "chroma",
                 )
-            if src.get_stored_embedder_identity() != dst.get_stored_embedder_identity():
+            left, right = src.get_stored_embedder_identity(), dst.get_stored_embedder_identity()
+            if left != right and (
+                left is None
+                or right is None
+                or left.model_name != right.model_name
+                or left.dimension
+                and right.dimension
+                and left.dimension != right.dimension
+            ):
                 raise CopyMismatch("Copied embedder identity mismatch")
     finally:
         old.close()
         new.close()
 
 
-def copy_palace(source, destination, source_backend, target_backend, *, max_records=100_000):
+def copy_palace(
+    source, destination, source_backend, target_backend, *, max_records=100_000, embed=None
+):
     """Copy all collections and sidecars, then read back every record and vector."""
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if source == destination or source in destination.parents or destination in source.parents:
@@ -106,24 +129,73 @@ def copy_palace(source, destination, source_backend, target_backend, *, max_reco
     old, new = BACKENDS[source_backend](), BACKENDS[target_backend]()
     try:
         names = collection_names(source, source_backend)
+        keyword_count = 0
+        if target_backend == "chroma":
+            for name in names:
+                src = open_collection(old, source, name, vectors_only=True)
+                keyword_count += len(src.get(where={KEYWORD_ONLY: True}, include=[]).ids)
+            if keyword_count:
+                logger.warning(
+                    "Rollback re-embedding count=%d estimated_seconds=%.1f",
+                    keyword_count,
+                    keyword_count * 0.05,
+                )
+                if embed is None:
+                    raise ValueError(
+                        "Rollback requires the workspace embedder for keyword-only records"
+                    )
         # Check all sizes before creating any destination files.
         for name in names:
             if (
                 target_backend == "compact"
-                and open_collection(old, source, name).count() > max_records
+                and open_collection(old, source, name, vectors_only=True).count() > max_records
             ):
                 raise ValueError("Collection exceeds compact migration size limit")
         destination.mkdir(mode=0o700, parents=True)
         for name in names:
-            src = open_collection(old, source, name)
-            dst = open_collection(new, destination, name, create=True)
+            src = open_collection(old, source, name, vectors_only=True)
+            dst = open_collection(new, destination, name, create=True, vectors_only=True)
             for offset in range(0, src.count(), 256):
                 batch = src.get(limit=256, offset=offset, include=INCLUDE)
+                if target_backend == "chroma":
+                    indices = [
+                        i
+                        for i, meta in enumerate(batch.metadatas)
+                        if (meta or {}).get(KEYWORD_ONLY) is True
+                    ]
+                    if indices:
+                        try:
+                            vectors = embed(
+                                [batch.documents[i] for i in indices],
+                                [batch.metadatas[i] for i in indices],
+                            )
+                        except Exception:
+                            raise ValueError(
+                                "Rollback refused: workspace embedder unavailable"
+                            ) from None
+                        if len(vectors) != len(indices):
+                            raise ValueError(
+                                "Rollback refused: workspace embedder returned an invalid batch"
+                            )
+                        embeddings = list(batch.embeddings)
+                        metadatas = [dict(meta) for meta in batch.metadatas]
+                        for i, vector in zip(indices, vectors):
+                            embeddings[i] = vector
+                            metadatas[i].pop(KEYWORD_ONLY)
+                        batch = replace(batch, embeddings=embeddings, metadatas=metadatas)
                 dst.add(
                     ids=batch.ids,
                     documents=batch.documents,
-                    metadatas=batch.metadatas,
+                    metadatas=[meta or {} for meta in batch.metadatas],
                     embeddings=batch.embeddings,
+                )
+                # Re-embedded rollback vectors have a concrete expected value
+                # here, before the final source comparison accounts for the
+                # deliberate keyword-only policy change.
+                verify_records(
+                    batch,
+                    dst.get(ids=batch.ids, include=INCLUDE),
+                    quantized=target_backend == "compact",
                 )
             identity = src.get_stored_embedder_identity()
             if identity is not None:
@@ -131,6 +203,13 @@ def copy_palace(source, destination, source_backend, target_backend, *, max_reco
     finally:
         old.close()
         new.close()
+    # Preserve the original sidecar bytes (including legacy unknown dimensions)
+    # instead of replacing them with newly serialized identity metadata.
+    from .backends._sidecar import EMBEDDER_SIDECAR_FILENAME
+
+    identity_file = destination / EMBEDDER_SIDECAR_FILENAME
+    if (source / EMBEDDER_SIDECAR_FILENAME).exists() and identity_file.exists():
+        identity_file.unlink()
     _carry_over_palace_files(str(source), str(destination), exclude_storage=source_backend)
     verify_palaces(source, destination, source_backend, target_backend)
     verify_sidecars(source, destination, source_backend)

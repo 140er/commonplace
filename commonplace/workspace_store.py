@@ -1,0 +1,140 @@
+"""One resolver and thread factory for opt-in workspace store generations."""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+POINTER = ".store-pointer.json"
+SETTINGS = "workspace.json"
+STATE = ".store-backfill.json"
+RECEIPT = ".store-backup.json"
+DEFAULT_MAX_RECORDS = 100_000
+
+
+def read_json(path, default=None):
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {} if default is None else default
+    if not isinstance(value, dict):
+        raise ValueError("Workspace store configuration must be an object")
+    return value
+
+
+def workspace_root(data_dir, workspace_id):
+    if not workspace_id.startswith("ws_") or not workspace_id[3:].isalnum():
+        raise ValueError("Invalid workspace id")
+    return Path(data_dir) / "workspaces" / workspace_id
+
+
+def generation_path(root, name):
+    root = Path(root)
+    if root.is_symlink():
+        raise ValueError("Workspace root cannot be a symlink")
+    if name == root.name:
+        return root
+    if not re.fullmatch(re.escape(root.name) + r"\.generation-[0-9a-f]{24}", name):
+        raise ValueError("Invalid workspace generation")
+    target = root.parent / name
+    if target.is_symlink():
+        raise ValueError("Workspace generation cannot be a symlink")
+    return target
+
+
+def resolve_workspace(root):
+    root = Path(root)
+    if root.is_symlink():
+        raise ValueError("Workspace root cannot be a symlink")
+    if not (root / POINTER).exists():
+        return root
+    pointer = read_json(root / POINTER)
+    if not isinstance(pointer.get("active"), str):
+        raise ValueError("Invalid workspace generation pointer")
+    active = generation_path(root, pointer["active"])
+    if not active.is_dir():
+        raise ValueError("Active workspace generation is missing")
+    return active
+
+
+def workspace_path(data_dir, workspace_id):
+    return resolve_workspace(workspace_root(data_dir, workspace_id))
+
+
+def settings_for(directory):
+    settings = read_json(Path(directory) / SETTINGS)
+    if settings.get("store", "v1") not in ("v1", "compact"):
+        raise ValueError("Workspace store must be v1 or compact")
+    limit = settings.get("compact_max_collection_records", DEFAULT_MAX_RECORDS)
+    if type(limit) is not int or limit < 1:
+        raise ValueError("Compact collection size limit must be a positive integer")
+    return settings
+
+
+def thread_path(directory):
+    compact = settings_for(directory).get("store", "v1") == "compact"
+    return Path(directory) / ("threads.v2.sqlite3" if compact else "threads.sqlite3")
+
+
+def open_threads(directory, *, sample_every=100):
+    from .handoff.thread_store import ThreadStore
+    from .handoff.thread_store_v2 import ThreadStoreV2
+
+    directory = Path(directory)
+    path = thread_path(directory)
+    if (
+        path.name == "threads.v2.sqlite3"
+        and not path.exists()
+        and (directory / "threads.sqlite3").exists()
+    ):
+        raise ValueError("Compact workspace requires a verified store switch")
+    store = (ThreadStoreV2 if path.name == "threads.v2.sqlite3" else ThreadStore)(str(path))
+    try:
+        comparison = read_json(directory / ".store-comparison.json")
+    except ValueError:
+        return store
+    if comparison:
+        previous = directory.parent / comparison["previous"]
+        if previous.is_dir() and thread_path(previous).exists():
+            from mempalace.dual_read import SampledReads
+
+            from .handoff.thread_store_migrate import read_store
+
+            context = read_store(thread_path(previous), compact=comparison["store"] == "compact")
+            try:
+                old = context.__enter__()
+            except (OSError, ValueError):
+                return store
+            reader = SampledReads(
+                store,
+                old,
+                reads=("get", "messages", "chunks", "search", "doc", "parent_of", "by_source"),
+                sample_every=sample_every,
+            )
+
+            def close():
+                try:
+                    store.close()
+                finally:
+                    context.__exit__(None, None, None)
+
+            reader.close = close
+            return reader
+    return store
+
+
+def worker_config(directory):
+    """Workspace settings override backend environment selection."""
+    from mempalace.fsio import atomic_write_json
+
+    directory = Path(directory)
+    settings = settings_for(directory)
+    path = directory / "config" / "config.json"
+    config = read_json(path)
+    desired = "compact" if settings.get("store", "v1") == "compact" else "chroma"
+    if config.get("backend") != desired:
+        config["backend"] = desired
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        atomic_write_json(path, config)
+    return config

@@ -334,15 +334,15 @@ def cmd_handoff_show(args) -> int:
 
 
 def _stores(args, stack, *, root=None):
-    from .handoff.thread_store import ThreadStore
+    from .workspace_store import open_threads, workspace_path
 
     stores = {}
 
     def store_for(workspace_id):
         if workspace_id not in stores:
-            path = (root or _data_dir(args)) / "workspaces" / workspace_id / "threads.sqlite3"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            store = stores[workspace_id] = ThreadStore(str(path))
+            directory = workspace_path(root or _data_dir(args), workspace_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            store = stores[workspace_id] = open_threads(directory)
             stack.callback(store.close)
         return stores[workspace_id]
 
@@ -593,6 +593,45 @@ def cmd_seed(args) -> int:
     return 0
 
 
+def cmd_workspace_store(args) -> int:
+    from .store_switch import switch_workspace
+
+    db = _db(args)
+    try:
+        workspace = db.workspace(args.workspace)["id"]
+        _owner(db, args, workspace)
+    finally:
+        db.close()
+    print(json.dumps(switch_workspace(_data_dir(args), workspace, args.store), sort_keys=True))
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    from .store_switch import doctor_workspace
+
+    db = _db(args)
+    try:
+        rows = [db.workspace(args.workspace)] if args.workspace else db.workspaces()
+        for workspace in rows:
+            print(json.dumps(doctor_workspace(_data_dir(args), workspace["id"]), sort_keys=True))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_workspace_prune(args) -> int:
+    from .store_switch import prune_generations
+
+    db = _db(args)
+    try:
+        workspace = db.workspace(args.workspace)["id"]
+        _owner(db, args, workspace)
+    finally:
+        db.close()
+    prune_generations(_data_dir(args), workspace)
+    return 0
+
+
 def cmd_backup(args) -> int:
     from .backup import backup
 
@@ -636,6 +675,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--owner", required=True)
     s.set_defaults(func=cmd_workspace_add)
     ws.add_parser("list").set_defaults(func=cmd_workspace_list)
+    s = ws.add_parser("store")
+    s.add_argument("workspace")
+    s.add_argument("store", choices=("v1", "compact"))
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_workspace_store)
+    s = ws.add_parser("prune-stores")
+    s.add_argument("workspace")
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_workspace_prune)
+    s = sub.add_parser("doctor")
+    s.add_argument("--workspace")
+    s.set_defaults(func=cmd_doctor)
 
     member = sub.add_parser("member").add_subparsers(dest="action", required=True)
     s = member.add_parser("add")
@@ -719,7 +770,9 @@ def main(argv=None) -> int:
 
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
-        if args.command in {"connect", "backup"}:
+        if args.command in {"connect", "backup"} or (
+            args.command == "workspace" and args.action in {"store", "prune-stores"}
+        ):
             return args.func(args)
         with data_lock(_data_dir(args)):
             return args.func(args)
@@ -727,7 +780,7 @@ def main(argv=None) -> int:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"login-link", "seed", "backup"}:
+        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor"}:
             raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
