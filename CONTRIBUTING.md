@@ -35,6 +35,20 @@ uv run pytest tests/ -v
 
 All tests must pass before submitting a PR. Tests should run without API keys or network access.
 
+For parallel runs, install the development extras and run behavior tests first,
+then wall-clock budget tests serially:
+
+```bash
+uv sync --extra dev
+uv run pytest tests/ --ignore=tests/benchmarks -m "not (benchmark or slow or stress or timing)" -n 6 --dist load
+uv run pytest tests/ --ignore=tests/benchmarks -m "timing and not (benchmark or slow or stress)" -n 0
+```
+
+Run both commands to cover the same tests as the default serial suite. The
+`timing` marker keeps short clock budgets out of concurrent worker activity;
+their assertions and thresholds are unchanged. Each worker has its own home
+and configuration directory.
+
 ### Property-based tests (optional)
 
 `hypothesis` is available in the dev extras for property-based tests:
@@ -166,17 +180,3 @@ git config user.email
 ```
 
 This is especially important when commits are created through agentic coding tools or automation, because those tools may not inherit your normal shell Git configuration. Avoid placeholder values such as `your@email.com` or localized template text; unresolved author emails can create avoidable provenance and SBOM review friction for downstream users.
-
-
-
-### Parallel tests
-
-Install the development dependencies, then run the suite with:
-
-```bash
-uv run pytest tests/ --ignore=tests/benchmarks -n 4 --dist loadgroup
-```
-
-The suite groups tests by module so module-scoped fixtures run once and tests
-that share process state stay together. Workers use separate temporary home
-directories and test data. Omit `-n 4 --dist loadgroup` for a serial run.

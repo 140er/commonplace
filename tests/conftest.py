@@ -22,13 +22,15 @@ from contextlib import ExitStack
 _original_env = {}
 _session_tmp = tempfile.mkdtemp(prefix="mempalace_session_")
 
-for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+for _var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"):
     _original_env[_var] = os.environ.get(_var)
 
 os.environ["HOME"] = _session_tmp
 os.environ["USERPROFILE"] = _session_tmp
 os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
+os.environ["XDG_CONFIG_HOME"] = os.path.join(_session_tmp, ".config")
+os.makedirs(os.environ["XDG_CONFIG_HOME"], exist_ok=True)
 
 # Now it is safe to import mempalace modules that trigger initialisation.
 import chromadb  # noqa: E402
@@ -594,20 +596,3 @@ def seeded_kg(kg):
     kg.add_triple("Alice", "works_at", "NewCo", valid_from="2025-01-01")
 
     return kg
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(config, items):
-    """Keep module fixtures and process-global test state on one worker.
-
-    Each worker has its own isolated HOME. Grouping whole modules also avoids
-    duplicating their expensive setup and teardown across workers. Explicit
-    groups take precedence when tests need to coordinate across modules.
-    """
-    if config.getoption("dist", default="no") != "loadgroup":
-        return
-    for item in items:
-        if item.get_closest_marker("xdist_group") is None:
-            item.add_marker(
-                pytest.mark.xdist_group(name=str(item.path.relative_to(config.rootpath)))
-            )

@@ -130,6 +130,7 @@ def test_ordinary_design_paragraph():
     assert scan(paragraph) == []
 
 
+@pytest.mark.timing
 def test_speed_on_10kb_and_delimiter_heavy_near_misses():
     samples = [
         ("A normal engineering note about token handling and builds. " * 180)[:10240],

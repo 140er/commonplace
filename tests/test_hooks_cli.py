@@ -819,6 +819,7 @@ def test_checkpoint_child_waits_out_a_held_palace_lock(tmp_path):
     assert (tmp_path / "s_last_save").read_text(encoding="utf-8") == "15"
 
 
+@pytest.mark.timing
 def test_daemon_available_probe_stays_under_hook_budget(tmp_path, monkeypatch):
     import socket
     import threading

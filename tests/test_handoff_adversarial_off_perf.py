@@ -87,6 +87,7 @@ def _environment(home):
 # the budget to absorb other jobs' load.
 @pytest.mark.parametrize("client", ["claude-code", "codex"])
 @pytest.mark.parametrize("enabled,budget", [(False, 0.100), (True, 0.500)])
+@pytest.mark.timing
 def test_warm_hook_subprocess_budget(tmp_path, large_transcript, client, enabled, budget):
     _cache(tmp_path, enabled=enabled, client=client)
     elapsed = []
@@ -856,6 +857,7 @@ def test_service_returns_before_slow_mirror_finishes(gateway, monkeypatch):
             future.result(timeout=2)
 
 
+@pytest.mark.timing
 def test_api_twenty_megabytes_and_thread_reads_budget(gateway, monkeypatch):
     monkeypatch.setattr(palace_mirror, "mirror", lambda *args, **kwargs: [])
     gateway.ctx.settings.set(
@@ -934,6 +936,7 @@ def test_api_twenty_megabytes_and_thread_reads_budget(gateway, monkeypatch):
         assert elapsed < 0.100
 
 
+@pytest.mark.timing
 def test_real_worker_storage_and_recall_budgets(tmp_path, monkeypatch, config, kg, collection):
     from tests._commonplace_helpers import Hub, InProcessLauncher
     from tests._mcp_server_helpers import _patch_mcp_server
@@ -1042,5 +1045,6 @@ def test_real_worker_storage_and_recall_budgets(tmp_path, monkeypatch, config, k
         hub.close()
 
 
+@pytest.mark.timing
 def test_report_timings():
     print("\nR3 wall seconds: " + json.dumps(TIMINGS, sort_keys=True))

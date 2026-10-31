@@ -621,6 +621,7 @@ class TestRWLockYield:
         lock.release_write()
         assert order == ["other writer", "writer resumed"]
 
+    @pytest.mark.timing
     def test_no_op_without_waiters_and_for_a_thread_not_holding_it(self):
         lock = mcp._RWLock()
         lock.acquire_write()

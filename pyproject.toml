@@ -266,6 +266,7 @@ pythonpath = ["."]
 addopts = "-m 'not benchmark and not slow and not stress'"
 markers = [
     "benchmark: scale/performance benchmark tests",
+    "timing: wall-clock budgets that run serially after the parallel suite",
     "slow: tests that take more than 30 seconds",
     "stress: destructive scale tests (100K+ drawers)",
 ]
