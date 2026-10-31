@@ -126,8 +126,9 @@ class _AfterImport(importlib.abc.MetaPathFinder):
         self.pending = {}
 
     def find_spec(self, fullname, path, target=None):
-        callbacks = self.pending.pop(fullname, None)
-        if not callbacks:
+        # Callbacks leave ``pending`` only once the module has run, so a bare
+        # spec lookup or a failed import keeps them for the real import.
+        if not self.pending.get(fullname):
             return None
         for finder in sys.meta_path:
             find = getattr(finder, "find_spec", None)
@@ -136,14 +137,19 @@ class _AfterImport(importlib.abc.MetaPathFinder):
                 break
         else:
             return None
-        exec_module = spec.loader.exec_module
+        loader = spec.loader
+        if not hasattr(loader, "exec_module"):
+            return spec
 
         def exec_then_apply(module):
-            exec_module(module)
-            for callback in callbacks:
+            del loader.exec_module  # back to the class method, for this import only
+            loader.exec_module(module)
+            # A raising callback fails the import with the entry already gone,
+            # as a failing patch in fixture setup failed the test before.
+            for callback in self.pending.pop(fullname, ()):
                 callback(module)
 
-        spec.loader.exec_module = exec_then_apply
+        loader.exec_module = exec_then_apply
         return spec
 
 
