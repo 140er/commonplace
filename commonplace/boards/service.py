@@ -962,7 +962,7 @@ class BoardService:
         old = row["status"]
         if status == old:
             return
-        if old == "review":
+        if old == "review" and not (not self.principal.person and status == "done"):
             raise ToolError("no: use decide to move a card from review")
         if self.principal.person:
             allowed = {
@@ -982,6 +982,7 @@ class BoardService:
                 ("doing", "review"),
                 ("todo", "done"),
                 ("doing", "done"),
+                ("review", "done"),
                 ("done", "todo"),
                 ("doing", "backlog"),
             }:
@@ -1076,7 +1077,12 @@ class BoardService:
             )
             # The agent that asked for review may still refresh the PR's call tree.
             refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
-            if row["status"] == "review" and not self.principal.person and not refresh:
+            if (
+                row["status"] == "review"
+                and not self.principal.person
+                and not refresh
+                and args.get("status") not in ("review", "done")
+            ):
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")

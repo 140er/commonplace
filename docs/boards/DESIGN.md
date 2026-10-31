@@ -54,7 +54,7 @@ backlog │ todo │ doing │ review │ done
 
 The full table of who may make each move is in [API.md](API.md#move-rules). Three rules carry the design:
 
-- **Only people move cards out of `backlog` and `review`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
+- **Only people move cards out of `backlog`. Agents may close `review` cards via `task_update`; other review exits require `decide`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
 - **Only the holder changes a `doing` card.** Others can comment.
 - **Cards are never deleted.** Closing one with a reason is a move to `done`. The event log is append-only (enforced by triggers in `schema.sql`).
 
