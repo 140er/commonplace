@@ -32,10 +32,10 @@ backlog │ todo │ doing │ review │ done
 
 | Column | Holds | Who puts cards here |
 |---|---|---|
-| `backlog` | Ideas, and anything filed by an `inbox` token. Agents never take from it. | Untrusted tokens and cloud clients (always), anyone (on purpose) |
+| `backlog` | Ideas, and anything filed by an `inbox` token. Trusted, unrestricted board writers may promote or explicitly take available cards of unrestricted origin without a pending person decision. | Untrusted tokens and cloud clients (always), anyone (on purpose) |
 | `todo` | Ready work. A card may be reserved for one agent. | People (from backlog or new), trusted and standard agents, decisions |
 | `doing` | Held by exactly one actor. An agent's hold expires. | `task_take_next`, or a person dragging a card |
-| `review` | Waiting on a person: a question, or finished work to check. | `task_handoff` to a person |
+| `review` | An open ask to a person: a question, or finished work to check. | `ask`, `task_update`, or `task_handoff` to a person |
 | `done` | Closed. Never deleted. | The holder, a person, or a decision |
 
 `review` is the one column added to kanzo's set. A question to Avery could have been a flag on a `doing` card, but then waiting work looks like moving work, and the claim keeps ticking on a card nobody can move. A column makes waiting visible on the board and gives the decide queue a single query.
@@ -54,9 +54,30 @@ backlog │ todo │ doing │ review │ done
 
 The full table of who may make each move is in [API.md](API.md#move-rules). Three rules carry the design:
 
-- **Only people move cards out of `backlog`. Agents may close `review` cards via `task_update`; other review exits require `decide`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
+- **People and trusted, unrestricted board writers may move available cards out of `backlog`; restricted-origin submissions and cards waiting on a person require a person.** Origin restrictions are recorded when a card is filed, including trusted inbox submissions. Legacy agent backlog uses its trust stamp and the stamping connection's current policy in the same workspace; untrusted stamps and missing, inactive or ambiguous origins remain person-only. Automatic pickup stays on `todo`, and backlog promotion preserves the caller's reservation. Only the asking agent may close a `review` card via `task_update`; person-directed review returns require `decide`. Withdrawal handling is prepared for future agent-directed asks under the rules below. An agent can never answer its own question. Untrusted and inbox-restricted connections still only submit cards and comments.
 - **Only the holder changes a `doing` card.** Others can comment.
 - **Cards are never deleted.** Closing one with a reason is a move to `done`. The event log is append-only (enforced by triggers in `schema.sql`).
+
+Trusted, unrestricted board writers may edit title, body, checks, labels and
+memory links on review cards they requested, preserving the open ask. The
+edit event keeps prior changed values as JSON, including visible link IDs.
+MCP decisions may supply the version read to reject a stale answer after an edit.
+
+Current tools and HTTP routes create only person-directed reviews and clear
+the assignee. Assignee edits and withdrawal are prepared for agent-to-agent
+review asks once a creation path exists. For such asks, the assignee or
+requester may return an agent-directed review
+to `todo` or `doing` by withdrawing its ask in the same transaction. Person
+recipients (including the default owner), person assignees and person return
+targets block withdrawal and keep their decision queue intact. Only the
+requester may complete a review card, and `decide` still refuses an agent's
+own ask.
+
+Withdrawal preserves the review/open-ask database constraint. A `release`
+event stores the original ask and optional verbatim reason, with actor, time,
+recipient, options and statuses. `card.ask_withdrawn` notifies readers alongside
+the normal move event; it does not record or imply an answer. Standard-trust,
+untrusted and inbox-restricted agents gain no feedback permissions.
 
 ## How agents claim
 
@@ -68,7 +89,7 @@ The full table of who may make each move is in [API.md](API.md#move-rules). Thre
 
 The race check behind this: four processes claiming from 2,001 cards, interleaved (1 / 11 / 653 / 1,336 claims each), got 2,001 distinct cards and expired the one stale claim. B's done test repeats this with real Claude Code and Codex sessions.
 
-**Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to `todo`, free, with an `expire` event, so the next agent sees "conn:codex:vm lost this at 14:30Z" and the comments before it.
+**Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to the lane it was claimed from (`todo` or `backlog`), free, with an `expire` event naming its former holder. Explicit backlog selection cannot turn into automatic work through expiry. Claims created before lane tracking return to `todo` as before.
 
 People's holds never expire. Avery dragging a card into `doing` means he is on it.
 
@@ -82,7 +103,7 @@ People's holds never expire. Avery dragging a card into `doing` means he is on i
   - `to=anyone`: back to `todo`, free.
   - `to=codex:vm`: back to `todo`, reserved for that connection. Only it (or a person) can start it.
   - `to=avery`: into `review`. The note becomes the question, `options` become buttons, and the card remembers who asked (`return_to`).
-- **Ask before starting:** an agent can hand a `todo` card it does not hold to a person. That is how it says "this is unclear" without claiming.
+- **Ask before starting:** an agent can hand a free or self-reserved `todo` card to a person. That is how it says "this is unclear" without claiming.
 
 After a decision, the card goes back to `todo`, reserved for the agent that asked. Its next `task_take_next` returns that card first, with the decision on a line of its own. The agent does not wait or poll: it hands off, ends its turn, and the session-start hook line tells it when something is back (API.md, "Hook line").
 
@@ -164,7 +185,7 @@ Taken in this doc, easy to overrule:
 - [x] Fifth column `review`, instead of a waiting flag on `doing`.
 - [x] Agent claims expire after 30 minutes without a write; people's holds never do.
 - [x] One extra tool, `task_handoff` (8 in total), instead of overloading `task_update`.
-- [x] Only people move cards out of `backlog` and `review`.
+- [x] Backlog pickup requires a person or a trusted, unrestricted board writer; person decisions remain protected.
 - [x] Cards are never deleted; the event log is append-only.
 - [x] After a decision, the card goes back to the agent that asked by default.
 

@@ -82,6 +82,7 @@ def _lock_worker(target: str, name: str, hold_seconds: float, log_path: str) -> 
 
 
 class TestMineLock:
+    @pytest.mark.timing
     def test_lock_acquires_and_releases(self, tmp_path):
         target = str(tmp_path / "lock_target.txt")
         with mine_lock(target):

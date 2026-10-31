@@ -264,6 +264,7 @@ def test_early_exit_touches_nothing(local, monkeypatch, capsys, reason):
     assert not (local.home / ".commonplace").exists()
 
 
+@pytest.mark.timing
 def test_warm_below_threshold_has_no_http_or_full_read(local, api, monkeypatch, capsys):
     local.usage = ContextUsage(10, 200_000, "tiny")
     seed_cache(local, api)
@@ -413,6 +414,7 @@ def test_bad_response_json_falls_back(local, api, monkeypatch, capsys, route, ra
 
 
 @pytest.mark.parametrize("route", ["/api/settings/handoff", "/api/handoff"])
+@pytest.mark.timing
 def test_timeout_falls_back(local, api, monkeypatch, capsys, route):
     api.delays[route] = 1
     monkeypatch.setattr(hook, "HTTP_TIMEOUT", 0.03)

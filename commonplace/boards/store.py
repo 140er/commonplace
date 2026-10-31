@@ -121,13 +121,14 @@ def card(conn, row, principal=None) -> dict:
 
 def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
     conn.execute(
-        "INSERT INTO task_events(task_id,kind,text,from_status,to_status,target,choice,options,"
+        "INSERT INTO task_events(task_id,kind,text,reason,from_status,to_status,target,choice,options,"
         "stamp_user,stamp_connection,stamp_trust,flags,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             number,
             kind,
             fields.get("text"),
+            fields.get("reason"),
             fields.get("from_status"),
             fields.get("to_status"),
             fields.get("target"),
@@ -144,14 +145,15 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
 
 def expire_claims(conn, board_id):
     expired = conn.execute(
-        "SELECT id,assignee FROM tasks WHERE board_id=? AND status='doing' AND claim_until<=?",
+        "SELECT id,assignee,coalesce(claim_from,'todo') AS return_status FROM tasks "
+        "WHERE board_id=? AND status='doing' AND claim_until<=?",
         (board_id, now()),
     ).fetchall()
     for row in expired:
         conn.execute(
-            "UPDATE tasks SET status='todo',assignee=NULL,claim_until=NULL,"
+            "UPDATE tasks SET status=?,assignee=NULL,claim_until=NULL,claim_from=NULL,"
             "version=version+1,updated_at=?,updated_by='system' WHERE id=?",
-            (now(), row["id"]),
+            (row["return_status"], now(), row["id"]),
         )
         append_event(
             conn,
@@ -160,7 +162,7 @@ def expire_claims(conn, board_id):
             "system",
             target=row["assignee"],
             from_status="doing",
-            to_status="todo",
+            to_status=row["return_status"],
         )
     return expired
 
@@ -172,7 +174,7 @@ class BoardStore:
     Calls without it are the contract's trusted, local workspace API.
     """
 
-    def __init__(self, workspace_dir):
+    def __init__(self, workspace_dir, *, legacy_origin=None):
         directory = Path(workspace_dir)
         directory.mkdir(parents=True, exist_ok=True)
         self.path = str(directory / "boards.sqlite3")
@@ -184,10 +186,30 @@ class BoardStore:
                 if "coordinator" not in board_columns:
                     conn.execute("ALTER TABLE boards ADD COLUMN coordinator TEXT")
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
-                extra = {"created_by": "TEXT", "callstack": "TEXT"}
+                extra = {
+                    "created_by": "TEXT",
+                    "callstack": "TEXT",
+                    "claim_from": "TEXT CHECK (claim_from IN ('backlog', 'todo'))",
+                    "restricted_origin": "INTEGER CHECK (restricted_origin IN (0, 1))",
+                }
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                if "restricted_origin" not in columns:
+                    # NULL leaves legacy agent backlog pending a policy lookup.
+                    conn.execute(
+                        "UPDATE tasks SET restricted_origin=CASE "
+                        "WHEN stamp_trust='untrusted' THEN 1 "
+                        "WHEN stamp_connection IS NULL OR status!='backlog' THEN 0 END"
+                    )
+                if legacy_origin is not None:
+                    for row in conn.execute(
+                        "SELECT * FROM tasks WHERE status='backlog' AND restricted_origin IS NULL"
+                    ).fetchall():
+                        conn.execute(
+                            "UPDATE tasks SET restricted_origin=? WHERE id=?",
+                            (int(legacy_origin(row)), row["id"]),
+                        )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS tasks_by_parent ON tasks(board_id,parent_number)"
                 )
@@ -199,6 +221,8 @@ class BoardStore:
                 event_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_events)")}
                 if "options" not in event_columns:
                     conn.execute("ALTER TABLE task_events ADD COLUMN options TEXT")
+                if "reason" not in event_columns:
+                    conn.execute("ALTER TABLE task_events ADD COLUMN reason TEXT")
                 link_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_links)")}
                 if "title" not in link_columns:
                     conn.execute("ALTER TABLE task_links ADD COLUMN title TEXT NOT NULL DEFAULT ''")

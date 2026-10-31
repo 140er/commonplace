@@ -13,6 +13,16 @@ Commonplace is the shared board and Memory for you and your agents. The MCP serv
 2. A card that came back from the user shows their decision on a `decision by` line. Act on it first.
 3. No card for you and the user gave no task: `task_take_next` (add `board` when you are outside a repo).
 
+Trusted connections with board write access may promote an available backlog card
+with `task_update task=#n status=todo`, or claim it explicitly with
+`task_take_next task=#n` (also `task_update task=#n status=doing`). Automatic
+pickup stays on `todo`. Open asks, person targets and others' reservations block
+pickup. Cards filed by untrusted or inbox-restricted connections require a person's
+release, even if the inbox token is trusted. Legacy backlog is checked against the
+stamping connection's current policy; unknown origins need a person. Promotion
+preserves your reservation; an expired backlog claim returns
+to backlog. Standard-trust, untrusted and inbox-restricted tokens gain no backlog access.
+
 ## Rules
 
 At session start, call `rules_changed since=<last seq>`; whenever `seq` advanced, call `rules_get`.
@@ -59,10 +69,24 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 
 - `task_update task=#n status=done lesson="…"` (the lesson is saved to Memory and linked to the card).
 - On boards that need review, the card goes to the user as "Done?" instead.
+- Trusted board writers may add `lesson`, `pr` or `link` to a `done` card without
+  reopening it. Removing links and other edits to completed cards remain blocked.
+- Trusted board writers may edit title, body, checks, labels and memory links
+  on review cards they requested. Open asks stay with the user; history keeps
+  prior edited values. Current tools create only person-directed reviews.
+  Assignee edits and withdrawal to `todo`/`doing` are prepared for agent-to-agent
+  review asks once those can be created. Person-directed asks cannot be withdrawn.
+  Only the requester may complete a review; never answer your own ask. When
+  answering, pass the card's read `version` to `decide` to reject a stale decision.
 
-## Owners only
+## Decisions
 
-`needs_me`: everything waiting on the user (asks, done cards to check, agent-filed backlog, PRs ready to merge, stuck agents). `decide task=#n choice=…` answers an ask.
+`needs_me`: asks and done reviews addressed to the token's user (or with no target),
+plus agent-filed backlog, PRs ready to merge and stale agent claims across readable
+boards. Owner-role connections retain access at any trust level. Trusted,
+unrestricted member agents may also read it without write access. `board_set` remains
+owner-only. `decide task=#n choice=…` answers an ask under the existing owner rules;
+an agent never answers its own ask.
 
 ## When the server is unreachable
 

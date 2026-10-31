@@ -139,6 +139,8 @@ def update(
 
 Backends with cheap approximate counters override `estimated_count`. Backends that hold connections must override `close`. Backends with native partial-update primitives (Postgres `UPDATE`, Lance `merge_insert`) override `update` and advertise `supports_update`; the token signals "atomic + single round-trip," not "supports partial updates at all" — the default implementation already supports them, just non-atomically.
 
+`bounded_lexical_search` declares an indexed lexical path that applies the search filter before a fixed candidate LIMIT. Chroma's SQLite FTS path, sqlite_exact and compact provide it. The union search pipeline uses their internal `union_lexical_search` path while public lexical search keeps its signature; closets use scope-local ranking. pgvector, Qdrant and Milvus do not declare it and retain vector candidates by default. See [RFC 009](009-union-where-bounded.md) for bounded scoped term fetches and query bounds.
+
 ### 1.3 Typed results (replaces Chroma dict shape)
 
 ```python

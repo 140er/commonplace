@@ -1,6 +1,6 @@
 # Searching Memories
 
-MemPalace uses ChromaDB's semantic vector search to find relevant memories. When you search, you get **verbatim text** — the exact words, never summaries.
+MemPalace combines semantic vector candidates with BM25 lexical candidates by default on bounded lexical backends (`union`): Chroma, sqlite_exact and compact. Other backends default to vector candidates. This also finds exact paths, identifiers, and error strings that embeddings miss. When you search, you get **verbatim text** — the exact words, never summaries.
 
 ## CLI Search
 
@@ -19,14 +19,29 @@ mempalace search "pricing" --wing driftwood --room costs
 
 # More results
 mempalace search "deploy process" --results 10
+
+# Select vector candidates only
+mempalace search "deploy process" --candidate-strategy vector
 ```
 
 ## How Search Works
 
 1. Your query is embedded using the vector store's default model (`all-MiniLM-L6-v2` with the default ChromaDB backend).
-2. The embedding is compared against all drawers using cosine similarity.
-3. Optional wing/room filters narrow the search scope — standard metadata filtering in the underlying vector store.
-4. Results are returned with similarity scores and source metadata.
+2. On Chroma, sqlite_exact and compact, vector matches and bounded backend BM25 lexical matches form the candidate pool. Other backends use vector candidates by default. `candidate_strategy="vector"` keeps vector candidates only.
+3. Optional wing/room filters narrow both candidate sources.
+4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
+
+Union drawer retrieval selects up to eight index-normalized terms, prioritizing literals and proper names outside sentence starts. A term fetch applies the complete scope inside FTS and stops after the scoped cutoff plus one row. The cutoff is 5% of the scope, bounded between 1,000 and 2,000 records. There are at most sixteen term fetches, no separate frequency probes, and no shared query-statistics cache. The complete accepted-term pool is ranked using only in-scope text and statistics, then the top results are hydrated. Closets use the same scope-local path. Public backend `lexical_search` retains its signature.
+
+Closets retain full-query scope-local BM25 without the drawer term selection or DF cutoff. They keep the query caps and quoted terms; reaching 5,000 matches for any term disables all closet boosts for that search.
+
+Writable Chroma opens maintain a partial covering index over wing, room and source metadata. It indexes no document text. Read-only palaces use the same bounded retrieval without creating the optional index.
+
+Queries are capped at 256 tokens and terms at 64 characters. Queries longer than twelve tokens after stop-word removal use literals and names only; without either they report `lexical_skipped: "long_query_no_literal"`. Stop-word-only selections report `no_terms_after_stopwords`. A long question with an incidental date can miss a lexical-only answer containing only ordinary topic words. Unsupported backend/filter shapes use vector candidates and report `lexical_unbounded_for_filter`, including explicit union requests. Corpus-dependent selection details and fallback causes are never returned. See [RFC 009](../../docs/rfcs/009-union-where-bounded.md).
+
+Commonplace searches its readable wing union in one worker call using the public `wings` list. The gateway intersects requested wings with the connection's readable wings, including the separate private-read requirement. This produces one candidate pool and one ranking. `wing` and `wings` together mean their intersection.
+
+The returned hybrid `score` is normalized within the candidate pool. Handoff recall can still merge thread scopes using the worker's sanitized query and explicit locale. Media/code task search always uses shared-space vector ranking and does not accept `wings`.
 
 ### Why Scoping Matters
 

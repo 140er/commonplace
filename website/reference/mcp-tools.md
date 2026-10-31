@@ -60,21 +60,36 @@ Full wing → room → drawer count tree.
 
 ### `mempalace_search`
 
-Hybrid drawer search with matching facts first. Facts have a separate list;
-drawer content, ranking and limits remain unchanged.
+Hybrid drawer search over vector and lexical candidates, with matching facts first.
+Facts have a separate list; drawers retain their own ranking and limits.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | **Yes** | What to search for |
 | `limit` | integer | No | Max results (default: 5) |
+| `candidate_strategy` | string | No | Default: `union` on bounded lexical backends (Chroma, sqlite_exact, compact), `vector` elsewhere. Either value can be selected explicitly |
 | `include_facts` | boolean | No | Include ranked facts (default: `true`); `false` skips the fact lookup |
 | `wing` | string | No | Filter by wing |
+| `wings` | array of strings | No | Search one wing union; intersected with readable wings by the gateway |
 | `room` | string | No | Filter by room |
 | `since` | string | No | Include drawers filed on or after this ISO date/datetime |
 | `before` | string | No | Include drawers filed strictly before this ISO date/datetime |
 | `max_distance` | number | No | Distance cutoff on the cosine scale (0 = identical, 2 = opposite), applied the same way whatever metric the palace uses. Default: no cutoff |
 
-**Returns:** `{ facts: [...], query, filters, results: [{ text, wing, room, source_file, similarity }], facts_error? }`
+**Returns:** `{ facts: [...], query, filters, results: [{ text, wing, room, source_file, similarity, score }], facts_error? }`
+
+`score` is the hybrid rank score, normalized within one candidate pool. Hits also
+carry `rank_components` (vector similarity, raw BM25, and ranking weights).
+Handoff recall re-ranks merged thread scopes once using the
+worker’s echoed query and explicit `ranking_lang` stop words; Python callers
+can use `mempalace.lexical.rerank_merged_hits(result["query"], hits, stop_words=mempalace.lexical.ranking_stop_words(result))` before sorting by score.
+Older workers without components retain approximate ordering across scopes.
+`similarity` remains the raw vector similarity and can be null for a lexical-only hit.
+Media/code task search always uses shared-space vector ranking, regardless of `candidate_strategy`.
+
+Union retrieval uses at most eight index-normalized terms and sixteen bounded scoped term fetches, with a 5% cutoff bounded between 1,000 and 2,000 records. Query caps are 256 tokens and 64 characters per term. Long queries (>12 tokens after stop words) use literals and proper names only. Responses may report `long_query_no_literal`, `no_terms_after_stopwords`, or the backend/filter-shape reason `lexical_unbounded_for_filter`. Corpus-dependent fallback causes and selection details are internal. There is no shared query-statistics cache. Unsupported backend/filter shapes use vector candidates even for an explicit union request.
+
+Gateway multi-wing search uses one worker call and one ranking over authorized `wings`, with no cross-wing score merge. Public backend lexical search keeps its signature; union and closets use scope-local ranking.
 
 Each fact carries `subject`, `predicate`, `object`, `score`, `current`,
 `fact_status`, `approval_status`, `approved_by`, `approval_link`, `origin_kind`,
@@ -86,10 +101,9 @@ scope. A fact-side failure returns `facts: []` and
 `facts_error: "unavailable"` while preserving drawer results.
 
 When `max_distance` drops results, the response says how many in
-`filtered_by_max_distance`. With `candidate_strategy: "union"`, a lexical-only
-hit whose vector distance can't be computed is kept with `distance: null` and
-`fallback_reason: "distance_unavailable"`, and a failed lexical fetch sets
-`candidate_strategy_fallback: "lexical_search_failed"`.
+`filtered_by_max_distance`. A lexical-only hit whose vector distance cannot be
+computed is kept with `distance: null`. Lexical failures retain vector results
+without exposing data-dependent fallback details.
 
 Each hit also includes date provenance: `filed_at` (equal to legacy `created_at`),
 legacy `authored_at`, `authored_at_source`, `content_date`, and

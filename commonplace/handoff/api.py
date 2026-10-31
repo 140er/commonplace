@@ -11,7 +11,7 @@ GET  /api/handoffs?task=#142              threads:read    list
 GET  /api/handoffs/<id>                   threads:read
 POST /api/handoffs/<id>/successor         handoff:write   {agent_ref, url?, thread_id?}
 POST /api/handoffs/<id>/launch-failed     handoff:write   {error} (max 1 KB JSON body)
-POST /api/handoffs/<id>/relaunch          owner
+POST /api/handoffs/<id>/relaunch          owner or original trusted connection
 GET  /api/threads/<id>                    threads:read    StoredThread
 GET  /api/threads/<id>/messages?start=&end=   threads:read
 POST /api/threads/<id>/recall             threads:read    {query, limit?, follow_chain?}
@@ -389,7 +389,6 @@ class _API:
             ):
                 if parts[1] == "relaunch":
                     require_launch_authority(principal)
-                    self.require(principal, owner=True)
                     self.handoff(principal, record_id, write=True)
                     _object(_read_json(handler, allow_empty=True), set())
                     return 200, self.result(

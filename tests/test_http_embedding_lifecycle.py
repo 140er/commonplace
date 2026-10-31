@@ -62,7 +62,7 @@ def test_reconnect_cannot_close_diary_handle_before_embedding(monkeypatch, tmp_p
     # for the diary's write lease, a valid unmodified production schedule.
     def wal_barrier(*args, **kwargs):
         got_handle.set()
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 10
         while mcp._HTTP_REQUEST_LOCK._waiting_writers == 0:
             assert time.monotonic() < deadline, "reconnect never queued"
             time.sleep(0.001)

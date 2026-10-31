@@ -60,8 +60,19 @@ def integration_module():
 
 
 @pytest.fixture
-def provider(integration_module):
-    return integration_module.MempalaceProvider()
+def provider(integration_module, monkeypatch):
+    provider = integration_module.MempalaceProvider()
+    get = provider._worker_queue.get
+
+    def get_without_idle_delay(block=True, timeout=None):
+        # Exercise the real worker and queue without a one-second idle poll
+        # delaying each fixture's shutdown.
+        if timeout is not None:
+            timeout = min(timeout, 0.01)
+        return get(block=block, timeout=timeout)
+
+    monkeypatch.setattr(provider._worker_queue, "get", get_without_idle_delay)
+    return provider
 
 
 @pytest.fixture(autouse=True)

@@ -47,6 +47,8 @@ def _stopwords_for_lang(lang: str) -> frozenset:
     name) while the lru_cache lives on ``_stopwords_for_canonical`` to
     keep the cache key normalized.
     """
+    if not lang:
+        return frozenset()
     canonical = _canonical_lang(lang) or lang.lower()
     return _stopwords_for_canonical(canonical)
 
@@ -67,6 +69,11 @@ def _resolve_stop_words(lang: Optional[str]) -> frozenset:
     Palaces that never configured a language get an empty set, preserving
     pre-PR scoring byte-for-byte.
     """
+    return _stopwords_for_lang(_resolve_rank_lang(lang))
+
+
+def _resolve_rank_lang(lang: Optional[str]) -> str:
+    """Resolve the worker locale once and echo it for cross-scope ranking."""
     if lang is None:
         env_val = os.environ.get("MEMPALACE_LANG") or os.environ.get("MEMPAL_LANG")
         if env_val and env_val.strip():
@@ -76,10 +83,10 @@ def _resolve_stop_words(lang: Optional[str]) -> frozenset:
                 lang = MempalaceConfig().lang_explicit
             except Exception:
                 logger.debug("lang resolution failed, skipping stop-word filter", exc_info=True)
-                return frozenset()
+                return ""
         if lang is None:
-            return frozenset()
-    return _stopwords_for_lang(lang)
+            return ""
+    return lang
 
 
 def _resolve_hybrid_rank_weights() -> tuple:
@@ -195,7 +202,8 @@ def _hybrid_rank(
     Used by candidate-union mode to merge BM25-only candidates that the
     vector index didn't surface.
 
-    Mutates each result dict to add ``bm25_score`` and reorders the list
+    Mutates each result dict to add ``bm25_score`` and the hybrid ``score``,
+    allowing downstream scope merges to preserve this order. Reorders the list
     in place. Returns the same list for convenience.
     """
     if not results:
@@ -207,7 +215,27 @@ def _hybrid_rank(
         )
         for r in results
     ]
-    bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
+    if any("_lexical_terms" in r for r in results):
+        from ..lexical import index_bm25_scores, lexical_query_terms
+
+        trigram = any(r.get("_lexical_trigram") for r in results)
+        # Retrieval's selected terms must not erase the rest of the query's
+        # signal on vector hits. Rank the complete query over this in-scope
+        # pool; only index-confirmed selected matches receive the tf floor.
+        terms, _ = lexical_query_terms(query, stop_words, trigram=trigram, closet=True)
+        bm25_raw = index_bm25_scores(
+            terms,
+            docs,
+            [r.get("_lexical_matches", ()) for r in results],
+            trigram=trigram,
+            stop_words=stop_words,
+        )
+        for r in results:
+            r.pop("_lexical_terms", None)
+            r.pop("_lexical_trigram", None)
+            r.pop("_lexical_matches", None)
+    else:
+        bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
     max_bm25 = max(bm25_raw) if bm25_raw else 0.0
     bm25_norm = [s / max_bm25 for s in bm25_raw] if max_bm25 > 0 else [0.0] * len(bm25_raw)
 
@@ -220,7 +248,15 @@ def _hybrid_rank(
             distance = _metric_scale_distance(boosted, metric)
         vec_sim = _distance_to_similarity(distance, metric)
         r["bm25_score"] = round(raw, 3)
-        scored.append((vector_weight * vec_sim + bm25_weight * norm, r))
+        score = vector_weight * vec_sim + bm25_weight * norm
+        r["score"] = round(score, 6)
+        r["rank_components"] = {
+            "vector_similarity": round(vec_sim, 6),
+            "bm25": round(raw, 6),
+            "vector_weight": round(vector_weight, 6),
+            "bm25_weight": round(bm25_weight, 6),
+        }
+        scored.append((score, r))
 
     # Break exact score ties by raw vector distance first: boosted drawers closer
     # than their boost all clamp to the same score and must keep vector order.

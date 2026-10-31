@@ -67,7 +67,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from . import launchers, palace_mirror, thread_store, transcripts, writer
-from .authority import require_launch_authority
+from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError, HandoffLeaseError
 from .models import (
     EVENT_FAILED,
@@ -429,8 +429,11 @@ class HandoffService:
 
     def relaunch(self, principal, handoff_id: str) -> HandoffResult:
         require_launch_authority(principal)
+        person = getattr(principal, "person", False)
+        if not person and principal.policy.write_wing in ("inbox", "wing_inbox"):
+            raise HandoffPermissionError("restricted connections cannot relaunch handoffs")
         with self.control_db._lock:
-            handoff = self._authorized(principal, handoff_id, owner_only=True)
+            handoff = self._authorized(principal, handoff_id, owner_only=person)
             if handoff.state != "launch_failed":
                 raise HandoffDBError("handoff is not ready to relaunch")
             snapshot = self._snapshots.get((handoff.workspace_id, handoff.idempotency_key))

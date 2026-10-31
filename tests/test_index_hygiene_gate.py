@@ -122,8 +122,9 @@ def test_default_strategy_is_measured_without_overriding_handler(reports):
     assert reports["default"]["effective_strategy"] in {"vector", "union"}
     # A default change in the separate PR should cause the default run to pass.
     effective = inspect.signature(mcp_server.tool_search).parameters["candidate_strategy"].default
-    assert reports["default"]["effective_strategy"] == effective
-    assert reports["default"]["checks"] == reports[effective]["checks"]
+    assert effective is None
+    assert reports["default"]["effective_strategy"] == "union"
+    assert reports["default"]["checks"] == reports["union"]["checks"]
 
 
 def test_union_recovers_every_needle_per_format_and_exposes_rank_cost(reports):

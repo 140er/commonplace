@@ -42,6 +42,7 @@ def test_open_cards_are_scoped_and_carry_need(hub, env):  # noqa: F811
         assert api(hub, cookie, "GET", f"/api/cards?limit={bad}")[0] == 400
 
 
+@pytest.mark.timing
 def test_open_cards_are_capped_most_urgent_first_and_fast(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     for n in range(300):

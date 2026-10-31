@@ -613,6 +613,24 @@ def tool_get_taxonomy():
 _EXACT_MATCH_DISTANCE = 1e-5
 
 
+def _sanitize_search_wings(wings):
+    if wings is None:
+        return None
+    if (
+        not isinstance(wings, list)
+        or len(wings) > 64
+        or any(not isinstance(w, str) or not w for w in wings)
+    ):
+        raise ValueError("wings must be a list of at most 64 wing names")
+    return [_sanitize_optional_name(w, "wing") for w in wings]
+
+
+def _search_fact_wings(wing, wings):
+    if wing:
+        return [wing] if wings is None or wing in wings else []
+    return wings
+
+
 def tool_search(
     query: str,
     limit: int = 5,
@@ -624,15 +642,17 @@ def tool_search(
     max_distance: float = None,
     min_similarity: float = None,
     context: str = None,
-    candidate_strategy: str = "vector",
+    candidate_strategy: Optional[str] = None,
     cli_compatible: bool = False,
     include_media: bool = False,
     query_task: str = "search",
     include_facts: bool = True,
+    wings: Optional[list[str]] = None,
 ):
     limit = max(1, min(limit, _MAX_RESULTS))
     try:
         wing = _sanitize_optional_name(wing, "wing")
+        wings = _sanitize_search_wings(wings)
         room = _sanitize_optional_name(room, "room")
         source_file = _sanitize_optional_source_file(source_file)
     except ValueError as e:
@@ -640,6 +660,8 @@ def tool_search(
     # since/before are validated inside search_memories (shared
     # parse_window), which returns the same {"error": ...} shape. Argument
     # types and enums are checked against the schema at dispatch.
+    if wings is not None and (include_media or query_task != "search"):
+        return {"error": "wings is supported for drawer search only"}
     if cli_compatible and (include_media or query_task != "search"):
         return {"error": "cli_compatible cannot be combined with media/code task search"}
     experimental = {
@@ -647,6 +669,7 @@ def tool_search(
         for name, value, default in (
             ("include_media", include_media, False),
             ("query_task", query_task, "search"),
+            ("wings", wings, None),
         )
         if value != default
     }
@@ -659,8 +682,6 @@ def tool_search(
         if source_file is not None:
             return {"error": "cli-compatible search does not support source_file"}
         unsupported_controls = []
-        if candidate_strategy != "vector":
-            unsupported_controls.append("candidate_strategy")
         if min_similarity is not None:
             unsupported_controls.append("min_similarity")
         if max_distance is not None:
@@ -707,7 +728,9 @@ def tool_search(
                         since=since,
                         before=before,
                         collection=collection,
+                        candidate_strategy=candidate_strategy,
                         facts=[],
+                        **({"wings": wings} if wings is not None else {}),
                     )
                 )
         except SearchError as exc:
@@ -716,7 +739,7 @@ def tool_search(
             tool_kg_search(
                 sanitized["clean_query"],
                 limit=limit,
-                wings=[wing] if wing else None,
+                wings=_search_fact_wings(wing, wings),
                 query_is_sanitized=True,
             )
             if include_facts
@@ -803,7 +826,7 @@ def tool_search(
         tool_kg_search(
             sanitized["clean_query"],
             limit=limit,
-            wings=[wing] if wing else None,
+            wings=_search_fact_wings(wing, wings),
             query_is_sanitized=True,
         )
         if include_facts

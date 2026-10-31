@@ -335,6 +335,12 @@ def main():
     p_search.add_argument("--room", default=None, help="Limit to one room")
     p_search.add_argument("--results", type=int, default=5, help="Number of results")
     p_search.add_argument(
+        "--candidate-strategy",
+        choices=["vector", "union"],
+        default=None,
+        help="Candidate sources before reranking (default: union on bounded lexical backends, otherwise vector)",
+    )
+    p_search.add_argument(
         "--include-media",
         action="store_true",
         help="Include local media assets using shared EmbeddingGemma 2 cosine ranking",

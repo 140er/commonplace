@@ -408,6 +408,7 @@ def _release_stuck_reader(release):
         reader.join(5)
 
 
+@pytest.mark.timing
 def test_layer1_read_that_blocks_past_the_budget_is_cut_off():
     """A read stuck in SQLite's busy timeout does not hold wake-up past its budget."""
     import threading
@@ -439,6 +440,7 @@ def test_layer1_read_that_blocks_past_the_budget_is_cut_off():
     mock_col.get.assert_not_called()
 
 
+@pytest.mark.timing
 def test_stuck_reads_leave_one_reader_thread_and_later_fetches_fail_fast():
     """While an abandoned read is still running, new fetches do not start another."""
     import threading

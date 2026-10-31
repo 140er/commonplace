@@ -13,6 +13,7 @@ def _print_search_results_bm25_only(
     since_dt=None,
     before_dt=None,
     facts=(),
+    wings=None,
 ) -> None:
     """CLI fallback printer for when HNSW divergence fences off vector search.
 
@@ -40,6 +41,7 @@ def _print_search_results_bm25_only(
         stop_words=stop_words,
         since_dt=since_dt,
         before_dt=before_dt,
+        **({"wings": wings} if wings is not None else {}),
     )
     hits = result.get("results", [])
     from ..fact_render import format_facts
@@ -109,7 +111,18 @@ def _print_also_in(hit: dict) -> None:
 
 
 def _cli_ranked_hits(
-    col, query, *, fetch, n_results, where, wing, room, window, metric, stop_words
+    col,
+    query,
+    *,
+    fetch,
+    n_results,
+    where,
+    wing,
+    room,
+    window,
+    metric,
+    stop_words,
+    candidate_strategy,
 ):
     """``(hits, fetched, skipped)``: the top ``fetch`` drawers, re-ranked and
     folded, and how many bookkeeping rows the fetch held.
@@ -143,31 +156,66 @@ def _cli_ranked_hits(
     docs = _first_or_empty(results, "documents")
     metas = _first_or_empty(results, "metadatas")
     dists = _first_or_empty(results, "distances")
+    stored_ids = _aligned_query_ids(results, len(docs))
+    known_distances = dict(zip(stored_ids, dists))
     fetched = len(docs)
     if window is not None:
         # Keep the whole in-window pool: the hybrid re-rank must see every
         # survivor before the display cut, or a BM25-strong drawer deep in the
         # pool could never surface.
         kept = [
-            (doc, meta, dist)
-            for doc, meta, dist in zip(docs, metas, dists)
+            (stored_id, doc, meta, dist)
+            for stored_id, doc, meta, dist in zip(stored_ids, docs, metas, dists)
             if filed_at_in_window((meta or {}).get("filed_at"), *window)
         ]
-        docs = [k[0] for k in kept]
-        metas = [k[1] for k in kept]
-        dists = [k[2] for k in kept]
+        stored_ids = [k[0] for k in kept]
+        docs = [k[1] for k in kept]
+        metas = [k[2] for k in kept]
+        dists = [k[3] for k in kept]
 
     # Pure-cosine retrieval on the CLI path was missing lexical matches: a
     # drawer whose text contains every query term can still score distance
     # >= 1.0 when it is a mechanical artifact (directory listing, diff, log
     # fragment). Hybridize with BM25 as `mempalace_search` does.
     hits = [
-        {"text": doc or "", "distance": float(dist), "metadata": meta or {}}
-        for doc, meta, dist in zip(docs, metas, dists)
+        {
+            "_stored_id": stored_id,
+            "text": doc or "",
+            "distance": float(dist),
+            "metadata": meta or {},
+            "source_file": Path((meta or {}).get("source_file") or "?").name,
+            "_source_file_full": (meta or {}).get("source_file"),
+            "_chunk_index": (meta or {}).get("chunk_index"),
+        }
+        for stored_id, doc, meta, dist in zip(stored_ids, docs, metas, dists)
         if not is_bookkeeping(meta)
     ]
     # Bookkeeping rows held slots in the fetch, so the caller widens for them too.
     skipped = len(docs) - len(hits)
+    stats = {}
+    _apply_candidate_strategy(
+        candidate_strategy,
+        hits,
+        col,
+        query,
+        wing,
+        room,
+        n_results,
+        since_dt=window[0] if window else None,
+        before_dt=window[1] if window else None,
+        known_distances=known_distances,
+        stats=stats,
+        where=where,
+        stop_words=stop_words,
+    )
+    for hit in hits:
+        if "metadata" not in hit:
+            hit["metadata"] = {
+                "wing": hit["wing"],
+                "room": hit["room"],
+                "source_file": hit["source_path"],
+                "chunk_index": hit.get("_chunk_index"),
+            }
     vector_weight, bm25_weight = _resolve_hybrid_rank_weights()
     hits = _hybrid_rank(
         hits,
@@ -180,12 +228,18 @@ def _cli_ranked_hits(
     return _fold_copies_across_sources(hits, _cli_hit_source, _cli_hit_ref), fetched, skipped
 
 
-def _cli_fact_matches(query, palace_path, wing, n_results):
+def _cli_fact_matches(query, palace_path, wing, n_results, wings=None):
     """Optional facts can report a generic failure but never stop CLI drawers."""
     try:
         from .facts import palace_facts
 
-        result = palace_facts(query, palace_path, wing=wing, limit=n_results)
+        result = palace_facts(
+            query,
+            palace_path,
+            wing=wing,
+            limit=n_results,
+            **({"wings": wings} if wings is not None else {}),
+        )
         if result.get("facts_error"):
             print("  facts_error: unavailable")
         return result["facts"]
@@ -193,6 +247,15 @@ def _cli_fact_matches(query, palace_path, wing, n_results):
         logger.warning("Fact search unavailable; preserving CLI drawers", exc_info=True)
         print("  facts_error: unavailable")
         return []
+
+
+def _print_cli_match(hit, metric):
+    bm25 = hit.get("bm25_score", 0.0)
+    if hit["distance"] is None:
+        print(f"      Match:  bm25={bm25}  (lexical candidate)")
+    else:
+        vec_sim = round(_distance_to_similarity(hit["distance"], metric), 3)
+        print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
 
 
 def search(
@@ -206,7 +269,9 @@ def search(
     collection=None,
     include_media: bool = False,
     query_task: str = "search",
+    candidate_strategy: Optional[str] = None,
     facts=None,
+    wings=None,
 ):
     """
     Search the palace. Returns verbatim drawer content.
@@ -214,6 +279,7 @@ def search(
     drawers whose ``filed_at`` falls in the ``[since, before)`` window —
     same semantics as ``search_memories``/``list_drawers``.
     """
+    _validate_candidate_strategy(candidate_strategy)
     if include_media or query_task != "search":
         result = search_memories(
             query,
@@ -225,6 +291,7 @@ def search(
             before=before,
             include_media=include_media,
             query_task=query_task,
+            candidate_strategy=candidate_strategy,
         )
         if result.get("error"):
             if result.get("error_class"):
@@ -268,7 +335,13 @@ def search(
     from ..fact_render import format_facts
 
     if facts is None:
-        facts = _cli_fact_matches(query, palace_path, wing, n_results)
+        facts = _cli_fact_matches(
+            query,
+            palace_path,
+            wing,
+            n_results,
+            **({"wings": wings} if wings is not None else {}),
+        )
 
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call
@@ -297,6 +370,7 @@ def search(
                 since_dt=since_dt,
                 before_dt=before_dt,
                 facts=facts,
+                **({"wings": wings} if wings is not None else {}),
             )
 
         col = _open_collection_or_explain(palace_path, opener=get_collection, read_only=True)
@@ -309,7 +383,8 @@ def search(
     # creation — their similarity scores will be junk until they run repair.
     _warn_if_legacy_metric(col)
 
-    where = build_where_filter(wing, room, col=col)
+    where = build_where_filter(wing, room, col=col, wings=wings)
+    candidate_strategy = _resolve_candidate_strategy(candidate_strategy, col, where)
 
     metric = _metric_for_collection(col)
     fetch = _candidate_pool_size(n_results, date_window_active)
@@ -325,6 +400,7 @@ def search(
             window=(since_dt, before_dt) if date_window_active else None,
             metric=metric,
             stop_words=stop_words,
+            candidate_strategy=candidate_strategy,
         )
         # Folded copies or skipped bookkeeping rows can leave the page short
         # while the fetch came back full, so more candidates exist: widen, as
@@ -356,8 +432,6 @@ def search(
     print(f"{'=' * 60}\n")
 
     for i, hit in enumerate(hits, 1):
-        vec_sim = round(_distance_to_similarity(hit["distance"], metric), 3)
-        bm25 = hit.get("bm25_score", 0.0)
         meta = hit["metadata"]
         source = Path(meta.get("source_file", "?")).name
         wing_name = meta.get("wing", "?")
@@ -366,7 +440,7 @@ def search(
         print(f"  [{i}] {wing_name} / {room_name}")
         print(f"      Source: {source}")
         _print_also_in(hit)
-        print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
+        _print_cli_match(hit, metric)
         print()
         # Print the verbatim text, indented
         for line in hit["text"].strip().split("\n"):

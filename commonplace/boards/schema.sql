@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     position      REAL NOT NULL,                    -- float, so a drag rewrites one row
     assignee      TEXT,                             -- actor ref; in todo it reserves the card for that actor
     claim_until   TEXT,                             -- agents only, while status = 'doing'; people's cards never expire
+    claim_from    TEXT CHECK (claim_from IN ('backlog', 'todo')), -- lane restored when an agent's claim expires
     ask           TEXT,                             -- set while status = 'review': the question for the person
     ask_options   TEXT,                             -- JSON array of short choices, or NULL for free text
     ask_to        TEXT,                             -- actor ref of the person asked (default: board owner)
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     stamp_user       TEXT NOT NULL,                 -- creator
     stamp_connection TEXT,
     stamp_trust      TEXT NOT NULL,
+    restricted_origin INTEGER DEFAULT 0 CHECK (restricted_origin IN (0, 1)), -- NULL: legacy origin unresolved; 1: person must release
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL,
     updated_by       TEXT NOT NULL,                 -- actor ref
@@ -99,6 +101,7 @@ CREATE TABLE IF NOT EXISTS task_events (
                    'add', 'edit', 'move', 'comment', 'claim', 'renew', 'release',
                    'expire', 'handoff', 'ask', 'decide', 'link', 'unlink')),
     text       TEXT,                                -- verbatim comment, handoff note, ask or reply
+    reason     TEXT,                                -- optional verbatim reason for withdrawing an ask
     from_status TEXT,
     to_status   TEXT,
     target     TEXT,                                -- actor ref (handoff, assign) or drawer id (link)

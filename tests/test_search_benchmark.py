@@ -408,7 +408,8 @@ def test_local_palace_source_explains_missing_embedding_runtime():
         source.vector_ranking(case, 10)
 
 
-def test_hub_search_client_reuses_authenticated_transport_and_parses_tool_result():
+@pytest.mark.parametrize("strategy", ["vector", "union"])
+def test_hub_search_client_reuses_authenticated_transport_and_parses_tool_result(strategy):
     calls = []
 
     class _Hub:
@@ -436,7 +437,7 @@ def test_hub_search_client_reuses_authenticated_transport_and_parses_tool_result
         "C:/private-palace",
         n_results=5,
         max_distance=1.5,
-        candidate_strategy="vector",
+        candidate_strategy=strategy,
         wing="project",
         room=None,
         source_file=None,
@@ -453,6 +454,7 @@ def test_hub_search_client_reuses_authenticated_transport_and_parses_tool_result
             "query": "private query",
             "limit": 5,
             "max_distance": 1.5,
+            "candidate_strategy": strategy,
             "wing": "project",
         },
     }
@@ -465,6 +467,23 @@ def test_local_palace_source_refuses_uncontrolled_direct_product_replay(monkeypa
 
     with pytest.raises(RuntimeError, match="--allow-direct-product-path"):
         source.current_ranking(case, 5, candidate_strategy="union")
+
+
+def test_union_profile_replays_through_live_hub(monkeypatch):
+    seen = []
+
+    def hub_search(query, palace_path, **kwargs):
+        seen.append(kwargs["candidate_strategy"])
+        return {"results": [{"drawer_id": "lexical", "score": 0.4}]}
+
+    monkeypatch.setattr(search_benchmark, "_live_hub_search", lambda _: hub_search)
+    source = LocalPalaceSearchSource("C:/palace", collection=_FakeCollection())
+    hits = source.current_ranking(
+        BenchmarkCase(id="q", query="needle"), 5, candidate_strategy="union"
+    )
+    assert [hit.drawer_id for hit in hits] == ["lexical"]
+    assert seen == ["union"]
+    assert source.current_latency_scope(candidate_strategy="union") == "product_boundary"
 
 
 def test_current_latency_scope_reflects_direct_fallback_when_explicitly_allowed(monkeypatch):

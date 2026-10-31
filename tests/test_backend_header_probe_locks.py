@@ -407,3 +407,66 @@ def test_read_header_fields_reads_through_sqlite_only(tmp_path):
     assert _magic.read_header_fields(str(tmp_path)) is None  # directory
     (tmp_path / "empty").write_bytes(b"")
     assert _magic.read_header_fields(str(tmp_path / "empty")) is None
+
+
+@posix_only
+def test_worker_probe_is_closed_from_another_thread(tmp_path):
+    db_path = str(tmp_path / "probe.sqlite3")
+    database = sqlite3.connect(db_path)
+    database.execute("CREATE TABLE documents (body TEXT)")
+    database.commit()
+    database.close()
+    results = []
+    worker = threading.Thread(target=lambda: results.append(_magic.has_sqlite_magic(db_path)))
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert results == [True]
+    stat = os.stat(db_path)
+    key = (stat.st_dev, stat.st_ino)
+    connection = _magic._retained_conns[key]
+
+    def descriptors():
+        if not os.path.isdir("/proc/self/fd"):
+            return None
+        found = set()
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                target = os.readlink("/proc/self/fd/" + fd)
+            except OSError:
+                continue
+            if os.path.realpath(target) == os.path.realpath(db_path):
+                found.add(fd)
+        return found
+
+    before = descriptors()
+    if before is not None:
+        assert before, "the worker probe owns a database descriptor"
+    _magic.close_retained()
+    assert key not in _magic._retained_conns
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    if before is not None:
+        assert descriptors() == set(), "closing the probe releases its descriptor"
+
+
+def test_retained_probe_close_reports_programming_errors(monkeypatch):
+    class BrokenProbe:
+        def close(self):
+            raise sqlite3.ProgrammingError("probe close failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_magic, "_retained_conns", {(0, 0): BrokenProbe()})
+        with pytest.raises(sqlite3.ProgrammingError, match="probe close failed"):
+            _magic.close_retained()
+
+
+def test_retained_probe_close_tolerates_os_errors(monkeypatch):
+    class BrokenProbe:
+        def close(self):
+            raise OSError("probe descriptor already unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_magic, "_retained_conns", {(0, 0): BrokenProbe()})
+        _magic.close_retained()
+        assert not _magic._retained_conns
