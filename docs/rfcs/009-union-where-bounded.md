@@ -24,7 +24,7 @@ Known exceptions (pre-existing, follow-up): fact ranking uses graph-wide statist
 4. **Term selection** (shared, deterministic):
    - Normalise terms with the index tokenizer.
    - A literal stays one term; where the index tokenizer splits it, it is fetched and scored as a phrase.
-   - Cap the query at 256 tokens and each term at 64 characters. Drop terms shorter than the index minimum (Chroma trigram: 3). Quote every term, doubling any `"`.
+   - Cap the query at 256 tokens and each index term at 64 characters. Over-length literals use a prefix fetch, but drawer tf counts exact untruncated occurrences and prefix-only membership supplies no match floor. Drop terms shorter than the index minimum (Chroma trigram: 3). Quote every term, doubling any `"`.
    - Classes in priority order: literals (a digit, `_ / . :`, a quoted span, or mixed case inside a word such as `getUser`; not hyphens alone, not all-caps words alone), then proper names (capitalised words that are not the first word of a sentence: the query start or after `. ! ?`), then other words.
    - Take the first 8 terms in priority order whose in-scope df is between 1 and the cutoff (5% of the scope, bounded to 1,000–2,000). At most 16 term fetches per search.
    - Count the query's tokens after stop words are removed. A query with more than 12 tokens uses literals and names only. With none of either it skips lexical. A long question with an incidental date can therefore miss a lexical-only answer containing only ordinary topic words; topic-word-next-to-literal recall is required for queries of at most 12 post-stopword tokens.

@@ -35,6 +35,7 @@ class LexicalTerm(str):
     def __new__(cls, text):
         term = super().__new__(cls, text[:64])
         term.prefix = len(text) > 64
+        term.original = text
         return term
 
 
@@ -154,7 +155,8 @@ def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
         return [0.0] * len(documents)
     with IndexWordNormalizer() as native_normalize:
         normalize = tokenize if trigram else native_normalize
-        phrases = [tuple(normalize(term)) for term in terms]
+        originals = [getattr(term, "original", term) for term in terms]
+        phrases = [tuple(normalize(term)) for term in originals]
         tokenized = [normalize(text) for text in documents]
     lengths = [len(tokens) for tokens in tokenized]
     avgdl = sum(lengths) / len(lengths) or 1.0
@@ -163,18 +165,12 @@ def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
         counts = Counter(tokens)
         evidence = matched_terms[i] if matched_terms is not None else ()
         row = []
-        for term, phrase in zip(terms, phrases):
+        for term, original, phrase in zip(terms, originals, phrases):
             size = len(phrase)
-            if trigram and any(c in term for c in "_/.:- "):
+            if trigram and any(c in original for c in "_/.:- "):
                 # Trigram literals are whole substrings, including separators.
                 # Keep the historical word rules for ordinary word matches.
-                freq = (documents[i] or "").lower().count(term)
-            elif getattr(term, "prefix", False) and size:
-                freq = sum(
-                    tuple(tokens[j : j + size - 1]) == phrase[:-1]
-                    and tokens[j + size - 1].startswith(phrase[-1])
-                    for j in range(len(tokens) - size + 1)
-                )
+                freq = (documents[i] or "").lower().count(original)
             elif size == 1:
                 freq = counts[phrase[0]]
             elif size:
@@ -183,7 +179,10 @@ def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
                 )
             else:
                 freq = 0
-            row.append(max(freq, 1 if term in evidence else 0))
+            # Prefix retrieval admits sibling tokens. Its membership proves
+            # only the prefix, so exact untruncated tf must stand on its own.
+            floor = 1 if term in evidence and not getattr(term, "prefix", False) else 0
+            row.append(max(freq, floor))
         frequencies.append(row)
     n = len(documents)
     idf = [

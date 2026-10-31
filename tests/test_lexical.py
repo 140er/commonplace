@@ -293,3 +293,42 @@ def test_decomposed_accents_keep_the_native_index_word_together():
         "resume",
         "cafe",
     ]
+
+
+@pytest.mark.parametrize("trigram", [False, True])
+def test_prefix_membership_does_not_supply_an_exact_match_floor(trigram):
+    from mempalace.lexical import LexicalTerm, index_bm25_scores
+
+    query = "k" + "9f3a" * 20
+    term = LexicalTerm(query)
+    assert len(term) == 64 and term.prefix and term.original == query
+    scores = index_bm25_scores(
+        [term], [query, query[:64] + "wrong"], [(term,), (term,)], trigram=trigram
+    )
+    assert scores[0] > 0 and scores[1] == 0
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+def test_long_literal_ranks_exact_token_above_a_prefix_sibling(tmp_path, monkeypatch, backend):
+    from mempalace.backends import embedding_wrapper
+    from mempalace.palace import get_collection
+    from mempalace.searcher import search_memories
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    query = "k" + "9f3a" * 20
+    sibling = query[:64] + "different"
+    col = get_collection(str(tmp_path), create=True)
+    col.add(
+        ids=[f"noise{i}" for i in range(30)] + ["sibling", "exact"],
+        documents=["routine note"] * 30 + [sibling, f"key {query} rotated with extra context"],
+        embeddings=[[0.01, 1.0]] * 30 + [[0.0, 0.0]] * 2,
+        metadatas=[{"wing": "public"}] * 32,
+    )
+    lexical = col.union_lexical_search(query=query, n_results=1, where={"wing": "public"})
+    assert [hit.id for hit in lexical.hits] == ["exact"]
+    result = search_memories(query, str(tmp_path), wing="public", n_results=1, include_facts=False)
+    assert result["results"][0]["drawer_id"] == "exact"
+    assert result["results"][0]["matched_via"] == "bm25_backend"
