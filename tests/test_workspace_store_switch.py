@@ -369,6 +369,7 @@ def test_keyword_only_rollback_uses_configured_embedder(workspace, monkeypatch, 
             backend.close()
 
 
+@pytest.mark.parametrize("transition", [1, 2, 3])
 @pytest.mark.parametrize(
     "step",
     [
@@ -387,10 +388,14 @@ def test_keyword_only_rollback_uses_configured_embedder(workspace, monkeypatch, 
         "complete",
     ],
 )
-def test_process_crash_at_each_boundary_is_restartable(workspace, step):
+def test_process_crash_at_each_boundary_is_restartable(workspace, step, transition):
     import subprocess
 
     data, root, thread = workspace
+    for number in range(1, transition):
+        switch.switch_workspace(data, WORKSPACE, "compact" if number % 2 else "v1")
+    source = workspace_path(data, WORKSPACE)
+    target = "compact" if transition % 2 else "v1"
     code = """
 import os,sys
 from pathlib import Path
@@ -400,24 +405,27 @@ switch._embedder = lambda directory: lambda documents,metadatas,**kwargs: [[1.,.
 def checkpoint(step):
     if step == sys.argv[3]:
         os._exit(91)
-switch.switch_workspace(Path(sys.argv[1]),sys.argv[2],'compact',checkpoint=checkpoint)
+switch.switch_workspace(Path(sys.argv[1]),sys.argv[2],sys.argv[4],checkpoint=checkpoint)
 """
     result = subprocess.run(
-        [sys.executable, "-c", code, str(data), WORKSPACE, step], capture_output=True, timeout=60
+        [sys.executable, "-c", code, str(data), WORKSPACE, step, target],
+        capture_output=True,
+        timeout=60,
     )
     assert result.returncode == 91, result.stderr.decode()
     committed = step in ("pointer", "publish_state", "pointer_mirrored", "published", "complete")
-    assert (workspace_path(data, WORKSPACE) != root) == committed
+    assert (workspace_path(data, WORKSPACE) != source) == committed
     with data_lock(data), closing(open_threads(workspace_path(data, WORKSPACE))) as store:
         assert store.get(thread.id) is not None
         assert store.messages(thread.id)[1].text == "second"
-    switch.switch_workspace(data, WORKSPACE, "compact")
-    assert switch.doctor_workspace(data, WORKSPACE)["store"] == "compact"
+    switch.switch_workspace(data, WORKSPACE, target)
+    assert switch.doctor_workspace(data, WORKSPACE)["store"] == target
     assert switch.doctor_workspace(data, WORKSPACE)["backfill"] == "complete"
     assert not any(
         path.name.endswith((".source-palace", ".probe", ".rollback-probe"))
         for path in root.parent.iterdir()
     )
+    assert switch.prune_generations(data, WORKSPACE, report_only=True)["findings"] == []
 
 
 def test_all_resolvers_follow_generation_pointer(workspace, monkeypatch):
@@ -540,10 +548,10 @@ def test_cli_store_doctor_and_rollback(workspace, monkeypatch, capsys):
     capsys.readouterr()
     stable = root.with_name(wid)
     (stable / POINTER_PREVIOUS).write_text("{}")
-    assert switch.doctor_workspace(data, wid)["previous_pointer_stale"]
+    assert switch.doctor_workspace(data, wid)["previous_pointer_difference"]
     assert read_json(stable / POINTER_PREVIOUS) == {}
     assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 3
-    assert "stale_previous_pointer" in json.loads(capsys.readouterr().out)["findings"]
+    assert "previous_pointer_differs" in json.loads(capsys.readouterr().out)["findings"]
     assert read_json(stable / POINTER_PREVIOUS) == {}
     assert main(args + ["workspace", "prune-stores", "fixture"]) == 0
     assert read_json(stable / POINTER_PREVIOUS) == read_json(stable / POINTER)
@@ -715,7 +723,10 @@ def test_minimal_pointer_preserves_unlisted_published_generations_and_recovery_c
     switch.prune_generations(data, WORKSPACE)
     switch.switch_workspace(data, WORKSPACE, "v1")
     assert switch._retirement_digest(retained) == before
-    assert read_json(root / POINTER_PREVIOUS) == {"active": active.name}
+    assert read_json(root / POINTER_PREVIOUS) == expected
+    difference = switch.doctor_workspace(data, WORKSPACE)["previous_pointer_difference"]
+    assert difference["message"] == "pointer differs from prev copy"
+    assert difference["entries"] == sorted([root.name, retained.name])
     assert "Preserving unlisted published generation " + retained.name in caplog.text
 
 
@@ -738,8 +749,97 @@ def _write_after_publication(directory):
     return added
 
 
+def _generation_bytes(*directories):
+    return {
+        (directory.name, path.relative_to(directory).as_posix()): path.read_bytes()
+        for directory in directories
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize("transition,phase", [(2, "copy"), (3, "copy"), (3, "rehearsal")])
+def test_mid_copy_and_rehearsal_crashes_remove_marked_scratch(workspace, transition, phase):
+    import subprocess
+
+    data, root, thread = workspace
+    for number in range(1, transition):
+        switch.switch_workspace(data, WORKSPACE, "compact" if number % 2 else "v1")
+    target = "compact" if transition % 2 else "v1"
+    code = """
+import os,sys
+from pathlib import Path
+from commonplace import store_switch as switch
+switch._verify_offline = lambda path: None
+switch._embedder = lambda directory: lambda documents,metadatas,**kwargs: [[1.,.3,-.1] for _ in documents]
+copy_tree = switch._copy_tree
+def crash_copy(source, destination, **kwargs):
+    copy_tree(source, destination, **kwargs)
+    name = Path(destination).name
+    if sys.argv[4] == 'copy':
+        kill = name.endswith('.source-palace') and '.rollback-probe' not in name
+    else:
+        kill = name.endswith('.rollback-probe.source-palace')
+    if kill:
+        os._exit(93)
+switch._copy_tree = crash_copy
+switch.switch_workspace(Path(sys.argv[1]), sys.argv[2], sys.argv[3])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(data), WORKSPACE, target, phase],
+        capture_output=True,
+        timeout=60,
+    )
+    assert result.returncode == 93, result.stderr.decode()
+    scratch = [path for path in root.parent.glob(root.name + ".generation-*source-palace")]
+    assert scratch and all((path / ".store-comparison.json").exists() for path in scratch)
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert set(path.name for path in scratch) <= set(report["leftover_generation_directories"])
+    assert "generation_leftovers" in report["findings"]
+    switch.switch_workspace(data, WORKSPACE, target)
+    assert all(not path.exists() for path in scratch)
+    assert switch.prune_generations(data, WORKSPACE, report_only=True)["findings"] == []
+    with closing(open_threads(workspace_path(data, WORKSPACE))) as store:
+        assert store.messages(thread.id)[1].text == "second"
+
+
+def test_report_only_cli_exits_three_for_leftover_scratch(workspace, capsys):
+    from commonplace.cli import main
+    from commonplace.control_db import ControlDB
+
+    data, root, _ = workspace
+    with closing(ControlDB(str(data / "control.sqlite3"))) as db:
+        db.create_user("owner@example.test", is_admin=True)
+        wid = db.create_workspace("fixture", "owner@example.test")
+    root.rename(root.with_name(wid))
+    stable = root.with_name(wid)
+    switch.switch_workspace(data, wid, "compact")
+    scratch = stable.with_name(stable.name + ".generation-" + "e" * 24 + ".source-palace")
+    scratch.mkdir()
+    (scratch / ".store-comparison.json").write_text("{}")
+    assert main(["--data", str(data), "workspace", "prune-stores", "fixture", "--report-only"]) == 3
+    report = json.loads(capsys.readouterr().out)
+    assert scratch.name in report["leftover_generation_directories"]
+    assert scratch.is_dir()
+
+
+def test_previous_pointer_refresh_allows_only_retained_entries_that_are_gone(workspace):
+    import shutil
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retired = workspace_path(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    shutil.rmtree(retired)
+    pointer = read_json(root / POINTER)
+    pointer["retained"] = [entry for entry in pointer["retained"] if entry["name"] != retired.name]
+    (root / POINTER).write_text(json.dumps(pointer))
+    switch.prune_generations(data, WORKSPACE)
+    assert read_json(root / POINTER_PREVIOUS) == pointer
+
+
 @pytest.mark.parametrize("restore", ["stale_previous", "handwritten_root"])
-def test_seal_error_records_publication_and_never_deletes_new_writes(
+def test_seal_error_refuses_a_conflicting_manual_rollback_without_changes(
     workspace, monkeypatch, restore
 ):
     data, root, original_thread = workspace
@@ -765,22 +865,32 @@ def test_seal_error_records_publication_and_never_deletes_new_writes(
         (root / POINTER).write_bytes((root / POINTER_PREVIOUS).read_bytes())
     else:
         (root / POINTER).write_text(json.dumps({"active": root.name}))
-    monkeypatch.setattr(switch, "_seal_retired", seal)
-    seals = []
-
-    def retry_once(stable, pointer):
-        seals.append(pointer["active"])
-        seal(stable, pointer)
-
-    monkeypatch.setattr(switch, "_seal_retired", retry_once)
+    with closing(open_threads(root)) as store:
+        manual = store.store(
+            WORKSPACE,
+            "manual-rollback-write",
+            [ThreadMessage(0, "user", "message", "root write after rollback", "root raw")],
+            actor="actor",
+        )
+    monkeypatch.setattr(
+        switch, "_seal_retired", lambda *args: pytest.fail("Sealed before refusing conflict")
+    )
+    before = _generation_bytes(root, active)
     retired_at = state["pointer"]["retained"][-1]["retired_at"]
-    switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 24 * 60 * 60)
-    assert seals == [active.name]
-    assert workspace_path(data, WORKSPACE) == active
-    assert read_json(root / switch.STATE)["state"] == "complete"
+    with pytest.raises(ValueError, match="recovery conflicts with the valid main pointer"):
+        switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 24 * 60 * 60)
+    assert _generation_bytes(root, active) == before
+    assert workspace_path(data, WORKSPACE) == root
+    with read_store(root / "threads.sqlite3") as store:
+        assert store.messages(manual.id)[0].text == "root write after rollback"
     with read_store(active / "threads.v2.sqlite3", compact=True) as store:
         assert store.messages(added.id)[0].text == "post-publication verbatim"
         assert store.messages(original_thread.id)[1].text == "second"
+    assert switch.doctor_workspace(data, WORKSPACE)["recovery_conflict"]
+    assert (
+        "recovery_conflict"
+        in switch.prune_generations(data, WORKSPACE, report_only=True)["findings"]
+    )
 
 
 def test_crash_after_pointer_then_stale_restore_preserves_written_staging_at_forty_days(workspace):
@@ -829,6 +939,13 @@ def test_copying_state_finishes_publication_from_either_pointer(workspace, evide
     (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": active.name}))
     filename = POINTER_PREVIOUS if evidence == "pointer" else POINTER
     (root / filename).write_text(json.dumps({"active": root.name}))
+    if evidence == "previous":
+        before = _generation_bytes(root, active)
+        with pytest.raises(ValueError, match="recovery conflicts with the valid main pointer"):
+            switch.prune_generations(data, WORKSPACE)
+        assert _generation_bytes(root, active) == before
+        assert workspace_path(data, WORKSPACE) == root
+        return
     switch.prune_generations(data, WORKSPACE)
     assert read_json(root / POINTER) == published
     assert read_json(root / POINTER_PREVIOUS) == published

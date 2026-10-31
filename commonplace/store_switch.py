@@ -90,17 +90,16 @@ def _finish_publication(root, pointer, state):
     )
 
 
-def _recover_publication(root):
-    state = _backfill_state(root)
+def _publication_pointer(root, state):
     if state.get("state") not in ("copying", "published"):
-        return
+        return None
     candidates = []
     if state.get("state") == "published":
         candidates.append(state.get("pointer"))
     for filename in (POINTER, POINTER_PREVIOUS):
         try:
             candidates.append(read_json(root / filename))
-        except ValueError:
+        except (ValueError, OSError):
             continue
     for pointer in candidates:
         try:
@@ -109,10 +108,36 @@ def _recover_publication(root):
             continue
         if pointer["active"] != state["staging"]:
             continue
-        store = settings_for(generation_path(root, pointer["active"])).get("store", "v1")
-        _write_pointer(root, pointer, store=store)
-        _finish_publication(root, pointer, _backfill_state(root))
-        return
+        return pointer
+    return None
+
+
+def _publication_conflict(root, candidate):
+    if candidate is None:
+        return None
+    try:
+        main = read_json(root / POINTER)
+        validate_pointer(root, main)
+    except (ValueError, OSError):
+        return None
+    if main["active"] != candidate["active"]:
+        return (
+            "Publication recovery conflicts with the valid main pointer: "
+            f"{main['active']} differs from {candidate['active']}; "
+            "preserve both generations and reconcile the pointers before retrying"
+        )
+    return None
+
+
+def _recover_publication(root):
+    candidate = _publication_pointer(root, _backfill_state(root))
+    conflict = _publication_conflict(root, candidate)
+    if conflict:
+        raise ValueError(conflict)
+    if candidate is not None:
+        store = settings_for(generation_path(root, candidate["active"])).get("store", "v1")
+        _write_pointer(root, candidate, store=store)
+        _finish_publication(root, candidate, _backfill_state(root))
 
 
 def _backfill_state(root):
@@ -283,8 +308,7 @@ def _prepare_generations(root):
     except (ValueError, KeyError, TypeError):
         _cleanup_recorded_staging(root)
         raise ValueError(POINTER_REPAIR) from None
-    # Repair a crash between the two durable pointer writes on every maintenance run.
-    atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
+    _refresh_previous_pointer(root, pointer)
     _cleanup_unpublished(root, pointer)
     return pointer
 
@@ -312,8 +336,12 @@ def _cleanup_unpublished(root, pointer):
         if path.is_symlink():
             raise ValueError("Refusing symlink in staging cleanup")
         if path.is_dir():
-            if (path / ".store-comparison.json").exists() and not (
-                base == recorded and base not in protected and not _writes_after_markers(path)
+            if (
+                path.name == base
+                and (path / ".store-comparison.json").exists()
+                and not (
+                    base == recorded and base not in protected and not _writes_after_markers(path)
+                )
             ):
                 logger.warning(
                     "Preserving unlisted published generation %s; recover its retained entry from %s or commonplace backup, or follow the documented manual removal procedure",
@@ -337,11 +365,58 @@ def _seal_retired(root, pointer):
                 path.chmod(path.stat().st_mode & ~0o222)
 
 
-def _previous_pointer_stale(root, pointer):
+def _refresh_previous_pointer(root, pointer):
+    """Preserve last-good history when the main pointer was edited externally."""
     try:
-        return bool(pointer) and read_json(root / POINTER_PREVIOUS) != pointer
-    except ValueError:
-        return bool(pointer)
+        previous = read_json(root / POINTER_PREVIOUS)
+        validate_pointer(root, previous)
+    except (ValueError, OSError):
+        atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
+        return
+    if previous == pointer:
+        return
+    if {key: value for key, value in previous.items() if key != "retained"} != {
+        key: value for key, value in pointer.items() if key != "retained"
+    }:
+        return
+    before = {item["name"]: item for item in previous.get("retained", [])}
+    after = {item["name"]: item for item in pointer.get("retained", [])}
+    if all(before.get(name) == item for name, item in after.items()) and all(
+        not generation_path(root, name).exists() for name in before.keys() - after.keys()
+    ):
+        atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
+
+
+def _previous_pointer_difference(root, pointer):
+    if not pointer:
+        return None
+    try:
+        previous = read_json(root / POINTER_PREVIOUS)
+    except (ValueError, OSError):
+        return {"message": "prev copy is missing or unreadable", "entries": []}
+    if previous == pointer:
+        return None
+    try:
+        before = {item["name"]: item for item in previous.get("retained", [])}
+        after = {item["name"]: item for item in pointer.get("retained", [])}
+        entries = {
+            name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
+        }
+        if previous.get("active") != pointer.get("active"):
+            entries.update(name for name in (previous.get("active"), pointer.get("active")) if name)
+        entries = sorted(entries)
+    except (KeyError, TypeError):
+        return {"message": "prev copy is unreadable", "entries": []}
+    return {"message": "pointer differs from prev copy", "entries": entries}
+
+
+def _leftover_generation_directories(root, pointer):
+    protected = {pointer.get("active"), *(item["name"] for item in pointer.get("retained", []))}
+    return sorted(
+        path.name
+        for path in root.parent.glob(root.name + ".generation-*")
+        if path.is_dir() and path.name not in protected
+    )
 
 
 def _preserved_generations(root, pointer):
@@ -379,8 +454,16 @@ def _prune_report(root, *, repair=None):
     preserved = _preserved_generations(root, pointer)
     if preserved:
         findings.append("unlisted_published_generations")
-    if _previous_pointer_stale(root, pointer):
-        findings.append("stale_previous_pointer")
+    difference = _previous_pointer_difference(root, pointer)
+    if difference:
+        findings.append("previous_pointer_differs")
+    leftovers = _leftover_generation_directories(root, pointer)
+    if leftovers:
+        findings.append("generation_leftovers")
+    conflict = _publication_conflict(root, _publication_pointer(root, state))
+    if conflict:
+        findings.append("recovery_conflict")
+        repair = repair or conflict
     if state.get("sealing") == "failed":
         findings.append("sealing_failed")
     if state.get("state") in ("copying", "published"):
@@ -394,7 +477,8 @@ def _prune_report(root, *, repair=None):
             if path.is_dir()
         ),
         "preserved_generations": preserved,
-        "previous_pointer_stale": _previous_pointer_stale(root, pointer),
+        "previous_pointer_difference": difference,
+        "leftover_generation_directories": leftovers,
     }
     if repair:
         report["repair"] = repair
@@ -921,6 +1005,8 @@ def doctor_workspace(data_dir, workspace_id):
     pointer = read_json(root / POINTER)
     if state == "copying" and recorded.get("staging") == pointer.get("active"):
         state = "published"
+    conflict = _publication_conflict(root, _publication_pointer(root, recorded))
+    repair = repair or conflict
     retained = []
     for item in read_json(root / POINTER).get("retained", []):
         path = generation_path(root, item["name"])
@@ -940,7 +1026,9 @@ def doctor_workspace(data_dir, workspace_id):
         "palace_schema_version": schema,
         "backfill": state,
         "sealing": recorded.get("sealing", "pending" if state == "published" else None),
-        "previous_pointer_stale": _previous_pointer_stale(root, pointer),
+        "previous_pointer_difference": _previous_pointer_difference(root, pointer),
+        "leftover_generation_directories": _leftover_generation_directories(root, pointer),
+        "recovery_conflict": conflict,
         "preserved_generations": _preserved_generations(root, pointer),
         "repair": repair,
     }
