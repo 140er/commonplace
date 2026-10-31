@@ -561,3 +561,20 @@ def seeded_kg(kg):
     kg.add_triple("Alice", "works_at", "NewCo", valid_from="2025-01-01")
 
     return kg
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Keep module fixtures and process-global test state on one worker.
+
+    Each worker has its own isolated HOME. Grouping whole modules also avoids
+    duplicating their expensive setup and teardown across workers. Explicit
+    groups take precedence when tests need to coordinate across modules.
+    """
+    if config.getoption("dist", default="no") != "loadgroup":
+        return
+    for item in items:
+        if item.get_closest_marker("xdist_group") is None:
+            item.add_marker(
+                pytest.mark.xdist_group(name=str(item.path.relative_to(config.rootpath)))
+            )

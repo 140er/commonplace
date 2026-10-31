@@ -80,6 +80,7 @@ dev = [
     "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-xdist>=3.6",
     # Offline media tests exercise real image objects and audio resampling
     # without installing the optional model or its PyTorch dependencies.
     "pillow>=10.0",
@@ -174,6 +175,7 @@ dev = [
     "cryptography>=42",
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-xdist>=3.6",
     "pillow>=10.0",
     "scipy>=1.10",
     # Retries known-transient ChromaDB-on-Windows HNSW compaction failures in CI

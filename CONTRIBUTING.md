@@ -167,3 +167,16 @@ git config user.email
 
 This is especially important when commits are created through agentic coding tools or automation, because those tools may not inherit your normal shell Git configuration. Avoid placeholder values such as `your@email.com` or localized template text; unresolved author emails can create avoidable provenance and SBOM review friction for downstream users.
 
+
+
+### Parallel tests
+
+Install the development dependencies, then run the suite with:
+
+```bash
+uv run pytest tests/ --ignore=tests/benchmarks -n 4 --dist loadgroup
+```
+
+The suite groups tests by module so module-scoped fixtures run once and tests
+that share process state stay together. Workers use separate temporary home
+directories and test data. Omit `-n 4 --dist loadgroup` for a serial run.
