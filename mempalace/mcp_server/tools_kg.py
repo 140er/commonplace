@@ -6,6 +6,28 @@ if __name__ != "mempalace.mcp_server":
 # ==================== KNOWLEDGE GRAPH ====================
 
 
+def tool_kg_search(query: str, limit: int = 5, wings=None, sensitivities=None, as_of=None):
+    """Fact-only half of search, so gateway drawer fan-out needs one lookup."""
+    try:
+        from ..searcher.facts import search_facts
+
+        facts = _call_kg(
+            lambda kg: search_facts(
+                kg,
+                query,
+                limit=max(1, min(limit, _MAX_RESULTS)),
+                wings=wings,
+                sensitivities=sensitivities,
+                as_of=as_of,
+            ),
+            read=True,
+        )
+    except Exception:
+        logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
+        return {"facts": [], "facts_error": "unavailable"}
+    return {"facts": facts}
+
+
 def _temporal_bound_key(value, *, end: bool = False) -> Optional[str]:
     if not value:
         return None
@@ -31,6 +53,8 @@ def tool_kg_query(
     direction: str = "both",
     wings: list = None,
     sensitivities: list = None,
+    search: bool = False,
+    limit: int = 5,
 ):
     """Query the knowledge graph for an entity's relationships.
 
@@ -38,11 +62,16 @@ def tool_kg_query(
     of those sensitivities. Facts filed before facts had wings match no wing.
     """
     try:
-        entity = sanitize_kg_value(entity, "entity")
+        entity = (
+            sanitize_query(entity)["clean_query"] if search else sanitize_kg_value(entity, "entity")
+        )
         as_of = sanitize_iso_temporal(as_of, "as_of")
         wings, sensitivities = visibility(wings, sensitivities)
     except ValueError as e:
         return {"error": str(e)}
+
+    if search:
+        return tool_kg_search(entity, limit, wings, sensitivities, as_of)
 
     if direction not in ("outgoing", "incoming", "both"):
         return {"error": "direction must be 'outgoing', 'incoming', or 'both'"}

@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
+from _thread_search_oracle import assert_alignment, old_search
 
 from commonplace.handoff import thread_store as store_module
 from commonplace.handoff.models import CHUNK_MAX_CHARS, THREADS_WING, RecallHit, ThreadMessage
@@ -597,9 +598,13 @@ def test_fts_backfills_after_unavailable_extension(monkeypatch, make_store, has_
         fallback.close()
     reopened = make_store()
     assert len(reopened.search(ids, "needle")) == len(ids)
+    assert reopened.search(ids, "needle") == old_search(reopened, ids, "needle")
+    assert_alignment(reopened)
     reopened.close()
     reopened = make_store()
     assert len(reopened.search(ids, "needle")) == len(ids)
+    assert reopened.search(ids, "needle") == old_search(reopened, ids, "needle")
+    assert_alignment(reopened)
     assert reopened._conn.execute("SELECT count(*) FROM chunks_fts").fetchone()[0] == len(ids)
 
 

@@ -23,3 +23,21 @@ Existing rows migrate to `origin_kind=unknown`, `origin_id=unknown`, `approval_s
 Handoff documents and thread recall include source, filing actor and proposal/unknown status. Uploaded transcript roles are unverified, including when a person uploads the transcript. Archived documents retain their exact text with an unknown-authority wrapper. Fact approval must be checked in the fact index before treating an excerpt as a user rule. Facts that handoff extraction files automatically stay proposals with their exact source range, even when a person uploaded the transcript; approving one is a separate, explicit save. Automatic extraction through a person's web session records the source thread as the origin, with the authenticated uploader retained in the caller stamp.
 
 Run `uv run python benchmarks/fact_provenance_bench.py` for the small recall gate. It checks that the invented SimSteer 5% gate stays an agent proposal when repeated, a person's 2% decision has approval evidence, the old rule points to its successor, a later agent proposal cannot retire the approved decision, and a backdated person approval retires a later-dated proposal filed first.
+
+Search also returns matching facts before drawers: a separate `facts` list in
+`mempalace_search` and hub responses, or a Facts section in the CLI. The drawer
+list keeps its existing order and limit. Facts include `source_link`, exact
+thread ranges, `source_drawer_id`, all observed `sources`, origin and approval
+fields, and `superseded_by`. An ended fact keeps its separate approval evidence
+but displays a historical/superseded status. Legacy CLI-capture responses omit
+an empty facts list to preserve their existing shape.
+
+The gateway includes facts only for callers allowed to use `mempalace_kg_query`,
+with that tool's wing and sensitivity scope. Source links still open through the
+existing source reader's access checks. `mempalace_kg_query` with `search=true` uses its `entity` argument as search
+text and exposes the same ranker for fact-only, optionally as-of reads. Ranking details and constants are
+documented in [RFC 009](rfcs/009-fact-first-ranking.md).
+
+Run `uv run python benchmarks/fact_recall_bench.py --threads 120 --retriever fact-first`
+for the fact-first gate, and `uv run python benchmarks/fact_first_bench.py --threads 120`
+for the plain-drawer comparison and the existing `search_benchmark` drawer gate.

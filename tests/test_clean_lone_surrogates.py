@@ -105,7 +105,7 @@ def _patch_mcp_server(monkeypatch, config, kg):
     from mempalace import mcp_server
 
     monkeypatch.setattr(mcp_server, "_config", config)
-    monkeypatch.setattr(mcp_server, "_get_kg", lambda: kg)
+    monkeypatch.setattr(mcp_server, "_get_kg", lambda *a, **kw: kg)
 
 
 class TestToolsAcceptSurrogates:

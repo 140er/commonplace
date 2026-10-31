@@ -648,6 +648,30 @@ def recall(kg: KnowledgeGraph, question: Question, k: int = 5) -> list:
     return facts[:k]
 
 
+def fact_first_recall(kg: KnowledgeGraph, question: Question, k: int = 5) -> list:
+    """Production lexical/status/decay ranking, with the eval's structured key.
+
+    Match subject and predicate just as ``recall`` does; never inspect the gold
+    answer. Candidate lookup, source loading, visibility and order are the same
+    ranker used by MCP, hub and CLI fact-first search.
+    """
+    from mempalace.searcher.facts import search_facts
+
+    facts = search_facts(
+        kg,
+        f"{question.subject} {question.predicate}",
+        wings=question.reader["wings"],
+        sensitivities=question.reader["sensitivities"],
+        as_of=question.as_of,
+        limit=None,
+    )
+    return [
+        f
+        for f in facts
+        if f["subject"] == question.subject and f["predicate"] == question.predicate
+    ][:k]
+
+
 def _identity(fact):
     return tuple(fact[key] for key in ("subject", "predicate", "object", "wing"))
 
@@ -853,11 +877,17 @@ def main(argv=None) -> int:
     parser.add_argument("--threads", type=int, default=40)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--saver", choices=sorted(SAVERS), default="oracle")
+    parser.add_argument("--retriever", choices=("kg", "fact-first"), default="kg")
     parser.add_argument("--json", action="store_true", help="print the full report as JSON")
     args = parser.parse_args(argv)
     if args.threads < 36:
         parser.error("the corpus needs at least 36 threads")
-    report = run(args.threads, args.seed, SAVERS[args.saver])
+    report = run(
+        args.threads,
+        args.seed,
+        SAVERS[args.saver],
+        retriever=fact_first_recall if args.retriever == "fact-first" else recall,
+    )
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:

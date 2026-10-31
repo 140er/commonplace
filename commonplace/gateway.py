@@ -27,6 +27,7 @@ import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from time import sleep
 from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
@@ -35,7 +36,7 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, privacy, ratelimit, sessions, urls
+from . import events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
@@ -51,6 +52,27 @@ WORKER_TIMEOUT_S = 660.0
 MAX_FANOUT_WINGS = 64
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
+
+
+def _with_search_facts(result, facts, facts_error=None):
+    from mempalace.fact_render import format_facts
+
+    if result.get("error"):
+        return result
+    if (
+        not facts
+        and not facts_error
+        and not any(key in result for key in ("facts", "results", "cli_output"))
+    ):
+        return result
+    out = {k: v for k, v in result.items() if k != "facts"}
+    if facts or facts_error or "cli_output" not in out:
+        out = {"facts": facts, **out}
+    if facts_error:
+        out["facts_error"] = "unavailable"
+    if isinstance(out.get("cli_output"), str):
+        out["cli_output"] = format_facts(facts) + out["cli_output"]
+    return out
 
 
 def _rpc_error(req_id, code: int, message: str) -> dict:
@@ -290,6 +312,12 @@ class Mediator:
             forwarded["params"] = {**params, "arguments": args}
             response = self.workers.post(principal, forwarded)
             response = self._after(principal, name, rule, args, response)
+            if isinstance(plan, dict) and "facts" in plan:
+                result = _tool_result(response)
+                if isinstance(result, dict):
+                    response = _replace_result(
+                        response, _with_search_facts(result, plan["facts"], plan.get("facts_error"))
+                    )
             if isinstance(plan, dict) and plan.get("unhide"):
                 unhide = plan["unhide"]
                 response = _unhide(response, unhide)
@@ -352,14 +380,49 @@ class Mediator:
 
     def _before_search(self, principal, name, args, notes):
         policy = principal.policy
-        if policy.sees_all_wings:
-            return None
         wing = args.get("wing")
-        if wing:
-            if not policy.can_read_wing(wing):
-                raise Denied(f"this connection can't read wing {wing!r}")
-            return None
-        return {"respond": self._fan_out_search(principal, name, args)}
+        if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
+            raise Denied(f"this connection can't read wing {wing!r}")
+        fact_result = (
+            self._search_facts(principal, args)
+            if args.get("include_facts", True)
+            else {"facts": []}
+        )
+        # A worker has workspace authority. Always suppress its unscoped fact
+        # search, including captured CLI output, and attach the scoped read.
+        args["include_facts"] = False
+        if policy.sees_all_wings or wing:
+            return fact_result
+        return {
+            "respond": _with_search_facts(
+                self._fan_out_search(principal, name, args),
+                fact_result["facts"],
+                fact_result.get("facts_error"),
+            )
+        }
+
+    def _search_facts(self, principal, args):
+        try:
+            if not principal.policy.tool_visible("mempalace_kg_query"):
+                return {"facts": []}
+            call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
+            if args.get("wing"):
+                call["wings"] = [args["wing"]]
+            self._before_kg_read(principal, "mempalace_kg_query", call, [])
+            result = self.workers.call_tool(principal, "mempalace_kg_query", call)
+            if (
+                not isinstance(result, dict)
+                or result.get("error")
+                or not isinstance(result.get("facts"), list)
+            ):
+                raise ValueError("Invalid fact search response")
+            return {
+                "facts": result["facts"],
+                **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
+            }
+        except Exception:
+            logger.warning("Fact search unavailable; preserving drawer search", exc_info=True)
+            return {"facts": [], "facts_error": "unavailable"}
 
     def _before_drawer_read(self, principal, name, args, notes):
         return None  # Checked on the way out, so a hidden drawer reads as missing.
@@ -919,6 +982,7 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
             {_host_name(host.strip()) for host in allowed.split(",")} if allowed else None
@@ -1241,6 +1305,15 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
+        if principal is not None and not parse_error and plans.enabled():
+            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+            plan = plans.get_plan(self.server.gateway.db, account) if account else None
+            if self._plan_limit(path, principal, request, plan):
+                return
+            if path == "/mcp" or path.startswith("/api/"):
+                delay = plans.load_delay(plan)
+                if delay:
+                    sleep(delay)
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -1259,6 +1332,39 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         # remaining bytes cannot become another HTTP request.
         self.close_connection = True
         handler(self)
+
+    def _plan_limit(self, path, principal, request, plan):
+        if path != "/mcp" and not path.startswith("/api/"):
+            return False
+        if plan is None or plan.storage_bytes is None:
+            return False
+        if not _write_request(self.command, path, request) or self.command == "DELETE":
+            return False
+        if path == "/mcp":
+            name = request["params"]["name"]
+            if "delete" in name or "remove" in name:
+                return False
+        gateway = self.server.gateway
+        if (
+            gateway.storage_meter.used(
+                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+            )
+            < plan.storage_bytes
+        ):
+            return False
+        gateway.storage_meter.audit_limit(gateway.db, principal)
+        message = plans.storage_message(plan)
+        self.close_connection = True
+        if path == "/mcp":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {"content": [{"type": "text", "text": message}], "isError": True},
+            }
+            self._send_json(200, response)
+        else:
+            self._send_json(507, {"error": message, "limit": "storage"})
+        return True
 
     def _mcp(self, principal, request):
         try:

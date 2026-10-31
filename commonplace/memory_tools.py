@@ -200,6 +200,7 @@ def _search(ctx, args, store=None):
     params = {
         "query": _string(args, "query"),
         "limit": _limit(args.get("limit"), 5, 100),
+        "include_facts": False,
     }
     if args.get("theme"):
         params["wing"] = _string(args, "theme")
