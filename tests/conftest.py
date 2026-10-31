@@ -188,9 +188,59 @@ def _close_test_storage_clients(monkeypatch):
     from chromadb.api.client import Client
 
     from commonplace.control_db import ControlDB
+    from mempalace.backends import _inproc_sqlite, _magic
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
+    probes_before = dict(_magic._retained_conns)
+    anchors_before = dict(_inproc_sqlite._anchors)
+    holders_before = dict(_inproc_sqlite._holders)
+    positives_before = set(_magic._positive)
     resources = ExitStack()
+
+    def live_databases():
+        from chromadb.api.shared_system_client import SharedSystemClient
+
+        paths = set()
+        inodes = set()
+        for system in list(SharedSystemClient._identifier_to_system.values()):
+            if not system.settings.is_persistent:
+                continue
+            path = os.path.realpath(
+                os.path.join(system.settings.persist_directory, "chroma.sqlite3")
+            )
+            paths.add(os.path.normcase(path))
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            inodes.add((stat.st_dev, stat.st_ino))
+        return paths, inodes
+
+    def close_anchors():
+        live_paths, _ = live_databases()
+        for current, previous in (
+            (_inproc_sqlite._anchors, anchors_before),
+            (_inproc_sqlite._holders, holders_before),
+        ):
+            for path, handle in list(current.items()):
+                if previous.get(path) is not handle and path not in live_paths:
+                    _inproc_sqlite.release(path)
+
+    def close_probes():
+        _, live_inodes = live_databases()
+        with _magic._lock:
+            for key, connection in list(_magic._retained_conns.items()):
+                if probes_before.get(key) is connection or key in live_inodes:
+                    continue
+                connection.close()
+                _magic._retained_conns.pop(key)
+            for key in set(_magic._positive) - positives_before - live_inodes:
+                _magic._positive.pop(key, None)
+
+    # ExitStack attempts every callback even when a client close raises.
+    # Its reverse order keeps clients before probes, then releases anchors.
+    resources.callback(close_anchors)
+    resources.callback(close_probes)
     palaces = set()
     original_client_init = Client.__init__
     original_control_init = ControlDB.__init__
@@ -205,9 +255,16 @@ def _close_test_storage_clients(monkeypatch):
         resources.callback(database.close)
 
     def tracked_connect(backend, palace_path, *args, **kwargs):
+        already_open = any(
+            handle is not None and not handle.closed
+            for handle in (
+                backend._clients.get(palace_path),
+                backend._read_only_clients.get(palace_path),
+            )
+        )
         result = original_connect(backend, palace_path, *args, **kwargs)
         key = (id(backend), palace_path)
-        if key not in palaces:
+        if not already_open and key not in palaces:
             palaces.add(key)
             # Release handles without closing the reusable registry backend.
             resources.callback(backend.close_palace, palace_path)
@@ -217,31 +274,7 @@ def _close_test_storage_clients(monkeypatch):
     monkeypatch.setattr(ControlDB, "__init__", tracked_control_init)
     monkeypatch.setattr(SQLiteExactBackend, "_connect", tracked_connect)
     yield
-    try:
-        resources.close()
-    finally:
-        # Header probes deliberately retain connections while a palace is live
-        # to preserve POSIX locks. Release them only after all test clients.
-        from mempalace.backends import _magic
-
-        _magic.close_retained()
-        _magic.forget()
-
-
-@pytest.fixture(autouse=True)
-def _release_palace_anchors(_close_test_storage_clients):
-    """Close anchor connections on ``chroma.sqlite3`` after each test.
-
-    On Linux mempalace keeps one idle connection per database inode for the life
-    of the process; across thousands of temporary palaces that would run the
-    test process out of descriptors. Only acts when the module is loaded.
-    """
-    yield
-    import sys
-
-    inproc = sys.modules.get("mempalace.backends._inproc_sqlite")
-    if inproc is not None:
-        inproc.release_all()
+    resources.close()
 
 
 def _realign_default_backend(palace_module):
