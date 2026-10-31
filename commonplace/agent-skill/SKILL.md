@@ -52,6 +52,7 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 
 - `ask question=… options=["A","B"] task=#n`. Two or three short options; the user answers with one tap.
 - Then end your turn. Don't poll. The answer comes back on the card: your next `task_take_next` or `task_list mine=true` returns it with the decision.
+- A decision whose reply starts with `New options:` means the user rejected every option. Don't carry on. Ask again with `ask` on the same card, with 2 or 3 different options, and say in one line what changed. The `Not:` line lists what was rejected.
 - Hand a card to another agent with `task_handoff task=#n to=<connection> note=…`, or back to the pool with `to=anyone`.
 
 ## Finishing

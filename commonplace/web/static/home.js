@@ -1,6 +1,7 @@
 // Home: what needs you, one tile per space, then every open task. Data in, HTML out;
 // the task row and its dot come from app.js so all three parts share #19's colours.
 import { escape as e, elapsed, safeLink } from "./api.js";
+import { hasQuestions } from "./decide.js";
 
 const enc = encodeURIComponent;
 const BUCKETS = ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"];
@@ -47,10 +48,16 @@ function action(card, state) {
   return "";
 }
 
-function needBox(items, selected, speak, dot) {
+function needBox(items, selected, speak, dot, answer) {
   const count = items.length;
   const heading = count ? `<b class="n">${count}</b> ${count === 1 ? "thing needs" : "things need"} you` : "Nothing needs you";
-  return `<section class="needbox ${count ? "waiting" : ""}" aria-labelledby="needbox-title"><header><h2 id="needbox-title">${heading}</h2>${speak ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : ""}</header><div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div>${count ? `<ol>${items.map(({ card, reason: why }) => `<li class="nline ${card.number === selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="-1">${dot(card)}<a class="tt" href="#/card/${card.number}">${e(card.title)}</a><span class="why">${e(why)}</span></li>`).join("")}</ol>` : ""}</section>`;
+  const speakBtn = speak ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "";
+  const answerBtn = answer ? '<a class="opt go answer" href="#/decide">Answer</a>' : "";
+  const actions = answerBtn || speakBtn ? `<div class="need-actions">${answerBtn}${speakBtn}</div>` : "";
+  return `<section class="needbox ${count ? "waiting" : ""}" aria-labelledby="needbox-title"><header><h2 id="needbox-title">${heading}</h2>${actions}</header><div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div>${count ? `<ol>${items.map(({ card, reason: why }) => `<li class="nline ${card.number === selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="-1">${dot(card)}<a class="tt" href="${askedLink(card, why)}">${e(card.title)}</a><span class="why">${e(why)}</span></li>`).join("")}</ol>` : ""}</section>`;
+}
+function askedLink(card, why) {
+  return why.startsWith("asks: ") ? `#/decide/${card.number}` : `#/card/${card.number}`;
 }
 
 function spaces(boards, open, items, stale, dot) {
@@ -74,5 +81,5 @@ function tasks(open, total, stale, boards, selected, { dot, taskRow }) {
 
 export function homeView({ needs = {}, boards = [], open = [], total = null, selected = null, speak = false }, rows) {
   const items = needItems(needs), stale = staleSet(needs);
-  return `<section class="queue home">${needBox(items, selected, speak, rows.dot)}${spaces(boards, open, items, stale, rows.dot)}${tasks(open, total, stale, boards, selected, rows)}</section>`;
+  return `<section class="queue home">${needBox(items, selected, speak, rows.dot, hasQuestions(needs))}${spaces(boards, open, items, stale, rows.dot)}${tasks(open, total, stale, boards, selected, rows)}</section>`;
 }

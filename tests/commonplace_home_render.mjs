@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 const apiUrl = url(await read("api.js"));
-const { homeView, needItems } = await import(url((await read("home.js")).replace('"./api.js"', `"${apiUrl}"`)));
+const decideUrl = url((await read("decide.js")).replace('"./api.js"', `"${apiUrl}"`));
+const { homeView, needItems } = await import(url((await read("home.js")).replace('"./api.js"', `"${apiUrl}"`).replace('"./decide.js"', `"${decideUrl}"`)));
 const rows = {
   dot: (card) => `<i class="status-dot ${card.need}" data-need="${card.need}"></i>`,
   taskRow: (card, context) => `<div class="trow">#${card.number}${context}</div>`,
@@ -28,14 +29,15 @@ const html = homeView({ needs, boards, open: [ask, plan, merge, stale, working, 
 // Three parts, top to bottom: the box, one tile per space, the task table.
 const at_ = (s) => html.indexOf(s);
 assert.ok(at_('class="needbox waiting"') >= 0 && at_('class="needbox') < at_('class="home-spaces"') && at_('class="home-spaces"') < at_('class="home-tasks"'));
-assert.match(html, /<h2 id="needbox-title"><b class="n">5<\/b> things need you<\/h2><button class="opt speak" data-action="speak-digest"/);
+assert.match(html, /<h2 id="needbox-title"><b class="n">5<\/b> things need you<\/h2><div class="need-actions"><a class="opt go answer" href="#\/decide">Answer<\/a><button class="opt speak" data-action="speak-digest"/);
 assert.ok(html.includes('id="digest-captions"'));
 
 // One line per item, ordered like the spoken digest; reasons from need and queue.
 assert.deepEqual(needItems(needs).map((i) => [i.card.number, i.reason]), [
   [1, "asks: Which one?"], [2, "plan to approve"], [3, "ready to merge"], [4, "claim went stale"], [6, "filed by an agent"],
 ]);
-assert.ok(html.includes('<a class="tt" href="#/card/1">Ship &lt;script&gt;alert(1)&lt;/script&gt;?</a><span class="why">asks: Which one?</span>'));
+assert.ok(html.includes('<a class="tt" href="#/decide/1">Ship &lt;script&gt;alert(1)&lt;/script&gt;?</a><span class="why">asks: Which one?</span>'));
+assert.ok(html.includes('<a class="tt" href="#/card/2">'));
 assert.ok(!html.includes("<script>") && !html.includes("Second line"));
 assert.ok(html.includes('class="nline sel" data-row="1"'));
 // The ask is answered in its card, its one clickable place; Home never repeats the choices.
@@ -70,6 +72,8 @@ assert.ok(html.includes('<article class="trow-card sel" data-row="1" data-key="s
 
 const empty = homeView({ needs: { count: 0 }, boards: [], open: [], speak: false }, rows);
 assert.ok(empty.includes('<section class="needbox " aria-labelledby="needbox-title"><header><h2 id="needbox-title">Nothing needs you</h2></header>'));
-assert.ok(empty.includes("No open tasks") && !empty.includes("<table>") && !empty.includes("speak-digest"));
+assert.ok(empty.includes("No open tasks") && !empty.includes("<table>") && !empty.includes("speak-digest") && !empty.includes('href="#/decide"'));
+const mergeOnly = homeView({ needs: { ready_to_merge: [merge], count: 1 }, boards, open: [merge], speak: true }, rows);
+assert.ok(mergeOnly.includes("speak-digest") && !mergeOnly.includes('href="#/decide"'));
 const one = homeView({ needs: { asks: [ask] }, boards, open: [ask] }, rows);
 assert.ok(one.includes("<b class=\"n\">1</b> thing needs you"));
