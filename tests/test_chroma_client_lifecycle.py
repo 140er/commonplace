@@ -323,3 +323,26 @@ fresh_backend.close()
 check_released()
 """,
     )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX index-check guard lifecycle")
+@pytest.mark.parametrize("helper_guard", [False, True])
+def test_orphaned_system_reset_releases_transient_guards(tmp_path, helper_guard):
+    _run_probe(
+        tmp_path,
+        f"""
+if {helper_guard!r}:
+    _inproc_sqlite._ANCHORED = False
+    _inproc_sqlite._HOLD_LOCKS = True
+backend = ChromaBackend()
+path = paths[0]
+backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+lost = ChromaBackend.make_client(path)
+lost = None
+key = _inproc_sqlite._key(os.path.join(path, 'chroma.sqlite3'))
+assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+chroma._clear_chroma_system_cache(palace_path=path)
+backend.close()
+check_released()
+""",
+    )

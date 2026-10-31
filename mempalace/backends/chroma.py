@@ -1929,6 +1929,9 @@ def _clear_chroma_system_cache(palace_path=None) -> bool:
                     if isinstance(identifier, str) and _same_palace(identifier, palace_path):
                         SharedSystemClient._identifier_to_system.pop(identifier, None)
                         SharedSystemClient._identifier_to_refcount.pop(identifier, None)
+            from ._inproc_sqlite import release_transient
+
+            release_transient(os.path.join(palace_path, "chroma.sqlite3"))
         return True
     if _clearing_system_cache:
         return False
