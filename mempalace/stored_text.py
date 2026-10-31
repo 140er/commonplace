@@ -42,7 +42,7 @@ import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping
 
-from .index_hygiene import BASE64_BOUNDARY_CLASS, is_word_character
+from .index_hygiene import continues_run
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
@@ -54,7 +54,6 @@ logger = logging.getLogger(__name__)
 _hint_warning_times = {}
 _hint_warning_lock = threading.Lock()
 _BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/]+|[A-Za-z0-9_\-]+)={0,2}\Z")
-_RUN_BOUNDARY_CHAR = re.compile(BASE64_BOUNDARY_CLASS)
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -373,21 +372,8 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     and _BASE64_FRAGMENT.fullmatch(text[start:end])
                     and type(emit) is bool
                     and (emit or (start == 0 and end < len(text)))
-                    and (
-                        start == 0
-                        or not (
-                            _RUN_BOUNDARY_CHAR.fullmatch(text[start - 1])
-                            or is_word_character(text[start - 1])
-                        )
-                    )
-                    and (
-                        end == len(text)
-                        or not (
-                            _RUN_BOUNDARY_CHAR.fullmatch(text[end])
-                            or is_word_character(text[end])
-                            or text[end] == "="
-                        )
-                    )
+                    and (start == 0 or not continues_run(text[start - 1]))
+                    and (end == len(text) or not (continues_run(text[end]) or text[end] == "="))
                 ):
                     raise ValueError("invalid span")
                 match = PLACEHOLDER_RE.fullmatch(placeholder)

@@ -58,12 +58,13 @@ intersections create no span and stay literal in index text, whether they would
 otherwise emit or continue a placeholder. No vectors are removed in A0; the vector
 count is unchanged. Keyword-only message policy is B1c.
 Queries use the same placeholder rule when they contain validated base64.
-At visible candidate edges, Unicode letters, numbers, combining marks (category
-M*), underscores, ZWNJ (U+200C) and ZWJ (U+200D) continue a word. Composed and
-decomposed word edges therefore follow the same rule. Punctuation outside the
-base64 alphabet and whitespace remain delimiters. The detector and hint validator
-share this rule and inspect original code points without normalization, preserving
-span offsets.
+At visible candidate edges, Unicode letters (L*), numbers (N*), marks (M*),
+connector punctuation (Pc) and format characters (Cf) continue a word, as do
+characters in the base64 alphabet; everything else delimits. For word edges,
+NFD never gets a placeholder NFC would not. This does not imply parity for
+decomposable symbols such as ≠, whose decomposition can introduce a word character.
+The detector and hint validator share this rule and inspect original code points
+without normalization, preserving span offsets.
 The index view also replaces NUL and lone surrogates with spaces for inference,
 rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
 strings retain those characters through the existing reversible encoding.
@@ -78,12 +79,12 @@ to the same owner; drawer ingress strips caller-supplied hints. The SHA-256 bind
 a hint to its chunk but does not authenticate it. Complete runs are revalidated
 by the detector. Fragments at chunk edges cannot be fully validated without the
 whole content, so their acceptance, media label and decoded size rely on that
-trusted provenance. Validation still checks fragment characters, visible word
+trusted provenance. Every fragment must contain at least one payload character:
+padding-only hints are rejected whether emitting or continuing, and zero-byte
+placeholders are invalid. Validation still checks fragment characters, visible word
 boundaries using the shared original-code-point predicate, and placeholder
 format and size bounds (150 to `sys.maxsize` decoded bytes, with an implied
-encoded length large enough to cover the fragment). Every fragment must contain
-at least one payload character: padding-only hints are rejected whether emitting
-or continuing, and zero-byte placeholders are invalid. Edge fragments can therefore
+encoded length large enough to cover the fragment). Edge fragments can therefore
 remove or replace short tokens in the index; hints are not a security boundary
 against a malicious palace writer. Stored documents remain verbatim.
 Removed hints are tombstoned on merging writes. A stale or invalid hint

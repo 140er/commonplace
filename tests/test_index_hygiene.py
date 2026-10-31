@@ -10,7 +10,12 @@ import unicodedata
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from mempalace.index_hygiene import base64_candidate_ranges, find_base64_spans, index_text
+from mempalace.index_hygiene import (
+    base64_candidate_ranges,
+    find_base64_spans,
+    index_text,
+    is_word_character,
+)
 
 
 def test_candidate_detection_is_bounded_on_adversarial_short_runs():
@@ -90,13 +95,23 @@ def test_marks_and_joiners_preserve_adjacent_runs(size, edge, side):
     assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
 
 
-def test_all_unicode_mark_categories_preserve_visible_edges():
+def test_all_unicode_marks_connectors_and_formats_preserve_visible_edges():
     _, encoded = payload()
     for codepoint in range(sys.maxunicode + 1):
         edge = chr(codepoint)
-        if unicodedata.category(edge).startswith("M"):
+        category = unicodedata.category(edge)
+        if category.startswith("M") or category in ("Pc", "Cf"):
             assert find_base64_spans(edge + encoded) == [], f"before U+{codepoint:04X}"
             assert find_base64_spans(encoded + edge) == [], f"after U+{codepoint:04X}"
+
+
+def test_all_letters_and_numbers_keep_word_edges_after_decomposition():
+    for codepoint in range(sys.maxunicode + 1):
+        char = chr(codepoint)
+        if unicodedata.category(char)[0] in "LN":
+            decomposed = unicodedata.normalize("NFD", char)
+            assert is_word_character(decomposed[0]), f"first U+{codepoint:04X}"
+            assert is_word_character(decomposed[-1]), f"last U+{codepoint:04X}"
 
 
 @pytest.mark.parametrize("before,after", [("…", "—"), ("«", "»"), ("\u2003", "\n"), ("🧭", "🌿")])

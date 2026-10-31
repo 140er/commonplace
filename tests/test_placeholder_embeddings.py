@@ -4,6 +4,7 @@ import base64
 import json
 import random
 import sys
+import unicodedata
 from collections import UserDict
 from types import MappingProxyType
 from unittest.mock import patch
@@ -558,6 +559,26 @@ def test_edge_hints_cannot_split_unicode_words(text, start, end, emit, caplog):
     hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
     assert index_text(text, hint) == text
     assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+def test_forged_edge_hints_preserve_composed_and_decomposed_words(form):
+    edge = unicodedata.normalize(form, "ï")
+    text = "ab" + edge + "cd"
+    for start, end, emit in [(0, 2, False), (2 + len(edge), len(text), True)]:
+        hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
+        assert index_text(text, hint) == text
+
+
+def test_all_unicode_marks_connectors_and_formats_reject_forged_edge_hints():
+    for codepoint in range(sys.maxunicode + 1):
+        char = chr(codepoint)
+        category = unicodedata.category(char)
+        if category.startswith("M") or category in ("Pc", "Cf"):
+            text = "ab" + char + "cd"
+            for start, end, emit in [(0, 2, False), (3, 5, True)]:
+                hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
+                assert index_text(text, hint) == text, f"U+{codepoint:04X}, emit={emit}"
 
 
 @pytest.mark.parametrize(

@@ -17,8 +17,8 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
-# ASCII lookarounds keep maximal-run matching linear. Unicode word edges are
-# checked separately, without changing the source characters or their offsets.
+# Python's re has no \p{M} category support, so ASCII lookarounds select runs
+# and Unicode word edges are checked separately without changing source offsets.
 BASE64_BOUNDARY_CLASS = r"[A-Za-z0-9+/_\-]"
 _RUN = re.compile(
     rf"(?<!{BASE64_BOUNDARY_CLASS}){BASE64_BOUNDARY_CLASS}{{200,}}={{0,2}}(?!{BASE64_BOUNDARY_CLASS}|=)"
@@ -55,7 +55,13 @@ class Base64Span:
 
 def is_word_character(char: str) -> bool:
     """Whether one original code point continues a word at a visible edge."""
-    return char == "_" or char in "\u200c\u200d" or unicodedata.category(char)[0] in "LNM"
+    category = unicodedata.category(char)
+    return category[0] in "LNM" or category in ("Pc", "Cf")
+
+
+def continues_run(char: str) -> bool:
+    """Whether one original code point continues a base64 run or its word."""
+    return is_word_character(char) or char in "+/-"
 
 
 def _media_type(data: bytes) -> str:
@@ -96,17 +102,17 @@ def find_base64_spans(text: str) -> list[Base64Span]:
     padding characters. The total length must be divisible by four, including
     for unpadded URL-safe runs. Whitespace/wrapped payloads are separate runs.
     Media labels come from decoded headers, never a data URI's claim.
-    A run touching a Unicode letter, number, combining mark, underscore or
-    ZWJ/ZWNJ is retained as part of a word. Punctuation outside the base64
-    alphabet and whitespace remain delimiters. Source text is never normalized.
+    A run touching a Unicode letter, number, mark, connector punctuation or
+    format character is retained as part of a word. Everything outside those
+    categories and the base64 alphabet delimits. Source text is never normalized.
     Wrapped 64/76-column payloads are deliberately left in. High-entropy
     alphabetic/base32 identifiers and words glued to a run may satisfy this
     same encoding rule; corpus recall/token gates remain necessary.
     """
     spans = []
     for match in _RUN.finditer(text):
-        if (match.start() > 0 and is_word_character(text[match.start() - 1])) or (
-            match.end() < len(text) and is_word_character(text[match.end()])
+        if (match.start() > 0 and continues_run(text[match.start() - 1])) or (
+            match.end() < len(text) and continues_run(text[match.end()])
         ):
             continue
         run = match.group()
