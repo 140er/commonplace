@@ -291,6 +291,52 @@ def test_native_client_path_alias_keeps_anchor_until_last_close(tmp_path):
         native.upsert(ids=["a"], documents=["quartz alias update"], embeddings=[vector])
         assert native.get(ids=["a"])["documents"] == ["quartz alias update"]
     finally:
-        _close_client(alias)
+        _close_client(alias, str(tmp_path) + "/.")
         backend.close()
     assert key not in _inproc_sqlite._anchors and key not in _inproc_sqlite._holders
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX read-anchor lifecycle")
+def test_interleaved_palaces_close_only_their_own_locks_and_guards(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from mempalace.backends import _inproc_sqlite, chroma
+
+    paths = [str(tmp_path / name) for name in ("p", "q")]
+    files = [os.path.join(path, "chroma.sqlite3") for path in paths]
+    keys = [_inproc_sqlite._key(path) for path in files]
+    backend = ChromaBackend()
+    calls, released = [], []
+    lock = chroma.palace_db_lock
+    release = _inproc_sqlite.release_transient
+
+    @contextmanager
+    def record_lock(path):
+        calls.append(path)
+        with lock(path):
+            yield
+
+    def record_release(path):
+        released.append(path)
+        release(path)
+
+    try:
+        for path in paths:
+            backend.get_collection(path, "mempalace_drawers", create=True)
+        monkeypatch.setattr(chroma, "palace_db_lock", record_lock)
+        monkeypatch.setattr(_inproc_sqlite, "release_transient", record_release)
+        for index in (0, 1, 0):
+            calls.clear()
+            released.clear()
+            backend.close_palace(paths[index])
+            assert calls and set(calls) == {files[index]}
+            assert released == [files[index]]
+            assert keys[index] not in _inproc_sqlite._anchors
+            assert keys[index] not in _inproc_sqlite._holders
+            if index == 0 and paths[1] in backend._clients:
+                assert keys[1] in _inproc_sqlite._anchors or keys[1] in _inproc_sqlite._holders
+                backend.get_collection(paths[0], "mempalace_drawers")
+            elif index == 1:
+                assert keys[0] in _inproc_sqlite._anchors or keys[0] in _inproc_sqlite._holders
+    finally:
+        backend.close()

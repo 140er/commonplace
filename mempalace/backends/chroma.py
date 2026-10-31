@@ -1740,7 +1740,7 @@ def _as_list(v: Any) -> list:
     return [v]
 
 
-def _close_client(client) -> None:
+def _close_client(client, palace_path) -> None:
     """Call ``PersistentClient.close()`` if available, swallow otherwise.
 
     chromadb 1.5.x exposes ``Client.close()`` to release rust-side SQLite
@@ -1748,14 +1748,9 @@ def _close_client(client) -> None:
     """
     if client is None:
         return
-    path = None
-    try:
-        settings = client.get_settings()
-        directory = settings.persist_directory
-        if isinstance(directory, (str, os.PathLike)):
-            path = os.path.join(directory, "chroma.sqlite3")
-    except Exception:
-        pass
+    # Client settings are shared and can name the last palace opened rather
+    # than this client. Its owner supplies the path used to cache the client.
+    path = os.path.join(palace_path, "chroma.sqlite3")
     try:
         with palace_db_lock(path) if path else contextlib.nullcontext():
             client.close()
@@ -1774,11 +1769,10 @@ def _close_client(client) -> None:
 
                     # Chroma keys Systems by the exact path string. Another
                     # System can still hold this file through a path alias.
-                    for system in list(SharedSystemClient._identifier_to_system.values()):
-                        settings = system.settings
-                        if not settings.is_persistent:
+                    for directory in list(SharedSystemClient._identifier_to_system):
+                        if not isinstance(directory, str):
                             continue
-                        peer = os.path.join(settings.persist_directory, "chroma.sqlite3")
+                        peer = os.path.join(directory, "chroma.sqlite3")
                         try:
                             same_file = os.path.samefile(path, peer)
                         except OSError:
@@ -2714,12 +2708,12 @@ class ChromaBackend(BaseBackend):
         those clients, including collections for unchanged palaces. Callers
         must reacquire them through :meth:`get_collection`.
         """
-        clients = list(self._clients.values())
+        clients = list(self._clients.items())
         self._clients.clear()
         self._freshness.clear()
         self._system_generation.clear()
-        for client in clients:
-            _close_client(client)
+        for path, client in clients:
+            _close_client(client, path)
 
     def _client(self, palace_path: str):
         """Return a cached ``PersistentClient`` (see :meth:`_client_locked`).
@@ -2759,7 +2753,7 @@ class ChromaBackend(BaseBackend):
         db_path = os.path.join(palace_path, "chroma.sqlite3")
         # DB was present when cache was built but is now missing → invalidate.
         if cached is not None and not os.path.isfile(db_path):
-            _close_client(self._clients.pop(palace_path, None))
+            _close_client(self._clients.pop(palace_path, None), palace_path)
             self._freshness.pop(palace_path, None)
             self._system_generation.pop(palace_path, None)
             cached = None
@@ -2825,7 +2819,7 @@ class ChromaBackend(BaseBackend):
             else:
                 # Cold open or a missing-DB invalidation does not require a
                 # global reset; release only the requested path.
-                _close_client(self._clients.pop(palace_path, None))
+                _close_client(self._clients.pop(palace_path, None), palace_path)
 
             ChromaBackend._prepare_palace_for_open(palace_path)
             cached = chromadb.PersistentClient(path=palace_path, settings=_CLIENT_SETTINGS)
@@ -3069,7 +3063,7 @@ class ChromaBackend(BaseBackend):
         if path is None:
             return
         with palace_db_lock(os.path.join(path, "chroma.sqlite3")):
-            _close_client(self._clients.pop(path, None))
+            _close_client(self._clients.pop(path, None), path)
             self._freshness.pop(path, None)
             self._system_generation.pop(path, None)
 
