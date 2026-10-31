@@ -14,7 +14,7 @@ const at = "2026-10-31T08:00:00Z";
 const card = (number, fields) => ({
   number, board: "lab", title: `Question ${number}`, status: "review", need: "you",
   ask: `Question ${number}?`, ask_options: [`Keep ${number} (advised)`, `Change ${number}`],
-  return_to: "conn:ada", version: 1, updated_at: at, created_at: `2026-10-31T0${number}:00:00Z`,
+  return_to: "conn:asker", version: 1, updated_at: at, created_at: `2026-10-31T0${number}:00:00Z`,
   ...fields,
 });
 const cards = [card(1), card(2), card(3), card(4), card(5)];
@@ -139,7 +139,7 @@ assert.match(renderDecide(failed.session), /#1 not sent/);
 assert.match(renderDecide(failed.session), /data-action="queue-retry"/);
 assert.match(meterHTML(failed.session), /<i class="done"><\/i><i class="now">/);
 
-const elsewhereCard = { ...cards[0], status: "todo", ask: null, events: [{ kind: "decide", actor: "user:sam", choice: "Change 1", text: null }] };
+const elsewhereCard = { ...cards[0], status: "todo", ask: null, events: [{ kind: "decide", actor: "user:other", choice: "Change 1", text: null }] };
 session = load();
 session = step(session, { type: "answer", optionIndex: 0 }).session;
 const elsewhere = step(session, { type: "result", number: 1, status: 409, card: elsewhereCard });
