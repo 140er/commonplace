@@ -190,6 +190,20 @@ class FakeStore:
         self.writes = []
         self.lock = threading.RLock()
         self.on_store = None
+        self.mirrors = {}
+
+    def mirror_progress(self, stored_id):
+        return self.mirrors.get(stored_id)
+
+    def begin_mirror(self, stored_id, through, *, bootstrap=-1):
+        completed, pending = self.mirrors.get(stored_id, (bootstrap, through))
+        if completed == pending:
+            pending = max(pending, through)
+        self.mirrors[stored_id] = (completed, pending)
+        return completed, pending
+
+    def finish_mirror(self, stored_id, through):
+        self.mirrors[stored_id] = (through, through)
 
     def store(self, workspace_id, source_thread_id, messages, *, actor, parent_stored_id=""):
         self.trace.append("store")
@@ -392,7 +406,7 @@ def rig(monkeypatch, tmp_path):
         return value.store
 
     monkeypatch.setattr(service.transcripts, "parse", parse)
-    monkeypatch.setattr(service.thread_store, "chunk_messages", chunk_messages)
+    monkeypatch.setattr(service.palace_mirror, "class_units", chunk_messages)
     monkeypatch.setattr(service.palace_mirror, "mirror", mirror)
     monkeypatch.setattr(service.writer, "build_doc", build_doc)
     monkeypatch.setattr(service.writer, "render_markdown", render_markdown)
@@ -404,7 +418,7 @@ def rig(monkeypatch, tmp_path):
         settings=value.settings,
         store_for=store_for,
         events=value.events,
-        call_tool=object(),
+        call_tool=lambda *args: {"drawers": [], "total": 0},
         prompt_dir=value.prompt_dir,
     )
     value.service = value.new_service()
@@ -683,7 +697,7 @@ def test_mirror_failures_are_best_effort(rig, monkeypatch, stage):
         raise RuntimeError("private mirror content")
 
     target = (
-        (service.thread_store, "chunk_messages")
+        (service.palace_mirror, "class_units")
         if stage == "chunks"
         else (service.palace_mirror, "mirror")
     )

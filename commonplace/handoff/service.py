@@ -231,7 +231,7 @@ class HandoffService:
                 parent_stored_id=parent_id,
             )
 
-            self._mirror_later(principal, stored, lambda: thread_store.chunk_messages(messages))
+            self._mirror_later(principal, stored, store)
 
             doc = writer.build_doc(
                 messages,
@@ -281,9 +281,7 @@ class HandoffService:
             reason = "thread storage failed"
             self._emit(EVENT_FAILED, principal, handoff, decision="error", reason=reason)
             return HandoffResult("compact", handoff, reason=reason)
-        # Mirroring all durable chunks also repairs a previous mirror failure;
-        # immutable chunk ids make these retries idempotent.
-        self._mirror_later(principal, stored, lambda: store.chunks(stored.id))
+        self._mirror_later(principal, stored, store)
         self._extract_later(principal, stored)
         return None
 
@@ -344,7 +342,7 @@ class HandoffService:
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-    def _mirror_later(self, principal, stored, chunks) -> None:
+    def _mirror_later(self, principal, stored, store) -> None:
         """Mirror into Memory search in the background, one job at a time.
 
         Best effort and off the request path: the full thread is already safe
@@ -355,7 +353,7 @@ class HandoffService:
 
         def job():
             try:
-                palace_mirror.mirror(self.call_tool, principal, stored, chunks())
+                palace_mirror.mirror_pending(self.call_tool, principal, stored, store)
             except Exception:
                 pass
 

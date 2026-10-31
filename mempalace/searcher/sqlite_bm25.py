@@ -396,6 +396,8 @@ def _merge_bm25_union_candidates(
     is not counted twice.
     """
     stats = {} if stats is None else stats
+    from ..stored_text import KEYWORD_ONLY
+
     known_distances = known_distances or {}
     lexical = (
         lexical_result
@@ -464,7 +466,13 @@ def _merge_bm25_union_candidates(
             ),
             "closet_boost": 0.0,
             "matched_via": "bm25_backend",
-            "_index_metadata": {INDEX_SPANS: meta.get(INDEX_SPANS)},
+            "_index_metadata": {
+                INDEX_SPANS: meta.get(INDEX_SPANS),
+                KEYWORD_ONLY: (
+                    getattr(drawers_col, "supports_keyword_only", False) is True
+                    and meta.get(KEYWORD_ONLY) is True
+                ),
+            },
             "bm25_score": round(float(hit.score), 3),
             "_source_file_full": full_source,
             "_chunk_index": meta.get("chunk_index"),

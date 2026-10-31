@@ -1,7 +1,7 @@
 """Private v2 file identity and schema. Production continues to open v1."""
 
 APPLICATION_ID = 0x43505432  # CPT2
-USER_VERSION = 2
+USER_VERSION = 3
 FILENAME = "threads.v2.sqlite3"
 
 SCHEMA = """

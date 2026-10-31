@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from mempalace.lexical import ranking_stop_words, rerank_merged_hits
+from mempalace.stored_text import INDEX_SPANS, IndexSource
 
-from .models import MIRROR_WING, RecallHit, StoredThread
+from .models import CHUNK_MAX_CHARS, MIRROR_WING, RecallHit, StoredThread
+from .thread_store import Chunk
 
 CallTool = Callable  # (principal, tool_name, arguments) -> parsed result dict
 
@@ -28,11 +30,95 @@ class MirrorError(RuntimeError):
     """Memory could not mirror or search a stored thread."""
 
 
-def _call(call_tool: CallTool, principal, name: str, arguments: dict) -> dict:
+@dataclass(frozen=True)
+class MirrorUnit(Chunk):
+    message_class: str
+    index_spans: str | None = None
+
+
+def message_class(message) -> str:
+    if message.kind == "tool_call":
+        return "tool_call"
+    if message.kind == "tool_result":
+        return "tool_output"
+    if message.kind == "system" or message.role == "system":
+        return "system"
+    return "conversation"
+
+
+def class_units(messages: list, max_chars: int = CHUNK_MAX_CHARS) -> list[MirrorUnit]:
+    """Keep whole messages together where possible, without mixing classes.
+
+    Long messages retain one header, then verbatim continuation slices. Index
+    provenance is computed before slicing, so a short continuation cannot
+    independently accept or reject a base64 fragment.
+    """
+    if max_chars <= 0:
+        raise ValueError("Chunk size must be positive")
+    units = []
+    pending = []
+    length = 0
+    kind = ""
+
+    def append(text, start, end, kind, source=None, offset=0):
+        source = source or IndexSource(text)
+        part = (
+            units[-1].index + 1
+            if units and (units[-1].seq_start, units[-1].seq_end) == (start, end)
+            else 0
+        )
+        units.append(
+            MirrorUnit(
+                part,
+                start,
+                end,
+                text,
+                kind,
+                source.metadata(offset, offset + len(text)).get(INDEX_SPANS),
+            )
+        )
+
+    def flush():
+        nonlocal length
+        if pending:
+            append("\n".join(text for _, text in pending), pending[0][0], pending[-1][0], kind)
+            pending.clear()
+            length = 0
+
+    for message in messages:
+        next_kind = message_class(message)
+        prefix = f"[{message.seq}] {message.role} {message.kind}"
+        if message.name:
+            prefix += f" {message.name}"
+        text = prefix + ": " + message.text
+        if pending and (next_kind != kind or length + 1 + len(text) > max_chars):
+            flush()
+        kind = next_kind
+        if len(text) > max_chars:
+            source = IndexSource(text)
+            for offset in range(0, len(text), max_chars):
+                append(
+                    text[offset : offset + max_chars],
+                    message.seq,
+                    message.seq,
+                    kind,
+                    source,
+                    offset,
+                )
+        else:
+            length += len(text) + bool(pending)
+            pending.append((message.seq, text))
+    flush()
+    return units
+
+
+def _call(call_tool: CallTool, principal, name: str, arguments: dict, *, missing_ok=False) -> dict:
     try:
         result = call_tool(principal, name, arguments)
     except Exception as exc:
         raise MirrorError("Memory worker call failed") from exc
+    if missing_ok and isinstance(result, dict) and result.get("error") == "No palace found":
+        return {"drawers": [], "total": 0}
     if (
         not isinstance(result, dict)
         or result.get("error")
@@ -43,8 +129,90 @@ def _call(call_tool: CallTool, principal, name: str, arguments: dict) -> dict:
     return result
 
 
+def _legacy_mirrored_seq(call_tool, principal, stored):
+    """Read existing origin metadata once; never retrofit mirrored drawers."""
+    offset = 0
+    completed = -1
+    while True:
+        page = _call(
+            call_tool,
+            principal,
+            "mempalace_list_drawers",
+            {"wing": MIRROR_WING, "room": stored.id, "limit": 100, "offset": offset},
+            missing_ok=True,
+        )
+        drawers = page.get("drawers")
+        if not isinstance(drawers, list):
+            raise MirrorError("Memory worker returned invalid drawer metadata")
+        for drawer in drawers:
+            if drawer.get("wing") != MIRROR_WING or drawer.get("room") != stored.id:
+                continue
+            metadata = drawer.get("metadata") or {}
+            source = metadata.get("source_file", "")
+            if not isinstance(source, str) or not source.startswith(f"handoff:{stored.id}#"):
+                continue
+            label = _range_label(
+                {"claimed_by": metadata.get("claimed_by") or metadata.get("added_by")}
+            )
+            if label is not None:
+                completed = max(completed, label[1])
+        offset += len(drawers)
+        if not drawers or offset >= page.get("total", offset):
+            return min(completed, stored.message_count - 1)
+
+
+def mirror_pending(call_tool, principal, stored, store):
+    """Resume a durable batch, then mirror later appends at a new boundary."""
+    progress = store.mirror_progress(stored.id)
+    bootstrap = _legacy_mirrored_seq(call_tool, principal, stored) if progress is None else -1
+    drawer_ids = []
+    while True:
+        completed, through = store.begin_mirror(
+            stored.id, stored.message_count - 1, bootstrap=bootstrap
+        )
+        if completed >= stored.message_count - 1:
+            return drawer_ids
+        messages = store.messages(stored.id, completed + 1, through)
+        if not messages or messages[0].seq != completed + 1 or messages[-1].seq != through:
+            raise MirrorError("Stored thread has an incomplete mirror range")
+        drawer_ids.extend(mirror(call_tool, principal, stored, class_units(messages)))
+        store.finish_mirror(stored.id, through)
+
+
 def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -> list[str]:
     """Return one drawer id per input chunk; identical text reuses an id."""
+    if chunks and isinstance(chunks[0], MirrorUnit):
+        drawer_ids = []
+        for offset in range(0, len(chunks), 64):
+            batch = chunks[offset : offset + 64]
+            result = _call(
+                call_tool,
+                principal,
+                "write_mirror_units",
+                {
+                    "thread_id": stored.id,
+                    "units": [
+                        {
+                            "seq_start": unit.seq_start,
+                            "seq_end": unit.seq_end,
+                            "message_class": unit.message_class,
+                            "part": unit.index,
+                            "text": unit.text,
+                            "index_spans": unit.index_spans,
+                        }
+                        for unit in batch
+                    ],
+                },
+            )
+            ids = result.get("drawer_ids")
+            if (
+                not isinstance(ids, list)
+                or len(ids) != len(batch)
+                or not all(isinstance(i, str) and i for i in ids)
+            ):
+                raise MirrorError("Memory worker returned invalid mirror ids")
+            drawer_ids.extend(ids)
+        return drawer_ids
     drawer_ids = []
     mirrored = {}
     for chunk in chunks:
@@ -59,21 +227,18 @@ def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -
             # add_drawer strips lone surrogates; fail instead of mirroring
             # different words from the lossless thread store.
             raise MirrorError("Memory cannot mirror this text verbatim") from exc
+        arguments = {
+            "wing": MIRROR_WING,
+            "room": stored.id,
+            "content": chunk.text,
+            "source_file": f"handoff:{stored.id}#{chunk.index}",
+            "added_by": f"handoff:{chunk.seq_start}-{chunk.seq_end}:{len(chunk.text)}",
+        }
         result = _call(
             call_tool,
             principal,
             "mempalace_add_drawer",
-            {
-                "wing": MIRROR_WING,
-                "room": stored.id,
-                "content": chunk.text,
-                "source_file": f"handoff:{stored.id}#{chunk.index}",
-                # add_drawer has no arbitrary metadata argument. The worker
-                # retains this label as claimed_by, separately from the
-                # verified author. Keep ranges for continuation chunks (which
-                # may have no [seq] header), and length to detect worker splits.
-                "added_by": f"handoff:{chunk.seq_start}-{chunk.seq_end}:{len(chunk.text)}",
-            },
+            arguments,
         )
         drawer_id = result.get("drawer_id")
         if not isinstance(drawer_id, str) or not drawer_id:
@@ -167,7 +332,11 @@ def palace_search(
         results = result.get("results")
         if not isinstance(results, list):
             raise MirrorError("Memory worker returned invalid search results")
-        origin = re.compile(r"handoff:" + re.escape(stored_id) + r"#([0-9]+)\Z")
+        origin = re.compile(
+            r"handoff:"
+            + re.escape(stored_id)
+            + r"#(?:v2:[0-9]+-[0-9]+:(?:conversation|tool_call|tool_output|system):)?([0-9]+)\Z"
+        )
         for hit in results:
             if not isinstance(hit, dict):
                 raise MirrorError("Memory worker returned an invalid search entry")
@@ -190,7 +359,7 @@ def palace_search(
                     raise MirrorError("Memory entry has no message range")
                 start, end = min(sequences), max(sequences)
             recalled = RecallHit(stored_id, index, start, end, _score(hit), text)
-            key = (stored_id, index)
+            key = (stored_id, source)
             if key not in hits or recalled.score > hits[key].score:
                 hits[key] = recalled
                 components[key] = {**hit, "text": text}
@@ -201,4 +370,13 @@ def palace_search(
     )
     for key, hit in components.items():
         hits[key] = replace(hits[key], score=_score(hit))
-    return sorted(hits.values(), key=lambda hit: hit.score, reverse=True)[:limit]
+    unique = []
+    for hit in sorted(hits.values(), key=lambda hit: hit.score, reverse=True):
+        if not any(
+            hit.stored_thread_id == previous.stored_thread_id
+            and hit.seq_start <= previous.seq_end
+            and previous.seq_start <= hit.seq_end
+            for previous in unique
+        ):
+            unique.append(hit)
+    return unique[:limit]
