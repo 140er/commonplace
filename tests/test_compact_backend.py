@@ -46,7 +46,9 @@ def test_format_roundtrip_and_partial_updates(compact):
     assert np.allclose(got.embeddings, [[0.1, 1, -0.6]] * 3, atol=1 / 127)
     conn = col._handle.conn
     assert conn.execute("PRAGMA application_id").fetchone()[0] == _APPLICATION_ID
-    row = conn.execute("SELECT document,embedding,scale FROM documents LIMIT 1").fetchone()
+    row = conn.execute(
+        "SELECT document,embedding,scale FROM documents JOIN vectors USING(rowid) LIMIT 1"
+    ).fetchone()
     assert isinstance(row[0], bytes)
     assert len(row[1]) == 3 and len(row[2]) == 4
     assert conn.execute("SELECT document FROM docs_fts LIMIT 1").fetchone()[0] is None
@@ -245,7 +247,11 @@ def test_selection_identity_and_minimum_sqlite(compact, tmp_path, monkeypatch):
         model_name = "model-a"
         dimension = 2
 
-    backend.get_collection(palace=ref, collection_name="mempalace_drawers", embedder=Embedder())
+    with pytest.warns(UserWarning, match="unknown embedder identity"):
+        backend.get_collection(palace=ref, collection_name="mempalace_drawers", embedder=Embedder())
+    from mempalace.backends.base import EmbedderIdentity
+
+    col.set_embedder_identity(EmbedderIdentity("model-a", 2))
     Embedder.model_name = "model-b"
     with pytest.raises(EmbedderIdentityMismatchError):
         backend.get_collection(palace=ref, collection_name="mempalace_drawers", embedder=Embedder())
@@ -511,6 +517,13 @@ def test_filtered_lexical_mask_plan_and_randomized_ranking_parity(compact):
         where = rng.choice(
             [
                 {"wing": wing},
+                {"wing": {"$in": [wing]}},
+                {
+                    "$or": [
+                        {"parent_drawer_id": {"$in": ["p7", "p8"]}},
+                        {"parent_entry_id": {"$in": ["missing"]}},
+                    ]
+                },
                 {"$and": [{"wing": wing}, {"room": room}]},
                 {"$or": [{"wing": wing}, {"room": room}]},
                 {"$and": [{"wing": {"$ne": wing}}, {"value": {"$gte": rng.randrange(200)}}]},
@@ -526,3 +539,184 @@ def test_filtered_lexical_mask_plan_and_randomized_ranking_parity(compact):
         actual = col.lexical_search(query="alpha beta", where=where, n_results=7).hits
         assert [hit.id for hit in actual] == [row[0] for row in expected]
         assert [hit.score for hit in actual] == pytest.approx([-row[1] for row in expected])
+
+
+def test_membership_indexes_and_null_parity(compact):
+    from mempalace.backends._filters import matches_where
+    from mempalace.search_util import build_where_filter
+
+    _, _, col = compact
+    metas = [
+        {"wing": "w", "parent_drawer_id": "p", "parent_entry_id": "p"},
+        {},
+        {"wing": 7, "room": False, "hall": 2.5, "parent_drawer_id": 12},
+        {"wing": ["w"], "room": [1, 2], "tag": ["a", "b"]},
+    ]
+    col.add(
+        ids=[str(i) for i in range(4)],
+        documents=["alpha"] * 4,
+        metadatas=metas,
+        embeddings=[[1, 0]] * 4,
+    )
+    filters = [
+        build_where_filter("w", known=["w"]),
+        {"$or": [{"parent_drawer_id": {"$in": ["p"]}}, {"parent_entry_id": {"$in": ["p"]}}]},
+    ]
+    for where, indexes in zip(
+        filters, [("idx_documents_wing_room",), ("compact_parent_drawer", "compact_parent_entry")]
+    ):
+        statements = []
+        col._handle.conn.set_trace_callback(statements.append)
+        col.get(where=where, include=[])
+        col._handle.conn.set_trace_callback(None)
+        sql = next(s for s in statements if s.startswith("SELECT d.rowid,d.id FROM documents"))
+        plan = [r[3] for r in col._handle.conn.execute("EXPLAIN QUERY PLAN " + sql)]
+        if "wing" in str(where):
+            assert any("wing=?" in p and "SEARCH d" in p for p in plan), plan
+        else:
+            assert any("SEARCH d USING INTEGER PRIMARY KEY" in p for p in plan), plan
+            for index in indexes:
+                assert any(index in p and "parent_" in p and "=?" in p for p in plan), plan
+    for key, values in [
+        ("wing", [None, "w", 7, ["w"], '["w"]']),
+        ("room", [None, False, [1, 2]]),
+        ("hall", [2.5]),
+        ("parent_drawer_id", [12]),
+        ("tag", [["a", "b"]]),
+    ]:
+        for value in values:
+            for op in ["$eq", "$ne", "$in", "$nin"]:
+                where = {key: {op: [value] if op in {"$in", "$nin"} else value}}
+                assert col.get(where=where, include=[]).ids == [
+                    str(i) for i, m in enumerate(metas) if matches_where(m, where)
+                ], where
+
+
+def test_open_preserves_data_version_and_vacuum_rowids(compact):
+    backend, ref, col = compact
+    col.add(ids=["a", "b", "c"], documents=["alpha"] * 3, embeddings=[[1, 0]] * 3)
+    col.delete(ids=["b"])
+    conn = col._handle.conn
+    before = conn.execute("PRAGMA data_version").fetchone()[0]
+    other = CompactBackend()
+    try:
+        other.get_collection(palace=ref, collection_name="mempalace_drawers")
+        assert conn.execute("PRAGMA data_version").fetchone()[0] == before
+    finally:
+        other.close()
+    rowids = list(conn.execute("SELECT rowid,id FROM documents"))
+    col.run_maintenance("compact")
+    assert list(conn.execute("SELECT rowid,id FROM documents")) == rowids
+    assert col.query(query_embeddings=[[1, 0]]).ids == [["a", "c"]]
+    assert [h.id for h in col.lexical_search(query="alpha").hits] == ["a", "c"]
+    with pytest.raises(ValueError):
+        col.get(limit=-1)
+    with pytest.raises(ValueError):
+        col.get(ids=["a"], offset=-1)
+    assert "supports_migration_export" not in backend.capabilities
+
+
+@pytest.mark.parametrize("keyword_bootstrap", [False, True])
+def test_injected_embedder_binds_first_vector_dimension(compact, keyword_bootstrap):
+    backend, ref, _ = compact
+
+    class Embedder:
+        model_name = "test-model"
+        dimension = 4
+
+    if keyword_bootstrap:
+        bootstrap = backend.get_collection(palace=ref, collection_name="bound", create=True)
+        bootstrap.add(ids=["keyword"], documents=["alpha"], metadatas=[{KEYWORD_ONLY: True}])
+        with pytest.warns(UserWarning, match="unknown embedder identity"):
+            col = backend.get_collection(palace=ref, collection_name="bound", embedder=Embedder())
+        assert col.get_stored_embedder_identity() is None
+    else:
+        col = backend.get_collection(
+            palace=ref, collection_name="bound", create=True, embedder=Embedder()
+        )
+    with pytest.raises(DimensionMismatchError, match="compact"):
+        col.add(ids=["bad"], documents=["alpha"], embeddings=[[1, 0]])
+    col.add(ids=["good"], documents=["alpha"], embeddings=[[1, 0, 0, 0]])
+    assert col.get_stored_embedder_identity().dimension == 4
+
+
+def test_compact_media_and_effective_title_guards(compact, monkeypatch):
+    _, _, inner = compact
+    inner.add(
+        ids=["image", "text"],
+        documents=["caption", "text"],
+        metadatas=[{"media_type": "image", "source_file": "image.png"}, {"title": "same"}],
+        embeddings=[[0, 1], [1, 0]],
+    )
+    col = EmbeddingCollection(inner)
+    calls = []
+
+    class Embedder:
+        def embed_documents(self, input, metadatas=None):
+            calls.extend(input)
+            return [[1, 1]] * len(input)
+
+    monkeypatch.setattr(
+        "mempalace.backends.embedding_wrapper._resolve_document_embedder", lambda: Embedder()
+    )
+    monkeypatch.setattr(
+        "mempalace.backends.embedding_wrapper._get_document_embedder", lambda: Embedder()
+    )
+    monkeypatch.setattr("mempalace.embedding.configured_embedding_function", lambda: Embedder())
+    monkeypatch.setattr(
+        "mempalace.backends.embedding_wrapper._embed_texts",
+        lambda texts, **kw: Embedder().embed_documents(texts),
+    )
+    for patch in [{"source_file": "new.png"}, {"media_type": "audio"}]:
+        with pytest.raises(ValueError, match="native media"):
+            col.update(ids=["image"], metadatas=[patch])
+    with pytest.raises(ValueError, match="native media"):
+        col.update(ids=["image"], documents=["new caption"])
+    col.update(ids=["image"], metadatas=[{"title": "new title"}])
+    col.update(ids=["text"], metadatas=[{"title": "same"}])
+    assert not calls
+    col.update(ids=["text"], metadatas=[{"title": "changed"}])
+    assert calls == ["text"]
+    assert inner.get(ids=["image"], include=["embeddings"]).embeddings == [[0, 1]]
+
+
+def test_batched_reindex_changes_dimension_without_rewriting_documents(compact):
+    _, _, col = compact
+    docs = ["alpha " * 200] * 260
+    col.add(ids=[str(i) for i in range(260)], documents=docs, embeddings=[[1, 0]] * 260)
+    col.add(ids=["keyword"], documents=["alpha keyword"], metadatas=[{KEYWORD_ONLY: True}])
+    before = [tuple(r) for r in col._handle.conn.execute("SELECT * FROM documents")]
+    fts_before = list(col._handle.conn.execute("SELECT rowid FROM docs_fts"))
+    batches = []
+
+    def embed(documents, metadatas):
+        batches.append(len(documents))
+        return [None if m.get(KEYWORD_ONLY) else [1, 0, 0] for m in metadatas]
+
+    col.reindex(embed, batch_size=64)
+    assert max(batches) == 64 and sum(batches) == 261
+    assert [tuple(r) for r in col._handle.conn.execute("SELECT * FROM documents")] == before
+    assert list(col._handle.conn.execute("SELECT rowid FROM docs_fts")) == fts_before
+    assert col.query(query_embeddings=[[1, 0, 0]], n_results=1).ids == [["0"]]
+    assert col.get(ids=["keyword"], include=["embeddings"]).embeddings == [None]
+
+    def fail(documents, metadatas):
+        raise RuntimeError("failed batch")
+
+    with pytest.raises(RuntimeError):
+        col.reindex(fail)
+    assert col.query(query_embeddings=[[1, 0, 0]], n_results=1).ids == [["0"]]
+    did = col._handle.conn.execute("SELECT id FROM dictionaries").fetchone()[0]
+    with pytest.raises(sqlite3.IntegrityError, match="in use"):
+        col._handle.conn.execute("DELETE FROM dictionaries WHERE id=?", (did,))
+    col._handle.conn.rollback()
+    col._backend.delete_collection(col._handle.palace_path, "mempalace_drawers")
+    assert not col._handle.conn.execute("SELECT 1 FROM vectors").fetchone()
+
+
+def test_response_hides_keyword_only_marker():
+    from mempalace.mcp_server import _response_safe_meta
+
+    meta = {KEYWORD_ONLY: True, "wing": "w"}
+    assert _response_safe_meta(meta) == {"wing": "w"}
+    assert meta[KEYWORD_ONLY] is True

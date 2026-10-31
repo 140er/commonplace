@@ -1780,16 +1780,10 @@ def rebuild_index(
 
         with mine_palace_lock(palace_path):
             collection = backend.get_collection(palace_path, collection_name)
-            rows = collection.get(include=["documents", "metadatas"])
             wrapper = EmbeddingCollection(collection)
-            # Finish all embedding before the atomic replacement. A failing
-            # provider leaves both the documents and indexes untouched.
-            vectors = wrapper._compact_vectors(rows.documents, rows.metadatas)
-            collection.upsert(
-                ids=rows.ids, documents=rows.documents, metadatas=rows.metadatas, embeddings=vectors
-            )
+            collection.reindex(wrapper._compact_vectors)
             _record_rebuilt_embedder_identity(collection, palace_path)
-            progress(f"  Rebuilt {len(rows.ids)} compact records.")
+            progress(f"  Rebuilt {collection.count()} compact records.")
             return
 
     progress(f"\n{'=' * 55}")

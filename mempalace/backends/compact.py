@@ -10,6 +10,8 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
+import warnings
 from functools import partial
 
 import numpy as np
@@ -116,6 +118,17 @@ def _where_sql(where):
         expr = _field(key)
         operations = expected if isinstance(expected, dict) else {"$eq": expected}
         for op, operand in operations.items():
+            # JSON arrays/objects have a textual SQLite representation, which
+            # must not equal a caller's string containing that same JSON.
+            textual = (
+                [operand]
+                if op in {"$eq", "$ne"}
+                else (operand or [] if op in {"$in", "$nin"} else [])
+            )
+            if any(isinstance(v, str) and v.lstrip().startswith(("[", "{")) for v in textual):
+                clauses.append("compact_compare(d.metadata_json, ?, ?, ?)")
+                params.extend([key, op, json.dumps(operand, ensure_ascii=True)])
+                continue
             value = encode_filter({op: operand})[op]
             if op in {"$eq", "$ne"} and not isinstance(value, (list, dict)):
                 clauses.append(f"{expr} IS {'NOT ' if op == '$ne' else ''}?")
@@ -130,14 +143,14 @@ def _where_sql(where):
                     # IS semantics include missing/NULL keys exactly as the core does.
                     membership = f"{expr} IN ({','.join('?' for _ in values)})"
                     if None in values:
-                        membership = f"(COALESCE({membership}, 0) OR {expr} IS NULL)"
-                    else:
+                        membership = f"({membership} OR {expr} IS NULL)"
+                    if op == "$nin":
                         membership = f"COALESCE({membership}, 0)"
                     clauses.append(f"NOT ({membership})" if op == "$nin" else membership)
                     params.extend(values)
             else:
-                clauses.append(f"compact_compare({expr}, ?, ?)")
-                params.extend([op, json.dumps(operand, ensure_ascii=True)])
+                clauses.append("compact_compare(d.metadata_json, ?, ?, ?)")
+                params.extend([key, op, json.dumps(operand, ensure_ascii=True)])
     return " AND ".join(f"({part})" for part in clauses) or "1", params
 
 
@@ -175,11 +188,56 @@ class CompactCollection(SQLiteExactCollection):
         return zstd.ZstdCompressionDict(row[0])
 
     def _decompress(self, cur, blob, dictionary_id):
-        return (
-            zstd.ZstdDecompressor(dict_data=self._dictionary(cur, dictionary_id))
-            .decompress(blob)
-            .decode("utf-8", "surrogatepass")
-        )
+        cache = self._handle.__dict__.setdefault("compact_decompressors", {})
+        if dictionary_id not in cache:
+            cache[dictionary_id] = zstd.ZstdDecompressor(
+                dict_data=self._dictionary(cur, dictionary_id)
+            )
+        return cache[dictionary_id].decompress(blob).decode("utf-8", "surrogatepass")
+
+    def _ensure_collection_dimension(self, cur, collection_id, dims):
+        distinct = set(dims)
+        stored = self._collection_dimension(cur, collection_id)
+        if len(distinct) > 1 or (stored is not None and distinct and distinct != {stored}):
+            raise DimensionMismatchError(
+                f"compact expects embedding dimension {stored}, got {sorted(distinct)}"
+            )
+        if stored is None and distinct:
+            cur.execute(
+                "UPDATE collections SET dimension=? WHERE id=?", (distinct.pop(), collection_id)
+            )
+
+    def _record_pending_identity(self, cur):
+        identity = getattr(self, "_pending_embedder_identity", None)
+        if identity is not None:
+            from .base import EmbedderIdentity, check_embedder_identity
+
+            row = cur.execute(
+                "SELECT value FROM meta WHERE key=?", (self._embedder_meta_key(),)
+            ).fetchone()
+            stored = (
+                EmbedderIdentity(
+                    row[0], self._collection_dimension(cur, self._collection_id(cur)) or 0
+                )
+                if row
+                else None
+            )
+            check_embedder_identity(stored, identity)
+            cur.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)",
+                (self._embedder_meta_key(), identity.model_name),
+            )
+
+    @staticmethod
+    def _put_vector(cur, rowid, cid, blob, scale, dim):
+        if blob is None:
+            cur.execute("DELETE FROM vectors WHERE rowid=?", (rowid,))
+        else:
+            cur.execute(
+                "INSERT INTO vectors(rowid,collection_id,embedding,scale,dim) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(rowid) DO UPDATE SET embedding=excluded.embedding,scale=excluded.scale,dim=excluded.dim",
+                (rowid, cid, blob, scale, dim),
+            )
 
     def _train_dictionary(self, cur, cid):
         if cur.execute("SELECT 1 FROM dictionaries WHERE collection_id=?", (cid,)).fetchone():
@@ -249,7 +307,6 @@ class CompactCollection(SQLiteExactCollection):
                         " ON CONFLICT(collection_id,id) DO UPDATE SET "
                         "document=excluded.document, dictionary_id=excluded.dictionary_id, "
                         "raw_size=excluded.raw_size, metadata_json=excluded.metadata_json, "
-                        "embedding=excluded.embedding, scale=excluded.scale, dim=excluded.dim, "
                         "updated_at=excluded.updated_at"
                     )
                     if upsert
@@ -257,7 +314,7 @@ class CompactCollection(SQLiteExactCollection):
                 )
                 rowid = cur.execute(
                     "INSERT INTO documents(collection_id,id,document,dictionary_id,raw_size,"
-                    "metadata_json,embedding,scale,dim,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                    "metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)"
                     + conflict
                     + " RETURNING rowid",
                     (
@@ -267,18 +324,18 @@ class CompactCollection(SQLiteExactCollection):
                         dictionary_id,
                         len(raw),
                         _json_dumps(meta),
-                        blob,
-                        scale,
-                        dim,
                         now,
                         now,
                     ),
                 ).fetchone()[0]
+                self._put_vector(cur, rowid, cid, blob, scale, dim)
                 cur.execute("DELETE FROM docs_fts WHERE rowid=?", (rowid,))
                 cur.execute(
                     "INSERT INTO docs_fts(rowid,document) VALUES (?,?)", (rowid, index_text(doc))
                 )
             self._train_dictionary(cur, cid)
+            if prepared:
+                self._record_pending_identity(cur)
 
     def update(self, *, ids, documents=None, metadatas=None, embeddings=None):
         if documents is None and metadatas is None and embeddings is None:
@@ -290,7 +347,7 @@ class CompactCollection(SQLiteExactCollection):
             updates = []
             for i, doc_id in enumerate(ids):
                 row = cur.execute(
-                    "SELECT rowid,metadata_json,embedding FROM documents WHERE collection_id=? AND id=?",
+                    "SELECT d.rowid,d.metadata_json,v.embedding FROM documents d LEFT JOIN vectors v ON v.rowid=d.rowid WHERE d.collection_id=? AND d.id=?",
                     (cid, doc_id),
                 ).fetchone()
                 if row is None:
@@ -307,14 +364,14 @@ class CompactCollection(SQLiteExactCollection):
                     metas[0][FLAG] = 1
                 values = [_json_dumps(metas[0]), utc_now_iso()]
                 sets = ["metadata_json=?", "updated_at=?"]
+                vector_update = None
                 dim = None
                 if meta.get(KEYWORD_ONLY) is True or embeddings is not None:
                     vector = embeddings[i] if embeddings is not None else None
                     blob, scale, dim = (
                         (None, None, None) if meta.get(KEYWORD_ONLY) is True else _quantize(vector)
                     )
-                    sets.extend(["embedding=?", "scale=?", "dim=?"])
-                    values.extend([blob, scale, dim])
+                    vector_update = (blob, scale, dim)
                 if docs is not None:
                     doc = docs[0]
                     raw = doc.encode("utf-8", "surrogatepass")
@@ -327,9 +384,13 @@ class CompactCollection(SQLiteExactCollection):
                     ).compress(raw)
                     sets.extend(["document=?", "dictionary_id=?", "raw_size=?"])
                     values.extend([compressed, did, len(raw)])
-                updates.append((row[0], sets, values, doc, dim))
+                updates.append((row[0], sets, values, doc, dim, vector_update))
             self._ensure_collection_dimension(cur, cid, [u[4] for u in updates if u[4] is not None])
-            for rowid, sets, values, doc, _ in updates:
+            if updates:
+                self._record_pending_identity(cur)
+            for rowid, sets, values, doc, _, vector_update in updates:
+                if vector_update is not None:
+                    self._put_vector(cur, rowid, cid, *vector_update)
                 cur.execute(
                     "UPDATE documents SET " + ",".join(sets) + " WHERE rowid=?", (*values, rowid)
                 )
@@ -368,12 +429,13 @@ class CompactCollection(SQLiteExactCollection):
         if spec.documents or spec.metadatas:
             cols.append("d.metadata_json")
         if spec.embeddings:
-            cols.extend(["d.embedding", "d.scale"])
+            cols.extend(["v.embedding", "v.scale"])
         cid = self._collection_id(cur)
         # Parent UNION masks must drive physical rowid lookups. Otherwise
         # SQLite may prefer a collection-wide covering index and sort it.
         hint = " NOT INDEXED" if "d.rowid IN (" in sql else ""
-        sql = f"SELECT {','.join(cols)} FROM documents d{hint} WHERE d.collection_id=? AND ({sql}) ORDER BY {order}"
+        vector_join = " LEFT JOIN vectors v ON v.rowid=d.rowid" if spec.embeddings else ""
+        sql = f"SELECT {','.join(cols)} FROM documents d{hint}{vector_join} WHERE d.collection_id=? AND ({sql}) ORDER BY {order}"
         params = [cid, *params]
         if limit is not None or offset:
             sql += " LIMIT ? OFFSET ?"
@@ -406,6 +468,8 @@ class CompactCollection(SQLiteExactCollection):
     def get(
         self, *, ids=None, where=None, where_document=None, limit=None, offset=None, include=None
     ):
+        if (limit is not None and limit < 0) or (offset is not None and offset < 0):
+            raise ValueError("limit and offset must be nonnegative")
         spec = _IncludeSpec.resolve(include, default_distances=False)
         with self._cursor() as cur:
             rows = self._select(
@@ -443,14 +507,16 @@ class CompactCollection(SQLiteExactCollection):
         if cached is not None and cached[0] == version:
             return cached[1:]
         rows = cur.execute(
-            "SELECT rowid,embedding,dim FROM documents WHERE collection_id=? AND embedding IS NOT NULL ORDER BY rowid",
+            "SELECT rowid,embedding FROM vectors WHERE collection_id=? ORDER BY rowid",
             (cid,),
         ).fetchall()
         dim = self._collection_dimension(cur, cid) or 0
         rowids = np.fromiter((r[0] for r in rows), dtype=np.int64, count=len(rows))
-        matrix = np.empty((len(rows), dim), dtype=np.int8)
-        for i, row in enumerate(rows):
-            matrix[i] = np.frombuffer(row[1], dtype=np.int8)
+        matrix = (
+            np.frombuffer(b"".join(r[1] for r in rows), dtype=np.int8).reshape(len(rows), dim)
+            if rows
+            else np.empty((0, dim), dtype=np.int8)
+        )
         norms = np.sqrt(np.einsum("ij,ij->i", matrix, matrix, dtype=np.int64)).astype(np.float32)
         self._handle._vector_cache[cid] = (version, rowids, matrix, norms)
         return rowids, matrix, norms
@@ -497,7 +563,7 @@ class CompactCollection(SQLiteExactCollection):
                 candidates = candidates[valid]
                 selected = selected[valid]
                 candidates = candidates[rowids[candidates] == selected]
-            indices = np.arange(len(rowids)) if candidates is None else candidates
+            count = len(rowids) if candidates is None else len(candidates)
             for vector in query_embeddings:
                 q = _as_vector_array(vector)
                 dim = self._collection_dimension(cur, cid)
@@ -512,17 +578,24 @@ class CompactCollection(SQLiteExactCollection):
                 q64 = q.astype(np.float64)
                 qnorm = np.linalg.norm(q64)
                 q = (q64 / qnorm if qnorm else q64).astype(np.float32)
-                distances = np.ones(len(indices), dtype=np.float32)
-                for start in range(0, len(indices), 8192):
-                    part = indices[start : start + 8192]
+                distances = np.ones(count, dtype=np.float32)
+                for start in range(0, count, 8192):
+                    part = (
+                        slice(start, min(start + 8192, count))
+                        if candidates is None
+                        else candidates[start : start + 8192]
+                    )
                     dots = matrix[part].astype(np.float32) @ q
-                    cos = np.zeros(len(part), dtype=np.float32)
+                    cos = np.zeros(len(dots), dtype=np.float32)
                     np.divide(dots, norms[part], out=cos, where=norms[part] > 0)
-                    distances[start : start + len(part)] -= np.clip(cos, -1, 1)
-                k = min(max(0, int(n_results)), len(indices))
-                # Stable ties use stored row order.
-                ranked = np.lexsort((rowids[indices], distances))[:k]
-                top = rowids[indices[ranked]].tolist()
+                    distances[start : start + len(dots)] -= np.clip(cos, -1, 1)
+                k = min(max(0, int(n_results)), count)
+                selected_rowids = rowids if candidates is None else rowids[candidates]
+                # Partition first, then order only the cut and its boundary ties.
+                cut = np.partition(distances, k - 1)[k - 1] if k else -np.inf
+                eligible = np.flatnonzero(distances <= cut)
+                ranked = eligible[np.lexsort((selected_rowids[eligible], distances[eligible]))[:k]]
+                top = selected_rowids[ranked].tolist()
                 result = self._hydrate_rowids(cur, top, spec)
                 out.ids.append(result.ids)
                 out.documents.append(result.documents)
@@ -536,19 +609,22 @@ class CompactCollection(SQLiteExactCollection):
                 raise _SnapshotChanged()
         return out
 
-    def _hydrate_rowids(self, cur, rowids, spec):
-        cols = ["rowid", "id"]
+    def _hydrate_rowids(self, cur, rowids, spec, *, keyed=False):
+        cols = ["d.rowid", "d.id"]
         if spec.documents:
-            cols.extend(["document", "dictionary_id"])
+            cols.extend(["d.document", "d.dictionary_id"])
         if spec.documents or spec.metadatas:
-            cols.append("metadata_json")
+            cols.append("d.metadata_json")
         if spec.embeddings:
-            cols.extend(["embedding", "scale"])
+            cols.extend(["v.embedding", "v.scale"])
+        vector_join = " LEFT JOIN vectors v ON v.rowid=d.rowid" if spec.embeddings else ""
         rows = cur.execute(
-            f"SELECT {','.join(cols)} FROM documents WHERE rowid IN (SELECT value FROM json_each(?))",
+            f"SELECT {','.join(cols)} FROM documents d{vector_join} WHERE d.rowid IN (SELECT value FROM json_each(?))",
             (json.dumps(rowids),),
         ).fetchall()
         by_id = {r["rowid"]: r for r in rows}
+        if keyed:
+            return {key: self._result(cur, [row], spec) for key, row in by_id.items()}
         return self._result(cur, [by_id[r] for r in rowids if r in by_id], spec)
 
     def lexical_search(self, *, query, n_results=10, where=None):
@@ -588,16 +664,18 @@ class CompactCollection(SQLiteExactCollection):
                 query_params = (match, cid, int(n_results))
             rows = cur.execute(query_sql, query_params).fetchall()
             result = self._hydrate_rowids(
-                cur, [r[0] for r in rows], _IncludeSpec(True, True, False, False)
+                cur, [r[0] for r in rows], _IncludeSpec(True, True, False, False), keyed=True
             )
             return LexicalResult(
                 hits=[
                     LexicalHit(
-                        id=doc_id, document=doc, metadata=meta, score=max(0.0, -float(row[1]))
+                        id=result[row[0]].ids[0],
+                        document=result[row[0]].documents[0],
+                        metadata=result[row[0]].metadatas[0],
+                        score=max(0.0, -float(row[1])),
                     )
-                    for doc_id, doc, meta, row in zip(
-                        result.ids, result.documents, result.metadatas, rows
-                    )
+                    for row in rows
+                    if row[0] in result
                 ]
             )
 
@@ -647,6 +725,62 @@ class CompactCollection(SQLiteExactCollection):
             embeddings=[row["embedding"] for row in rows] if spec.embeddings else None,
         )
 
+    def reindex(self, embed, batch_size=256):
+        """Stage quantized batches, then replace only vectors in one transaction.
+
+        The caller holds the palace writer lease over the snapshot and swap.
+        Embedding runs outside the backend mutex/transaction, so request-lock
+        handoffs cannot deadlock a second request using this connection.
+        """
+        with tempfile.TemporaryDirectory(
+            prefix="compact-reindex-", dir=self._handle.palace_path
+        ) as directory:
+            stage = sqlite3.connect(os.path.join(directory, "vectors.sqlite3"))
+            try:
+                stage.execute(
+                    "CREATE TABLE staged(rowid INTEGER PRIMARY KEY,embedding BLOB,scale BLOB,dim INTEGER)"
+                )
+                after = 0
+                dimensions = set()
+                while True:
+                    with self._cursor() as cur:
+                        cid = self._collection_id(cur)
+                        rows = cur.execute(
+                            "SELECT rowid,id,document,dictionary_id,metadata_json FROM documents WHERE collection_id=? AND rowid>? ORDER BY rowid LIMIT ?",
+                            (cid, after, batch_size),
+                        ).fetchall()
+                        if not rows:
+                            break
+                        records = self._result(cur, rows, _IncludeSpec(True, True, False, False))
+                    vectors = embed(records.documents, records.metadatas)
+                    if len(vectors) != len(rows):
+                        raise ValueError("compact reindex embedding batch length mismatch")
+                    prepared = [
+                        (None, None, None) if meta.get(KEYWORD_ONLY) is True else _quantize(vector)
+                        for meta, vector in zip(records.metadatas, vectors)
+                    ]
+                    dimensions.update(v[2] for v in prepared if v[2] is not None)
+                    if len(dimensions) > 1:
+                        raise DimensionMismatchError(
+                            "compact reindex cannot mix embedding dimensions"
+                        )
+                    stage.executemany(
+                        "INSERT INTO staged VALUES (?,?,?,?)",
+                        [(row["rowid"], *vector) for row, vector in zip(rows, prepared)],
+                    )
+                    stage.commit()
+                    after = rows[-1]["rowid"]
+                with self._cursor(write=True) as cur:
+                    cid = self._collection_id(cur)
+                    cur.execute("UPDATE collections SET dimension=NULL WHERE id=?", (cid,))
+                    self._ensure_collection_dimension(cur, cid, list(dimensions))
+                    staged = stage.execute("SELECT rowid,embedding,scale,dim FROM staged")
+                    while batch := staged.fetchmany(batch_size):
+                        for rowid, blob, scale, dim in batch:
+                            self._put_vector(cur, rowid, cid, blob, scale, dim)
+            finally:
+                stage.close()
+
     def maintenance_state(self):
         state = super().maintenance_state()
         with self._cursor() as cur:
@@ -656,9 +790,11 @@ class CompactCollection(SQLiteExactCollection):
 
 class CompactBackend(SQLiteExactBackend):
     name = "compact"
-    capabilities = (SQLiteExactBackend.capabilities - {"supports_embeddings_passthrough"}) | {
+    capabilities = (
+        SQLiteExactBackend.capabilities
+        - {"supports_embeddings_passthrough", "supports_migration_export"}
+    ) | {
         "supports_range_filters",
-        "supports_migration_export",
     }
 
     @staticmethod
@@ -681,8 +817,10 @@ class CompactBackend(SQLiteExactBackend):
 
             handle.conn.create_function(
                 "compact_compare",
-                3,
-                lambda actual, op, operand: _compare(decode_value(actual), op, json.loads(operand)),
+                4,
+                lambda metadata, key, op, operand: _compare(
+                    decode_value(json.loads(metadata).get(key)), op, json.loads(operand)
+                ),
                 deterministic=True,
             )
 
@@ -708,28 +846,38 @@ class CompactBackend(SQLiteExactBackend):
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, _SCHEMA_VERSION):
             raise BackendError(f"unsupported compact schema version: {version}")
-        conn.executescript(f"""
-            PRAGMA application_id={_APPLICATION_ID};
-            PRAGMA user_version={_SCHEMA_VERSION};
+        if not tables:
+            conn.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+            conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+        else:
+            return
+        conn.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,dimension INTEGER,created_at TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS dictionaries(id INTEGER PRIMARY KEY,collection_id INTEGER UNIQUE NOT NULL,data BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS dictionaries(id INTEGER PRIMARY KEY AUTOINCREMENT,collection_id INTEGER UNIQUE NOT NULL,data BLOB NOT NULL);
             CREATE TRIGGER IF NOT EXISTS immutable_dictionary BEFORE UPDATE ON dictionaries
                 BEGIN SELECT RAISE(ABORT,'compact dictionaries are immutable'); END;
             CREATE TABLE IF NOT EXISTS documents(
-                collection_id INTEGER NOT NULL,id TEXT NOT NULL,document BLOB NOT NULL,
+                rowid INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL,id TEXT NOT NULL,document BLOB NOT NULL,
                 dictionary_id INTEGER,raw_size INTEGER NOT NULL,metadata_json TEXT NOT NULL,
-                embedding BLOB,scale BLOB,dim INTEGER,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
-                wing TEXT AS (json_extract(metadata_json,'$.wing')) VIRTUAL,
-                room TEXT AS (json_extract(metadata_json,'$.room')) VIRTUAL,
-                hall TEXT AS (json_extract(metadata_json,'$.hall')) VIRTUAL,
-                parent_drawer_id TEXT AS (json_extract(metadata_json,'$.parent_drawer_id')) VIRTUAL,
-                parent_entry_id TEXT AS (json_extract(metadata_json,'$.parent_entry_id')) VIRTUAL,
-                PRIMARY KEY(collection_id,id),
-                CHECK ((embedding IS NULL AND scale IS NULL AND dim IS NULL) OR
-                       (length(embedding)=dim AND length(scale)=4 AND dim>0)));
+                created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+                wing AS (json_extract(metadata_json,'$.wing')) VIRTUAL,
+                room AS (json_extract(metadata_json,'$.room')) VIRTUAL,
+                hall AS (json_extract(metadata_json,'$.hall')) VIRTUAL,
+                parent_drawer_id AS (json_extract(metadata_json,'$.parent_drawer_id')) VIRTUAL,
+                parent_entry_id AS (json_extract(metadata_json,'$.parent_entry_id')) VIRTUAL,
+                UNIQUE(collection_id,id));
+            CREATE TABLE vectors(rowid INTEGER PRIMARY KEY,collection_id INTEGER NOT NULL,
+                embedding BLOB NOT NULL,scale BLOB NOT NULL,dim INTEGER NOT NULL,
+                CHECK(length(embedding)=dim AND length(scale)=4 AND dim>0));
+            CREATE INDEX compact_vectors_collection ON vectors(collection_id);
+            CREATE TRIGGER delete_vector AFTER DELETE ON documents BEGIN
+                DELETE FROM vectors WHERE rowid=old.rowid; END;
+            CREATE TRIGGER dictionary_in_use BEFORE DELETE ON dictionaries
+                WHEN EXISTS(SELECT 1 FROM documents WHERE dictionary_id=old.id)
+                BEGIN SELECT RAISE(ABORT,'compact dictionary is in use'); END;
             CREATE INDEX IF NOT EXISTS compact_parent_drawer ON documents(parent_drawer_id,collection_id);
             CREATE INDEX IF NOT EXISTS compact_parent_entry ON documents(parent_entry_id,collection_id);
             CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(document,content='',contentless_delete=1);
@@ -745,19 +893,42 @@ class CompactBackend(SQLiteExactBackend):
         base = super().get_collection(*args, **kwargs)
         collection = CompactCollection(base._handle, base._collection_name, backend=self)
         if embedder is not None:
-            from .base import EmbedderIdentity, check_embedder_identity
+            from .base import (
+                EmbedderIdentity,
+                EmbedderIdentityUnknownWarning,
+                check_embedder_identity,
+            )
 
             identity = EmbedderIdentity(embedder.model_name, embedder.dimension)
-            stored = collection.get_stored_embedder_identity()
-            with collection._cursor() as cur:
-                dim = collection._collection_dimension(cur, collection._collection_id(cur))
-            if dim is not None and dim != identity.dimension:
-                raise DimensionMismatchError(
-                    f"compact expects embedding dimension {dim}, got {identity.dimension}"
-                )
-            check_embedder_identity(stored, identity)
-            if stored is None and not collection._handle.read_only:
-                collection.set_embedder_identity(identity)
+            collection._pending_embedder_identity = identity
+            with collection._cursor(write=not collection._handle.read_only) as cur:
+                cid = collection._collection_id(cur)
+                dim = collection._collection_dimension(cur, cid)
+                if dim is not None and dim != identity.dimension:
+                    raise DimensionMismatchError(
+                        f"compact expects embedding dimension {dim}, got {identity.dimension}"
+                    )
+                identity_row = cur.execute(
+                    "SELECT value FROM meta WHERE key=?", (collection._embedder_meta_key(),)
+                ).fetchone()
+                stored = EmbedderIdentity(identity_row[0], dim or 0) if identity_row else None
+                check_embedder_identity(stored, identity)
+                exists = cur.execute(
+                    "SELECT 1 FROM documents WHERE collection_id=? LIMIT 1", (cid,)
+                ).fetchone()
+                if stored is None and exists:
+                    warnings.warn(
+                        "compact collection has unknown embedder identity",
+                        EmbedderIdentityUnknownWarning,
+                        stacklevel=2,
+                    )
+                if not collection._handle.read_only:
+                    collection._ensure_collection_dimension(cur, cid, [identity.dimension])
+                    if stored is None and not exists:
+                        cur.execute(
+                            "INSERT INTO meta(key,value) VALUES (?,?)",
+                            (collection._embedder_meta_key(), identity.model_name),
+                        )
         return collection
 
     @classmethod
@@ -773,9 +944,13 @@ class CompactBackend(SQLiteExactBackend):
 
     def delete_collection(self, palace_path, collection_name):
         collection = self.get_collection(palace_path, collection_name)
-        collection.delete()
         with collection._cursor(write=True) as cur:
             cid = collection._collection_id(cur)
+            cur.execute(
+                "DELETE FROM docs_fts WHERE rowid IN (SELECT rowid FROM documents WHERE collection_id=?)",
+                (cid,),
+            )
+            cur.execute("DELETE FROM documents WHERE collection_id=?", (cid,))
             cur.execute("DELETE FROM dictionaries WHERE collection_id=?", (cid,))
             cur.execute("DELETE FROM collections WHERE id=?", (cid,))
 

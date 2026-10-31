@@ -216,31 +216,54 @@ class EmbeddingCollection(BaseCollection):
             )
             for i, record_id in enumerate(ids)
         ]
-        # A metadata-only move keeps the vector. Title changes and explicit
-        # promotion from keyword-only to vector require a fresh vector.
-        needs_vectors = documents is not None or any(
-            (
-                _metadata_can_change_embedding(patch)
-                or (
+        if embeddings is None:
+            patches = metadatas or [{} for _ in ids]
+            for record_id, patch in zip(ids, patches):
+                previous = old.get(record_id, ("", {}))[1]
+                if _is_native_media(previous) and (
+                    documents is not None
+                    or {"source_path", "source_file", "media_type"}.intersection(patch or {})
+                ):
+                    raise ValueError(
+                        "native media changes require explicit embeddings or re-ingesting the source"
+                    )
+            embedder = None
+            title_change = any(_metadata_can_change_embedding(patch) for patch in patches)
+            if title_change:
+                embedder = _resolve_document_embedder()
+            needs_vectors = (
+                documents is not None
+                or any(
                     old.get(record_id, ("", {}))[1].get(KEYWORD_ONLY) is True
                     and effective[i].get(KEYWORD_ONLY) is not True
+                    for i, record_id in enumerate(ids)
+                )
+                or (
+                    title_change
+                    and _supports_metadata_aware_documents(embedder)
+                    and any(
+                        not _is_native_media(old.get(record_id, ("", {}))[1])
+                        and _metadata_title(old.get(record_id, ("", {}))[1])
+                        != _metadata_title(effective[i])
+                        for i, record_id in enumerate(ids)
+                    )
                 )
             )
-            for i, record_id in enumerate(ids)
-            for patch in [metadatas[i] if metadatas is not None else None]
-        )
-        if embeddings is None and needs_vectors:
-            texts = (
-                documents
-                if documents is not None
-                else [old.get(record_id, ("", {}))[0] for record_id in ids]
-            )
-            # Missing ids are skipped by update and must not be embedded.
-            embedding_meta = [
-                meta if record_id in old else {KEYWORD_ONLY: True}
-                for record_id, meta in zip(ids, effective)
-            ]
-            embeddings = self._compact_vectors(texts, embedding_meta)
+            if needs_vectors:
+                if any(_is_native_media(meta) for _, meta in old.values()):
+                    raise ValueError(
+                        "mixed native media and text updates require explicit embeddings"
+                    )
+                texts = (
+                    documents
+                    if documents is not None
+                    else [old.get(record_id, ("", {}))[0] for record_id in ids]
+                )
+                embedding_meta = [
+                    meta if record_id in old else {KEYWORD_ONLY: True}
+                    for record_id, meta in zip(ids, effective)
+                ]
+                embeddings = self._compact_vectors(texts, embedding_meta)
         return self._inner.update(
             ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
         )

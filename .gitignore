@@ -48,3 +48,5 @@ target/
 *.exe
 
 .taste-skill/
+
+.analysis/

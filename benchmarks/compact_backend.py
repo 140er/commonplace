@@ -93,6 +93,7 @@ def recall(root, n=5000):
         col.add(ids=[str(i) for i in range(n)], documents=docs, embeddings=vectors)
         rankings.append(col.query(query_embeddings=qvectors, n_results=10, include=[]).ids)
         backend.close()
+        shutil.rmtree(root / backend.name)
     overlap = np.mean([len(set(a) & set(b)) / 10 for a, b in zip(*rankings)])
     planted = [np.mean([str(i) in hits for i, hits in enumerate(ranking)]) for ranking in rankings]
     return {
@@ -105,16 +106,22 @@ def recall(root, n=5000):
     }
 
 
-def storage_and_latency(root, size, *, chroma=False, progress=None):
+def storage_and_latency(root, size, *, chroma=False, progress=None, dominant=False):
     generator = PalaceDataGenerator(seed=42)
     # Reuse the same 10k synthetic templates with a unique drawer prefix.
     templates = [generator._random_text(800, 800)[:780] for _ in range(10000)]
     rng = np.random.default_rng(42)
-    factories = [CompactBackend, SQLiteExactBackend]
+    factories = [CompactBackend] if dominant else [CompactBackend, SQLiteExactBackend]
     if chroma:
         from mempalace.backends.chroma import ChromaBackend
 
         factories.append(ChromaBackend)
+
+    def drawer_wing(i):
+        if dominant:
+            return "w7" if i < int(size * 0.8) else f"w{i % 24 + (i % 24 >= 7)}"
+        return f"w{i % 25}"
+
     results = {}
     for factory in factories:
         backend = factory()
@@ -134,7 +141,7 @@ def storage_and_latency(root, size, *, chroma=False, progress=None):
                 ],
                 metadatas=[
                     {
-                        "wing": f"w{i % 25}",
+                        "wing": drawer_wing(i),
                         "room": f"r{(i // 25) % 30}",
                         "parent_drawer_id": f"p{i // 4}",
                         "parent_entry_id": f"p{i // 4}",
@@ -146,6 +153,7 @@ def storage_and_latency(root, size, *, chroma=False, progress=None):
                 embeddings=vectors.tolist(),
             )
         write_seconds = time.perf_counter() - start
+        bulk_state = col.maintenance_state()
         backend.close()
         disk_bytes = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
         start = time.perf_counter()
@@ -159,38 +167,68 @@ def storage_and_latency(root, size, *, chroma=False, progress=None):
         entry = {
             "bytes_per_drawer": round(disk_bytes / size, 2),
             "write_seconds": round(write_seconds, 2),
+            "bulk_load_state": bulk_state,
+            "settled_state": col.maintenance_state(),
+            "background_maintenance": "synchronous"
+            if backend.name in {"compact", "sqlite_exact"}
+            else "no completion hook advertised",
             "open_ms": round(open_ms, 3),
             "first_query_with_load_ms": round(load_ms, 3),
         }
         if backend.name == "compact":
-            entry["vector"] = timed(
-                lambda col=col, q=q: col.query(query_embeddings=[q], n_results=10)
-            )
-            entry["vector_wing"] = timed(
-                lambda col=col, q=q: col.query(
-                    query_embeddings=[q], where={"wing": "w7"}, n_results=10
-                )
-            )
-            where = {"$and": [{"wing": "w7"}, {"room": "r9"}]}
-            entry["vector_wing_room"] = timed(
-                lambda col=col, q=q, where=where: col.query(
-                    query_embeddings=[q], where=where, n_results=10
-                )
-            )
-            entry["lexical_wing_room"] = timed(
-                lambda col=col, where=where: col.lexical_search(
-                    query="authentication database", where=where, n_results=10
-                )
-            )
-            # Use the actual MCP hydration function, with the collection path
-            # directly, to include sorting and exact chunk reassembly.
-            from mempalace.mcp_server import _collection_logical_drawer_record
+            from mempalace.search_util import build_where_filter
+            from mempalace.mcp_server import _collection_logical_drawer_record, _bulk_drawer_records
 
-            entry["get_drawer_split"] = timed(
-                lambda col=col: _collection_logical_drawer_record(col, "p1234")
-            )
+            wing = build_where_filter("w7", known=[f"w{i}" for i in range(25)])
+            where = build_where_filter("w7", "r9", known=[f"w{i}" for i in range(25)])
+
+            def phase():
+                return {
+                    "vector": timed(lambda: col.query(query_embeddings=[q], n_results=10)),
+                    "vector_wing": timed(
+                        lambda: col.query(query_embeddings=[q], where=wing, n_results=10)
+                    ),
+                    "vector_wing_room": timed(
+                        lambda: col.query(query_embeddings=[q], where=where, n_results=10)
+                    ),
+                    "lexical": timed(
+                        lambda: col.lexical_search(query="authentication database", n_results=10)
+                    ),
+                    "lexical_wing": timed(
+                        lambda: col.lexical_search(
+                            query="authentication database", where=wing, n_results=10
+                        )
+                    ),
+                    "lexical_wing_room": timed(
+                        lambda: col.lexical_search(
+                            query="authentication database", where=where, n_results=10
+                        )
+                    ),
+                    "get_drawer_split": timed(
+                        lambda: _collection_logical_drawer_record(col, "p1234")
+                    ),
+                    "get_drawers_bulk": timed(
+                        lambda: _bulk_drawer_records(col, [f"p{i}" for i in range(1200, 1232)])
+                    ),
+                }
+
+            entry.update(phase())
+        entry["maintenance_results"] = {}
+        for kind in sorted(backend.maintenance_kinds):
+            outcome = col.run_maintenance(kind)
+            entry["maintenance_results"][kind] = {"status": outcome.status, "stats": outcome.stats}
+        entry["after_maintenance_state"] = col.maintenance_state()
+        if backend.name == "compact":
+            entry["after_maintenance"] = phase()
+            start = time.perf_counter()
+            col.update(ids=["d0"], embeddings=[q])
+            col.query(query_embeddings=[q], n_results=10)
+            entry["write_plus_query_ms"] = round(1000 * (time.perf_counter() - start), 3)
         results[backend.name] = entry
         backend.close()
+        entry["after_maintenance_bytes_per_drawer"] = round(
+            sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) / size, 2
+        )
         del col
         shutil.rmtree(path)
         if progress is not None:
@@ -213,6 +251,11 @@ def main():
         "--chroma", action="store_true", help="Measure Chroma at the smallest requested size"
     )
     parser.add_argument("--skip-recall", action="store_true")
+    parser.add_argument(
+        "--dominant-wing",
+        action="store_true",
+        help="80 percent of drawers share one wing; compact only",
+    )
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="compact-gates-", dir=args.work_dir) as tmp:
@@ -234,6 +277,7 @@ def main():
                 size,
                 chroma=args.chroma and size == min(args.sizes),
                 progress=save_progress,
+                dominant=args.dominant_wing,
             )
             if args.output:
                 args.output.write_text(json.dumps(result, indent=2) + "\n")
