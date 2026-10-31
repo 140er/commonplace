@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -77,22 +77,39 @@ class _FakeChromaCollection:
 # ---------------------------------------------------------------------------
 
 
-def _hold_lock(palace_path: str, ready_flag: str, release_flag: str) -> int:
-    """Acquire ``mine_palace_lock``, signal readiness, wait for release.
+_WAIT_SECONDS = 30
 
-    Mirrors the helper in ``test_palace_locks.py`` so the contention
-    semantics match across both test files.
-    """
+
+def _hold_lock(palace_path, ready, release):
+    """Keep the lock until the parent finishes the operation under test."""
+    with mine_palace_lock(palace_path):
+        ready.set()
+        assert release.wait(_WAIT_SECONDS), "parent did not release the lock holder"
+
+
+def _join_children(*children):
+    """Reap every child, including when synchronization or an assertion fails."""
+    for child in children:
+        child.join(timeout=5)
+        if child.is_alive():
+            child.terminate()
+            child.join(timeout=5)
+    for child in children:
+        assert child.exitcode == 0, f"{child.name} failed or timed out: exit {child.exitcode}"
+
+
+@contextmanager
+def _held_lock(palace_path):
+    ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
+    holder = ctx.Process(target=_hold_lock, args=(palace_path, ready, release))
+    holder.start()
     try:
-        with mine_palace_lock(palace_path):
-            open(ready_flag, "w").close()
-            for _ in range(500):
-                if os.path.exists(release_flag):
-                    return 0
-                time.sleep(0.01)
-            return 0
-    except MineAlreadyRunning:
-        return 1
+        assert ready.wait(_WAIT_SECONDS), "holder failed to acquire lock"
+        yield
+    finally:
+        release.set()
+        _join_children(holder)
 
 
 # ---------------------------------------------------------------------------
@@ -114,23 +131,9 @@ def test_palace_path_none_skips_lock(tmp_path, monkeypatch):
     # Hold the lock in a child process. Without palace_path, the parent
     # write must still succeed (the lock does not gate this caller).
     palace = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-    ctx = _get_mp_context()
-    holder = ctx.Process(target=_hold_lock, args=(palace, ready, release))
-    holder.start()
-    try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock"
-
+    with _held_lock(palace):
         col.upsert(documents=["doc"], ids=["id-1"])
         assert fake.upserts == [{"documents": ["doc"], "ids": ["id-1"]}]
-    finally:
-        open(release, "w").close()
-        holder.join(timeout=5)
 
 
 def test_writer_blocks_during_mine(tmp_path, monkeypatch):
@@ -142,19 +145,7 @@ def test_writer_blocks_during_mine(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     palace = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
-    ctx = _get_mp_context()
-    holder = ctx.Process(target=_hold_lock, args=(palace, ready, release))
-    holder.start()
-    try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock"
-
+    with _held_lock(palace):
         fake = _FakeChromaCollection()
         col = ChromaCollection(fake, palace_path=palace)
 
@@ -173,9 +164,6 @@ def test_writer_blocks_during_mine(tmp_path, monkeypatch):
         assert fake.adds == []
         assert fake.updates == []
         assert fake.deletes == []
-    finally:
-        open(release, "w").close()
-        holder.join(timeout=5)
 
 
 def test_reentrant_inside_mine_passes_through(tmp_path, monkeypatch):
@@ -208,31 +196,31 @@ def test_reentrant_inside_mine_passes_through(tmp_path, monkeypatch):
     assert len(fake.deletes) == 1
 
 
-class _SlowFakeChromaCollection(_FakeChromaCollection):
-    """Fake whose write methods hold the caller for ``hold_seconds``.
+class _HeldFakeChromaCollection(_FakeChromaCollection):
+    """Signal that upsert owns the lock, then wait for the parent's release."""
 
-    Used to keep ``mine_palace_lock`` acquired long enough for a sibling
-    process to contend deterministically.
-    """
-
-    def __init__(self, hold_seconds: float = 0.3):
+    def __init__(self, acquired, release):
         super().__init__()
-        self._hold = hold_seconds
+        self._acquired = acquired
+        self._release = release
 
     def upsert(self, **kwargs):
-        time.sleep(self._hold)
+        self._acquired.set()
+        assert self._release.wait(_WAIT_SECONDS), "parent did not release the first writer"
         super().upsert(**kwargs)
 
 
-def _slow_writer_target(palace_path, tmp_path_str, pid, result_q):
-    """Subprocess target: try a slow upsert, report ok/busy."""
+def _writer_target(palace_path, tmp_path_str, pid, ready, start, acquired, release, result_q):
+    """Finish imports before readiness, then try one upsert on command."""
     os.environ["HOME"] = tmp_path_str
     # Fresh import inside child so HOME monkeypatch routes the lock dir.
     from mempalace.backends.chroma import ChromaCollection as _CC
     from mempalace.palace import MineAlreadyRunning as _MAR
 
-    fake = _SlowFakeChromaCollection(hold_seconds=0.3)
+    fake = _HeldFakeChromaCollection(acquired, release) if pid == 1 else _FakeChromaCollection()
     col = _CC(fake, palace_path=palace_path)
+    ready.set()
+    assert start.wait(_WAIT_SECONDS), f"parent did not start writer {pid}"
     try:
         col.upsert(documents=[f"d{pid}"], ids=[f"i{pid}"])
         result_q.put(("ok", pid))
@@ -250,27 +238,46 @@ def test_concurrent_writers_serialize(tmp_path, monkeypatch):
     writer reaches chromadb and the rest fail loudly instead of corrupting
     the index.
 
-    The slow fake holds the lock for 0.3s per writer, large enough for the
-    second process to contend even on slow CI runners.
+    Both children finish importing before the parent starts either write.
+    The first writer holds its lock until the second reports its attempt.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     palace = str(tmp_path / "palace")
 
     ctx = _get_mp_context()
     result_q = ctx.Queue()
+    ready = [ctx.Event(), ctx.Event()]
+    start = [ctx.Event(), ctx.Event()]
+    acquired, release = ctx.Event(), ctx.Event()
+    children = [
+        ctx.Process(
+            target=_writer_target,
+            args=(palace, str(tmp_path), i + 1, ready[i], start[i], acquired, release, result_q),
+        )
+        for i in range(2)
+    ]
+    for child in children:
+        child.start()
+    try:
+        for i, event in enumerate(ready, 1):
+            assert event.wait(_WAIT_SECONDS), f"writer {i} failed to finish importing"
+        start[0].set()
+        assert acquired.wait(_WAIT_SECONDS), "first writer failed to acquire the lock"
+        start[1].set()
+        attempt = result_q.get(timeout=_WAIT_SECONDS)
+        assert attempt[1] == 2, f"expected the second writer's attempt, got {attempt}"
+        release.set()
+        outcomes = [attempt, result_q.get(timeout=_WAIT_SECONDS)]
+    finally:
+        release.set()
+        for event in start:
+            event.set()
+        try:
+            _join_children(*children)
+        finally:
+            result_q.close()
+            result_q.join_thread()
 
-    p1 = ctx.Process(target=_slow_writer_target, args=(palace, str(tmp_path), 1, result_q))
-    p2 = ctx.Process(target=_slow_writer_target, args=(palace, str(tmp_path), 2, result_q))
-    p1.start()
-    # Tiny stagger so p1 wins the race deterministically; without it the
-    # OS scheduler can pick either, which is also a valid outcome but
-    # makes the assertion brittle on slow CI.
-    time.sleep(0.05)
-    p2.start()
-    p1.join(timeout=5)
-    p2.join(timeout=5)
-
-    outcomes = [result_q.get(timeout=1) for _ in range(2)]
     statuses = sorted(o[0] for o in outcomes)
     assert statuses == ["busy", "ok"], f"expected one ok + one busy, got {outcomes}"
 
@@ -285,19 +292,7 @@ def test_read_path_does_not_acquire_lock(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     palace = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
-    ctx = _get_mp_context()
-    holder = ctx.Process(target=_hold_lock, args=(palace, ready, release))
-    holder.start()
-    try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock"
-
+    with _held_lock(palace):
         # _FakeChromaCollection doesn't implement query/get/count; we only
         # need to confirm the wrapper does not call into mine_palace_lock
         # for reads, which we assert by observing the wrapped methods are
@@ -320,6 +315,3 @@ def test_read_path_does_not_acquire_lock(tmp_path, monkeypatch):
             assert "_write_lock" not in src, (
                 f"{read_attr} must NOT acquire the write lock (read path)"
             )
-    finally:
-        open(release, "w").close()
-        holder.join(timeout=5)
