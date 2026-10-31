@@ -449,9 +449,10 @@ class CompactCollection(SQLiteExactCollection):
 
     @contextlib.contextmanager
     def _cursor(self, *, write=False):
-        self._refresh_read_handle()
-        handle = self._handle
-        with self._write_lock() if write else handle.lock:
+        if write:
+            self._refresh_read_handle()
+        with self._write_lock() if write else self._read_lock():
+            handle = self._handle
             self._ensure_open()
             shared = handle.compact_shared
             with shared.lock:
@@ -556,10 +557,9 @@ class CompactCollection(SQLiteExactCollection):
             try:
                 return operation()
             except _SnapshotChanged:
-                with self._handle.lock:
-                    self._ensure_open()
-                    with self._handle.compact_shared.lock:
-                        self._handle._vector_cache.clear()
+                with self._read_lock() as handle:
+                    with handle.compact_shared.lock:
+                        handle._vector_cache.clear()
         raise BackendError("Palace changed repeatedly during compact search; retry the query")
 
     def query(self, **kwargs):

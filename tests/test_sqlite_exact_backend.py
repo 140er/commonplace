@@ -1,4 +1,5 @@
 import math
+import multiprocessing
 import os
 import re
 import sqlite3
@@ -602,6 +603,198 @@ def test_read_only_open_bounds_retries_if_every_selected_handle_is_retired(
     with pytest.raises(BackendError, match="changed repeatedly"):
         backend.get_collection(str(tmp_path), "records", options={"read_only": True})
     assert calls == 3
+
+
+@pytest.mark.parametrize("shutdown", [None, "collection", "palace", "backend"])
+def test_read_retries_retirement_after_refresh_but_preserves_explicit_close(
+    tmp_path, monkeypatch, retirement_open, shutdown
+):
+    name, backend, reader, snapshot_cleanup = retirement_open
+    old_handle = reader._handle
+    selected, resume = threading.Event(), threading.Event()
+    results, errors = [], []
+
+    def pause():
+        selected.set()
+        if not resume.wait(30):
+            raise TimeoutError("reader was not resumed")
+
+    if snapshot_cleanup:
+        query_once = reader._query_once
+
+        def paused_query(**kwargs):
+            if not selected.is_set():
+                pause()
+                raise sqlite_exact_module._SnapshotChanged()
+            return query_once(**kwargs)
+
+        monkeypatch.setattr(reader, "_query_once", paused_query)
+    else:
+        refresh = reader._refresh_read_handle
+
+        def paused_refresh():
+            refresh()
+            if not selected.is_set():
+                pause()
+
+        monkeypatch.setattr(reader, "_refresh_read_handle", paused_refresh)
+
+    def query():
+        try:
+            results.append(reader.query(query_embeddings=[[0.0, 1.0]], n_results=1))
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=query)
+    worker.start()
+    try:
+        assert selected.wait(30), "reader did not reach the acquisition boundary"
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from mempalace.backends import get_backend
+b = get_backend(sys.argv[1])
+c = b.get_collection(sys.argv[2], 'records')
+c.add(ids=['b'], documents=['beta'], embeddings=[[0.0, 1.0]])
+b.close()
+""",
+                name,
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+        assert old_handle.retired and old_handle.closed
+        if shutdown == "collection":
+            reader.close()
+        elif shutdown == "palace":
+            backend.close_palace(str(tmp_path))
+            backend.get_collection(str(tmp_path), "records", options={"read_only": True})
+        elif shutdown == "backend":
+            backend.close()
+    finally:
+        resume.set()
+        worker.join(30)
+    assert not worker.is_alive()
+    if shutdown:
+        assert not results
+        assert len(errors) == 1 and isinstance(errors[0], BackendClosedError)
+    else:
+        assert errors == []
+        assert len(results) == 1 and results[0].ids == [["b"]]
+
+
+def test_read_bounds_retirement_retries_after_refresh(tmp_path, monkeypatch, retirement_open):
+    _, backend, reader, snapshot_cleanup = retirement_open
+    refresh = reader._refresh_read_handle
+    calls = 0
+
+    def retiring_refresh():
+        nonlocal calls
+        calls += 1
+        assert calls <= 3, "read retirement retries were not bounded"
+        refresh()
+        with backend._clients_lock:
+            backend._retire_read_only_handle(str(tmp_path), reader._handle)
+
+    monkeypatch.setattr(reader, "_refresh_read_handle", retiring_refresh)
+    if snapshot_cleanup:
+
+        def changed_query(**kwargs):
+            raise sqlite_exact_module._SnapshotChanged()
+
+        monkeypatch.setattr(reader, "_query_once", changed_query)
+    with pytest.raises(BackendError, match="changed repeatedly") as exc:
+        reader.query(query_embeddings=[[1.0, 0.0]])
+    assert not isinstance(exc.value, BackendClosedError)
+    assert calls == 3
+
+
+def _external_reader_stress_writer(path, backend_name, commands, responses):
+    from mempalace.backends import get_backend_class
+
+    backend_type = get_backend_class(backend_name)
+    responses.put("ready")
+    while (command := commands.get(timeout=30)) is not None:
+        backend = backend_type()
+        try:
+            col = backend.get_collection(path, "records")
+            col.upsert(ids=["b"], documents=[f"beta {command}"], embeddings=[[0.0, 1.0]])
+        finally:
+            backend.close()
+        responses.put(command)
+
+
+@pytest.mark.parametrize("backend_name", ["sqlite_exact", "compact"])
+def test_open_then_search_during_external_commits_has_no_closed_errors(tmp_path, backend_name):
+    from mempalace.backends import get_backend_class
+
+    backend = get_backend_class(backend_name)()
+    writer = backend.get_collection(str(tmp_path), "records", create=True)
+    writer.add(ids=["a"], documents=["alpha"], embeddings=[[1.0, 0.0]])
+    backend.close_palace(str(tmp_path))
+    ctx = multiprocessing.get_context("spawn")
+    commands, responses = ctx.Queue(), ctx.Queue()
+    external = ctx.Process(
+        target=_external_reader_stress_writer,
+        args=(str(tmp_path), backend_name, commands, responses),
+    )
+    start, finish = threading.Barrier(3), threading.Barrier(3)
+    errors, searches = [], []
+    rounds = 20
+
+    def search():
+        try:
+            for _ in range(rounds):
+                start.wait(30)
+                for _ in range(5):
+                    reader = backend.get_collection(
+                        str(tmp_path), "records", options={"read_only": True}
+                    )
+                    result = reader.query(query_embeddings=[[0.0, 1.0]], n_results=1)
+                    assert result.ids in ([["a"]], [["b"]])
+                    searches.append(result.ids)
+                finish.wait(30)
+        except BaseException as exc:
+            errors.append(exc)
+            start.abort()
+            finish.abort()
+
+    threads = [threading.Thread(target=search) for _ in range(2)]
+    external.start()
+    try:
+        assert responses.get(timeout=30) == "ready"
+        for thread in threads:
+            thread.start()
+        for i in range(rounds):
+            commands.put(i)
+            start.wait(30)
+            assert responses.get(timeout=30) == i
+            finish.wait(30)
+        assert not errors
+        assert len(searches) == rounds * 10
+    finally:
+        start.abort()
+        finish.abort()
+        commands.put(None)
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(30)
+        external.join(30)
+        if external.is_alive():
+            external.terminate()
+            external.join(30)
+        backend.close()
+        commands.close()
+        responses.close()
+    assert not any(thread.is_alive() for thread in threads)
+    assert external.exitcode == 0
 
 
 def test_sqlite_exact_read_only_open_skips_schema_init_and_refuses_writes(tmp_path):

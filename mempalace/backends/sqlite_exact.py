@@ -486,6 +486,30 @@ class SQLiteExactCollection(BaseCollection):
                     self._handle = self._backend._connect(path, create=False, read_only=True)
 
     @contextlib.contextmanager
+    def _read_lock(self):
+        for _ in range(3):
+            self._refresh_read_handle()
+            handle = self._handle
+            with handle.lock:
+                if handle is not self._handle:
+                    continue
+                # Retirement can win after refresh but before this lock. Only
+                # retry within the original lifetime: an explicit close must
+                # still fail, even if the same palace has since reopened.
+                # Do not acquire the registry lock while holding handle.lock.
+                if (
+                    handle.retired
+                    and not self._closed
+                    and self._backend is not None
+                    and self._backend._palace_lifetimes.get(handle.palace_path) is handle.lifetime
+                ):
+                    continue
+                self._ensure_open()
+                yield handle
+                return
+        raise BackendError("Palace changed repeatedly while acquiring a reader; retry the query")
+
+    @contextlib.contextmanager
     def _write_lock(self):
         """Serialize this handle before taking process-wide writer ownership.
 
@@ -505,25 +529,27 @@ class SQLiteExactCollection(BaseCollection):
 
     @contextlib.contextmanager
     def _cursor(self, *, write: bool = False):
-        self._refresh_read_handle()
-        serialization = self._write_lock() if write else self._handle.lock
+        if write:
+            self._refresh_read_handle()
+        serialization = self._write_lock() if write else self._read_lock()
         with serialization:
             self._ensure_open()
-            cur = self._handle.conn.cursor()
+            handle = self._handle
+            cur = handle.conn.cursor()
             try:
                 yield cur
             except Exception:
-                self._handle.conn.rollback()
+                handle.conn.rollback()
                 raise
             else:
                 # No-op write cursors never start a transaction. Bumping them
                 # would drop a warm immutable snapshot that still matches disk.
-                if write and self._handle.conn.in_transaction:
+                if write and handle.conn.in_transaction:
                     _bump_write_generation(cur)
-                self._handle.conn.commit()
+                handle.conn.commit()
                 if write:
-                    self._handle._vector_cache.clear()
-                    self._handle._native_cache.clear()
+                    handle._vector_cache.clear()
+                    handle._native_cache.clear()
             finally:
                 cur.close()
 
