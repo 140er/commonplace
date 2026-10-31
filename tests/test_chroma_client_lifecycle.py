@@ -346,3 +346,52 @@ backend.close()
 check_released()
 """,
     )
+
+
+@pytest.mark.parametrize("legacy_client", [False, True])
+def test_cold_open_drains_its_pending_client_before_peer_vector_read(tmp_path, legacy_client):
+    _run_probe(
+        tmp_path,
+        f"legacy_client = {legacy_client!r}\n"
+        + """
+import subprocess
+backend = ChromaBackend()
+for path in paths:
+    col = backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+    col.query(query_embeddings=[[0., 1.]], n_results=1)
+held, release = threading.Event(), threading.Event()
+def writer_lock():
+    with _inproc_sqlite.palace_db_lock(os.path.join(paths[0], 'chroma.sqlite3')):
+        held.set()
+        release.wait(20)
+writer_thread = threading.Thread(target=writer_lock, daemon=True)
+writer_thread.start()
+assert held.wait(5)
+with _inproc_sqlite.palace_db_lock(os.path.join(paths[2], 'chroma.sqlite3')):
+    backend.close()
+writer = '''
+import sys
+from mempalace.backends.chroma import ChromaBackend
+backend = ChromaBackend()
+col = backend.get_collection(sys.argv[1], 'mempalace_drawers')
+col.add(ids=[f'peer{i}' for i in range(20)], documents=['peer'] * 20, embeddings=[[0., 1.]] * 20, metadatas=[{'wing': 'public'}] * 20)
+backend.close()
+'''
+subprocess.run([sys.executable, '-c', writer, paths[1]], check=True, capture_output=True, timeout=20)
+fresh_backend = ChromaBackend()
+if legacy_client:
+    client = ChromaBackend.make_client(paths[1])
+    fresh = client.get_collection('mempalace_drawers')
+    ids = fresh.query(query_embeddings=[[0., 1.]], n_results=10)['ids'][0]
+else:
+    fresh = fresh_backend.get_collection(palace=PalaceRef(id=paths[1], local_path=paths[1]), collection_name='mempalace_drawers', options=options)
+    ids = fresh.query(query_embeddings=[[0., 1.]], n_results=10).ids[0]
+assert len(ids) == 10 and all(id.startswith('peer') for id in ids), ids
+release.set()
+check_finished([writer_thread])
+if legacy_client:
+    chroma._close_client(client, paths[1])
+fresh_backend.close()
+chroma._drain_pending_clients()
+""",
+    )

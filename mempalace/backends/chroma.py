@@ -2910,6 +2910,7 @@ class ChromaBackend(BaseBackend):
                     removed = self._clients.pop(palace_path, None)
                 _close_client(removed, palace_path)
 
+            _drain_pending_clients(palace_path=palace_path)
             ChromaBackend._prepare_palace_for_open(palace_path)
             cached = chromadb.PersistentClient(
                 path=palace_path, settings=_CLIENT_SETTINGS.model_copy()
@@ -3027,6 +3028,7 @@ class ChromaBackend(BaseBackend):
         disk change. See :attr:`_quarantined_paths` for the gate logic.
         """
         with palace_db_lock(os.path.join(palace_path, "chroma.sqlite3")):
+            _drain_pending_clients(palace_path=palace_path)
             ChromaBackend._prepare_palace_for_open(palace_path)
             return chromadb.PersistentClient(
                 path=palace_path, settings=_CLIENT_SETTINGS.model_copy()
