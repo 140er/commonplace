@@ -25,9 +25,9 @@ def digest(value):
 
 
 def compare(current, previous):
-    """Only cryptographic digests reach logs, even when records differ."""
+    """Expose only equality, without a reusable content fingerprint."""
     left, right = digest(current), digest(previous)
-    logger.info("store_dual_read current_hash=%s previous_hash=%s", left, right)
+    logger.info("store_dual_read match=%s", left == right)
 
 
 class SampledReads:
@@ -78,7 +78,16 @@ def observe_collection(collection, palace_path, collection_name):
     marker = Path(palace_path) / ".store-comparison.json"
     try:
         config = json.loads(marker.read_text(encoding="utf-8"))
-        previous = Path(config["previous"])
+        # Chroma may mutate storage even through a read-only API open.
+        if config["backend"] == "chroma":
+            return collection
+        current = Path(palace_path).resolve()
+        from commonplace.workspace_store import generation_path
+
+        previous = (
+            generation_path(current.parent.parent / config["workspace"], config["previous"])
+            / "palace"
+        )
         if not previous.is_dir():
             return collection
         backend = get_backend(config["backend"])

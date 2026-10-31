@@ -28,6 +28,7 @@ from mempalace.backend_copy import open_collection, verify_palaces
 from mempalace.backends import ChromaBackend, CompactBackend
 
 WORKSPACE = "ws_fixture"
+REAL_EMBEDDER = switch._embedder
 
 
 @pytest.fixture
@@ -86,10 +87,17 @@ def workspace(tmp_path, monkeypatch):
     (root / "palace" / "custom-sidecar").write_bytes(b"preserved\0")
     command = tmp_path / "backup_command.py"
     command.write_text(
-        "import datetime,json\nprint(json.dumps({'completed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'off_host':True}))\n"
+        "import datetime,json,os\nprint(json.dumps({'completed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'off_host':True,'nonce':os.environ['COMMONPLACE_BACKUP_NONCE']}))\n"
     )
     monkeypatch.setenv("COMMONPLACE_BACKUP_CMD", shlex.join([sys.executable, str(command)]))
     monkeypatch.setattr(switch, "_verify_offline", lambda directory: None)
+    monkeypatch.setattr(
+        switch,
+        "_embedder",
+        lambda directory: (
+            lambda documents, metadatas, **kwargs: [[1.0, 0.3, -0.1] for _ in documents]
+        ),
+    )
     return data, root, thread
 
 
@@ -104,7 +112,14 @@ def test_switch_write_rollback_every_record(workspace):
     assert read_json(active / "config" / "config.json")["backend"] == "compact"
     assert read_json(root / RECEIPT)["off_host"] is True
     assert (root / "threads.sqlite3").exists()
-    verify_palaces(root / "palace", active / "palace", "chroma", "compact")
+    from pathlib import Path
+
+    from mempalace.backend_copy import verify_sidecars
+
+    snapshot = Path(str(active) + ".verify-snapshot")
+    switch._copy_tree(root / "palace", snapshot)
+    verify_palaces(snapshot, active / "palace", "chroma", "compact")
+    verify_sidecars(root / "palace", active / "palace", "chroma", skip={".store-comparison.json"})
     with closing(open_threads(active, sample_every=1)) as store:
         assert store.messages(thread.id)[1].text == "second"
         store.append(
@@ -236,6 +251,11 @@ except MineAlreadyRunning:
                 result = subprocess.run(
                     [sys.executable, "-c", code, str(root / "palace")],
                     capture_output=True,
+                    env=dict(
+                        __import__("os").environ,
+                        HOME=str(root / "home"),
+                        USERPROFILE=str(root / "home"),
+                    ),
                     timeout=20,
                 )
                 assert result.returncode == 0, result.stderr.decode()
@@ -317,7 +337,7 @@ def test_keyword_only_rollback_uses_configured_embedder(workspace, monkeypatch, 
     def factory(directory):
         assert directory == active
 
-        def embed(documents, metadatas):
+        def embed(documents, metadatas, **kwargs):
             assert documents == ["keyword-only exact text"]
             if not available:
                 raise ValueError("unavailable")
@@ -372,6 +392,7 @@ import os,sys
 from pathlib import Path
 from commonplace import store_switch as switch
 switch._verify_offline = lambda path: None
+switch._embedder = lambda directory: lambda documents,metadatas,**kwargs: [[1.,.3,-.1] for _ in documents]
 def checkpoint(step):
     if step == sys.argv[3]:
         os._exit(91)
@@ -431,12 +452,14 @@ def test_all_resolvers_follow_generation_pointer(workspace, monkeypatch):
             seen.append(kw["env"]["COMMONPLACE_WORKSPACE_DIR"])
             or SimpleNamespace(
                 returncode=0,
+                stderr="",
                 stdout=json.dumps(
                     {
                         "completed_at": __import__("datetime")
                         .datetime.now(__import__("datetime").timezone.utc)
                         .isoformat(),
                         "off_host": True,
+                        "nonce": kw["env"]["COMMONPLACE_BACKUP_NONCE"],
                     }
                 ),
             )
@@ -489,8 +512,8 @@ def test_embedding_process_uses_workspace_config_and_excludes_operator_secrets(
         return SimpleNamespace(returncode=0, stdout="[[1,0]]")
 
     monkeypatch.setattr(switch.subprocess, "run", run)
-    assert switch._embedder(root)(["text"], [{}]) == [[1, 0]]
-    assert seen == [{"documents": ["text"], "metadatas": [{}]}]
+    assert REAL_EMBEDDER(root)(["text"], [{}]) == [[1, 0]]
+    assert seen == [{"documents": ["text"], "metadatas": [{}], "identity": None, "dimension": None}]
 
 
 def test_cli_store_doctor_and_rollback(workspace, monkeypatch, capsys):
@@ -510,3 +533,394 @@ def test_cli_store_doctor_and_rollback(workspace, monkeypatch, capsys):
     assert report["store"] == "compact" and report["thread_index_version"] == 0
     assert main(args + ["workspace", "store", "fixture", "v1"]) == 0
     assert main(args + ["workspace", "prune-stores", "fixture"]) == 0
+
+
+def test_failed_switch_removes_all_staging_and_unchanged_cleans_orphans(workspace):
+    data, root, _ = workspace
+
+    def fail(step):
+        if step == "palace":
+            raise ValueError("injected failure")
+
+    with pytest.raises(ValueError, match="injected"):
+        switch.switch_workspace(data, WORKSPACE, "compact", checkpoint=fail)
+    assert list(root.parent.glob(root.name + ".generation-*")) == []
+    orphan = root.with_name(root.name + ".generation-" + "a" * 24)
+    (orphan / "payload").mkdir(parents=True)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    assert not orphan.exists()
+    orphan.mkdir()
+    switch.prune_generations(data, WORKSPACE)
+    assert not orphan.exists()
+
+
+def test_disk_space_gate_precedes_backup(workspace, monkeypatch):
+    from types import SimpleNamespace
+
+    data, root, _ = workspace
+    monkeypatch.setattr(switch.shutil, "disk_usage", lambda path: SimpleNamespace(free=0))
+    monkeypatch.setattr(
+        switch, "backup_workspace", lambda *args: pytest.fail("Backup ran before disk gate")
+    )
+    with pytest.raises(ValueError, match="free space"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    assert workspace_path(data, WORKSPACE) == root
+
+
+def test_prune_refuses_writes_in_retired_generation(workspace):
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    assert (root / "threads.sqlite3").stat().st_mode & 0o222 == 0
+    # Simulate an older binary restoring write permissions and adding content.
+    (root / "late-record").write_text("new verbatim data")
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    with pytest.raises(ValueError, match="newer writes"):
+        switch.prune_generations(data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS + 1)
+    assert (root / "late-record").read_text() == "new verbatim data"
+    assert switch.doctor_workspace(data, WORKSPACE)["retained_generations"][0]["newer_writes"]
+
+
+def test_palace_dual_read_skips_chroma_without_touching_retired_files(workspace):
+    import hashlib
+    from types import SimpleNamespace
+
+    from mempalace.dual_read import observe_collection
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    before = {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    current = SimpleNamespace(get=lambda: "live")
+    assert observe_collection(current, str(active / "palace"), "mempalace_drawers") is current
+    after = {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    assert before == after
+
+
+def test_thread_dual_read_and_close_from_another_thread(workspace, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from commonplace.handoff.wiring import HandoffContext
+
+    data, root, thread = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    context = HandoffContext(gateway=None, control_db=None, data_dir=data)
+    store = context.store_for(WORKSPACE)
+    store._sample_every = 1
+    with (
+        caplog.at_level(logging.INFO, logger="mempalace.dual_read"),
+        ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        assert pool.submit(store.messages, thread.id).result()[0].text == "first"
+        pool.submit(context.close).result()
+    assert "match=True" in caplog.text
+    assert "comparison_unavailable" not in caplog.text
+
+
+def test_rehearsal_probe_does_not_collide_with_existing_collection(workspace):
+    data, root, _ = workspace
+    backend = ChromaBackend()
+    try:
+        open_collection(backend, root / "palace", "rollback_verification", create=True).add(
+            ids=["probe"],
+            documents=["original"],
+            metadatas=[{"last_modified": "2026-01-01"}],
+            embeddings=[[1.0, 0.0, 0.0, 0.0]],
+        )
+    finally:
+        backend.close()
+    switch.switch_workspace(data, WORKSPACE, "compact")
+
+
+def test_unexpected_source_backend_is_refused_before_backup(workspace, monkeypatch):
+    import shutil
+
+    from mempalace.backends import SQLiteExactBackend
+
+    data, root, _ = workspace
+    shutil.rmtree(root / "palace")
+    backend = SQLiteExactBackend()
+    try:
+        open_collection(backend, root / "palace", "mempalace_drawers", create=True).add(
+            ids=["original"], documents=["verbatim"], embeddings=[[1.0, 2.0]]
+        )
+    finally:
+        backend.close()
+    monkeypatch.setattr(
+        switch, "backup_workspace", lambda *args: pytest.fail("Backup ran for unsupported backend")
+    )
+    with pytest.raises(ValueError, match="backend disagrees"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    assert workspace_path(data, WORKSPACE) == root
+    assert (root / "palace" / "sqlite_exact.sqlite3").exists()
+
+
+def test_blank_backup_command_is_a_clear_refusal(workspace, monkeypatch):
+    data, root, _ = workspace
+    monkeypatch.setenv("COMMONPLACE_BACKUP_CMD", "   ")
+    with pytest.raises(BackupError, match="COMMONPLACE_BACKUP_CMD"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    assert workspace_path(data, WORKSPACE) == root
+
+
+@pytest.mark.parametrize(
+    "payload", ["boards.sqlite3", "rules.sqlite3", "config/extra.json", "home/verbatim"]
+)
+def test_final_verification_checks_all_workspace_files(workspace, payload):
+    data, root, _ = workspace
+    target = root / payload
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        target.write_text("original")
+
+    def corrupt(step):
+        if step == "files":
+            stage = root.parent / read_json(root / switch.STATE)["staging"]
+            (stage / payload).write_bytes(b"changed")
+
+    with pytest.raises((ValueError, sqlite3.Error, OSError)):
+        switch.switch_workspace(data, WORKSPACE, "compact", checkpoint=corrupt)
+    assert workspace_path(data, WORKSPACE) == root
+    assert not list(root.parent.glob(root.name + ".generation-*"))
+
+
+def test_stale_nonce_receipt_and_backup_diagnostics(workspace, monkeypatch):
+    data, root, _ = workspace
+    code = "import datetime,json,sys; print('backup diagnostic',file=sys.stderr); print(json.dumps({'completed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'off_host':True,'nonce':'other-run'}))"
+    monkeypatch.setenv("COMMONPLACE_BACKUP_CMD", shlex.join([sys.executable, "-c", code]))
+    with pytest.raises(BackupError, match="nonce"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    assert (root / switch.BACKUP_STDERR).read_text() == "backup diagnostic\n"
+
+
+def test_runtime_ignores_migration_limit_typo_and_refuses_missing_v1_settings(workspace):
+    data, root, thread = workspace
+    (root / SETTINGS).write_text('{"compact_max_collection_records":"typo"}')
+    with closing(open_threads(root)) as store:
+        assert store.get(thread.id)
+    with pytest.raises(ValueError, match="positive integer"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    (root / SETTINGS).unlink()
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    (active / SETTINGS).unlink()
+    with pytest.raises(ValueError, match="disagrees with settings"):
+        open_threads(active)
+    assert not (active / "threads.sqlite3").exists()
+
+
+def test_rollback_preflight_refuses_surrogates_before_backup(workspace, monkeypatch):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    with closing(open_threads(workspace_path(data, WORKSPACE))) as store:
+        store.store(
+            WORKSPACE,
+            "unrepresentable",
+            [ThreadMessage(0, "user", "message", "\ud800", "\ud800")],
+            actor="actor",
+        )
+    monkeypatch.setattr(
+        switch, "backup_workspace", lambda *args: pytest.fail("Backup ran before surrogate gate")
+    )
+    with pytest.raises(ValueError, match="cannot be represented"):
+        switch.switch_workspace(data, WORKSPACE, "v1")
+
+
+@pytest.mark.parametrize(
+    "identity,dimension",
+    [
+        ({"model_name": "other-model", "dimension": 3}, 3),
+        ({"model_name": "fixture-model", "dimension": 4}, 4),
+    ],
+)
+def test_store_embed_refuses_wrong_model_or_dimension_before_embedding(
+    monkeypatch, identity, dimension
+):
+    import io
+
+    import mempalace.backends.embedding_wrapper as wrapper
+    import mempalace.embedding as embedding
+    from commonplace.store_embed import main
+    from mempalace.backends.base import EmbedderIdentity
+
+    monkeypatch.setattr(
+        embedding, "get_embedder_identity", lambda: EmbedderIdentity("fixture-model", 3)
+    )
+    monkeypatch.setattr(
+        wrapper, "_embed_texts", lambda *a, **kw: pytest.fail("Embedded before identity check")
+    )
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "documents": ["text"],
+                    "metadatas": [{}],
+                    "identity": identity,
+                    "dimension": dimension,
+                }
+            )
+        ),
+    )
+    with pytest.raises(ValueError, match="does not match stored"):
+        main()
+
+
+def test_store_embed_checks_identity_and_embeds_keyword_probe(monkeypatch, capsys):
+    import io
+
+    import mempalace.backends.embedding_wrapper as wrapper
+    import mempalace.embedding as embedding
+    from commonplace.store_embed import main
+    from mempalace.backends.base import EmbedderIdentity
+    from mempalace.backends.compact import KEYWORD_ONLY
+
+    seen = []
+    monkeypatch.setattr(
+        embedding, "get_embedder_identity", lambda: EmbedderIdentity("fixture-model", 3)
+    )
+    monkeypatch.setattr(
+        wrapper, "_embed_texts", lambda documents, **kw: seen.extend(documents) or [[1.0, 0.0, 0.0]]
+    )
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "documents": ["keyword probe"],
+                    "metadatas": [{KEYWORD_ONLY: True}],
+                    "identity": {"model_name": "fixture-model", "dimension": 3},
+                    "dimension": 3,
+                }
+            )
+        ),
+    )
+    main()
+    assert seen == ["keyword probe"]
+    assert json.loads(capsys.readouterr().out) == [[1.0, 0.0, 0.0]]
+
+
+def test_keyword_estimate_precedes_backup_and_rehearsal_exercises_it(
+    workspace, monkeypatch, caplog
+):
+    from mempalace.backends.compact import KEYWORD_ONLY
+
+    data, root, _ = workspace
+    calls = []
+
+    def factory(directory):
+        def embed(documents, metadatas, *, identity=None, dimension=None):
+            assert dimension == 3
+            assert all(meta.get(KEYWORD_ONLY) is True for meta in metadatas)
+            calls.extend(documents)
+            return [[1.0, 0.0, 0.0] for _ in documents]
+
+        return embed
+
+    monkeypatch.setattr(switch, "_embedder", factory)
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    assert "rollback keyword verification" in calls
+    active = workspace_path(data, WORKSPACE)
+    backend = CompactBackend()
+    try:
+        open_collection(backend, active / "palace", "mempalace_drawers", create=True).add(
+            ids=["keyword"], documents=["verbatim"], metadatas=[{KEYWORD_ONLY: True}]
+        )
+    finally:
+        backend.close()
+
+    def before_backup(*args):
+        assert "Rollback re-embedding count=1" in caplog.text
+        raise BackupError("stopped before backup")
+
+    caplog.clear()
+    monkeypatch.setattr(switch, "backup_workspace", before_backup)
+    with caplog.at_level(logging.WARNING), pytest.raises(BackupError, match="before backup"):
+        switch.switch_workspace(data, WORKSPACE, "v1")
+
+
+def test_palace_lock_namespace_does_not_share_reentrant_credit(tmp_path):
+    import os
+    import subprocess
+
+    from mempalace.palace import mine_palace_lock
+
+    palace = str(tmp_path / "palace")
+    other = str(tmp_path / "other-locks")
+    with mine_palace_lock(palace), mine_palace_lock(palace, lock_dir=other):
+        code = """
+import sys
+from mempalace.palace import mine_palace_lock, MineAlreadyRunning
+try:
+    with mine_palace_lock(sys.argv[1], lock_dir=sys.argv[2]):
+        raise AssertionError('Namespaced lease was bypassed')
+except MineAlreadyRunning:
+    pass
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, palace, other],
+            env=dict(os.environ),
+            capture_output=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+
+
+def test_unknown_workspace_cli_refuses_without_traceback(workspace, capsys):
+    from commonplace.cli import main
+
+    data, _, _ = workspace
+    assert main(["--data", str(data), "workspace", "store", "missing", "compact"]) == 2
+    error = capsys.readouterr().err
+    assert "no such workspace" in error and "Traceback" not in error
+
+
+def test_backup_completion_must_follow_this_command_start(workspace, monkeypatch):
+    import os
+    import time
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    data, root, _ = workspace
+    for path in root.rglob("*"):
+        if path.is_file():
+            os.utime(path, (time.time() - 100, time.time() - 100))
+
+    def completed_before_start(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stderr="",
+            stdout=json.dumps(
+                {
+                    "completed_at": datetime.fromtimestamp(
+                        time.time() - 1, timezone.utc
+                    ).isoformat(),
+                    "off_host": True,
+                    "nonce": kwargs["env"]["COMMONPLACE_BACKUP_NONCE"],
+                }
+            ),
+        )
+
+    monkeypatch.setattr(switch.subprocess, "run", completed_before_start)
+    with pytest.raises(BackupError, match="after its start"):
+        switch.backup_workspace(root, root, WORKSPACE)
+
+
+def test_size_gate_runs_before_backup(workspace, monkeypatch):
+    data, root, _ = workspace
+    (root / SETTINGS).write_text('{"compact_max_collection_records":0}')
+    monkeypatch.setattr(
+        switch, "backup_workspace", lambda *args: pytest.fail("Backup ran before size gate")
+    )
+    with pytest.raises(ValueError, match="positive integer"):
+        switch.switch_workspace(data, WORKSPACE, "compact")

@@ -28,6 +28,10 @@ class CopyMismatch(ValueError):
     """A record, collection or vector failed the lossless copy check."""
 
 
+class RollbackEmbedderMismatch(ValueError):
+    """Configured rollback embedding would change the stored vector space."""
+
+
 def collection_names(path, backend):
     filename = "compact.sqlite3" if backend == "compact" else "chroma.sqlite3"
     database = Path(path).resolve() / filename
@@ -117,6 +121,51 @@ def verify_palaces(source, destination, source_backend, target_backend, *, batch
         new.close()
 
 
+def palace_preflight(source, source_backend, target_backend, *, max_records=100_000):
+    """Inspect formats, counts and rollback cost without opening a Chroma client."""
+    from .backends import detect_backends_for_path
+
+    source = Path(source).resolve()
+    detected = set(detect_backends_for_path(str(source)))
+    if detected and detected != {source_backend}:
+        raise CopyMismatch("Source palace backend disagrees with workspace store")
+    filename = "compact.sqlite3" if source_backend == "compact" else "chroma.sqlite3"
+    database = source / filename
+    if not database.exists():
+        return 0
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as conn:
+        if source_backend == "compact":
+            counts = conn.execute(
+                "SELECT collection_id,count(*) FROM documents GROUP BY collection_id"
+            )
+        else:
+            counts = conn.execute(
+                "SELECT c.id,count(e.id) FROM collections c LEFT JOIN segments s ON s.collection=c.id AND s.scope='METADATA' LEFT JOIN embeddings e ON e.segment_id=s.id GROUP BY c.id"
+            )
+        if target_backend == "compact" and any(row[1] > max_records for row in counts):
+            raise ValueError("Collection exceeds compact migration size limit")
+        keywords = 0
+        if source_backend == "compact" and target_backend == "chroma":
+            keywords = conn.execute(
+                "SELECT count(*) FROM documents WHERE json_extract(metadata_json,?)=1",
+                ("$." + KEYWORD_ONLY,),
+            ).fetchone()[0]
+            if keywords:
+                logger.warning(
+                    "Rollback re-embedding count=%d estimated_seconds=%.1f",
+                    keywords,
+                    keywords * 0.05,
+                )
+        return keywords
+
+
+def collection_dimension(path, name):
+    database = Path(path).resolve() / "compact.sqlite3"
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as conn:
+        row = conn.execute("SELECT dimension FROM collections WHERE name=?", (name,)).fetchone()
+    return row[0] if row else None
+
+
 def copy_palace(
     source, destination, source_backend, target_backend, *, max_records=100_000, embed=None
 ):
@@ -126,24 +175,14 @@ def copy_palace(
         raise ValueError("Palace copy requires a sibling directory")
     if destination.exists():
         raise ValueError("Palace copy destination must be new")
+    keyword_count = palace_preflight(
+        source, source_backend, target_backend, max_records=max_records
+    )
     old, new = BACKENDS[source_backend](), BACKENDS[target_backend]()
     try:
         names = collection_names(source, source_backend)
-        keyword_count = 0
-        if target_backend == "chroma":
-            for name in names:
-                src = open_collection(old, source, name, vectors_only=True)
-                keyword_count += len(src.get(where={KEYWORD_ONLY: True}, include=[]).ids)
-            if keyword_count:
-                logger.warning(
-                    "Rollback re-embedding count=%d estimated_seconds=%.1f",
-                    keyword_count,
-                    keyword_count * 0.05,
-                )
-                if embed is None:
-                    raise ValueError(
-                        "Rollback requires the workspace embedder for keyword-only records"
-                    )
+        if keyword_count and embed is None:
+            raise ValueError("Rollback requires the workspace embedder for keyword-only records")
         # Check all sizes before creating any destination files.
         for name in names:
             if (
@@ -168,7 +207,11 @@ def copy_palace(
                             vectors = embed(
                                 [batch.documents[i] for i in indices],
                                 [batch.metadatas[i] for i in indices],
+                                identity=src.get_stored_embedder_identity(),
+                                dimension=collection_dimension(source, name),
                             )
+                        except RollbackEmbedderMismatch:
+                            raise
                         except Exception:
                             raise ValueError(
                                 "Rollback refused: workspace embedder unavailable"
@@ -215,11 +258,39 @@ def copy_palace(
     verify_sidecars(source, destination, source_backend)
 
 
-def verify_sidecars(source, destination, source_backend):
+def _verify_sqlite(left, right):
+    """Compare typed values, including NULs that SQLite quote()/iterdump truncate."""
+    left.execute("BEGIN")
+    right.execute("BEGIN")
+    schema = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+    expected = left.execute(schema).fetchall()
+    if expected != right.execute(schema).fetchall():
+        raise CopyMismatch("Copied SQLite schema mismatch")
+    for kind, name, _, _ in expected:
+        if kind != "table":
+            continue
+        identifier = '"' + name.replace('"', '""') + '"'
+        query = "SELECT * FROM " + identifier
+        try:
+            src = left.execute(query + " ORDER BY rowid")
+            dst = right.execute(query + " ORDER BY rowid")
+        except sqlite3.OperationalError as error:
+            if "no such column: rowid" not in str(error):
+                raise
+            # WITHOUT ROWID tables scan in primary-key order.
+            src, dst = left.execute(query), right.execute(query)
+        while True:
+            a, b = src.fetchmany(256), dst.fetchmany(256)
+            if a != b:
+                raise CopyMismatch("Copied SQLite sidecar values mismatch")
+            if not a:
+                break
+
+
+def verify_sidecars(source, destination, source_backend=None, *, skip=()):
     """Check copied sidecars, comparing SQLite contents including committed WAL."""
     import hashlib
     import os
-    from itertools import zip_longest
 
     from .backups import _uncopyable_reason
     from .migrate import _is_chroma_storage
@@ -231,7 +302,21 @@ def verify_sidecars(source, destination, source_backend):
                 checksum.update(data)
         return checksum.digest()
 
+    def _sqlite_file(path):
+        with path.open("rb") as stream:
+            return stream.read(16) == b"SQLite format 3\0"
+
+    source = Path(source).resolve()
+
     def check(src, dst):
+        if src.relative_to(source).as_posix() in skip:
+            return
+        if src.name.endswith(("-wal", "-shm", "-journal")) and any(
+            src.with_name(src.name[: -len(suffix)]).is_file()
+            for suffix in ("-wal", "-shm", "-journal")
+            if src.name.endswith(suffix)
+        ):
+            return
         if _uncopyable_reason(str(src), follow_symlinks=False) is not None:
             return
         if src.is_symlink():
@@ -242,13 +327,12 @@ def verify_sidecars(source, destination, source_backend):
                 raise CopyMismatch("Copied sidecar directory missing")
             for child in src.iterdir():
                 check(child, dst / child.name)
-        elif src.name.endswith(".sqlite3"):
+        elif src.is_file() and _sqlite_file(src):
             with (
                 closing(sqlite3.connect(src.as_uri() + "?mode=ro", uri=True)) as left,
                 closing(sqlite3.connect(dst.as_uri() + "?mode=ro", uri=True)) as right,
             ):
-                if any(a != b for a, b in zip_longest(left.iterdump(), right.iterdump())):
-                    raise CopyMismatch("Copied SQLite sidecar mismatch")
+                _verify_sqlite(left, right)
         elif file_hash(src) != file_hash(dst):
             raise CopyMismatch("Copied sidecar bytes mismatch")
 

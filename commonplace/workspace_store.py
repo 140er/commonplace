@@ -66,10 +66,14 @@ def settings_for(directory):
     settings = read_json(Path(directory) / SETTINGS)
     if settings.get("store", "v1") not in ("v1", "compact"):
         raise ValueError("Workspace store must be v1 or compact")
-    limit = settings.get("compact_max_collection_records", DEFAULT_MAX_RECORDS)
+    return settings
+
+
+def migration_limit(directory):
+    limit = settings_for(directory).get("compact_max_collection_records", DEFAULT_MAX_RECORDS)
     if type(limit) is not int or limit < 1:
         raise ValueError("Compact collection size limit must be a positive integer")
-    return settings
+    return limit
 
 
 def thread_path(directory):
@@ -83,12 +87,13 @@ def open_threads(directory, *, sample_every=100):
 
     directory = Path(directory)
     path = thread_path(directory)
-    if (
-        path.name == "threads.v2.sqlite3"
-        and not path.exists()
-        and (directory / "threads.sqlite3").exists()
-    ):
-        raise ValueError("Compact workspace requires a verified store switch")
+    other = directory / (
+        "threads.sqlite3" if path.name == "threads.v2.sqlite3" else "threads.v2.sqlite3"
+    )
+    if not path.exists() and other.exists():
+        raise ValueError(
+            "Workspace thread format disagrees with settings; a verified store switch is required"
+        )
     store = (ThreadStoreV2 if path.name == "threads.v2.sqlite3" else ThreadStore)(str(path))
     try:
         comparison = read_json(directory / ".store-comparison.json")

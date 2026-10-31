@@ -9,7 +9,7 @@ commonplace token add grok:coordinator --workspace personal --client grok \
 commonplace serve --host 127.0.0.1 --port 8765
 ```
 
-`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus `workspaces/<id>/palace`.
+`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus workspace generation directories. `workspaces/<id>` is the stable generation-pointer container; use `commonplace doctor --workspace <workspace>` to find the active path.
 
 Social sign-in: [provider setup](SETUP.md).
 

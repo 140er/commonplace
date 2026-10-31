@@ -28,7 +28,10 @@ def read_store(path, *, compact=False):
     store = cls.__new__(cls)
     store._lock = threading.RLock()
     store._conn = sqlite3.connect(
-        Path(path).resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None
+        Path(path).resolve().as_uri() + "?mode=ro",
+        uri=True,
+        isolation_level=None,
+        check_same_thread=False,
     )
     store._conn.row_factory = sqlite3.Row
     try:
@@ -68,38 +71,42 @@ def verify_stores(source, target):
             raise MigrationMismatch("Copied messages, chunks or digest mismatch")
 
 
+def require_v1_representable(old):
+    unsupported = 0
+    for row in old._conn.execute("SELECT id FROM threads"):
+        try:
+            for item in old.messages(row["id"]):
+                for value in (
+                    item.role,
+                    item.kind,
+                    item.name,
+                    item.call_id,
+                    item.at,
+                    item.text,
+                    item.raw,
+                ):
+                    value.encode("utf-8")
+        except UnicodeEncodeError:
+            unsupported += 1
+    unsupported_docs = 0
+    for row in old._conn.execute("SELECT markdown FROM handoff_docs"):
+        try:
+            string(row[0]).encode("utf-8")
+        except UnicodeEncodeError:
+            unsupported_docs += 1
+    if unsupported or unsupported_docs:
+        raise MigrationMismatch(
+            f"Rollback refused: {unsupported} threads and {unsupported_docs} documents "
+            "cannot be represented by v1"
+        )
+
+
 def migrate_v2(source: str, destination: str) -> int:
     """Reverse row copy, including writes and append-time boundaries from v2."""
     if Path(source).resolve() == Path(destination).resolve():
         raise ValueError("Migration needs a separate v1 file")
     with read_store(source, compact=True) as old:
-        unsupported = 0
-        for row in old._conn.execute("SELECT id FROM threads"):
-            try:
-                for item in old.messages(row["id"]):
-                    for value in (
-                        item.role,
-                        item.kind,
-                        item.name,
-                        item.call_id,
-                        item.at,
-                        item.text,
-                        item.raw,
-                    ):
-                        value.encode("utf-8")
-            except UnicodeEncodeError:
-                unsupported += 1
-        unsupported_docs = 0
-        for row in old._conn.execute("SELECT markdown FROM handoff_docs"):
-            try:
-                string(row[0]).encode("utf-8")
-            except UnicodeEncodeError:
-                unsupported_docs += 1
-        if unsupported or unsupported_docs:
-            raise MigrationMismatch(
-                f"Rollback refused: {unsupported} threads and {unsupported_docs} documents "
-                "cannot be represented by v1"
-            )
+        require_v1_representable(old)
         new = ThreadStore(destination)
         try:
             with new._lock, new._conn:
@@ -112,7 +119,8 @@ def migrate_v2(source: str, destination: str) -> int:
                     for row in old._conn.execute(f"SELECT * FROM {table}"):
                         placeholders = ",".join("?" for _ in row)
                         new._conn.execute(
-                            f"INSERT INTO {table} VALUES ({placeholders})", tuple(row)
+                            f"INSERT INTO {table} ({','.join(row.keys())}) VALUES ({placeholders})",
+                            tuple(row),
                         )
                 for row in rows:
                     for item in old.messages(row["id"]):

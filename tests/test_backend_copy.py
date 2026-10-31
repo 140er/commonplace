@@ -93,8 +93,7 @@ def test_sampled_reads_log_hashes_and_leave_live_result_unchanged(caplog):
     reader = SampledReads(current, previous, reads=["get"], sample_every=1)
     with caplog.at_level(logging.INFO, logger="mempalace.dual_read"):
         assert reader.get(query="sensitive query") == current.get()
-    assert "current_hash=" in caplog.text
-    assert "previous_hash=" in caplog.text
+    assert "match=False" in caplog.text
     assert "private content" not in caplog.text
     assert "sensitive query" not in caplog.text
 
@@ -180,3 +179,23 @@ def test_legacy_unknown_embedder_dimension_survives_both_directions(tmp_path):
     copy_palace(source, tmp_path / "compact", "chroma", "compact")
     copy_palace(tmp_path / "compact", tmp_path / "restored", "compact", "chroma")
     assert (tmp_path / "restored" / "mempalace_embedder.json").read_bytes() == identity
+
+
+def test_sqlite_copy_verification_compares_text_after_nul(tmp_path):
+    import shutil
+
+    from mempalace.backend_copy import verify_sidecars
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    with sqlite3.connect(source / "records.sqlite3") as conn:
+        conn.execute("CREATE TABLE records(value TEXT)")
+        conn.execute("INSERT INTO records VALUES (?)", ("prefix\0original",))
+    conn.close()
+    shutil.copyfile(source / "records.sqlite3", target / "records.sqlite3")
+    with sqlite3.connect(target / "records.sqlite3") as conn:
+        conn.execute("UPDATE records SET value=?", ("prefix\0changed",))
+    conn.close()
+    with pytest.raises(CopyMismatch, match="values mismatch"):
+        verify_sidecars(source, target)

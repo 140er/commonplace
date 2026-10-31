@@ -596,13 +596,23 @@ def cmd_seed(args) -> int:
 def cmd_workspace_store(args) -> int:
     from .store_switch import switch_workspace
 
-    db = _db(args)
-    try:
-        workspace = db.workspace(args.workspace)["id"]
-        _owner(db, args, workspace)
-    finally:
-        db.close()
-    print(json.dumps(switch_workspace(_data_dir(args), workspace, args.store), sort_keys=True))
+    def authorize(ref):
+        db = _db(args)
+        try:
+            row = db.workspace(ref)
+            if row is None:
+                raise ControlError("no such workspace")
+            _owner(db, args, row["id"])
+            return row["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            switch_workspace(_data_dir(args), args.workspace, args.store, authorize=authorize),
+            sort_keys=True,
+        )
+    )
     return 0
 
 
