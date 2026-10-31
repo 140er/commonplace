@@ -1208,8 +1208,8 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
 
     def capture(principal, name, arguments):
         result = ctx.call_tool(principal, name, arguments)
-        if name == "mempalace_add_drawer":
-            written.append(result["drawer_id"])
+        if name == "write_mirror_units":
+            written.extend(result["drawer_ids"])
         return result
 
     ctx.service.call_tool = capture

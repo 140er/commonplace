@@ -492,18 +492,28 @@ def test_append_failure_rolls_back_then_retry_mirrors_new_tail(harness, monkeypa
     assert {table: harness.rows(table) for table in baseline} == baseline
     harness.assert_event_count(EVENT_FAILED, 1)
     mirrored = []
-    harness.ctx.service.call_tool = lambda *args: None
-    monkeypatch.setattr(
-        palace_mirror, "mirror", lambda call, principal, stored, chunks: mirrored.extend(chunks)
-    )
+
+    def metadata_only(_principal, name, _arguments):
+        assert name == "mempalace_list_drawers"
+        return {"drawers": [], "total": 0}
+
+    def capture_mirror(call, principal, stored, chunks):
+        mirrored.extend(chunks)
+        return [f"unit-{unit.seq_start}-{unit.seq_end}-{unit.index}" for unit in chunks]
+
+    harness.ctx.service.call_tool = metadata_only
+    monkeypatch.setattr(palace_mirror, "mirror", capture_mirror)
     result = harness.ctx.service.run(harness.principal, body)
     harness.ctx.service.wait_for_mirrors(timeout=10)
     assert result.handoff == first.handoff
     assert not result.launch
     assert any("uniqueaddedfact" in chunk.text for chunk in mirrored)
     before = harness.rows("messages")
+    mirrored_before_retry = list(mirrored)
     assert not harness.ctx.service.run(harness.principal, body).launch
+    harness.ctx.service.wait_for_mirrors(timeout=10)
     assert harness.rows("messages") == before
+    assert mirrored == mirrored_before_retry
 
     def mirror_down(*args):
         raise OSError("configured Memory mirror unavailable")
@@ -715,12 +725,17 @@ def test_storage_failure_rolls_back_preserves_existing_and_retries(harness, monk
 def test_mirror_failure_is_best_effort_after_durable_storage(harness, monkeypatch):
     harness.ctx.service.call_tool = lambda *args: None
 
+    calls = []
+
     def fail_mirror(*args):
+        assert len(harness.rows("threads")) == 1
+        calls.append(True)
         raise OSError(errno.ENOSPC, "mirror disk full")
 
-    monkeypatch.setattr(palace_mirror, "mirror", fail_mirror)
+    monkeypatch.setattr(palace_mirror, "mirror_pending", fail_mirror)
     result = harness.ctx.service.run(harness.principal, request())
-    assert result.launch
+    harness.ctx.service.wait_for_mirrors(timeout=10)
+    assert result.launch and calls == [True]
     assert len(harness.rows("threads")) == 1
     harness.assert_event_count(EVENT_FAILED, 0)
 

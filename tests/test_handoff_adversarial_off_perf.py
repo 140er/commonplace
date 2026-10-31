@@ -841,7 +841,7 @@ def test_service_returns_before_slow_mirror_finishes(gateway, monkeypatch):
         finally:
             finished.set()
 
-    monkeypatch.setattr(palace_mirror, "mirror", slow_mirror)
+    monkeypatch.setattr(palace_mirror, "mirror_pending", slow_mirror)
     request = HandoffRequest(
         ThreadMeta("slow-mirror"), '[{"role":"user","content":"exact words"}]', "messages"
     )
@@ -859,7 +859,7 @@ def test_service_returns_before_slow_mirror_finishes(gateway, monkeypatch):
 
 @pytest.mark.timing
 def test_api_twenty_megabytes_and_thread_reads_budget(gateway, monkeypatch):
-    monkeypatch.setattr(palace_mirror, "mirror", lambda *args, **kwargs: [])
+    monkeypatch.setattr(palace_mirror, "mirror_pending", lambda *args, **kwargs: [])
     gateway.ctx.settings.set(
         SettingRow(gateway.workspace, "workspace", "", enabled=True),
         actor=gateway.owner,
