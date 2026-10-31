@@ -601,7 +601,7 @@ def cmd_login_link(args) -> int:
     )
     try:
         mailer.send(to, "Your Commonplace sign-in link", text)
-    except MailError:
+    except BaseException:
         # The link was never delivered: make sure it can never be used.
         sessions.discard_login_link(db, parse_qs(urlsplit(url).query)["t"][0])
         raise

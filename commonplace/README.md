@@ -25,7 +25,7 @@ Mail is off until `COMMONPLACE_SMTP_HOST` and `COMMONPLACE_SMTP_FROM` are set. W
 | `COMMONPLACE_SMTP_PORT` | 587, or 465 with SSL, or 25 without TLS | SMTP port |
 | `COMMONPLACE_SMTP_FROM` | required with a host | From address, e.g. `Commonplace <noreply@example.com>` |
 | `COMMONPLACE_SMTP_USER`, `COMMONPLACE_SMTP_PASSWORD` | unset (no auth) | Set both or neither |
-| `COMMONPLACE_SMTP_STARTTLS` | `true` | `false` sends without TLS; only allowed with credentials when the host is loopback |
+| `COMMONPLACE_SMTP_STARTTLS` | `true` | `false` sends without TLS, e.g. to a relay without auth; with credentials only when the host is loopback |
 | `COMMONPLACE_SMTP_SSL` | `true` on port 465, else `false` | Implicit TLS; set only one of SSL and STARTTLS |
 
 Certificates are always verified. The password is never logged or shown in errors.

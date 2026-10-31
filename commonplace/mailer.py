@@ -14,7 +14,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass, field
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid, parseaddr
+from email.utils import formatdate, getaddresses, make_msgid, parseaddr
 from typing import Mapping, Optional, Protocol
 
 NOT_CONFIGURED = "mail not configured: set COMMONPLACE_SMTP_HOST and COMMONPLACE_SMTP_FROM"
@@ -61,7 +61,8 @@ def _address(value: str, what: str) -> str:
     if not isinstance(value, str) or any(c in value for c in "\r\n\0"):
         raise MailError(f"invalid {what} address")
     _, address = parseaddr(value)
-    if "@" not in address or " " in address:
+    # getaddresses also catches lists that older parseaddr builds cut to one.
+    if "@" not in address or " " in address or len(getaddresses([value])) != 1:
         raise MailError(f"invalid {what} address")
     return value.strip()
 
@@ -107,6 +108,7 @@ class SMTPMailer:
         c = self.config
         message = self._message(to, subject, text, html)
         context = ssl.create_default_context()
+        sent = False
         try:
             if c.security == "ssl":
                 client = smtplib.SMTP_SSL(c.host, c.port, timeout=c.timeout, context=context)
@@ -118,13 +120,18 @@ class SMTPMailer:
                 if c.user:
                     client.login(c.user, c.password)
                 client.send_message(message)
+                sent = True
         except smtplib.SMTPResponseException as exc:
+            if sent:  # Accepted; only QUIT failed.
+                return
             error = exc.smtp_error
             if isinstance(error, bytes):
                 error = error.decode("utf-8", "replace")
             detail = f"{exc.smtp_code} {error}"
             raise MailError(f"mail not sent: {self._scrub(detail)}") from None
         except (smtplib.SMTPException, OSError) as exc:
+            if sent:
+                return
             detail = f"{type(exc).__name__}: {exc}"
             raise MailError(f"mail not sent: {self._scrub(detail)}") from None
 

@@ -64,7 +64,7 @@ class _Handler(socketserver.StreamRequestHandler):
                 server.messages.append(message_from_bytes(data, policy=policy.default))
                 self._reply("250 queued")
             elif verb == "QUIT":
-                self._reply("221 bye")
+                self._reply(server.quit_reply)
                 return
             else:
                 self._reply("250 ok")
@@ -78,6 +78,7 @@ class _FakeSMTP(socketserver.ThreadingTCPServer):
         super().__init__(("127.0.0.1", 0), _Handler)
         self.auth, self.mail_from, self.rcpt_to, self.messages = [], [], [], []
         self.auth_reply = "235 ok"
+        self.quit_reply = "221 bye"
 
 
 @pytest.fixture
@@ -220,6 +221,38 @@ def test_send_over_the_wire(smtp_server, smtp_env):
     assert message.get_body("html").get_content().strip() == "<p>html body</p>"
 
 
+def test_send_without_auth_or_tls(smtp_server, smtp_env, monkeypatch):
+    monkeypatch.delenv("COMMONPLACE_SMTP_USER")
+    monkeypatch.delenv("COMMONPLACE_SMTP_PASSWORD")
+    sender = mailer.from_env()
+    assert (sender.config.security, sender.config.user) == ("none", "")
+    sender.send("someone@example.com", "Hello", "plain body")
+    assert smtp_server.auth == []
+    (message,) = smtp_server.messages
+    assert message["To"] == "someone@example.com"
+
+
+def test_starttls_required_but_not_offered(smtp_server, smtp_env, monkeypatch):
+    monkeypatch.delenv("COMMONPLACE_SMTP_STARTTLS")
+    with pytest.raises(mailer.MailError, match="mail not sent"):
+        mailer.from_env().send("someone@example.com", "s", "t")
+    assert not smtp_server.messages and not smtp_server.auth
+
+
+def test_failed_quit_after_delivery_is_success(smtp_server, smtp_env):
+    smtp_server.quit_reply = "421 closing"
+    mailer.from_env().send("someone@example.com", "s", "t")
+    assert len(smtp_server.messages) == 1
+
+
+@pytest.mark.parametrize("old_parser", [False, True])
+def test_send_rejects_address_lists(smtp_env, monkeypatch, old_parser):
+    if old_parser:  # Older 3.10/3.11 builds return the first address of a list.
+        monkeypatch.setattr(mailer, "parseaddr", lambda value: ("", "a@example.com"))
+    with pytest.raises(mailer.MailError, match="invalid recipient"):
+        mailer.from_env().send("a@example.com, b@example.com", "s", "t")
+
+
 def test_send_rejects_header_injection(smtp_env):
     sender = mailer.from_env()
     with pytest.raises(mailer.MailError, match="invalid recipient"):
@@ -262,6 +295,19 @@ class _RecordingSMTP:
                 ("connect", "smtp.example.com", 587, False),
                 ("starttls",),
                 ("login", "u", PASSWORD),
+                ("send", "to@example.com"),
+                ("quit",),
+            ],
+        ),
+        (
+            {
+                "COMMONPLACE_SMTP_STARTTLS": "off",
+                "COMMONPLACE_SMTP_USER": "",
+                "COMMONPLACE_SMTP_PASSWORD": "",
+            },
+            "SMTP",
+            [
+                ("connect", "smtp.example.com", 25, False),
                 ("send", "to@example.com"),
                 ("quit",),
             ],
@@ -364,4 +410,39 @@ def test_login_link_send_failure_discards_link(initialized, smtp_server, smtp_en
     for text in (output.err, caplog.text):
         assert PASSWORD not in text and "/app/login" not in text
     assert not smtp_server.messages
+    assert _unused_links(initialized) == 0
+
+
+def test_login_link_send_survives_failed_quit(initialized, smtp_server, smtp_env, capsys):
+    smtp_server.quit_reply = "421 closing"
+    argv = ["--data", str(initialized), "login-link", "owner@example.com", "--send"]
+    assert cli.main(argv) == 0
+    assert capsys.readouterr().out == "login link sent to owner@example.com\n"
+    (message,) = smtp_server.messages
+    (url,) = [line for line in message.get_content().splitlines() if line.startswith("https://")]
+    token = parse_qs(urlsplit(url).query)["t"][0]
+    with closing(ControlDB(str(initialized / "control.sqlite3"))) as db:
+        assert sessions.redeem_login_link(db, token)
+        assert sessions.redeem_login_link(db, token) is None
+
+
+def test_login_link_send_bad_config_mints_nothing(initialized, no_smtp_env, monkeypatch, capsys):
+    monkeypatch.setenv("COMMONPLACE_SMTP_HOST", "smtp.example.com")
+    argv = ["--data", str(initialized), "login-link", "owner@example.com", "--send"]
+    assert cli.main(argv) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert "COMMONPLACE_SMTP_FROM is not set" in output.err
+    assert _unused_links(initialized) == 0
+
+
+def test_login_link_send_interrupted_discards_link(initialized, smtp_env, monkeypatch, capsys):
+    def interrupted(self, *args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mailer.SMTPMailer, "send", interrupted)
+    argv = ["--data", str(initialized), "login-link", "owner@example.com", "--send"]
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(argv)
+    assert "/app/login" not in capsys.readouterr().out
     assert _unused_links(initialized) == 0
