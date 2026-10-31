@@ -300,6 +300,7 @@ def test_settle_failure_can_retry_without_relaunch(manual):
 
 
 def test_manual_selection_does_not_run_configured_automatic_launcher(manual, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command")
     manual.settings.set(
         SettingRow(
             manual.principal.workspace_id,

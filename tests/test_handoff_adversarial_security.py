@@ -4,8 +4,11 @@ import hashlib
 import hmac
 import http.client
 import http.server
+import ipaddress
 import json
 import re
+import socket
+import sys
 import threading
 from dataclasses import replace
 from html import escape
@@ -17,8 +20,9 @@ import pytest
 from commonplace import events as hub_events, sessions, webhooks
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
-from commonplace.handoff import api, launchers, writer
+from commonplace.handoff import api, launcher_policy, launchers, writer
 from commonplace.handoff.models import (
+    SCOPE_HANDOFF,
     HandoffDoc,
     HandoffRequest,
     LauncherConfig,
@@ -56,6 +60,14 @@ class SecurityHub:
             "untrusted_member": {"trust": "untrusted", "user": self.member},
             "foreign": {"workspace": self.other},
             "revoked": {},
+            "oauth": {
+                "profile": "slim",
+                "scopes": ["memory:read", "memory:write"],
+                "trust": "standard",
+            },
+            "handoff_standard": {"scopes": [SCOPE_HANDOFF], "trust": "standard"},
+            "trusted_memory": {"scopes": ["memory:read", "memory:write"]},
+            "handoff_trusted": {"profile": "slim", "scopes": [SCOPE_HANDOFF]},
         }.items():
             self.token(name, **options)
         self.db.revoke(self.connections["revoked"], actor=self.owner)
@@ -358,10 +370,171 @@ def test_settings_and_launcher_writes_fail_closed(security, token):
         {"scope": "workspace", "launcher": {"kind": "command", "argv": ["sh", "-c", "arbitrary"]}},
         token=token,
     )
-    assert (status, json.loads(body)) == (
-        (401, {"error": "unauthorized"}) if token == "revoked" else (404, NOT_FOUND)
-    )
+    if token == "revoked":
+        assert (status, json.loads(body)) == (401, {"error": "unauthorized"})
+    elif token.startswith("untrusted"):
+        assert status == 403 and SCOPE_HANDOFF in json.loads(body)["error"]
+    else:
+        assert (status, json.loads(body)) == (404, NOT_FOUND)
     assert security.ctx.handoff_db.list_settings(security.workspace) == before
+
+
+@pytest.mark.parametrize("token", ["oauth", "handoff_standard", "trusted_memory"])
+@pytest.mark.parametrize("action", ["put", "delete", "relaunch", "handoff"])
+def test_agent_launcher_authority_requires_scope_and_trusted_trust(security, token, action):
+    before = security.ctx.handoff_db.list_settings(security.workspace)
+    routes = {
+        "put": ("PUT", "/api/settings/handoff", {"scope": "workspace", "enabled": True}),
+        "delete": ("DELETE", "/api/settings/handoff?scope=workspace", None),
+        "relaunch": ("POST", f"/api/handoffs/{security.record.id}/relaunch", {}),
+        "handoff": ("POST", "/api/handoff", {"meta": {"thread_id": "denied"}, "transcript": "[]"}),
+    }
+    status, body, _ = security.request(*routes[action], token=token)
+    assert status == 403
+    assert SCOPE_HANDOFF in json.loads(body)["error"]
+    assert "trusted" in json.loads(body)["error"]
+    assert TEXT_MARKER not in body and SECRET_MARKER not in body
+    assert security.ctx.handoff_db.list_settings(security.workspace) == before
+    assert security.ctx.handoff_db.by_key(security.workspace, "thread:denied") is None
+
+
+@pytest.mark.parametrize("person", [False, True])
+def test_safe_launcher_settings_and_relaunch_keep_authorized_access(security, monkeypatch, person):
+    token = "handoff_trusted"
+    host = security.server.server_address[0]
+    headers = {"Origin": f"http://{host}:{security.port}", "Content-Type": "application/json"}
+    if person:
+        principal = sessions.person_principal(security.db, security.owner, security.workspace)
+        principal = replace(principal, policy=Policy.build(scopes=[], trust="standard"))
+        monkeypatch.setattr(security.gateway, "authenticate", lambda _: principal)
+    ref = f"authorized-{person}"
+    assert (
+        security.request(
+            "PUT",
+            "/api/settings/handoff",
+            {"scope": "agent", "ref": ref, "enabled": True, "launcher": {"kind": "client"}},
+            token=token,
+            headers=headers,
+        )[0]
+        == 200
+    )
+    assert (
+        security.request(
+            "DELETE",
+            "/api/settings/handoff?" + urlencode({"scope": "agent", "ref": ref}),
+            token=token,
+            headers=headers,
+        )[0]
+        == 200
+    )
+    record = security.create(ref, "safe launcher")
+    security.ctx.service.report_launch_failure(security.principal, record.id, "retry")
+    status, body, _ = security.request(
+        "POST", f"/api/handoffs/{record.id}/relaunch", {}, token=token, headers=headers
+    )
+    assert status == 200 and json.loads(body)["launch"]
+
+
+@pytest.mark.parametrize("kind", ["command", "webhook"])
+def test_gateway_launchers_require_operator_opt_in_when_saved(security, monkeypatch, kind):
+    monkeypatch.delenv("COMMONPLACE_HANDOFF_LAUNCHERS", raising=False)
+    config = {"kind": kind, "argv": [sys.executable, "-c", "pass"]}
+    if kind == "webhook":
+        config = {
+            "kind": kind,
+            "url": f"https://{ipaddress.ip_address(0x08080808)}/launch",
+            "secret": SECRET_MARKER,
+        }
+    before = security.ctx.handoff_db.list_settings(security.workspace)
+    status, body, _ = security.request(
+        "PUT", "/api/settings/handoff", {"scope": "workspace", "launcher": config}
+    )
+    assert status == 400 and "COMMONPLACE_HANDOFF_LAUNCHERS" in json.loads(body)["error"]
+    assert security.ctx.handoff_db.list_settings(security.workspace) == before
+
+
+@pytest.mark.parametrize("kind", ["command", "webhook"])
+def test_stored_gateway_launchers_fail_closed_without_opt_in(security, monkeypatch, tmp_path, kind):
+    monkeypatch.delenv("COMMONPLACE_HANDOFF_LAUNCHERS", raising=False)
+    marker = tmp_path / "executed"
+    config = LauncherConfig(
+        kind=kind,
+        argv=(sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
+        url=f"https://{ipaddress.ip_address(0x08080808)}/launch",
+        secret=SECRET_MARKER,
+    )
+    agent = f"disabled-{kind}"
+    security.ctx.handoff_db.put_setting(
+        SettingRow(security.workspace, "agent", agent, launcher=config), actor="test"
+    )
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("a disabled launcher performed work")
+
+    monkeypatch.setattr(launchers.subprocess, "Popen", unexpected)
+    monkeypatch.setattr(launchers, "build_opener", unexpected)
+    result = security.ctx.service.run(
+        security.principal,
+        HandoffRequest(
+            ThreadMeta(agent, agent=agent),
+            json.dumps([{"role": "user", "content": "saved"}]),
+            "messages",
+        ),
+    )
+    assert result.handoff.state == "launch_failed"
+    assert "COMMONPLACE_HANDOFF_LAUNCHERS" in result.handoff.error
+    assert result.reason == result.handoff.error
+    assert not result.launch and not marker.exists()
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize(
+    "address",
+    [ipaddress.ip_address(0x0A000001), ipaddress.ip_address(0x7F000001), ipaddress.IPv6Address(1)],
+)
+def test_webhook_launcher_private_addresses_fail_at_save_and_launch(
+    security, monkeypatch, scheme, address
+):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
+    host = f"[{address}]" if address.version == 6 else str(address)
+    config = {"kind": "webhook", "url": f"{scheme}://{host}/launch", "secret": SECRET_MARKER}
+    assert (
+        security.request(
+            "PUT", "/api/settings/handoff", {"scope": "workspace", "launcher": config}
+        )[0]
+        == 400
+    )
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("a private launcher sent a request")
+
+    monkeypatch.setattr(launchers, "build_opener", unexpected)
+    with pytest.raises(launchers.LaunchPolicyError):
+        launchers.launch(LauncherConfig(**config), security.record, TEXT_MARKER, prompt_dir="")
+
+
+def test_webhook_launcher_refuses_names_resolving_to_private_addresses(security, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
+    address = security.server.server_address[0]
+    name = security.server.server_name
+    original = socket.getaddrinfo
+
+    def resolve(host, *args, **kwargs):
+        if host == name:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
+        return original(host, *args, **kwargs)
+
+    monkeypatch.setattr(launcher_policy.socket, "getaddrinfo", resolve)
+    url = f"https://{name}/launch"
+    config = {"kind": "webhook", "url": url, "secret": SECRET_MARKER}
+    assert (
+        security.request(
+            "PUT", "/api/settings/handoff", {"scope": "workspace", "launcher": config}
+        )[0]
+        == 400
+    )
+    with pytest.raises(launchers.LaunchPolicyError, match="public destination"):
+        launchers.launch(LauncherConfig(**config), security.record, TEXT_MARKER, prompt_dir="")
 
 
 def test_untrusted_member_cannot_enable_task(security):
@@ -371,13 +544,14 @@ def test_untrusted_member_cannot_enable_task(security):
         {"scope": "task", "ref": "#671", "enabled": True},
         token="untrusted_member",
     )
-    assert (status, json.loads(body)) == (404, NOT_FOUND)
+    assert status == 403 and SCOPE_HANDOFF in json.loads(body)["error"]
     assert not any(
         row.ref == "#671" for row in security.ctx.handoff_db.list_settings(security.workspace)
     )
 
 
-def test_member_enabled_only_and_owner_launcher_controls(security):
+def test_member_enabled_only_and_owner_launcher_controls(security, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command")
     assert (
         security.request(
             "PUT",
@@ -558,6 +732,7 @@ def test_webhook_crlf_cannot_inject_headers(security, suffix):
 def test_command_arguments_are_literal_and_executable_is_owner_chosen(
     security, monkeypatch, tmp_path
 ):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command")
     calls = []
 
     class Process:
@@ -624,7 +799,11 @@ def redirect_server():
 
 
 @pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
-def test_owner_local_webhooks_never_follow_redirects(security, redirect_server, code):
+def test_owner_local_webhooks_never_follow_redirects(security, redirect_server, code, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
+    # Transport tests use an isolated receiver; policy is exercised above.
+    monkeypatch.setattr(launchers, "validate_webhook_url", lambda _: None)
+    monkeypatch.setattr(launchers, "require_public_address", lambda _: None)
     port, calls = redirect_server
     target = f"http://127.0.0.1:{port}/{code}"
     with pytest.raises(launchers.LaunchError, match=str(code)):
@@ -643,6 +822,20 @@ def test_owner_local_webhooks_never_follow_redirects(security, redirect_server, 
     assert len(calls) == 2
     assert all(path == f"/{code}" for path, _, _ in calls)
     assert SECRET_MARKER not in repr(calls)
+
+
+def test_webhook_rechecks_connected_peer_before_sending(security, redirect_server, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
+    # Simulate a destination changing after a successful public-address check.
+    monkeypatch.setattr(launchers, "validate_webhook_url", lambda _: None)
+    port, calls = redirect_server
+    host = security.server.server_address[0]
+    config = LauncherConfig(
+        kind="webhook", url=f"http://{host}:{port}/launch", secret=SECRET_MARKER
+    )
+    with pytest.raises(launchers.LaunchPolicyError, match="public destination"):
+        launchers.launch(config, security.record, TEXT_MARKER, prompt_dir="")
+    assert not calls
 
 
 def test_secrets_and_transcripts_do_not_enter_audit_events_deliveries_or_logs(security, caplog):
@@ -842,7 +1035,9 @@ def test_app_without_valid_session_redirects_to_login(security, route, cookie):
     assert TEXT_MARKER not in body
 
 
-@pytest.mark.parametrize("token", [None, "missing", "slim", "untrusted", "revoked"])
+@pytest.mark.parametrize(
+    "token", [None, "missing", "slim", "untrusted", "revoked", "oauth", "handoff_standard"]
+)
 def test_same_origin_setting_form_uses_person_authority(security, token):
     _, cookie, _ = security.login()
     _, body, _ = security.request(
@@ -933,6 +1128,7 @@ def test_successor_quotes_cannot_close_their_markdown_fences():
 def test_launcher_secret_is_redacted_in_settings_web_and_cli(security, capsys, monkeypatch):
     from commonplace import cli
 
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
     status, response, _ = security.request(
         "PUT",
         "/api/settings/handoff",
@@ -941,7 +1137,7 @@ def test_launcher_secret_is_redacted_in_settings_web_and_cli(security, capsys, m
             "ref": "secret-test",
             "launcher": {
                 "kind": "webhook",
-                "url": "http://127.0.0.1/launcher",
+                "url": f"https://{ipaddress.ip_address(0x08080808)}/launcher",
                 "secret": SECRET_MARKER,
             },
         },

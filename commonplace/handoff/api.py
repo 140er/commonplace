@@ -1,8 +1,10 @@
 """REST API for handoff, on the gateway. Owner: part T11.
 
 All routes need ``Authorization: Bearer cmmn_…`` (``gateway.authenticate``)
-and answer JSON; errors are ``{"error": "..."}`` with 400/401/404/409.
+and answer JSON; errors are ``{"error": "..."}`` with 400/401/403/404/409.
 A thread or handoff the caller can't see is 404, never 403.
+Agent tokens need handoff:write and trusted trust to change settings or launch;
+signed-in people retain their workspace role permissions.
 
 POST /api/handoff                         handoff:write   HandoffRequest → HandoffResult
 GET  /api/handoffs?task=#142              threads:read    list
@@ -26,6 +28,7 @@ import math
 from dataclasses import fields, is_dataclass, replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError
 from .models import (
     LAUNCHER_KINDS,
@@ -261,6 +264,8 @@ class _API:
             status, result = self.dispatch(handler, principal, target.path, query)
         except _RequestError as error:
             status, result = error.status, {"error": error.message}
+        except HandoffPermissionError as error:
+            status, result = 403, {"error": str(error)}
         except ThreadNotFound:
             status, result = 404, {"error": "not found"}
         except SettingsError as error:
@@ -335,7 +340,7 @@ class _API:
         method = handler.command
         workspace = principal.workspace_id
         if path == "/api/handoff":
-            self.require(principal, SCOPE_HANDOFF)
+            require_launch_authority(principal)
             request = _handoff_request(_read_json(handler, MAX_HANDOFF_BYTES))
             key = request.idempotency_key or f"thread:{request.meta.thread_id}"
             # A retry is also a read of the existing handoff. Check ownership
@@ -383,6 +388,7 @@ class _API:
                 and parts[1] in ("successor", "launch-failed", "relaunch")
             ):
                 if parts[1] == "relaunch":
+                    require_launch_authority(principal)
                     self.require(principal, owner=True)
                     self.handoff(principal, record_id, write=True)
                     _object(_read_json(handler, allow_empty=True), set())
@@ -476,8 +482,7 @@ class _API:
                 "rows": _public([row for row in rows if row.workspace_id == workspace]),
                 "effective": _public(effective),
             }
-        if principal.policy.trust == "untrusted":
-            _missing()
+        require_launch_authority(principal)
         if handler.command == "PUT":
             row = _setting_row(_read_json(handler), workspace)
             row = self.ctx.settings.set(row, actor=principal.actor, is_owner=owner)

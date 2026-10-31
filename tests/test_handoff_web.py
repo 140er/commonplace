@@ -1,6 +1,7 @@
 """Loopback gateway tests with no Memory worker or external service."""
 
 import http.client
+import ipaddress
 import json
 import threading
 from dataclasses import replace
@@ -23,7 +24,7 @@ from commonplace.handoff.models import (
     ThreadMessage,
 )
 from commonplace.handoff.recall import ThreadNotFound
-from commonplace.handoff.settings import SettingsError
+from commonplace.handoff.settings import SettingsError, SettingsService
 from commonplace.handoff.wiring import install
 from commonplace.policy import Policy
 
@@ -395,7 +396,8 @@ def test_same_origin_post_accepts_valid_csrf(app):
     assert response.status == 303 and len(app.settings.calls) == 1
 
 
-def test_ui_settings_updates_preserve_other_configured_fields(app):
+def test_ui_settings_updates_preserve_other_configured_fields(app, monkeypatch):
+    monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "command")
     launcher = LauncherConfig(kind="command", argv=("agent", "{prompt}"))
     for scope, ref in (("workspace", ""), ("agent", "codex:vm")):
         app.settings.rows[(app.workspace, scope, ref)] = SettingRow(
@@ -412,6 +414,48 @@ def test_ui_settings_updates_preserve_other_configured_fields(app):
         row = app.settings.calls[-1][1]
         assert not row.enabled and row.launcher == launcher and row.context_window == 100000
         assert row.threshold == (0.8 if scope == "workspace" else 0.9)
+
+
+@pytest.mark.parametrize(
+    "scope,ref", [("workspace", ""), ("agent", "stored-agent"), ("task", "#55")]
+)
+@pytest.mark.parametrize("kind", ["command", "webhook"])
+def test_web_save_recovers_a_refused_stored_launcher(app, monkeypatch, scope, ref, kind):
+    records = app.handoff.service.db
+    settings = SettingsService(records)
+    monkeypatch.setattr(app.handoff, "settings", settings)
+    monkeypatch.setattr(app.handoff, "handoff_db", records)
+    monkeypatch.delenv("COMMONPLACE_HANDOFF_LAUNCHERS", raising=False)
+    config = LauncherConfig(kind="command", argv=("runner", "{prompt}"))
+    if kind == "webhook":
+        monkeypatch.setenv("COMMONPLACE_HANDOFF_LAUNCHERS", "webhook")
+        config = LauncherConfig(
+            kind="webhook",
+            url=f"https://{ipaddress.ip_address(0x0A000001)}/launch",
+            secret="test-secret-value",
+        )
+    records.put_setting(
+        SettingRow(
+            app.workspace,
+            scope,
+            ref,
+            enabled=False,
+            threshold=0.9,
+            context_window=100000,
+            launcher=config,
+        ),
+        actor="conn:previous",
+    )
+    app.browser.login()
+    response = app.browser.post(
+        {"action": "save", "scope": scope, "ref": ref, "enabled": "on", "threshold": "85"}
+    )
+    assert response.status == 303
+    (saved,) = records.list_settings(app.workspace)
+    assert saved.enabled and saved.launcher == LauncherConfig()
+    assert saved.context_window == 100000
+    assert saved.threshold == (0.85 if scope == "workspace" else 0.9)
+    assert saved.updated_by.startswith("user:")
 
 
 def test_owner_saves_toggle_threshold_and_adds_updates_removes_override(app):
