@@ -158,3 +158,26 @@ def test_media_query_releases_request_lock_only_during_inference(
     assert not found.get("error"), found
     assert found["results"]
     assert events == ["enter", "inference", "exit"]
+
+
+@pytest.mark.parametrize("query_task", ["search", "code"])
+def test_media_query_uses_core_base64_placeholder(indexed_media, monkeypatch, query_task):
+    import base64
+    import random
+
+    from mempalace.stored_text import index_text
+
+    palace, provider, _ = indexed_media
+    query = "screenshot " + base64.b64encode(random.Random(3).randbytes(300)).decode()
+    seen = []
+    method = "embed_code_query" if query_task == "code" else "embed_query"
+    original = getattr(provider, method)
+
+    def record(texts):
+        seen.extend(texts)
+        return original(texts)
+
+    monkeypatch.setattr(provider, method, record)
+    result = search_memories(query, palace, include_media=True, query_task=query_task)
+    assert not result.get("error"), result
+    assert seen == [index_text(query, stored_form=False)]

@@ -96,7 +96,19 @@ def _embed_texts(
         elif not query and callable(getattr(ef, "embed_documents", None)):
             method = ef.embed_documents
             if _supports_metadata_aware_documents(ef):
-                vectors = method(input=texts, metadatas=metadatas)
+                # Metadata-aware models prepend a title or source basename.
+                # Clean that derived title without changing stored metadata.
+                indexed_metadata = None
+                if metadatas is not None:
+                    indexed_metadata = []
+                    for meta in metadatas:
+                        title = _metadata_title(meta or {})
+                        if title:
+                            indexed_title = index_text(title, stored_form=False)
+                            if indexed_title != title:
+                                meta = {**meta, "title": indexed_title}
+                        indexed_metadata.append(meta)
+                vectors = method(input=texts, metadatas=indexed_metadata)
             else:
                 vectors = method(input=texts)
         else:

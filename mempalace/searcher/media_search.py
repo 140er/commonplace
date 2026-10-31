@@ -37,6 +37,7 @@ def search_with_media(
     """
     from ..embedding import embedding_section, get_embedding_function
     from ..palace import ASSETS_COLLECTION_NAME
+    from ..stored_text import index_text
     from . import (
         _distance_to_similarity,
         _result_author_fields,
@@ -89,8 +90,11 @@ def search_with_media(
             raise ValueError("No text or media index found; mine the sandbox corpus first")
         with embedding_section():
             ef = get_embedding_function()
+            indexed_query = index_text(query, stored_form=False)
             query_vectors = (
-                ef.embed_code_query([query]) if query_task == "code" else ef.embed_query([query])
+                ef.embed_code_query([indexed_query])
+                if query_task == "code"
+                else ef.embed_query([indexed_query])
             )
         candidates = []
         fetched = 0

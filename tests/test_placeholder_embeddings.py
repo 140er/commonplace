@@ -303,3 +303,21 @@ def test_exchange_trimming_does_not_lose_span_context():
     assert all(not find_base64_spans(item) for item in indexed)
     assert "Before" in "".join(indexed)
     assert "after needle" in "".join(indexed)
+
+
+@pytest.mark.parametrize("field", ["title", "source_file", "source_path"])
+def test_metadata_titles_use_index_text_without_altering_metadata(field):
+    class TitledRecorder(Recorder):
+        def embed_documents(self, input, metadatas):
+            self.metadatas = metadatas
+            return self(input)
+
+    recorder = TitledRecorder()
+    title = base64.urlsafe_b64encode(random.Random(7).randbytes(300)).decode()
+    metadata = [{field: title}]
+    ew._embed_texts(["document"], metadatas=metadata, embedder=recorder)
+    assert recorder.metadatas[0]["title"] == index_text(
+        ew._metadata_title(metadata[0]), stored_form=False
+    )
+    assert metadata == [{field: title}]
+    assert recorder.seen == ["document"]
