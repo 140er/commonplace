@@ -45,6 +45,16 @@ TOOLS = {
                     "type": "string",
                     "description": "Entity to query (e.g. 'Max', 'MyProject', 'Alice')",
                 },
+                "search": {
+                    "type": "boolean",
+                    "description": "Rank whole-word matches across facts, using entity as search text (default false).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Fact-search result limit (default 5).",
+                },
                 "as_of": {
                     "type": "string",
                     "description": "Date/datetime filter — only facts valid at this time (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ, optional)",
@@ -454,9 +464,8 @@ TOOLS = {
     },
     "mempalace_search": {
         "description": (
-            "Search past-session memories. Returns matching drawers. "
-            "Not for the current conversation — if it happened in this "
-            "session, answer from context instead."
+            "Search past-session memories: facts with status/source links first, then verbatim drawers. "
+            "For the current conversation, answer from context."
         ),
         "input_schema": {
             "type": "object",
@@ -503,6 +512,10 @@ TOOLS = {
                 "max_distance": {
                     "type": "number",
                     "description": "Optional distance cutoff on the cosine scale (0=identical, 2=opposite), applied the same way whatever metric the palace uses. Results further than this are dropped and counted in filtered_by_max_distance. Lower = stricter. Default: no cutoff.",
+                },
+                "include_facts": {
+                    "type": "boolean",
+                    "description": "Include matching facts (default true); drawer results are unchanged.",
                 },
                 "candidate_strategy": {
                     "type": "string",

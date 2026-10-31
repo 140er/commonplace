@@ -583,6 +583,9 @@ class KnowledgeGraph:
             );
         """)
         self._migrate_schema(conn)
+        from .fact_index import try_install
+
+        self._fact_index_ready = try_install(conn)
         if not had_sources:
             # Facts filed before fact_sources existed keep their first source.
             conn.execute(
@@ -1386,6 +1389,37 @@ class KnowledgeGraph:
                         {k: row[k] for k in row.keys() if k != "triple_id" and row[k] is not None}
                     )
         return out
+
+    def search_fact_rows(
+        self,
+        tokens,
+        *,
+        candidate_limit,
+        common_term_fraction,
+        wings=None,
+        sensitivities=None,
+        as_of=None,
+    ):
+        """Indexed lexical lookup with the same visibility as other KG reads."""
+        from .fact_index import candidates
+
+        wings, sensitivities = visibility(wings, sensitivities)
+        as_of = sanitize_iso_temporal(as_of, "as_of")
+        visible_sql, params = _visibility_sql(wings, sensitivities)
+        temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
+        with self._lock:
+            if not self._fact_index_ready:
+                raise RuntimeError("Fact search index unavailable")
+            return candidates(
+                self._conn(),
+                tokens,
+                visible_sql,
+                params,
+                temporal_sql,
+                temporal_params,
+                limit=candidate_limit,
+                common_term_fraction=common_term_fraction,
+            )
 
     @staticmethod
     def _mark_superseded(conn, old_ids, new_id):
