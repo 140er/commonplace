@@ -1108,9 +1108,9 @@ def _force_chroma_cache_reset() -> None:
         logger.debug("Failed to close cached Chroma backend during cache reset", exc_info=True)
     if cached_client is not None:
         try:
-            close = getattr(cached_client, "close", None)
-            if callable(close):
-                close()
+            from ..backends.chroma import _close_client
+
+            _close_client(cached_client, _config.palace_path)
         except Exception:
             logger.debug(
                 "Failed to close MCP-local Chroma client during cache reset", exc_info=True

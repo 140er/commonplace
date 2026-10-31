@@ -1751,6 +1751,46 @@ def _same_palace(first, second):
 
 
 _CLIENT_REGISTRY_LOCK = threading.RLock()
+_PENDING_CLIENT_CLOSES: dict[int, tuple[str, Any]] = {}
+_pending_close_worker: threading.Thread | None = None
+
+
+def _drain_pending_clients(palace_path=None) -> None:
+    """Close deferred owners under their own palace lock, outside the registry."""
+    held = held_palace_db_paths()
+    with _CLIENT_REGISTRY_LOCK:
+        pending = [
+            (key, path)
+            for key, (path, _) in _PENDING_CLIENT_CLOSES.items()
+            if (palace_path is None or _same_palace(path, palace_path))
+            and all(_same_palace(path, os.path.dirname(lock)) for lock in held)
+        ]
+    for key, path in pending:
+        with palace_db_lock(os.path.join(path, "chroma.sqlite3")):
+            with _CLIENT_REGISTRY_LOCK:
+                owner = _PENDING_CLIENT_CLOSES.pop(key, None)
+            if owner is not None:
+                _close_client(owner[1], path)
+
+
+def _close_pending_clients() -> None:
+    global _pending_close_worker
+    while True:
+        with _CLIENT_REGISTRY_LOCK:
+            if not _PENDING_CLIENT_CLOSES:
+                _pending_close_worker = None
+                return
+            path, _ = next(iter(_PENDING_CLIENT_CLOSES.values()))
+        _drain_pending_clients(palace_path=path)
+
+
+def _schedule_pending_closes() -> None:
+    """A caller holding a foreign palace lock cannot close these owners itself."""
+    global _pending_close_worker
+    with _CLIENT_REGISTRY_LOCK:
+        if _PENDING_CLIENT_CLOSES and _pending_close_worker is None:
+            _pending_close_worker = threading.Thread(target=_close_pending_clients, daemon=True)
+            _pending_close_worker.start()
 
 
 def _close_client(client, palace_path) -> None:
@@ -1761,8 +1801,7 @@ def _close_client(client, palace_path) -> None:
     """
     if client is None:
         return
-    # Client settings are shared and can name the last palace opened rather
-    # than this client. Its owner supplies the path used to cache the client.
+    # Its owner supplies the path used to cache this client, including aliases.
     path = os.path.join(palace_path, "chroma.sqlite3")
     if any(not _same_palace(palace_path, os.path.dirname(held)) for held in held_palace_db_paths()):
         raise RuntimeError("Cannot close a client while holding another palace's lock")
@@ -1861,9 +1900,9 @@ def _clear_chroma_system_cache(palace_path=None) -> bool:
     the reset discarded and a later write can persist that stale index over
     the peer's.
 
-    A palace lifecycle operation relies on last-client close to evict each
-    identifier. It never clears the global map or changes another palace's
-    generation. A process-wide reset is allowed only without a palace lock.
+    A palace lifecycle operation also forgets identifiers retained by clients
+    that were dropped without close. It never clears the global map or changes
+    another palace's generation. A process-wide reset requires no palace lock.
     Its generation advances so discarded clients cannot be reused.
     """
     global _SYSTEM_GENERATION, _clearing_system_cache
@@ -1873,11 +1912,23 @@ def _clear_chroma_system_cache(palace_path=None) -> bool:
     if palace_path is not None:
         if any(not _same_palace(palace_path, os.path.dirname(key)) for key in held):
             raise RuntimeError("Cannot reset a palace while holding another palace's lock")
-        # Closing the last registered client evicts its System by identifier.
-        # Other palaces retain their clients, Systems and generation.
         with palace_db_lock(os.path.join(palace_path, "chroma.sqlite3")):
             for callback in list(_BEFORE_SYSTEM_CACHE_RESET):
                 callback(palace_path=palace_path)
+            _drain_pending_clients(palace_path=palace_path)
+            from chromadb.api.shared_system_client import SharedSystemClient
+
+            # Chroma clients have no destructor. A dropped owner can leave a
+            # refcount behind forever; closing registered owners cannot evict
+            # that stale System. Forget it without trying to close lost clients.
+            with SharedSystemClient._refcount_lock:
+                identifiers = set(SharedSystemClient._identifier_to_system) | set(
+                    SharedSystemClient._identifier_to_refcount
+                )
+                for identifier in identifiers:
+                    if isinstance(identifier, str) and _same_palace(identifier, palace_path):
+                        SharedSystemClient._identifier_to_system.pop(identifier, None)
+                        SharedSystemClient._identifier_to_refcount.pop(identifier, None)
         return True
     if _clearing_system_cache:
         return False
@@ -2726,23 +2777,24 @@ class ChromaBackend(BaseBackend):
         """Close and forget every client owned by this backend.
 
         With a palace filter, invalidate only that canonical file's clients.
-        An existing palace lock also limits the drain to that palace. Pop
-        under the registry lock, then close one client at a time outside it.
+        Pop under the registry lock, then close one client at a time outside
+        it. A foreign palace lock sends the close to a worker with no locks.
         """
-        held = held_palace_db_paths()
         with _CLIENT_REGISTRY_LOCK:
             clients = [
                 (path, client)
                 for path, client in self._clients.items()
                 if (palace_path is None or _same_palace(path, palace_path))
-                and all(_same_palace(path, os.path.dirname(key)) for key in held)
             ]
-            for path, _ in clients:
+            for path, client in clients:
                 self._clients.pop(path)
                 self._freshness.pop(path, None)
                 self._system_generation.pop(path, None)
-        for path, client in clients:
-            _close_client(client, path)
+                # Publish ownership before releasing the registry. A reset
+                # must not miss a client between its removal and its close.
+                _PENDING_CLIENT_CLOSES[id(client)] = (path, client)
+        _drain_pending_clients(palace_path=palace_path)
+        _schedule_pending_closes()
 
     def _client(self, palace_path: str):
         """Return a cached ``PersistentClient`` (see :meth:`_client_locked`).
@@ -2856,7 +2908,9 @@ class ChromaBackend(BaseBackend):
                 _close_client(removed, palace_path)
 
             ChromaBackend._prepare_palace_for_open(palace_path)
-            cached = chromadb.PersistentClient(path=palace_path, settings=_CLIENT_SETTINGS.copy())
+            cached = chromadb.PersistentClient(
+                path=palace_path, settings=_CLIENT_SETTINGS.model_copy()
+            )
             with _CLIENT_REGISTRY_LOCK:
                 self._clients[palace_path] = cached
             # Re-stat after the client constructor runs: chromadb creates
@@ -2971,7 +3025,9 @@ class ChromaBackend(BaseBackend):
         """
         with palace_db_lock(os.path.join(palace_path, "chroma.sqlite3")):
             ChromaBackend._prepare_palace_for_open(palace_path)
-            return chromadb.PersistentClient(path=palace_path, settings=_CLIENT_SETTINGS.copy())
+            return chromadb.PersistentClient(
+                path=palace_path, settings=_CLIENT_SETTINGS.model_copy()
+            )
 
     @staticmethod
     def backend_version() -> str:

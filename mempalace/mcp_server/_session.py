@@ -37,6 +37,21 @@ def _restamp_palace_db() -> None:
     _note_own_db_stamp(_config.palace_path, (_palace_db_inode, _palace_db_mtime))
 
 
+def _close_session_client() -> None:
+    """Release the cached owner before dropping it, preserving open errors."""
+    global _client_cache
+    cached = _client_cache
+    if cached is not None:
+        from ..backends.chroma import _close_client
+
+        # The configuration may already name a replacement palace.
+        path = getattr(cached, "_identifier", None)
+        if not isinstance(path, str):
+            path = _config.palace_path
+        _close_client(cached, path)
+    _client_cache = None
+
+
 def _drop_session_client_for_system_reset(palace_path=None) -> None:
     """Close the session client before the shared Chroma System is dropped.
 
@@ -59,26 +74,17 @@ def _drop_session_client_for_system_reset(palace_path=None) -> None:
     if palace_path is not None:
         from ..backends.chroma import _same_palace
 
-        if _config is None or not _same_palace(palace_path, _config.palace_path):
+        cached_path = getattr(_client_cache, "_identifier", None)
+        if not isinstance(cached_path, str):
+            cached_path = _config.palace_path if _config is not None else None
+        if cached_path is None or not _same_palace(palace_path, cached_path):
             return
-    cached = _client_cache
-    _client_cache = None
+    _close_session_client()
     _collection_cache = None
     _collection_cache_backend = None
     _collection_cache_palace = None
     _collection_open_error = None
     _invalidate_overview_caches()
-    if cached is None:
-        return
-    try:
-        from ..backends.chroma import _close_client
-
-        _close_client(cached, _config.palace_path)
-    except Exception:
-        logger.debug(
-            "Failed to close session Chroma client before system reset",
-            exc_info=True,
-        )
 
 
 register_before_system_cache_reset(_drop_session_client_for_system_reset)
@@ -135,7 +141,7 @@ def _get_client():
     # both stored and current values are 0 on the first call after deletion,
     # making inode_changed and mtime_changed both False.
     if not os.path.isfile(db_path) and _collection_cache is not None:
-        _client_cache = None
+        _close_session_client()
         _collection_cache = None
         _collection_cache_backend = None
         _collection_cache_palace = None
@@ -432,7 +438,7 @@ def _get_collection(create=False):
                 "details": str(exc),
                 "hint": "Select the matching backend or use a fresh palace directory.",
             }
-            _client_cache = None
+            _close_session_client()
             _collection_cache = None
             _collection_cache_backend = None
             _collection_cache_palace = None
@@ -444,7 +450,7 @@ def _get_collection(create=False):
             # Deterministic config error: retrying cannot help, and the
             # generic "Backend open failed" would hide the fix.
             _collection_open_error = _unknown_embedding_model_error(exc)
-            _client_cache = None
+            _close_session_client()
             _collection_cache = None
             _collection_cache_backend = None
             _collection_cache_palace = None
@@ -487,7 +493,7 @@ def _get_collection(create=False):
                 # to rebuild the chromadb client from scratch, reopening
                 # the collection cleanly and healing the common
                 # stale-handle case.
-                _client_cache = None
+                _close_session_client()
                 _collection_cache = None
                 _collection_cache_backend = None
                 _collection_cache_palace = None
@@ -499,7 +505,7 @@ def _get_collection(create=False):
                     "details": "Could not open the Chroma collection.",
                     "hint": "Run: mempalace repair-status for diagnostics.",
                 }
-    _client_cache = None
+    _close_session_client()
     _collection_cache = None
     _collection_cache_backend = None
     _collection_cache_palace = None

@@ -122,6 +122,10 @@ def exercise(index):
                 assert client._identifier == path
                 assert client.get_settings().persist_directory == path
                 assert col.query(query_embeddings=[[1., 0.]], n_results=1).ids == [['a']]
+                if rng.randrange(10) == 0:
+                    lost = ChromaBackend.make_client(path)
+                    lost = None
+                    chroma._clear_chroma_system_cache(palace_path=path)
                 if rng.randrange(2):
                     backend.close_palace(path)
             operations[index] += 1
@@ -178,3 +182,144 @@ def test_reopen_preserves_other_palace_live_system(tmp_path):
         assert other.get(ids=["a"]).documents == ["quartz"]
     finally:
         backend.close()
+
+
+def test_dropped_client_does_not_hide_peer_vector_writes(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+import subprocess
+backend = ChromaBackend()
+path = paths[0]
+col = backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+col.query(query_embeddings=[[0., 1.]], n_results=1)
+lost = ChromaBackend.make_client(path)
+lost = None
+writer = '''
+import sys
+from mempalace.backends.chroma import ChromaBackend
+backend = ChromaBackend()
+col = backend.get_collection(sys.argv[1], 'mempalace_drawers')
+col.add(ids=['peer'], documents=['new peer drawer'], embeddings=[[0., 1.]], metadatas=[{'wing': 'public'}])
+backend.close()
+'''
+subprocess.run([sys.executable, '-c', writer, path], check=True, capture_output=True, timeout=20)
+stamp = time.time() + 5
+os.utime(os.path.join(path, 'chroma.sqlite3'), (stamp, stamp))
+fresh = backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+assert fresh.count() == 2
+assert fresh.query(query_embeddings=[[0., 1.]], n_results=1).ids == [['peer']]
+backend.close()
+check_released()
+""",
+    )
+
+
+def test_dropped_client_does_not_break_in_place_repair(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+from mempalace import repair
+path = paths[0]
+lost = ChromaBackend.make_client(path)
+lost = None
+repair.rebuild_from_sqlite(path, path, archive_existing_dest=True)
+backend = ChromaBackend()
+col = backend.get_collection(path, 'mempalace_drawers')
+assert Path(path, 'chroma.sqlite3').is_file()
+assert col.get().ids == ['a']
+backend.close()
+""",
+    )
+
+
+def test_session_closes_dropped_client_across_external_rebuild(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+import json
+import subprocess
+from mempalace import mcp_server
+from mempalace.backends import embedding_wrapper
+from mempalace.config import MempalaceConfig
+embedding_wrapper._embed_texts = lambda texts, **kw: [[1., 0.] for _ in texts]
+path = paths[0]
+config = root / 'config'
+config.mkdir()
+(config / 'config.json').write_text(json.dumps({'palace_path': path}))
+mcp_server._config = MempalaceConfig(config_dir=str(config))
+assert mcp_server._get_collection().count() == 1
+old_client = mcp_server._client_cache
+lost = ChromaBackend.make_client(path)
+lost = None
+os.rename(path, path + '.old')
+mcp_server._get_client()
+assert old_client._closed
+writer = '''
+import sys
+from mempalace.backends.chroma import ChromaBackend
+backend = ChromaBackend()
+col = backend.get_collection(sys.argv[1], 'mempalace_drawers', create=True)
+col.add(ids=[f'new{i}' for i in range(5)], documents=['new drawer'] * 5, embeddings=[[1., 0.]] * 5, metadatas=[{'wing': 'public'}] * 5)
+backend.close()
+'''
+subprocess.run([sys.executable, '-c', writer, path], check=True, capture_output=True, timeout=20)
+assert mcp_server._get_collection().count() == 5
+assert set(mcp_server._get_collection().get().ids) == {f'new{i}' for i in range(5)}
+mcp_server._drop_session_client_for_system_reset()
+""",
+    )
+
+
+def test_close_under_foreign_lock_releases_all_owned_clients(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+backend = ChromaBackend()
+for path in paths[:2]:
+    backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+with _inproc_sqlite.palace_db_lock(os.path.join(paths[0], 'chroma.sqlite3')):
+    backend.close()
+with chroma._CLIENT_REGISTRY_LOCK:
+    worker = chroma._pending_close_worker
+if worker is not None:
+    worker.join(10)
+    assert not worker.is_alive(), 'deferred close deadlock'
+assert not chroma._PENDING_CLIENT_CLOSES
+check_released()
+""",
+    )
+
+
+def test_reset_drains_deferred_owner_before_replacing_system(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+backend = ChromaBackend()
+for path in paths[:2]:
+    backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+other = paths[1]
+def close_under_foreign_lock():
+    try:
+        with _inproc_sqlite.palace_db_lock(os.path.join(paths[0], 'chroma.sqlite3')):
+            backend.close()
+    except BaseException as error:
+        errors.append(repr(error))
+with _inproc_sqlite.palace_db_lock(os.path.join(other, 'chroma.sqlite3')):
+    thread = threading.Thread(target=close_under_foreign_lock, daemon=True)
+    thread.start()
+    check_finished([thread])
+    assert chroma._PENDING_CLIENT_CLOSES
+    chroma._clear_chroma_system_cache(palace_path=other)
+    fresh_backend = ChromaBackend()
+    fresh = fresh_backend.get_collection(palace=PalaceRef(id=other, local_path=other), collection_name='mempalace_drawers', options=options)
+with chroma._CLIENT_REGISTRY_LOCK:
+    worker = chroma._pending_close_worker
+if worker is not None:
+    worker.join(10)
+    assert not worker.is_alive()
+assert fresh.query(query_embeddings=[[1., 0.]], n_results=1).ids == [['a']]
+fresh_backend.close()
+check_released()
+""",
+    )
