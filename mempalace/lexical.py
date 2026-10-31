@@ -105,13 +105,18 @@ def lexical_query_terms(
                 start = True
             part = match.group(1) or match.group(2) or match.group()
             quoted = match.group(1) is not None or match.group(2) is not None
-            words = TOKEN_RE.findall(part.lower()) if trigram else normalize(part)
+            words = TOKEN_RE.findall(part.lower()) if trigram and not quoted else normalize(part)
             remaining = 256 - seen_tokens
             if remaining <= 0:
                 break
             seen_tokens += len(words)
             words = words[:remaining]
             token_count += sum(word not in ignored for word in words)
+            if quoted and not any(
+                len(word) >= min_length and word not in ignored for word in words
+            ):
+                start, last_end = False, match.end()
+                continue
             literal = (
                 quoted
                 or any(c in part for c in "_/.:")

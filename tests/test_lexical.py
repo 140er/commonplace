@@ -332,3 +332,25 @@ def test_long_literal_ranks_exact_token_above_a_prefix_sibling(tmp_path, monkeyp
     result = search_memories(query, str(tmp_path), wing="public", n_results=1, include_facts=False)
     assert result["results"][0]["drawer_id"] == "exact"
     assert result["results"][0]["matched_via"] == "bm25_backend"
+
+
+@pytest.mark.parametrize("span", ["  ", "--", "…", "🙂", " or ", "the and", "session summary"])
+@pytest.mark.parametrize("trigram", [False, True])
+def test_empty_and_stopword_only_quoted_spans_do_not_select_terms(span, trigram):
+    assert lexical_query_terms(f'"{span}"', trigram=trigram) == (
+        [],
+        "no_terms_after_stopwords",
+    )
+    terms, skip = lexical_query_terms(f'"{span}" ZXQ739251', trigram=trigram)
+    assert skip is None and terms == ["zxq739251"]
+
+
+def test_quotes_validate_index_words_without_changing_valid_phrase_semantics():
+    assert lexical_query_terms('foo" OR "bar')[0] == ["foo", "bar"]
+    assert lexical_query_terms('" aa bb "', min_length=3, trigram=True) == (
+        [],
+        "no_terms_after_stopwords",
+    )
+    assert lexical_query_terms('"a copper and lantern"', min_length=3, trigram=True)[0] == [
+        "a copper and lantern"
+    ]
