@@ -26,7 +26,7 @@ from .thread_store import (
     canonical_sha256,
     chunk_messages,
 )
-from .thread_store_v2_schema import APPLICATION_ID, FILENAME, SCHEMA, USER_VERSION
+from .thread_store_v2_schema import APPLICATION_ID, BLOCK_TRIGGERS, FILENAME, SCHEMA, USER_VERSION
 
 _BLOCK_COLUMNS = (
     "thread_id, idx, first_line, n_lines, first_seq, last_seq, text_dict, ztext, raw_dict, zraw"
@@ -103,6 +103,9 @@ class ThreadStoreV2(V1ThreadStore):
                     if sqlite3.complete_statement(statement):
                         self._conn.execute(statement)
                         statement = ""
+            for name, sql in BLOCK_TRIGGERS.items():
+                self._conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+                self._conn.execute(sql)
             self._fts_enabled = self._create_fts()
             if self._fts_enabled:
                 indexed = self._conn.execute("SELECT indexed_chunks FROM index_meta").fetchone()[0]
@@ -149,6 +152,11 @@ class ThreadStoreV2(V1ThreadStore):
                 "INSERT INTO chunk_fts(rowid, text) VALUES (?, ?)",
                 (row["rowid"], _index_text(self._chunk_text(row, cache), version)),
             )
+            # Chunks advance through contiguous message ranges. Only the last
+            # block can overlap the next chunk; release all earlier frames.
+            if cache:
+                key = max(cache)
+                cache = {key: cache[key]}
         self._conn.execute(
             "UPDATE index_meta SET index_version=?, indexed_chunks=?", (version, len(rows))
         )

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -792,7 +793,7 @@ def test_migration_reads_back_thread_metadata_rows(tmp_path):
 def test_reindex_releases_previous_thread_cache(store, monkeypatch):
     from collections import Counter
 
-    items = simple(["needle " * 10000, "second " * 10000])
+    items = simple(["needle " * 10000, "second " * 10000, "third " * 10000])
     # Interleave append-time chunks so rowid order cannot bound the cache.
     threads = [store.store("workspace", str(index), items[:1], actor="actor") for index in range(3)]
     for thread in reversed(threads):
@@ -803,6 +804,7 @@ def test_reindex_releases_previous_thread_cache(store, monkeypatch):
     visited = []
 
     def chunk(row, cache):
+        assert len(cache) <= 1
         assert all(key[0] == row["thread_id"] for key in cache)
         visited.append((row["thread_id"], row["idx"]))
         return original_chunk(row, cache)
@@ -846,11 +848,19 @@ def test_shared_cache_text_then_raw_decodes_each_frame_once(store, monkeypatch):
 
 @pytest.mark.parametrize("recursive", [False, True])
 @pytest.mark.parametrize(
-    "assignment", ["idx=0", "thread_id='other'", "first_line=99", "first_seq=99"]
+    "assignment",
+    [
+        "idx=0",
+        "thread_id='other'",
+        "first_line=99",
+        "first_seq=99",
+        "rowid=(SELECT rowid FROM block WHERE idx=0)",
+        "rowid=99",
+    ],
 )
 def test_replace_cannot_change_last_block_identity(store, tmp_path, recursive, assignment):
     thread = store.store("workspace", "source", simple(["first " * 20000, "second"]), actor="actor")
-    with sqlite3.connect(tmp_path / FILENAME) as conn:
+    with closing(sqlite3.connect(tmp_path / FILENAME)) as conn:
         conn.execute(f"PRAGMA recursive_triggers={int(recursive)}")
         before = conn.execute("SELECT * FROM block ORDER BY thread_id, idx").fetchall()
         assert len(before) == 2
@@ -859,10 +869,60 @@ def test_replace_cannot_change_last_block_identity(store, tmp_path, recursive, a
                 f"UPDATE OR REPLACE block SET {assignment} WHERE thread_id=? AND idx=1",
                 (thread.id,),
             )
-        with pytest.raises(sqlite3.IntegrityError, match="last"):
-            conn.execute(
-                "INSERT OR REPLACE INTO block VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                before[0],
-            )
         assert conn.execute("SELECT * FROM block ORDER BY thread_id, idx").fetchall() == before
     assert store.messages(thread.id) == simple(["first " * 20000, "second"])
+
+
+@pytest.mark.parametrize("recursive", [False, True])
+@pytest.mark.parametrize("replacement", ["sealed_key", "sealed_rowid", "first_line", "first_seq"])
+def test_insert_replace_cannot_change_block_identity(store, tmp_path, recursive, replacement):
+    items = simple(["first " * 20000, "second"])
+    thread = store.store("workspace", "source", items, actor="actor")
+    with closing(sqlite3.connect(tmp_path / FILENAME)) as conn:
+        conn.execute(f"PRAGMA recursive_triggers={int(recursive)}")
+        conn.row_factory = sqlite3.Row
+        before = conn.execute("SELECT rowid, * FROM block ORDER BY idx").fetchall()
+        values = dict(before[0] if replacement == "sealed_key" else before[-1])
+        if replacement == "sealed_rowid":
+            values["rowid"] = before[0]["rowid"]
+        else:
+            # No explicit rowid: exercise the logical-key conflict path too.
+            del values["rowid"]
+            if replacement in {"first_line", "first_seq"}:
+                values[replacement] += 1
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+        with pytest.raises(sqlite3.IntegrityError, match="last"):
+            conn.execute(
+                f"INSERT OR REPLACE INTO block ({columns}) VALUES ({placeholders})",
+                tuple(values.values()),
+            )
+        assert conn.execute("SELECT rowid, * FROM block ORDER BY idx").fetchall() == before
+    assert store.messages(thread.id) == items
+
+
+def test_reopen_refreshes_legacy_block_triggers(tmp_path):
+    from commonplace.handoff.thread_store_v2_schema import BLOCK_TRIGGERS
+
+    path = tmp_path / FILENAME
+    items = simple(["first " * 20000, "second"])
+    with closing(ThreadStoreV2(str(path))) as value:
+        thread = value.store("workspace", "source", items, actor="actor")
+        before = value._conn.execute("SELECT rowid, * FROM block ORDER BY idx").fetchall()
+        for name in BLOCK_TRIGGERS:
+            value._conn.execute(f"DROP TRIGGER {name}")
+            value._conn.execute(f"CREATE TRIGGER {name} BEFORE UPDATE ON block BEGIN SELECT 1; END")
+    for _ in range(2):
+        with closing(ThreadStoreV2(str(path))) as value:
+            assert (
+                value._conn.execute("SELECT rowid, * FROM block ORDER BY idx").fetchall() == before
+            )
+            assert value.messages(thread.id) == items
+            for name, sql in BLOCK_TRIGGERS.items():
+                actual = value._conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)
+                ).fetchone()[0]
+                assert actual.strip().rstrip(";") == sql.strip().rstrip(";")
+            value._conn.execute("PRAGMA recursive_triggers=OFF")
+            with pytest.raises(sqlite3.IntegrityError, match="last"):
+                value._conn.execute("UPDATE OR REPLACE block SET rowid=1 WHERE idx=1")
