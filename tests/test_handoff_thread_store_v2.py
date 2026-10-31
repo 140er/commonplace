@@ -97,6 +97,20 @@ def test_parser_is_the_oracle(store, fmt, text):
     assert store._conn.execute("SELECT count(*) FROM line").fetchone()[0] < len(expected)
 
 
+@pytest.mark.parametrize("end", [2, None])
+def test_message_range_uses_index_bounds(store, end):
+    items = simple([f"turn {i}" for i in range(10)])
+    thread = store.store("workspace", "source", items, actor="actor")
+    statements = []
+    store._conn.set_trace_callback(statements.append)
+    assert store.messages(thread.id, 1, end) == items[1 : end + 1 if end is not None else None]
+    store._conn.set_trace_callback(None)
+    query = next(sql for sql in statements if sql.startswith("SELECT m.*"))
+    plan = " ".join(row[3] for row in store._conn.execute("EXPLAIN QUERY PLAN " + query))
+    assert "thread_id=? AND seq>?" in plan
+    assert ("seq<?" in plan) == (end is not None)
+
+
 def test_reopen_and_identity(tmp_path):
     path = tmp_path / FILENAME
     items = parse(transcript("messages", "needle\x00surrogate\ud800"))
