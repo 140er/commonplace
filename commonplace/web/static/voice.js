@@ -2,7 +2,7 @@ import { escape as e } from "./api.js";
 
 const languages = ["en", "nl"], storageKey = "commonplace-voice-language";
 const inputs = 'form[data-form="space-message"] textarea[data-draft], form[data-form="comment"] input[data-draft], form[data-form="reply"] input[data-draft]';
-const mic = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8"/></svg>';
+const block = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M9 2h6v10H9z"/><path d="M5 9h2.5v4.5h9V9H19v7h-5.75v3H16v3H8v-3h2.75v-3H5z"/></svg>';
 
 export function languagePicker(storage) {
   let language = "en";
@@ -64,7 +64,7 @@ export function voiceInput(root, api, failed, browser = window) {
       control.dataset.state = phase;
       control.setAttribute("aria-busy", String(busy));
       const focused = control.contains?.(browser.document.activeElement) ? { ...browser.document.activeElement.dataset } : null;
-      control.innerHTML = `<button type="button" data-voice="mic" aria-label="${e(label)}" aria-pressed="${phase === "recording"}" ${busy || (!job && jobs.size) ? "disabled" : ""}>${phase === "recording" ? '<span class="voice-stop" aria-hidden="true"></span>' : busy ? '<span class="status-dot checks" aria-hidden="true"></span>' : mic}</button><button type="button" data-voice="language" aria-label="Voice language" aria-haspopup="menu" aria-expanded="${menu === identity(input)}" ${jobs.size ? "disabled" : ""}>${e(picker.get().toUpperCase())}</button>${menu === identity(input) ? `<div class="voice-menu" role="menu" aria-label="Voice language">${languages.map((lang) => `<button type="button" data-voice="choose" data-language="${e(lang)}" role="menuitemradio" aria-checked="${picker.get() === lang}">${e(lang.toUpperCase())}</button>`).join("")}</div>` : ""}`;
+      control.innerHTML = `<button type="button" data-voice="mic" aria-label="${e(label)}" aria-pressed="${phase === "recording"}" ${busy || (!job && jobs.size) ? "disabled" : ""}>${phase === "recording" ? '<span class="voice-stop" aria-hidden="true"></span>' : busy ? '<span class="status-dot checks" aria-hidden="true"></span>' : block}</button><button type="button" data-voice="language" aria-label="Voice language" aria-haspopup="menu" aria-expanded="${menu === identity(input)}" ${jobs.size ? "disabled" : ""}>${e(picker.get().toUpperCase())}</button>${menu === identity(input) ? `<div class="voice-menu" role="menu" aria-label="Voice language">${languages.map((lang) => `<button type="button" data-voice="choose" data-language="${e(lang)}" role="menuitemradio" aria-checked="${picker.get() === lang}">${e(lang.toUpperCase())}</button>`).join("")}</div>` : ""}`;
       if (focused) control.querySelector(`[data-voice="${e(focused.voice)}"]${focused.language ? `[data-language="${e(focused.language)}"]` : ""}`)?.focus({ preventScroll: true });
       const caret = carets.get(identity(input));
       if (caret && job && browser.document.activeElement !== input) input.setSelectionRange(...caret);
