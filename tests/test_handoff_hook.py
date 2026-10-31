@@ -709,6 +709,15 @@ def test_invalid_client_config(local, api, monkeypatch, capsys, raw):
 )
 def test_launch_failure_does_not_stop_or_retry(local, api, monkeypatch, capsys, argv):
     configure_successor(local, argv=argv)
+    start = hook.subprocess.Popen
+
+    def exited_child(*args, **kwargs):
+        child = start(*args, **kwargs)
+        # Observe a completed failure, independent of interpreter startup time.
+        child.wait(timeout=10)
+        return child
+
+    monkeypatch.setattr(hook.subprocess, "Popen", exited_child)
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
     assert err

@@ -420,6 +420,10 @@ The launched process inherits the environment and receives
 back to this one. The server's `command` launcher also supplies
 `COMMONPLACE_THREAD_ID` with the stored thread ID.
 
+The local hook observes the successor for 50 ms and reports a nonzero exit
+seen during that window. A process still running then is registered as
+launched; this startup observation does not guarantee continued liveness.
+
 Gateway `command` and `webhook` launchers are disabled by default. An operator
 can enable either kind with `COMMONPLACE_HANDOFF_LAUNCHERS=command`,
 `COMMONPLACE_HANDOFF_LAUNCHERS=webhook`, or both:
