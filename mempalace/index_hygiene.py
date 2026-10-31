@@ -27,6 +27,7 @@ _RUN = re.compile(
 _CANDIDATE_RUN = re.compile(rf"(?<!{BASE64_BOUNDARY_CLASS}){BASE64_BOUNDARY_CLASS}{{200,}}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
+_MAX_FORMAT_LOOK_PAST = 32
 
 # Public index-only format. ``binary`` is a classification, not a MIME type.
 PLACEHOLDER_FORMAT = "[base64 {media_type} {decoded_bytes} B]"
@@ -69,12 +70,16 @@ def continues_run(char: str) -> bool:
 
 
 def run_touches_word(text: str, start: int, end: int) -> bool:
-    """Look past invisible format characters to the nearest visible neighbours."""
+    """Look past at most 32 formats per edge; longer stretches preserve the run."""
     i = start - 1
     while i >= 0 and _invisible_format(text[i]):
+        if start - 1 - i >= _MAX_FORMAT_LOOK_PAST:
+            return True
         i -= 1
     j = end
     while j < len(text) and _invisible_format(text[j]):
+        if j - end >= _MAX_FORMAT_LOOK_PAST:
+            return True
         j += 1
     return (i >= 0 and continues_run(text[i])) or (
         j < len(text) and (continues_run(text[j]) or text[j] == "=")
@@ -120,9 +125,10 @@ def find_base64_spans(text: str) -> list[Base64Span]:
     for unpadded URL-safe runs. Whitespace/wrapped payloads are separate runs.
     Media labels come from decoded headers, never a data URI's claim.
     A run touching a Unicode letter, number, mark or connector punctuation is
-    retained as part of a word. Edges look past format characters except ZWSP
-    to the nearest visible character or text boundary. Everything outside those
-    word categories and the base64 alphabet delimits. Text is never normalized.
+    retained as part of a word. Each edge looks past at most 32 format characters
+    except ZWSP to the nearest visible character or text boundary; longer
+    stretches keep the run literal. Everything outside those word categories
+    and the base64 alphabet delimits. Text is never normalized.
     Wrapped 64/76-column payloads are deliberately left in. High-entropy
     alphabetic/base32 identifiers and words glued to a run may satisfy this
     same encoding rule; corpus recall/token gates remain necessary.
