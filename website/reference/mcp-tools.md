@@ -60,19 +60,30 @@ Full wing → room → drawer count tree.
 
 ### `mempalace_search`
 
-Semantic search. Returns verbatim drawer content with similarity scores.
+Hybrid drawer search with matching facts first. Facts have a separate list;
+drawer content, ranking and limits remain unchanged.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | **Yes** | What to search for |
 | `limit` | integer | No | Max results (default: 5) |
+| `include_facts` | boolean | No | Include ranked facts (default: `true`); `false` skips the fact lookup |
 | `wing` | string | No | Filter by wing |
 | `room` | string | No | Filter by room |
 | `since` | string | No | Include drawers filed on or after this ISO date/datetime |
 | `before` | string | No | Include drawers filed strictly before this ISO date/datetime |
 | `max_distance` | number | No | Distance cutoff on the cosine scale (0 = identical, 2 = opposite), applied the same way whatever metric the palace uses. Default: no cutoff |
 
-**Returns:** `{ query, filters, results: [{ text, wing, room, source_file, similarity }] }`
+**Returns:** `{ facts: [...], query, filters, results: [{ text, wing, room, source_file, similarity }], facts_error? }`
+
+Each fact carries `subject`, `predicate`, `object`, `score`, `current`,
+`fact_status`, `approval_status`, `approved_by`, `approval_link`, `origin_kind`,
+`origin_id`, `origin_link`, `superseded_by`, and its verbatim source pointers:
+`source_link`, thread/range fields, `source_drawer_id`, and `sources`.
+Relevance weights rare whole words and ignores filler; status and observation
+age affect ranking. Facts use the caller's KG permissions and wing/sensitivity
+scope. A fact-side failure returns `facts: []` and
+`facts_error: "unavailable"` while preserving drawer results.
 
 When `max_distance` drops results, the response says how many in
 `filtered_by_max_distance`. With `candidate_strategy: "union"`, a lexical-only
@@ -305,17 +316,29 @@ Before the overwrite, the replaced text and metadata are appended verbatim to `d
 
 ### `mempalace_kg_query`
 
-Query entity relationships with time filtering.
+Query entity relationships with time filtering, or rank whole-word fact matches.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `entity` | string | **Yes** | Entity to query (e.g. "Max", "MyProject") |
+| `entity` | string | **Yes** | Entity to query, or free search text when `search` is `true` |
+| `search` | boolean | No | Use fact-first lexical/status/decay ranking (default: `false`) |
+| `limit` | integer | No | Result limit in search mode only (default: 5, max: 100) |
 | `as_of` | string | No | Date filter — only facts valid at this date (YYYY-MM-DD) |
 | `direction` | string | No | `outgoing`, `incoming`, or `both` (default: `both`) |
 | `wings` | string[] | No | Only facts in these wings (facts with no wing match none) |
 | `sensitivities` | string[] | No | Only facts of these sensitivities |
 
 **Returns:** `{ entity, as_of, facts: [{ direction, subject, predicate, object, valid_from, valid_to, current }], count }`
+
+With `search: true`, returns `{ facts: [...], facts_error? }`. Facts have the
+same scoring, authority and source fields as `mempalace_search`, and the same KG
+wing/sensitivity filters apply. `as_of` restricts matches to facts valid at that
+instant. Invalid filters, including a malformed `as_of`, return the normal
+`{ error }` tool result. For example:
+
+```json
+{"entity": "Project deploy port", "search": true, "limit": 5, "wings": ["projects"]}
+```
 
 ---
 
