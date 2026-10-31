@@ -212,7 +212,13 @@ def test_search_scopes_each_thread_and_globally_orders_and_limits():
         (
             principal,
             "mempalace_search",
-            {"query": "raw?\nquery", "wing": MIRROR_WING, "room": room, "limit": 8},
+            {
+                "query": "raw?\nquery",
+                "wing": MIRROR_WING,
+                "room": room,
+                "limit": 8,
+                "include_facts": False,
+            },
         )
         for room in ("thr_first", "thr_other")
     ]

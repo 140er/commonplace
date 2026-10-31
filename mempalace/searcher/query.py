@@ -186,7 +186,7 @@ def _pool_left_results_short(
     )
 
 
-def search_memories(
+def _search_drawer_memories(
     query: str,
     palace_path: str,
     wing: str = None,
@@ -497,7 +497,7 @@ def search_memories(
         hits, n_results, candidates_fetched, pool_size, bookkeeping_dropped
     ):
         if _pool_scale < _MAX_POOL_SCALE and pool_size < _MAX_FOLD_POOL:
-            return search_memories(
+            return _search_drawer_memories(
                 query,
                 palace_path,
                 wing=wing,
@@ -515,6 +515,47 @@ def search_memories(
             )
         envelope["distinct_results_truncated"] = True
     return envelope
+
+
+_DRAWER_SEARCH_SIGNATURE = inspect.signature(_search_drawer_memories)
+
+
+def search_memories(
+    query: str, palace_path: str, *args, include_facts: bool = True, **kwargs
+) -> dict:
+    """Search facts and drawers independently; drawer defaults come from one place.
+
+    Drawer parameters pass through untouched to ``_search_drawer_memories``.
+    ``include_facts=False`` skips the optional fact path entirely.
+    """
+    result = _search_drawer_memories(query, palace_path, *args, **kwargs)
+    if result.get("error"):
+        return result
+    fact_result = {"facts": []}
+    if include_facts:
+        try:
+            from .facts import palace_facts
+
+            bound = _DRAWER_SEARCH_SIGNATURE.bind(query, palace_path, *args, **kwargs)
+            bound.apply_defaults()
+            fact_result = palace_facts(
+                query, palace_path, wing=bound.arguments["wing"], limit=bound.arguments["n_results"]
+            )
+        except Exception:
+            logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
+            fact_result = {"facts": [], "facts_error": "unavailable"}
+    return {**fact_result, **result}
+
+
+# Keep introspection accurate without copying drawer parameters or defaults.
+search_memories.__signature__ = _DRAWER_SEARCH_SIGNATURE.replace(
+    parameters=[
+        *_DRAWER_SEARCH_SIGNATURE.parameters.values(),
+        inspect.Parameter(
+            "include_facts", inspect.Parameter.KEYWORD_ONLY, default=True, annotation=bool
+        ),
+    ]
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

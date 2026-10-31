@@ -6,7 +6,7 @@ import mimetypes
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from commonplace import events, sessions
+from commonplace import events, plans, sessions
 from commonplace.http_util import query, require_principal, send_json
 
 STATIC = Path(__file__).parent / "static"
@@ -101,6 +101,39 @@ def install(gateway):
                 },
             )
 
+    def plan(h):
+        principal = require_principal(gateway, h)
+        if principal is None:
+            return
+        if not plans.enabled():
+            send_json(h, 200, {"enabled": False})
+            return
+        account = plans.workspace_account(gateway.db, principal.workspace_id)
+        current = plans.get_plan(gateway.db, account) if account else None
+        used = (
+            gateway.storage_meter.used(
+                principal.workspace_id, gateway.workspace_dir(principal.workspace_id)
+            )
+            if account
+            else 0
+        )
+        send_json(
+            h,
+            200,
+            {
+                "enabled": True,
+                "plan": current.name if current else None,
+                "storage": {"used": used, "limit": current.storage_bytes if current else None},
+                "transcription": {
+                    "used_today": plans.transcription_used(gateway.db, account) if account else 0,
+                    "limit": current.transcription_seconds if current else None,
+                },
+                "sync": {
+                    "interval_seconds": plans.sync_interval(gateway.db, account) if account else 0
+                },
+            },
+        )
+
     def feed(h):
         principal = require_principal(gateway, h)
         if principal is None:
@@ -150,6 +183,7 @@ def install(gateway):
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)
     gateway.add_route("GET", "/api/me", me)
+    gateway.add_route("GET", "/api/plan", plan)
     gateway.add_route("GET", "/api/events", feed)
     gateway.add_route("GET", "/api/connections", connections)
     gateway.add_prefix_route("GET", "/app/", _static)

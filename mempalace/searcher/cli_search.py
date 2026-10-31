@@ -12,6 +12,7 @@ def _print_search_results_bm25_only(
     stop_words: frozenset = frozenset(),
     since_dt=None,
     before_dt=None,
+    facts=(),
 ) -> None:
     """CLI fallback printer for when HNSW divergence fences off vector search.
 
@@ -41,6 +42,9 @@ def _print_search_results_bm25_only(
         before_dt=before_dt,
     )
     hits = result.get("results", [])
+    from ..fact_render import format_facts
+
+    print(format_facts(facts), end="")
 
     print(
         "\n  NOTICE: vector search disabled — HNSW index has diverged from SQLite.\n"
@@ -225,6 +229,30 @@ def _cli_ranked_hits(
     return _fold_copies_across_sources(hits, _cli_hit_source, _cli_hit_ref), fetched, skipped
 
 
+def _cli_fact_matches(query, palace_path, wing, n_results):
+    """Optional facts can report a generic failure but never stop CLI drawers."""
+    try:
+        from .facts import palace_facts
+
+        result = palace_facts(query, palace_path, wing=wing, limit=n_results)
+        if result.get("facts_error"):
+            print("  facts_error: unavailable")
+        return result["facts"]
+    except Exception:
+        logger.warning("Fact search unavailable; preserving CLI drawers", exc_info=True)
+        print("  facts_error: unavailable")
+        return []
+
+
+def _print_cli_match(hit, metric):
+    bm25 = hit.get("bm25_score", 0.0)
+    if hit["distance"] is None:
+        print(f"      Match:  bm25={bm25}  (lexical candidate)")
+    else:
+        vec_sim = round(_distance_to_similarity(hit["distance"], metric), 3)
+        print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
+
+
 def search(
     query: str,
     palace_path: str,
@@ -237,6 +265,7 @@ def search(
     include_media: bool = False,
     query_task: str = "search",
     candidate_strategy: str = "union",
+    facts=None,
 ):
     """
     Search the palace. Returns verbatim drawer content.
@@ -267,6 +296,9 @@ def search(
             else:
                 print(result["error"])
             raise SearchError(result["error"])
+        from ..fact_render import format_facts
+
+        print(format_facts(result.get("facts", [])), end="")
         for index, hit in enumerate(result["results"], 1):
             kind = hit.get("media_type") or "text/code"
             print(f"{index}. [{kind}] {hit['source_file']}  similarity={hit['similarity']:.3f}")
@@ -294,6 +326,10 @@ def search(
         print(f"\n  {e}")
         raise SearchError(str(e)) from e
     date_window_active = since_dt is not None or before_dt is not None
+    from ..fact_render import format_facts
+
+    if facts is None:
+        facts = _cli_fact_matches(query, palace_path, wing, n_results)
 
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call
@@ -321,6 +357,7 @@ def search(
                 stop_words=stop_words,
                 since_dt=since_dt,
                 before_dt=before_dt,
+                facts=facts,
             )
 
         col = _open_collection_or_explain(palace_path, opener=get_collection, read_only=True)
@@ -363,6 +400,7 @@ def search(
             break
         fetch = min(fetch * 4, _MAX_FOLD_POOL)
     hits = hits[:n_results]
+    print(format_facts(facts), end="")
     if not hits:
         print(f'\n  No results found for: "{query}"')
         return None
@@ -380,12 +418,6 @@ def search(
     print(f"{'=' * 60}\n")
 
     for i, hit in enumerate(hits, 1):
-        vec_sim = (
-            round(_distance_to_similarity(hit["distance"], metric), 3)
-            if hit["distance"] is not None
-            else None
-        )
-        bm25 = hit.get("bm25_score", 0.0)
         meta = hit["metadata"]
         source = Path(meta.get("source_file", "?")).name
         wing_name = meta.get("wing", "?")
@@ -394,10 +426,7 @@ def search(
         print(f"  [{i}] {wing_name} / {room_name}")
         print(f"      Source: {source}")
         _print_also_in(hit)
-        if vec_sim is None:
-            print(f"      Match:  bm25={bm25}  (lexical candidate)")
-        else:
-            print(f"      Match:  {metric}_sim={vec_sim}  bm25={bm25}")
+        _print_cli_match(hit, metric)
         print()
         # Print the verbatim text, indented
         for line in hit["text"].strip().split("\n"):

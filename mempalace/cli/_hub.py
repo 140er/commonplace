@@ -74,6 +74,10 @@ def _print_hub_search_result(args, result: dict) -> bool:
     if not isinstance(hits, list):
         return False
 
+    from ..fact_render import format_facts
+
+    print(format_facts(result.get("facts", [])), end="")
+
     if result.get("vector_disabled") or result.get("fallback") == "bm25_only_via_sqlite":
         print(
             "\n  NOTICE: vector search disabled — showing BM25-only results.\n"

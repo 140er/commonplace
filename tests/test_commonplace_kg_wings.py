@@ -1,5 +1,7 @@
 """The gateway limits facts to the wings and sensitivities a token may read."""
 
+import pytest
+
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
 SCOPED = dict(
@@ -171,6 +173,48 @@ def test_stats_still_need_every_wing(hub):
     token = hub.token("scoped", **SCOPED)
     response = hub.rpc(token, "tools/call", {"name": "mempalace_kg_stats", "arguments": {}})
     assert "error" in response
+
+
+@pytest.mark.parametrize(
+    "name, args",
+    [
+        ("mempalace_kg_query", {"entity": "api"}),
+        ("mempalace_kg_timeline", {"entity": "api"}),
+        ("mempalace_kg_timeline", {}),
+    ],
+)
+def test_scoped_reads_list_fact_wings_without_calling_stats(hub, monkeypatch, name, args):
+    from mempalace.knowledge_graph import KnowledgeGraph
+
+    _seed(hub)
+    token = hub.token("scoped", **SCOPED)
+    calls = []
+    original = hub.gateway.mediator.workers.call_tool
+
+    def worker_call(principal, name, arguments):
+        calls.append(name)
+        assert name != "mempalace_kg_stats"
+        return original(principal, name, arguments)
+
+    def forbidden_stats(self):
+        pytest.fail("a scoped read must not calculate graph statistics")
+
+    monkeypatch.setattr(hub.gateway.mediator.workers, "call_tool", worker_call)
+    monkeypatch.setattr(KnowledgeGraph, "stats", forbidden_stats)
+    result, text = hub.call(token, name, **args)
+    assert result is not None, text
+    facts = result["facts"] if name == "mempalace_kg_query" else result["timeline"]
+    assert [f["object"] for f in facts] == ["sqlite"]
+    assert calls.count("mempalace_kg_list_wings") == 1
+
+
+def test_fact_wing_list_does_not_expose_hidden_names_to_scoped_clients(hub):
+    owner = _seed(hub)
+    token = hub.token("scoped", **SCOPED)
+    denied = hub.rpc(token, "tools/call", {"name": "mempalace_kg_list_wings", "arguments": {}})
+    assert "error" in denied and "vault_x" not in str(denied)
+    result, _ = hub.call(owner, "mempalace_kg_list_wings")
+    assert result["wings"] == ["private", "shared", "vault_x"]
 
 
 def test_writes_cannot_find_or_change_a_hidden_fact(hub):

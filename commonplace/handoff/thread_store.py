@@ -103,7 +103,9 @@ def chunk_messages(messages: list, max_chars: int = CHUNK_MAX_CHARS) -> list[Chu
 def canonical_sha256(messages: list) -> str:
     """SHA-256 over the messages' (seq, role, kind, name, call_id, text, raw)."""
     canonical = [(m.seq, m.role, m.kind, m.name, m.call_id, m.text, m.raw) for m in messages]
-    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8", "surrogatepass"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -207,12 +209,23 @@ class ThreadStore:
                 if "no such module: fts5" not in str(error).lower():
                     raise
                 return False
+            # Old writers ignore user_version and can misalign FTS rowids after
+            # fallback writes. Repair identities on every open, retaining all
+            # aligned entries so migration does not rewrite a healthy index.
+            self._conn.execute(
+                """DELETE FROM chunks_fts WHERE rowid IN (
+                       SELECT f.rowid FROM chunks_fts f
+                       LEFT JOIN chunks c ON c.rowid=f.rowid
+                       WHERE c.thread_id IS NOT f.thread_id OR c.idx IS NOT f.idx
+                   )"""
+            )
+            if self._conn.execute("PRAGMA user_version").fetchone()[0] < 1:
+                self._conn.execute("PRAGMA user_version=1")
             # Also handles reopening with FTS5 after stores made without it.
             self._conn.execute(
-                """INSERT INTO chunks_fts(thread_id, idx, text)
-                   SELECT thread_id, idx, text FROM chunks
-                   WHERE (thread_id, idx) NOT IN
-                         (SELECT thread_id, idx FROM chunks_fts)"""
+                """INSERT INTO chunks_fts(rowid, thread_id, idx, text)
+                   SELECT rowid, thread_id, idx, text FROM chunks
+                   WHERE rowid NOT IN (SELECT rowid FROM chunks_fts)"""
             )
         return True
 
@@ -333,8 +346,9 @@ class ThreadStore:
             )
             if self._fts_enabled:
                 self._conn.executemany(
-                    "INSERT INTO chunks_fts(thread_id, idx, text) VALUES (?, ?, ?)",
-                    [(stored.id, c.index, c.text) for c in chunks],
+                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
+                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
+                    [(stored.id, c.index) for c in chunks],
                 )
             return stored
 
@@ -379,8 +393,9 @@ class ThreadStore:
             )
             if self._fts_enabled:
                 self._conn.executemany(
-                    "INSERT INTO chunks_fts(thread_id, idx, text) VALUES (?, ?, ?)",
-                    [(stored_id, stored.chunk_count + c.index, c.text) for c in chunks],
+                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
+                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
+                    [(stored_id, stored.chunk_count + c.index) for c in chunks],
                 )
             self._conn.execute(
                 "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
@@ -498,14 +513,50 @@ class ThreadStore:
         for offset in range(0, len(stored_ids), batch_size):
             ids = stored_ids[offset : offset + batch_size]
             placeholders = ",".join("?" for _ in ids)
+            chunk_count = self._conn.execute(
+                f"SELECT coalesce(sum(chunk_count), 0) FROM threads WHERE id IN ({placeholders})",
+                ids,
+            ).fetchone()[0]
+            if not chunk_count:
+                continue
+            # Stop counting at the scoped chunk count. A rare global match set
+            # is cheaper to join directly than materializing the entire scope.
+            match_count = self._conn.execute(
+                "SELECT count(*) FROM (SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT ?)",
+                (match, chunk_count),
+            ).fetchone()[0]
+            if match_count < chunk_count:
+                scope_sql = ""
+                rank_sql = (
+                    "FROM chunks_fts CROSS JOIN chunks AS s ON s.rowid=chunks_fts.rowid "
+                    f"WHERE chunks_fts MATCH ? AND s.thread_id IN ({placeholders}) "
+                    "ORDER BY bm25(chunks_fts), s.thread_id, s.idx LIMIT ?"
+                )
+                parameters = (match, *ids, limit)
+            else:
+                # Covering primary-key metadata avoids payload reads for common
+                # terms. AS MATERIALIZED requires SQLite 3.35+ and prevents the
+                # planner from moving chunk payload lookups ahead of LIMIT.
+                scope_sql = (
+                    "scope AS MATERIALIZED ("
+                    "SELECT rowid AS chunk_rowid, thread_id, idx FROM chunks "
+                    f"WHERE thread_id IN ({placeholders})), "
+                )
+                rank_sql = (
+                    "FROM chunks_fts JOIN scope ON scope.chunk_rowid=chunks_fts.rowid "
+                    "WHERE chunks_fts MATCH ? "
+                    "ORDER BY bm25(chunks_fts), scope.thread_id, scope.idx LIMIT ?"
+                )
+                parameters = (*ids, match, limit)
             rows.extend(
                 self._conn.execute(
-                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
-                    "-bm25(chunks_fts) AS score FROM chunks_fts "
-                    "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
-                    f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
-                    "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
-                    (match, *ids, limit),
+                    "WITH " + scope_sql + "ranked AS MATERIALIZED ("
+                    "SELECT chunks_fts.rowid AS chunk_rowid, -bm25(chunks_fts) AS score "
+                    + rank_sql
+                    + ") "
+                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, ranked.score "
+                    "FROM ranked JOIN chunks AS c ON c.rowid=ranked.chunk_rowid",
+                    parameters,
                 ).fetchall()
             )
         # BM25 scores use the same corpus for every id batch, so their
@@ -551,3 +602,11 @@ class ThreadStore:
         # Equal scores have the same stable ordering in every batch; each
         # batch's first `limit` rows suffice for the final first `limit`.
         return list(found.values())
+
+
+def __getattr__(name):
+    if name == "ThreadStoreV2":
+        from .thread_store_v2 import ThreadStoreV2
+
+        return ThreadStoreV2
+    raise AttributeError(name)

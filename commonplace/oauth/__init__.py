@@ -32,6 +32,8 @@ h1{margin:0 0 16px;font-size:24px;overflow-wrap:anywhere}p{margin:0 0 24px;overf
 form{display:flex;gap:6px;flex-wrap:wrap}button,input{font:inherit;border:0;border-radius:0;padding:12px}
 button{background:#202320;color:#e8e9e5;cursor:pointer}button[value=allow],button[type=submit]{background:#f7941d;color:#0b0c0b}
 input{background:#050605;color:#e8e9e5;min-width:0;flex:1}button:focus-visible,input:focus-visible{outline:2px solid #e8e9e5;outline-offset:3px}
+a.provider{display:block;padding:12px;background:#202320;color:inherit;text-decoration:none;margin-bottom:6px}
+a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9e5;outline-offset:3px}
 """
 
 
@@ -230,8 +232,13 @@ def _show_authorize(gateway, h, *, status=200):
         cookie = f"{_BROWSER_COOKIE}={browser}; Path=/oauth/authorize; HttpOnly; SameSite=Lax; Max-Age=600"
         if gateway.secure_cookies:
             cookie += "; Secure"
+        sign_in = getattr(gateway, "sign_in", None)
+        links = "".join(
+            f'<a class="provider" href="{escape(link, quote=True)}">Continue with {escape(name)}</a>'
+            for name, link in (sign_in.links(authorize_path) if sign_in else [])
+        )
         content = (
-            f'<form method="post" action="{action}">{hidden}'
+            links + f'<form method="post" action="{action}">{hidden}'
             '<input name="login_token" aria-label="Sign in token" type="password" required autocomplete="off">'
             '<button type="submit">Sign in</button></form>'
         )

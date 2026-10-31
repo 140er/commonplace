@@ -227,3 +227,21 @@ def test_replication_and_import_never_lower_sensitivity(tmp_path):
     assert counts["triples"]["present"] == 1
     with KnowledgeGraph(db_path=dst) as kg:
         assert _row(kg, kept)["sensitivity"] == "private"
+
+
+def test_fact_wing_list_is_one_covering_index_query(kg):
+    assert kg.list_wings() == []
+    kg.add_triple("a", "likes", "tea", wing="Projects")
+    kg.add_triple("a", "likes", "tea", wing="projects")
+    kg.add_triple("a", "likes", "coffee", wing="Projects")
+    kg.add_triple("a", "likes", "cocoa", wing="history", valid_to="2020-01-01")
+    kg.add_triple("a", "likes", "water")
+    queries = []
+    kg._conn().set_trace_callback(queries.append)
+    try:
+        assert kg.list_wings() == ["Projects", "history", "projects"]
+    finally:
+        kg._conn().set_trace_callback(None)
+    assert len(queries) == 1 and "COUNT" not in queries[0].upper()
+    plan = kg._conn().execute("EXPLAIN QUERY PLAN " + queries[0]).fetchall()
+    assert any("COVERING INDEX idx_triples_wing" in r["detail"] for r in plan)

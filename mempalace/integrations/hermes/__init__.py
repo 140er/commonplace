@@ -815,6 +815,7 @@ class MempalaceProvider(MemoryProvider):  # type: ignore[misc]
                 query,
                 palace_path=self._palace_path,
                 n_results=n,
+                include_facts=False,
             )
             hits = result.get("results", []) if isinstance(result, dict) else []
             if not hits:
@@ -1376,6 +1377,7 @@ class MempalaceProvider(MemoryProvider):  # type: ignore[misc]
             wing=wing or "",
             room=room or "",
             n_results=n,
+            include_facts=False,
         )
         if isinstance(data, dict) and "error" in data:
             return data

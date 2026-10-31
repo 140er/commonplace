@@ -154,7 +154,13 @@ def palace_search(
             call_tool,
             principal,
             "mempalace_search",
-            {"query": query, "wing": MIRROR_WING, "room": stored_id, "limit": fetch_limit},
+            {
+                "query": query,
+                "wing": MIRROR_WING,
+                "room": stored_id,
+                "limit": fetch_limit,
+                "include_facts": False,
+            },
         )
         if first is None:
             first = result

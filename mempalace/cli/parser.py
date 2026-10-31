@@ -465,7 +465,7 @@ def main():
         choices=["full", "light"],
         default="full",
         help=(
-            "Tool names in the block: 'full' (default, the 48-tool mempalace-mcp) or "
+            "Tool names in the block: 'full' (default, the 49-tool mempalace-mcp) or "
             "'light' (palace_query / palace_exec / palace_coordinate)"
         ),
     )
