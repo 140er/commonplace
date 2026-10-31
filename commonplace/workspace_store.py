@@ -13,6 +13,12 @@ POINTER_REPAIR = (
     "Invalid or missing workspace generation pointer; stop the gateway and verify "
     f"{POINTER_PREVIOUS} before restoring {POINTER}"
 )
+PREVIOUS_WITHOUT_POINTER_REPAIR = (
+    f"Missing workspace generation pointer: {POINTER_PREVIOUS} exists without {POINTER}; "
+    "verify the selected data, then "
+    f"restore {POINTER_PREVIOUS} over {POINTER} to recover its history, "
+    f"or delete {POINTER_PREVIOUS} to accept the original workspace root"
+)
 SETTINGS = "workspace.json"
 STATE = ".store-backfill.json"
 RECEIPT = ".store-backup.json"
@@ -54,6 +60,8 @@ def resolve_workspace(root):
     if root.is_symlink():
         raise ValueError("Workspace root cannot be a symlink")
     if not (root / POINTER).exists():
+        if (root / POINTER_PREVIOUS).exists() or (root / POINTER_PREVIOUS).is_symlink():
+            raise ValueError(PREVIOUS_WITHOUT_POINTER_REPAIR)
         if any(root.parent.glob(root.name + ".generation-*")):
             raise ValueError(POINTER_REPAIR)
         return root

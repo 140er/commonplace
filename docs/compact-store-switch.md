@@ -94,7 +94,10 @@ pointer first. If it is missing or invalid, only the state file's provably
 unpublished staging copy can be removed; other generations are preserved and
 the operation refuses until the pointer is repaired. Workers, the gateway and
 doctor also refuse to resolve an absent or invalid pointer when sibling
-generations exist, so they cannot resume writing into the original root.
+generations exist, so they cannot resume writing into the original root. A prev
+copy without a main pointer also refuses, even with no sibling generations:
+verify the data and restore prev over the main pointer, or delete prev to accept
+the original root. Pending publication does not bypass this refusal.
 Completed retained generations are preserved. With a valid pointer, cleanup
 preserves and reports unlisted generations carrying `.store-comparison.json`;
 named retained generations follow the fourteen-day and fingerprint checks.
@@ -117,7 +120,11 @@ change, or delete `.store-pointer.prev.json` to accept the current pointer. Stop
 the gateway and verify the selected generation and its writes before either
 choice. This also covers a prune interrupted between its two pointer writes:
 dropping the root entry leaves a difference because the stable root directory
-still exists. No automatic inference is made; the same two choices apply.
+still exists. If that root contains only the tool's administration files, it is
+treated as gone: pruning heals the interrupted deletion, including after restoring
+prev. Doctor and report-only name an emptied root still listed as retained and
+recommend completing the prune. Any other root contents retain the normal checks.
+Missing `retained` and `retained: []` are equivalent.
 Recovery can finish an interrupted publication when its pointer carries forward
 the previous copy's complete retained history. A partial pointer cannot bypass
 the history check through a pending publication state.
@@ -181,6 +188,10 @@ Report-only mode never changes workspace files or repairs pointers. It exits 0
 when no findings remain and 3 when it reports leftover directories, preserved
 generations, pointer differences, recovery conflicts, incomplete backfill, failed sealing or corrupt state, so scheduled
 checks can detect outstanding work. Ordinary command errors use exit code 2.
+Doctor also exits 3 for recovery conflicts and emptied retained roots. Both
+reports give the recovery conflict hint priority over a prev difference. A missing
+or unparseable prev copy yields exit 3 with an instruction to run maintenance,
+which refreshes it from the valid main pointer.
 If retirement evidence cannot be recovered from the pointer copy or a full
 `commonplace backup` snapshot, preserve the generation, recover its missing
 records, verify a backup of those contents, then remove that generation manually.

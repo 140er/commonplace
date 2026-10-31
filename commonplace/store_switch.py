@@ -126,7 +126,7 @@ def _publication_conflict(root, candidate):
             f"{main['active']} differs from {candidate['active']}; "
             "preserve both generations and reconcile the pointers before retrying"
         )
-    if main != candidate:
+    if not _pointers_equal(main, candidate):
         difference = _previous_pointer_difference(root, main)
         return (difference or {}).get("repair") or (
             "Publication recovery conflicts with the valid main pointer's history; "
@@ -144,7 +144,7 @@ def _recover_publication(root):
         previous, parsed = _read_previous_pointer(root)
         if (
             parsed
-            and previous != candidate
+            and not _pointers_equal(previous, candidate)
             and not _publication_extends_previous(root, candidate, previous)
         ):
             _refresh_previous_pointer(root, candidate)
@@ -325,6 +325,10 @@ def _cleanup_recorded_staging(root):
 
 def _prepare_generations(root):
     """Validate publication evidence before allowing any orphan cleanup."""
+    if not (root / POINTER).exists() and (
+        (root / POINTER_PREVIOUS).exists() or (root / POINTER_PREVIOUS).is_symlink()
+    ):
+        resolve_workspace(root)
     _recover_publication(root)
     try:
         pointer = read_json(root / POINTER)
@@ -401,6 +405,39 @@ def _read_previous_pointer(root):
         return None, False
 
 
+def _pointers_equal(first, second):
+    def normalized(pointer):
+        return {"retained": [], **pointer} if isinstance(pointer, dict) else pointer
+
+    return normalized(first) == normalized(second)
+
+
+def _generation_gone(root, directory):
+    return (
+        not directory.exists()
+        or directory == root
+        and all(
+            child.name in _ADMIN_FILES and child.is_file() and not child.is_symlink()
+            for child in root.iterdir()
+        )
+    )
+
+
+def _emptied_retained_root(root, pointer):
+    if any(item["name"] == root.name for item in pointer.get("retained", [])) and _generation_gone(
+        root, root
+    ):
+        return root.name
+    return None
+
+
+def _emptied_root_repair(name):
+    return (
+        f"Retained root {name} contains only store administration files; "
+        "rerun workspace prune-stores to complete the interrupted prune"
+    )
+
+
 def _only_gone_retained_entries(root, pointer, previous):
     if not isinstance(previous, dict):
         return False
@@ -415,7 +452,7 @@ def _only_gone_retained_entries(root, pointer, previous):
         return (
             bool(removed)
             and all(before.get(name) == item for name, item in after.items())
-            and all(not generation_path(root, name).exists() for name in removed)
+            and all(_generation_gone(root, generation_path(root, name)) for name in removed)
         )
     except (KeyError, TypeError, ValueError):
         return False
@@ -436,11 +473,11 @@ def _refresh_previous_pointer(root, pointer):
         previous, parsed = _read_previous_pointer(root)
     except OSError:
         raise ValueError(_previous_pointer_repair([])) from None
-    if parsed and previous == pointer:
+    if parsed and _pointers_equal(previous, pointer):
         return
     if not parsed or _only_gone_retained_entries(root, pointer, previous):
         atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
-    elif previous != pointer:
+    else:
         difference = _previous_pointer_difference(root, pointer)
         raise ValueError(difference["repair"])
 
@@ -457,8 +494,12 @@ def _previous_pointer_difference(root, pointer):
             "repair": _previous_pointer_repair([]),
         }
     if not parsed:
-        return {"message": "prev copy is missing or cannot be parsed", "entries": []}
-    if previous == pointer:
+        return {
+            "message": "prev copy is missing or cannot be parsed",
+            "entries": [],
+            "repair": "Run workspace prune-stores to refresh the prev copy from the valid main pointer",
+        }
+    if _pointers_equal(previous, pointer):
         return None
     try:
         before = {item["name"]: item for item in previous.get("retained", [])}
@@ -506,11 +547,11 @@ def _preserved_generations(root, pointer):
 def _prune_report(root, *, repair=None):
     findings = []
     try:
-        pointer = read_json(root / POINTER)
         resolve_workspace(root)
-    except ValueError:
+        pointer = read_json(root / POINTER)
+    except ValueError as error:
         pointer = {}
-        repair = repair or POINTER_REPAIR
+        repair = repair or str(error)
         findings.append("invalid_pointer")
     try:
         state = _backfill_state(root)
@@ -531,7 +572,11 @@ def _prune_report(root, *, repair=None):
     conflict = _publication_conflict(root, _publication_pointer(root, state))
     if conflict:
         findings.append("recovery_conflict")
-        repair = repair or conflict
+        repair = conflict
+    emptied_root = _emptied_retained_root(root, pointer)
+    if emptied_root:
+        findings.append("emptied_retained_root")
+        repair = repair or _emptied_root_repair(emptied_root)
     if state.get("sealing") == "failed":
         findings.append("sealing_failed")
     if state.get("state") in ("copying", "published"):
@@ -547,6 +592,7 @@ def _prune_report(root, *, repair=None):
         "preserved_generations": preserved,
         "previous_pointer_difference": difference,
         "leftover_generation_directories": leftovers,
+        "emptied_retained_root": emptied_root,
     }
     if repair:
         report["repair"] = repair
@@ -1017,7 +1063,7 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None, repor
             path = generation_path(root, item["name"])
             if path.name == pointer.get("active"):
                 raise ValueError("Refusing to delete the active workspace generation")
-            if not path.exists():
+            if _generation_gone(root, path):
                 continue
             if (time.time() if now is None else now) - item["retired_at"] < RETENTION_SECONDS:
                 kept.append(item)
@@ -1078,6 +1124,9 @@ def doctor_workspace(data_dir, workspace_id):
     difference = _previous_pointer_difference(root, pointer)
     if difference:
         repair = repair or difference.get("repair")
+    emptied_root = _emptied_retained_root(root, pointer)
+    if emptied_root:
+        repair = repair or _emptied_root_repair(emptied_root)
     retained = []
     for item in read_json(root / POINTER).get("retained", []):
         path = generation_path(root, item["name"])
@@ -1100,6 +1149,7 @@ def doctor_workspace(data_dir, workspace_id):
         "previous_pointer_difference": difference,
         "leftover_generation_directories": _leftover_generation_directories(root, pointer),
         "recovery_conflict": conflict,
+        "emptied_retained_root": emptied_root,
         "preserved_generations": _preserved_generations(root, pointer),
         "repair": repair,
     }
