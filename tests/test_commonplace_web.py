@@ -127,6 +127,8 @@ def test_static_index_and_spa_fallback(hub, path):
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert b'<script type="module" src="/app/app.js">' in body
     assert b"Sign in" in body
+    assert b'<a class="brand-home" href="/app/"' in body
+    assert b'<img class="brand-v2" src="/app/brand/logo-small-dark.svg"' in body
     assert "default-src 'self'" in headers["Content-Security-Policy"]
     assert "unsafe-inline" not in headers["Content-Security-Policy"]
     assert headers["X-Content-Type-Options"] == "nosniff"
@@ -155,6 +157,8 @@ def test_static_rejects_missing_assets_api_and_traversal(hub, path):
     [
         ("app.js", "text/javascript"),
         ("app.css", "text/css"),
+        ("brand/logo-small-dark.svg", "image/svg+xml"),
+        ("icon.svg", "image/svg+xml"),
         ("fonts/geist-mono-latin.woff2", "font/woff2"),
     ],
 )

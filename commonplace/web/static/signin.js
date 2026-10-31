@@ -38,5 +38,5 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     const href = next ? `${url}${url.includes("?") ? "&" : "?"}next=${encodeURIComponent(next)}` : url;
     return `<a class="provider" href="${e(href)}">${icon(id)}<span>Continue with ${e(name)}</span></a>`;
   }).join("");
-  return `<main class="signin"><h1>Sign in</h1>${links ? `<nav class="providers">${links}</nav>` : ""}<form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${message ? `<div class="message" role="status">${e(message)}</div>` : ""}</main>`;
+  return `<main class="signin"><a class="brand-home" href="/app/" aria-label="Commonplace"><img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a><h1>Sign in</h1>${links ? `<nav class="providers">${links}</nav>` : ""}<form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${message ? `<div class="message" role="status">${e(message)}</div>` : ""}</main>`;
 }
