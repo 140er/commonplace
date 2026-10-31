@@ -451,6 +451,7 @@ WING_SCOPED_SINCE_BASELINE = {
     "mempalace_kg_save",
     "fact_save",
 }
+TOOLS_ADDED_SINCE_BASELINE = {"rules_publish", "rules_get", "rules_changed"}
 
 
 def _as_baseline(reply, baseline):
@@ -463,13 +464,24 @@ def _as_baseline(reply, baseline):
     tools[:] = [
         t
         for t in tools
-        if t.get("name") in known or t.get("name") not in WING_SCOPED_SINCE_BASELINE
+        if t.get("name") in known
+        or t.get("name") not in WING_SCOPED_SINCE_BASELINE | TOOLS_ADDED_SINCE_BASELINE
     ]
     for tool in tools:
         properties = tool.get("inputSchema", {}).get("properties", {})
         for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
             properties.pop(name, None)
     return status, body
+
+
+def test_baseline_filters_only_known_additions_when_missing():
+    def reply(names):
+        return 200, {"result": {"tools": [{"name": name} for name in names]}}
+
+    baseline = reply(["existing", "rules_get"])
+    actual = reply(["existing", "rules_get", "rules_publish", "rules_changed", "unexpected"])
+    assert _as_baseline(actual, baseline) == reply(["existing", "rules_get", "unexpected"])
+    assert _as_baseline(actual, baseline) != baseline
 
 
 @pytest.fixture(scope="module")

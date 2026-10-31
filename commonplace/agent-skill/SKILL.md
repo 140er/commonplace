@@ -13,6 +13,12 @@ Commonplace is the shared board and Memory for you and your agents. The MCP serv
 2. A card that came back from the user shows their decision on a `decision by` line. Act on it first.
 3. No card for you and the user gave no task: `task_take_next` (add `board` when you are outside a repo).
 
+## Rules
+
+At session start, call `rules_changed since=<last seq>`; whenever `seq` advanced, call `rules_get`.
+Follow the effective `text`: owner edits win, and retired rules mean stop following them.
+When your own rules change, call `rules_publish` with `replace=true`.
+
 ## While working
 
 - Report progress with `task_update task=#n status_line="<what you are doing now>"` at every real step, at least every 20 minutes. It renews your claim; a claim expires after 30 minutes without a write and the card goes back to the pool.

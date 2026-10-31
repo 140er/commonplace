@@ -29,10 +29,11 @@ def test_frontmatter_and_size():
 def _contract_tools() -> set:
     contract = CONTRACT.read_text(encoding="utf-8")
     sections = contract.split("## Boards (W1)", 1)[1].split("## Webhooks (W3)", 1)[0]
-    return set(re.findall(r"^\| `([a-z][a-z0-9_]*)` \|", sections, re.MULTILINE))
+    rules = (ROOT / "docs/design/RULES.md").read_text(encoding="utf-8")
+    return set(re.findall(r"^\| `([a-z][a-z0-9_]*)` \|", sections + rules, re.MULTILINE))
 
 
-_TOOLISH = re.compile(r"\b(?:task|board|memory|needs|ask|decide)(?:_[a-z]+)*\b")
+_TOOLISH = re.compile(r"\b(?:task|board|memory|needs|rules|ask|decide)(?:_[a-z]+)*\b")
 _ARGS = {"status_line"}
 
 
@@ -120,3 +121,17 @@ def test_documented_url_defaults_overrides_and_oauth(tmp_path):
         )
         assert result.stdout == expected + "/mcp"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_rules_session_loop():
+    text = SKILL.read_text(encoding="utf-8").split("## Rules\n", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "rules_changed since=<last seq>",
+        "rules_get",
+        "text",
+        "owner edits win",
+        "retired",
+        "rules_publish",
+        "replace=true",
+    ):
+        assert phrase in text
