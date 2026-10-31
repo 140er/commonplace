@@ -139,6 +139,15 @@ def _link_minutes(minutes: Optional[int]) -> int:
     return max(1, min(int(minutes), 24 * 60))
 
 
+def discard_login_link(db: ControlDB, token: str) -> None:
+    """Delete an unused login token, e.g. when its email could not be sent."""
+    ensure_schema(db)
+    with db._lock:
+        db._conn.execute(
+            "DELETE FROM login_links WHERE token_hash = ? AND used_at IS NULL", (_hash(token),)
+        )
+
+
 def redeem_login_link(db: ControlDB, token: str) -> Optional[str]:
     """Use a login token once. Returns a new session id, or ``None``."""
     ensure_schema(db)

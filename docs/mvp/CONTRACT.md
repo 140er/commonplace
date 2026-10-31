@@ -157,7 +157,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
 
 ## CLI, stdio bridge, seed (W5)
 
-- `commonplace login-link <email> [--workspace] [--base-url]` prints `<base>/app/login?t=…`.
+- `commonplace login-link <email> [--workspace] [--base-url] [--minutes] [--send]` prints `<base>/app/login?t=…`; with `--send` it emails the link instead (SMTP via `COMMONPLACE_SMTP_*`, see `commonplace/README.md`) and prints only `login link sent to <address>`.
 - `commonplace connect --url <base>/mcp [--token-env COMMONPLACE_TOKEN]`: stdio ↔ HTTP MCP bridge (newline-delimited JSON-RPC on stdin/stdout; POST each to the URL with the Bearer; 202 → no output). For clients that only speak stdio.
 - `commonplace token add … --client claude-code|codex|grok|t3|chatgpt|claude-ai` presets (when `--profile`/wings not given): coding agents → standard, read `*` minus private, write `project_*`,`shared`, trusted, kg:read off; grok → slim, read `shared,inbox`, write_wing `inbox`, untrusted; claude-ai/chatgpt → slim, standard, write_wing `inbox`.
 - `commonplace seed <file.json> --workspace` imports boards + cards (`[{"board","title","body","status","labels","repo","branch","pr_url"}]`), idempotent on (board, title).

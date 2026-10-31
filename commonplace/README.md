@@ -13,6 +13,23 @@ commonplace serve --host 127.0.0.1 --port 8765
 
 Social sign-in: [provider setup](SETUP.md).
 
+## Mail
+
+`commonplace login-link <email> --send` emails the sign-in link to the account's address and prints only `login link sent to <address>`; the link itself is never printed. Without `--send` the link is printed as before. The link uses `--base-url`, else `COMMONPLACE_APP_URL`, else `COMMONPLACE_BASE_URL`.
+
+Mail is off until `COMMONPLACE_SMTP_HOST` and `COMMONPLACE_SMTP_FROM` are set. With mail off, `--send` exits with `mail not configured` and creates no link. If sending fails, the new link is deleted.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COMMONPLACE_SMTP_HOST` | unset (mail off) | SMTP server |
+| `COMMONPLACE_SMTP_PORT` | 587, or 465 with SSL, or 25 without TLS | SMTP port |
+| `COMMONPLACE_SMTP_FROM` | required with a host | From address, e.g. `Commonplace <noreply@example.com>` |
+| `COMMONPLACE_SMTP_USER`, `COMMONPLACE_SMTP_PASSWORD` | unset (no auth) | Set both or neither |
+| `COMMONPLACE_SMTP_STARTTLS` | `true` | `false` sends without TLS; only allowed with credentials when the host is loopback |
+| `COMMONPLACE_SMTP_SSL` | `true` on port 465, else `false` | Implicit TLS; set only one of SSL and STARTTLS |
+
+Certificates are always verified. The password is never logged or shown in errors.
+
 Claude Code: [local setup and repeatable fresh-install check](../docs/commonplace-client-setup.md).
 
 ## Hosted plans
