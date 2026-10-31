@@ -6,7 +6,15 @@ if __name__ != "mempalace.mcp_server":
 # ==================== KNOWLEDGE GRAPH ====================
 
 
-def tool_kg_search(query: str, limit: int = 5, wings=None, sensitivities=None, as_of=None):
+def tool_kg_search(
+    query: str,
+    limit: int = 5,
+    wings=None,
+    sensitivities=None,
+    as_of=None,
+    *,
+    query_is_sanitized=False,
+):
     """Fact-only half of search, so gateway drawer fan-out needs one lookup."""
     try:
         from ..searcher.facts import search_facts
@@ -19,6 +27,7 @@ def tool_kg_search(query: str, limit: int = 5, wings=None, sensitivities=None, a
                 wings=wings,
                 sensitivities=sensitivities,
                 as_of=as_of,
+                query_is_sanitized=query_is_sanitized,
             ),
             read=True,
         )
@@ -71,7 +80,7 @@ def tool_kg_query(
         return {"error": str(e)}
 
     if search:
-        return tool_kg_search(entity, limit, wings, sensitivities, as_of)
+        return tool_kg_search(entity, limit, wings, sensitivities, as_of, query_is_sanitized=True)
 
     if direction not in ("outgoing", "incoming", "both"):
         return {"error": "direction must be 'outgoing', 'incoming', or 'both'"}

@@ -212,6 +212,46 @@ def test_long_query_returns_facts_for_owner_and_scoped_reader_without_warnings(h
     assert not caplog.records
 
 
+@pytest.mark.parametrize("tool", ["mempalace_search", "mempalace_kg_query"])
+@pytest.mark.parametrize("scoped", [False, True])
+def test_fact_query_sanitizer_warns_once_through_gateway(hub, monkeypatch, caplog, tool, scoped):
+    owner = plant(hub)
+    token = (
+        hub.token(
+            "reader", profile="full", scopes=["memory:read", "kg:read"], read_wings=["shared"]
+        )
+        if scoped
+        else owner
+    )
+    query = "Kestrel " + "deployment " * 20 + "port?"
+    args = {"query": query} if tool == "mempalace_search" else {"entity": query, "search": True}
+    fact_warnings = []
+    call_tool = hub.gateway.mediator.workers.call_tool
+
+    def warnings():
+        return [record for record in caplog.records if "Query sanitized:" in record.message]
+
+    def recorded(principal, name, args):
+        before = len(warnings())
+        result = call_tool(principal, name, args)
+        if name == "mempalace_kg_query" and args.get("search"):
+            fact_warnings.append(len(warnings()) - before)
+        return result
+
+    monkeypatch.setattr(hub.gateway.mediator.workers, "call_tool", recorded)
+    caplog.clear()
+    caplog.set_level(logging.WARNING, logger="mempalace.query_sanitizer")
+    result, raw = hub.call(token, tool, **args)
+    assert result and "facts_error" not in result, raw
+    assert len(result["facts"]) == (1 if scoped else 4)
+    # Drawer fan-out has independent tool requests; each fact request must
+    # sanitize exactly once, regardless of those drawer calls.
+    if tool == "mempalace_kg_query":
+        assert len(warnings()) == 1
+    else:
+        assert fact_warnings == [1]
+
+
 @pytest.mark.parametrize("owner", [False, True])
 @pytest.mark.parametrize("wing", [None, "shared"])
 def test_empty_cli_capture_omits_facts_for_direct_and_fanout_search(hub, owner, wing):
