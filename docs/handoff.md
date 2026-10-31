@@ -539,7 +539,7 @@ For agent tokens, every launch and settings write or delete also requires
 | GET | `/api/handoffs/<id>` | `threads:read` | Handoff record |
 | POST | `/api/handoffs/<id>/successor` | `handoff:write` | `{agent_ref, url?, thread_id?}` |
 | POST | `/api/handoffs/<id>/launch-failed` | `handoff:write` | `{error}` |
-| POST | `/api/handoffs/<id>/relaunch` | owner; agent tokens: `handoff:write` + `trusted` | Retry a failed launch |
+| POST | `/api/handoffs/<id>/relaunch` | person owner, owner-role connection, or original launcher connection; agent tokens: `handoff:write` + `trusted`, unrestricted | Retry a `launch_failed` handoff |
 | GET | `/api/threads/<id>` | `threads:read` | Stored thread metadata |
 | GET | `/api/threads/<id>/messages?start=0&end=99` | `threads:read` | Verbatim messages in the inclusive range |
 | POST | `/api/threads/<id>/recall` | `threads:read` | `{query, limit?, follow_chain?}` → search hits |
@@ -690,9 +690,13 @@ Run the offline extraction eval with `python benchmarks/fact_recall_bench.py --s
 | Server command or webhook launcher fails | The thread stays saved; `handoff.launch_failed`; the old agent is told to stop |
 | Hook configuration, HTTP, timeout or response error | The hook exits successfully and silently; the agent continues on its normal path |
 
-Owners can retry a recorded launch failure with
+Person owners, owner-role connections, or the original launcher connection can retry a recorded launch failure with
 `commonplace handoff relaunch <handoff_id>`. Inspect the saved handoff
-before starting a successor manually.
+before starting a successor manually. Every agent connection must still have
+`handoff:write`, trusted trust and unrestricted access. Standard-trust, untrusted
+and inbox-restricted tokens cannot relaunch. A member connection may relaunch only
+its own handoff; an owner-role connection retains its existing ability to relaunch
+another connection's handoff. Retries outside `launch_failed` are refused.
 
 When the hook's own successor command fails, it reports
 `POST /api/handoffs/<id>/launch-failed`, which records `launch_failed`
@@ -718,8 +722,9 @@ stored thread; the handoff and its successor stay the same. Other
 different content under the same source ID is a conflict. A failed
 storage attempt can be retried. A handoff stuck mid-store after a crash
 is taken over by the next retry once its 10-minute lease runs out. A
-recorded launch failure needs an explicit owner relaunch to release its
-launch claim.
+recorded launch failure needs an explicit relaunch by a person owner, an owner-role
+connection, or the original launcher connection to release its launch claim.
+Agent connections still need the launch authority described above.
 
 When a successor's own thread ID was registered with its handoff, its
 next handoff links into the chain even without `COMMONPLACE_HANDOFF_ID`.
@@ -743,7 +748,7 @@ old thread and the successor reference or URL.
   other JSON requests.
 - A Codex handoff happens at the start of the next turn, not mid-turn;
   see the Codex section. If that successor fails to start and the gateway
-  restarts before an owner relaunches it, the relaunched successor doesn't
+  restarts before it is explicitly relaunched, the relaunched successor doesn't
   get the user's unanswered message (the control database holds no text);
   the old session showed it was refused.
 - Each stored thread is also written into Memory search in the background,

@@ -501,6 +501,9 @@ def legacy(tmp_path_factory):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
+    # Overlaid board tools use the current registry contract; handoff remains
+    # absent from the baseline's enabled modules below.
+    shutil.copy2(ROOT / "commonplace" / "extensions.py", snapshot / "commonplace" / "extensions.py")
     # A separate interpreter keeps relative and dynamic imports, policies and
     # extension registrations entirely on the pinned source tree.
     script = (
@@ -517,6 +520,9 @@ from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
 from commonplace.policy import TOOL_RULES, Policy
 
+extensions.MODULES = tuple(
+    name for name in extensions.MODULES if name != "commonplace.handoff.extension"
+)
 for module in (cli, extensions, gateway, policy):
     assert Path(module.__file__).resolve().is_relative_to(Path.cwd())
 assert "commonplace.handoff.extension" not in extensions.MODULES

@@ -5,7 +5,7 @@ import json
 from commonplace.extensions import ALL_PROFILES, WORK_PROFILES, LocalTool, ToolError, register
 
 from .display import card_url, people
-from .service import BoardService
+from .service import BoardService, _trusted_agent
 
 STRING = {"type": "string"}
 TASK = {"type": ["string", "integer"]}
@@ -169,7 +169,17 @@ def _run(ctx, name, args):
     )
 
 
-def add(name, properties, required=(), *, work=False, trusted=False, owner=False, write=False):
+def add(
+    name,
+    properties,
+    required=(),
+    *,
+    work=False,
+    trusted=False,
+    owner=False,
+    write=False,
+    available=None,
+):
     register(
         LocalTool(
             name=name,
@@ -183,14 +193,15 @@ def add(name, properties, required=(), *, work=False, trusted=False, owner=False
                 "task_show": "Read a card and its history and linked memories.",
                 "task_add": "Add a card; submissions from untrusted connections enter backlog.",
                 "task_comment": "Append a comment and renew your claim.",
-                "task_take_next": "Claim a ready card reserved for you or free for anyone.",
+                "task_take_next": "Claim a todo card reserved for you or free for anyone. Trusted agents may also claim a backlog card by task number; restricted submissions and cards awaiting a person are excluded.",
                 "task_update": "Update a card, move todo/held doing to review or done, or close your own review card with done. "
                 "Reopen done to todo (status only). Save a lesson with done. "
+                "Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. "
                 "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
                 "ask": "Ask the workspace owner and end the turn.",
                 "decide": "Answer a review and return, release, close or park the card.",
-                "needs_me": "Read the owner's decision queue.",
+                "needs_me": "Read the visible decision queue (owners or trusted, unrestricted member connections; read only).",
             }[name],
             input_schema={
                 "type": "object",
@@ -204,6 +215,7 @@ def add(name, properties, required=(), *, work=False, trusted=False, owner=False
             profiles=WORK_PROFILES if work else ALL_PROFILES,
             trusted_only=trusted,
             owner_only=owner,
+            available=available,
         )
     )
 
@@ -327,4 +339,8 @@ def register_tools():
         trusted=True,
         write=True,
     )
-    add("needs_me", {"format": {"type": "string", "enum": ["list", "digest"]}}, owner=True)
+    add(
+        "needs_me",
+        {"format": {"type": "string", "enum": ["list", "digest"]}},
+        available=lambda p, _gateway: p.role == "owner" or _trusted_agent(p),
+    )

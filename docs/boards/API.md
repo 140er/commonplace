@@ -27,6 +27,7 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | `task_take_next` | `board?`, `task?` | standard, full |
 | `task_update` | `task`, `title?`, `body?`, `status?` (`backlog` \| `todo` \| `doing` \| `review` \| `done`), `before?`, `after?`, `link?`, `unlink?`, `lesson?` | standard, full |
 | `task_handoff` | `task`, `to`, `note`, `options?` | standard, full |
+| `needs_me` | `format?` (`list` \| `digest`) | slim, standard, full; owners or trusted, unrestricted member connections |
 
 `untrusted` tokens never get `task_take_next`, `task_update` or `task_handoff`, whatever their profile.
 
@@ -81,7 +82,7 @@ links: drawer_7f3a "Token lifecycle notes", drawer_91c0 (invalidated)
 #149 added to todo on mempalace
 ```
 
-Tokens whose write wing is `inbox` get `#149 added to backlog on mempalace`; `status` and `assignee` are ignored for them.
+Untrusted tokens and tokens whose write wing is `inbox` or `wing_inbox` get `#149 added to backlog on mempalace`; `status` and `assignee` are ignored for them. Restricted origin is recorded at creation, even for a trusted inbox token. Only a person may release these submissions from backlog. For older agent-filed backlog, untrusted stamps remain restricted; other origins are resolved from the stamping connection's current policy in the same workspace. Missing, inactive or ambiguous connections remain person-only.
 
 ### task_comment
 
@@ -93,7 +94,9 @@ ok #142  until 15:00Z
 
 ### task_take_next
 
-The claim. Without `task`: the caller's reserved `todo` card with the lowest position, else the unassigned one with the lowest position. With `task`: that card, if it is in `todo` and free or reserved for the caller.
+The claim. Without `task`: the caller's reserved `todo` card with the lowest position, else the unassigned one with the lowest position. It never falls back to backlog, so the ready-work queue keeps its priority. With `task`: that card, if it is in `todo` and free or reserved for the caller. An unrestricted connection with policy trust `trusted` and write access to the board may also claim a `backlog` card explicitly by number. The claim moves it to `doing`, assigns the caller, and starts the normal claim expiry. `task_update task=#n status=doing` gives the same explicit backlog pickup and lease. The audit differs: `task_take_next` records `claim` / `card.claimed`; the status update records `move` / `card.moved`.
+
+Agents cannot claim backlog cards filed by restricted connections, or cards with an open ask or a person in `assignee` or `ask_to`. A person in `return_to` also protects a backlog card. Outside backlog, an answered decision's return marker does not block normal moves or annotations after the person releases the card. Automatic selection skips pending person decisions. Other agents' reservations remain protected. Standard-trust and restricted connections gain no backlog permissions; people keep their existing move and claim rules. An expired explicit backlog claim returns to backlog, so it cannot become automatic work through expiry.
 
 ```
 #142 Fix the Windows lock on repair  yours until 14:30Z
@@ -111,18 +114,18 @@ BEGIN IMMEDIATE;
 -- 1. Expire stale agent claims on this board: log who lost the claim, then free the card.
 INSERT INTO task_events (task_id, kind, from_status, to_status, target,
                          stamp_user, stamp_trust, created_at)
-SELECT id, 'expire', 'doing', 'todo', assignee, 'system', 'trusted', :now
+SELECT id, 'expire', 'doing', coalesce(claim_from, 'todo'), assignee, 'system', 'trusted', :now
   FROM tasks
  WHERE board_id = :board AND status = 'doing' AND claim_until < :now;
 
 UPDATE tasks
-   SET status = 'todo', assignee = NULL, claim_until = NULL,
+   SET status = coalesce(claim_from, 'todo'), assignee = NULL, claim_until = NULL, claim_from = NULL,
        version = version + 1, updated_at = :now, updated_by = 'system'
  WHERE board_id = :board AND status = 'doing' AND claim_until < :now;
 
 -- 2. Claim one card.
 UPDATE tasks
-   SET status = 'doing', assignee = :me, claim_until = :until,
+   SET status = 'doing', assignee = :me, claim_until = :until, claim_from = 'todo',
        version = version + 1, updated_at = :now, updated_by = :me
  WHERE id = (
        SELECT id FROM tasks
@@ -143,8 +146,10 @@ COMMIT;
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
 
 - Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Only the asking agent (`return_to` matches the caller) may close a `review` card with `status: "done"` (subject to `done_needs_review`), or keep it in `review`. Other exits from `review` require `decide`; agents cannot answer their own asks.
+- Trusted, unrestricted board writers may promote an available `backlog` card to `todo`, or pick it up with `status=doing`. Restricted-origin cards require a person's release. Promotion preserves the caller's reservation. An open ask or a person in `assignee` or `ask_to` blocks agent moves. A person in `return_to` additionally blocks backlog pickup; stale return markers on released `todo` or `done` cards do not block normal moves or annotations.
+- Completed-card exception for trusted, unrestricted board writers: an update containing only `lesson`, `pr` and/or `link` may annotate a `done` card without reopening it. Optional `status=done` is accepted. Removing links and other edits stay frozen. These annotations emit the normal link history and `card.updated` event, preserving completion time and status.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with the ask `Done?` and options `ship | redo`.
-- `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
+- `lesson` (with `status: "done"`, or on an already completed card) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
 - `link` / `unlink` take a drawer ID.
 - `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear; `--card N --hub URL` uploads it directly). The web card shows its head commit, so a stale tree is visible. The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
@@ -176,7 +181,8 @@ An agent can also hand off a card it does not hold, but only from `todo`, only w
 
 | From → to | Agent (trusted or standard) | Person |
 |---|---|---|
-| backlog → todo | no | yes |
+| backlog → todo | trusted, unrestricted board writers; free or self-reserved; unrestricted origin; no pending person decision | yes |
+| backlog → doing | trusted, unrestricted board writers; explicit `task_take_next task=#n` or `task_update status=doing`; same availability checks | no |
 | todo → doing | `task_take_next` only | yes (holds it, no expiry) |
 | doing → todo | `task_handoff` (holder) | yes |
 | doing → review | `task_update` or `task_handoff` to a person (holder) | yes |
@@ -199,7 +205,17 @@ defaults to 200 (1 to 500); `total` counts them all. Home's task table reads it.
 
 ### Spoken Needs you digest
 
-`GET /api/needs-me/digest` accepts the same owner session or bearer token as
+`needs_me`, `GET /api/needs-me` and its digest retain access for signed-in owners
+and owner-role connections, including standard-trust, untrusted and inbox tokens.
+Trusted, unrestricted member connections with `memory:read` may also read them;
+other member connections are refused. Every bucket is scoped to readable board
+wings. Only `asks` and `done_review` additionally filter by `ask_to`: unset or
+addressed to the token's user. `backlog_from_agents`, `ready_to_merge` and `stale`
+include all qualifying cards within those readable wings. This grants no decision
+or board configuration rights: `board_set` remains owner-only, and an agent never
+answers its own ask.
+
+`GET /api/needs-me/digest` accepts the same owner session or permitted bearer token as
 `GET /api/needs-me`, with the same wing visibility. It returns
 `{text, count, items: [{number, title, need, board}], remaining}`. The queue is
 deduplicated, with addressed asks first, then the server's `need` priority and
