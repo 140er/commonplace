@@ -16,6 +16,33 @@ from mempalace.palace import get_collection
 from mempalace.searcher import search_memories
 
 
+def test_hybrid_union_keeps_full_query_signal_on_vector_candidates():
+    from mempalace.searcher import _hybrid_rank
+
+    results = [
+        {
+            "drawer_id": "vector",
+            "text": "texts def auth pass metadatas source",
+            "distance": 0.8,
+            "_lexical_terms": ["lantern"],
+            "_lexical_matches": (),
+        },
+        {
+            "drawer_id": "lexical",
+            "text": "lantern lantern",
+            "distance": None,
+            "_lexical_terms": ["lantern"],
+            "_lexical_matches": ("lantern",),
+        },
+    ]
+    ranked = _hybrid_rank(
+        results, "texts def auth pass metadatas source lantern", stop_words=frozenset({"source"})
+    )
+    assert ranked[0]["drawer_id"] == "vector"
+    assert ranked[0]["bm25_score"] > 0
+    assert all(not any(key.startswith("_lexical_") for key in hit) for hit in ranked)
+
+
 def _seed_drawers(palace_path):
     """Seed a corpus where the right doc for one query is BM25-strong but
     vector-distant.

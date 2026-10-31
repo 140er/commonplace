@@ -216,14 +216,18 @@ def _hybrid_rank(
         for r in results
     ]
     if any("_lexical_terms" in r for r in results):
-        from ..lexical import index_bm25_scores
+        from ..lexical import index_bm25_scores, lexical_query_terms
 
-        terms = next(r["_lexical_terms"] for r in results if "_lexical_terms" in r)
+        trigram = any(r.get("_lexical_trigram") for r in results)
+        # Retrieval's selected terms must not erase the rest of the query's
+        # signal on vector hits. Rank the complete query over this in-scope
+        # pool; only index-confirmed selected matches receive the tf floor.
+        terms, _ = lexical_query_terms(query, stop_words, trigram=trigram, closet=True)
         bm25_raw = index_bm25_scores(
             terms,
             docs,
             [r.get("_lexical_matches", ()) for r in results],
-            trigram=any(r.get("_lexical_trigram") for r in results),
+            trigram=trigram,
         )
         for r in results:
             r.pop("_lexical_terms", None)
