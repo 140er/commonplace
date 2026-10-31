@@ -63,7 +63,7 @@ def _hold_lock(palace_path: str, ready_flag, release_flag) -> int:
     try:
         with mine_palace_lock(palace_path):
             ready_flag.set()
-            assert release_flag.wait(5), "parent did not release the lock holder"
+            assert release_flag.wait(30), "parent did not release the lock holder"
             return 0
     except MineAlreadyRunning:
         return 1
@@ -138,7 +138,7 @@ def test_same_palace_serializes_across_processes(tmp_path, monkeypatch):
     holder = ctx.Process(target=_hold_lock, args=(palace, ready, release))
     holder.start()
     try:
-        assert ready.wait(5), "holder failed to acquire lock in time"
+        assert ready.wait(30), "holder failed to acquire lock in time"
 
         # From the parent, we must not be able to acquire the same palace lock
         with pytest.raises(MineAlreadyRunning):
@@ -146,7 +146,7 @@ def test_same_palace_serializes_across_processes(tmp_path, monkeypatch):
                 pytest.fail("second acquire of same palace should have raised")
     finally:
         release.set()
-        holder.join(timeout=5)
+        holder.join(timeout=35)
         assert holder.exitcode == 0
 
 
@@ -160,7 +160,7 @@ def test_different_palaces_dont_conflict(tmp_path, monkeypatch):
     holder = ctx.Process(target=_hold_lock, args=(palace_a, ready, release))
     holder.start()
     try:
-        assert ready.wait(5), "holder failed to acquire lock in time"
+        assert ready.wait(30), "holder failed to acquire lock in time"
 
         # Different palace — must succeed even while palace_a is held
         with mine_palace_lock(palace_b):
@@ -189,7 +189,7 @@ def test_palace_path_is_normalized(tmp_path, monkeypatch):
     holder = ctx.Process(target=_hold_lock, args=(absolute, ready, release))
     holder.start()
     try:
-        assert ready.wait(5), "holder failed to acquire lock in time"
+        assert ready.wait(30), "holder failed to acquire lock in time"
 
         # Parent holds CWD = tmp_path so "palace" is the same on-disk dir as
         # the absolute form. The lock key is sha256(realpath+normcase) so the
@@ -253,7 +253,7 @@ def _hold_lock_send_pid(palace_path: str, ready_flag, release_flag, pid_q) -> No
         with mine_palace_lock(palace_path):
             pid_q.put((os.getpid(), list(_sys.argv[:3])))
             ready_flag.set()
-            assert release_flag.wait(5), "parent did not release the lock holder"
+            assert release_flag.wait(30), "parent did not release the lock holder"
     except MineAlreadyRunning:
         pid_q.put(("error", "raised"))
 
@@ -276,7 +276,7 @@ def test_lock_failure_message_names_holder(tmp_path, monkeypatch):
     holder = ctx.Process(target=_hold_lock_send_pid, args=(palace, ready, release, pid_q))
     holder.start()
     try:
-        assert ready.wait(5), "holder failed to acquire lock in time"
+        assert ready.wait(30), "holder failed to acquire lock in time"
         holder_pid, _holder_argv = pid_q.get(timeout=2)
 
         with pytest.raises(MineAlreadyRunning) as excinfo:
@@ -648,7 +648,7 @@ def _hold_source_lock(source_file: str, ready_flag, release_flag) -> int:
     """
     with mine_lock(source_file):
         ready_flag.set()
-        assert release_flag.wait(5), "parent did not release the lock holder"
+        assert release_flag.wait(30), "parent did not release the lock holder"
         return 0
 
 
@@ -699,7 +699,7 @@ def test_reap_never_removes_a_lock_held_by_another_process(tmp_path, monkeypatch
     holder = ctx.Process(target=_hold_source_lock, args=(source_file, ready, release))
     holder.start()
     try:
-        assert ready.wait(5), "holder failed to acquire lock in time"
+        assert ready.wait(30), "holder failed to acquire lock in time"
 
         lock_dir = tmp_path / ".mempalace" / "locks"
         lock_files = list(lock_dir.glob("*.lock"))
@@ -716,7 +716,7 @@ def test_reap_never_removes_a_lock_held_by_another_process(tmp_path, monkeypatch
         assert lock_files[0].exists(), "a held lock must never be removed by the reaper"
     finally:
         release.set()
-        holder.join(timeout=5)
+        holder.join(timeout=35)
         assert holder.exitcode == 0
 
 

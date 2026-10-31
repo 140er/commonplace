@@ -305,7 +305,8 @@ def _start_server(tmp_path, monkeypatch, execute_fn):
     if client is None:
         raise AssertionError(
             "daemon did not respond after signaling readiness "
-            f"(thread_alive={thread.is_alive()}, httpd_bound={bool(holders)}, "
+            f"(thread_alive={thread.is_alive()}, server_error={server_error!r}, "
+            f"httpd_bound={bool(holders)}, "
             f"endpoint_exists={daemon.endpoint_path(str(palace)).exists()})"
         )
     return client, thread, palace, holders
