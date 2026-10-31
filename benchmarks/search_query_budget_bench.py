@@ -347,10 +347,12 @@ def run(
                 row = {
                     "case": label,
                     "drawers": size,
+                    "repeats": repeats,
+                    "p95_method": "nearest_rank",
                     "latency_ms": {
                         s: {
                             "p50": float(np.percentile(v, 50)),
-                            "p95": float(np.percentile(v, 95)),
+                            "p95": float(np.percentile(v, 95, method="inverted_cdf")),
                             "max": max(v),
                         }
                         for s, v in samples.items()
