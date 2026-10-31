@@ -1772,7 +1772,21 @@ def _close_client(client) -> None:
                 ):
                     from ._inproc_sqlite import release
 
-                    release(path)
+                    # Chroma keys Systems by the exact path string. Another
+                    # System can still hold this file through a path alias.
+                    for system in list(SharedSystemClient._identifier_to_system.values()):
+                        settings = system.settings
+                        if not settings.is_persistent:
+                            continue
+                        peer = os.path.join(settings.persist_directory, "chroma.sqlite3")
+                        try:
+                            same_file = os.path.samefile(path, peer)
+                        except OSError:
+                            same_file = os.path.realpath(path) == os.path.realpath(peer)
+                        if same_file:
+                            break
+                    else:
+                        release(path)
     except Exception:
         logger.debug("client.close() unavailable or failed", exc_info=True)
 

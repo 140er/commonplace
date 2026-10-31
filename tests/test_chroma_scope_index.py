@@ -1,5 +1,6 @@
 """The optional scope index preserves Chroma writes and recovery semantics."""
 
+import os
 import sqlite3
 from unittest.mock import patch
 
@@ -196,6 +197,7 @@ def test_closet_substring_only_zero_scores_are_dropped(tmp_path):
         backend.close()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX read-anchor lifecycle")
 def test_closing_one_backend_retains_sibling_anchor_guards(tmp_path):
     from mempalace.backends import _inproc_sqlite
 
@@ -243,3 +245,25 @@ def test_small_chroma_lexical_pool_decodes_once_without_changing_scores(tmp_path
         assert calls == {"load": 0, "hydrate": 1}
     finally:
         backend.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX read-anchor lifecycle")
+def test_native_client_path_alias_keeps_anchor_until_last_close(tmp_path):
+    from mempalace.backends import _inproc_sqlite
+    from mempalace.backends.chroma import _close_client
+
+    backend, col = _seed(tmp_path)
+    vector = col.get(ids=["a"], include=["embeddings"]).embeddings[0]
+    alias = ChromaBackend.make_client(str(tmp_path) + "/.")
+    key = _inproc_sqlite._key(str(tmp_path / "chroma.sqlite3"))
+    try:
+        assert backend._clients[str(tmp_path)]._identifier != alias._identifier
+        backend.close()
+        assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+        native = alias.get_collection("mempalace_drawers")
+        native.upsert(ids=["a"], documents=["quartz alias update"], embeddings=[vector])
+        assert native.get(ids=["a"])["documents"] == ["quartz alias update"]
+    finally:
+        _close_client(alias)
+        backend.close()
+    assert key not in _inproc_sqlite._anchors and key not in _inproc_sqlite._holders
