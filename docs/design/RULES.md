@@ -16,7 +16,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);  -- 'seq': bum
 CREATE TABLE rules (
   id          INTEGER PRIMARY KEY,
   agent       TEXT NOT NULL,         -- who the rule applies to: actor ref "conn:<name>", or "*" for every agent
-  origin_agent TEXT,                 -- the agent the rule first applied to (NULL when created for "*")
+  origin_agent TEXT,                 -- the agent the rule first applied to (NULL for "*" until it first moves to an agent)
+  agent_text_by TEXT,                -- the agent that wrote agent_text (a moved rule can hold another agent's wording)
   key         TEXT NOT NULL,         -- stable per agent; matches [A-Za-z0-9._-]{1,100}, else derived from the text
   text        TEXT NOT NULL,         -- effective text: what the agent must follow
   agent_text  TEXT,                  -- the agent's latest published wording (NULL for owner-written rules)
@@ -64,7 +65,7 @@ Rules are never deleted. Retiring keeps the row and its history.
 | Owner keeps the edit (`keep_edit`, requires `pending=1`) | `pending=0`; retirement, if any, stays in force. Repeating that agent wording remains a no-op. |
 | Agent publishes with `replace=true` and leaves out an active `source=agent` key | `retired`, `retired_by=agent` (note: "dropped by agent"). Never retires owner edits or owner-retired rules. |
 | Agent republishes an agent-retired key | Revives as `proposed`, `source=agent`, `text=agent_text`, `pending=0`, `retired_by=NULL`, even for identical wording |
-| Owner changes who a rule applies to (`set_agent`) | Moves it to `*` or another `conn:<name>`. Text, status, source and key stay; the version bumps and history gets the note `Applies to: <old> → <new>`, followed by the owner's note if given. Retired rules return 400 "restore the rule first"; the current target returns 400 "nothing to change". When the target already has a rule with the same key (retired ones included, since keys are unique per agent), it returns 400 "<target> already has a rule with this key" and changes nothing: there is no merge, the owner retires or edits one of the two. With `accept=true` it also accepts a `proposed` rule in the same version ("Accept for all agents"); other states are refused. |
+| Owner changes who a rule applies to (`set_agent`) | Moves it to `*` or another `conn:<name>`. Text, status, source and key stay; the version bumps and history gets the note `Applies to: <old> → <new>`, followed by the owner's note if given. Retired rules return 400 "restore the rule first"; the current target returns 400 "nothing to change". When the target already has a rule with the same key (retired ones included, since keys are unique per agent), it returns 400 "<target> already has a rule with this key" and changes nothing: there is no merge, the owner retires or edits one of the two. With `accept=true` it also accepts a `proposed` rule in the same version ("Accept for all agents"); other states are refused. A `*` rule that moves to `conn:x` for the first time gets `origin_agent=x`, so x's later publishes keep finding it after it moves back. |
 | Agent republishes a key the owner moved away | The publish still finds the rule through `origin_agent`, so no second proposal appears under the agent. If the rule now applies to `*` and the agent can see it, it is handled like an owner edit: changed wording becomes `agent_text` with `pending=1`, kind and scope changes are ignored, and `replace=true` never retires it. If the agent can no longer see it (moved to another agent, or a board it cannot read), the key is skipped. |
 | Agent publishes a key of a rule the owner moved to it from another agent | Handled like an owner edit too: its wording becomes `agent_text` with `pending=1`, kind and scope changes are ignored, and its `replace=true` never retires the rule, because the agent did not publish it first. |
 | Owner retires a non-retired rule | `retired`, `retired_by=owner`. Agents stop following it. Retiring again is refused. |
@@ -80,7 +81,7 @@ After the rules transaction closes, each changed agent emits `rule.changed`; a m
 ### Visibility
 
 - An agent sees its own rules, plus the `*` rules, filtered by scope: a `board` rule only when it can read that board's wing, and a `repo` rule always (repos are not secret on their own).
-- On a rule an agent did not publish first, `rules_get` shows `agent_text`, `pending` and a `conn:` `updated_by` only to the agent that first published the rule and to the agent that wrote them last; other agents get `null`, `0` and `null`. So one agent's unreviewed wording never reaches another agent.
+- Agents see `agent_text`, `agent_text_by` and `pending` only when they wrote that `agent_text` themselves, and a `conn:` `updated_by` only when it is their own; otherwise these come back as `null`, `null`, `0` and `null`. A moved rule can hold another agent's wording, and one agent's unreviewed wording never reaches another agent. Republishing wording another agent wrote, word for word, records the publisher as its writer.
 - People in the workspace see everything. Only the owner (`principal.role == "owner"`) can edit, accept, retire, restore, suggest or decide.
 
 ## MCP tools
@@ -111,7 +112,7 @@ Agent loop, as written in the skill: at the start of a session call `rules_chang
 | POST | `/api/rules/:id/suggestions` | `{text, from_agent}` | owner. This is where the web page stores a clarify reply that came back through the bridge. |
 | POST | `/api/rules/suggestions/:sid` | `{action: accept\|dismiss, version?}` | owner; `version` is required for accept |
 
-Rule JSON: `{id, agent, key, text, agent_text, kind, scope, scope_ref, status, source, pending, retired_by, version, seq, updated_at, updated_by}`.
+Rule JSON: `{id, agent, key, text, agent_text, agent_text_by, kind, scope, scope_ref, status, source, pending, retired_by, version, seq, updated_at, updated_by}`.
 
 ## Owner UI
 
@@ -119,7 +120,7 @@ The UI uses look B: the tokens, Geist Mono, tiles on the 6px gap and the v2 bloc
 
 - **Nav:** "Rules" in the sidebar under Memory and in the phone tabs (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
 - **Screen:** the title is "Rules". There is one tile per agent (the connection name, with "All agents" for `*`), ordered by how many rules wait on the owner. The header row holds the agent's name, its waiting count and a "Help me clarify" button for the whole set.
-- **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), the rule text and a status chip. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff with "Use agent's" and "Keep mine". Owner-retired rows with pending proposals appear in the active list; other retired rows sit folded at the bottom of each tile.
+- **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), the rule text and a status chip. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff (headed with the writing agent's name when the rule now applies to someone else) with "Use agent's" and "Keep mine". Owner-retired rows with pending proposals appear in the active list; other retired rows sit folded at the bottom of each tile.
 - **Applies to:** active rows have an "Applies to…" menu that moves the rule to All agents or another agent's tile. Proposed rows also show "Accept for all agents" next to Accept. History shows the move as its note.
 - **Inline edit:** the text turns into a textarea, with selects for kind and scope, then Save and Cancel. Nothing opens in a modal.
 - **Help me clarify** (on a row and on a tile) opens a small inline panel:

@@ -965,7 +965,7 @@ def test_owner_moves_rule_to_all_agents_and_back(hub, env):
     assert last["agent"] == "*" and last["version"] == shared["version"]
     assert last["note"] == f"Applies to: {env.agent.connection} → All agents"
     assert env.worker.rules_get()["rules"] == [shared]
-    assert other.rules_get()["rules"] == [dict(shared, agent_text=None)]
+    assert other.rules_get()["rules"] == [dict(shared, agent_text=None, agent_text_by=None)]
     assert other.rules_changed(0)["rules"] == [
         {"key": shared["key"], "status": "accepted", "target": "all"}
     ]
@@ -978,7 +978,7 @@ def test_owner_moves_rule_to_all_agents_and_back(hub, env):
     assert other.rules_get()["rules"] == [] and other.rules_changed(0)["rules"] == []
     status, elsewhere = move(hub, env, back, other.principal.actor)
     assert status == 200 and env.worker.rules_get()["rules"] == []
-    assert other.rules_get()["rules"] == [dict(elsewhere, agent_text=None)]
+    assert other.rules_get()["rules"] == [dict(elsewhere, agent_text=None, agent_text_by=None)]
     listing = env.owner.list_rules()["rules"]
     assert [r["agent"] for r in listing] == [other.principal.actor]
     assert [v["agent"] for v in env.owner.history(accepted["id"])] == [
@@ -1152,7 +1152,7 @@ def test_moved_rule_answers_to_the_owner_for_its_new_agent(hub, env):
     assert env.worker.rules_get()["rules"] == [own]
     for viewer in (receiver, bystander):
         assert viewer.rules_get()["rules"] == [
-            dict(own, agent_text=None, pending=0, updated_by=None)
+            dict(own, agent_text=None, agent_text_by=None, pending=0, updated_by=None)
         ]
     assert env.owner.list_rules()["rules"] == [own]
     assert shared["updated_by"] == env.person.actor
@@ -1165,11 +1165,51 @@ def test_origin_wording_stays_hidden_after_a_move_to_another_agent(hub, env):
     edited = env.owner.edit(current["id"], 1, text="Owner wording")
     moved = env.owner.set_agent(current["id"], edited["version"], receiver.principal.actor)
     assert moved["agent_text"] == "Origin wording"
-    assert receiver.rules_get()["rules"] == [dict(moved, agent_text=None)]
+    assert receiver.rules_get()["rules"] == [dict(moved, agent_text=None, agent_text_by=None)]
     own = receiver.rules_publish([rule(text="Receiver wording")])["rules"][0]
     assert own["agent_text"] == "Receiver wording" and own["pending"] == 1
     assert own["updated_by"] == receiver.principal.actor
     assert receiver.rules_get()["rules"] == [own]
+
+
+def test_moved_wording_is_shown_only_to_the_agent_that_wrote_it(hub, env):
+    def agent(name):
+        return service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token(name)}"))
+
+    receiver, bystander = agent("receiver"), agent("bystander")
+    hidden = {"agent_text": None, "agent_text_by": None, "pending": 0}
+    accepted = env.owner.action(publish(env)["id"], 1, "accept")
+    moved = env.owner.set_agent(accepted["id"], accepted["version"], receiver.principal.actor)
+    # Republishing the origin agent's exact words makes the receiver their writer.
+    same = receiver.rules_publish([rule()])["rules"][0]
+    assert same["agent_text"] == accepted["text"]
+    assert same["agent_text_by"] == receiver.principal.actor and same["pending"] == 0
+    assert env.owner.list_rules()["rules"][0]["agent_text_by"] == receiver.principal.actor
+    wording = receiver.rules_publish([rule(text="Receiver wording")])["rules"][0]
+    assert wording["agent_text_by"] == receiver.principal.actor
+    shared = env.owner.set_agent(moved["id"], wording["version"], "*")
+    assert receiver.rules_get()["rules"][0]["agent_text"] == "Receiver wording"
+    for viewer in (env.worker, bystander):
+        assert viewer.rules_get()["rules"] == [dict(shared, **hidden)]
+    kept = env.owner.action(shared["id"], shared["version"], "keep_edit")
+    back = env.owner.set_agent(kept["id"], kept["version"], env.agent.actor)
+    assert back["agent_text"] == "Receiver wording"
+    assert env.worker.rules_get()["rules"] == [dict(back, **hidden)]
+    # Owner rules for all agents first answer to the agent they move to.
+    written = env.owner.create("*", "Owner rule for all", "limit")
+    there = env.owner.set_agent(written["id"], 1, env.agent.actor)
+    proposal = env.worker.rules_publish(
+        [{"key": written["key"], "text": "Agent wording", "kind": "limit"}]
+    )["rules"][0]
+    assert proposal["id"] == written["id"] and proposal["pending"] == 1
+    onward = env.owner.set_agent(there["id"], proposal["version"], receiver.principal.actor)
+    assert receiver.rules_get()["rules"][-1] == dict(onward, **hidden)
+    home = env.owner.set_agent(onward["id"], onward["version"], "*")
+    again = env.worker.rules_publish(
+        [{"key": written["key"], "text": "Agent wording 2", "kind": "limit"}]
+    )["rules"][0]
+    assert again["id"] == home["id"] and again["agent_text"] == "Agent wording 2"
+    assert [r["id"] for r in env.owner.list_rules()["rules"]] == [accepted["id"], written["id"]]
 
 
 def test_store_migration_adds_agent_columns_to_existing_files(tmp_path):
@@ -1180,12 +1220,12 @@ def test_store_migration_adds_agent_columns_to_existing_files(tmp_path):
     path = directory / "rules.sqlite3"
     with sqlite3.connect(path) as conn:
         conn.executescript(Path(rule_store.__file__).with_name("schema.sql").read_text())
-        for agent, key in (("conn:writer", "one"), ("*", "two")):
+        for agent, key, agent_text in (("conn:writer", "one", "t"), ("*", "two", None)):
             conn.execute(
-                "INSERT INTO rules(agent,key,text,kind,scope,status,source,seq,created_at,"
-                "updated_at,updated_by) VALUES (?,?,'t','limit','global','accepted','owner',1,"
-                "'x','x','x')",
-                (agent, key),
+                "INSERT INTO rules(agent,key,text,agent_text,kind,scope,status,source,seq,"
+                "created_at,updated_at,updated_by) VALUES (?,?,'t',?,'limit','global','accepted',"
+                "'owner',1,'x','x','x')",
+                (agent, key, agent_text),
             )
         conn.execute(
             "INSERT INTO rule_versions(rule_id,version,text,kind,scope,status,source,stamp_user,"
@@ -1194,10 +1234,9 @@ def test_store_migration_adds_agent_columns_to_existing_files(tmp_path):
         )
     opened = open_store(directory)
     with opened.connection() as conn:
-        assert [tuple(r) for r in conn.execute("SELECT agent,origin_agent FROM rules")] == [
-            ("conn:writer", "conn:writer"),
-            ("*", None),
-        ]
+        assert [
+            tuple(r) for r in conn.execute("SELECT agent,origin_agent,agent_text_by FROM rules")
+        ] == [("conn:writer", "conn:writer", "conn:writer"), ("*", None, None)]
         assert conn.execute("SELECT agent FROM rule_versions").fetchone()[0] is None
         with pytest.raises(sqlite3.DatabaseError, match="append-only"):
             conn.execute("UPDATE rule_versions SET agent='*'")

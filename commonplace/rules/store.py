@@ -23,6 +23,10 @@ def migrate(conn):
             # The agent a rule first applied to keeps matching its republishes after a move.
             conn.execute("ALTER TABLE rules ADD COLUMN origin_agent TEXT")
             conn.execute("UPDATE rules SET origin_agent=agent WHERE agent!='*'")
+        if "agent_text_by" not in {r[1] for r in conn.execute("PRAGMA table_info(rules)")}:
+            # Until rules could move, the rule's own agent wrote its agent_text.
+            conn.execute("ALTER TABLE rules ADD COLUMN agent_text_by TEXT")
+            conn.execute("UPDATE rules SET agent_text_by=origin_agent WHERE agent_text IS NOT NULL")
         if "agent" not in {r[1] for r in conn.execute("PRAGMA table_info(rule_versions)")}:
             conn.execute("ALTER TABLE rule_versions ADD COLUMN agent TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS rules_by_origin ON rules(origin_agent, key)")
