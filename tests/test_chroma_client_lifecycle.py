@@ -476,3 +476,47 @@ with chroma._CLIENT_REGISTRY_LOCK:
     chroma._pending_close_worker = None
 """,
     )
+
+
+def test_pending_worker_failure_is_logged_and_later_closes_restart_it(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+import io
+import logging
+output = io.StringIO()
+handler = logging.StreamHandler(output)
+chroma.logger.addHandler(handler)
+original_drain = chroma._drain_pending_clients
+failed = threading.Event()
+def fail_once(*args, **kwargs):
+    if not failed.is_set():
+        failed.set()
+        raise RuntimeError('injected cleanup failure')
+    return original_drain(*args, **kwargs)
+chroma._drain_pending_clients = fail_once
+closed = []
+chroma._close_client = lambda client, path: closed.append(client)
+first, second = object(), object()
+with chroma._CLIENT_REGISTRY_LOCK:
+    chroma._PENDING_CLIENT_CLOSES[id(first)] = (paths[0], first)
+chroma._schedule_pending_closes()
+with chroma._CLIENT_REGISTRY_LOCK:
+    worker = chroma._pending_close_worker
+if worker is not None:
+    worker.join(5)
+assert failed.is_set()
+assert chroma._pending_close_worker is None
+assert 'Pending Chroma client cleanup failed' in output.getvalue()
+with chroma._CLIENT_REGISTRY_LOCK:
+    chroma._PENDING_CLIENT_CLOSES[id(second)] = (paths[1], second)
+chroma._schedule_pending_closes()
+with chroma._CLIENT_REGISTRY_LOCK:
+    worker = chroma._pending_close_worker
+if worker is not None:
+    worker.join(5)
+    assert not worker.is_alive()
+assert set(closed) == {first, second}
+assert not chroma._PENDING_CLIENT_CLOSES
+""",
+    )

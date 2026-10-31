@@ -1796,17 +1796,24 @@ def _drain_pending_clients(palace_path=None, *, blocking=True) -> int:
 
 def _close_pending_clients() -> None:
     global _pending_close_worker
-    while True:
+    try:
+        while True:
+            with _CLIENT_REGISTRY_LOCK:
+                if not _PENDING_CLIENT_CLOSES:
+                    _pending_close_worker = None
+                    return
+                paths = list(dict.fromkeys(path for path, _ in _PENDING_CLIENT_CLOSES.values()))
+            closed = sum(_drain_pending_clients(palace_path=path, blocking=False) for path in paths)
+            if not closed:
+                # A writer can own one palace for a long time. Retry without
+                # keeping other palaces' clients queued behind that lock.
+                threading.Event().wait(0.05)
+    except Exception:
+        logger.warning("Pending Chroma client cleanup failed", exc_info=True)
+    finally:
         with _CLIENT_REGISTRY_LOCK:
-            if not _PENDING_CLIENT_CLOSES:
+            if _pending_close_worker is threading.current_thread():
                 _pending_close_worker = None
-                return
-            paths = list(dict.fromkeys(path for path, _ in _PENDING_CLIENT_CLOSES.values()))
-        closed = sum(_drain_pending_clients(palace_path=path, blocking=False) for path in paths)
-        if not closed:
-            # A writer can own one palace for a long time. Retry without
-            # keeping other palaces' clients queued behind that lock.
-            threading.Event().wait(0.05)
 
 
 def _schedule_pending_closes() -> None:
