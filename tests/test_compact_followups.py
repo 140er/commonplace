@@ -134,6 +134,9 @@ b.close()
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
+    assert _query(reader) == ["b", "a"]
+    assert reader._handle._vector_cache[1] is not cache
+    assert not reader._handle._vector_cache[1].loci_ready
     assert _query(reader, {"wing": "w"}) == []
     assert _query(reader, {"wing": "x"}) == ["b", "a"]
     assert col._handle._vector_cache[1] is not cache
@@ -227,7 +230,9 @@ def test_version_one_upgrades_in_place_without_losing_drawers(store):
     conn.close()
     other = CompactBackend()
     try:
-        with pytest.raises(BackendError, match="writable once to upgrade in place"):
+        with pytest.raises(
+            BackendError, match="read-only searches.*mempalace --palace PATH repair rebuild-index"
+        ):
             other.get_collection(str(directory), "records", options={"read_only": True})
         col = other.get_collection(str(directory), "records")
         assert list(col._handle.conn.execute("SELECT * FROM documents")) == before
@@ -495,17 +500,20 @@ def test_reindex_verifies_swapped_dimensions_and_rolls_back(store, monkeypatch):
 
 
 def test_partial_batch_rollback_never_changes_warm_cache(store):
-    _, col, _ = store
+    backend, col, directory = store
     col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
-    _query(col)
-    cache = col._handle._vector_cache[1]
+    reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+    _query(reader)
+    cache = reader._handle._vector_cache[1]
     before = cache.matrix.copy(), cache.size
     with pytest.raises(sqlite3.IntegrityError):
         col.add(ids=["b", "a"], documents=["beta", "collision"], embeddings=[[0, 1], [-1, 0]])
+    assert col._handle._vector_cache[1] is cache
     assert cache.size == before[1]
     assert np.array_equal(cache.matrix, before[0])
     assert col.get(include=[]).ids == ["a"]
-    assert _query(col) == ["a"]
+    assert _query(reader) == ["a"]
+    assert reader._handle._vector_cache[1] is cache
 
 
 def test_read_only_search_shares_patched_cache_across_backend_instances(store):
@@ -674,7 +682,7 @@ def test_populated_schema_restores_derived_indexes_and_triggers(store, repair):
 def test_repair_missing_file_does_not_create_database(tmp_path):
     backend = CompactBackend()
     try:
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(BackendError, match="does not exist"):
             backend.repair_empty_schema(str(tmp_path))
         assert not (tmp_path / "compact.sqlite3").exists()
     finally:
@@ -777,3 +785,194 @@ b.close()
         assert reader.get(ids=["a"]).documents == ["beta"]
     finally:
         readonly.close()
+
+
+def test_vector_reload_skips_metadata_and_loci_load_uses_index(store):
+    _, col, _ = store
+    col.add(
+        ids=["a", "b", "keyword"],
+        documents=["alpha"] * 3,
+        embeddings=[[1, 0], [0, 1], None],
+        metadatas=[
+            {"wing": "w", "room": "r", "details": "x" * 4096},
+            {"wing": "x", "room": "s"},
+            {KEYWORD_ONLY: True, "wing": "w"},
+        ],
+    )
+    statements = []
+    col._handle.conn.set_trace_callback(statements.append)
+    try:
+        assert _query(col) == ["a", "b"]
+        cache = col._handle._vector_cache[1]
+        assert not cache.loci_ready
+        loader = next(
+            sql for sql in statements if sql.startswith("SELECT rowid,embedding FROM vectors")
+        )
+        assert "documents" not in loader
+        assert not cache.books["wing"].values
+        # Unsupported predicates do not populate the optional locus cache.
+        _query(col, {"details": {"$ne": "missing"}})
+        assert not cache.loci_ready
+        assert _query(col, {"wing": "w"}) == ["a"]
+        assert cache.loci_ready
+        locus_sql = next(sql for sql in statements if sql.startswith("SELECT rowid,wing,room"))
+        conn = col._handle.conn
+        assert any(
+            "idx_documents_coll_wing_room_hall" in row[3]
+            for row in conn.execute("EXPLAIN QUERY PLAN " + locus_sql)
+        )
+        statements.clear()
+        assert _query(col, {"room": "s"}) == ["b"]
+        assert not any(sql.startswith("SELECT d.rowid FROM documents") for sql in statements)
+    finally:
+        col._handle.conn.set_trace_callback(None)
+
+
+def test_loci_loader_covering_opcodes_when_supported(store):
+    _, col, _ = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]], metadatas=[{"wing": "w"}])
+    statements = []
+    col._handle.conn.set_trace_callback(statements.append)
+    try:
+        _query(col, {"wing": "w"})
+        locus_sql = next(sql for sql in statements if sql.startswith("SELECT rowid,wing,room"))
+        conn = col._handle.conn
+        # Table cursors may be opened even when all values come from the index.
+        opcodes = conn.execute("EXPLAIN " + locus_sql).fetchall()
+        table_root = conn.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name='documents'"
+        ).fetchone()[0]
+        table_cursors = {row[2] for row in opcodes if row[1] == "OpenRead" and row[3] == table_root}
+        reads_table = any(row[1] == "Column" and row[2] in table_cursors for row in opcodes)
+        if reads_table and any("json_extract" in str(row[5]) for row in opcodes):
+            pytest.skip("SQLite evaluates virtual columns instead of covering their reads")
+        assert not reads_table
+    finally:
+        col._handle.conn.set_trace_callback(None)
+
+
+@pytest.mark.parametrize("close", ["close", "close_palace", "retire"])
+def test_closed_referenced_handle_releases_shared_cache(store, close):
+    import gc
+    import weakref
+
+    backend, writer, directory = store
+    writer.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+    _query(reader)
+    cache_ref = weakref.ref(reader._handle.compact_shared)
+    if close == "retire":
+        # Leave only the retired reader referring to this state.
+        writer._handle.compact_shared = None
+        writer._handle._vector_cache = {}
+        backend._retire_read_only_handle(str(directory), reader._handle)
+    elif close == "close_palace":
+        backend.close_palace(str(directory))
+    else:
+        backend.close()
+    gc.collect()
+    assert reader._handle.compact_shared is None
+    assert not reader._handle._vector_cache
+    assert cache_ref() is None
+
+
+def test_creation_token_prevents_cache_reuse_for_rebuilt_same_inode(store):
+    backend, col, directory = store
+    col.add(ids=["old"], documents=["old record"], embeddings=[[1, 0]])
+    assert _query(col) == ["old"]
+    old_shared = col._handle.compact_shared
+    old_version = col._handle._vector_cache[1].version
+    backend.close()
+    db = directory / "compact.sqlite3"
+    inode = db.stat().st_ino
+    # Truncation deterministically recreates the file while preserving its inode.
+    db.write_bytes(b"")
+    new = CompactBackend()
+    try:
+        col = new.get_collection(str(directory), "records", create=True)
+        col.add(ids=["new"], documents=["new record"], embeddings=[[0, 1]])
+        assert _query(col) == ["new"]
+        assert db.stat().st_ino == inode
+        assert col._handle.compact_shared is not old_shared
+        version = col._handle._vector_cache[1].version
+        assert version[1] == old_version[1]
+        assert version[0] != old_version[0]
+    finally:
+        new.close()
+
+
+def test_existing_v2_file_gets_stable_creation_token_on_writable_open(store):
+    backend, col, directory = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    backend.close()
+    with sqlite3.connect(directory / "compact.sqlite3") as conn:
+        conn.execute("DELETE FROM meta WHERE key='file_id'")
+    legacy_reader = CompactBackend()
+    upgraded = CompactBackend()
+    try:
+        reader = legacy_reader.get_collection(
+            str(directory), "records", options={"read_only": True}
+        )
+        assert _query(reader) == ["a"]
+        writer = upgraded.get_collection(str(directory), "records")
+        token = writer._generation(writer._handle.conn.cursor())[0]
+        assert token
+        assert _query(reader) == ["a"]
+        upgraded.close_palace(str(directory))
+        writer = upgraded.get_collection(str(directory), "records")
+        assert writer._generation(writer._handle.conn.cursor())[0] == token
+    finally:
+        upgraded.close()
+        legacy_reader.close()
+
+
+def test_writer_waits_for_cache_without_holding_cross_process_lease(store):
+    import threading
+
+    _, col, directory = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    shared = col._handle.compact_shared
+    owner = threading.get_ident()
+    waiting = threading.Event()
+    errors = []
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.RLock()
+
+        def __enter__(self):
+            if threading.get_ident() != owner:
+                waiting.set()
+            self.lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    shared.lock = ObservedLock()
+
+    def write():
+        try:
+            col.update(ids=["a"], embeddings=[[0, 1]])
+        except BaseException as exc:
+            errors.append(exc)
+
+    with shared.lock:
+        worker = threading.Thread(target=write)
+        worker.start()
+        assert waiting.wait(10)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys\nfrom mempalace.palace import mine_palace_lock\nwith mine_palace_lock(sys.argv[1]): pass",
+                str(directory),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    worker.join(30)
+    assert not worker.is_alive()
+    assert not errors
+    assert result.returncode == 0, result.stderr

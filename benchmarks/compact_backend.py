@@ -237,6 +237,29 @@ def storage_and_latency(root, size, *, chroma=False, progress=None, dominant=Fal
     return results
 
 
+def drawer_metadata(i, wing, room):
+    """Seventeen synthetic fields, approximately 440 bytes when serialized."""
+    return {
+        "wing": wing,
+        "room": room,
+        "parent_drawer_id": f"p{i // 4}",
+        "source_file": f"source/file{i // 50}.md",
+        "filed_at": "2026-10-01T00:00:00Z",
+        "hall": "hall_events",
+        "chunk_index": i % 9,
+        "added_by": "convo-miner",
+        "entities": "topic-a;topic-b;project-c",
+        "authored_at": "2026-10-01T00:00:00Z",
+        "ingest_mode": "convos",
+        "extract_mode": "exchange",
+        "normalize_version": 4,
+        "id_recipe": 2,
+        "convo_chunker_version": 3,
+        "source_mtime": 1793390223.5,
+        "source_dir_id": f"dir-{i // 5000:04d}-0123456789abcdef",
+    }
+
+
 _LATENCY_WORKER = r"""
 import importlib.util, json, sys, time, threading
 import numpy as np
@@ -254,7 +277,7 @@ try:
     c=b.get_collection(sys.argv[2], 'bench', options={'read_only':sys.argv[1]=='probe'})
     q=json.loads(sys.argv[4])
     if sys.argv[1]=='write':
-        c.upsert(ids=['external'], documents=['synthetic external write'], metadatas=[{'wing':'w0','room':'r0'}], embeddings=[q])
+        c.upsert(ids=['external'], documents=['synthetic external write'], metadatas=[json.loads(sys.argv[5])], embeddings=[q])
     else:
         process=psutil.Process()
         peak=[process.memory_info().rss]
@@ -308,10 +331,11 @@ def read_only_latency(
                 ids=[str(i) for i in range(start, start + count)],
                 documents=["synthetic searchable record"] * count,
                 metadatas=[
-                    {
-                        "wing": "w0" if dominant and i < size * 0.8 else f"w{i % 25}",
-                        "room": f"r{(i // 25) % 30}",
-                    }
+                    drawer_metadata(
+                        i,
+                        "w0" if dominant and i < size * 0.8 else f"w{i % 25}",
+                        f"r{(i // 25) % 30}",
+                    )
                     for i in range(start, start + count)
                 ],
                 embeddings=rng.normal(size=(count, 384)).tolist(),
@@ -328,6 +352,7 @@ def read_only_latency(
                     str(root),
                     str(baseline_module) if baseline_module else "-",
                     json.dumps(query),
+                    json.dumps(drawer_metadata(size, "w0", "r0")),
                 ],
                 check=True,
                 capture_output=True,
@@ -336,7 +361,12 @@ def read_only_latency(
             )
             return json.loads(completed.stdout) if mode == "probe" else None
 
-        measurements = worker("probe")
+        cold = [worker("probe") for _ in range(3)]
+        measurements = {key: statistics.median(sample[key] for sample in cold) for key in cold[0]}
+        measurements["metadata_keys"] = len(drawer_metadata(size // 2, "w0", "r0"))
+        measurements["metadata_bytes"] = len(
+            json.dumps(drawer_metadata(size // 2, "w0", "r0"), separators=(",", ":"))
+        )
         reader = backend.get_collection(str(root), "bench", options={"read_only": True})
 
         def query_ms(where=None):
@@ -345,6 +375,7 @@ def read_only_latency(
             return (time.perf_counter() - start) * 1000
 
         query_ms()
+        measurements["first_wing_filter_ms"] = query_ms({"wing": "w0"})
         for name, where in {
             "unfiltered": None,
             "wing": {"wing": "w0"},
@@ -359,7 +390,7 @@ def read_only_latency(
             writer.upsert(
                 ids=["own"],
                 documents=["synthetic own write"],
-                metadatas=[{"wing": "w0", "room": "r0"}],
+                metadatas=[drawer_metadata(size, "w0", "r0")],
                 embeddings=[query],
             )
             writes.append((time.perf_counter() - begin) * 1000)

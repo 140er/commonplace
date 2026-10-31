@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import uuid
 import warnings
 import weakref
 from functools import partial
@@ -41,6 +42,7 @@ from .base import (
     GetResult,
     LexicalHit,
     LexicalResult,
+    PalaceNotFoundError,
     QueryResult,
     _IncludeSpec,
     validate_write_batch,
@@ -100,9 +102,9 @@ class _FileCache:
         self.collections = {}
 
 
-def _file_cache(path):
+def _file_cache(path, file_id):
     stat = os.stat(path)
-    key = (os.path.realpath(path), stat.st_dev, stat.st_ino)
+    key = (os.path.realpath(path), stat.st_dev, stat.st_ino, file_id)
     with _FILE_CACHES_LOCK:
         shared = _FILE_CACHES.get(key)
         if shared is None:
@@ -316,6 +318,7 @@ class _VectorCache:
         self.dimension = dimension
         self.size = 0
         self.books = {"wing": _Codes(), "room": _Codes()}
+        self.loci_ready = False
         self.offset = first_rowid
         self.rowid_index = np.full(max(16, last_rowid - first_rowid + 17), -1, np.int32)
         self._allocate(max(16, capacity + capacity // 64))
@@ -380,6 +383,8 @@ class _VectorCache:
 
     def filter(self, where):
         """Return a vectorized mask, or None when a predicate needs SQL."""
+        if not self.loci_ready:
+            return None
         parts = []
         for key, value in (where or {}).items():
             if key in {"$and", "$or"}:
@@ -416,8 +421,22 @@ class CompactCollection(SQLiteExactCollection):
 
     @staticmethod
     def _generation(cur):
-        row = cur.execute("SELECT value FROM meta WHERE key='write_generation'").fetchone()
-        return int(row[0]) if row else 0
+        values = dict(
+            cur.execute("SELECT key,value FROM meta WHERE key IN ('file_id','write_generation')")
+        )
+        return values.get("file_id"), int(values.get("write_generation", 0))
+
+    @contextlib.contextmanager
+    def _write_lock(self):
+        from ..palace import mine_palace_lock
+
+        with self._handle.lock:
+            self._ensure_open()
+            # A reader may own the shared matrix for an entire query. Wait
+            # before acquiring the cross-process writer lease.
+            with self._handle.compact_shared.lock:
+                with mine_palace_lock(self._handle.palace_path):
+                    yield
 
     @staticmethod
     def _cache_version(cur):
@@ -431,62 +450,66 @@ class CompactCollection(SQLiteExactCollection):
     def _cursor(self, *, write=False):
         self._refresh_read_handle()
         handle = self._handle
-        shared = handle.compact_shared
-        with self._write_lock() if write else handle.lock, shared.lock:
+        with self._write_lock() if write else handle.lock:
             self._ensure_open()
-            cur = handle.conn.cursor()
-            changes = {}
-            handle.__dict__.setdefault("compact_changes", {})[cur] = changes
-            committed = False
-            try:
-                cur.execute("BEGIN IMMEDIATE" if write else "BEGIN")
-                generation = self._generation(cur)  # read inside the pinned snapshot
-                for cid, cache in list(shared.collections.items()):
-                    if cache.version != generation:
-                        del shared.collections[cid]
-                before = handle.conn.total_changes
-                yield cur
-                patches = {}
-                mutated = write and handle.conn.total_changes != before
-                if mutated:
-                    _bump_write_generation(cur)
-                    for cid, rowids in changes.items():
-                        cur.execute(
-                            "INSERT INTO meta(key,value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)",
-                            (f"compact_generation:{cid}",),
-                        )
-                        if cid not in shared.collections:
-                            continue
-                        if rowids is None or shared.collections[cid].dimension != (
-                            self._collection_dimension(cur, cid) or 0
-                        ):
+            shared = handle.compact_shared
+            with shared.lock:
+                cur = handle.conn.cursor()
+                changes = {}
+                handle.__dict__.setdefault("compact_changes", {})[cur] = changes
+                committed = False
+                try:
+                    cur.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                    generation = self._generation(cur)  # read inside the pinned snapshot
+                    for cid, cache in list(shared.collections.items()):
+                        if cache.version != generation:
                             del shared.collections[cid]
-                        else:
-                            patches[cid] = self._cache_rows(cur, rowids)
-                    generation = self._generation(cur)
-                handle.conn.commit()
-                committed = True
-                if mutated:
-                    try:
-                        for cid, cache in shared.collections.items():
-                            for row in patches.get(cid, []):
-                                self._patch_cache(cur, cache, row)
-                            cache.version = generation
-                    except Exception:
-                        shared.collections.clear()
-                        _LOG.warning(
-                            "Discarding compact cache after a committed write", exc_info=True
-                        )
-                    handle._native_cache.clear()
-            except BaseException:
-                if not committed:
-                    handle.conn.rollback()
-                    if write:
-                        shared.collections.clear()
-                raise
-            finally:
-                handle.compact_changes.pop(cur, None)
-                cur.close()
+                    before = handle.conn.total_changes
+                    yield cur
+                    patches = {}
+                    invalidated = set()
+                    mutated = write and handle.conn.total_changes != before
+                    if mutated:
+                        _bump_write_generation(cur)
+                        for cid, rowids in changes.items():
+                            cur.execute(
+                                "INSERT INTO meta(key,value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)",
+                                (f"compact_generation:{cid}",),
+                            )
+                            if cid not in shared.collections:
+                                continue
+                            if rowids is None or shared.collections[cid].dimension != (
+                                self._collection_dimension(cur, cid) or 0
+                            ):
+                                invalidated.add(cid)
+                            else:
+                                patches[cid] = self._cache_rows(
+                                    cur, rowids, shared.collections[cid].loci_ready
+                                )
+                        generation = self._generation(cur)
+                    handle.conn.commit()
+                    committed = True
+                    if mutated:
+                        try:
+                            for cid in invalidated:
+                                shared.collections.pop(cid, None)
+                            for cid, cache in shared.collections.items():
+                                for row in patches.get(cid, []):
+                                    self._patch_cache(cur, cache, row)
+                                cache.version = generation
+                        except Exception:
+                            shared.collections.clear()
+                            _LOG.warning(
+                                "Discarding compact cache after a committed write", exc_info=True
+                            )
+                        handle._native_cache.clear()
+                except BaseException:
+                    if not committed:
+                        handle.conn.rollback()
+                    raise
+                finally:
+                    handle.compact_changes.pop(cur, None)
+                    cur.close()
 
     def _changed(self, cur, cid, rowids=None):
         changes = self._handle.compact_changes[cur]
@@ -496,7 +519,13 @@ class CompactCollection(SQLiteExactCollection):
             changes.setdefault(cid, set()).update(rowids)
 
     @staticmethod
-    def _cache_rows(cur, rowids):
+    def _cache_rows(cur, rowids, loci_ready):
+        if not loci_ready:
+            return cur.execute(
+                "SELECT wanted.value AS rowid,v.embedding FROM json_each(?) wanted "
+                "LEFT JOIN vectors v ON v.rowid=wanted.value",
+                (json.dumps(list(rowids)),),
+            ).fetchall()
         return cur.execute(
             "SELECT wanted.value AS rowid,v.embedding,d.wing,d.room,"
             "CASE WHEN substr(d.wing,1,1) IN ('[','{') THEN json_type(d.metadata_json,'$.wing') END AS wing_type,"
@@ -510,19 +539,23 @@ class CompactCollection(SQLiteExactCollection):
     def _patch_cache(cur, cache, row):
         if row["embedding"] is None:
             cache.put(row["rowid"], None)
-        else:
+        elif cache.loci_ready:
             codes = [
                 cache.books[key].code(row[key], row[key + "_type"]) for key in ("wing", "room")
             ]
             cache.put(row["rowid"], row["embedding"], *codes)
+        else:
+            cache.put(row["rowid"], row["embedding"])
 
     def _retry_snapshot(self, operation):
         for _ in range(3):
             try:
                 return operation()
             except _SnapshotChanged:
-                with self._handle.compact_shared.lock:
-                    self._handle._vector_cache.clear()
+                with self._handle.lock:
+                    self._ensure_open()
+                    with self._handle.compact_shared.lock:
+                        self._handle._vector_cache.clear()
         raise BackendError("Palace changed repeatedly during compact search; retry the query")
 
     def query(self, **kwargs):
@@ -873,7 +906,7 @@ class CompactCollection(SQLiteExactCollection):
         loader.row_factory = None
         try:
             loader.execute(
-                "SELECT v.rowid,v.embedding,d.wing,d.room FROM vectors v JOIN documents d ON d.rowid=v.rowid WHERE v.collection_id=? ORDER BY v.rowid",
+                "SELECT rowid,embedding FROM vectors WHERE collection_id=? ORDER BY rowid",
                 (cid,),
             )
             while rows := loader.fetchmany(4096):
@@ -889,7 +922,40 @@ class CompactCollection(SQLiteExactCollection):
                         "ij,ij->i", cache.matrix[start:end], cache.matrix[start:end], dtype=np.int64
                     )
                 )
-                for column, key in ((2, "wing"), (3, "room")):
+                cache.size = end
+        finally:
+            loader.close()
+        self._handle._vector_cache[cid] = cache
+        return cache
+
+    @staticmethod
+    def _supports_loci(where):
+        return all(
+            all(CompactCollection._supports_loci(child) for child in value or [])
+            if key in {"$and", "$or"}
+            else key in {"wing", "room"} and _indexed_operand(value)
+            for key, value in where.items()
+        )
+
+    def _load_loci(self, cur, cid, cache):
+        """Read dedicated locus columns separately from the vector reload.
+
+        The locus index supplies the collection range. Some SQLite builds also
+        cover virtual-column reads; others evaluate their generated expressions.
+        JSON types are needed only for array/object-looking values.
+        """
+        loader = cur.connection.cursor()
+        loader.row_factory = None
+        try:
+            loader.execute(
+                "SELECT rowid,wing,room FROM documents INDEXED BY idx_documents_coll_wing_room_hall WHERE collection_id=?",
+                (cid,),
+            )
+            while rows := loader.fetchmany(4096):
+                ids = np.fromiter((row[0] for row in rows), np.int64, count=len(rows))
+                positions = cache.positions(ids)
+                valid = positions >= 0
+                for column, key in ((1, "wing"), (2, "room")):
                     book = cache.books[key]
                     for raw in {row[column] for row in rows}:
                         if not (isinstance(raw, str) and raw.startswith(("[", "{"))):
@@ -908,12 +974,10 @@ class CompactCollection(SQLiteExactCollection):
                         for index in unusual:
                             row = rows[index]
                             codes[index] = book.code(row[column], kinds[row[0]])
-                    getattr(cache, key)[start:end] = codes
-                cache.size = end
+                    getattr(cache, key)[positions[valid]] = codes[valid]
+            cache.loci_ready = True
         finally:
             loader.close()
-        self._handle._vector_cache[cid] = cache
-        return cache
 
     def _query_once(
         self,
@@ -960,6 +1024,13 @@ class CompactCollection(SQLiteExactCollection):
                 candidates = cache.positions(selected)
                 candidates = candidates[candidates >= 0]
                 candidates.sort()
+                if (
+                    not cache.loci_ready
+                    and where
+                    and not where_document
+                    and self._supports_loci(where)
+                ):
+                    self._load_loci(cur, cid, cache)
             count = len(rowids) if candidates is None else len(candidates)
             for vector in query_embeddings:
                 q = _as_vector_array(vector)
@@ -1289,10 +1360,47 @@ class CompactBackend(SQLiteExactBackend):
                 return matches_where_document(doc, json.loads(predicate))
 
             handle.conn.create_function("compact_document_match", 4, document_match)
-            handle.compact_shared = _file_cache(self._db_path(palace_path))
+            # Old read-only files can lack a token until their next writable
+            # open. Keep those caches private to this connection lifetime.
+            file_id = handle.conn.execute("SELECT value FROM meta WHERE key='file_id'").fetchone()
+            handle.compact_shared = _file_cache(
+                self._db_path(palace_path), file_id[0] if file_id else uuid.uuid4().hex
+            )
             handle._vector_cache = handle.compact_shared.collections
             handle.compact_functions_registered = True
         return handle
+
+    @staticmethod
+    def _release_cache(handle):
+        with handle.lock:
+            handle._vector_cache = {}
+            handle.compact_shared = None
+
+    def _retire_read_only_handle(self, palace_path, handle):
+        try:
+            super()._retire_read_only_handle(palace_path, handle)
+        finally:
+            self._release_cache(handle)
+
+    def close_palace(self, palace):
+        path = palace.local_path if hasattr(palace, "local_path") else palace
+        with self._clients_lock:
+            handles = [self._clients.get(path), self._read_only_clients.get(path)]
+            try:
+                super().close_palace(palace)
+            finally:
+                for handle in handles:
+                    if handle is not None:
+                        self._release_cache(handle)
+
+    def close(self):
+        with self._clients_lock:
+            handles = list(self._clients.values()) + list(self._read_only_clients.values())
+            try:
+                super().close()
+            finally:
+                for handle in handles:
+                    self._release_cache(handle)
 
     @staticmethod
     def _missing_schema(conn):
@@ -1328,7 +1436,8 @@ class CompactBackend(SQLiteExactBackend):
                 "upgrade MemPalace"
                 if version > _SCHEMA_VERSION
                 else (
-                    "open this palace writable once to upgrade in place"
+                    "read-only searches require an in-place upgrade first; run "
+                    "mempalace --palace PATH repair rebuild-index (opens writable to upgrade)"
                     if version == 1
                     else "recover from a backup"
                 )
@@ -1355,9 +1464,13 @@ class CompactBackend(SQLiteExactBackend):
         from ..palace import mine_palace_lock
 
         with mine_palace_lock(palace_path):
-            conn = sqlite3.connect(
-                Path(self._db_path(palace_path)).resolve().as_uri() + "?mode=rw", uri=True
-            )
+            db_path = Path(self._db_path(palace_path)).resolve()
+            if not db_path.is_file():
+                raise PalaceNotFoundError("compact palace database does not exist")
+            try:
+                conn = sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True)
+            except sqlite3.OperationalError as exc:
+                raise BackendError("could not open compact palace for repair") from exc
             try:
                 if (
                     not self._missing_schema(conn)
@@ -1393,6 +1506,9 @@ class CompactBackend(SQLiteExactBackend):
                         "cannot complete compact schema containing documents; recover from a backup"
                     )
             if not self._missing_schema(conn) and version == _SCHEMA_VERSION:
+                if not conn.execute("SELECT 1 FROM meta WHERE key='file_id'").fetchone():
+                    conn.execute("INSERT INTO meta VALUES ('file_id',?)", (uuid.uuid4().hex,))
+                    conn.commit()
                 if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                     conn.execute("PRAGMA journal_mode=WAL")
                 return
@@ -1436,6 +1552,7 @@ class CompactBackend(SQLiteExactBackend):
                 INSERT OR IGNORE INTO meta VALUES ('fts5_available','1');
             """)
             self._ensure_locus_columns(conn)
+            conn.execute("INSERT OR IGNORE INTO meta VALUES ('file_id',?)", (uuid.uuid4().hex,))
             conn.execute("CREATE INDEX IF NOT EXISTS compact_room ON documents(collection_id,room)")
             conn.execute(f"PRAGMA application_id={_APPLICATION_ID}")
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
