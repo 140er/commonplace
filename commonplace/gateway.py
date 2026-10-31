@@ -249,9 +249,9 @@ class Mediator:
         params = params if isinstance(params, dict) else {}
         name = params.get("name")
         args = params.get("arguments")
-        from mempalace.stored_text import strip_index_hints
+        from mempalace.stored_text import user_tool_arguments
 
-        args = strip_index_hints(dict(args)) if isinstance(args, dict) else {}
+        args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
         policy = principal.policy
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")

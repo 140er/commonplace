@@ -677,11 +677,11 @@ def _tool_result_is_error(result) -> bool:
     )
 
 
-def _tool_call_response(req_id, result) -> dict:
+def _tool_call_response(req_id, result, *, tool_name=None) -> dict:
     """The JSON-RPC response carrying a tool's result as MCP text content."""
-    from ..stored_text import strip_index_hints
+    from ..stored_text import public_tool_result
 
-    result = strip_index_hints(result)
+    result = public_tool_result(result, tool_name=tool_name)
     tool_result = {
         "content": [{"type": "text", "text": json.dumps(result, indent=2, ensure_ascii=False)}]
     }
@@ -928,9 +928,9 @@ def call_tool(req_id, params: dict, internal: bool = False):
             "Invalid params: 'name' must be a string and 'arguments' an object",
         ), None
     tool_name = params.get("name")
-    from ..stored_text import strip_index_hints
+    from ..stored_text import user_tool_arguments
 
-    tool_args = strip_index_hints(params.get("arguments") or {})
+    tool_args = user_tool_arguments(params.get("arguments") or {}, tool_name=tool_name)
     if tool_name not in TOOLS:
         return _json_rpc_error(req_id, -32601, f"Unknown tool: {tool_name}"), None
     # Whitelist arguments to declared schema properties only.
@@ -1068,7 +1068,11 @@ def handle_request(request):
         }
     if method == "tools/call":
         refusal, result = call_tool(req_id, params)
-        return refusal if refusal is not None else _tool_call_response(req_id, result)
+        return (
+            refusal
+            if refusal is not None
+            else _tool_call_response(req_id, result, tool_name=params.get("name"))
+        )
 
     # Notifications (missing id) must never get a response
     if req_id is None:

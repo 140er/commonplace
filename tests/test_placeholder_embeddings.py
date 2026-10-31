@@ -15,7 +15,7 @@ from mempalace.stored_text import (
     chunk_index_metadata,
     encode_record,
     index_text,
-    strip_index_hints,
+    user_tool_arguments,
 )
 
 _REAL_EMBED_TEXTS = ew._embed_texts
@@ -24,6 +24,7 @@ _REAL_EMBED_TEXTS = ew._embed_texts
 @pytest.fixture(autouse=True)
 def real_embedding_wrapper(monkeypatch):
     monkeypatch.setattr(ew, "_embed_texts", _REAL_EMBED_TEXTS)
+    monkeypatch.setattr("mempalace.stored_text._hint_warning_times", {})
 
 
 def corpus(size=1831):
@@ -151,9 +152,9 @@ def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypat
         got = col.get(ids=ids, include=["documents", "metadatas"])
         assert dict(zip(got.ids, got.documents)) == dict(zip(ids, docs))
         recorder.seen.clear()
-        from mempalace.repair import _embeddinggemma2_collection
+        from mempalace.repair import _text_embedding_collection
 
-        rebuilt = _embeddinggemma2_collection(inner, False)
+        rebuilt = _text_embedding_collection(inner, False)
         rebuilt.upsert(ids=got.ids, documents=got.documents, metadatas=got.metadatas)
         assert recorder.seen == expected
         col.update(ids=[ids[0]], documents=[text], metadatas=[source.metadata(0, len(text))])
@@ -183,7 +184,11 @@ def test_reserved_hints_are_removed_recursively_without_touching_verbatim_string
         "metadata": {INDEX_SPANS: "forged", "wing": "test"},
         "rows": [{INDEX_SPANS: "forged"}],
     }
-    assert strip_index_hints(value) == {"content": text, "metadata": {"wing": "test"}, "rows": [{}]}
+    assert user_tool_arguments(value) == {
+        "content": text,
+        "metadata": {"wing": "test"},
+        "rows": [{INDEX_SPANS: "forged"}],
+    }
     assert INDEX_SPANS in value
 
 
@@ -240,7 +245,7 @@ def test_mcp_ingress_strips_hint_before_dispatch(monkeypatch):
     seen = {}
     monkeypatch.setitem(
         mcp.TOOLS,
-        "hygiene_fixture",
+        "mempalace_add_drawer",
         {
             "input_schema": {"type": "object", "properties": {"metadata": {"type": "object"}}},
             "handler": lambda **kwargs: seen.update(kwargs) or {"success": True},
@@ -250,7 +255,7 @@ def test_mcp_ingress_strips_hint_before_dispatch(monkeypatch):
     mcp.call_tool(
         1,
         {
-            "name": "hygiene_fixture",
+            "name": "mempalace_add_drawer",
             "arguments": {
                 INDEX_SPANS: "forged",
                 "metadata": {INDEX_SPANS: "forged", "wing": "test"},
@@ -340,3 +345,298 @@ def test_trimmed_exchange_maps_occurrences_without_erasing_an_invalid_run():
     indexed = "".join(index_text(item["content"], chunk_index_metadata(item)) for item in chunks)
     assert "invalid='" + invalid + "'" in indexed
     assert "valid='[base64 binary 300 B]'" in indexed
+
+
+def test_hint_projection_failure_never_blocks_verbatim_chunks(caplog):
+    from copy import deepcopy
+
+    from mempalace.stored_text import annotate_chunks
+
+    text = corpus()
+    chunks = [{"content": text[:137]}, {"content": "chunker-specific transformed text"}]
+    before = deepcopy(chunks)
+    assert annotate_chunks(text, chunks) is chunks
+    assert chunks == before
+    assert "storing chunks without hints" in caplog.text
+
+
+def test_invalid_hint_warnings_are_rate_limited(caplog):
+    for _ in range(30):
+        assert index_text("plain document", {INDEX_SPANS: "bad json"}) == "plain document"
+    assert caplog.text.count("Ignoring stale or invalid index span hint") == 1
+
+
+@pytest.mark.parametrize("forged", ["prose", "deep-json"])
+def test_untrusted_hint_cannot_erase_prose_or_crash_json_decoder(forged):
+    import hashlib
+
+    text = "the secret needle word"
+    hint = json.dumps(
+        {
+            "v": 1,
+            "sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "spans": [[4, 18, "[base64 binary 300 B]", False]],
+        }
+    )
+    if forged == "deep-json":
+        hint = "[" * 2000 + "0" + "]" * 2000
+    assert index_text(text, {INDEX_SPANS: hint}) == text
+
+
+@pytest.mark.parametrize("kind", ["unpadded", "glued", "mixed", "padding"])
+def test_rejected_whole_runs_are_not_reclassified_on_chunk_fragments(kind):
+    from mempalace.miner import chunk_text
+
+    payload = base64.urlsafe_b64encode(random.Random(9).randbytes(1000)).decode()
+    rejected = {
+        "unpadded": payload.rstrip("="),
+        "glued": payload.rstrip("=") + "wordx",
+        "mixed": payload.rstrip("=") + "+/_-",
+        "padding": payload + "=",
+    }[kind]
+    assert not find_base64_spans(rejected)
+    chunks = chunk_text(rejected, "fixture.txt", chunk_size=800, chunk_overlap=0, min_chunk_size=0)
+    assert any(find_base64_spans(chunk["content"]) for chunk in chunks)
+    for chunk in chunks:
+        meta = chunk_index_metadata(chunk)
+        assert json.loads(meta[INDEX_SPANS])["spans"] == []
+        assert index_text(chunk["content"], meta) == chunk["content"]
+
+
+def test_adapter_and_exchange_metadata_cannot_forge_hints():
+    from types import SimpleNamespace
+
+    from mempalace.convo_miner import file_conversation_exchange
+    from mempalace.sources.base import DrawerRecord
+    from mempalace.sources.context import PalaceContext
+
+    writes = []
+    collection = SimpleNamespace(upsert=lambda **kwargs: writes.append(kwargs))
+    context = PalaceContext(
+        drawer_collection=collection,
+        knowledge_graph=None,
+        palace_path="fixture",
+        adapter_name="fixture",
+        adapter_version="1",
+    )
+    context.upsert_drawer(
+        DrawerRecord(
+            content="verbatim",
+            source_file="fixture.txt",
+            chunk_index=0,
+            metadata={INDEX_SPANS: "forged"},
+        )
+    )
+    file_conversation_exchange(
+        collection,
+        wing="test",
+        room="notes",
+        text="verbatim exchange",
+        source_file="fixture.txt",
+        agent="fixture",
+        extra_metadata={INDEX_SPANS: "forged", "tag": "keep"},
+    )
+    assert len(writes) == 2
+    assert all(INDEX_SPANS not in write["metadatas"][0] for write in writes)
+    assert writes[1]["metadatas"][0]["tag"] == "keep"
+
+
+def test_hint_change_reembeds_pre_policy_vectors_once(monkeypatch):
+    from types import SimpleNamespace
+
+    from mempalace import palace
+    from mempalace.backends.base import GetResult
+
+    text = corpus()
+    old = {"source_file": "fixture.txt"}
+    new = IndexSource(text).metadata(0, len(text), old)
+    col = SimpleNamespace(
+        get=lambda **kwargs: GetResult(ids=["id"], documents=[text], metadatas=[old]),
+        upsert_merges_metadata=False,
+    )
+    vector_reads = []
+    monkeypatch.setattr(palace, "_stored_vectors", lambda *args: vector_reads.append(args) or {})
+    rows, reuse, vectors = palace._split_unchanged(col, [("id", text, new)])
+    assert rows == [("id", text, new)] and reuse == [] and vectors == []
+    assert vector_reads[0][1] == []
+    old.update(new)
+    monkeypatch.setattr(palace, "_stored_vectors", lambda *args: {"id": [1.0, 0.0, 0.0]})
+    monkeypatch.setattr("mempalace.embedding.probe_dimension", lambda: 3)
+    rows, reuse, vectors = palace._split_unchanged(col, [("id", text, new)])
+    assert rows == [] and reuse == [("id", text, new)] and vectors == [[1.0, 0.0, 0.0]]
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact"])
+@pytest.mark.parametrize("width", [800, 10000])
+def test_drawer_updates_tombstone_old_hints(monkeypatch, config, palace_path, kg, backend, width):
+    from _mcp_server_helpers import _patch_mcp_server
+
+    from mempalace import mcp_server as mcp
+    from mempalace.backends import PalaceRef, get_backend
+
+    _patch_mcp_server(monkeypatch, config, kg)
+    monkeypatch.setattr(type(config), "chunk_size", property(lambda self: width))
+    inner = get_backend(backend).get_collection(
+        palace=PalaceRef(id=palace_path, local_path=palace_path),
+        collection_name="mempalace_drawers",
+        create=True,
+    )
+    col = ew.EmbeddingCollection(inner)
+    recorder = Recorder(dimension=384)
+    monkeypatch.setattr(ew, "_get_document_embedder", lambda: recorder)
+    monkeypatch.setattr("mempalace.embedding.configured_embedding_function", lambda: recorder)
+    monkeypatch.setattr(mcp, "_get_collection", lambda **kwargs: col)
+    # First chunk is plain, so cleanup cannot rely on its prior metadata having a hint.
+    text = "plain prefix. " * 70 + corpus()
+    added = mcp.tool_add_drawer(wing="test", room="notes", content=text)
+    assert added.get("success"), added
+    plain = "plain replacement. " * 100
+    updated = mcp.tool_update_drawer(added["drawer_id"], content=plain)
+    assert updated.get("success"), updated
+    rows = col.get(include=["documents", "metadatas"])
+    assert all(meta.get(INDEX_SPANS) is None for meta in rows.metadatas)
+    assert "".join(rows.documents) == plain
+
+
+def test_event_and_artifact_metadata_remain_verbatim_at_client_boundaries():
+    from mempalace import mcp_server as mcp
+    from mempalace.stored_text import FLAG, KEYWORD_ONLY, dumps_client
+
+    metadata = {
+        INDEX_SPANS: "user JSON",
+        FLAG: "literal",
+        KEYWORD_ONLY: "user value",
+        "nested": {INDEX_SPANS: "also literal"},
+    }
+    for name in ("mempalace_event_append", "mempalace_artifact_put", "mempalace_emit_patch"):
+        arguments = {"metadata": metadata, "content": "verbatim"}
+        assert user_tool_arguments(arguments, tool_name=name) == arguments
+        result = mcp._tool_call_response(1, arguments, tool_name=name)
+        assert json.loads(result["result"]["content"][0]["text"]) == arguments
+        assert json.loads(dumps_client(arguments)) == arguments
+    cleaned = user_tool_arguments({"metadatas": (metadata,)}, tool_name="mempalace_add_drawer")
+    assert cleaned == {"metadatas": ({"nested": {INDEX_SPANS: "also literal"}},)}
+
+
+@pytest.mark.parametrize("chunker", ["project", "exchange", "general"])
+@given(
+    size=st.integers(200, 1800),
+    width=st.integers(37, 850),
+    kind=st.sampled_from(["valid", "unpadded", "glued", "mixed", "padding", "identifier"]),
+    prefix=st.sampled_from(
+        ["Ω 🧭", "lone\udcff byte", "NUL\0value", "line\u2028separator", "CRLF\r\ntext"]
+    ),
+)
+@settings(max_examples=200, deadline=None)
+def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, prefix):
+    import re
+    from bisect import bisect_left
+
+    payload = base64.urlsafe_b64encode(random.Random(size).randbytes(size)).decode()
+    run = {
+        "valid": payload,
+        "unpadded": payload.rstrip("="),
+        "glued": "word" + payload.rstrip("=") + "tailx",
+        "mixed": payload.rstrip("=") + "+/_-",
+        "padding": payload + "===",
+        "identifier": "abcdef0123456789" * 30,
+    }[kind]
+    text = (
+        f"  > {prefix} first   \r\nBefore '{run}' after needle.\r\n> second\nreply\n> third\nreply"
+    )
+    spans = find_base64_spans(text)
+    if chunker == "project":
+        from mempalace.miner import chunk_text
+
+        chunks = chunk_text(
+            text, "fixture.txt", chunk_size=width, chunk_overlap=width // 5, min_chunk_size=0
+        )
+        view, ranges, cursor = text, [], 0
+        for chunk in chunks:
+            start = text.find(chunk["content"], cursor)
+            assert start >= 0
+            ranges.append((start, start + len(chunk["content"])))
+            cursor = start + 1
+        projected = [(s.start, s.end, s.placeholder) for s in spans]
+    else:
+        if chunker == "exchange":
+            from mempalace.convo_miner import chunk_exchanges
+
+            chunks = chunk_exchanges(text, chunk_size=width, min_chunk_size=0)
+        else:
+            from mempalace.general_extractor import extract_memories
+
+            chunks = extract_memories(text, chunk_size=width)
+        view = "".join(c["content"] for c in chunks)
+        # Independent oracle: map non-whitespace character ordinals using
+        # small fixture arrays, then project only original validated spans.
+        source_positions = [i for i, c in enumerate(text) if not c.isspace()]
+        view_positions = [i for i, c in enumerate(view) if not c.isspace()]
+        assert "".join(text[i] for i in source_positions) == "".join(
+            view[i] for i in view_positions
+        )
+        projected = []
+        for span in spans:
+            first = bisect_left(source_positions, span.start)
+            last = bisect_left(source_positions, span.end) - 1
+            projected.append((view_positions[first], view_positions[last] + 1, span.placeholder))
+        ranges, start = [], 0
+        for chunk in chunks:
+            ranges.append((start, start + len(chunk["content"])))
+            start += len(chunk["content"])
+    for chunk, (start, end) in zip(chunks, ranges):
+        expected, cursor = [], start
+        for left, right, placeholder in projected:
+            if left >= end or right <= start:
+                continue
+            expected.append(view[cursor : max(start, left)])
+            if start <= left < end or left <= start < end <= right:
+                expected.append(placeholder)
+            cursor = min(end, right)
+        expected.append(view[cursor:end])
+        expected_text = re.sub(r"[\x00\ud800-\udfff]", " ", "".join(expected))
+        assert (
+            index_text(chunk["content"], chunk_index_metadata(chunk), stored_form=False)
+            == expected_text
+        )
+
+
+def test_hybrid_keyword_scores_use_hinted_index_view_and_preserve_text(monkeypatch):
+    from mempalace import searcher
+
+    text = corpus()
+    source = IndexSource(text)
+    # A locally undecodable fragment exercises hint propagation into reranking.
+    start = source.spans[0].start + 17
+    doc = text[start : start + 137]
+    meta = source.metadata(start, start + len(doc))
+    captured = []
+    monkeypatch.setattr(
+        searcher,
+        "bm25_scores",
+        lambda query, docs, **kwargs: captured.extend(docs) or [1.0] * len(docs),
+    )
+    rows = [{"text": doc, "distance": 0.1, "_index_metadata": meta}]
+    ranked = searcher._hybrid_rank(rows, "needle")
+    assert captured == [index_text(doc, meta)]
+    assert ranked[0]["text"] == doc
+
+
+def test_no_fts_keyword_scores_use_index_view(tmp_path, monkeypatch):
+    from mempalace.backends import sqlite_exact
+
+    backend = sqlite_exact.SQLiteExactBackend()
+    col = backend.create_collection(str(tmp_path), "test_drawers")
+    text = corpus()
+    meta = IndexSource(text).metadata(0, len(text))
+    col.add(ids=["id"], documents=[text], metadatas=[meta], embeddings=[[1.0, 0.0, 0.0]])
+    captured = []
+    monkeypatch.setattr(col, "_lexical_search_fts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        sqlite_exact, "bm25_scores", lambda query, docs: captured.extend(docs) or [1.0] * len(docs)
+    )
+    try:
+        assert col.lexical_search(query="needle").hits[0].document == text
+        assert captured == [index_text(text, meta)]
+    finally:
+        backend.close()

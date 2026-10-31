@@ -1440,7 +1440,9 @@ class SQLiteExactCollection(BaseCollection):
             if hits is not None:
                 return LexicalResult(hits=hits)
             rows = self._rows(cur, where=where)
-        scores = bm25_scores(query, [row["document"] for row in rows])
+        scores = bm25_scores(
+            query, [index_text(row["document"], row["metadata"], stored_form=False) for row in rows]
+        )
         scored = [
             LexicalHit(
                 id=row["id"],

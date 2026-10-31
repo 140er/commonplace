@@ -152,7 +152,9 @@ def file_conversation_exchange(
         **identity_metadata(source_file),
     }
     if extra_metadata:
-        for key, value in extra_metadata.items():
+        from .stored_text import public_metadata
+
+        for key, value in public_metadata(extra_metadata).items():
             metadata.setdefault(key, value)
     collection.upsert(ids=[drawer_id], documents=[text], metadatas=[metadata])
     return drawer_id

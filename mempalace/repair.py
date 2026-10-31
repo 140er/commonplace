@@ -345,7 +345,7 @@ def _delete_collection_if_exists(backend, palace_path: str, collection_name: str
         return
 
 
-def _embeddinggemma2_collection(collection, enabled: bool):
+def _text_embedding_collection(collection, enabled: bool):
     """Use the core index-text encoder for every text rebuild.
 
     ``enabled`` is retained for the existing model-selection call sites.
@@ -491,7 +491,7 @@ def _rebuild_collection_via_temp(
         asset_embedder = _asset_media_embedder() if media_assets else None
         temp_col = backend.create_collection(palace_path, temp_name)
         if not media_assets:
-            temp_col = _embeddinggemma2_collection(temp_col, embeddinggemma2)
+            temp_col = _text_embedding_collection(temp_col, embeddinggemma2)
         staged = 0
         for i in range(0, expected, batch_size):
             batch_ids = all_ids[i : i + batch_size]
@@ -516,7 +516,7 @@ def _rebuild_collection_via_temp(
         live_replaced = True
         new_col = backend.create_collection(palace_path, collection_name)
         if not media_assets:
-            new_col = _embeddinggemma2_collection(new_col, embeddinggemma2)
+            new_col = _text_embedding_collection(new_col, embeddinggemma2)
 
         rebuilt = 0
         for i in range(0, expected, batch_size):
@@ -596,7 +596,7 @@ def _promote_temp_collection(
     _delete_collection_if_exists(backend, palace_path, collection_name)
     new_col = backend.create_collection(palace_path, collection_name)
     if not media_assets:
-        new_col = _embeddinggemma2_collection(new_col, embeddinggemma2)
+        new_col = _text_embedding_collection(new_col, embeddinggemma2)
     promoted = 0
     for i in range(0, len(ids), batch_size):
         batch_docs = docs[i : i + batch_size]
@@ -2079,7 +2079,7 @@ def _rebuild_one_collection(
             asset_embedder = _asset_media_embedder()
         col = backend.create_collection(dest_palace, collection_name)
         if not media_assets:
-            col = _embeddinggemma2_collection(col, embeddinggemma2)
+            col = _text_embedding_collection(col, embeddinggemma2)
 
         for emb_id, doc, meta in extract_via_sqlite(source_palace, collection_name):
             ids.append(emb_id)

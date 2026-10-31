@@ -3,7 +3,7 @@ if __name__ != "mempalace.mcp_server":
     raise ImportError(f"{__name__} is an implementation fragment; import mempalace.mcp_server")
 
 
-from ..stored_text import IndexSource, public_metadata
+from ..stored_text import INDEX_SPANS, IndexSource, public_metadata
 
 # ==================== WRITE TOOLS ====================
 
@@ -484,6 +484,7 @@ def _build_chunk_rows(drawer_id: str, content: str, meta: dict, chunk_size: int)
 
         chunk_meta = dict(base_meta)
         chunk_meta["chunk_index"] = chunk_index
+        chunk_meta[INDEX_SPANS] = None
         chunk_metas.append(index_source.metadata(start, start + len(chunk_doc), chunk_meta))
 
     return chunk_ids, chunk_docs, chunk_metas
@@ -1575,7 +1576,9 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
             update_kwargs = {"ids": [record["ids"][0]]}
             if content is not None:
                 update_kwargs["documents"] = [new_doc]
-                new_meta = IndexSource(new_doc).metadata(0, len(new_doc), new_meta)
+                new_meta = IndexSource(new_doc).metadata(
+                    0, len(new_doc), {**new_meta, INDEX_SPANS: None}
+                )
             update_kwargs["metadatas"] = [new_meta]
 
             col.update(**update_kwargs)

@@ -46,7 +46,7 @@ C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vecto
 ## A0: Placeholder embeddings (all backends)
 
 - Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text; the stored document stays verbatim.
-- Chroma accepts explicit embeddings, so this ships on Chroma too. It cuts embedding CPU on base64-heavy drawers and removes junk vectors. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
+- Chroma accepts explicit embeddings, so this ships on Chroma too. It removes base64 from embedding input; CPU savings depend on the model, and fixed-length padding can retain most inference cost. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
 
 ### A0 indexing policy
 
@@ -56,13 +56,19 @@ range: a span emits its placeholder where it starts, continuation fragments are
 removed, and a chunk wholly inside a span indexes the placeholder. No vectors are
 removed in A0; the vector count is unchanged. Keyword-only message policy is B1c.
 Queries use the same placeholder rule when they contain validated base64.
+The index view also replaces NUL and lone surrogates with spaces for inference,
+rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
+strings retain those characters through the existing reversible encoding.
 
 The reserved `_mempalace_index_spans` metadata key carries version 1 JSON with a
 SHA-256 of the verbatim chunk and clipped local spans. This preserves boundary
 context during repair, migration and replication without storing another prose
-copy. A stale version or content hash logs a warning and falls back to detection
-on the supplied document. The hint is removed from user arguments and public
-responses; it never changes the document returned by `get_drawer`.
+copy. An empty span list records a whole-input rejection of a base64-shaped
+run, so a valid-looking fragment cannot override that decision after splitting.
+Removed hints are tombstoned on merging writes. A stale version or content hash
+logs a rate-limited warning and falls back to detection on the supplied document. A projection failure logs a warning and stores the
+verbatim chunks without hints rather than losing the source. The hint is removed
+from drawer arguments and public responses; it never changes the document returned by `get_drawer`.
 
 The embedding wrapper supplies explicit vectors on Chroma and the other vector
 backends. SQLite's `docs_fts` receives the same core index view. Chroma's own FTS

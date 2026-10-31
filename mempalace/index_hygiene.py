@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 _RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![A-Za-z0-9+/_=\-])")
+_CANDIDATE_RUN = re.compile(r"[A-Za-z0-9+/_\-]{200,}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
 
@@ -65,6 +66,15 @@ def _media_type(data: bytes) -> str:
     if data.startswith(b"\x1f\x8b\x08"):
         return "application/gzip"
     return "binary"
+
+
+def base64_candidate_ranges(text: str) -> list[tuple[int, int]]:
+    """Maximal base64-shaped runs, including rejected padding/alphabet/length.
+
+    Chunking must preserve a whole-input rejection as well as an acceptance:
+    a locally valid substring cannot override the decision on its whole run.
+    """
+    return [match.span() for match in _CANDIDATE_RUN.finditer(text)]
 
 
 def find_base64_spans(text: str) -> list[Base64Span]:

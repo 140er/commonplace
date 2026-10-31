@@ -41,9 +41,9 @@ def run(repeats=3, chunk_size=800):
             "embedding_cpu_seconds": statistics.median(timings),
             "cpu_samples_seconds": timings,
             "vectors": len(vectors),
-            "embedding_characters": sum(len(d) for d in docs) if policy == "before" else sum(
-                len(index_text(d, m, stored_form=False)) for d, m in zip(docs, metadata)
-            ),
+            "embedding_characters": sum(len(d) for d in docs)
+            if policy == "before"
+            else sum(len(index_text(d, m, stored_form=False)) for d, m in zip(docs, metadata)),
         }
     return {
         "model": "MiniLM CPU",
@@ -51,7 +51,11 @@ def run(repeats=3, chunk_size=800):
         "chunk_size": chunk_size,
         "repeats": repeats,
         **results,
-        "cpu_reduction_percent": 100 * (1 - results["after"]["embedding_cpu_seconds"] / results["before"]["embedding_cpu_seconds"]),
+        "cpu_reduction_percent": 100
+        * (
+            1
+            - results["after"]["embedding_cpu_seconds"] / results["before"]["embedding_cpu_seconds"]
+        ),
     }
 
 
