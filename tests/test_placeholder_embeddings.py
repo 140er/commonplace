@@ -321,3 +321,22 @@ def test_metadata_titles_use_index_text_without_altering_metadata(field):
     )
     assert metadata == [{field: title}]
     assert recorder.seen == ["document"]
+
+
+def test_trimmed_exchange_maps_occurrences_without_erasing_an_invalid_run():
+    from mempalace.convo_miner import chunk_exchanges
+
+    payload = base64.b64encode(random.Random(7).randbytes(300)).decode()
+    invalid = "X" + payload + "X"
+    text = (
+        "  > header   \ninvalid='"
+        + invalid
+        + "'\nvalid='"
+        + payload
+        + "'\n> second\nreply\n> third\nreply"
+    )
+    assert len(find_base64_spans(text)) == 1
+    chunks = chunk_exchanges(text, chunk_size=10000, min_chunk_size=0)
+    indexed = "".join(index_text(item["content"], chunk_index_metadata(item)) for item in chunks)
+    assert "invalid='" + invalid + "'" in indexed
+    assert "valid='[base64 binary 300 B]'" in indexed

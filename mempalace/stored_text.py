@@ -184,16 +184,40 @@ def annotate_chunks(text: str, chunks: list) -> list:
             from .index_hygiene import Base64Span
 
             view = "".join(chunk["content"] for chunk in chunks)
-            mapped, position = [], 0
-            for span in source.spans:
-                payload = text[span.start : span.end]
-                found = view.find(payload, position)
-                if found < 0:
-                    raise ValueError("validated span missing from chunked source")
-                mapped.append(
-                    Base64Span(found, found + len(payload), span.media_type, span.decoded_bytes)
-                )
-                position = found + len(payload)
+            mapped = []
+            original_pos = projected_pos = span_index = 0
+            mapped_start = None
+            while True:
+                while original_pos < len(text) and text[original_pos].isspace():
+                    original_pos += 1
+                while projected_pos < len(view) and view[projected_pos].isspace():
+                    projected_pos += 1
+                if original_pos == len(text) and projected_pos == len(view):
+                    break
+                if (
+                    original_pos == len(text)
+                    or projected_pos == len(view)
+                    or text[original_pos] != view[projected_pos]
+                ):
+                    raise ValueError("chunker changed non-whitespace source text")
+                if span_index < len(source.spans):
+                    span = source.spans[span_index]
+                    if original_pos == span.start:
+                        mapped_start = projected_pos
+                    if original_pos == span.end - 1:
+                        if (
+                            mapped_start is None
+                            or projected_pos + 1 - mapped_start != span.end - span.start
+                        ):
+                            raise ValueError("chunker changed a validated base64 run")
+                        mapped.append(
+                            Base64Span(
+                                mapped_start, projected_pos + 1, span.media_type, span.decoded_bytes
+                            )
+                        )
+                        span_index += 1
+                original_pos += 1
+                projected_pos += 1
             source.text = view
             source.spans = mapped
             source._starts = [span.start for span in mapped]
