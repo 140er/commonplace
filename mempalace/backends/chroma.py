@@ -1755,6 +1755,19 @@ _PENDING_CLIENT_CLOSES: dict[int, tuple[str, Any]] = {}
 _pending_close_worker: threading.Thread | None = None
 
 
+def _reset_client_registry_after_fork() -> None:
+    # The parent owns these clients and its worker thread does not survive
+    # fork. Forget inherited entries without sending native close calls.
+    global _CLIENT_REGISTRY_LOCK, _PENDING_CLIENT_CLOSES, _pending_close_worker
+    _CLIENT_REGISTRY_LOCK = threading.RLock()
+    _PENDING_CLIENT_CLOSES = {}
+    _pending_close_worker = None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_client_registry_after_fork)
+
+
 def _drain_pending_clients(palace_path=None, *, blocking=True) -> int:
     """Close deferred owners under their own palace lock, outside the registry."""
     held = held_palace_db_paths()

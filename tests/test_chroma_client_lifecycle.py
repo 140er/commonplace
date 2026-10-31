@@ -430,3 +430,49 @@ if worker is not None:
 check_released()
 """,
     )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX fork lifecycle")
+def test_fork_resets_pending_queue_worker_and_registry_lock(tmp_path):
+    _run_probe(
+        tmp_path,
+        """
+from multiprocessing import get_context
+inherited = object()
+with chroma._CLIENT_REGISTRY_LOCK:
+    chroma._PENDING_CLIENT_CLOSES[id(inherited)] = (paths[0], inherited)
+    chroma._pending_close_worker = threading.Thread()
+held, release = threading.Event(), threading.Event()
+def hold_registry():
+    with chroma._CLIENT_REGISTRY_LOCK:
+        held.set()
+        release.wait(10)
+thread = threading.Thread(target=hold_registry, daemon=True)
+thread.start()
+assert held.wait(5)
+def child():
+    assert not chroma._PENDING_CLIENT_CLOSES, 'child inherited pending clients'
+    assert chroma._pending_close_worker is None
+    closed = threading.Event()
+    chroma._close_client = lambda client, path: closed.set()
+    owner = object()
+    with chroma._CLIENT_REGISTRY_LOCK:
+        chroma._PENDING_CLIENT_CLOSES[id(owner)] = (paths[0], owner)
+    chroma._schedule_pending_closes()
+    assert closed.wait(2), 'child worker did not start'
+process = get_context('fork').Process(target=child)
+process.start()
+process.join(5)
+if process.is_alive():
+    process.kill()
+    process.join()
+    raise AssertionError('child inherited a locked registry')
+release.set()
+thread.join(5)
+assert process.exitcode == 0
+with chroma._CLIENT_REGISTRY_LOCK:
+    assert chroma._PENDING_CLIENT_CLOSES[id(inherited)][1] is inherited
+    chroma._PENDING_CLIENT_CLOSES.clear()
+    chroma._pending_close_worker = None
+""",
+    )
