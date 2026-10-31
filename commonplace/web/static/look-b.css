@@ -1,1 +1,266 @@
-/* Look B */
+/* Look B, "Block": built from the v2 block logo. White #F2F4F7 solid blocks on cold ink #0E1116
+   for the primary action, the selected nav item and the selected row; 2px outlines instead of grey
+   fills; the mark's hex for status dots and a clipped corner on primary buttons. Orange still only
+   means "waits on you", red only means recording. */
+
+:root[data-look="b"] {
+  --bg: #0e1116;
+  --surface: #12161c;
+  --surface-2: #181d24;
+  --surface-3: #232932;
+  --term: #090b0e;
+  --line: #2a313b;
+  --ink: #f2f4f7;
+  --muted: #b0b8c3;
+  --quiet: #8a939f;
+  --wait: #7f8894;
+  --accent-ink: #0e1116;
+  --person: #a9bdf5;
+  --b-on-ink: #0e1116;
+  --b-on-ink-quiet: #49515c;
+  --b-cut: 8px;
+  --b-hex: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  --b-hex-ring: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%, 50% 0, 50% 2.4px, 2px calc(25% + 1.2px), 2px calc(75% - 1.2px), 50% calc(100% - 2.4px), calc(100% - 2px) calc(75% - 1.2px), calc(100% - 2px) calc(25% + 1.2px), 50% 2.4px);
+  --b-clip: polygon(0 0, calc(100% - var(--b-cut)) 0, 100% var(--b-cut), 100% 100%, 0 100%);
+  color-scheme: dark;
+}
+:root[data-look="b"] ::selection { background: var(--ink); color: var(--b-on-ink); }
+:root[data-look="b"] :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+:root[data-look="b"] input, :root[data-look="b"] textarea, :root[data-look="b"] select {
+  background: var(--term); caret-color: var(--ink);
+  outline: 2px solid var(--line); outline-offset: -2px;
+}
+:root[data-look="b"] input:focus-visible, :root[data-look="b"] textarea:focus-visible, :root[data-look="b"] select:focus-visible { outline-color: var(--ink); }
+:root[data-look="b"] input::placeholder, :root[data-look="b"] textarea::placeholder { color: var(--quiet); }
+:root[data-look="b"] button:hover, :root[data-look="b"] a:hover { filter: none; }
+:root[data-look="b"] .cursor { background: var(--ink); }
+
+/* ---------- Tiles: flat ink with a 2px rule, no grey fills ---------- */
+:root[data-look="b"] :is(.ws, .navs, .head, .needbox, .home-space, .home-tasks, .stack, .done-list, .space-chat, .space-tasks,
+  .settings-section, .form-tile, .memory-toolbar, .message, .rule-tile, .rule-row, .rule-new, .signin, .panel .tile, .item) {
+  background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px;
+}
+:root[data-look="b"] .queue h2 { background: var(--surface); }
+
+/* ---------- Type: heavy mono, tight ---------- */
+:root[data-look="b"] .head h1 { font-size: 40px; line-height: 40px; font-weight: 800; letter-spacing: -0.065em; }
+:root[data-look="b"] :is(.panel h2, .settings-section h2, .form-tile h2) { font-weight: 800; letter-spacing: -0.05em; }
+:root[data-look="b"] .panel h2 { font-size: 24px; line-height: 28px; }
+:root[data-look="b"] :is(.settings-section h2, .form-tile h2) { font-size: 20px; }
+:root[data-look="b"] :is(.home h2, .home-space h3, .space-bar h2, .rule-tile h2) { font-size: 16px; font-weight: 800; letter-spacing: -0.04em; }
+:root[data-look="b"] .home h2 .n { font-weight: 800; }
+
+/* ---------- Brand: the v2 lockup replaces the old tile ---------- */
+:root[data-look="b"] .ws { display: flex; align-items: center; height: 56px; padding: 0 16px; }
+:root[data-look="b"] .ws .mark, :root[data-look="b"] .ws .name { display: none; }
+:root[data-look="b"] .brand-v2 { display: block; width: 105px; height: 22px; }
+:root[data-look="b"] .signin .brand-v2 { margin-bottom: 48px; }
+
+/* ---------- Nav: selected item is a solid white block ---------- */
+:root[data-look="b"] .navs { padding: 8px; gap: 4px; }
+:root[data-look="b"] .navs a, :root[data-look="b"] .navs .logout { color: var(--muted); font-weight: 600; }
+:root[data-look="b"] .navs a:hover, :root[data-look="b"] .navs .logout:hover { color: var(--ink); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .navs a[aria-current] { background: var(--ink); color: var(--b-on-ink); font-weight: 800; outline: 0; }
+:root[data-look="b"] .navs a .n { font-weight: 800; }
+:root[data-look="b"] .mtabs a { background: var(--surface); color: var(--muted); font-weight: 700; outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .mtabs a[aria-current] { background: var(--ink); color: var(--b-on-ink); font-weight: 800; outline: 0; }
+
+/* ---------- Buttons: primary is a white block with the mark's cut corner; the rest are outlines ---------- */
+:root[data-look="b"] :is(.blockbtn, .opt.go, .composer .send.go, .composer button, .space-composer > button, .reply-form > button, .signin form button, .webhook-form button, .panel-actions button) {
+  background: var(--ink); color: var(--b-on-ink); font-weight: 800; outline: 0;
+  clip-path: var(--b-clip);
+}
+:root[data-look="b"] :is(.blockbtn, .opt.go, .composer button, .space-composer > button, .reply-form > button, .signin form button, .webhook-form button, .panel-actions button):focus-visible {
+  outline: 2px solid var(--b-on-ink); outline-offset: -5px;
+}
+:root[data-look="b"] .blockbtn { padding: 0 18px 0 14px; white-space: nowrap; }
+:root[data-look="b"] .head .opt { white-space: nowrap; }
+:root[data-look="b"] .blockbtn kbd { background: rgba(14, 17, 22, 0.12); color: var(--b-on-ink); }
+:root[data-look="b"] .opt, :root[data-look="b"] .setting-row button, :root[data-look="b"] .panel .close, :root[data-look="b"] .panel .x,
+:root[data-look="b"] .signin .provider, :root[data-look="b"] .views button {
+  background: transparent; color: var(--ink); font-weight: 700;
+  outline: 2px solid var(--line); outline-offset: -2px;
+}
+:root[data-look="b"] .opt:hover, :root[data-look="b"] .setting-row button:hover, :root[data-look="b"] .panel .close:hover,
+:root[data-look="b"] .signin .provider:hover, :root[data-look="b"] .views button:hover { outline-color: var(--ink); }
+:root[data-look="b"] :is(.opt, .setting-row button, .panel .close, .signin .provider, .views button):focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+:root[data-look="b"] .opt.go .k { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .opt .k { color: var(--quiet); }
+:root[data-look="b"] .setting-row button[aria-pressed="true"] { background: var(--ink); color: var(--b-on-ink); outline: 0; }
+:root[data-look="b"] .views { background: transparent; gap: 4px; padding: 0; }
+:root[data-look="b"] .views button[aria-selected="true"] { background: var(--ink); color: var(--b-on-ink); outline: 0; }
+:root[data-look="b"] kbd { background: transparent; outline: 1px solid var(--line); outline-offset: -1px; color: var(--quiet); }
+
+/* ---------- Status dots: the mark's hex. Solid for state, ring for idle, turning ring for checks ---------- */
+:root[data-look="b"] .status-dot { width: 9px; height: 10px; border-radius: 0; clip-path: var(--b-hex); }
+:root[data-look="b"] .status-dot.idle { background: var(--wait); border: 0; clip-path: var(--b-hex-ring); }
+:root[data-look="b"] .status-dot.checks { background: var(--ink); border: 0; clip-path: var(--b-hex-ring); animation: spin 1.6s linear infinite; }
+:root[data-look="b"] .trow { grid-template-columns: 9px minmax(0, 1fr) auto; }
+@container (min-width: 620px) { :root[data-look="b"] .trow { grid-template-columns: 9px minmax(0, 1fr) auto auto; } }
+:root[data-look="b"] .nline { grid-template-columns: 9px minmax(0, max-content) minmax(0, 1fr); }
+:root[data-look="b"] .done-list li i { width: 7px; height: 8px; clip-path: var(--b-hex); }
+
+/* Pills: outlined; "needs you" stays the one orange block. */
+:root[data-look="b"] .pill { background: transparent; color: var(--muted); outline: 2px solid var(--line); outline-offset: -2px; font-weight: 800; }
+:root[data-look="b"] .pill.you { background: var(--accent); color: var(--accent-ink); outline: 0; }
+:root[data-look="b"] .pill.you .status-dot { background: var(--accent-ink); }
+:root[data-look="b"] .state { font-weight: 800; }
+:root[data-look="b"] .state.doing { background: var(--ink); color: var(--b-on-ink); }
+
+/* ---------- Home ---------- */
+:root[data-look="b"] .home { gap: var(--gap); }
+:root[data-look="b"] .needbox.waiting { outline-color: var(--accent); box-shadow: none; }
+:root[data-look="b"] .nline.sel { background: var(--ink); color: var(--b-on-ink); box-shadow: none; }
+:root[data-look="b"] .nline.sel .why { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .digest-captions { background: var(--term); border-left: 4px solid var(--ink); }
+:root[data-look="b"] .speak[data-active="true"] { background: var(--ink); color: var(--b-on-ink); }
+:root[data-look="b"] .home-tasks th { color: var(--quiet); font-weight: 700; }
+:root[data-look="b"] .home-tasks td { border-top: 2px solid var(--line); }
+:root[data-look="b"] .home-tasks tr.sel td { background: var(--ink); color: var(--b-on-ink); }
+:root[data-look="b"] .home-tasks tr.sel td:first-child { box-shadow: none; }
+:root[data-look="b"] .home-tasks tr.sel :is(.sub, td time, td:nth-child(2)) { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .home-tasks tr.sel .opt, :root[data-look="b"] .trow-card.sel .opt { background: var(--b-on-ink); color: var(--ink); outline: 0; }
+:root[data-look="b"] .home-tasks tr.sel .pill:not(.you) { outline-color: var(--b-on-ink-quiet); color: var(--b-on-ink); }
+:root[data-look="b"] .trow-card { border-top: 2px solid var(--line); }
+:root[data-look="b"] .trow-card.sel { background: var(--ink); color: var(--b-on-ink); box-shadow: none; }
+:root[data-look="b"] .trow-card.sel :is(.tm, time, .sub, .actor) { color: var(--b-on-ink-quiet); }
+
+/* Decision queue rows: the selected row is the white block (was orange). */
+:root[data-look="b"] .queue { background: var(--bg); }
+:root[data-look="b"] .item.sel { background: var(--ink); color: var(--b-on-ink); outline: 0; }
+:root[data-look="b"] .item.sel :is(.id, .meta, .actor, .links svg, .task-meta, .status-line, .trow .tm, .trow > time) { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .item.sel .q { color: var(--b-on-ink); }
+:root[data-look="b"] .item.sel .opt { background: transparent; color: var(--b-on-ink); outline-color: var(--b-on-ink); }
+:root[data-look="b"] .item.sel .opt .k { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .item.sel .opt.go { background: var(--b-on-ink); color: var(--ink); }
+:root[data-look="b"] .item.sel .opt.go .k { color: var(--quiet); }
+:root[data-look="b"] .item.sel .status-dot.you { background: var(--accent); }
+:root[data-look="b"] .item.sel input { background: #fff; color: var(--b-on-ink); outline-color: var(--b-on-ink); caret-color: var(--b-on-ink); }
+:root[data-look="b"] .item.sel .reply-form > button { background: var(--b-on-ink); color: var(--ink); }
+:root[data-look="b"] .item.sel .voice-control button { background: var(--ink); color: var(--b-on-ink); outline-color: var(--b-on-ink); }
+:root[data-look="b"] .item.sel .voice-control { background: var(--ink); }
+
+/* ---------- Board ---------- */
+:root[data-look="b"] .col > header { height: 56px; background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .col > header button { font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+:root[data-look="b"] .col > header .n { font-size: 28px; line-height: 28px; font-weight: 800; letter-spacing: -0.06em; }
+:root[data-look="b"] .col.review > header { background: var(--surface); color: var(--ink); outline-color: var(--accent); }
+:root[data-look="b"] .col.review > header button { color: var(--accent); }
+:root[data-look="b"] .col.review > header .n { color: var(--accent); }
+:root[data-look="b"] .col.done > header { background: var(--surface); color: var(--quiet); }
+:root[data-look="b"] .rail > header button { font-weight: 800; font-size: 24px; letter-spacing: -0.06em; }
+:root[data-look="b"] .rail .stack button { color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+:root[data-look="b"] .stack { background: transparent; outline: 0; padding: 0; }
+:root[data-look="b"] .rail .stack { padding: 14px 0; outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .col.drop .stack { outline: 2px solid var(--ink); outline-offset: -2px; background: transparent; }
+:root[data-look="b"] .card { background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px; padding: 14px; }
+:root[data-look="b"] .card:hover { outline-color: var(--muted); }
+:root[data-look="b"] .card .ct, :root[data-look="b"] .trow .tt { font-weight: 700; }
+:root[data-look="b"] .card .cq { background: var(--term); color: var(--muted); border-left: 2px solid var(--line); }
+:root[data-look="b"] .col.review .card .cq { border-left-color: var(--accent); color: var(--ink); }
+:root[data-look="b"] .card.focus { box-shadow: none; outline-color: var(--ink); }
+:root[data-look="b"] .card.open, :root[data-look="b"] .card:focus-visible { background: var(--ink); color: var(--b-on-ink); outline: 0; }
+:root[data-look="b"] .card.open :is(.meta, .actor, .tm, time, .task-meta, .status-line) { color: var(--b-on-ink-quiet); }
+:root[data-look="b"] .card.open .cq { background: var(--b-on-ink); color: var(--ink); }
+
+/* ---------- Card panel ---------- */
+:root[data-look="b"] .panel { background: var(--bg); }
+:root[data-look="b"] .panel .bar .id { font-weight: 800; }
+:root[data-look="b"] .log { background: var(--term); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .ev time { color: var(--wait); }
+:root[data-look="b"] .ev .said { background: var(--surface); border-left: 2px solid var(--line); }
+:root[data-look="b"] .hit { background: var(--term); }
+:root[data-look="b"] .ev.ask .hit { background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .ev.ask.open .hit { box-shadow: none; outline-color: var(--accent); }
+:root[data-look="b"] .ev.ask .q { font-weight: 700; }
+:root[data-look="b"] .ev.ask .said { background: var(--term); }
+:root[data-look="b"] .hit .opt { background: transparent; }
+:root[data-look="b"] .hit .opt.go { background: var(--ink); color: var(--b-on-ink); }
+:root[data-look="b"] .hit .field { background: var(--term); }
+:root[data-look="b"] .drawers li, :root[data-look="b"] .panel .linked a, :root[data-look="b"] .rows li { background: transparent; outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .rows li:hover, :root[data-look="b"] .panel .linked a:hover { background: transparent; outline-color: var(--ink); }
+:root[data-look="b"] .panel form.composer { background: var(--bg); }
+:root[data-look="b"] .composer input { background: var(--term); }
+:root[data-look="b"] .prose code { background: var(--term); outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* PR call tree: 2px guides, hex nodes. */
+:root[data-look="b"] .cs { outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .cs-tree ul > li::before { border-width: 0 0 2px 2px; border-color: var(--line); }
+:root[data-look="b"] .cs-tree ul > li:not(:last-child)::after { border-left: 2px solid var(--line); }
+:root[data-look="b"] .cs-dot { width: 9px; height: 10px; clip-path: var(--b-hex); }
+:root[data-look="b"] .cs-dot.changed { background: var(--ok); box-shadow: none; clip-path: var(--b-hex-ring); }
+:root[data-look="b"] .cs-dot.unchanged, :root[data-look="b"] .cs-dot.deleted { background: var(--quiet); box-shadow: none; clip-path: var(--b-hex-ring); }
+:root[data-look="b"] button.cs-row:hover { background: var(--surface-2); }
+
+/* ---------- Space chat + tasks ---------- */
+:root[data-look="b"] .space-bar { border-bottom: 2px solid var(--line); }
+:root[data-look="b"] .space-stream { padding-top: 16px; }
+:root[data-look="b"] .from-person > .space-stamp .actor { font-weight: 800; }
+:root[data-look="b"] .space-task { background: transparent; outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .space-tasks .space-task { background: transparent; outline: 0; }
+:root[data-look="b"] .space-tasks .space-task + .space-task { border-top: 2px solid var(--line); }
+:root[data-look="b"] .space-asks .ev.ask .hit { background: var(--term); }
+:root[data-look="b"] .space-asks .reply-form input { background: var(--term); }
+:root[data-look="b"] .space-composer { background: var(--surface); border-top: 2px solid var(--line); }
+:root[data-look="b"] .space-tabs { background: var(--surface); }
+:root[data-look="b"] .space-tabs button { font-weight: 700; }
+:root[data-look="b"] .space-tabs button[aria-pressed="true"] { background: var(--ink); color: var(--b-on-ink); font-weight: 800; }
+
+/* ---------- Voice: quiet outlined glyph, solid red while recording, terminal language list ---------- */
+:root[data-look="b"] .voice-control { gap: 4px; background: transparent; }
+:root[data-look="b"] .voice-control button { background: transparent; color: var(--muted); outline: 2px solid var(--line); outline-offset: -2px; font-weight: 700; clip-path: none; }
+:root[data-look="b"] .voice-control button:hover { color: var(--ink); outline-color: var(--ink); }
+:root[data-look="b"] .voice-control button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+:root[data-look="b"] .voice-control[data-state="recording"] [data-voice="mic"],
+:root[data-look="b"] .item.sel .voice-control[data-state="recording"] [data-voice="mic"] { background: var(--rec); color: var(--b-on-ink); outline: 0; }
+:root[data-look="b"] .voice-menu { background: var(--term); padding: 4px; gap: 2px; outline: 2px solid var(--ink); outline-offset: -2px; }
+:root[data-look="b"] .voice-control .voice-menu button { outline: 0; min-height: 40px; color: var(--muted); }
+:root[data-look="b"] .voice-control .voice-menu button:hover { color: var(--ink); }
+:root[data-look="b"] .voice-menu [aria-checked="true"], :root[data-look="b"] .voice-control .voice-menu [aria-checked="true"] { background: var(--ink); color: var(--b-on-ink); }
+
+/* ---------- Settings, forms, messages ---------- */
+:root[data-look="b"] .setting-row { border-bottom: 2px solid var(--line); }
+:root[data-look="b"] .setting-row:last-child { border-bottom: 0; }
+:root[data-look="b"] .settings-section .message { outline: 0; padding: 4px 0; background: transparent; color: var(--muted); }
+:root[data-look="b"] .secret { background: var(--term); outline: 2px solid var(--ink); outline-offset: -2px; }
+:root[data-look="b"] #connection-state { background: var(--surface); outline: 2px solid var(--flag); outline-offset: -2px; }
+
+/* ---------- Sign-in ---------- */
+:root[data-look="b"] .signin { padding: 40px 32px 32px; }
+:root[data-look="b"] .signin h1 { font-size: 40px; line-height: 40px; font-weight: 800; letter-spacing: -0.065em; margin-bottom: 28px; }
+:root[data-look="b"] .signin form button { padding: 0 20px 0 16px; min-height: 44px; }
+:root[data-look="b"] .signin input { min-height: 44px; }
+
+/* ---------- Memory ---------- */
+:root[data-look="b"] .stage { background: var(--term); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .legend button { background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .legend button[aria-pressed="false"] { background: var(--bg); }
+:root[data-look="b"] .legend i { clip-path: var(--b-hex); width: 9px; }
+:root[data-look="b"] .zoom button, :root[data-look="b"] .zoom span, :root[data-look="b"] .when { background: var(--surface); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .when .lit { background: var(--ink); }
+:root[data-look="b"] .when button.sel .all { background: var(--muted); }
+:root[data-look="b"] .when .sig::after, :root[data-look="b"] .meter i.on { background: var(--ink); }
+:root[data-look="b"] .hud dd.on, :root[data-look="b"] .hud .clock dd, :root[data-look="b"] .filter .hits { color: var(--ink); }
+:root[data-look="b"] .tip { background: var(--ink); color: var(--b-on-ink); }
+:root[data-look="b"] .mmark { background: var(--ink); }
+:root[data-look="b"] .memory-results button:hover { background: var(--surface-2); }
+:root[data-look="b"] .memory-results { outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .facts { background: var(--term); }
+
+/* ---------- Rules ---------- */
+:root[data-look="b"] .rule-proposal, :root[data-look="b"] .rule-clarify-panel, :root[data-look="b"] [data-rule-history] { background: var(--term); outline: 2px solid var(--line); outline-offset: -2px; }
+:root[data-look="b"] .rule-proposal .opt, :root[data-look="b"] .rule-clarify-panel .opt { background: transparent; }
+:root[data-look="b"] .navs a [data-rules-count][data-waiting="false"], :root[data-look="b"] .mtabs [data-rules-count][data-waiting="false"] { background: transparent; outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* ---------- Phone ---------- */
+@media (max-width: 640px) {
+  :root[data-look="b"] .head h1 { font-size: 28px; line-height: 32px; }
+  :root[data-look="b"] .rail .stack { padding: 0 14px; }
+  :root[data-look="b"] .signin { padding: 32px 20px 24px; }
+  :root[data-look="b"] .signin .brand-v2 { margin-bottom: 36px; }
+  :root[data-look="b"] .card { padding: 10px 12px; }
+  :root[data-look="b"] .col > header .n { font-size: 22px; line-height: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-look="b"] .status-dot.checks { animation: none; }
+}
