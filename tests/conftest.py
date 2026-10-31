@@ -177,7 +177,38 @@ def _reset_loaded_mcp_writer_state(mcp_server) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _release_palace_anchors():
+def _close_test_chroma_clients(monkeypatch):
+    """Own raw Chroma clients until teardown, including discarded references.
+
+    Chroma's shared System retains SQLite and index handles until every client
+    closes. Deleting a Python client does not release its System reference.
+    Backend cache cleanup alone misses clients constructed directly by tests.
+    """
+    from chromadb.api.client import Client
+
+    clients = []
+    original_init = Client.__init__
+
+    def tracked_init(client, *args, **kwargs):
+        original_init(client, *args, **kwargs)
+        clients.append(client)
+
+    monkeypatch.setattr(Client, "__init__", tracked_init)
+    yield
+    try:
+        for client in reversed(clients):
+            client.close()
+    finally:
+        # Header probes deliberately retain connections while a palace is live
+        # to preserve POSIX locks. Release them only after all test clients.
+        from mempalace.backends import _magic
+
+        _magic.close_retained()
+        _magic.forget()
+
+
+@pytest.fixture(autouse=True)
+def _release_palace_anchors(_close_test_chroma_clients):
     """Close anchor connections on ``chroma.sqlite3`` after each test.
 
     On Linux mempalace keeps one idle connection per database inode for the life
@@ -231,7 +262,7 @@ def _utc_local_zone(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_mcp_cache(monkeypatch):
+def _reset_mcp_cache(monkeypatch, _close_test_chroma_clients):
     """Reset cached MCP state between tests without importing mcp_server.
 
     If mempalace.mcp_server is already imported, release its writer lease,
