@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from hypothesis import given, settings, strategies as st
 
 from mempalace.backends.embedding_wrapper import EmbeddingCollection
 from mempalace.stored_text import KEYWORD_ONLY, user_tool_arguments
@@ -323,7 +324,7 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
         assert col.get(ids=old.ids, include=["documents", "metadatas"]) == old
         assert old_ids[0] not in new_ids
         new = col.get(ids=new_ids, include=["metadatas", "embeddings"])
-        assert [meta["source_seq_start"] for meta in new.metadatas] == [1, 3, 4]
+        assert [meta["source_seq_start"] for meta in new.metadatas] == [2, 3, 4]
         assert all(
             meta["source_file"].startswith(f"handoff:{stored.id}#v2:") for meta in new.metadatas
         )
@@ -348,7 +349,7 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
             ),
         )
         hits = palace_search(call, principal, [stored.id], "ZXQ739251", 10)
-        assert (hits[0].seq_start, hits[0].seq_end) == (1, 2)
+        assert (hits[0].seq_start, hits[0].seq_end) == (2, 2)
         recall = Recall(lambda workspace: store, call_tool=call)
         merged = recall.recall(principal, stored.id, "ZXQ739251", limit=10)
         assert any(hit.seq_start <= 2 <= hit.seq_end for hit in merged)
@@ -363,7 +364,10 @@ def test_legacy_ranges_stay_untouched_new_classes_append_once(
 
 
 @pytest.mark.parametrize("version", [1, 2])
-def test_legacy_partial_message_replays_its_missing_tail(writer, tmp_path, monkeypatch, version):
+@pytest.mark.parametrize("append", [False, True], ids=["no-append", "append"])
+def test_legacy_partial_message_replays_its_missing_tail(
+    writer, tmp_path, monkeypatch, version, append
+):
     from commonplace.handoff.models import ThreadMessage
     from commonplace.handoff.palace_mirror import mirror, mirror_pending, palace_search
     from commonplace.handoff.recall import Recall
@@ -396,9 +400,11 @@ def test_legacy_partial_message_replays_its_missing_tail(writer, tmp_path, monke
         mirror(call, None, stored, legacy[:2])
         old = col.get(include=["documents", "metadatas"])
         assert all("TAIL_ZXQ739251" not in text for text in old.documents)
-        stored = store.append(stored.id, messages)
+        if append:
+            stored = store.append(stored.id, messages)
         ids = mirror_pending(call, None, stored, store)
-        assert store.mirror_progress(stored.id) == (2, 2)
+        end = stored.message_count - 1
+        assert store.mirror_progress(stored.id) == (end, end)
         assert col.get(ids=old.ids, include=["documents", "metadatas"]) == old
         new = col.get(include=["metadatas"])
         assert all(
@@ -409,6 +415,10 @@ def test_legacy_partial_message_replays_its_missing_tail(writer, tmp_path, monke
         hits = palace_search(call, None, [stored.id], "TAIL_ZXQ739251", 10)
         assert hits and "TAIL_ZXQ739251" in hits[0].text
         assert (hits[0].seq_start, hits[0].seq_end) == (1, 1)
+        earlier = palace_search(call, None, [stored.id], "earlier", 10)
+        assert any(
+            (hit.seq_start, hit.seq_end, hit.text) == (0, 0, legacy[0].text) for hit in earlier
+        )
         principal = SimpleNamespace(
             workspace_id="workspace",
             policy=SimpleNamespace(has_scope=lambda scope: True, can_read_wing=lambda wing: True),
@@ -422,6 +432,154 @@ def test_legacy_partial_message_replays_its_missing_tail(writer, tmp_path, monke
         assert col.count() == count
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize(
+    "append,physical_rows,source",
+    [
+        pytest.param(False, False, "palace", id="no-append"),
+        pytest.param(True, False, "palace", id="append-palace"),
+        pytest.param(True, False, "recall", id="append-recall"),
+        pytest.param(False, True, "palace", id="physical-rows"),
+    ],
+)
+def test_legacy_unsplit_final_keeps_earlier_matching_messages(
+    writer, tmp_path, monkeypatch, version, append, physical_rows, source
+):
+    from commonplace.handoff.models import ThreadMessage
+    from commonplace.handoff.palace_mirror import mirror, mirror_pending, palace_search
+    from commonplace.handoff.recall import Recall
+    from commonplace.handoff.thread_store import ThreadStore, chunk_messages
+    from commonplace.handoff.thread_store_v2 import ThreadStoreV2
+    from mempalace import provenance, searcher
+
+    server, col, _, _ = writer
+    cls = ThreadStore if version == 1 else ThreadStoreV2
+    path = tmp_path / ("threads.sqlite3" if version == 1 else "threads.v2.sqlite3")
+    store = cls(str(path))
+    final = (
+        "zephyr " + "filler " * 350 + "TAIL_ZXQ739251" if physical_rows else "zephyr zephyr gamma"
+    )
+    messages = [
+        ThreadMessage(i, "user", "message", text, text)
+        for i, text in enumerate(["alpha zephyr note", "beta plain message", final])
+    ]
+
+    def call(principal, name, args):
+        with provenance.verified(dict.fromkeys(provenance.FIELDS, "gateway")):
+            return (
+                server.write_mirror_units(**args)
+                if name == "write_mirror_units"
+                else server.TOOLS[name]["handler"](**args)
+            )
+
+    monkeypatch.setattr(searcher, "get_collection", lambda *args, **kwargs: col)
+    monkeypatch.setattr(searcher, "get_closets_collection", lambda *args, **kwargs: None)
+    principal = SimpleNamespace(
+        workspace_id="workspace",
+        policy=SimpleNamespace(has_scope=lambda scope: True, can_read_wing=lambda wing: True),
+    )
+    try:
+        initial = messages[:2] if append else messages
+        stored = store.store("workspace", "source", initial, actor="actor")
+        legacy = chunk_messages(initial)
+        assert len(legacy) == 1
+        mirror(call, principal, stored, legacy)
+        old = col.get(include=["documents", "metadatas"])
+        if physical_rows:
+            assert len(final) > 3 * server._config.chunk_size
+            assert len(old.ids) == (len(legacy[0].text) + 799) // 800 >= 4
+        if append:
+            stored = store.append(stored.id, messages)
+        ids = mirror_pending(call, principal, stored, store)
+        assert store.mirror_progress(stored.id) == (2, 2)
+        assert col.get(ids=old.ids, include=["documents", "metadatas"]) == old
+        recall = Recall(lambda workspace: store, call_tool=call)
+        query = "TAIL_ZXQ739251" if physical_rows else "zephyr"
+        hits = (
+            recall.recall(principal, stored.id, query, limit=10)
+            if source == "recall"
+            else palace_search(call, principal, [stored.id], query, 10)
+        )
+        expected = {(0, 1), (2, 2)} if append else {(0, 2)}
+        assert {(hit.seq_start, hit.seq_end) for hit in hits} == expected
+        assert any(hit.text == legacy[0].text for hit in hits)
+        assert recall.get(principal, stored.id, 0, 2) == messages
+        if append:
+            assert len(ids) == 1
+        else:
+            assert ids == []
+        assert col.count() == len(old.ids) + len(ids)
+        assert mirror_pending(call, principal, stored, store) == []
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "case,end,expected",
+    [
+        ("fresh", -1, -1),
+        ("unsplit", 2, 2),
+        ("split", 2, 1),
+        ("split", 0, -1),
+        ("missing", 2, 1),
+        ("wrong-sequence", 2, 1),
+        ("multiple", 2, 1),
+    ],
+)
+def test_bootstrap_seq_reads_only_the_final_legacy_message(case, end, expected):
+    from unittest.mock import Mock
+
+    from commonplace.handoff.models import ThreadMessage
+    from commonplace.handoff.palace_mirror import _bootstrap_seq
+
+    message = ThreadMessage(
+        end + (case == "wrong-sequence"),
+        "user",
+        "message",
+        "x" * (4001 if case == "split" else 2500),
+        "raw",
+    )
+    found = [] if case == "missing" else [message] * (2 if case == "multiple" else 1)
+    store = SimpleNamespace(messages=Mock(return_value=found))
+    stored = SimpleNamespace(id="thr_legacy")
+    assert _bootstrap_seq(store, stored, end) == expected
+    if end < 0:
+        store.messages.assert_not_called()
+    else:
+        store.messages.assert_called_once_with(stored.id, end, end)
+
+
+@settings(max_examples=100, deadline=None, derandomize=True)
+@given(
+    specifications=st.lists(
+        st.tuples(
+            st.sampled_from([("user", "message"), ("tool", "tool_result"), ("system", "system")]),
+            st.text(alphabet="abc", max_size=20),
+            st.one_of(
+                st.integers(min_value=0, max_value=12000),
+                st.sampled_from([0, 1, 3970, 3980, 3999, 4000, 4001, 8000]),
+            ),
+        ),
+        min_size=1,
+        max_size=6,
+    ),
+    first=st.integers(min_value=0, max_value=1000),
+)
+def test_legacy_message_splits_alone_iff_it_spans_multiple_batch_chunks(specifications, first):
+    from commonplace.handoff.models import CHUNK_MAX_CHARS, ThreadMessage
+    from commonplace.handoff.thread_store import chunk_messages
+
+    assert CHUNK_MAX_CHARS == 4000
+    messages = [
+        ThreadMessage(first + i, role, kind, ("x \n" * ((size + 2) // 3))[:size], "raw", name=name)
+        for i, ((role, kind), name, size) in enumerate(specifications)
+    ]
+    chunks = chunk_messages(messages)
+    for message in messages:
+        appearances = sum(chunk.seq_start <= message.seq <= chunk.seq_end for chunk in chunks)
+        assert (len(chunk_messages([message])) > 1) == (appearances >= 2)
 
 
 def test_internal_writer_deduplicates_parts_but_keeps_distinct_ranges(writer, monkeypatch):

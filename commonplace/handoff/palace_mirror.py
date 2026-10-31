@@ -21,7 +21,7 @@ from mempalace.lexical import ranking_stop_words, rerank_merged_hits
 from mempalace.stored_text import INDEX_SPANS, IndexSource
 
 from .models import CHUNK_MAX_CHARS, MIRROR_WING, RecallHit, StoredThread
-from .thread_store import Chunk
+from .thread_store import Chunk, chunk_messages
 
 CallTool = Callable  # (principal, tool_name, arguments) -> parsed result dict
 
@@ -162,16 +162,30 @@ def _legacy_mirrored_seq(call_tool, principal, stored):
                 completed = max(completed, label[1])
         offset += len(drawers)
         if not drawers or offset >= page.get("total", offset):
-            # Legacy writes were ordered, but the final message may have only
-            # some continuation pieces. Replay it in full without rewriting
-            # any legacy drawers; overlap deduplication handles the excerpts.
-            return max(-1, min(completed, stored.message_count - 1) - 1)
+            # Legacy writes were ordered. The caller decides whether the final
+            # message is whole or needs replaying after a partial split write.
+            return min(completed, stored.message_count - 1)
+
+
+def _bootstrap_seq(store, stored, end: int) -> int:
+    """Last message the legacy drawers fully cover; -1 when none."""
+    if end < 0:
+        return -1  # Fresh thread: no legacy drawers, no store read.
+    found = store.messages(stored.id, end, end)
+    # Use the legacy writer's default chunk limit, not the physical drawer size.
+    # Changing that default affects threads not yet bootstrapped. One legacy
+    # add_drawer atomically upserts every physical row, so an unsplit message
+    # in a surviving logical drawer is complete even across multiple rows.
+    if len(found) == 1 and found[0].seq == end and len(chunk_messages(found)) == 1:
+        return end
+    return end - 1  # Split, missing or unexpected: replay the final message in full.
 
 
 def mirror_pending(call_tool, principal, stored, store):
     """Resume a durable batch, then mirror later appends at a new boundary."""
     progress = store.mirror_progress(stored.id)
-    bootstrap = _legacy_mirrored_seq(call_tool, principal, stored) if progress is None else -1
+    end = _legacy_mirrored_seq(call_tool, principal, stored) if progress is None else -1
+    bootstrap = _bootstrap_seq(store, stored, end)
     drawer_ids = []
     while True:
         completed, through = store.begin_mirror(
