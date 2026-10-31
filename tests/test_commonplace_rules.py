@@ -964,7 +964,8 @@ def test_owner_moves_rule_to_all_agents_and_back(hub, env):
     last = env.owner.history(accepted["id"])[-1]
     assert last["agent"] == "*" and last["version"] == shared["version"]
     assert last["note"] == f"Applies to: {env.agent.connection} → All agents"
-    assert env.worker.rules_get()["rules"] == [shared] == other.rules_get()["rules"]
+    assert env.worker.rules_get()["rules"] == [shared]
+    assert other.rules_get()["rules"] == [dict(shared, agent_text=None)]
     assert other.rules_changed(0)["rules"] == [
         {"key": shared["key"], "status": "accepted", "target": "all"}
     ]
@@ -977,7 +978,7 @@ def test_owner_moves_rule_to_all_agents_and_back(hub, env):
     assert other.rules_get()["rules"] == [] and other.rules_changed(0)["rules"] == []
     status, elsewhere = move(hub, env, back, other.principal.actor)
     assert status == 200 and env.worker.rules_get()["rules"] == []
-    assert other.rules_get()["rules"] == [elsewhere]
+    assert other.rules_get()["rules"] == [dict(elsewhere, agent_text=None)]
     listing = env.owner.list_rules()["rules"]
     assert [r["agent"] for r in listing] == [other.principal.actor]
     assert [v["agent"] for v in env.owner.history(accepted["id"])] == [
@@ -1126,6 +1127,49 @@ def test_republish_after_move_stays_with_the_moved_rule(hub, env):
     assert env.worker.rules_publish([rule(text="Again")])["rules"] == []
     assert env.owner.list_rules()["rules"][0] == hidden
     assert len(env.owner.list_rules()["rules"]) == 2
+
+
+def test_moved_rule_answers_to_the_owner_for_its_new_agent(hub, env):
+    receiver = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('receiver')}"))
+    bystander = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('bystander')}"))
+    accepted = env.owner.action(publish(env)["id"], 1, "accept")
+    moved = env.owner.set_agent(accepted["id"], accepted["version"], receiver.principal.actor)
+    # The receiving agent's routine bulk replace never retires a rule it did not publish.
+    assert receiver.rules_publish([], replace=True)["rules"] == []
+    assert env.owner.list_rules()["rules"] == [moved]
+    # Its own wording and classification wait for the owner like an owner edit.
+    pending = receiver.rules_publish([rule(text="Receiver rewrite", kind="limit")])["rules"][0]
+    assert pending["id"] == moved["id"] and pending["text"] == moved["text"]
+    assert pending["kind"] == moved["kind"] and pending["pending"] == 1
+    assert pending["agent_text"] == "Receiver rewrite"
+    assert receiver.rules_publish([], replace=True)["rules"] == []
+    assert env.owner.list_rules()["rules"][0]["status"] == "accepted"
+    # On a shared rule, the origin agent's pending wording is visible only to that agent.
+    kept = env.owner.action(moved["id"], pending["version"], "keep_edit")
+    shared = env.owner.set_agent(moved["id"], kept["version"], "*")
+    own = env.worker.rules_publish([rule(text="Origin rewrite")])["rules"][0]
+    assert own["agent"] == "*" and own["pending"] == 1 and own["agent_text"] == "Origin rewrite"
+    assert env.worker.rules_get()["rules"] == [own]
+    for viewer in (receiver, bystander):
+        assert viewer.rules_get()["rules"] == [
+            dict(own, agent_text=None, pending=0, updated_by=None)
+        ]
+    assert env.owner.list_rules()["rules"] == [own]
+    assert shared["updated_by"] == env.person.actor
+    assert bystander.rules_get()["rules"][0]["text"] == shared["text"]
+
+
+def test_origin_wording_stays_hidden_after_a_move_to_another_agent(hub, env):
+    receiver = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('receiver')}"))
+    current = publish(env, text="Origin wording")
+    edited = env.owner.edit(current["id"], 1, text="Owner wording")
+    moved = env.owner.set_agent(current["id"], edited["version"], receiver.principal.actor)
+    assert moved["agent_text"] == "Origin wording"
+    assert receiver.rules_get()["rules"] == [dict(moved, agent_text=None)]
+    own = receiver.rules_publish([rule(text="Receiver wording")])["rules"][0]
+    assert own["agent_text"] == "Receiver wording" and own["pending"] == 1
+    assert own["updated_by"] == receiver.principal.actor
+    assert receiver.rules_get()["rules"] == [own]
 
 
 def test_store_migration_adds_agent_columns_to_existing_files(tmp_path):

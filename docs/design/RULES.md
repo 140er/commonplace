@@ -66,6 +66,7 @@ Rules are never deleted. Retiring keeps the row and its history.
 | Agent republishes an agent-retired key | Revives as `proposed`, `source=agent`, `text=agent_text`, `pending=0`, `retired_by=NULL`, even for identical wording |
 | Owner changes who a rule applies to (`set_agent`) | Moves it to `*` or another `conn:<name>`. Text, status, source and key stay; the version bumps and history gets the note `Applies to: <old> → <new>`, followed by the owner's note if given. Retired rules return 400 "restore the rule first"; the current target returns 400 "nothing to change". When the target already has a rule with the same key (retired ones included, since keys are unique per agent), it returns 400 "<target> already has a rule with this key" and changes nothing: there is no merge, the owner retires or edits one of the two. With `accept=true` it also accepts a `proposed` rule in the same version ("Accept for all agents"); other states are refused. |
 | Agent republishes a key the owner moved away | The publish still finds the rule through `origin_agent`, so no second proposal appears under the agent. If the rule now applies to `*` and the agent can see it, it is handled like an owner edit: changed wording becomes `agent_text` with `pending=1`, kind and scope changes are ignored, and `replace=true` never retires it. If the agent can no longer see it (moved to another agent, or a board it cannot read), the key is skipped. |
+| Agent publishes a key of a rule the owner moved to it from another agent | Handled like an owner edit too: its wording becomes `agent_text` with `pending=1`, kind and scope changes are ignored, and its `replace=true` never retires the rule, because the agent did not publish it first. |
 | Owner retires a non-retired rule | `retired`, `retired_by=owner`. Agents stop following it. Retiring again is refused. |
 | Agent republishes an owner-retired key | Stays retired. Different wording updates only `agent_text` and `pending`; it never restores the rule. A pending proposal appears in the active review list. |
 | Owner restores a retired rule | When `retired_by=agent`, sets `accepted`, `source=owner`, `retired_by=NULL`: the owner explicitly keeps it, so agent replacement cannot retire it and later wording becomes a pending proposal. When `retired_by=owner`, restores `accepted`, or `edited` when `source=owner`, and clears `retired_by`. Other states are refused. |
@@ -79,6 +80,7 @@ After the rules transaction closes, each changed agent emits `rule.changed`; a m
 ### Visibility
 
 - An agent sees its own rules, plus the `*` rules, filtered by scope: a `board` rule only when it can read that board's wing, and a `repo` rule always (repos are not secret on their own).
+- On a rule an agent did not publish first, `rules_get` shows `agent_text`, `pending` and a `conn:` `updated_by` only to the agent that wrote them last; other agents get `null`, `0` and `null`. So one agent's unreviewed wording never reaches another agent.
 - People in the workspace see everything. Only the owner (`principal.role == "owner"`) can edit, accept, retire, restore, suggest or decide.
 
 ## MCP tools

@@ -386,4 +386,12 @@ console.log("Rules suggestion and deferred-render checks passed");
   await click({ ruleAction: "move", agent: "*" });
   assert.equal(sent.length, 2);
 }
+// Pending wording on a shared rule names the agent that proposed it.
+{
+  const shared = rule(11, { agent: "*", status: "accepted", pending: 1, agent_text: "Theirs", updated_by: "conn:writer" });
+  assert.ok(rulesView({ rules: [shared] }).includes("<h4>writer’s wording</h4>"));
+  assert.ok(rulesView({ rules: [{ ...shared, updated_by: "user:owner" }] }).includes("<h4>Agent’s wording</h4>"));
+  assert.ok(rulesView({ rules: [{ ...shared, agent: "conn:writer" }] }).includes("<h4>Agent’s wording</h4>"));
+  assert.ok(rulesView({ rules: [{ ...shared, updated_by: "conn:<b>" }] }).includes("<h4>&lt;b&gt;’s wording</h4>"));
+}
 console.log("Rules agent-target checks passed");

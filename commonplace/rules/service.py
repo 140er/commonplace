@@ -146,6 +146,18 @@ class RuleService:
             and (row["scope"] != "board" or self._board_visible(row["scope_ref"]))
         )
 
+    def _agent_view(self, rule, origin):
+        """Another agent's wording on a moved rule stays between that agent and the owner."""
+        if self.principal.person or self.principal.actor in (
+            origin or rule["agent"],
+            rule["updated_by"],
+        ):
+            return rule
+        masked = dict(rule, agent_text=None, pending=0)
+        if str(rule["updated_by"]).startswith("conn:"):
+            masked["updated_by"] = None
+        return masked
+
     def _snapshot(self, conn, rule_id, *, note=None, source=None):
         row = row_for(conn, rule_id)
         p = self.principal
@@ -257,7 +269,8 @@ class RuleService:
                 if not self._visible(row):
                     # The owner moved it out of this agent's sight: skip it, reveal nothing.
                     continue
-                owned = row["agent"] == actor
+                # A rule moved here from another agent is handled like an owner edit.
+                owned = row["agent"] == actor and row["origin_agent"] in (None, actor)
                 if owned and row["retired_by"] == "agent":
                     updates = dict(
                         values,
@@ -280,11 +293,16 @@ class RuleService:
                     updates = dict(values, agent_text=values["text"], status="proposed", pending=0)
                     if all(row[k] == v for k, v in values.items()):
                         updates = {}
-                result.append(self._change(conn, row, updates) if updates else rule_json(row))
+                result.append(
+                    self._agent_view(
+                        self._change(conn, row, updates) if updates else rule_json(row),
+                        row["origin_agent"],
+                    )
+                )
             if replace:
                 rows = conn.execute(
                     "SELECT * FROM rules WHERE agent=? AND source='agent' AND status!='retired' "
-                    "AND retired_by IS NULL",
+                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=agent",
                     (self.principal.actor,),
                 ).fetchall()
                 for row in rows:
@@ -316,7 +334,7 @@ class RuleService:
             rows = conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
             return {
                 "rules": [
-                    rule_json(row)
+                    self._agent_view(rule_json(row), row["origin_agent"])
                     for row in rows
                     if self._visible(row)
                     and (

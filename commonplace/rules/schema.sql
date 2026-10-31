@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS rules (
     updated_by TEXT NOT NULL,
     UNIQUE (agent, key)
 );
+-- migrate() in store.py adds rules.origin_agent and rule_versions.agent.
 CREATE INDEX IF NOT EXISTS rules_by_seq ON rules(seq);
 CREATE TABLE IF NOT EXISTS rule_versions (
     id INTEGER PRIMARY KEY,
