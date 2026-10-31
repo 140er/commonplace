@@ -34,10 +34,10 @@ Two notes:
 ```
  tailnet clients                                   cloud clients
  (Claude Code, Codex, Cursor,                      (Grok Bot, claude.ai,
-  coding-agent sessions)                      ChatGPT)
+  coding-agent sessions)                            ChatGPT)
         │  tailscale serve (HTTPS, tailnet only)          │  public HTTPS (Funnel or tunnel)
         ▼                                                 ▼
- ┌──────────────── Memory server, Docker ───────────────────────────┐
+ ┌──────────────── Memory server, Docker ─────────────────────────────┐
  │  mempalace serve  --host 127.0.0.1 --port 8765                     │
  │   - one process owns the palace (ChromaDB + SQLite KG)             │
  │   - token -> client identity, allowed wings, allowed tools (new)   │
