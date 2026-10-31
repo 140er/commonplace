@@ -27,6 +27,7 @@ _RUN = re.compile(
 _CANDIDATE_RUN = re.compile(rf"(?<!{BASE64_BOUNDARY_CLASS}){BASE64_BOUNDARY_CLASS}{{200,}}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
+_MAX_FORMAT_LOOK_PAST = 32
 
 # Public index-only format. ``binary`` is a classification, not a MIME type.
 PLACEHOLDER_FORMAT = "[base64 {media_type} {decoded_bytes} B]"
@@ -69,12 +70,16 @@ def continues_run(char: str) -> bool:
 
 
 def run_touches_word(text: str, start: int, end: int) -> bool:
-    """Look past invisible format characters to the nearest visible neighbours."""
+    """Look past at most 32 formats per edge; longer stretches preserve the run."""
     i = start - 1
     while i >= 0 and _invisible_format(text[i]):
+        if start - 1 - i >= _MAX_FORMAT_LOOK_PAST:
+            return True
         i -= 1
     j = end
     while j < len(text) and _invisible_format(text[j]):
+        if j - end >= _MAX_FORMAT_LOOK_PAST:
+            return True
         j += 1
     return (i >= 0 and continues_run(text[i])) or (
         j < len(text) and (continues_run(text[j]) or text[j] == "=")

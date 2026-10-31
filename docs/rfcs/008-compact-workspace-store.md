@@ -62,8 +62,10 @@ At visible candidate edges, Unicode letters (L*), numbers (N*), marks (M*),
 connector punctuation (Pc) and characters in the base64 alphabet continue a word;
 everything else delimits. Both edges look past format characters (Cf), except
 ZWSP (U+200B), to the nearest visible character. A document or chunk edge counts
-as a delimiter, and ZWSP is a separator. Word edges behave identically; elsewhere
-NFD never gets a placeholder NFC would not. Decomposable symbols such as ≠ can
+as a delimiter, and ZWSP is a separator. Look-past is capped at 32 Cf characters
+per edge; longer stretches conservatively count as touching a word. Word edges
+behave identically; elsewhere NFD never gets a placeholder NFC would not.
+Decomposable symbols such as ≠ can
 retain more text in NFD. The detector and hint validator share this rule and
 inspect original code points without normalization, preserving span offsets.
 The index view also replaces NUL and lone surrogates with spaces for inference,

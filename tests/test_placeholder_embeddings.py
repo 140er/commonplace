@@ -597,6 +597,22 @@ def test_edge_fragments_look_past_formats_to_chunk_delimiters(char, emit, caplog
     assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
+@pytest.mark.parametrize("count", [32, 33])
+@pytest.mark.parametrize("emit", [False, True])
+def test_edge_fragments_with_long_format_stretches(count, emit, caplog):
+    formats = "\u00ad" * count
+    text = formats + "ab" if emit else "ab" + formats
+    start, end = (count, count + 2) if emit else (0, 2)
+    hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
+    if count == 32:
+        expected = formats + "[base64 binary 150 B]" if emit else formats
+        assert index_text(text, hint) == expected
+        assert "Ignoring stale or invalid index span hint" not in caplog.text
+    else:
+        assert index_text(text, hint) == text
+        assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
 @pytest.mark.parametrize(
     "rule",
     [

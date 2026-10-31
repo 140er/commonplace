@@ -36,6 +36,22 @@ def test_candidate_detection_is_bounded_on_adversarial_short_runs():
     assert min(candidate_times) < 2.0
 
 
+def test_format_look_past_is_bounded_on_adversarial_runs():
+    text = ("A" * 200 + "\u00ad" * 4_000) * 1_000
+    # The former detector's Unicode lookarounds delimit these low-entropy runs.
+    baseline = re.compile(r"(?<![\w+/\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![\w+/=\-])")
+    detector_times, baseline_times = [], []
+    for _ in range(5):
+        start = time.perf_counter()
+        assert find_base64_spans(text) == []
+        detector_times.append(time.perf_counter() - start)
+        start = time.perf_counter()
+        assert sum(1 for _ in baseline.finditer(text)) == 1_000
+        baseline_times.append(time.perf_counter() - start)
+    # Regex scanning is a lower bound on the former detector's full work.
+    assert min(detector_times) < 2 * min(baseline_times)
+
+
 def test_candidate_ranges_keep_rejected_runs_whole():
     rejected = "A" * 200 + "_+/==="
     text = "A" * 199 + " " + rejected + " end"
@@ -142,6 +158,20 @@ def test_format_characters_keep_delimited_payload_coverage(before, after, caplog
     source = IndexSource(text)
     assert hinted_index_text(text, source.metadata(0, len(text))) == expected
     assert "Ignoring stale or invalid index span hint" not in caplog.text
+
+
+@pytest.mark.parametrize("count", [32, 33])
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_long_format_stretches_preserve_runs_conservatively(count, side):
+    _, encoded = payload()
+    formats = "\u00ad" * count
+    text = formats + encoded if side == "before" else encoded + formats
+    spans = find_base64_spans(text)
+    if count == 32:
+        assert len(spans) == 1
+    else:
+        assert spans == []
+        assert index_text(text) == text
 
 
 def test_all_letters_and_numbers_keep_word_edges_after_decomposition():
