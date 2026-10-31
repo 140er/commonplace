@@ -626,7 +626,13 @@ def cmd_doctor(args) -> int:
         for workspace in rows:
             report = doctor_workspace(_data_dir(args), workspace["id"])
             print(json.dumps(report, sort_keys=True))
-            if report.get("previous_pointer_difference"):
+            if (
+                report.get("previous_pointer_difference")
+                or report.get("recovery_conflict")
+                or report.get("emptied_retained_root")
+                or report.get("interrupted_deletions")
+                or report.get("retired_findings")
+            ):
                 status = 3
     finally:
         db.close()

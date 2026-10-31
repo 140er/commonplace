@@ -54,6 +54,8 @@ def resolve_workspace(root):
     if root.is_symlink():
         raise ValueError("Workspace root cannot be a symlink")
     if not (root / POINTER).exists():
+        if (root / POINTER_PREVIOUS).exists() or (root / POINTER_PREVIOUS).is_symlink():
+            raise ValueError(previous_without_pointer_repair(root))
         if any(root.parent.glob(root.name + ".generation-*")):
             raise ValueError(POINTER_REPAIR)
         return root
@@ -62,6 +64,42 @@ def resolve_workspace(root):
     except ValueError:
         raise ValueError(POINTER_REPAIR) from None
     return validate_pointer(root, pointer)
+
+
+def previous_without_pointer_repair(root):
+    choices = []
+    try:
+        state = read_json(root / STATE)
+        published = state.get("pointer", {})
+        validate_pointer(root, published)
+        recoverable = (
+            state.get("state") == "published"
+            and published["active"] == state.get("staging")
+            and generation_path(root, published["active"]) != root
+        )
+    except (ValueError, OSError):
+        recoverable = False
+    try:
+        previous = read_json(root / POINTER_PREVIOUS)
+        validate_pointer(root, previous)
+        if not recoverable or {"retained": [], **previous} == {"retained": [], **published}:
+            choices.append(f"restore {POINTER_PREVIOUS} as {POINTER} to recover its history")
+    except (ValueError, OSError):
+        if not recoverable:
+            choices.append(
+                f"repair {POINTER_PREVIOUS} from verified evidence before restoring {POINTER}"
+            )
+    if recoverable:
+        choices.append(
+            f"delete {POINTER_PREVIOUS} and rerun workspace prune-stores to republish "
+            f"the recorded generation {published['active']}"
+        )
+    elif not any(root.parent.glob(root.name + ".generation-*")):
+        choices.append(f"delete {POINTER_PREVIOUS} to accept the original workspace root")
+    return (
+        f"Missing workspace generation pointer: {POINTER_PREVIOUS} exists without {POINTER}; "
+        "verify the selected data, then " + ", or ".join(choices)
+    )
 
 
 def validate_pointer(root, pointer):

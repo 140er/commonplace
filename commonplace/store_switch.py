@@ -52,6 +52,13 @@ _ADMIN_FILES = frozenset({POINTER, POINTER_PREVIOUS, RECEIPT, STATE, BACKUP_STDE
 logger = logging.getLogger(__name__)
 
 
+def _write_state(root, state):
+    previous = read_json(root / STATE)
+    if "prune_findings" in previous and "prune_findings" not in state:
+        state = dict(state, prune_findings=previous["prune_findings"])
+    atomic_write_json(root / STATE, state, follow_symlinks=False)
+
+
 def _write_pointer(root, pointer, *, store=None, checkpoint=lambda step: None):
     atomic_write_json(root / POINTER, pointer, follow_symlinks=False)
     if store is not None:
@@ -64,8 +71,8 @@ def _write_pointer(root, pointer, *, store=None, checkpoint=lambda step: None):
 
 
 def _record_published(root, pointer, store):
-    atomic_write_json(
-        root / STATE,
+    _write_state(
+        root,
         {
             "state": "published",
             "staging": pointer["active"],
@@ -73,7 +80,6 @@ def _record_published(root, pointer, store):
             "pointer": pointer,
             "sealing": "pending",
         },
-        follow_symlinks=False,
     )
 
 
@@ -81,12 +87,11 @@ def _finish_publication(root, pointer, state):
     try:
         _seal_retired(root, pointer)
     except BaseException:
-        atomic_write_json(root / STATE, dict(state, sealing="failed"), follow_symlinks=False)
+        _write_state(root, dict(state, sealing="failed"))
         raise
-    atomic_write_json(
-        root / STATE,
+    _write_state(
+        root,
         {"state": "complete", "store": state["store"], "sealing": "complete"},
-        follow_symlinks=False,
     )
 
 
@@ -126,7 +131,7 @@ def _publication_conflict(root, candidate):
             f"{main['active']} differs from {candidate['active']}; "
             "preserve both generations and reconcile the pointers before retrying"
         )
-    if main != candidate:
+    if not _pointers_equal(main, candidate):
         difference = _previous_pointer_difference(root, main)
         return (difference or {}).get("repair") or (
             "Publication recovery conflicts with the valid main pointer's history; "
@@ -144,7 +149,7 @@ def _recover_publication(root):
         previous, parsed = _read_previous_pointer(root)
         if (
             parsed
-            and previous != candidate
+            and not _pointers_equal(previous, candidate)
             and not _publication_extends_previous(root, candidate, previous)
         ):
             _refresh_previous_pointer(root, candidate)
@@ -172,11 +177,35 @@ def _publication_extends_previous(root, pointer, previous):
 def _backfill_state(root):
     try:
         state = read_json(root / STATE)
-        if state and state.get("state") not in ("copying", "published", "complete", "failed"):
+        if state and state.get("state") not in (
+            "copying",
+            "published",
+            "complete",
+            "failed",
+            "deleting",
+        ):
             raise ValueError
         if state.get("state") in ("copying", "published"):
             if generation_path(root, state["staging"]) == root:
                 raise ValueError
+        if state.get("state") == "deleting":
+            deletion = state["deletion"]
+            generation_path(root, deletion["entry"]["name"])
+            validate_pointer(root, deletion["pointer"])
+            if not isinstance(deletion["files"], dict):
+                raise ValueError
+        if "prune_findings" in state:
+            if not isinstance(state["prune_findings"], list):
+                raise ValueError
+            for finding in state["prune_findings"]:
+                generation_path(root, finding["generation"])
+                if finding["kind"] not in (
+                    "incomplete (interrupted deletion)",
+                    "newer writes",
+                    "changed since retirement",
+                ):
+                    raise ValueError
+                float(finding["at"])
         return state
     except (ValueError, KeyError, TypeError):
         raise ValueError(
@@ -214,7 +243,7 @@ def newest_write(directory, *, exclude=()):
     return newest
 
 
-def _retirement_digest(directory):
+def _retirement_digest(directory, *, entries=None):
     """Detect added/changed data even within the filesystem's mtime resolution."""
     directory = Path(directory)
     checksum = hashlib.sha256()
@@ -230,6 +259,8 @@ def _retirement_digest(directory):
         if path.is_symlink():
             checksum.update(path.relative_to(directory).as_posix().encode("utf-8"))
             checksum.update(os.fsencode(os.readlink(path)))
+            if entries is not None:
+                entries[path.relative_to(directory).as_posix()] = ["symlink", os.readlink(path)]
         elif path.is_dir():
             for child in sorted(path.iterdir()):
                 visit(child)
@@ -246,20 +277,17 @@ def _retirement_digest(directory):
                 )
             )
             with path.open("rb") as stream:
+                file_hash = hashlib.sha256()
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     checksum.update(block)
+                    if entries is not None:
+                        file_hash.update(block)
+            if entries is not None:
+                entries[path.relative_to(directory).as_posix()] = ["file", file_hash.hexdigest()]
 
     if directory.exists():
         visit(directory)
     return checksum.hexdigest()
-
-
-def _retired_changed(directory, item):
-    return (
-        newest_write(directory) > int(item["retired_at"] * 1_000_000_000)
-        or not item.get("digest")
-        or _retirement_digest(directory) != item["digest"]
-    )
 
 
 def _staging_paths(staging):
@@ -295,7 +323,7 @@ def _reset_staging_state(root, pointer):
         if staging.exists():
             return
         status = "failed"
-    atomic_write_json(root / STATE, {"state": status}, follow_symlinks=False)
+    _write_state(root, {"state": status})
 
 
 def _writes_after_markers(directory):
@@ -325,6 +353,10 @@ def _cleanup_recorded_staging(root):
 
 def _prepare_generations(root):
     """Validate publication evidence before allowing any orphan cleanup."""
+    if not (root / POINTER).exists() and (
+        (root / POINTER_PREVIOUS).exists() or (root / POINTER_PREVIOUS).is_symlink()
+    ):
+        resolve_workspace(root)
     _recover_publication(root)
     try:
         pointer = read_json(root / POINTER)
@@ -401,6 +433,238 @@ def _read_previous_pointer(root):
         return None, False
 
 
+def _pointers_equal(first, second):
+    def normalized(pointer):
+        return {"retained": [], **pointer} if isinstance(pointer, dict) else pointer
+
+    return normalized(first) == normalized(second)
+
+
+def _generation_gone(root, directory):
+    return (
+        not directory.exists()
+        or directory == root
+        and all(
+            child.name in _ADMIN_FILES and child.is_file() and not child.is_symlink()
+            for child in root.iterdir()
+        )
+    )
+
+
+def _emptied_retained_root(root, pointer):
+    if any(item["name"] == root.name for item in pointer.get("retained", [])) and _generation_gone(
+        root, root
+    ):
+        return root.name
+    return None
+
+
+def _emptied_root_repair(name):
+    return (
+        f"Retained root {name} contains only store administration files; "
+        "rerun workspace prune-stores to complete the interrupted prune"
+    )
+
+
+def _deletion_repair(name, *, recorded):
+    if recorded:
+        return f"Interrupted deletion of {name}; the next workspace prune-stores finishes it"
+    return (
+        f"Interrupted deletion or fingerprint mismatch of {name} without a deletion record; "
+        "preserve and verify its remaining contents with commonplace backup, then follow "
+        "the documented manual removal procedure"
+    )
+
+
+def _legacy_required_file(directory):
+    if not (directory / "palace").is_dir():
+        return None
+    compact = (directory / "threads.v2.sqlite3").exists() or (
+        directory / "palace" / "compact.sqlite3"
+    ).exists()
+    chroma = (directory / "threads.sqlite3").exists() or (
+        directory / "palace" / "chroma.sqlite3"
+    ).exists()
+    if compact == chroma:
+        return None
+    return "palace/compact.sqlite3" if compact else "palace/chroma.sqlite3"
+
+
+def _missing_retired_files(directory, item):
+    expected = item.get("expected_files")
+    if expected is None:
+        required = _legacy_required_file(directory)
+        expected = [required] if required else []
+    if not isinstance(expected, list) or any(
+        not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
+        for name in expected
+    ):
+        raise ValueError("Invalid retired generation file inventory")
+    return [
+        name
+        for name in expected
+        if not (directory / name).exists() and not (directory / name).is_symlink()
+    ]
+
+
+def _retired_kind(root, item):
+    directory = generation_path(root, item["name"])
+    digest = item.get("digest")
+    current = _retirement_digest(directory) if digest else None
+    if "expected_files" not in item and digest and current == digest:
+        return None
+    if _missing_retired_files(directory, item):
+        return "incomplete (interrupted deletion)"
+    changed = bool(digest) and current != digest
+    newer = newest_write(directory) > int(item["retired_at"] * 1_000_000_000)
+    if changed and newer:
+        return "newer writes"
+    if not digest or changed or newer:
+        return "changed since retirement"
+    return None
+
+
+def _retired_repair(name, kind, *, recorded=False):
+    if recorded and kind == "incomplete (interrupted deletion)":
+        return _deletion_repair(name, recorded=True)
+    description = (
+        f"Interrupted deletion of {name} is blocked: {kind}"
+        if recorded
+        else f"Generation {name} is {kind}"
+    )
+    return (
+        description + "; preserve and verify its remaining contents with commonplace backup, "
+        "then follow the documented manual removal procedure"
+    )
+
+
+def _save_prune_findings(root, findings):
+    state = _backfill_state(root)
+    if findings or state.get("prune_findings"):
+        _write_state(
+            root, dict(state, state=state.get("state", "complete"), prune_findings=findings)
+        )
+
+
+def _retired_findings(root, pointer, state, *, inspect_expired=False, now=None):
+    known = {item["generation"]: item["kind"] for item in state.get("prune_findings", [])}
+    findings = []
+    pending = None
+    if state.get("state") == "deleting":
+        pending = state["deletion"]["entry"]["name"]
+        kind = known.get(pending, "incomplete (interrupted deletion)")
+        findings.append(
+            {
+                "name": pending,
+                "kind": kind,
+                "recorded": True,
+                "repair": _retired_repair(pending, kind, recorded=True),
+            }
+        )
+    for item in pointer.get("retained", []):
+        name = item["name"]
+        directory = generation_path(root, name)
+        if name == pending or _generation_gone(root, directory):
+            continue
+        missing = _missing_retired_files(directory, item)
+        if (
+            inspect_expired
+            and (time.time() if now is None else now) - item["retired_at"] >= RETENTION_SECONDS
+        ):
+            kind = _retired_kind(root, item)
+        elif missing:
+            kind = "incomplete (interrupted deletion)"
+        else:
+            kind = known.get(name)
+            if "expected_files" not in item and kind == "incomplete (interrupted deletion)":
+                kind = None
+            if kind is None and newest_write(directory) > int(item["retired_at"] * 1_000_000_000):
+                kind = "changed since retirement"
+        if kind:
+            findings.append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "recorded": False,
+                    "missing_files": missing,
+                    "repair": _retired_repair(name, kind),
+                }
+            )
+    return findings
+
+
+def _remove_retired_directory(root, directory):
+    if directory == root:
+        for child in directory.iterdir():
+            if child.name not in _ADMIN_FILES:
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        fsync_directory(root)
+    else:
+        if directory.exists():
+            shutil.rmtree(directory)
+        fsync_directory(directory.parent)
+
+
+def _finish_deletion(root, pointer, state):
+    deletion = state["deletion"]
+    item, recorded = deletion["entry"], deletion["pointer"]
+    name = item["name"]
+    if (
+        name == pointer["active"]
+        or item not in recorded.get("retained", [])
+        or not (
+            _pointers_equal(pointer, recorded)
+            or _only_gone_retained_entries(root, pointer, recorded)
+        )
+    ):
+        raise ValueError(
+            f"Recorded deletion of {name} conflicts with the current pointer; preserve both"
+        )
+    directory = generation_path(root, name)
+    remaining = {}
+    _retirement_digest(directory, entries=remaining)
+    changed = sorted(
+        path for path, value in remaining.items() if deletion["files"].get(path) != value
+    )
+    if changed:
+        _save_prune_findings(
+            root, [{"generation": name, "kind": "changed since retirement", "at": time.time()}]
+        )
+        raise ValueError(
+            f"Refusing to finish deletion of {name}: remaining files changed or were added: "
+            + ", ".join(changed)
+        )
+    _remove_retired_directory(root, directory)
+    pointer = dict(
+        pointer, retained=[entry for entry in pointer.get("retained", []) if entry["name"] != name]
+    )
+    _write_pointer(root, pointer)
+    _write_state(
+        root,
+        {"state": "complete", "store": state.get("store", "v1"), "sealing": "complete"},
+    )
+    return pointer
+
+
+def _start_deletion(root, pointer, item):
+    directory = generation_path(root, item["name"])
+    files = {}
+    if _retirement_digest(directory, entries=files) != item["digest"]:
+        kind = _retired_kind(root, item) or "changed since retirement"
+        _save_prune_findings(root, [{"generation": item["name"], "kind": kind, "at": time.time()}])
+        raise ValueError(_retired_repair(item["name"], kind))
+    state = {
+        "state": "deleting",
+        "store": settings_for(generation_path(root, pointer["active"])).get("store", "v1"),
+        "deletion": {"entry": item, "pointer": pointer, "files": files},
+    }
+    _write_state(root, state)
+    return _finish_deletion(root, pointer, state)
+
+
 def _only_gone_retained_entries(root, pointer, previous):
     if not isinstance(previous, dict):
         return False
@@ -415,7 +679,7 @@ def _only_gone_retained_entries(root, pointer, previous):
         return (
             bool(removed)
             and all(before.get(name) == item for name, item in after.items())
-            and all(not generation_path(root, name).exists() for name in removed)
+            and all(_generation_gone(root, generation_path(root, name)) for name in removed)
         )
     except (KeyError, TypeError, ValueError):
         return False
@@ -436,11 +700,11 @@ def _refresh_previous_pointer(root, pointer):
         previous, parsed = _read_previous_pointer(root)
     except OSError:
         raise ValueError(_previous_pointer_repair([])) from None
-    if parsed and previous == pointer:
+    if parsed and _pointers_equal(previous, pointer):
         return
     if not parsed or _only_gone_retained_entries(root, pointer, previous):
         atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
-    elif previous != pointer:
+    else:
         difference = _previous_pointer_difference(root, pointer)
         raise ValueError(difference["repair"])
 
@@ -457,8 +721,12 @@ def _previous_pointer_difference(root, pointer):
             "repair": _previous_pointer_repair([]),
         }
     if not parsed:
-        return {"message": "prev copy is missing or cannot be parsed", "entries": []}
-    if previous == pointer:
+        return {
+            "message": "prev copy is missing or cannot be parsed",
+            "entries": [],
+            "repair": "Run workspace prune-stores to refresh the prev copy from the valid main pointer",
+        }
+    if _pointers_equal(previous, pointer):
         return None
     try:
         before = {item["name"]: item for item in previous.get("retained", [])}
@@ -474,6 +742,10 @@ def _previous_pointer_difference(root, pointer):
     difference = {"message": "pointer differs from prev copy", "entries": entries}
     if not _only_gone_retained_entries(root, pointer, previous):
         difference["repair"] = _previous_pointer_repair(entries)
+    else:
+        difference["repair"] = (
+            "Rerun workspace prune-stores to finish pruning and refresh the prev copy"
+        )
     return difference
 
 
@@ -503,14 +775,14 @@ def _preserved_generations(root, pointer):
     return preserved
 
 
-def _prune_report(root, *, repair=None):
+def _prune_report(root, *, repair=None, now=None):
     findings = []
     try:
-        pointer = read_json(root / POINTER)
         resolve_workspace(root)
-    except ValueError:
+        pointer = read_json(root / POINTER)
+    except ValueError as error:
         pointer = {}
-        repair = repair or POINTER_REPAIR
+        repair = repair or str(error)
         findings.append("invalid_pointer")
     try:
         state = _backfill_state(root)
@@ -531,7 +803,21 @@ def _prune_report(root, *, repair=None):
     conflict = _publication_conflict(root, _publication_pointer(root, state))
     if conflict:
         findings.append("recovery_conflict")
-        repair = repair or conflict
+        repair = conflict
+    retired_findings = _retired_findings(root, pointer, state, inspect_expired=True, now=now)
+    deletions = [
+        item
+        for item in retired_findings
+        if item["recorded"] or item["kind"] == "incomplete (interrupted deletion)"
+    ]
+    if retired_findings:
+        findings.append("retired_generation_findings")
+        if not conflict and "invalid_pointer" not in findings:
+            repair = retired_findings[0]["repair"]
+    emptied_root = _emptied_retained_root(root, pointer)
+    if emptied_root:
+        findings.append("emptied_retained_root")
+        repair = repair or _emptied_root_repair(emptied_root)
     if state.get("sealing") == "failed":
         findings.append("sealing_failed")
     if state.get("state") in ("copying", "published"):
@@ -547,6 +833,10 @@ def _prune_report(root, *, repair=None):
         "preserved_generations": preserved,
         "previous_pointer_difference": difference,
         "leftover_generation_directories": leftovers,
+        "emptied_retained_root": emptied_root,
+        "interrupted_deletions": deletions,
+        "retired_findings": retired_findings,
+        "last_prune_findings": state.get("prune_findings", []),
     }
     if repair:
         report["repair"] = repair
@@ -915,7 +1205,9 @@ def switch_workspace(
         root = workspace_root(data_dir, workspace_id)
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         _verify_offline(data_dir)
-        _backfill_state(root)
+        state = _backfill_state(root)
+        if state.get("state") == "deleting":
+            raise ValueError(_deletion_repair(state["deletion"]["entry"]["name"], recorded=True))
         pointer = _prepare_generations(root)
         if _backfill_state(root).get("sealing") != "complete":
             _seal_retired(root, pointer)
@@ -936,10 +1228,9 @@ def switch_workspace(
                 _write_pointer(root, pointer)
             name = root.name + ".generation-" + secrets.token_hex(12)
             staging = generation_path(root, name)
-            atomic_write_json(
-                root / STATE,
+            _write_state(
+                root,
                 {"state": "copying", "staging": name, "store": target_store},
-                follow_symlinks=False,
             )
             try:
                 checkpoint("staging")
@@ -970,11 +1261,14 @@ def switch_workspace(
                     raise ValueError("Workspace changed after backup; refusing store switch")
                 _verify_offline(data_dir)
                 checkpoint("verified")
+                expected_files = {}
+                digest = _retirement_digest(source, entries=expected_files)
                 retained = pointer.get("retained", []) + [
                     {
                         "name": source.name,
                         "retired_at": time.time(),
-                        "digest": _retirement_digest(source),
+                        "digest": digest,
+                        "expected_files": sorted(expected_files),
                     }
                 ]
                 published = {"active": name, "retained": retained}
@@ -986,10 +1280,9 @@ def switch_workspace(
             except BaseException:
                 if read_json(root / POINTER).get("active") != name:
                     _remove_staging(staging)
-                    atomic_write_json(
-                        root / STATE,
+                    _write_state(
+                        root,
                         {"state": "failed", "store": source_store},
-                        follow_symlinks=False,
                     )
                 raise
 
@@ -1001,46 +1294,42 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None, repor
         root = workspace_root(data_dir, workspace_id)
         _verify_offline(Path(data_dir).resolve())
         if report_only:
-            return _prune_report(root)
+            return _prune_report(root, now=now)
         try:
             _backfill_state(root)
         except ValueError as error:
             logger.warning("%s", error)
-            return _prune_report(root, repair=str(error))
+            return _prune_report(root, repair=str(error), now=now)
         pointer = _prepare_generations(root)
         if not pointer:
             return None
         if _backfill_state(root).get("sealing") != "complete":
             _seal_retired(root, pointer)
-        kept, modified = [], []
-        for item in pointer.get("retained", []):
+        state = _backfill_state(root)
+        if state.get("state") == "deleting":
+            pointer = _finish_deletion(root, pointer, state)
+        refused = []
+        for item in list(pointer.get("retained", [])):
             path = generation_path(root, item["name"])
             if path.name == pointer.get("active"):
                 raise ValueError("Refusing to delete the active workspace generation")
-            if not path.exists():
+            if _generation_gone(root, path):
+                pointer = dict(
+                    pointer, retained=[entry for entry in pointer["retained"] if entry != item]
+                )
+                _write_pointer(root, pointer)
                 continue
             if (time.time() if now is None else now) - item["retired_at"] < RETENTION_SECONDS:
-                kept.append(item)
                 continue
-            if _retired_changed(path, item):
-                kept.append(item)
-                modified.append(path.name)
+            kind = _retired_kind(root, item)
+            if kind:
+                refused.append({"generation": path.name, "kind": kind, "at": time.time()})
                 continue
-            if path == root:
-                for child in path.iterdir():
-                    if child.name not in _ADMIN_FILES:
-                        if child.is_dir() and not child.is_symlink():
-                            shutil.rmtree(child)
-                        else:
-                            child.unlink()
-            elif path.exists():
-                shutil.rmtree(path)
-        if pointer.get("retained", []) != kept:
-            pointer["retained"] = kept
-            _write_pointer(root, pointer)
-        if modified:
+            pointer = _start_deletion(root, pointer, item)
+        _save_prune_findings(root, refused)
+        if refused:
             raise ValueError(
-                "Refusing to prune retired generations with newer writes: " + ", ".join(modified)
+                "; ".join(_retired_repair(item["generation"], item["kind"]) for item in refused)
             )
     return None
 
@@ -1078,6 +1367,17 @@ def doctor_workspace(data_dir, workspace_id):
     difference = _previous_pointer_difference(root, pointer)
     if difference:
         repair = repair or difference.get("repair")
+    retired_findings = _retired_findings(root, pointer, recorded)
+    deletions = [
+        item
+        for item in retired_findings
+        if item["recorded"] or item["kind"] == "incomplete (interrupted deletion)"
+    ]
+    if retired_findings and not conflict:
+        repair = retired_findings[0]["repair"]
+    emptied_root = _emptied_retained_root(root, pointer)
+    if emptied_root:
+        repair = repair or _emptied_root_repair(emptied_root)
     retained = []
     for item in read_json(root / POINTER).get("retained", []):
         path = generation_path(root, item["name"])
@@ -1086,6 +1386,11 @@ def doctor_workspace(data_dir, workspace_id):
                 "name": item["name"],
                 "older_than_14_days": time.time() - item["retired_at"] >= RETENTION_SECONDS,
                 "newer_writes": newest_write(path) > int(item["retired_at"] * 1_000_000_000),
+                "verification": (
+                    "unverified (legacy entry; prune checks it)"
+                    if "expected_files" not in item and _legacy_required_file(path) is None
+                    else None
+                ),
             }
         )
     return {
@@ -1100,6 +1405,10 @@ def doctor_workspace(data_dir, workspace_id):
         "previous_pointer_difference": difference,
         "leftover_generation_directories": _leftover_generation_directories(root, pointer),
         "recovery_conflict": conflict,
+        "emptied_retained_root": emptied_root,
+        "interrupted_deletions": deletions,
+        "retired_findings": retired_findings,
+        "last_prune_findings": recorded.get("prune_findings", []),
         "preserved_generations": _preserved_generations(root, pointer),
         "repair": repair,
     }
