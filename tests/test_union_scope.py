@@ -449,3 +449,80 @@ def test_term_fetch_budget_and_cjk_single_fetch(tmp_path, monkeypatch, backend):
     result = col.union_lexical_search(query="项目部署配置故障排查")
     assert [h.id for h in result.hits] == ["cjk"]
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+def test_closet_statistics_exclude_drawers_even_in_the_same_wing(tmp_path, monkeypatch, backend):
+    """Legacy table-wide IDF can swap alpha/beta; closet-only scope pins their order."""
+    from mempalace.backends import embedding_wrapper
+    from mempalace.palace import get_closets_collection
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    palace = str(tmp_path / "palace")
+    drawers = get_collection(palace, create=True)
+    closets = get_closets_collection(palace, create=True)
+    closets.add(
+        ids=["ca", "cb"],
+        documents=["alpha rollout|team|→a", "beta rollout|team|→b"],
+        embeddings=[[1.0, 0.0]] * 2,
+        metadatas=[
+            {"wing": "public", "source_file": "a.md"},
+            {"wing": "public", "source_file": "b.md"},
+        ],
+    )
+
+    def closet_order():
+        result = closets.union_lexical_search(
+            query="alpha beta", n_results=10, where={"wing": "public"}, closet=True
+        )
+        return [hit.id for hit in result.hits]
+
+    assert closet_order() == ["ca", "cb"]
+    drawers.add(
+        ids=["a", "b"] + [f"noise{i}" for i in range(300)],
+        documents=["Decision detail."] * 2 + ["alpha alpha rollout"] * 300,
+        embeddings=[[1.0, 0.0]] * 2 + [[0.01, 1.0]] * 300,
+        metadatas=[{"wing": "public", "source_file": name} for name in ("a.md", "b.md")]
+        + [{"wing": "public", "source_file": f"noise{i}.md"} for i in range(300)],
+    )
+    assert closet_order() == ["ca", "cb"]
+    if backend != "chroma":
+        # Develop's SQLite FTS ranks with drawers from the same table, making
+        # beta rarer. That cross-collection influence is intentionally removed.
+        legacy = closets.lexical_search(query="alpha beta", n_results=10, where={"wing": "public"})
+        assert [hit.id for hit in legacy.hits] == ["cb", "ca"]
+    from mempalace import searcher
+    from mempalace.backends.base import QueryResult
+
+    # Keep vector candidates deterministic so closet statistics control boosts.
+    monkeypatch.setattr(searcher, "get_collection", lambda *args, **kw: drawers)
+    monkeypatch.setattr(
+        drawers,
+        "query",
+        lambda **kw: QueryResult(
+            ids=[["a", "b"]],
+            documents=[["Decision detail."] * 2],
+            metadatas=[
+                [
+                    {"wing": "public", "source_file": "a.md"},
+                    {"wing": "public", "source_file": "b.md"},
+                ]
+            ],
+            distances=[[0.2, 0.2]],
+        ),
+    )
+    result = search_memories(
+        "alpha beta",
+        palace,
+        wing="public",
+        n_results=2,
+        candidate_strategy="vector",
+        include_facts=False,
+    )
+    assert [(hit["drawer_id"], hit["closet_boost"]) for hit in result["results"]] == [
+        ("a", 0.40),
+        ("b", 0.25),
+    ]
