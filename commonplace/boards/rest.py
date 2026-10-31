@@ -136,18 +136,17 @@ def dispatch(service, h, parts, method):
             return routed
     if parts == ["boards"]:
         if method == "GET":
-            return 200, {"boards": service.board_list()}
+            return 200, {"boards": service.board_list(top_level=True)}
         if method == "POST":
             return 201, service.board_add(**read_json(h))
     if len(parts) == 3 and parts[0] == "boards" and parts[2] == "cards":
         if method == "GET":
+            cards = service.task_list(
+                board=parts[1], status=query(h).get("status") or None, all_statuses=True
+            )
             return 200, {
-                "cards": service.task_list(
-                    board=parts[1],
-                    status=query(h).get("status") or None,
-                    all_statuses=True,
-                    top_level=True,
-                )
+                "cards": [c for c in cards if c["parent"] is None],
+                "linked": [c for c in cards if c["message_id"] is not None],
             }
         if method == "POST":
             body = read_json(h)

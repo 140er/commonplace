@@ -74,7 +74,17 @@ def test_deep_actors_roll_up_four_children_and_agents_still_see_them(hub, env): 
         "review": 0,
         "done": 0,
     }
+    assert top.board_list()[0]["counts"] == {
+        "backlog": 0,
+        "todo": 2,
+        "doing": 1,
+        "review": 0,
+        "done": 2,
+    }
     for caller in (token, sub_token):
+        ok, output = mcp(hub, caller, "board_list")
+        assert ok and "work  todo 2  doing 1  review 0" in output
+        assert api(hub, caller, "GET", "/api/boards")[1]["boards"][0]["counts"]["todo"] == 0
         ok, output = mcp(hub, caller, "task_list", board="work", status="done")
         assert ok and f"#{children[0]['number']} done" in output
         assert f"parent:#{parent['number']}" in output
@@ -130,12 +140,97 @@ def test_assigned_current_card_and_nested_explicit_parent_are_flattened(hub, env
     parent = owner.task_add(title="Assigned by a person", board="work", assignee=principal.actor)
     top.task_take_next(task=parent["number"])
     _, _, sub = actor(hub, "worker", parent=principal.connection)
-    nested = sub.task_add(title="Nested", board="work", assignee=principal.actor)
-    top.task_take_next(task=nested["number"])
-    assert sub.task_add(title="Automatic flatten", board="work")["parent"] == parent["number"]
+    nested = sub.task_add(title="Nested", board="work")
     assert (
         sub.task_add(title="Explicit flatten", board="work", parent=nested["number"])["parent"]
         == parent["number"]
+    )
+    owner.task_handoff(nested["number"], to=principal.actor, note="Take the nested task")
+    top.task_take_next(task=nested["number"])
+    assert sub.task_add(title="Automatic flatten", board="work")["parent"] == parent["number"]
+
+
+def test_reassigned_child_cannot_roll_work_into_another_actors_top_level_card(hub, env):  # noqa: F811
+    _token, principal, _person, cookie, owner = env
+    first = service(hub, principal)
+    own = first.task_add(title="First root", board="work")
+    first.task_take_next(task=own["number"])
+    other_id, _, second = actor(hub, "second-root")
+    foreign = second.task_add(title="Second root", board="work")
+    _, _, second_sub = actor(hub, "second-worker", parent=other_id)
+    nested = second_sub.task_add(title="Reassigned child", board="work", assignee=principal.actor)
+    assert nested["parent"] == foreign["number"]
+    first.task_take_next(task=nested["number"])
+    _, sub_token, first_sub = actor(hub, "first-worker", parent=principal.connection_id)
+    status, refused = api(
+        hub,
+        sub_token,
+        "POST",
+        "/api/boards/work/cards",
+        {
+            "title": "Foreign explicit parent",
+            "parent": nested["number"],
+        },
+    )
+    assert status == 400 and "top-level actor" in refused["error"]
+    ok, output = mcp(
+        hub,
+        sub_token,
+        "task_add",
+        board="work",
+        title="Foreign explicit parent",
+        parent=nested["number"],
+    )
+    assert not ok and "top-level actor" in output
+    standalone = first_sub.task_add(title="Automatic stays top-level", board="work")
+    assert standalone["parent"] is None
+    assert owner.task_show(foreign["number"])["children"] == {"done": 0, "total": 1}
+    assert standalone["number"] in {
+        c["number"] for c in api(hub, cookie, "GET", "/api/boards/work/cards")[1]["cards"]
+    }
+
+
+def test_chat_linked_children_keep_asks_and_answer_history(hub, env):  # noqa: F811
+    _token, principal, _person, cookie, owner = env
+    message = owner.space_post("work", "  Keep the decision with this message.\n")
+    top = service(hub, principal)
+    parent = top.task_add(title="Parent", board="work", message_id=message["id"])
+    _, _, sub = actor(hub, "worker", parent=principal.connection_id)
+    child = sub.task_add(title="Child approval", board="work", message_id=message["id"])
+    sub.ask('Ship <script> & "original"?', ["Ship", "Wait"], task=child["number"])
+    sub.task_add(title="Not chat-linked", board="work")
+    owner.board_add(slug="other", wing="shared")
+    other_message = owner.space_post("other", "Other board")
+    top.task_add(title="Other linked card", board="other", message_id=other_message["id"])
+    status, payload = api(hub, cookie, "GET", "/api/boards/work/cards")
+    assert status == 200 and [c["number"] for c in payload["cards"]] == [parent["number"]]
+    assert {c["number"] for c in payload["linked"]} == {parent["number"], child["number"]}
+    linked_child = next(c for c in payload["linked"] if c["number"] == child["number"])
+    assert (
+        linked_child["parent"] == parent["number"] and linked_child["message_id"] == message["id"]
+    )
+    assert linked_child["need"] == "you" and linked_child["ask_options"] == ["Ship", "Wait"]
+    assert linked_child["ask"] == 'Ship <script> & "original"?'
+    status, filtered = api(hub, cookie, "GET", "/api/boards/work/cards?status=review")
+    assert status == 200 and filtered["cards"] == []
+    assert [c["number"] for c in filtered["linked"]] == [child["number"]]
+    status, answered = api(
+        hub,
+        cookie,
+        "POST",
+        f"/api/cards/{child['number']}/decide",
+        {
+            "version": linked_child["version"],
+            "choice": "Ship",
+        },
+    )
+    assert status == 200 and answered["status"] == "todo"
+    refreshed = api(hub, cookie, "GET", "/api/boards/work/cards")[1]
+    answered = next(c for c in refreshed["linked"] if c["number"] == child["number"])
+    assert answered["ask"] is None and answered["message_id"] == message["id"]
+    assert any(
+        e["kind"] == "decide" and e["choice"] == "Ship"
+        for e in owner.task_show(child["number"])["events"]
     )
 
 

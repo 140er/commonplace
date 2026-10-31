@@ -22,7 +22,7 @@ const state = {
   me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
-  chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
+  chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0,
 };
@@ -164,7 +164,7 @@ async function signin(code = null) {
   speech.stop(); voice.reset();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
-  state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
+  state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
   providersPromise ||= api("/app/auth/providers").catch(() => ({}));
   const { providers = [], paused = [] } = await providersPromise;
   if (state.me) return;
@@ -281,7 +281,7 @@ function syncSpaceTasks(parent, cards, inline = false) {
 async function hydrateSpaceTasks() {
   const epoch = state.screen, board = state.chatBoard;
   const current = () => epoch === state.screen && state.chatBoard === board && state.base === `#/space/${enc(board)}`;
-  const changed = await Promise.all(state.cards.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
+  const changed = await Promise.all(state.linked.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
     if (state.chatTasks.get(card.number)?.version === card.version) return false;
     const pending = state.chatTaskRequests.get(card.number);
     if (pending?.version === card.version && pending.epoch === epoch) return false;
@@ -289,7 +289,7 @@ async function hydrateSpaceTasks() {
     state.chatTaskRequests.set(card.number, request);
     try {
       const detail = await api(`/api/cards/${card.number}`);
-      if (!current() || state.cards.find((c) => c.number === card.number)?.version !== detail.version) return false;
+      if (!current() || state.linked.find((c) => c.number === card.number)?.version !== detail.version) return false;
       state.chatTasks.set(card.number, detail);
       return true;
     } catch (error) { if (current()) showError(error.message); return false; }
@@ -342,7 +342,7 @@ function spaceView() {
   const stream = content.querySelector(".space-stream"), older = stream.querySelector("[data-older]");
   older.hidden = !state.chatHasMore;
   const linked = new Map();
-  state.cards.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
+  state.linked.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
   let next = older.nextElementSibling;
   for (const m of state.chat) {
     let node = stream.querySelector(`[data-message="${m.id}"]`);
@@ -465,6 +465,7 @@ async function refresh({ background = false, events = [] } = {}) {
       const result = await api(`/api/boards/${enc(slug)}/cards`);
       if (!current()) return;
       state.cards = result.cards;
+      state.linked = result.linked;
       if (state.base.startsWith("#/space/")) {
         if (state.chatBoard !== slug) {
           const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
@@ -535,7 +536,7 @@ async function route() {
 // The current view's list first, so a write never sends a version left over from another view.
 function findCard(number) {
   if (state.card?.number === number) return state.card;
-  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.open, needsCards()] : [state.open, needsCards(), state.cards];
+  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
 async function mutate(key, action) {

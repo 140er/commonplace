@@ -444,7 +444,7 @@ class BoardService:
         ):
             raise ToolError("no: take this card before editing it")
 
-    def board_list(self):
+    def board_list(self, *, top_level=False):
         with self.transaction() as conn:
             result = []
             for board in self._visible_boards(conn):
@@ -455,7 +455,8 @@ class BoardService:
                         r["status"]: r["n"]
                         for r in conn.execute(
                             "SELECT status,count(*) n FROM tasks WHERE board_id=? "
-                            "AND parent_number IS NULL GROUP BY status",
+                            + ("AND parent_number IS NULL " if top_level else "")
+                            + "GROUP BY status",
                             (board["id"],),
                         )
                     }
@@ -712,19 +713,17 @@ class BoardService:
                 row = task_row(conn, number)
             except ToolError:
                 raise ParentError("no: parent card not found on this board") from None
-            if row["board_id"] != board["id"] or root not in (row["created_by"], row["assignee"]):
-                raise ParentError(
-                    "no: parent card must be created by or assigned to the top-level actor on this board"
-                )
+            if row["board_id"] != board["id"]:
+                raise ParentError("no: parent card must be on this board")
         elif root is not None:
             row = conn.execute(
-                "SELECT id,parent_number,board_id FROM tasks WHERE board_id=? "
+                "SELECT id,parent_number,board_id,created_by,assignee FROM tasks WHERE board_id=? "
                 "AND status='doing' AND assignee=? ORDER BY updated_at DESC,id DESC LIMIT 1",
                 (board["id"], root),
             ).fetchone()
             if row is None:
                 row = conn.execute(
-                    "SELECT id,parent_number,board_id FROM tasks WHERE board_id=? "
+                    "SELECT id,parent_number,board_id,created_by,assignee FROM tasks WHERE board_id=? "
                     "AND status!='done' AND created_by=? ORDER BY created_at DESC,id DESC LIMIT 1",
                     (board["id"], root),
                 ).fetchone()
@@ -738,6 +737,12 @@ class BoardService:
             row = task_row(conn, row["parent_number"])
             if row["board_id"] != board["id"]:
                 raise ParentError("no: parent card must be on this board")
+        if row is not None and root not in (row["created_by"], row["assignee"]):
+            if parent is not None:
+                raise ParentError(
+                    "no: parent card must be created by or assigned to the top-level actor on this board"
+                )
+            return None
         return row["id"] if row is not None else None
 
     def _new_card(
