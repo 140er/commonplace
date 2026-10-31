@@ -80,7 +80,7 @@ After the rules transaction closes, each changed agent emits `rule.changed`; a m
 ### Visibility
 
 - An agent sees its own rules, plus the `*` rules, filtered by scope: a `board` rule only when it can read that board's wing, and a `repo` rule always (repos are not secret on their own).
-- On a rule an agent did not publish first, `rules_get` shows `agent_text`, `pending` and a `conn:` `updated_by` only to the agent that wrote them last; other agents get `null`, `0` and `null`. So one agent's unreviewed wording never reaches another agent.
+- On a rule an agent did not publish first, `rules_get` shows `agent_text`, `pending` and a `conn:` `updated_by` only to the agent that first published the rule and to the agent that wrote them last; other agents get `null`, `0` and `null`. So one agent's unreviewed wording never reaches another agent.
 - People in the workspace see everything. Only the owner (`principal.role == "owner"`) can edit, accept, retire, restore, suggest or decide.
 
 ## MCP tools
