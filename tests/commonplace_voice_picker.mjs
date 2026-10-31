@@ -178,7 +178,7 @@ const app = await readFile(new URL("../commonplace/web/static/app.js", import.me
 assert.match(app, /function remember\(\)\s*\{\s*voice\.remember\(\)/);
 assert.match(app, /voice\.view\(\);\s*if \(saved\?\.view/);
 assert.match(app, /if \(hash !== state\.route\) voice\.stop\(\)/);
-assert.match(app, /function signin\(\)[\s\S]*?voice\.reset\(\)/);
+assert.match(app, /function signin\([^)]*\)[\s\S]*?voice\.reset\(\)/);
 assert.doesNotMatch(source, /SpeechRecognition|createObjectURL|\.submit\(|requestSubmit\(/);
 // Boot must display the app without waiting for voice status. The real API's
 // session-expired event must still replace that shell with sign-in on a late 401.

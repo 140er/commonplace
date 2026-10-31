@@ -7,8 +7,16 @@ const messages = {
   email: "That account has no verified email.",
   account: "No account for that email.",
   disabled: "This account can't sign in.",
+  paused: "This sign-in option is paused until tomorrow. Use another option with the same email.",
 };
-export const signinMessage = (code) => Object.hasOwn(messages, code) ? messages[code] : messages.failed;
+function pausedMessage(provider) {
+  if (!provider) return messages.paused;
+  const time = new Date(provider.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `Sign-in with ${provider.name} is paused until ${time}. Use another option with the same email.`;
+}
+export const signinMessage = (code, paused = [], via = "") => code === "paused"
+  ? pausedMessage(paused.find((p) => p.id === via) || paused[0])
+  : Object.hasOwn(messages, code) ? messages[code] : messages.failed;
 
 // Simple Icons marks (CC0); Google keeps its four brand colours.
 const paths = {
@@ -23,10 +31,12 @@ function icon(id) {
   return Object.hasOwn(paths, id) ? `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="${paths[id]}"/></svg>` : "";
 }
 
-export function signinView({ providers = [], error = "", next = "" }) {
+export function signinView({ providers = [], paused = [], via = "", error = "", next = "" }) {
+  const previous = paused.find((p) => p.id === via);
+  const message = error || (previous ? pausedMessage(previous) : "");
   const links = providers.map(({ id, name, url }) => {
     const href = next ? `${url}${url.includes("?") ? "&" : "?"}next=${encodeURIComponent(next)}` : url;
     return `<a class="provider" href="${e(href)}">${icon(id)}<span>Continue with ${e(name)}</span></a>`;
   }).join("");
-  return `<main class="signin"><h1>Sign in</h1>${links ? `<nav class="providers">${links}</nav>` : ""}<form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${error ? `<div class="message" role="status">${e(error)}</div>` : ""}</main>`;
+  return `<main class="signin"><h1>Sign in</h1>${links ? `<nav class="providers">${links}</nav>` : ""}<form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>${message ? `<div class="message" role="status">${e(message)}</div>` : ""}</main>`;
 }
