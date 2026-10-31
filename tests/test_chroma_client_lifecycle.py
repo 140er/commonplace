@@ -43,13 +43,17 @@ def check_finished(threads):
     assert not errors, errors
 
 def check_released():
+    import gc
+    gc.collect()
+    chroma._drain_pending_guard_releases()
     assert closes
     for path in paths:
         key = _inproc_sqlite._key(os.path.join(path, 'chroma.sqlite3'))
-        assert key not in _inproc_sqlite._anchors
-        assert key not in _inproc_sqlite._holders
-        assert path not in SharedSystemClient._identifier_to_system
-        assert not SharedSystemClient._identifier_to_refcount.get(path, 0)
+        with _inproc_sqlite.palace_db_lock(key):
+            assert key not in _inproc_sqlite._anchors
+            assert key not in _inproc_sqlite._holders
+            assert path not in SharedSystemClient._identifier_to_system
+            assert not SharedSystemClient._identifier_to_refcount.get(path, 0)
 """
 
 
@@ -209,6 +213,7 @@ os.utime(os.path.join(path, 'chroma.sqlite3'), (stamp, stamp))
 fresh = backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
 assert fresh.count() == 2
 assert fresh.query(query_embeddings=[[0., 1.]], n_results=1).ids == [['peer']]
+col = None
 backend.close()
 check_released()
 """,
@@ -439,7 +444,10 @@ def test_fork_resets_pending_queue_worker_and_registry_lock(tmp_path):
         """
 from multiprocessing import get_context
 inherited = object()
+forgotten = type('ForgottenSystem', (), {})()
 with chroma._CLIENT_REGISTRY_LOCK:
+    chroma._FORGOTTEN_SYSTEMS[paths[0]] = [chroma.weakref.ref(forgotten)]
+    chroma._PENDING_GUARD_RELEASES.add(paths[0])
     chroma._PENDING_CLIENT_CLOSES[id(inherited)] = (paths[0], inherited)
     chroma._pending_close_worker = threading.Thread()
 held, release = threading.Event(), threading.Event()
@@ -452,6 +460,8 @@ thread.start()
 assert held.wait(5)
 def child():
     assert not chroma._PENDING_CLIENT_CLOSES, 'child inherited pending clients'
+    assert not chroma._FORGOTTEN_SYSTEMS
+    assert not chroma._PENDING_GUARD_RELEASES
     assert chroma._pending_close_worker is None
     closed = threading.Event()
     chroma._close_client = lambda client, path: closed.set()
@@ -472,6 +482,9 @@ thread.join(5)
 assert process.exitcode == 0
 with chroma._CLIENT_REGISTRY_LOCK:
     assert chroma._PENDING_CLIENT_CLOSES[id(inherited)][1] is inherited
+    assert chroma._FORGOTTEN_SYSTEMS[paths[0]][0]() is forgotten
+    chroma._FORGOTTEN_SYSTEMS.clear()
+    chroma._PENDING_GUARD_RELEASES.clear()
     chroma._PENDING_CLIENT_CLOSES.clear()
     chroma._pending_close_worker = None
 """,
@@ -518,5 +531,51 @@ if worker is not None:
     assert not worker.is_alive()
 assert set(closed) == {first, second}
 assert not chroma._PENDING_CLIENT_CLOSES
+""",
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX orphan guard lifecycle")
+@pytest.mark.parametrize("helper_guard", [False, True])
+def test_live_forgotten_system_retains_guards_during_peer_writes(tmp_path, helper_guard):
+    _run_probe(
+        tmp_path,
+        f"helper_guard = {helper_guard!r}\n"
+        + """
+import gc
+import subprocess
+if helper_guard:
+    _inproc_sqlite._ANCHORED = False
+    _inproc_sqlite._HOLD_LOCKS = True
+backend = ChromaBackend()
+path = paths[0]
+backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+orphan = ChromaBackend.make_client(path)
+orphan_collection = orphan.get_collection('mempalace_drawers')
+key = _inproc_sqlite._key(os.path.join(path, 'chroma.sqlite3'))
+chroma._clear_chroma_system_cache(palace_path=path)
+assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders, 'live orphan lost its read guard'
+writer = '''
+import sys
+from mempalace.backends.chroma import ChromaBackend
+backend = ChromaBackend()
+col = backend.get_collection(sys.argv[1], 'mempalace_drawers')
+col.add(ids=['peer'], documents=['peer note'], embeddings=[[0., 1.]], metadatas=[{'wing': 'public'}])
+backend.close()
+'''
+subprocess.run([sys.executable, '-c', writer, path], check=True, capture_output=True, timeout=20)
+assert orphan_collection.get(ids=['a'])['documents'] == ['quartz note']
+assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+fresh_backend = ChromaBackend()
+fresh = fresh_backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+assert fresh.query(query_embeddings=[[0., 1.]], n_results=1).ids == [['peer']]
+fresh_backend.close()
+assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+orphan_collection = orphan = None
+gc.collect()
+chroma._drain_pending_guard_releases(palace_path=path)
+assert key not in _inproc_sqlite._anchors
+assert key not in _inproc_sqlite._holders
+backend.close()
 """,
     )

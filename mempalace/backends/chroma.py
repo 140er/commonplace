@@ -8,6 +8,7 @@ import pickle
 import shlex
 import sqlite3
 import struct
+import sys
 import threading
 import time
 import warnings
@@ -1752,20 +1753,81 @@ def _same_palace(first, second):
 
 _CLIENT_REGISTRY_LOCK = threading.RLock()
 _PENDING_CLIENT_CLOSES: dict[int, tuple[str, Any]] = {}
+_FORGOTTEN_SYSTEMS: dict[str, list[weakref.ReferenceType]] = {}
+_PENDING_GUARD_RELEASES: set[str] = set()
 _pending_close_worker: threading.Thread | None = None
 
 
 def _reset_client_registry_after_fork() -> None:
     # The parent owns these clients and its worker thread does not survive
     # fork. Forget inherited entries without sending native close calls.
-    global _CLIENT_REGISTRY_LOCK, _PENDING_CLIENT_CLOSES, _pending_close_worker
+    global \
+        _CLIENT_REGISTRY_LOCK, \
+        _PENDING_CLIENT_CLOSES, \
+        _FORGOTTEN_SYSTEMS, \
+        _PENDING_GUARD_RELEASES, \
+        _pending_close_worker
     _CLIENT_REGISTRY_LOCK = threading.RLock()
     _PENDING_CLIENT_CLOSES = {}
+    _FORGOTTEN_SYSTEMS = {}
+    _PENDING_GUARD_RELEASES = set()
     _pending_close_worker = None
 
 
 if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_reset_client_registry_after_fork)
+
+
+def _request_guard_release(palace_path) -> None:
+    # GC can run under another palace's lock. Schedule instead of releasing
+    # this palace's read guard from the weak-reference callback itself.
+    if sys.is_finalizing():
+        return
+    with _CLIENT_REGISTRY_LOCK:
+        _PENDING_GUARD_RELEASES.add(palace_path)
+    _schedule_pending_closes()
+
+
+def _release_guard_if_unused(palace_path) -> None:
+    """Caller holds the palace lock; forgotten native Systems still need guards."""
+    from chromadb.api.shared_system_client import SharedSystemClient
+
+    for identifier in list(SharedSystemClient._identifier_to_system):
+        if isinstance(identifier, str) and _same_palace(identifier, palace_path):
+            return
+    with _CLIENT_REGISTRY_LOCK:
+        paths = [path for path in _FORGOTTEN_SYSTEMS if _same_palace(path, palace_path)]
+        if any(ref() is not None for path in paths for ref in _FORGOTTEN_SYSTEMS[path]):
+            return
+        for path in paths:
+            _FORGOTTEN_SYSTEMS.pop(path)
+    from ._inproc_sqlite import release_transient
+
+    release_transient(os.path.join(palace_path, "chroma.sqlite3"))
+
+
+def _drain_pending_guard_releases(palace_path=None, *, blocking=True) -> int:
+    held = held_palace_db_paths()
+    with _CLIENT_REGISTRY_LOCK:
+        paths = [
+            path
+            for path in _PENDING_GUARD_RELEASES
+            if (palace_path is None or _same_palace(path, palace_path))
+            and all(_same_palace(path, os.path.dirname(lock)) for lock in held)
+        ]
+    drained = 0
+    for path in paths:
+        lock = palace_db_lock(os.path.join(path, "chroma.sqlite3"))
+        if not lock.acquire(blocking=blocking):
+            continue
+        try:
+            with _CLIENT_REGISTRY_LOCK:
+                _PENDING_GUARD_RELEASES.discard(path)
+            _release_guard_if_unused(path)
+            drained += 1
+        finally:
+            lock.release()
+    return drained
 
 
 def _drain_pending_clients(palace_path=None, *, blocking=True) -> int:
@@ -1799,11 +1861,12 @@ def _close_pending_clients() -> None:
     try:
         while True:
             with _CLIENT_REGISTRY_LOCK:
-                if not _PENDING_CLIENT_CLOSES:
+                if not _PENDING_CLIENT_CLOSES and not _PENDING_GUARD_RELEASES:
                     _pending_close_worker = None
                     return
                 paths = list(dict.fromkeys(path for path, _ in _PENDING_CLIENT_CLOSES.values()))
             closed = sum(_drain_pending_clients(palace_path=path, blocking=False) for path in paths)
+            closed += _drain_pending_guard_releases(blocking=False)
             if not closed:
                 # A writer can own one palace for a long time. Retry without
                 # keeping other palaces' clients queued behind that lock.
@@ -1820,7 +1883,7 @@ def _schedule_pending_closes() -> None:
     """A caller holding a foreign palace lock cannot close these owners itself."""
     global _pending_close_worker
     with _CLIENT_REGISTRY_LOCK:
-        if _PENDING_CLIENT_CLOSES and _pending_close_worker is None:
+        if (_PENDING_CLIENT_CLOSES or _PENDING_GUARD_RELEASES) and _pending_close_worker is None:
             _pending_close_worker = threading.Thread(target=_close_pending_clients, daemon=True)
             _pending_close_worker.start()
 
@@ -1851,8 +1914,6 @@ def _close_client(client, palace_path) -> None:
                     and identifier not in SharedSystemClient._identifier_to_system
                     and not SharedSystemClient._identifier_to_refcount.get(identifier, 0)
                 ):
-                    from ._inproc_sqlite import release_transient
-
                     # Chroma keys Systems by the exact path string. Another
                     # System can still hold this file through a path alias.
                     for directory in list(SharedSystemClient._identifier_to_system):
@@ -1866,7 +1927,7 @@ def _close_client(client, palace_path) -> None:
                         if same_file:
                             break
                     else:
-                        release_transient(path)
+                        _release_guard_if_unused(palace_path)
     except Exception:
         logger.debug("client.close() unavailable or failed", exc_info=True)
 
@@ -1959,11 +2020,13 @@ def _clear_chroma_system_cache(palace_path=None) -> bool:
                 )
                 for identifier in identifiers:
                     if isinstance(identifier, str) and _same_palace(identifier, palace_path):
-                        SharedSystemClient._identifier_to_system.pop(identifier, None)
+                        system = SharedSystemClient._identifier_to_system.pop(identifier, None)
+                        if system is not None:
+                            ref = weakref.ref(system, lambda _: _request_guard_release(palace_path))
+                            with _CLIENT_REGISTRY_LOCK:
+                                _FORGOTTEN_SYSTEMS.setdefault(palace_path, []).append(ref)
                         SharedSystemClient._identifier_to_refcount.pop(identifier, None)
-            from ._inproc_sqlite import release_transient
-
-            release_transient(os.path.join(palace_path, "chroma.sqlite3"))
+            _release_guard_if_unused(palace_path)
         return True
     if _clearing_system_cache:
         return False
