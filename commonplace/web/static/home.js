@@ -52,7 +52,7 @@ function needBox(items, selected, speak, dot, answer) {
   const count = items.length;
   const heading = count ? `<b class="n">${count}</b> ${count === 1 ? "thing needs" : "things need"} you` : "Nothing needs you";
   const speakBtn = speak ? '<button class="opt speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : "";
-  const answerBtn = answer ? '<a class="opt ink" href="#/decide">Answer</a>' : "";
+  const answerBtn = answer ? '<a class="opt go answer" href="#/decide">Answer</a>' : "";
   const actions = answerBtn || speakBtn ? `<div class="need-actions">${answerBtn}${speakBtn}</div>` : "";
   return `<section class="needbox ${count ? "waiting" : ""}" aria-labelledby="needbox-title"><header><h2 id="needbox-title">${heading}</h2>${actions}</header><div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div>${count ? `<ol>${items.map(({ card, reason: why }) => `<li class="nline ${card.number === selected ? "sel" : ""}" data-row="${card.number}" data-key="${card.number}" tabindex="-1">${dot(card)}<a class="tt" href="${askedLink(card, why)}">${e(card.title)}</a><span class="why">${e(why)}</span></li>`).join("")}</ol>` : ""}</section>`;
 }

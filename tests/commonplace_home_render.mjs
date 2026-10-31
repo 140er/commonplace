@@ -29,7 +29,7 @@ const html = homeView({ needs, boards, open: [ask, plan, merge, stale, working, 
 // Three parts, top to bottom: the box, one tile per space, the task table.
 const at_ = (s) => html.indexOf(s);
 assert.ok(at_('class="needbox waiting"') >= 0 && at_('class="needbox') < at_('class="home-spaces"') && at_('class="home-spaces"') < at_('class="home-tasks"'));
-assert.match(html, /<h2 id="needbox-title"><b class="n">5<\/b> things need you<\/h2><div class="need-actions"><a class="opt ink" href="#\/decide">Answer<\/a><button class="opt speak" data-action="speak-digest"/);
+assert.match(html, /<h2 id="needbox-title"><b class="n">5<\/b> things need you<\/h2><div class="need-actions"><a class="opt go answer" href="#\/decide">Answer<\/a><button class="opt speak" data-action="speak-digest"/);
 assert.ok(html.includes('id="digest-captions"'));
 
 // One line per item, ordered like the spoken digest; reasons from need and queue.

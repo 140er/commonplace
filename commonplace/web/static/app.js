@@ -3,7 +3,8 @@ import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
 import { homeView, needItems } from "./home.js";
-import { createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, toolsHTML } from "./decide.js";
+import { ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, toolsHTML } from "./decide.js";
+import { bindSwipe, SWIPE } from "./decide-swipe.js";
 import { planView } from "./plan.js";
 import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
@@ -24,7 +25,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "",
+  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -518,10 +519,20 @@ async function refresh({ background = false, events = [] } = {}) {
   }
 }
 function decideStart(hash) {
-  const match = /^#\/decide(?:\/([1-9]\d*))?$/.exec(hash);
+  const match = /^#\/decide(?:\/([1-9]\d*))?(\?list=1)?$/.exec(hash);
   if (!match) return undefined;
   return match[1] ? Number(match[1]) : null;
 }
+function askedRead() {
+  try { return JSON.parse(localStorage.getItem(ASKED_KEY) || "{}") || {}; } catch { return {}; }
+}
+function askedWrite(asked) {
+  try {
+    if (Object.keys(asked).length) localStorage.setItem(ASKED_KEY, JSON.stringify(asked));
+    else localStorage.removeItem(ASKED_KEY);
+  } catch { /* private mode: the waiting state lasts this visit only */ }
+}
+const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 let queueTimer = null, queueSlowTimer = null;
 function queueStop() {
   clearTimeout(queueTimer); queueTimer = null;
@@ -586,9 +597,21 @@ function paintQueue() {
   const question = content.querySelector("[data-question]");
   const nextFocus = question?.dataset.question || "";
   const changed = Boolean(previous && nextFocus && previous !== nextFocus);
-  if (changed) content.querySelector(".decide-card")?.classList.add("swap");
+  const card = content.querySelector(".decide-card:not(.under)");
+  if (changed && card) card.classList.add(previous.split(":")[0] === nextFocus.split(":")[0] ? "flip" : "rise");
+  if (changed || !previous) state.queueShownAt = performance.now();
   state.queueFocus = nextFocus;
-  focusRestore(mark, changed || (!mark && Boolean(nextFocus) && previous !== nextFocus));
+  if (state.queueField) {
+    state.queueField = false;
+    content.querySelector(".decide-field input")?.focus({ preventScroll: true });
+  } else focusRestore(mark, changed || (!mark && Boolean(nextFocus) && previous !== nextFocus));
+  if (card?.dataset.swipe === "on" && !stillMotion()) {
+    bindSwipe(card, content.querySelector(".decide-dock"), {
+      armedAt: state.queueShownAt + SWIPE.arm,
+      labels: { yes: DECIDE_COPY.releaseYes, no: DECIDE_COPY.releaseNo },
+      onCommit: (side) => queueApply({ type: side }),
+    });
+  }
   queueArm();
 }
 function queueApply(event) {
@@ -598,6 +621,8 @@ function queueApply(event) {
   for (const effect of effects) {
     if (effect.type === "post") void sendDecide(effect, false);
     else if (effect.type === "get") void loadQueueCard(effect.number);
+    else if (effect.type === "get-asked") void loadAskedCard(effect.number);
+    else if (effect.type === "asked") askedWrite(effect.asked);
     else if (effect.type === "home") location.hash = "#/";
   }
   if (state.base === "#/decide" && state.queue && state.queue.phase !== "empty") paintQueue();
@@ -608,6 +633,7 @@ function queueFlush(keepalive) {
   const { session, effects } = reduce(state.queue, { type: "flush" });
   state.queue = session;
   for (const effect of effects) if (effect.type === "post") void sendDecide(effect, keepalive);
+  for (const effect of effects) if (effect.type === "asked") askedWrite(effect.asked);
   if (state.base === "#/decide" && state.queue.phase !== "empty") paintQueue();
   else queueArm();
 }
@@ -626,13 +652,26 @@ async function loadQueueCard(number) {
     queueApply({ type: "result", number, status: error.status || 0, error: error.message });
   }
 }
+async function loadAskedCard(number) {
+  let card = null;
+  try { card = await api(`/api/cards/${number}`); } catch (error) { if (error.status !== 404) return; }
+  if (state.base !== "#/decide" || !state.queue) return;
+  queueApply({ type: "asked-card", number, card });
+}
 async function sendDecide(effect, keepalive) {
   const { number, body } = effect;
   try {
-    await api(`/api/cards/${number}/decide`, { method: "POST", body, keepalive: Boolean(keepalive) });
-    if (state.base !== "#/decide" || !state.queue) return;
+    const card = await api(`/api/cards/${number}/decide`, { method: "POST", body, keepalive: Boolean(keepalive) });
     state.drafts.delete(`reply-${number}`);
-    queueApply({ type: "result", number, status: 200 });
+    if (state.base !== "#/decide" || !state.queue) {
+      // Sent on the way out: the session is gone, so keep the waiting state for the next visit here.
+      const asked = askedRead();
+      if (effect.asking) asked[number] = { at: card?.updated_at || new Date().toISOString(), rejected: effect.rejected || [] };
+      else delete asked[number];
+      askedWrite(asked);
+      return;
+    }
+    queueApply({ type: "result", number, status: 200, card });
   } catch (error) {
     if (error.status === 401 || state.base !== "#/decide" || !state.queue) return;
     const reload = error.status === 409 || (error.status === 403 && RELOAD_ERRORS.has(error.message));
@@ -670,7 +709,7 @@ async function route() {
     const sameVisit = previousBase === "#/decide" && state.queue && state.queue.start === start;
     if (!sameVisit) {
       queueFlush(true); queueStop(); state.queueFocus = "";
-      state.queue = createSession(start, state.me.actor || "");
+      state.queue = createSession(start, state.me.actor || "", { asked: askedRead(), list: /\?list=1$/.test(hash) });
       queueArmSlow();
     }
   }
@@ -739,6 +778,14 @@ root.addEventListener("click", async (event) => {
       const reply = queueDraft(current);
       if (current) state.drafts.set(`reply-${current}`, reply);
       queueApply({ type: "answer", optionIndex: Number(b.dataset.option), reply });
+    } else if (action === "queue-yes") queueApply({ type: "yes" });
+    else if (action === "queue-no") queueApply({ type: "no" });
+    else if (action === "queue-back") queueApply({ type: "back" });
+    else if (action === "queue-reply-open") { state.queueField = true; queueApply({ type: "reply-open" }); }
+    else if (action === "queue-ask-new") {
+      const reply = queueDraft(current);
+      if (current) state.drafts.set(`reply-${current}`, reply);
+      queueApply({ type: "ask-new", reply });
     } else if (action === "queue-later") queueApply({ type: "later" });
     else if (action === "queue-undo") queueApply({ type: "undo" });
     else if (action === "queue-retry") queueApply({ type: "retry" });
@@ -895,13 +942,23 @@ document.addEventListener("keydown", (event) => {
     const queueAction = queueKey(event.key, false);
     if (queueAction) {
       event.preventDefault();
-      if (queueAction.type === "answer") root.querySelector(`[data-action="queue-answer"][data-option="${queueAction.optionIndex}"]:not(:disabled)`)?.click();
+      if (queueAction.type === "answer") {
+        const current = state.queue.items[state.queue.cursor]?.number;
+        queueApply({ type: "answer", optionIndex: queueAction.optionIndex, reply: current ? queueDraft(current) : "" });
+      } else if (queueAction.type === "yes") root.querySelector('[data-action="queue-yes"]:not(:disabled)')?.click();
+      else if (queueAction.type === "no") root.querySelector('[data-action="queue-no"]:not(:disabled)')?.click();
+      else if (queueAction.type === "ask-new") root.querySelector('[data-action="queue-ask-new"]:not(:disabled)')?.click();
+      else if (queueAction.type === "back") root.querySelector('[data-action="queue-back"]')?.click();
       else if (queueAction.type === "later") root.querySelector('[data-action="queue-later"]')?.click();
       else if (queueAction.type === "undo") root.querySelector('[data-action="queue-undo"]')?.click();
       else if (queueAction.type === "open") {
         const item = state.queue.items[state.queue.cursor];
         if (item) location.hash = `#/card/${item.number}`;
-      } else if (queueAction.type === "focus-reply") root.querySelector(".decide-reply input")?.focus();
+      } else if (queueAction.type === "focus-reply") {
+        const field = root.querySelector(".decide-field input");
+        if (field) field.focus();
+        else root.querySelector('[data-action="queue-reply-open"]')?.click();
+      }
       else if (queueAction.type === "home") location.hash = "#/";
       else if (queueAction.type === "move") queueApply({ type: "move", delta: queueAction.delta });
       return;
