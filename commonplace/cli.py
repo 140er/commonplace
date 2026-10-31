@@ -620,13 +620,17 @@ def cmd_doctor(args) -> int:
     from .store_switch import doctor_workspace
 
     db = _db(args)
+    status = 0
     try:
         rows = [db.workspace(args.workspace)] if args.workspace else db.workspaces()
         for workspace in rows:
-            print(json.dumps(doctor_workspace(_data_dir(args), workspace["id"]), sort_keys=True))
+            report = doctor_workspace(_data_dir(args), workspace["id"])
+            print(json.dumps(report, sort_keys=True))
+            if report.get("previous_pointer_difference"):
+                status = 3
     finally:
         db.close()
-    return 0
+    return status
 
 
 def cmd_workspace_prune(args) -> int:

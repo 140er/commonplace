@@ -126,6 +126,12 @@ def _publication_conflict(root, candidate):
             f"{main['active']} differs from {candidate['active']}; "
             "preserve both generations and reconcile the pointers before retrying"
         )
+    if main != candidate:
+        difference = _previous_pointer_difference(root, main)
+        return (difference or {}).get("repair") or (
+            "Publication recovery conflicts with the valid main pointer's history; "
+            "reconcile the main pointer and recorded publication before retrying"
+        )
     return None
 
 
@@ -135,9 +141,32 @@ def _recover_publication(root):
     if conflict:
         raise ValueError(conflict)
     if candidate is not None:
+        previous, parsed = _read_previous_pointer(root)
+        if (
+            parsed
+            and previous != candidate
+            and not _publication_extends_previous(root, candidate, previous)
+        ):
+            _refresh_previous_pointer(root, candidate)
         store = settings_for(generation_path(root, candidate["active"])).get("store", "v1")
         _write_pointer(root, candidate, store=store)
         _finish_publication(root, candidate, _backfill_state(root))
+
+
+def _publication_extends_previous(root, pointer, previous):
+    """Recognize the intact history of an interrupted tool-written publication."""
+    try:
+        validate_pointer(root, previous)
+        retained = pointer["retained"]
+        marker = read_json(generation_path(root, pointer["active"]) / ".store-comparison.json")
+        return (
+            pointer["active"] != previous["active"]
+            and retained[:-1] == previous.get("retained", [])
+            and retained[-1]["name"] == previous["active"]
+            and marker["previous"] == previous["active"]
+        )
+    except (ValueError, OSError, KeyError, TypeError, IndexError):
+        return False
 
 
 def _backfill_state(root):
@@ -365,35 +394,70 @@ def _seal_retired(root, pointer):
                 path.chmod(path.stat().st_mode & ~0o222)
 
 
-def _refresh_previous_pointer(root, pointer):
-    """Preserve last-good history when the main pointer was edited externally."""
+def _read_previous_pointer(root):
     try:
-        previous = read_json(root / POINTER_PREVIOUS)
-        validate_pointer(root, previous)
-    except (ValueError, OSError):
-        atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
-        return
-    if previous == pointer:
-        return
+        return json.loads((root / POINTER_PREVIOUS).read_text(encoding="utf-8")), True
+    except (FileNotFoundError, UnicodeError, json.JSONDecodeError):
+        return None, False
+
+
+def _only_gone_retained_entries(root, pointer, previous):
+    if not isinstance(previous, dict):
+        return False
     if {key: value for key, value in previous.items() if key != "retained"} != {
         key: value for key, value in pointer.items() if key != "retained"
     }:
+        return False
+    try:
+        before = {item["name"]: item for item in previous.get("retained", [])}
+        after = {item["name"]: item for item in pointer.get("retained", [])}
+        removed = before.keys() - after.keys()
+        return (
+            bool(removed)
+            and all(before.get(name) == item for name, item in after.items())
+            and all(not generation_path(root, name).exists() for name in removed)
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _previous_pointer_repair(entries):
+    return (
+        "Pointer differs from the last-good prev copy (entries: "
+        + (", ".join(entries) or "unavailable")
+        + f"); restore {POINTER_PREVIOUS} over {POINTER} to undo the pointer change, "
+        + f"or delete {POINTER_PREVIOUS} to accept the current pointer"
+    )
+
+
+def _refresh_previous_pointer(root, pointer):
+    """Refuse divergent history before cleanup, backfill or pointer writes."""
+    try:
+        previous, parsed = _read_previous_pointer(root)
+    except OSError:
+        raise ValueError(_previous_pointer_repair([])) from None
+    if parsed and previous == pointer:
         return
-    before = {item["name"]: item for item in previous.get("retained", [])}
-    after = {item["name"]: item for item in pointer.get("retained", [])}
-    if all(before.get(name) == item for name, item in after.items()) and all(
-        not generation_path(root, name).exists() for name in before.keys() - after.keys()
-    ):
+    if not parsed or _only_gone_retained_entries(root, pointer, previous):
         atomic_write_json(root / POINTER_PREVIOUS, pointer, follow_symlinks=False)
+    elif previous != pointer:
+        difference = _previous_pointer_difference(root, pointer)
+        raise ValueError(difference["repair"])
 
 
 def _previous_pointer_difference(root, pointer):
     if not pointer:
         return None
     try:
-        previous = read_json(root / POINTER_PREVIOUS)
-    except (ValueError, OSError):
-        return {"message": "prev copy is missing or unreadable", "entries": []}
+        previous, parsed = _read_previous_pointer(root)
+    except OSError:
+        return {
+            "message": "prev copy could not be read",
+            "entries": [],
+            "repair": _previous_pointer_repair([]),
+        }
+    if not parsed:
+        return {"message": "prev copy is missing or cannot be parsed", "entries": []}
     if previous == pointer:
         return None
     try:
@@ -405,9 +469,12 @@ def _previous_pointer_difference(root, pointer):
         if previous.get("active") != pointer.get("active"):
             entries.update(name for name in (previous.get("active"), pointer.get("active")) if name)
         entries = sorted(entries)
-    except (KeyError, TypeError):
-        return {"message": "prev copy is unreadable", "entries": []}
-    return {"message": "pointer differs from prev copy", "entries": entries}
+    except (AttributeError, KeyError, TypeError):
+        entries = [pointer["active"]] if pointer.get("active") else []
+    difference = {"message": "pointer differs from prev copy", "entries": entries}
+    if not _only_gone_retained_entries(root, pointer, previous):
+        difference["repair"] = _previous_pointer_repair(entries)
+    return difference
 
 
 def _leftover_generation_directories(root, pointer):
@@ -457,6 +524,7 @@ def _prune_report(root, *, repair=None):
     difference = _previous_pointer_difference(root, pointer)
     if difference:
         findings.append("previous_pointer_differs")
+        repair = repair or difference.get("repair")
     leftovers = _leftover_generation_directories(root, pointer)
     if leftovers:
         findings.append("generation_leftovers")
@@ -1007,6 +1075,9 @@ def doctor_workspace(data_dir, workspace_id):
         state = "published"
     conflict = _publication_conflict(root, _publication_pointer(root, recorded))
     repair = repair or conflict
+    difference = _previous_pointer_difference(root, pointer)
+    if difference:
+        repair = repair or difference.get("repair")
     retained = []
     for item in read_json(root / POINTER).get("retained", []):
         path = generation_path(root, item["name"])
@@ -1026,7 +1097,7 @@ def doctor_workspace(data_dir, workspace_id):
         "palace_schema_version": schema,
         "backfill": state,
         "sealing": recorded.get("sealing", "pending" if state == "published" else None),
-        "previous_pointer_difference": _previous_pointer_difference(root, pointer),
+        "previous_pointer_difference": difference,
         "leftover_generation_directories": _leftover_generation_directories(root, pointer),
         "recovery_conflict": conflict,
         "preserved_generations": _preserved_generations(root, pointer),

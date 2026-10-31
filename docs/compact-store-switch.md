@@ -81,6 +81,12 @@ including a crash before the publication state could be recorded. It never
 overrides a valid main pointer naming another existing generation: maintenance
 reports that conflict, refuses with a non-zero exit and changes nothing. Preserve
 both generations and reconcile their writes and pointers before retrying.
+To keep the manual main pointer, first recover any wanted writes from the recorded
+generation, then clear the pending `published` state in `.store-backfill.json`
+(replace it atomically with `{}`). To adopt the recorded publication instead,
+atomically restore its `pointer` object from the `published` state over
+`.store-pointer.json`, preserving its full retained list, then retry maintenance
+to finish sealing. Resolve any remaining prev-copy difference as described below.
 A failed operation removes its unpublished staging copies immediately. After a
 process crash, rerunning either store command or pruning removes orphan staging
 copies and resets the interrupted backfill state. Cleanup validates the generation
@@ -100,9 +106,22 @@ leftover generation-related directory, including scratch copies.
 
 The tool's pointer writes atomically update a last-good recovery copy in
 `.store-pointer.prev.json` at the stable workspace root. Maintenance preserves that
-copy after an external edit of the main pointer. It refreshes the copy only when
-it is missing or unreadable, or when the main pointer differs solely by removed
-retained entries whose directories are gone. To repair a lost pointer,
+copy after an external edit of the main pointer. It replaces the copy only when
+it is absent or its contents cannot be parsed as JSON, or when the main pointer
+differs solely by removed retained entries whose directories are gone. A parseable
+copy is preserved even when its active directory is temporarily missing. Other
+differences make switch and prune refuse before changing any files; doctor and
+report-only pruning exit 3, name the differing entries and explain the two choices:
+restore `.store-pointer.prev.json` over `.store-pointer.json` to undo the pointer
+change, or delete `.store-pointer.prev.json` to accept the current pointer. Stop
+the gateway and verify the selected generation and its writes before either
+choice. This also covers a prune interrupted between its two pointer writes:
+dropping the root entry leaves a difference because the stable root directory
+still exists. No automatic inference is made; the same two choices apply.
+Recovery can finish an interrupted publication when its pointer carries forward
+the previous copy's complete retained history. A partial pointer cannot bypass
+the history check through a pending publication state.
+To repair a lost pointer,
 stop the gateway, preserve all generation directories and inspect that copy or
 a full data-tree snapshot made with `commonplace backup`. The configured off-host
 command backs up only the active generation and does not retain the pointer or
