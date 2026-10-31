@@ -2,7 +2,7 @@
   {
     "board": "commonplace",
     "title": "Accounts, scoped PATs and verified authorship",
-    "body": "hub core (mcp:54e8c93e, feat/hub-core: accounts, cmmn_ PATs, scopes, audit)\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md; implemented in commit fc353100",
+    "body": "hub core (mcp:54e8c93e, feat/hub-core: accounts, cmmn_ PATs, scopes, audit)\n\nSource: docs/mvp/CONTRACT.md",
     "status": "done",
     "labels": [
       "mvp",
@@ -14,7 +14,7 @@
   {
     "board": "commonplace",
     "title": "Kanban design v2",
-    "body": "Kanban UI design v2: site look (Opus) (#9)\n\nSource: git log 0dfa60ab (merged PR #9)",
+    "body": "Kanban UI design v2: site look  (#9)\n\nSource: docs/mvp/CONTRACT.md",
     "status": "done",
     "labels": [
       "mvp",
@@ -27,7 +27,7 @@
   {
     "board": "commonplace",
     "title": "Commonplace product site",
-    "body": "Website (look B, PR #8) + app served from one deploy.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Website (look B, PR #8) + app served from one deploy.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "review",
     "labels": [
       "mvp",
@@ -40,7 +40,7 @@
   {
     "board": "commonplace",
     "title": "Memory map prototype",
-    "body": "memory map #10 -> #12 (merges automatically when #10 is green)\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "memory map #10 -> #12 (merges automatically when #10 is green)\n\nSource: docs/mvp/CONTRACT.md",
     "status": "review",
     "labels": [
       "mvp",
@@ -53,7 +53,7 @@
   {
     "board": "commonplace",
     "title": "Memory map on real data",
-    "body": "Memory: store, search, link to card; memory map (#12) on real data.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Memory: store, search, link to card; memory map (#12) on real data.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "review",
     "labels": [
       "mvp",
@@ -66,7 +66,7 @@
   {
     "board": "commonplace",
     "title": "Boards, cards and decisions",
-    "body": "boards/kanban with cards (Opus kanban design, styled like look B), statuses, assignee (human or agent), comments, linking branch/PR.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "boards/kanban with cards (kanban design, styled like look B), statuses, assignee (human or agent), comments, linking branch/PR.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -77,7 +77,7 @@
   {
     "board": "commonplace",
     "title": "Memory tools and card links",
-    "body": "Memory: store, search, link to card; memory map (#12) on real data.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Memory: store, search, link to card; memory map (#12) on real data.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -88,7 +88,7 @@
   {
     "board": "commonplace",
     "title": "Agent API and MCP tools",
-    "body": "Agents API + MCP server: tools for cards (list/create/update/move/comment), memory (save/search/get), ask/decision (inline decision card with buttons for Jeffrey), \"what needs me\" summary. Streamable HTTP + stdio. Auth with cmmn_ PAT.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Agents API + MCP server: tools for cards (list/create/update/move/comment), memory (save/search/get), ask/decision (inline decision card with buttons for Avery), \"what needs me\" summary. Streamable HTTP + stdio. Auth with cmmn_ PAT.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -99,7 +99,7 @@
   {
     "board": "commonplace",
     "title": "Wake webhooks",
-    "body": "Wake webhooks: register a webhook that fires on card change / review needed / waiting on you.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Wake webhooks: register a webhook that fires on card change / review needed / waiting on you.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -110,7 +110,7 @@
   {
     "board": "commonplace",
     "title": "Commonplace agent skill",
-    "body": "Agent skills: a real `commonplace` SKILL.md (+ AGENTS.md snippet) for Claude Code, Codex and Grok Bot: how an agent picks up a task, reports status, stores memories and asks Jeffrey something.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Agent skills: a real `commonplace` SKILL.md (+ AGENTS.md snippet) for Claude Code, Codex and Grok Bot: how an agent picks up a task, reports status, stores memories and asks Avery something.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -121,7 +121,7 @@
   {
     "board": "commonplace",
     "title": "Stdio bridge and client presets",
-    "body": "MCP over streamable HTTP with JSON replies (no SSE stream), plus `commonplace connect` as the stdio bridge\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "MCP over streamable HTTP with JSON replies (no SSE stream), plus `commonplace connect` as the stdio bridge\n\nSource: docs/mvp/CONTRACT.md",
     "status": "done",
     "labels": [
       "mvp",
@@ -132,8 +132,8 @@
   },
   {
     "board": "commonplace",
-    "title": "Deploy on edge1 over Tailscale",
-    "body": "Deploy: Docker compose (or a single binary) on Hetzner edge1 (168.119.13.136, Tailscale 100.76.209.1, Caddy present). Hetzner Admin prepares edge1 and does the deploy.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "title": "Deploy on a server over a private network",
+    "body": "Deploy the Docker Compose service behind Caddy on an operator-managed server. Keep addresses, paths and credentials in local configuration.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -144,7 +144,7 @@
   {
     "board": "commonplace",
     "title": "Import current cards and todos",
-    "body": "Seed: import the current Commonplace/mempalace cards + todos so it isn't empty on day one.\n\nSource: ~/work/mempalace-notes/MVP-BRIEF.md",
+    "body": "Seed: import the current Commonplace/mempalace cards + todos so it isn't empty on day one.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -155,7 +155,7 @@
   {
     "board": "commonplace",
     "title": "Nightly consistent backups",
-    "body": "restic over Tailscale to zurvur, 30 daily / 12 weekly kept\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "Nightly consistent backups with host-managed retention\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",
@@ -166,7 +166,7 @@
   {
     "board": "commonplace",
     "title": "Private-memory canaries",
-    "body": "The Grok token can't see a canary in `private`.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "The Grok token can't see a canary in `private`.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",
@@ -177,7 +177,7 @@
   {
     "board": "commonplace",
     "title": "Verify fresh client setup",
-    "body": "A fresh machine goes from zero to connected Claude Code in under 5 minutes.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "A fresh machine goes from zero to connected Claude Code in under 5 minutes.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",
@@ -188,7 +188,7 @@
   {
     "board": "commonplace",
     "title": "Set public domain routing",
-    "body": "commonplace.run = website, app.cmmn.dev = app, cmmn.dev = MCP, OAuth, agent endpoints and every shared link (short links `cmmn.dev/s/<code>`). Tailnet only (edge1.tail6cee8c.ts.net for all three) until the deploy gives the go\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "commonplace.run = website, app.cmmn.dev = app, cmmn.dev = MCP, OAuth, agent endpoints and every shared link (short links `cmmn.dev/s/<code>`). Tailnet only (hub.example.com for all three) until the deploy gives the go\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",
@@ -199,7 +199,7 @@
   {
     "board": "commonplace",
     "title": "OAuth for claude.ai and ChatGPT",
-    "body": "OAuth 2.1 for claude.ai and ChatGPT is built now (W8); it goes live with the public URL. Agents and Grok use cmmn_ PATs\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "OAuth 2.1 for claude.ai and ChatGPT is built now (W8); it goes live with the public URL. Agents and Grok use cmmn_ PATs\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -210,7 +210,7 @@
   {
     "board": "commonplace",
     "title": "Invisible privacy routing and flags",
-    "body": "secret and injection flags on write, no prompts or extra clicks, text never changed\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "secret and injection flags on write, no prompts or extra clicks, text never changed\n\nSource: docs/mvp/CONTRACT.md",
     "status": "doing",
     "labels": [
       "mvp",
@@ -221,7 +221,7 @@
   {
     "board": "commonplace",
     "title": "Phone notifications through ntfy",
-    "body": "ntfy self-hosted on edge1 (no third party), only needs-you/blocked/done, tap opens the card.\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "ntfy self-hosted on server (no third party), only needs-you/blocked/done, tap opens the card.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "notifications"
@@ -230,8 +230,8 @@
   },
   {
     "board": "commonplace",
-    "title": "Coordinator starts agents through T3",
-    "body": "A small runner on each machine (VM, Mac, PC) holds a T3 connection, takes \"start\" jobs from the hub, runs `t3 thread start`, and reports the thread id back to the card. Real coordinator, one adapter to maintain, the hub never gets a shell.\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "title": "Coordinator starts agents",
+    "body": "The coordinator requests agent sessions through an operator-configured provider adapter and records the session on the card. The hub never gets a shell.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "agents"
@@ -241,7 +241,7 @@
   {
     "board": "commonplace",
     "title": "Voice needs-you digest",
-    "body": "Voice mode: \"What needs me today?\" spoken summary of everything waiting.\n\nSource: ~/work/mempalace-notes/FEATURE-BACKLOG.md",
+    "body": "Voice mode: \"What needs me today?\" spoken summary of everything waiting.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "voice"
@@ -251,7 +251,7 @@
   {
     "board": "commonplace",
     "title": "PR call-stack view on review cards",
-    "body": "On a card that has a PR, show the change as a call tree of the new and changed functions, from the entry point down to execution, each with file:line and a dot for new/changed.\n\nSource: ~/work/mempalace-notes/FEATURE-BACKLOG.md",
+    "body": "On a card that has a PR, show the change as a call tree of the new and changed functions, from the entry point down to execution, each with file:line and a dot for new/changed.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "review"
@@ -261,7 +261,7 @@
   {
     "board": "commonplace",
     "title": "Optional context handoff",
-    "body": "this ships as an OPTION, OFF by default. When turned on it must be a complete, working system, not a stub.\n\nSource: ~/work/mempalace-notes/HANDOFF-SYSTEM-BRIEF.md",
+    "body": "this ships as an OPTION, OFF by default. When turned on it must be a complete, working system, not a stub.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "handoff"
@@ -272,7 +272,7 @@
   {
     "board": "commonplace",
     "title": "Chart kit access and license",
-    "body": "Next: Jeffrey creates a free mebius account (or OKs one) so we can pull the code.\n\nSource: ~/work/mempalace-notes/FEATURE-BACKLOG.md",
+    "body": "Next: Avery creates a free mebius account (or OKs one) so we can pull the code.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "decision"
@@ -282,7 +282,7 @@
   {
     "board": "commonplace",
     "title": "Remote hooks spool and upload",
-    "body": "Hooks spool and upload asynchronously (idempotent batches).\n\nSource: ~/work/mempalace-notes/BACKEND-QUESTIONS.md",
+    "body": "Hooks spool and upload asynchronously (idempotent batches).\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "hooks"
@@ -292,7 +292,7 @@
   {
     "board": "commonplace",
     "title": "Sealed memory companion and key recovery",
-    "body": "Sealed tier (§8): companion with local decrypt and search, plus key recovery.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "Sealed tier (§8): companion with local decrypt and search, plus key recovery.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "privacy"
@@ -302,7 +302,7 @@
   {
     "board": "commonplace",
     "title": "Multi-user invites and workspace canaries",
-    "body": "Workspaces, invites, owner/member roles, worker supervisor with idle-stop, per-token quotas, audit log view, export and account deletion.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "Workspaces, invites, owner/member roles, worker supervisor with idle-stop, per-token quotas, audit log view, export and account deletion.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "multi-user"
@@ -312,7 +312,7 @@
   {
     "board": "commonplace",
     "title": "Hosted beta pricing",
-    "body": "Undecided. Revisit with real usage from the M3 beta.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "Undecided. Revisit with real usage from the M3 beta.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "hosted"
@@ -322,7 +322,7 @@
   {
     "board": "commonplace",
     "title": "Shared embedding service",
-    "body": "A shared embedding service and more connector guides.\n\nSource: PRODUCT-DESIGN.md",
+    "body": "A shared embedding service and more connector guides.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "performance"
@@ -332,7 +332,7 @@
   {
     "board": "commonplace",
     "title": "Coordinator splits requests into cards",
-    "body": "One coordinator per space that splits a request into tasks, each with its own agent; task cards appear inline.\n\nSource: ~/work/mempalace-notes/FEATURE-BACKLOG.md",
+    "body": "One coordinator per space that splits a request into tasks, each with its own agent; task cards appear inline.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "backlog",
     "labels": [
       "agents"
@@ -342,7 +342,7 @@
   {
     "board": "commonplace",
     "title": "Live task rows with branch, PR and heartbeat",
-    "body": "Task rows with semantic status dot (waits on you / plan to approve / ready to merge / checks running), branch, PR number, elapsed time, live transitions.\n\nSource: ~/work/mempalace-notes/FEATURE-BACKLOG.md",
+    "body": "Task rows with semantic status dot (waits on you / plan to approve / ready to merge / checks running), branch, PR number, elapsed time, live transitions.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",
@@ -353,7 +353,7 @@
   {
     "board": "commonplace",
     "title": "Phone-first decisions",
-    "body": "Phone-first layout. STEAL for the board; Jeffrey decides mostly from his phone.\n\nSource: ~/work/mempalace-notes/INSPIRATION-SHEPHERDR.md",
+    "body": "Phone-first layout. STEAL for the board; Avery decides mostly from his phone.\n\nSource: docs/mvp/CONTRACT.md",
     "status": "todo",
     "labels": [
       "mvp",

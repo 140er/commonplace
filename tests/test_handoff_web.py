@@ -188,7 +188,7 @@ class Browser:
 class App:
     def __init__(self, path):
         self.db = ControlDB(str(path / "control.sqlite3"))
-        self.owner = self.db.create_user("jeffrey@example.com")
+        self.owner = self.db.create_user("avery@example.com")
         self.workspace = self.db.create_workspace("commonplace", self.owner)
         self.settings = FakeSettings()
         self.handoff_db = FakeHandoffs(self.settings)

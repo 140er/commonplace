@@ -1,7 +1,7 @@
 # MemPalace fork: Codex and Claude Code rerun
 
-Fork: 140er/mempalace, final `develop` at `2b18634e` (PRs #1–#5 merged). Rerun build: `develop` at `eb229c3b` (PRs #1 and #2; #3–#5 don't change ingest or recall behaviour, and #5's Codex eval reran the recall questions on the final plugin). Trial 1 (MemPalace 3.11.0, 2026-10-29): `~/work/mempalace-trial/REPORT.md`.
-Rerun harness: `~/work/mempalace-trial2` (same prompts, models, scoring and contamination guards as trial 1).
+Fork: [140er/mempalace](https://github.com/140er/mempalace), final `develop` at `2b18634e` (PRs #1–#5 merged). Rerun build: `develop` at `eb229c3b` (PRs #1 and #2; #3–#5 don't change ingest or recall behaviour, and #5's Codex eval reran the recall questions on the final plugin). Trial 1 (MemPalace 3.11.0, 2026-10-29): the first trial report.
+Rerun harness: a separate evaluation workspace (same prompts, models, scoring and contamination guards as trial 1).
 
 ## Verdict
 
@@ -17,11 +17,11 @@ Baselines are unchanged (Claude 3.5, Codex 3), so the gains come from MemPalace,
 
 | PR | Fix | Review | Fix round | Merged |
 |---|---|---|---|---|
-| [#1](https://github.com/140er/mempalace/pull/1) fix(codex) | Codex 0.163+ rollouts carry turns only as `event_msg/item_completed` UserMessage/AgentMessage items. Parser, hook exchange counter and checkpoint extractor read both forms; wing from `session_meta.payload.cwd` (was `sessions`) | Fable: 2 medium, 2 low | All but one fixed: T3 worktree cwds collapse to the project wing; a rollout resumed across the upgrade keeps every turn (drop only a cross-form repeat of the role's last turn); Codex background-command notices are boilerplate. Not fixed (pre-existing): see gaps | `da92e423` |
-| [#2](https://github.com/140er/mempalace/pull/2) fix(recall) | Recall skill fires on "anything I should know about X" / "safe way to do Y" / gotchas and before "I don't know"; with nothing in memory it answers from the repo, labelled, never from model memory; code or a commit is not a decision | Fable: no blocking, 5 wording | All 5 applied | `eb229c3b` |
-| [#3](https://github.com/140er/mempalace/pull/3) fix(init) | `init --yes` and non-tty init never prompt (mine only with `--auto-mine`); `.gitignore` edited only with `--update-gitignore`; neutral default halls for new palaces | Fable: 2 medium, 3 low, 1 nit | All fixed: an existing palace with no config.json keeps the legacy halls; the init skill asks before adding .gitignore entries; website docs; messages; hint only when entries are missing | `cfeb3864` |
-| [#4](https://github.com/140er/mempalace/pull/4) docs(codex) | Nested Codex hooks format everywhere; project trust and hook review documented; read-only trust warning in `mempalace status` | Fable: 4 medium, 2 low | All fixed: leftover flat example in hooks/README; linked worktrees use the main repo's trust; no false warning from ~/.codex outside a repo; Windows case-insensitive trust keys; site anchors; deleted cwd | `d615a14b` |
-| [#5](https://github.com/140er/mempalace/pull/5) feat(recall) | Jeffrey's decisions: automatic recall proven in Codex (eval, 5/5 with no command), optional `recall` command in all three plugins, new wording in the Cursor and Antigravity copies (each shorter) | Fable: no blocking; 2 medium, 4 low | All applied: generic skill lists `recall`; eval installs the plugin with hooks off (palace untouched: 23 drawers before and after), read-only sandbox by default, exec failures exit 2; always-on description trimmed; per-file size budgets pinned at current sizes | `2b18634e` |
+| [#1](https://github.com/140er/mempalace/pull/1) fix(codex) | Codex 0.163+ rollouts carry turns only as `event_msg/item_completed` UserMessage/AgentMessage items. Parser, hook exchange counter and checkpoint extractor read both forms; wing from `session_meta.payload.cwd` (was `sessions`) | Reviewer: 2 medium, 2 low | All but one fixed: T3 worktree cwds collapse to the project wing; a rollout resumed across the upgrade keeps every turn (drop only a cross-form repeat of the role's last turn); Codex background-command notices are boilerplate. Not fixed (pre-existing): see gaps | `da92e423` |
+| [#2](https://github.com/140er/mempalace/pull/2) fix(recall) | Recall skill fires on "anything I should know about X" / "safe way to do Y" / gotchas and before "I don't know"; with nothing in memory it answers from the repo, labelled, never from model memory; code or a commit is not a decision | Reviewer: no blocking, 5 wording | All 5 applied | `eb229c3b` |
+| [#3](https://github.com/140er/mempalace/pull/3) fix(init) | `init --yes` and non-tty init never prompt (mine only with `--auto-mine`); `.gitignore` edited only with `--update-gitignore`; neutral default halls for new palaces | Reviewer: 2 medium, 3 low, 1 nit | All fixed: an existing palace with no config.json keeps the legacy halls; the init skill asks before adding .gitignore entries; website docs; messages; hint only when entries are missing | `cfeb3864` |
+| [#4](https://github.com/140er/mempalace/pull/4) docs(codex) | Nested Codex hooks format everywhere; project trust and hook review documented; read-only trust warning in `mempalace status` | Reviewer: 4 medium, 2 low | All fixed: leftover flat example in hooks/README; linked worktrees use the main repo's trust; no false warning from ~/.codex outside a repo; Windows case-insensitive trust keys; site anchors; deleted cwd | `d615a14b` |
+| [#5](https://github.com/140er/mempalace/pull/5) feat(recall) | Product decisions: automatic recall proven in Codex (eval, 5/5 with no command), optional `recall` command in all three plugins, new wording in the Cursor and Antigravity copies (each shorter) | Reviewer: no blocking; 2 medium, 4 low | All applied: generic skill lists `recall`; eval installs the plugin with hooks off (palace untouched: 23 drawers before and after), read-only sandbox by default, exec failures exit 2; always-on description trimmed; per-file size budgets pinned at current sizes | `2b18634e` |
 
 All are upstream-friendly (no fork-only changes). The rerun build (`eb229c3b`) had #1 and #2. #3 and #4 don't change ingest or recall. On final develop `d615a14b`, `init --yes` neither prompts nor hangs on an open, silent stdin, and it leaves `.gitignore` untouched (it prints a hint).
 
@@ -42,14 +42,14 @@ Token figures are estimates (chars / 4). No line was added to CLAUDE.md or AGENT
 
 ## Scores
 
-Same 8 questions, prompts and models as trial 1 (Claude Code 2.1.x with `claude-sonnet-5-5`, Codex CLI 0.163.0 with `gpt-6.1-sol` at medium effort). Each question runs in a fresh session; auto-save is off during recall. Pass criteria were written down before reading any answer (`~/work/mempalace-trial2/NEXT.md`). Answers: `~/work/mempalace-trial2/summary-{claude,codex}.txt`.
+Same 8 questions, prompts and models as trial 1 (Claude Code 2.1.x with `claude-sonnet-5-5`, Codex CLI 0.163.0 with `gpt-6.1-sol` at medium effort). Each question runs in a fresh session; auto-save is off during recall. Pass criteria were written down before reading any answer (the evaluation plan). Answers: the evaluation artifacts.
 
 | # | Question (needs) | Claude base | Claude +MP (old → **new**) | Codex base | Codex +MP (old → **new**) | Codex empty palace (old → **new**) |
 |---|---|---|---|---|---|---|
 | 1 | Pin field + rejected alternative | 0.5 | 1 → **1** | 0.5 | 0 → **1** | 0 → **0.5** (`pinnedAt` from code) |
 | 2 | Why server not client | 0.5 (flagged inference) | 1 → **1** | 0.5 | 0.5 → **1** | 0.5 → **0.5** (repo docs, flagged) |
 | 3 | Who vetoed a table, where state goes | 0 | 1 → **1** | 0.5 | 0 → **1** | 0 → **0.5** (where, from code) |
-| 4 | Port 5733 on this VM | 0 | 0 → **1** | 0 | 0 → **1** | 0 → **0** |
+| 4 | Port 5733 on the evaluation host | 0 | 0 → **1** | 0 | 0 → **1** | 0 → **0** |
 | 5 | Safe typecheck, and why | 0 | 0 → **1** | 0 | 0 → **1** | 0 → **0** |
 | 6 | How worktree ports are chosen (code) | 1 | 1 → **1** | 1 | 1 → **1** | 1 → **1** |
 | 7 | Uncommitted fix, why no test, branch | 0.5 | 1 → **1** | 0.5 | 0.5 → **1** | 0.5 → **0.5** (fix from diff) |
@@ -82,33 +82,33 @@ MemPalace is still about cost-neutral. Claude +MP is faster and cheaper than Cla
 
 ## Tests and CI
 
-No GitHub Actions; local `pr-check` (full suite, ruff) per PR, plus uncapped full-suite runs.
+No GitHub Actions; local checks (full suite, ruff) per PR, plus uncapped full-suite runs.
 
-| PR | pr-check | Full suite |
+| PR | local checks | Full suite |
 |---|---|---|
 | #1 | First run at `a92376b1`: FAIL. pytest hit "Too many open files" at 94%, then failures cascaded (see below). Rerun at `37b7c451`: 30 min step timeout at 85%, no failures before the cutoff | Uncapped at `37b7c451` (ulimit 65536): **7807 passed, 73 skipped, 0 failed** (33m51s) |
 | #2 | 30 min step timeout, no failures before the cutoff | Post-merge set on develop `eb229c3b` (every SKILL.md / recall-protocol / readme-claims test, plus normalize, hooks_cli, convo_miner): **652 passed, 1 skipped** |
 | #3 | `6b2967dd`: **PASS**, 7825 passed, 75 skipped (36m45s, step timeout 60m) | |
-| #4 | `d79db318`: 7834 passed, **1 failed**: `tests/test_dsh_plugin.py::test_dsh_plugin_node_suite` ("hooks run one at a time per session", a Node timing check). #4 does not touch the dsh plugin, the test passes 3/3 on the PR head alone and passed in #3's run, so it is a load flake. Merged per Jeffrey's rule (unrelated failures don't block) | |
+| #4 | `d79db318`: 7834 passed, **1 failed**: `tests/test_dsh_plugin.py::test_dsh_plugin_node_suite` ("hooks run one at a time per session", a Node timing check). #4 does not touch the dsh plugin, the test passes 3/3 on the PR head alone and passed in #3's run, so it is a load flake. Merged under the project's policy (unrelated failures don't block) | |
 | #5 | `87bd89cc`: **PASS**, 7861 passed, 75 skipped (30m55s). Codex eval `scripts/evals/codex_auto_recall.sh`: 5/5 searched with no command, palace and `~/.codex` untouched | |
 
-The suite takes about 34–37 min on this VM when other jobs share it, over pr-check's default 30 min step limit. #3, #4 and #5 ran with `PR_CHECK_STEP_TIMEOUT=60m`.
+The suite took about 34–37 min under shared load, exceeding the configured 30-minute step limit. #3, #4 and #5 ran with a 60-minute step timeout.
 
 ### Separate item: "Too many open files" in the full suite
 
-- Seen once: pr-check on #1 at `a92376b1` (Python 3.13, CI=1, ulimit 65536). It hit EMFILE at about 94% (test_sync.py onwards), then crashed in pytest's tmpdir cleanup.
-- Not reproduced on: develop `84582fb0` uncapped (Python 3.12, CI=1, ulimit 65536), **7797 passed**, peak 1848 open fds; #1 at `37b7c451` uncapped, 7807 passed, peak 2148 fds; the later pr-check runs.
-- Real but small leak, pre-existing on develop: `tests/test_sync.py` alone goes from 28 to about 1300–1550 open fds (same under 3.12 and 3.13 with CI=1). It is spread over many tests; the largest single step is +70 in `TestUnresolvedSources::test_the_report_does_not_depend_on_the_order_drawers_arrive_in`. That is about 2% of a 65536 limit, so it does not explain the one EMFILE run by itself. The likeliest extra factor is that run sharing the VM with other suites, but this is not proven.
+- Seen once: local checks on #1 at `a92376b1` (Python 3.13, CI=1, ulimit 65536). It hit EMFILE at about 94% (test_sync.py onwards), then crashed in pytest's tmpdir cleanup.
+- Not reproduced on: develop `84582fb0` uncapped (Python 3.12, CI=1, ulimit 65536), **7797 passed**, peak 1848 open fds; #1 at `37b7c451` uncapped, 7807 passed, peak 2148 fds; later local runs.
+- Real but small leak, pre-existing on develop: `tests/test_sync.py` alone goes from 28 to about 1300–1550 open fds (same under 3.12 and 3.13 with CI=1). It is spread over many tests; the largest single step is +70 in `TestUnresolvedSources::test_the_report_does_not_depend_on_the_order_drawers_arrive_in`. That is about 2% of a 65536 limit, so it does not explain the one EMFILE run by itself. The likeliest extra factor is that run sharing the host with other suites, but this is not proven.
 - Not caused by #1: its diff opens no files (`with open` only, in already-existing readers).
 - Follow-up (not done here): close the palace/backend handles the test_sync fixtures open (likely sqlite/chroma clients created per hypothesis example), and add an fd-count assertion in a session-finish hook so a leak fails loudly instead of cascading.
 
 ## Known gaps (not fixed here)
 
-- **Forked sub-agent rollouts never parse** (pre-existing). 34 of 453 rollouts on this VM have two `session_meta` lines (`forked_from_id`), one AgentMessage and no UserMessage. They fail the two-message gate, so `mempalace mine ~/.codex/sessions` warns about them on every run and never marks them done.
+- **Forked sub-agent rollouts never parse** (pre-existing). 34 of 453 rollouts on the evaluation host have two `session_meta` lines (`forked_from_id`), one AgentMessage and no UserMessage. They fail the two-message gate, so `mempalace mine ~/.codex/sessions` warns about them on every run and never marks them done.
 - **Codex ignores `.codex-plugin/skills/*`** (pre-existing). Codex 0.163 builds this plugin's command skills from the root `commands/*.md` (the Cursor commands) as `source-command-mempalace-*`. The Codex-specific `$mempalace <command>` skills in `.codex-plugin/skills/` are never loaded, and their descriptions differ from the Cursor ones.
-- **Flaky dsh timing test.** `tests/test_dsh_plugin.py::test_dsh_plugin_node_suite` ("hooks run one at a time per session") failed once under load (two suites sharing the VM) and passes alone.
+- **Flaky dsh timing test.** `tests/test_dsh_plugin.py::test_dsh_plugin_node_suite` ("hooks run one at a time per session") failed once under load (two suites sharing the host) and passes alone.
 
-## Decisions for Jeffrey (decided)
+## Recorded product decisions
 
-1. **How Codex users get the recall skill.** Jeffrey picked B: an optional `recall` command in all three plugins, with recall triggering automatically, never needing a command. **Correction:** the premise in my first version of this section was wrong. Codex 0.163 loads the plugin from the repo root (marketplace `"path": "./"`, manifest `"skills": "./skills/"`), so the Codex plugin has always listed `skills/mempalace-recall` in every session. The trial copied it into `.agents/skills` only because the trial harness didn't install the plugin. Codex never reads `.codex-plugin/skills/*`; it turns the root `commands/*.md` into skills instead. PR #5 proves the automatic path with a real `codex exec` eval: 5/5 searched with no command. It adds the optional command as a thin wrapper (~40 tokens per Codex session). The recall description itself costs ~100 tokens per Codex session, as before.
-2. **Antigravity and Cursor recall copies.** Jeffrey picked B: port the new trigger and repo-fallback wording. Done in PR #5. Every file is shorter than before.
+1. **How Codex users get the recall skill.** The project chose B: an optional `recall` command in all three plugins, with recall triggering automatically, never needing a command. **Correction:** the premise in my first version of this section was wrong. Codex 0.163 loads the plugin from the repo root (marketplace `"path": "./"`, manifest `"skills": "./skills/"`), so the Codex plugin has always listed `skills/mempalace-recall` in every session. The trial copied it into `.agents/skills` only because the trial harness didn't install the plugin. Codex never reads `.codex-plugin/skills/*`; it turns the root `commands/*.md` into skills instead. PR #5 proves the automatic path with a real `codex exec` eval: 5/5 searched with no command. It adds the optional command as a thin wrapper (~40 tokens per Codex session). The recall description itself costs ~100 tokens per Codex session, as before.
+2. **Antigravity and Cursor recall copies.** The project chose B: port the new trigger and repo-fallback wording. Done in PR #5. Every file is shorter than before.

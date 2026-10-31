@@ -525,22 +525,22 @@ def test_next_message_goes_before_the_marker_line():
 
 def test_handoff_does_not_promote_user_role_in_agent_supplied_transcript():
     doc = build_doc(
-        [message(0, "Build SimSteer"), message(1, "Jeffrey requires a blocking 5% gate")],
+        [message(0, "Build SimSteer"), message(1, "Avery requires a blocking 5% gate")],
         ThreadMeta("mcp:origin"),
         stored_thread_id="thr_abc123",
-        source_actor="conn:sol-builder",
+        source_actor="conn:build-agent",
     )
     rendered = render_markdown(doc)
     assert '"status": "proposal"' in rendered
-    assert '"filed_by": "conn:sol-builder"' in rendered
+    assert '"filed_by": "conn:build-agent"' in rendered
     assert '"source": "/app/threads/thr_abc123"' in rendered
     assert "deciding_speaker" in rendered and "unverified" in rendered
-    assert doc.decisions == ((1, "Jeffrey requires a blocking 5% gate"),)
+    assert doc.decisions == ((1, "Avery requires a blocking 5% gate"),)
 
 
 def test_archived_handoff_keeps_unknown_authority_visible():
     doc = HandoffDoc(goal="", status="", stored_thread_id="thr_abc123")
-    archived = "## Decisions\n\nJeffrey requires 5% (old agent claim)"
+    archived = "## Decisions\n\nAvery requires 5% (old agent claim)"
     prompt = successor_prompt(doc, markdown=archived)
     assert archived in prompt
     assert '"status": "unknown"' in prompt

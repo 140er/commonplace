@@ -79,9 +79,9 @@ def _environment(home):
 
 # Wall clock includes fresh-interpreter startup and the hook's imports, so use a quiet machine.
 # Disabled (100 ms) case, develop f9aac848, 60 runs per client (2026-10-30):
-#   8-thread Xeon E3-1275v5 runner, idle: p50 74 ms, p99 79 ms, max 82 ms
-#   Same runner with 3 parallel test jobs: p50 100-114 ms, max 182 ms (load average 2.7)
-#   14-vCPU runner at load ~24: min 67 ms, p50 89-94 ms
+#   Quiet test host: p50 74 ms, p99 79 ms, max 82 ms
+#   Same host with concurrent tests: p50 100-114 ms, max 182 ms
+#   Separate test host under load: min 67 ms, p50 89-94 ms
 # 21c920cf, where this test was added, measures the same, so there is no regression. 100 ms keeps
 # ~20% headroom over the idle p99. Run it alone on an otherwise idle machine rather than raising
 # the budget to absorb other jobs' load.

@@ -115,7 +115,7 @@ def compare(threads=120):
             ),
             drawer_bench.BenchmarkCase(
                 "package",
-                "Jeffrey pnpm",
+                "Avery pnpm",
                 {by_key["t25"]: 3},
                 filters={"wing": "shared"},
             ),

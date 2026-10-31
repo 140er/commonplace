@@ -65,9 +65,9 @@ def test_add_triple_retry_records_the_new_source(kg):
 
 
 def test_a_single_valued_predicate_is_replaced(kg):
-    old = kg.save_fact("Jeffrey", "works_at", "Acme", wing="w", valid_from="2024-01-01")
+    old = kg.save_fact("Avery", "works_at", "Acme", wing="w", valid_from="2024-01-01")
     new = kg.save_fact(
-        "Jeffrey", "works_at", "Initech", wing="w", valid_from="2026-02-01", single_valued=True
+        "Avery", "works_at", "Initech", wing="w", valid_from="2026-02-01", single_valued=True
     )
     assert new["action"] == "superseded"
     assert new["superseded"] == [old["triple_id"]] and new["previous"] == ["Acme"]
@@ -75,7 +75,7 @@ def test_a_single_valued_predicate_is_replaced(kg):
     assert old_row["status"] == "superseded" and old_row["superseded_by"] == new["triple_id"]
     assert old_row["valid_to"] == "2026-02-01T00:00:00Z"
     assert _row(kg, new["triple_id"])["valid_from"] == "2026-02-01T00:00:00Z"
-    (current,) = kg.query_entity("Jeffrey", as_of="2026-03-01")
+    (current,) = kg.query_entity("Avery", as_of="2026-03-01")
     assert current["object"] == "Initech"
 
 
@@ -90,23 +90,23 @@ def test_a_multi_valued_predicate_keeps_both(kg):
 
 
 def test_older_news_is_filed_as_history(kg):
-    current = kg.save_fact("Jeffrey", "works_at", "Initech", wing="w", valid_from="2026-02-01")
+    current = kg.save_fact("Avery", "works_at", "Initech", wing="w", valid_from="2026-02-01")
     old = kg.save_fact(
-        "Jeffrey", "works_at", "Acme", wing="w", valid_from="2024-01-01", single_valued=True
+        "Avery", "works_at", "Acme", wing="w", valid_from="2024-01-01", single_valued=True
     )
     assert old["action"] == "historical" and old["current"] == current["triple_id"]
     row = _row(kg, old["triple_id"])
     assert (row["valid_from"], row["valid_to"]) == ("2024-01-01", "2026-02-01T00:00:00Z")
     assert _row(kg, current["triple_id"])["valid_to"] is None
-    (then,) = kg.query_entity("Jeffrey", as_of="2025-01-01")
+    (then,) = kg.query_entity("Avery", as_of="2025-01-01")
     assert then["object"] == "Acme"
 
 
 def test_replacement_stays_in_its_wing_and_visibility(kg):
-    other = kg.save_fact("Jeffrey", "works_at", "Acme", wing="other")
-    hidden = kg.save_fact("Jeffrey", "works_at", "Secret Co", wing="w", sensitivity="private")
+    other = kg.save_fact("Avery", "works_at", "Acme", wing="other")
+    hidden = kg.save_fact("Avery", "works_at", "Secret Co", wing="w", sensitivity="private")
     out = kg.save_fact(
-        "Jeffrey",
+        "Avery",
         "works_at",
         "Initech",
         wing="w",
@@ -118,14 +118,14 @@ def test_replacement_stays_in_its_wing_and_visibility(kg):
     assert _row(kg, hidden["triple_id"])["valid_to"] is None
     # A caller that can't see the private copy never merges into it either.
     again = kg.save_fact(
-        "Jeffrey", "works_at", "Secret Co", wing="w", sensitivities=["public", "internal"]
+        "Avery", "works_at", "Secret Co", wing="w", sensitivities=["public", "internal"]
     )
     assert again["action"] == "added" and again["triple_id"] != hidden["triple_id"]
 
 
 def test_the_successor_is_as_sensitive_as_what_it_replaces(kg):
-    kg.save_fact("Jeffrey", "lives_in", "Utrecht", wing="w", sensitivity="private")
-    out = kg.save_fact("Jeffrey", "lives_in", "Delft", wing="w", single_valued=True)
+    kg.save_fact("Avery", "lives_in", "Utrecht", wing="w", sensitivity="private")
+    out = kg.save_fact("Avery", "lives_in", "Delft", wing="w", single_valued=True)
     assert _row(kg, out["triple_id"])["sensitivity"] == "private"
 
 
