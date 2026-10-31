@@ -973,9 +973,84 @@ def test_prev_without_main_refuses_even_without_generation_directories(
             switch.switch_workspace(data, WORKSPACE, "compact")
         else:
             switch.prune_generations(data, WORKSPACE)
-    assert "restore .store-pointer.prev.json" in str(error.value)
+    if contents == '{"active":"ws_fixture"}':
+        assert "restore .store-pointer.prev.json" in str(error.value)
     assert "or delete .store-pointer.prev.json" in str(error.value)
     assert _generation_bytes(root) == before
+
+
+@pytest.mark.parametrize("pending", ["complete", "copying", "published", "published_stale_prev"])
+@pytest.mark.parametrize("remedy", ["restore", "delete"])
+def test_missing_main_hint_offers_only_working_recovery_choices(
+    workspace, monkeypatch, pending, remedy
+):
+    import subprocess
+
+    data, root, original = workspace
+    if pending == "copying":
+        code = """
+import os,sys
+from pathlib import Path
+from commonplace import store_switch as switch
+switch._verify_offline = lambda path: None
+switch._embedder = lambda directory: lambda documents,metadatas,**kwargs: [[1.,.3,-.1] for _ in documents]
+def checkpoint(step):
+    if step == 'pointer': os._exit(96)
+switch.switch_workspace(Path(sys.argv[1]),sys.argv[2],'compact',checkpoint=checkpoint)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(data), WORKSPACE], capture_output=True, timeout=60
+        )
+        assert result.returncode == 96, result.stderr.decode()
+    else:
+        switch.switch_workspace(data, WORKSPACE, "compact")
+        if pending.startswith("published"):
+            switch._record_published(root, read_json(root / POINTER), "compact")
+            if pending == "published_stale_prev":
+                (root / POINTER_PREVIOUS).write_text(
+                    json.dumps({"active": root.name, "retained": []})
+                )
+    active = workspace_path(data, WORKSPACE)
+    (root / POINTER).unlink()
+    before = _generation_bytes(root, active)
+    with pytest.raises(ValueError, match="Missing workspace generation pointer") as error:
+        switch.prune_generations(data, WORKSPACE)
+    hint = str(error.value)
+    if pending == "published_stale_prev":
+        assert "restore .store-pointer.prev.json" not in hint
+    else:
+        assert "restore .store-pointer.prev.json as .store-pointer.json" in hint
+    assert _generation_bytes(root, active) == before
+    if pending.startswith("published"):
+        assert f"republish the recorded generation {active.name}" in hint
+        assert "accept the original workspace root" not in hint
+        if pending == "published_stale_prev" and remedy == "restore":
+            return
+    else:
+        assert "delete .store-pointer.prev.json" not in hint
+        if remedy == "delete":
+            return
+    if remedy == "restore":
+        (root / POINTER).write_bytes((root / POINTER_PREVIOUS).read_bytes())
+    else:
+        (root / POINTER_PREVIOUS).unlink()
+    switch.prune_generations(data, WORKSPACE)
+    resolved = workspace_path(data, WORKSPACE)
+    with closing(open_threads(resolved)) as store:
+        assert store.messages(original.id)[1].text == "second"
+    if pending.startswith("published"):
+        assert resolved == active
+
+
+def test_missing_main_without_generations_can_accept_original_root(workspace):
+    data, root, _ = workspace
+    switch._write_pointer(root, {"active": root.name})
+    (root / POINTER).unlink()
+    with pytest.raises(ValueError, match="delete .store-pointer.prev.json to accept the original"):
+        switch.prune_generations(data, WORKSPACE)
+    (root / POINTER_PREVIOUS).unlink()
+    switch.prune_generations(data, WORKSPACE)
+    assert switch.switch_workspace(data, WORKSPACE, "v1")["state"] == "unchanged"
 
 
 @pytest.mark.parametrize("condition", ["missing_prev", "conflict", "conflict_with_difference"])
@@ -1054,13 +1129,245 @@ switch.prune_generations(Path(sys.argv[1]),sys.argv[2],now=float(sys.argv[3]))
         report = switch.prune_generations(data, WORKSPACE, report_only=True)
         assert doctor["emptied_retained_root"] == report["emptied_retained_root"] == root.name
         assert "emptied_retained_root" in report["findings"]
-        assert "complete the interrupted prune" in doctor["repair"] == report["repair"]
+        assert "prune-stores finishes it" in doctor["repair"] == report["repair"]
     before = _generation_bytes(active)
     switch.prune_generations(data, WORKSPACE)
     assert _generation_bytes(active) == before
     assert read_json(root / POINTER_PREVIOUS) == read_json(root / POINTER)
     assert read_json(root / POINTER)["retained"] == []
     assert switch.prune_generations(data, WORKSPACE, report_only=True)["findings"] == []
+
+
+@pytest.mark.parametrize("target", ["root", "generation"])
+def test_prune_resumes_a_recorded_partial_deletion_after_a_hard_kill(workspace, target):
+    import subprocess
+
+    data, root, original = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retired = root
+    if target == "generation":
+        retired = workspace_path(data, WORKSPACE)
+        switch.switch_workspace(data, WORKSPACE, "v1")
+    active = workspace_path(data, WORKSPACE)
+    now = max(item["retired_at"] for item in read_json(root / POINTER)["retained"]) + 40 * 86400
+    code = """
+import os,sys
+from pathlib import Path
+from commonplace import store_switch as switch
+switch._verify_offline = lambda path: None
+remove = switch._remove_retired_directory
+def crash_remove(root, directory):
+    if directory.name == sys.argv[3]:
+        (directory / ('threads.sqlite3' if directory == root else 'threads.v2.sqlite3')).unlink()
+        os._exit(97)
+    remove(root, directory)
+switch._remove_retired_directory = crash_remove
+switch.prune_generations(Path(sys.argv[1]),sys.argv[2],now=float(sys.argv[4]))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(data), WORKSPACE, retired.name, str(now)],
+        capture_output=True,
+        timeout=60,
+    )
+    assert result.returncode == 97, result.stderr.decode()
+    assert retired.exists() and list((retired / "palace").iterdir())
+    assert read_json(root / switch.STATE)["state"] == "deleting"
+    doctor = switch.doctor_workspace(data, WORKSPACE)
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert doctor["interrupted_deletions"] == report["interrupted_deletions"]
+    assert report["interrupted_deletions"][0]["name"] == retired.name
+    assert "the next workspace prune-stores finishes it" in doctor["repair"] == report["repair"]
+    with pytest.raises(ValueError, match="Interrupted deletion"):
+        switch.switch_workspace(data, WORKSPACE, "compact")
+    switch.prune_generations(data, WORKSPACE, now=now)
+    assert switch._generation_gone(root, retired)
+    assert read_json(root / switch.STATE)["state"] == "complete"
+    assert workspace_path(data, WORKSPACE) == active
+    with closing(open_threads(active)) as store:
+        assert store.messages(original.id)[1].text == "second"
+
+
+@pytest.mark.parametrize("mutation", ["add", "change"])
+def test_recorded_deletion_refuses_changed_files_during_downtime(workspace, monkeypatch, mutation):
+    import os
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    remove = switch._remove_retired_directory
+
+    def interrupt(*args):
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(switch, "_remove_retired_directory", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 86400)
+    relative = "post-crash-write" if mutation == "add" else "palace/custom-sidecar"
+    changed = root / relative
+    if changed.exists():
+        stamp = changed.stat().st_mtime_ns
+        changed.chmod(0o600)
+        changed.write_text("verbatim new data")
+        os.utime(changed, ns=(stamp, stamp))
+    else:
+        changed.write_text("verbatim new data")
+    monkeypatch.setattr(switch, "_remove_retired_directory", remove)
+    before = _generation_bytes(root, active)
+    with pytest.raises(ValueError, match="remaining files changed or were added") as error:
+        switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 86400)
+    assert relative in str(error.value)
+    after = _generation_bytes(root, active)
+    assert {key: value for key, value in after.items() if key[1] != switch.STATE} == {
+        key: value for key, value in before.items() if key[1] != switch.STATE
+    }
+    assert read_json(root / switch.STATE)["prune_findings"][0]["kind"] == "changed since retirement"
+
+
+@pytest.mark.parametrize(
+    "missing,legacy",
+    [("threads.sqlite3", False), ("boards.sqlite3", False), ("threads.sqlite3", True)],
+)
+def test_unrecorded_partial_deletion_is_named_and_saved_for_stat_only_doctor(
+    workspace, monkeypatch, missing, legacy
+):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    if legacy:
+        pointer = read_json(root / POINTER)
+        pointer["retained"][0].pop("expected_files")
+        switch._write_pointer(root, pointer)
+    (root / missing).unlink()
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    now = retired_at + 40 * 86400
+    with monkeypatch.context() as context:
+        context.setattr(
+            switch,
+            "_retirement_digest",
+            lambda *args, **kwargs: pytest.fail("Doctor hashed retired data"),
+        )
+        doctor = switch.doctor_workspace(data, WORKSPACE)
+    report = switch.prune_generations(data, WORKSPACE, now=now, report_only=True)
+    assert (
+        doctor["retired_findings"][0]["kind"]
+        == report["retired_findings"][0]["kind"]
+        == "incomplete (interrupted deletion)"
+    )
+    assert missing in report["retired_findings"][0]["missing_files"]
+    assert "manual removal" in report["repair"]
+    with pytest.raises(ValueError, match=r"incomplete \(interrupted deletion\)") as error:
+        switch.prune_generations(data, WORKSPACE, now=now)
+    assert "newer writes" not in str(error.value)
+    saved = read_json(root / switch.STATE)["prune_findings"]
+    assert set(saved[0]) == {"generation", "kind", "at"}
+    assert saved[0]["generation"] == root.name
+    with monkeypatch.context() as context:
+        context.setattr(
+            switch,
+            "_retirement_digest",
+            lambda *args, **kwargs: pytest.fail("Doctor hashed retired data"),
+        )
+        assert switch.doctor_workspace(data, WORKSPACE)["last_prune_findings"] == saved
+
+
+@pytest.mark.parametrize(
+    "mutation,kind",
+    [
+        ("backdated", "changed since retirement"),
+        ("newer", "newer writes"),
+        ("mtime_only", "changed since retirement"),
+    ],
+)
+def test_prune_classifies_changes_and_doctor_uses_saved_findings(
+    workspace, monkeypatch, mutation, kind
+):
+    import os
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    path = root / "palace" / "custom-sidecar"
+    old = path.stat().st_mtime_ns
+    if mutation != "mtime_only":
+        path.chmod(0o600)
+        path.write_bytes(b"changed verbatim fixture")
+    stamp = old if mutation == "backdated" else int((retired_at + 1) * 1_000_000_000)
+    os.utime(path, ns=(stamp, stamp))
+    now = retired_at + 40 * 86400
+    report = switch.prune_generations(data, WORKSPACE, now=now, report_only=True)
+    assert report["retired_findings"][0]["kind"] == kind
+    with pytest.raises(ValueError, match=kind):
+        switch.prune_generations(data, WORKSPACE, now=now)
+    with monkeypatch.context() as context:
+        context.setattr(
+            switch,
+            "_retirement_digest",
+            lambda *args, **kwargs: pytest.fail("Doctor hashed retired data"),
+        )
+        assert switch.doctor_workspace(data, WORKSPACE)["retired_findings"][0]["kind"] == kind
+
+
+def test_report_only_hashes_expired_generations_and_doctor_never_hashes(workspace, monkeypatch):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    digest = switch._retirement_digest
+    calls = []
+
+    def observe(directory, **kwargs):
+        calls.append(directory)
+        return digest(directory, **kwargs)
+
+    monkeypatch.setattr(switch, "_retirement_digest", observe)
+    switch.prune_generations(
+        data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS - 1, report_only=True
+    )
+    assert calls == []
+    switch.prune_generations(
+        data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS, report_only=True
+    )
+    assert calls == [root]
+    monkeypatch.setattr(switch.time, "time", lambda: retired_at + 40 * 86400)
+    switch.doctor_workspace(data, WORKSPACE)
+    assert calls == [root]
+
+
+def test_last_prune_findings_survive_a_store_switch(workspace, monkeypatch):
+    import os
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    (root / switch.STATE).unlink()
+    path = root / "palace" / "custom-sidecar"
+    stamp = path.stat().st_mtime_ns
+    path.chmod(0o600)
+    path.write_bytes(b"changed original generation")
+    os.utime(path, ns=(stamp, stamp))
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    with pytest.raises(ValueError, match="changed since retirement"):
+        switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 86400)
+    saved = read_json(root / switch.STATE)["prune_findings"]
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    monkeypatch.setattr(
+        switch,
+        "_retirement_digest",
+        lambda *args, **kwargs: pytest.fail("Doctor hashed retained data"),
+    )
+    assert switch.doctor_workspace(data, WORKSPACE)["last_prune_findings"] == saved
+
+
+def test_old_root_drop_crash_has_a_rerun_hint(workspace):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    previous = (root / POINTER_PREVIOUS).read_bytes()
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    switch.prune_generations(data, WORKSPACE, now=retired_at + 40 * 86400)
+    (root / POINTER_PREVIOUS).write_bytes(previous)
+    doctor = switch.doctor_workspace(data, WORKSPACE)
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert "Rerun workspace prune-stores" in doctor["repair"] == report["repair"]
+    switch.prune_generations(data, WORKSPACE)
+    assert read_json(root / POINTER) == read_json(root / POINTER_PREVIOUS)
 
 
 @pytest.mark.parametrize("restore", ["stale_previous", "handwritten_root"])
@@ -1251,6 +1558,8 @@ def test_all_resolvers_refuse_lost_pointer_even_after_original_root_is_pruned(wo
         '{"state":"unknown"}',
         '{"state":"copying","staging":7}',
         '{"state":"copying","staging":"../other"}',
+        '{"state":"deleting","deletion":{}}',
+        '{"state":"complete","prune_findings":[{}]}',
     ],
 )
 def test_corrupt_state_prune_reports_without_modifying_any_generation(workspace, caplog, damage):

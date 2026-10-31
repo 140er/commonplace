@@ -630,6 +630,8 @@ def cmd_doctor(args) -> int:
                 report.get("previous_pointer_difference")
                 or report.get("recovery_conflict")
                 or report.get("emptied_retained_root")
+                or report.get("interrupted_deletions")
+                or report.get("retired_findings")
             ):
                 status = 3
     finally:
