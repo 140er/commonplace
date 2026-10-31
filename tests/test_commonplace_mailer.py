@@ -48,10 +48,10 @@ class _Handler(socketserver.StreamRequestHandler):
                 server.auth.append(base64.b64decode(rest[0]).decode())
                 self._reply(server.auth_reply)
             elif verb == "MAIL":
-                server.mail_from.append(command)
+                server.mail_from.append(command.lower())
                 self._reply("250 ok")
             elif verb == "RCPT":
-                server.rcpt_to.append(command)
+                server.rcpt_to.append(command.lower())
                 self._reply("250 ok")
             elif verb == "DATA":
                 self._reply("354 go ahead")
@@ -211,8 +211,8 @@ def test_send_over_the_wire(smtp_server, smtp_env):
     sender = mailer.from_env()
     sender.send("someone@example.com", "Hello", "plain body", html="<p>html body</p>")
     assert smtp_server.auth == [f"\0mailer@example.com\0{PASSWORD}"]
-    assert smtp_server.mail_from == ["mail FROM:<noreply@example.com>"]
-    assert smtp_server.rcpt_to == ["rcpt TO:<someone@example.com>"]
+    assert smtp_server.mail_from == ["mail from:<noreply@example.com>"]
+    assert smtp_server.rcpt_to == ["rcpt to:<someone@example.com>"]
     (message,) = smtp_server.messages
     assert message["From"] == "Commonplace <noreply@example.com>"
     assert message["To"] == "someone@example.com"
