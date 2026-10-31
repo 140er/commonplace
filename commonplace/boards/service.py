@@ -481,6 +481,7 @@ class BoardService:
             raise ToolError("no: card is reserved for another connection")
         if editing and not (
             (row["status"] == "doing" and row["assignee"] == self.principal.actor)
+            or self._review_editor(row)
             or (
                 row["status"] in ("todo", "backlog")
                 and row["created_by"] == self.principal.actor
@@ -722,6 +723,7 @@ class BoardService:
                     "at": r["created_at"],
                     "choice": r["choice"],
                     "target": r["target"],
+                    **({"reason": r["reason"]} if r["kind"] == "release" else {}),
                     # Events that opened an ask carry the choices offered, verbatim.
                     **(
                         {"options": json.loads(r["options"] or "[]")}
@@ -1023,6 +1025,15 @@ class BoardService:
         boundary = other[0] if other else neighbor["position"] + (-2 if before is not None else 2)
         updates["position"] = (boundary + neighbor["position"]) / 2
 
+    def _review_editor(self, row):
+        return (
+            row["status"] == "review"
+            and not self.principal.person
+            and self.principal.policy.trust == "trusted"
+            and not _restricted(self.principal)
+            and self.principal.actor in (row["assignee"], row["return_to"])
+        )
+
     def _transition(self, row, status):
         if status not in STATUSES:
             raise ToolError("no: invalid status")
@@ -1030,6 +1041,12 @@ class BoardService:
         if status == old:
             return
         if old == "review" and not (not self.principal.person and status == "done"):
+            if self._review_editor(row) and status in ("todo", "doing"):
+                if not (row["ask_to"] or "").startswith("conn:") or any(
+                    (row[key] or "").startswith("user:") for key in ("assignee", "return_to")
+                ):
+                    raise ToolError("no: waiting on a person, they must answer via decide")
+                return
             raise ToolError("no: use decide to move a card from review")
         if self.principal.person:
             allowed = {
@@ -1117,6 +1134,46 @@ class BoardService:
         else:
             raise ToolError("no: pr must be a URL or a positive number")
 
+    def _record_review_withdrawal(self, conn, row, status, reason):
+        if row["status"] != "review" or status not in ("todo", "doing"):
+            return
+        self._log(
+            conn,
+            row["id"],
+            "release",
+            text=row["ask"],
+            reason=reason,
+            target=row["ask_to"],
+            options=json.loads(row["ask_options"] or "[]"),
+            from_status="review",
+            to_status=status,
+            flags=flags_for(row["ask"], reason),
+        )
+        self._emit(
+            conn,
+            row["id"],
+            "card.ask_withdrawn",
+            target=row["ask_to"],
+            return_to=row["return_to"],
+            **{"from": "review", "to": status},
+        )
+
+    def _review_edit_text(self, conn, row, args, updates):
+        if row["status"] != "review":
+            return None
+        previous = {
+            key: row[key]
+            for key in ("title", "body", "checks")
+            if key in updates and updates[key] != row[key]
+        }
+        if "labels" in updates and updates["labels"] != row["labels"]:
+            previous["labels"] = json.loads(row["labels"] or "[]")
+        if set(args) & {"link", "unlink"}:
+            previous["links"] = [
+                link["drawer_id"] for link in self.store.links(conn, row["id"], self.principal)
+            ]
+        return json.dumps(previous, ensure_ascii=False) if previous else None
+
     def task_update(self, task, *, version=None, **args):
         permitted = {
             "title",
@@ -1134,12 +1191,16 @@ class BoardService:
             "checks",
             "status_line",
             "callstack",
+            "reason",
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             self._write(board)
             self._version(conn, row, version)
-            if set(args) - permitted:
+            if set(args) - permitted or (
+                "reason" in args
+                and not (row["status"] == "review" and args.get("status") in ("todo", "doing"))
+            ):
                 raise ToolError("no: unknown update field")
             self._holder(
                 row,
@@ -1151,10 +1212,17 @@ class BoardService:
             )
             # The agent that asked for review may still refresh the PR's call tree.
             refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
+            feedback = (
+                self._review_editor(row)
+                and set(args)
+                <= {"title", "body", "checks", "labels", "link", "unlink", "status", "reason"}
+                and args.get("status", "review") in ("review", "todo", "doing")
+            )
             if (
                 row["status"] == "review"
                 and not self.principal.person
                 and not refresh
+                and not feedback
                 and not (
                     row["return_to"] == self.principal.actor
                     and set(args) <= {"status", "lesson"}
@@ -1194,6 +1262,7 @@ class BoardService:
                 updates["callstack"] = callstack_json(args["callstack"])
             status = args.get("status", row["status"])
             self._transition(row, status)
+            reason = validate_text(args.get("reason", ""), "reason") or None
             if status != row["status"]:
                 updates.update(
                     status=status, claim_until=None, done_at=now() if status == "done" else None
@@ -1224,6 +1293,7 @@ class BoardService:
                         done_at=None,
                     )
             self._position(conn, row, updates, args.get("before"), args.get("after"))
+            review_edit_text = self._review_edit_text(conn, row, args, updates)
             if "lesson" in args:
                 lesson = validate_text(args["lesson"], "lesson", required=True)
                 saved = self.ctx.memory(
@@ -1242,7 +1312,7 @@ class BoardService:
                 if key in args:
                     self._link(conn, row, args[key], unlink=key == "unlink")
             new_flags = flags_for(
-                *(args.get(key) for key in ("title", "body", "lesson", "status_line")),
+                *(args.get(key) for key in ("title", "body", "lesson", "status_line", "reason")),
                 updates.get("callstack"),
             )
             if new_flags:
@@ -1260,8 +1330,9 @@ class BoardService:
                     "options": json.loads(updates["ask_options"]),
                 }
                 if updates.get("ask") is not None
-                else {}
+                else {"text": review_edit_text}
             )
+            self._record_review_withdrawal(conn, row, status, reason)
             self._log(
                 conn,
                 row["id"],
