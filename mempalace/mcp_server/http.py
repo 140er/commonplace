@@ -637,9 +637,7 @@ def _http_dispatch(request):
                 return refusal
             try:
                 with _write_stall_watch("mempalace_add_drawer"):
-                    result = write_mirror_units(
-                        **params, _yield_between_units=_HTTP_REQUEST_LOCK.yield_write
-                    )
+                    result = write_mirror_units(**params)
             except (TypeError, ValueError):
                 return _json_rpc_error(req_id, -32602, "Invalid mirror units")
             return _tool_call_response(req_id, result)

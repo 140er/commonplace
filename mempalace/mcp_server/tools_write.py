@@ -513,7 +513,7 @@ def tool_add_drawer(
     )
 
 
-def write_mirror_units(thread_id: str, units: list, *, _yield_between_units=None):
+def write_mirror_units(thread_id: str, units: list):
     """Authenticated internal operation; not an MCP tool or client argument."""
     from ..ids import make_drawer_id_from_chunk
 
@@ -559,8 +559,6 @@ def write_mirror_units(thread_id: str, units: list, *, _yield_between_units=None
         if not result.get("success"):
             return result
         ids.append(result["drawer_id"])
-        if _yield_between_units is not None:
-            _yield_between_units()
     return {"success": True, "drawer_ids": ids}
 
 
