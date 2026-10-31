@@ -249,18 +249,11 @@ class _FakeHub:
         assert not self.thread.is_alive(), "fake hub did not stop"
 
 
-@pytest.fixture(scope="module")
-def _default_fake_hub():
+@pytest.fixture
+def fake_hub(isolated_home):
     hub = _FakeHub()
     yield hub
     hub.stop()
-
-
-@pytest.fixture
-def fake_hub(isolated_home, _default_fake_hub):
-    _default_fake_hub.requests.clear()
-    _default_fake_hub.auth_headers.clear()
-    return _default_fake_hub
 
 
 def _register_hub(palace, hub, read_only=False, capabilities=None, search_config_fingerprint=None):

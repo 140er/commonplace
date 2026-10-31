@@ -304,7 +304,7 @@ def _start_server(tmp_path, monkeypatch, execute_fn):
     client = daemon.get_client_if_running(str(palace))
     if client is None:
         raise AssertionError(
-            "daemon did not become ready within 30s "
+            "daemon did not respond after signaling readiness "
             f"(thread_alive={thread.is_alive()}, httpd_bound={bool(holders)}, "
             f"endpoint_exists={daemon.endpoint_path(str(palace)).exists()})"
         )
