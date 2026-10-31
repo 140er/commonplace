@@ -179,6 +179,33 @@ def test_scope_hydration_keeps_row_identity_when_a_row_is_missing(tmp_path):
         backend.close()
 
 
+def test_scope_index_check_closes_reader_without_retaining_snapshot(tmp_path, monkeypatch):
+    from mempalace.backends import _inproc_sqlite, chroma_sqlite
+
+    backend, _ = _seed(tmp_path)
+    readers = []
+    original = chroma_sqlite.open_palace_reader
+
+    def reader(path, **kwargs):
+        assert kwargs == {"retain_guard": False}
+        conn = original(path, **kwargs)
+        readers.append(conn)
+        return conn
+
+    monkeypatch.setattr(chroma_sqlite, "open_palace_reader", reader)
+    try:
+        chroma_sqlite.ensure_palace_scope_index(str(tmp_path))
+        assert len(readers) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            readers[0].execute("SELECT 1")
+        key = _inproc_sqlite._key(str(tmp_path / "chroma.sqlite3"))
+        anchor = _inproc_sqlite._anchors.get(key)
+        if anchor is not None:
+            assert not anchor.conn.in_transaction
+    finally:
+        backend.close()
+
+
 def test_closet_substring_only_zero_scores_are_dropped(tmp_path):
     backend = ChromaBackend()
     try:
@@ -208,9 +235,9 @@ def test_closing_one_backend_retains_sibling_anchor_guards(tmp_path):
     assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
     first.close()
     assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
-    vector = sibling.get(ids=["a"], include=["embeddings"]).embeddings[0]
+    vector = sibling._collection.get(ids=["a"], include=["embeddings"])["embeddings"][0]
     sibling.upsert(ids=["a"], documents=["quartz updated"], embeddings=[vector])
-    assert sibling.get(ids=["a"]).documents == ["quartz updated"]
+    assert sibling._collection.get(ids=["a"])["documents"] == ["quartz updated"]
     second.close()
     assert key not in _inproc_sqlite._anchors and key not in _inproc_sqlite._holders
 
@@ -253,7 +280,7 @@ def test_native_client_path_alias_keeps_anchor_until_last_close(tmp_path):
     from mempalace.backends.chroma import _close_client
 
     backend, col = _seed(tmp_path)
-    vector = col.get(ids=["a"], include=["embeddings"]).embeddings[0]
+    vector = col._collection.get(ids=["a"], include=["embeddings"])["embeddings"][0]
     alias = ChromaBackend.make_client(str(tmp_path) + "/.")
     key = _inproc_sqlite._key(str(tmp_path / "chroma.sqlite3"))
     try:

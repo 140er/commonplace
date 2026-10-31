@@ -115,6 +115,7 @@ _HOLDER_READY_SECONDS = 2.0
 _registry_lock = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
 _anchors: dict[str, "_Anchor"] = {}
+_persistent_readers: set[str] = set()
 _holders: dict[str, "_Holder"] = {}
 
 # Self-contained: the helper must not import this package. Importing
@@ -566,13 +567,17 @@ def _close_and_release(conn: sqlite3.Connection, lock: threading.RLock) -> None:
         lock.release()
 
 
-def open_reader(db_path, *, timeout: Optional[float] = None) -> PalaceSqliteConnection:
+def open_reader(
+    db_path, *, timeout: Optional[float] = None, retain_guard: bool = True
+) -> PalaceSqliteConnection:
     """Open ``db_path`` for reading under :func:`palace_db_lock`.
 
     Same failure contract as :func:`mempalace.config.connect_sqlite_read`
     (``sqlite3.Error`` for a database SQLite cannot open, ``ValueError`` for a
     path the URI cannot carry). The caller must ``close()`` the result, which
-    releases the lock.
+    releases the lock. ``retain_guard=False`` leaves only a transient idle
+    guard, releasable after the last native client closes; neither kind of
+    guard retains this reader's transaction or WAL snapshot.
     """
     db_path = os.fspath(db_path)
     key = _key(db_path)
@@ -590,6 +595,11 @@ def open_reader(db_path, *, timeout: Optional[float] = None) -> PalaceSqliteConn
             _ensure_anchor(db_path, key)
         kwargs = {} if timeout is None else {"timeout": timeout}
         conn = connect_sqlite_read(db_path, **kwargs)
+        if retain_guard:
+            # Ordinary reads preserve the idle guard across native client
+            # reopens, preventing recreation of the WAL sidecars. An index
+            # existence check needs the guard only while that client lives.
+            _persistent_readers.add(key)
     except BaseException:
         lock.release()
         raise
@@ -623,12 +633,21 @@ def release(db_path) -> None:
     db_path = os.fspath(db_path)
     key = _key(db_path)
     with _lock_for_key(key):
+        _persistent_readers.discard(key)
         anchor = _anchors.pop(key, None)
         if anchor is not None:
             anchor.discard()
         holder = _holders.pop(key, None)
         if holder is not None:
             _stop_holder(holder, wait=True)
+
+
+def release_transient(db_path) -> None:
+    """Release index-check guards, retaining guards used by ordinary readers."""
+    key = _key(os.fspath(db_path))
+    with _lock_for_key(key):
+        if key not in _persistent_readers:
+            release(db_path)
 
 
 def release_all() -> None:
@@ -638,6 +657,7 @@ def release_all() -> None:
         holders = list(_holders.values())
         _anchors.clear()
         _holders.clear()
+        _persistent_readers.clear()
     for anchor in anchors:
         anchor.discard()
     for holder in holders:
@@ -649,12 +669,13 @@ def _reset_after_fork_in_child() -> None:
     # leaves the inherited descriptors alone (closing them would drop locks).
     # The helper belongs to the parent: drop this process's pipe dup and do
     # not signal the helper to exit.
-    global _registry_lock, _locks, _anchors, _holders
+    global _registry_lock, _locks, _anchors, _holders, _persistent_readers
     holders = list(_holders.values())
     _registry_lock = threading.Lock()
     _locks = {}
     _anchors = {}
     _holders = {}
+    _persistent_readers = set()
     for holder in holders:
         _stop_holder(holder, wait=False)
 

@@ -81,13 +81,19 @@ def ensure_palace_scope_index(palace_path):
     path = _db_file(palace_path)
     if path is None:
         return
-    if _read_db(
-        palace_path,
-        lambda conn: conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
-        ).fetchone(),
-    ):
-        return
+    try:
+        conn = open_palace_reader(path, retain_guard=False)
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
+            ).fetchone()
+        finally:
+            # No cursor, read transaction or snapshot escapes this check.
+            conn.close()
+        if exists:
+            return
+    except sqlite3.Error:
+        pass
     if time.monotonic() < _scope_index_retry_after.get(path, 0):
         return
     try:

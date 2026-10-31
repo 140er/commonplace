@@ -1763,14 +1763,14 @@ def _close_client(client) -> None:
                 from chromadb.api.shared_system_client import SharedSystemClient
 
                 identifier = getattr(client, "_identifier", None)
-                # Only the last native client may release Python's read
-                # anchors. A sibling backend/session still needs their guards.
+                # Only the last native client may release index-check guards.
+                # Ordinary reader guards stay idle across client reopens.
                 if (
                     isinstance(identifier, str)
                     and identifier not in SharedSystemClient._identifier_to_system
                     and not SharedSystemClient._identifier_to_refcount.get(identifier, 0)
                 ):
-                    from ._inproc_sqlite import release
+                    from ._inproc_sqlite import release_transient
 
                     # Chroma keys Systems by the exact path string. Another
                     # System can still hold this file through a path alias.
@@ -1786,7 +1786,7 @@ def _close_client(client) -> None:
                         if same_file:
                             break
                     else:
-                        release(path)
+                        release_transient(path)
     except Exception:
         logger.debug("client.close() unavailable or failed", exc_info=True)
 
