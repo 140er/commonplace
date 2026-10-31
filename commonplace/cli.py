@@ -643,7 +643,9 @@ def cmd_workspace_prune(args) -> int:
         finally:
             db.close()
 
-    prune_generations(_data_dir(args), args.workspace, authorize=authorize)
+    report = prune_generations(_data_dir(args), args.workspace, authorize=authorize)
+    if report is not None:
+        print(json.dumps(report, sort_keys=True))
     return 0
 
 

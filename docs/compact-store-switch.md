@@ -78,8 +78,26 @@ process crash, rerunning either store command or pruning removes orphan staging
 copies and resets the interrupted backfill state. Cleanup validates the generation
 pointer first. If it is missing or invalid, only the state file's provably
 unpublished staging copy can be removed; other generations are preserved and
-the operation refuses until the pointer is restored. Completed retained
-generations are preserved.
+the operation refuses until the pointer is repaired. Workers, the gateway and
+doctor also refuse to resolve an absent or invalid pointer when sibling
+generations exist, so they cannot resume writing into the original root.
+Completed retained generations are preserved. With a valid pointer, cleanup
+preserves and reports unlisted generations carrying `.store-comparison.json`;
+named retained generations follow the fourteen-day and fingerprint checks.
+
+Every administrative pointer update also atomically records a recovery copy in
+`.store-pointer.prev.json` at the stable workspace root. To repair a lost pointer,
+stop the gateway, preserve all generation directories and inspect that copy or
+the verified off-host backup. Confirm the candidate's active generation exists
+and contains the latest writes before atomically restoring `.store-pointer.json`.
+A crash between the two writes can leave the recovery copy one update behind;
+it is a recovery candidate, never an automatic fallback. Restore the full retained
+list rather than writing a minimal pointer by hand. Unlisted published generations
+are preserved until their retirement evidence is recovered and checked.
+
+If `.store-backfill.json` is corrupt, switching refuses with a repair hint.
+Pruning instead returns a read-only generation report and changes no workspace
+files. Repair the state from verified evidence before retrying destructive cleanup.
 
 A sample of live thread reads, palace reads and searches is compared with the
 retained store. Comparison logs contain only match status and fixed diagnostic

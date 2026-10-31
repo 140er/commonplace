@@ -16,6 +16,7 @@ from commonplace.handoff.thread_store import ThreadStore
 from commonplace.handoff.thread_store_migrate import read_store, verify_stores
 from commonplace.workspace_store import (
     POINTER,
+    POINTER_PREVIOUS,
     RECEIPT,
     SETTINGS,
     open_threads,
@@ -676,6 +677,124 @@ def test_prune_drops_missing_generation_and_resets_crash_state(workspace):
     assert compact.name not in [item["name"] for item in read_json(root / POINTER)["retained"]]
     assert not staged.exists()
     assert switch.doctor_workspace(data, WORKSPACE)["backfill"] == "failed"
+
+
+def test_minimal_pointer_preserves_unlisted_published_generations_and_recovery_copy(
+    workspace, caplog
+):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retained = workspace_path(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    active = workspace_path(data, WORKSPACE)
+    expected = read_json(root / POINTER)
+    assert read_json(root / POINTER_PREVIOUS) == expected
+    before = switch._retirement_digest(retained)
+    (root / POINTER).write_text(json.dumps({"active": active.name}))
+    switch.prune_generations(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    assert switch._retirement_digest(retained) == before
+    assert read_json(root / POINTER_PREVIOUS) == expected
+    assert "Preserving unlisted published generation " + retained.name in caplog.text
+
+
+def test_returned_retired_generation_is_preserved_after_entry_was_dropped(workspace, caplog):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    retained = workspace_path(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    moved = retained.with_name("temporarily-moved-generation")
+    retained.rename(moved)
+    switch.prune_generations(data, WORKSPACE)
+    assert retained.name not in [item["name"] for item in read_json(root / POINTER)["retained"]]
+    moved.rename(retained)
+    before = switch._retirement_digest(retained)
+    switch.prune_generations(data, WORKSPACE)
+    assert switch._retirement_digest(retained) == before
+    assert "Preserving unlisted published generation " + retained.name in caplog.text
+
+
+@pytest.mark.parametrize("damage", ["missing", "invalid_json", "missing_active", "nonexistent"])
+def test_all_resolvers_refuse_lost_pointer_even_after_original_root_is_pruned(workspace, damage):
+    import argparse
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+
+    from commonplace.cli import _stores
+    from commonplace.extensions import ToolContext
+    from commonplace.gateway import Gateway
+    from commonplace.handoff.wiring import HandoffContext
+    from commonplace.workers import WorkerSupervisor
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    switch.prune_generations(data, WORKSPACE, now=retired_at + switch.RETENTION_SECONDS)
+    assert not (root / "threads.sqlite3").exists()
+    if damage == "missing":
+        (root / POINTER).unlink()
+    elif damage == "invalid_json":
+        (root / POINTER).write_text("{")
+    elif damage == "missing_active":
+        (root / POINTER).write_text("{}")
+    else:
+        (root / POINTER).write_text(json.dumps({"active": root.name + ".generation-" + "f" * 24}))
+    # Every entry point ultimately uses the same resolver; none may recreate v1.
+    with pytest.raises(ValueError, match=r"generation pointer.*\.store-pointer.prev.json"):
+        workspace_path(data, WORKSPACE)
+    with pytest.raises(ValueError, match="generation pointer"):
+        switch.doctor_workspace(data, WORKSPACE)
+    supervisor = WorkerSupervisor(str(data))
+    gateway = Gateway.__new__(Gateway)
+    gateway.supervisor = supervisor
+    tool = ToolContext(principal=SimpleNamespace(workspace_id=WORKSPACE), gateway=gateway)
+    context = HandoffContext(gateway=None, control_db=None, data_dir=data)
+    for resolve in (
+        lambda: supervisor.workspace_dir(WORKSPACE),
+        lambda: gateway.workspace_dir(WORKSPACE),
+        tool.workspace_dir,
+        lambda: context.store_for(WORKSPACE),
+    ):
+        with pytest.raises(ValueError, match="generation pointer"):
+            resolve()
+    with ExitStack() as stack, pytest.raises(ValueError, match="generation pointer"):
+        _stores(argparse.Namespace(data=str(data)), stack)(WORKSPACE)
+    context.close()
+    assert active.is_dir() and not (root / "threads.sqlite3").exists()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "{",
+        "[]",
+        '{"state":"unknown"}',
+        '{"state":"copying","staging":7}',
+        '{"state":"copying","staging":"../other"}',
+    ],
+)
+def test_corrupt_state_prune_reports_without_modifying_any_generation(workspace, caplog, damage):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    staged = root.with_name(root.name + ".generation-" + "e" * 24)
+    staged.mkdir()
+    (staged / "unfinished").write_text("staging must remain untouched")
+    (root / switch.STATE).write_text(damage)
+    pointer = (root / POINTER).read_bytes()
+    recovery = (root / POINTER_PREVIOUS).read_bytes()
+    before = {path.name: switch._retirement_digest(path) for path in (root, active, staged)}
+    report = switch.prune_generations(data, WORKSPACE)
+    assert report["state"] == "report_only"
+    assert report["generations"] == sorted([root.name, active.name, staged.name])
+    assert "repair .store-backfill.json" in report["repair"]
+    assert "read-only report" in caplog.text
+    with pytest.raises(ValueError, match="Corrupt workspace backfill state"):
+        switch.switch_workspace(data, WORKSPACE, "v1")
+    assert (root / POINTER).read_bytes() == pointer
+    assert (root / POINTER_PREVIOUS).read_bytes() == recovery
+    assert before == {path.name: switch._retirement_digest(path) for path in (root, active, staged)}
 
 
 def test_corrupt_retained_thread_database_does_not_block_live_store(workspace):

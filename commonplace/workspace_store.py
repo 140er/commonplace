@@ -8,6 +8,11 @@ import sqlite3
 from pathlib import Path
 
 POINTER = ".store-pointer.json"
+POINTER_PREVIOUS = ".store-pointer.prev.json"
+POINTER_REPAIR = (
+    "Invalid or missing workspace generation pointer; stop the gateway and verify "
+    f"{POINTER_PREVIOUS} before restoring {POINTER}"
+)
 SETTINGS = "workspace.json"
 STATE = ".store-backfill.json"
 RECEIPT = ".store-backup.json"
@@ -49,13 +54,26 @@ def resolve_workspace(root):
     if root.is_symlink():
         raise ValueError("Workspace root cannot be a symlink")
     if not (root / POINTER).exists():
+        if any(root.parent.glob(root.name + ".generation-*")):
+            raise ValueError(POINTER_REPAIR)
         return root
-    pointer = read_json(root / POINTER)
-    if not isinstance(pointer.get("active"), str):
-        raise ValueError("Invalid workspace generation pointer")
-    active = generation_path(root, pointer["active"])
-    if not active.is_dir():
-        raise ValueError("Active workspace generation is missing")
+    try:
+        pointer = read_json(root / POINTER)
+        if not isinstance(pointer.get("active"), str):
+            raise ValueError
+        active = generation_path(root, pointer["active"])
+        if not active.is_dir():
+            raise ValueError
+        retained = pointer.get("retained", [])
+        if not isinstance(retained, list):
+            raise ValueError
+        for item in retained:
+            generation_path(root, item["name"])
+            if item["name"] == pointer["active"]:
+                raise ValueError
+            float(item["retired_at"])
+    except (ValueError, KeyError, TypeError):
+        raise ValueError(POINTER_REPAIR) from None
     return active
 
 
