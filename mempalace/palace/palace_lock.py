@@ -260,7 +260,7 @@ def _write_lock_holder(lock_file) -> None:
 
 
 @contextlib.contextmanager
-def mine_palace_lock(palace_path: str):
+def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
     """Per-palace non-blocking lock around the full `mine` pipeline.
 
     The per-file `mine_lock` only protects delete+insert interleave for a
@@ -280,6 +280,10 @@ def mine_palace_lock(palace_path: str):
     normcase, `C:\\Palace` and `c:\\palace` would hash to different keys
     on Windows and let two concurrent mines touch the same on-disk palace.
 
+    ``lock_dir`` lets offline administration use an isolated worker's lease
+    directory without changing process HOME. Re-entrant credit is scoped to
+    the resolved lock file, so holds in different namespaces stay independent.
+
     Non-blocking: if another `mine` is already writing to this palace,
     raise MineAlreadyRunning so the caller can exit cleanly instead of
     piling up as a waiting worker.
@@ -292,13 +296,14 @@ def mine_palace_lock(palace_path: str):
     lets the threaded MCP HTTP transport write from a worker thread while the
     long-lived writer-lease is held on another thread of the same process.
     """
-    lock_dir = paths.lock_dir()
+    lock_dir = paths.lock_dir() if lock_dir is None else lock_dir
     os.makedirs(lock_dir, exist_ok=True)
     resolved = os.path.realpath(os.path.expanduser(palace_path))
     palace_key = paths.palace_key(palace_path, length=16)
     lock_path = os.path.join(lock_dir, f"mine_palace_{palace_key}.lock")
 
-    if _held_by_this_process(palace_key):
+    lock_key = os.path.normcase(os.path.realpath(lock_path))
+    if _held_by_this_process(lock_key):
         # This process already holds the lock for this palace — pass through.
         yield
         return
@@ -357,10 +362,10 @@ def mine_palace_lock(palace_path: str):
         # flock, so the in-memory hold would outlive the OS lock and a later
         # re-entrant acquire would pass through and write without the flock.
         try:
-            _mark_held(palace_key)
+            _mark_held(lock_key)
             yield
         finally:
-            _mark_released(palace_key)
+            _mark_released(lock_key)
     finally:
         if acquired:
             try:

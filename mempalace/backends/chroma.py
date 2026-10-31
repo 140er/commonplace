@@ -1979,6 +1979,26 @@ class ChromaCollection(BaseCollection):
 
         _validate_list_batch(ids, documents, metadatas, embeddings)
         documents, ids, metadatas = prepare_stored_write(documents, ids, metadatas)
+        if getattr(self, "_migration_vectors", False):
+            # Preserve legacy metadata exactly: a migration must not invent
+            # last_modified stamps. Chroma accepts omitted metadata, but not
+            # empty objects within a metadata batch, so group those rows apart.
+            for has_metadata in (False, True):
+                indices = [
+                    i for i in range(len(ids)) if bool(metadatas and metadatas[i]) == has_metadata
+                ]
+                if not indices:
+                    continue
+                copied = {
+                    "ids": [ids[i] for i in indices],
+                    "documents": [documents[i] for i in indices],
+                    "embeddings": [embeddings[i] for i in indices],
+                }
+                if has_metadata:
+                    copied["metadatas"] = [metadatas[i] for i in indices]
+                with self._write_lock():
+                    self._collection.add(**copied)
+            return
         kwargs: dict[str, Any] = {
             "documents": documents,
             "ids": ids,
@@ -2913,6 +2933,7 @@ class ChromaBackend(BaseBackend):
         palace_ref, collection_name, create, options = _normalize_get_collection_args(args, kwargs)
         self.require_namespace_support(palace_ref)
         caller_vectors = bool(options and options.get("caller_vectors", False))
+        migration_vectors = bool(options and options.get("_migration_vectors", False))
         # A read-only open must not create chroma.sqlite3 or rewrite the
         # collection's configuration (the HNSW thread pin below is a write).
         read_only = bool(options and options.get("read_only", False)) and not create
@@ -2926,7 +2947,7 @@ class ChromaBackend(BaseBackend):
         if read_only and not os.path.isfile(os.path.join(palace_path, "chroma.sqlite3")):
             raise PalaceNotFoundError(palace_path)
 
-        if caller_vectors:
+        if caller_vectors or migration_vectors:
             # Passing None explicitly prevents Chroma's client default EF.
             ef_kwargs = {
                 "embedding_function": None,
@@ -2995,7 +3016,8 @@ class ChromaBackend(BaseBackend):
             palace_path=palace_path,
             backend=self,
         )
-        wrapped._require_embeddings = caller_vectors
+        wrapped._require_embeddings = caller_vectors or migration_vectors
+        wrapped._migration_vectors = migration_vectors
         return wrapped
 
     def close_palace(self, palace) -> None:

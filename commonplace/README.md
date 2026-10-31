@@ -9,7 +9,7 @@ commonplace token add grok:coordinator --workspace personal --client grok \
 commonplace serve --host 127.0.0.1 --port 8765
 ```
 
-`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus `workspaces/<id>/palace`.
+`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus workspace generation directories. `workspaces/<id>` is the stable generation-pointer container; use `commonplace doctor --workspace <workspace>` to find the active path.
 
 Social sign-in: [provider setup](SETUP.md).
 
@@ -52,3 +52,5 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 - Searches without a wing run once per readable wing and merge by score.
 
 The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
+
+Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.

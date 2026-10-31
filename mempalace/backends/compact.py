@@ -6,13 +6,20 @@ sqlite_exact. This is a separate disk format, never an exact-vector alias.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import re
+import shutil
 import sqlite3
 import tempfile
+import threading
+import uuid
 import warnings
+import weakref
 from functools import partial
+from pathlib import Path
 
 import numpy as np
 import zstandard as zstd
@@ -21,12 +28,13 @@ from ..stored_text import (
     FLAG,
     KEYWORD_ONLY,
     decode_record,
+    decode_value,
     encode_filter,
     index_text,
     prepare_stored_write,
 )
 from ..timeutil import utc_now_iso
-from ._filters import _compare, validate_where
+from ._filters import _compare, matches_where, validate_where
 from ._magic import read_header_fields
 from .base import (
     BackendError,
@@ -34,6 +42,7 @@ from .base import (
     GetResult,
     LexicalHit,
     LexicalResult,
+    PalaceNotFoundError,
     QueryResult,
     _IncludeSpec,
     validate_write_batch,
@@ -42,6 +51,7 @@ from .sqlite_exact import (
     SQLiteExactBackend,
     SQLiteExactCollection,
     _as_vector_array,
+    _bump_write_generation,
     _json_dumps,
     _json_loads,
     _SnapshotChanged,
@@ -49,9 +59,100 @@ from .sqlite_exact import (
 
 _DB_FILENAME = "compact.sqlite3"
 _APPLICATION_ID = 0x4D504343  # MPCC
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _DICTIONARY_SIZE = 32768
 _SAMPLE_CAP = 1024 * 1024
+_MAX_LOCUS_VALUES = 1000
+_LOG = logging.getLogger(__name__)
+_FILE_CACHES = weakref.WeakValueDictionary()
+_FILE_CACHES_LOCK = threading.RLock()
+_REINDEX_ACTIVE = set()
+_REINDEX_LOCK = threading.RLock()
+_DATA_OBJECTS = {"meta", "collections", "dictionaries", "documents", "vectors", "docs_fts"}
+_REQUIRED_OBJECTS = {
+    "meta",
+    "collections",
+    "dictionaries",
+    "documents",
+    "vectors",
+    "docs_fts",
+    "immutable_dictionary",
+    "delete_vector",
+    "dictionary_in_use",
+    "compact_vectors_collection",
+    "compact_parent_drawer",
+    "compact_parent_entry",
+    "compact_room",
+    "idx_documents_coll_wing_room_hall",
+    "idx_documents_coll_source_file",
+    "idx_documents_coll_filed_at",
+    "idx_documents_coll_wing_filed_at",
+}
+
+
+def _remove_stage(directory):
+    try:
+        shutil.rmtree(directory)
+    except OSError:
+        _LOG.warning("Could not remove an abandoned compact reindex stage", exc_info=True)
+
+
+class _FileCache:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.collections = {}
+
+
+def _file_cache(path, file_id):
+    stat = os.stat(path)
+    key = (os.path.realpath(path), stat.st_dev, stat.st_ino, file_id)
+    with _FILE_CACHES_LOCK:
+        shared = _FILE_CACHES.get(key)
+        if shared is None:
+            shared = _FileCache()
+            _FILE_CACHES[key] = shared
+        return shared
+
+
+def _cleanup_reindex(palace_path):
+    """Caller owns the palace lease; do not remove a live in-process stage."""
+    with _REINDEX_LOCK:
+        try:
+            entries = list(os.scandir(palace_path))
+        except OSError:
+            _LOG.warning("Could not inspect compact reindex stages", exc_info=True)
+            return
+        for entry in entries:
+            if (
+                entry.name.startswith("compact-reindex-")
+                and entry.is_dir(follow_symlinks=False)
+                and os.path.realpath(entry.path) not in _REINDEX_ACTIVE
+            ):
+                _remove_stage(entry.path)
+
+
+@contextlib.contextmanager
+def _reindex_directory(palace_path):
+    with _REINDEX_LOCK:
+        _cleanup_reindex(palace_path)
+        directory = tempfile.mkdtemp(prefix="compact-reindex-", dir=palace_path)
+        directory = os.path.realpath(directory)
+        _REINDEX_ACTIVE.add(directory)
+    try:
+        yield directory
+    finally:
+        with _REINDEX_LOCK:
+            _REINDEX_ACTIVE.remove(directory)
+            _remove_stage(directory)
+
+
+def _indexed_operand(expected):
+    operations = expected if isinstance(expected, dict) else {"$eq": expected}
+    return bool(operations) and all(
+        (op == "$eq" and not isinstance(value, (list, dict)))
+        or (op == "$in" and all(not isinstance(v, (list, dict)) for v in value or []))
+        for op, value in operations.items()
+    )
 
 
 def _field(key):
@@ -89,10 +190,7 @@ def _where_sql(where):
                 and all(
                     len(child) == 1
                     and next(iter(child)) in parent_indexes
-                    and (
-                        not isinstance(next(iter(child.values())), dict)
-                        or set(next(iter(child.values()))) <= {"$eq", "$in"}
-                    )
+                    and _indexed_operand(next(iter(child.values())))
                     for child in expected
                 )
             ):
@@ -126,8 +224,23 @@ def _where_sql(where):
                 else (operand or [] if op in {"$in", "$nin"} else [])
             )
             if any(isinstance(v, str) and v.lstrip().startswith(("[", "{")) for v in textual):
-                clauses.append("compact_compare(d.metadata_json, ?, ?, ?)")
-                params.extend([key, op, json.dumps(operand, ensure_ascii=True)])
+                # Keep the equality/index probe, then distinguish a JSON string
+                # from an array/object with the same SQLite text representation.
+                values = textual
+                parts = []
+                for item in values:
+                    equality, arguments = (
+                        _where_sql({key: {"$eq": item}})
+                        if not (isinstance(item, str) and item.lstrip().startswith(("[", "{")))
+                        else (
+                            f"{expr} IS ? AND compact_compare(d.metadata_json, ?, '$eq', ?)",
+                            [encode_filter(item), key, json.dumps(item, ensure_ascii=True)],
+                        )
+                    )
+                    parts.append(f"({equality})")
+                    params.extend(arguments)
+                membership = " OR ".join(parts) or "0"
+                clauses.append(f"NOT ({membership})" if op in {"$ne", "$nin"} else membership)
                 continue
             value = encode_filter({op: operand})[op]
             if op in {"$eq", "$ne"} and not isinstance(value, (list, dict)):
@@ -174,10 +287,281 @@ def _vector(blob, scale):
     ).tolist()
 
 
+class _Codes:
+    """Memoize common stored loci, preserving Python's bool/int equality."""
+
+    def __init__(self):
+        self.values = {}
+        self.raw = {}
+
+    @staticmethod
+    def key(value):
+        if isinstance(value, (dict, list)):
+            return (type(value).__name__, json.dumps(value, sort_keys=True))
+        return value
+
+    def code(self, raw, kind=None):
+        key = (raw, kind) if kind is not None else raw
+        found = self.raw.get(key)
+        if found is None:
+            value = json.loads(raw) if kind in {"array", "object"} else raw
+            value = self.key(decode_value(value))
+            found = self.values.setdefault(value, len(self.values))
+            self.raw[key] = found
+        return found
+
+
+class _VectorCache:
+    """Capacity-backed int8 rows and a dense int32 rowid-to-position index."""
+
+    def __init__(self, version, dimension, capacity, first_rowid=0, last_rowid=0):
+        self.version = version
+        self.dimension = dimension
+        self.size = 0
+        self.books = {"wing": _Codes(), "room": _Codes()}
+        self.loci_ready = False
+        self.loci_attempted = False
+        self.offset = first_rowid
+        self.rowid_index = np.full(max(16, last_rowid - first_rowid + 17), -1, np.int32)
+        self._allocate(max(16, capacity + capacity // 64))
+
+    def _allocate(self, capacity):
+        arrays = {
+            "rowids": np.empty(capacity, np.int64),
+            "matrix": np.empty((capacity, self.dimension), np.int8),
+            "norms": np.empty(capacity, np.float32),
+            "wing": np.empty(capacity, np.int32),
+            "room": np.empty(capacity, np.int32),
+        }
+        for name, array in arrays.items():
+            if hasattr(self, name):
+                array[: self.size] = getattr(self, name)[: self.size]
+            setattr(self, name, array)
+
+    def positions(self, rowids):
+        indexes = np.asarray(rowids, np.int64) - self.offset
+        valid = (indexes >= 0) & (indexes < len(self.rowid_index))
+        result = np.full(len(indexes), -1, np.int32)
+        result[valid] = self.rowid_index[indexes[valid]]
+        return result
+
+    def _index_slot(self, rowid):
+        slot = rowid - self.offset
+        if slot < 0 or slot >= len(self.rowid_index):
+            offset = min(rowid, self.offset)
+            capacity = max(rowid - offset + 17, len(self.rowid_index) * 2 + self.offset - offset)
+            array = np.full(capacity, -1, np.int32)
+            start = self.offset - offset
+            array[start : start + len(self.rowid_index)] = self.rowid_index
+            self.offset, self.rowid_index = offset, array
+            slot = rowid - offset
+        return slot
+
+    def put(self, rowid, blob, wing=0, room=0):
+        if blob is None and not self.offset <= rowid < self.offset + len(self.rowid_index):
+            return
+        slot = self._index_slot(rowid)
+        position = int(self.rowid_index[slot])
+        if blob is None:
+            if position >= 0:
+                self.size -= 1
+                self.rowid_index[slot] = -1
+                if position != self.size:
+                    for name in ("rowids", "matrix", "norms", "wing", "room"):
+                        getattr(self, name)[position] = getattr(self, name)[self.size]
+                    self.rowid_index[self.rowids[position] - self.offset] = position
+            return
+        if position < 0:
+            if self.size == len(self.rowids):
+                self._allocate(self.size + max(16, self.size // 4))
+            position = self.size
+            self.size += 1
+            self.rowid_index[slot] = position
+        self.rowids[position] = rowid
+        vector = np.frombuffer(blob, np.int8)
+        self.matrix[position] = vector
+        self.norms[position] = np.sqrt(np.dot(vector.astype(np.int64), vector.astype(np.int64)))
+        self.wing[position], self.room[position] = wing, room
+
+    def filter(self, where):
+        """Return a vectorized mask, or None when a predicate needs SQL."""
+        if not self.loci_ready:
+            return None
+        parts = []
+        for key, value in (where or {}).items():
+            if key in {"$and", "$or"}:
+                children = [self.filter(child) for child in value or []]
+                if any(child is None for child in children):
+                    return None
+                mask = np.full(self.size, key == "$and", dtype=bool)
+                combine = np.logical_and if key == "$and" else np.logical_or
+                for child in children:
+                    combine(mask, child, out=mask)
+                parts.append(mask)
+            elif key in self.books and _indexed_operand(value):
+                operations = value if isinstance(value, dict) else {"$eq": value}
+                book = self.books[key]
+                array = getattr(self, key)[: self.size]
+                for op, operand in operations.items():
+                    values = [operand] if op == "$eq" else operand or []
+                    codes = tuple(
+                        {book.values[book.key(v)] for v in values if book.key(v) in book.values}
+                    )
+                    parts.append(array == codes[0] if len(codes) == 1 else np.isin(array, codes))
+            else:
+                return None
+        mask = np.ones(self.size, dtype=bool)
+        for part in parts:
+            np.logical_and(mask, part, out=mask)
+        return mask
+
+
 class CompactCollection(SQLiteExactCollection):
     """RFC 001 collection; the keyword-only marker is an internal write API."""
 
     supports_keyword_only = True
+
+    @staticmethod
+    def _generation(cur):
+        values = dict(
+            cur.execute("SELECT key,value FROM meta WHERE key IN ('file_id','write_generation')")
+        )
+        return values.get("file_id"), int(values.get("write_generation", 0))
+
+    @contextlib.contextmanager
+    def _write_lock(self):
+        from ..palace import mine_palace_lock
+
+        with self._handle.lock:
+            self._ensure_open()
+            # A reader may own the shared matrix for an entire query. Wait
+            # before acquiring the cross-process writer lease.
+            with self._handle.compact_shared.lock:
+                with mine_palace_lock(self._handle.palace_path):
+                    yield
+
+    @staticmethod
+    def _cache_version(cur):
+        return (
+            cur.connection,
+            cur.execute("PRAGMA data_version").fetchone()[0],
+            cur.connection.total_changes,
+        )
+
+    @contextlib.contextmanager
+    def _cursor(self, *, write=False):
+        self._refresh_read_handle()
+        handle = self._handle
+        with self._write_lock() if write else handle.lock:
+            self._ensure_open()
+            shared = handle.compact_shared
+            with shared.lock:
+                cur = handle.conn.cursor()
+                changes = {}
+                handle.__dict__.setdefault("compact_changes", {})[cur] = changes
+                committed = False
+                try:
+                    cur.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                    generation = self._generation(cur)  # read inside the pinned snapshot
+                    for cid, cache in list(shared.collections.items()):
+                        if cache.version != generation:
+                            del shared.collections[cid]
+                    before = handle.conn.total_changes
+                    yield cur
+                    patches = {}
+                    invalidated = set()
+                    mutated = write and handle.conn.total_changes != before
+                    if mutated:
+                        _bump_write_generation(cur)
+                        for cid, rowids in changes.items():
+                            cur.execute(
+                                "INSERT INTO meta(key,value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)",
+                                (f"compact_generation:{cid}",),
+                            )
+                            if cid not in shared.collections:
+                                continue
+                            if rowids is None or shared.collections[cid].dimension != (
+                                self._collection_dimension(cur, cid) or 0
+                            ):
+                                invalidated.add(cid)
+                            else:
+                                patches[cid] = self._cache_rows(
+                                    cur, rowids, shared.collections[cid].loci_ready
+                                )
+                        generation = self._generation(cur)
+                    handle.conn.commit()
+                    committed = True
+                    if mutated:
+                        try:
+                            for cid in invalidated:
+                                shared.collections.pop(cid, None)
+                            for cid, cache in shared.collections.items():
+                                for row in patches.get(cid, []):
+                                    self._patch_cache(cur, cache, row)
+                                cache.version = generation
+                        except Exception:
+                            shared.collections.clear()
+                            _LOG.warning(
+                                "Discarding compact cache after a committed write", exc_info=True
+                            )
+                        handle._native_cache.clear()
+                except BaseException:
+                    if not committed:
+                        handle.conn.rollback()
+                    raise
+                finally:
+                    handle.compact_changes.pop(cur, None)
+                    cur.close()
+
+    def _changed(self, cur, cid, rowids=None):
+        changes = self._handle.compact_changes[cur]
+        if rowids is None:
+            changes[cid] = None
+        elif cid not in changes or changes[cid] is not None:
+            changes.setdefault(cid, set()).update(rowids)
+
+    @staticmethod
+    def _cache_rows(cur, rowids, loci_ready):
+        if not loci_ready:
+            return cur.execute(
+                "SELECT wanted.value AS rowid,v.embedding FROM json_each(?) wanted "
+                "LEFT JOIN vectors v ON v.rowid=wanted.value",
+                (json.dumps(list(rowids)),),
+            ).fetchall()
+        return cur.execute(
+            "SELECT wanted.value AS rowid,v.embedding,d.wing,d.room,"
+            "CASE WHEN substr(d.wing,1,1) IN ('[','{') THEN json_type(d.metadata_json,'$.wing') END AS wing_type,"
+            "CASE WHEN substr(d.room,1,1) IN ('[','{') THEN json_type(d.metadata_json,'$.room') END AS room_type "
+            "FROM json_each(?) wanted LEFT JOIN documents d ON d.rowid=wanted.value "
+            "LEFT JOIN vectors v ON v.rowid=d.rowid",
+            (json.dumps(list(rowids)),),
+        ).fetchall()
+
+    @staticmethod
+    def _patch_cache(cur, cache, row):
+        if row["embedding"] is None:
+            cache.put(row["rowid"], None)
+        elif cache.loci_ready:
+            codes = [
+                cache.books[key].code(row[key], row[key + "_type"]) for key in ("wing", "room")
+            ]
+            cache.put(row["rowid"], row["embedding"], *codes)
+        else:
+            cache.put(row["rowid"], row["embedding"])
+
+    def _retry_snapshot(self, operation):
+        for _ in range(3):
+            try:
+                return operation()
+            except _SnapshotChanged:
+                with self._handle.lock:
+                    self._ensure_open()
+                    with self._handle.compact_shared.lock:
+                        self._handle._vector_cache.clear()
+        raise BackendError("Palace changed repeatedly during compact search; retry the query")
+
+    def query(self, **kwargs):
+        return self._retry_snapshot(lambda: self._query_once(**kwargs))
 
     def _dictionary(self, cur, dictionary_id):
         if dictionary_id is None:
@@ -329,6 +713,7 @@ class CompactCollection(SQLiteExactCollection):
                     ),
                 ).fetchone()[0]
                 self._put_vector(cur, rowid, cid, blob, scale, dim)
+                self._changed(cur, cid, [rowid])
                 cur.execute("DELETE FROM docs_fts WHERE rowid=?", (rowid,))
                 cur.execute(
                     "INSERT INTO docs_fts(rowid,document) VALUES (?,?)",
@@ -389,6 +774,7 @@ class CompactCollection(SQLiteExactCollection):
             self._ensure_collection_dimension(cur, cid, [u[4] for u in updates if u[4] is not None])
             if updates:
                 self._record_pending_identity(cur)
+            self._changed(cur, cid, [u[0] for u in updates])
             for rowid, sets, values, doc, _, vector_update, meta in updates:
                 if vector_update is not None:
                     self._put_vector(cur, rowid, cid, *vector_update)
@@ -496,34 +882,119 @@ class CompactCollection(SQLiteExactCollection):
     def _index_version(self, cur):
         if self._handle.immutable:
             db_path = self._backend._db_path(self._handle.palace_path)
-            if self._backend._database_signature(db_path) != self._handle.immutable_signature or (
-                os.path.exists(db_path + "-wal") and os.path.getsize(db_path + "-wal") > 0
+            try:
+                wal_has_frames = os.path.getsize(db_path + "-wal") > 0
+            except FileNotFoundError:
+                wal_has_frames = False
+            if (
+                self._backend._database_signature(db_path) != self._handle.immutable_signature
+                or wal_has_frames
             ):
                 raise _SnapshotChanged()
-        return (
-            self._handle.conn,
-            cur.execute("PRAGMA data_version").fetchone()[0],
-            self._handle.conn.total_changes,
-        )
+        return self._cache_version(cur)
 
     def _vectors(self, cur, cid, version):
+        generation = self._generation(cur)
         cached = self._handle._vector_cache.get(cid)
-        if cached is not None and cached[0] == version:
-            return cached[1:]
-        rows = cur.execute(
-            "SELECT rowid,embedding FROM vectors WHERE collection_id=? ORDER BY rowid",
-            (cid,),
-        ).fetchall()
-        dim = self._collection_dimension(cur, cid) or 0
-        rowids = np.fromiter((r[0] for r in rows), dtype=np.int64, count=len(rows))
-        matrix = (
-            np.frombuffer(b"".join(r[1] for r in rows), dtype=np.int8).reshape(len(rows), dim)
-            if rows
-            else np.empty((0, dim), dtype=np.int8)
+        if cached is not None and cached.version == generation:
+            return cached
+        count, first, last = cur.execute(
+            "SELECT COUNT(*),MIN(rowid),MAX(rowid) FROM vectors WHERE collection_id=?", (cid,)
+        ).fetchone()
+        cache = _VectorCache(
+            generation, self._collection_dimension(cur, cid) or 0, count, first or 0, last or 0
         )
-        norms = np.sqrt(np.einsum("ij,ij->i", matrix, matrix, dtype=np.int64)).astype(np.float32)
-        self._handle._vector_cache[cid] = (version, rowids, matrix, norms)
-        return rowids, matrix, norms
+        loader = self._handle.conn.cursor()
+        loader.row_factory = None
+        try:
+            loader.execute(
+                "SELECT rowid,embedding FROM vectors WHERE collection_id=? ORDER BY rowid",
+                (cid,),
+            )
+            while rows := loader.fetchmany(4096):
+                start, end = cache.size, cache.size + len(rows)
+                ids = np.fromiter((row[0] for row in rows), np.int64, count=len(rows))
+                cache.rowids[start:end] = ids
+                cache.rowid_index[ids - cache.offset] = np.arange(start, end, dtype=np.int32)
+                cache.matrix[start:end] = np.frombuffer(
+                    b"".join(row[1] for row in rows), np.int8
+                ).reshape(len(rows), cache.dimension)
+                cache.norms[start:end] = np.sqrt(
+                    np.einsum(
+                        "ij,ij->i", cache.matrix[start:end], cache.matrix[start:end], dtype=np.int64
+                    )
+                )
+                cache.size = end
+        finally:
+            loader.close()
+        self._handle._vector_cache[cid] = cache
+        return cache
+
+    @staticmethod
+    def _supports_loci(where):
+        return all(
+            all(CompactCollection._supports_loci(child) for child in value or [])
+            if key in {"$and", "$or"}
+            else key in {"wing", "room"} and _indexed_operand(value)
+            for key, value in where.items()
+        )
+
+    def _load_loci(self, cur, cid, cache):
+        """Enumerate distinct indexed values, then collect their indexed rowids.
+
+        Reading virtual columns across the entire collection evaluates JSON on
+        some SQLite builds. Seek to each distinct value instead; the rowid
+        aggregation needs only index entries. High-cardinality loci retain SQL
+        masks until the next vector reload rather than repeating this probe.
+        """
+        fields = (("wing", "idx_documents_coll_wing_room_hall"), ("room", "compact_room"))
+        distinct = {}
+        for key, index in fields:
+            prefix = f"FROM documents INDEXED BY {index} WHERE collection_id=? AND {key}"
+            values = []
+            if cur.execute(f"SELECT 1 {prefix} IS NULL LIMIT 1", (cid,)).fetchone():
+                values.append(None)
+            row = cur.execute(
+                f"SELECT {key} {prefix} IS NOT NULL ORDER BY {key} LIMIT 1", (cid,)
+            ).fetchone()
+            while row is not None:
+                values.append(row[0])
+                if len(values) > _MAX_LOCUS_VALUES:
+                    cache.loci_attempted = True
+                    return
+                row = cur.execute(
+                    f"SELECT {key} {prefix}>? ORDER BY {key} LIMIT 1", (cid, row[0])
+                ).fetchone()
+            distinct[key] = values
+        for key, index in fields:
+            book, array = cache.books[key], getattr(cache, key)
+            for raw in distinct[key]:
+                text = cur.execute(
+                    f"SELECT group_concat(rowid) FROM documents INDEXED BY {index} WHERE collection_id=? AND {key} IS ?",
+                    (cid, raw),
+                ).fetchone()[0]
+                ids = (
+                    np.fromstring(text, sep=",", dtype=np.int64) if text else np.empty(0, np.int64)
+                )
+                positions = cache.positions(ids)
+                valid = positions >= 0
+                if isinstance(raw, str) and raw.startswith(("[", "{")):
+                    # SQLite stores arrays/objects as text in the same index
+                    # range as JSON-looking strings. Split only these rows.
+                    ids, positions = ids[valid], positions[valid]
+                    for start in range(0, len(ids), 4096):
+                        kinds = dict(
+                            cur.execute(
+                                f"SELECT rowid,json_type(metadata_json,'$.{key}') FROM documents WHERE rowid IN (SELECT value FROM json_each(?))",
+                                (json.dumps(ids[start : start + 4096].tolist()),),
+                            )
+                        )
+                        array[positions[start : start + 4096]] = [
+                            book.code(raw, kinds[int(rowid)]) for rowid in ids[start : start + 4096]
+                        ]
+                else:
+                    array[positions[valid]] = book.code(raw)
+        cache.loci_ready = cache.loci_attempted = True
 
     def _query_once(
         self,
@@ -550,9 +1021,15 @@ class CompactCollection(SQLiteExactCollection):
         with self._cursor() as cur:
             cid = self._collection_id(cur)
             version = self._index_version(cur)
-            rowids, matrix, norms = self._vectors(cur, cid, version)
+            cache = self._vectors(cur, cid, version)
+            rowids = cache.rowids[: cache.size]
+            matrix = cache.matrix[: cache.size]
+            norms = cache.norms[: cache.size]
             candidates = None
-            if where or where_document:
+            cached_filter = cache.filter(where) if where and not where_document else None
+            if cached_filter is not None:
+                candidates = np.flatnonzero(cached_filter)
+            elif where or where_document:
                 found = self._select(
                     cur,
                     where=where,
@@ -560,17 +1037,17 @@ class CompactCollection(SQLiteExactCollection):
                     spec=_IncludeSpec(False, False, False, False),
                     rowids_only=True,
                 )
-                selected = np.fromiter(
-                    (r["rowid"] for r in found), dtype=np.int64, count=len(found)
-                )
-                # SQL masks need no row ordering. Sort compact rowids here
-                # for contiguous cache access without steering SQLite to a scan.
-                selected.sort()
-                candidates = np.searchsorted(rowids, selected)
-                valid = candidates < len(rowids)
-                candidates = candidates[valid]
-                selected = selected[valid]
-                candidates = candidates[rowids[candidates] == selected]
+                selected = np.fromiter((row["rowid"] for row in found), np.int64, count=len(found))
+                candidates = cache.positions(selected)
+                candidates = candidates[candidates >= 0]
+                candidates.sort()
+                if (
+                    not cache.loci_attempted
+                    and where
+                    and not where_document
+                    and self._supports_loci(where)
+                ):
+                    self._load_loci(cur, cid, cache)
             count = len(rowids) if candidates is None else len(candidates)
             for vector in query_embeddings:
                 q = _as_vector_array(vector)
@@ -640,7 +1117,10 @@ class CompactCollection(SQLiteExactCollection):
 
         return sqlite_collection_scope(self, where, compact=True)
 
-    def lexical_search(self, *, query, n_results=10, where=None):
+    def lexical_search(self, **kwargs):
+        return self._retry_snapshot(lambda: self._lexical_once(**kwargs))
+
+    def _lexical_once(self, *, query, n_results=10, where=None):
         from ..lexical import tokenize
 
         sql, params = _where_sql(where)
@@ -675,10 +1155,13 @@ class CompactCollection(SQLiteExactCollection):
                     "ORDER BY score,d.rowid LIMIT ?"
                 )
                 query_params = (match, cid, int(n_results))
+            version = self._index_version(cur)
             rows = cur.execute(query_sql, query_params).fetchall()
             result = self._hydrate_rowids(
                 cur, [r[0] for r in rows], _IncludeSpec(True, True, False, False), keyed=True
             )
+            if version != self._index_version(cur):
+                raise _SnapshotChanged()
             return LexicalResult(
                 hits=[
                     LexicalHit(
@@ -688,7 +1171,7 @@ class CompactCollection(SQLiteExactCollection):
                         score=max(0.0, -float(row[1])),
                     )
                     for row in rows
-                    if row[0] in result
+                    if row[0] in result and matches_where(result[row[0]].metadatas[0], where)
                 ]
             )
 
@@ -697,6 +1180,7 @@ class CompactCollection(SQLiteExactCollection):
             rows = self._select(
                 cur, ids=ids, where=where, spec=_IncludeSpec(False, False, False, False)
             )
+            self._changed(cur, self._collection_id(cur), [r["rowid"] for r in rows])
             rowids = json.dumps([r["rowid"] for r in rows])
             cur.execute(
                 "DELETE FROM docs_fts WHERE rowid IN (SELECT value FROM json_each(?))", (rowids,)
@@ -738,6 +1222,21 @@ class CompactCollection(SQLiteExactCollection):
             embeddings=[row["embedding"] for row in rows] if spec.embeddings else None,
         )
 
+    def _collection_snapshot(self, cur):
+        cid = self._collection_id(cur)
+        row = cur.execute(
+            "SELECT value FROM meta WHERE key=?", (f"compact_generation:{cid}",)
+        ).fetchone()
+        identity = cur.execute(
+            "SELECT value FROM meta WHERE key=?", (self._embedder_meta_key(),)
+        ).fetchone()
+        return (
+            cid,
+            int(row[0]) if row else 0,
+            self._collection_dimension(cur, cid),
+            identity[0] if identity else None,
+        )
+
     def reindex(self, embed, batch_size=256):
         """Stage quantized batches, then replace only vectors in one transaction.
 
@@ -745,9 +1244,14 @@ class CompactCollection(SQLiteExactCollection):
         Embedding runs outside the backend mutex/transaction, so request-lock
         handoffs cannot deadlock a second request using this connection.
         """
-        with tempfile.TemporaryDirectory(
-            prefix="compact-reindex-", dir=self._handle.palace_path
-        ) as directory:
+        from ..palace import mine_palace_lock
+
+        with (
+            mine_palace_lock(self._handle.palace_path),
+            _reindex_directory(self._handle.palace_path) as directory,
+        ):
+            with self._cursor() as cur:
+                snapshot = self._collection_snapshot(cur)
             stage = sqlite3.connect(os.path.join(directory, "vectors.sqlite3"))
             try:
                 stage.execute(
@@ -757,7 +1261,11 @@ class CompactCollection(SQLiteExactCollection):
                 dimensions = set()
                 while True:
                     with self._cursor() as cur:
-                        cid = self._collection_id(cur)
+                        if snapshot != self._collection_snapshot(cur):
+                            raise BackendError(
+                                "compact reindex aborted: collection changed during staging; retry reindex"
+                            )
+                        cid = snapshot[0]
                         rows = cur.execute(
                             "SELECT rowid,id,document,dictionary_id,metadata_json FROM documents WHERE collection_id=? AND rowid>? ORDER BY rowid LIMIT ?",
                             (cid, after, batch_size),
@@ -784,20 +1292,42 @@ class CompactCollection(SQLiteExactCollection):
                     stage.commit()
                     after = rows[-1]["rowid"]
                 with self._cursor(write=True) as cur:
+                    if snapshot != self._collection_snapshot(cur):
+                        raise BackendError(
+                            "compact reindex aborted: collection changed during staging; retry reindex"
+                        )
                     cid = self._collection_id(cur)
+                    self._changed(cur, cid)
+                    cur.execute("DELETE FROM vectors WHERE collection_id=?", (cid,))
                     cur.execute("UPDATE collections SET dimension=NULL WHERE id=?", (cid,))
                     self._ensure_collection_dimension(cur, cid, list(dimensions))
                     staged = stage.execute("SELECT rowid,embedding,scale,dim FROM staged")
                     while batch := staged.fetchmany(batch_size):
                         for rowid, blob, scale, dim in batch:
                             self._put_vector(cur, rowid, cid, blob, scale, dim)
+                    invalid = cur.execute(
+                        "SELECT 1 FROM vectors v LEFT JOIN documents d ON d.rowid=v.rowid "
+                        "JOIN collections c ON c.id=v.collection_id "
+                        "WHERE v.collection_id=? AND (v.dim IS NOT c.dimension OR d.collection_id IS NOT v.collection_id) LIMIT 1",
+                        (cid,),
+                    ).fetchone()
+                    expected = stage.execute(
+                        "SELECT COUNT(*) FROM staged WHERE embedding IS NOT NULL"
+                    ).fetchone()[0]
+                    actual = cur.execute(
+                        "SELECT COUNT(*) FROM vectors WHERE collection_id=?", (cid,)
+                    ).fetchone()[0]
+                    if invalid or expected != actual:
+                        raise BackendError(
+                            "compact reindex vector verification failed; original vectors retained"
+                        )
             finally:
                 stage.close()
 
     def maintenance_state(self):
         state = super().maintenance_state()
         with self._cursor() as cur:
-            state["consistency_token"] = list(self._index_version(cur)[1:])
+            state["consistency_token"] = list(self._cache_version(cur)[1:])
         return state
 
 
@@ -823,8 +1353,12 @@ class CompactBackend(SQLiteExactBackend):
                 return handle
             if handle.conn.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
                 raise BackendError("not a compact palace database (application_id mismatch)")
-            if handle.conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
-                raise BackendError("unsupported compact schema version")
+            self._validate_schema(handle.conn)
+            if not read_only:
+                from ..palace import mine_palace_lock
+
+                with mine_palace_lock(palace_path):
+                    _cleanup_reindex(palace_path)
             from ..stored_text import decode_value
             from ._filters import matches_where_document
 
@@ -848,56 +1382,211 @@ class CompactBackend(SQLiteExactBackend):
                 return matches_where_document(doc, json.loads(predicate))
 
             handle.conn.create_function("compact_document_match", 4, document_match)
+            # Old read-only files can lack a token until their next writable
+            # open. Keep those caches private to this connection lifetime.
+            file_id = handle.conn.execute("SELECT value FROM meta WHERE key='file_id'").fetchone()
+            handle.compact_shared = _file_cache(
+                self._db_path(palace_path), file_id[0] if file_id else uuid.uuid4().hex
+            )
+            handle._vector_cache = handle.compact_shared.collections
             handle.compact_functions_registered = True
         return handle
 
-    def _init_schema(self, conn):
+    @staticmethod
+    def _release_cache(handle):
+        with handle.lock:
+            handle._vector_cache = {}
+            handle.compact_shared = None
+
+    def _retire_read_only_handle(self, palace_path, handle):
+        try:
+            super()._retire_read_only_handle(palace_path, handle)
+        finally:
+            self._release_cache(handle)
+
+    def close_palace(self, palace):
+        path = palace.local_path if hasattr(palace, "local_path") else palace
+        with self._clients_lock:
+            handles = [self._clients.get(path), self._read_only_clients.get(path)]
+        try:
+            super().close_palace(palace)
+        finally:
+            for handle in handles:
+                if handle is not None:
+                    self._release_cache(handle)
+
+    def close(self):
+        with self._clients_lock:
+            handles = list(self._clients.values()) + list(self._read_only_clients.values())
+            self._closed = True
+        try:
+            super().close()
+        finally:
+            for handle in handles:
+                self._release_cache(handle)
+
+    @staticmethod
+    def _missing_schema(conn):
+        objects = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        missing = _REQUIRED_OBJECTS - objects
+        for table, required in {
+            "documents": {
+                "rowid",
+                "collection_id",
+                "id",
+                "document",
+                "dictionary_id",
+                "raw_size",
+                "metadata_json",
+                "wing",
+                "room",
+                "parent_drawer_id",
+                "parent_entry_id",
+            },
+            "vectors": {"rowid", "collection_id", "embedding", "scale", "dim"},
+            "collections": {"id", "name", "dimension", "created_at"},
+        }.items():
+            if table in objects:
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")}
+                missing.update(f"{table}.{column}" for column in required - columns)
+        return missing
+
+    @staticmethod
+    def _check_version(conn):
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != _SCHEMA_VERSION:
+            guidance = (
+                "upgrade MemPalace"
+                if version > _SCHEMA_VERSION
+                else (
+                    "read-only searches require an in-place upgrade first; open writable once "
+                    "to upgrade without rebuilding, or run mempalace --palace PATH repair "
+                    "rebuild-index (re-embeds every drawer)"
+                    if version == 1
+                    else "recover from a backup"
+                )
+            )
+            raise BackendError(f"unsupported compact format version {version}; {guidance}")
+
+    @classmethod
+    def _missing_data_schema(cls, conn):
+        return {item for item in cls._missing_schema(conn) if item in _DATA_OBJECTS or "." in item}
+
+    @classmethod
+    def _validate_schema(cls, conn):
+        cls._check_version(conn)
+        missing = cls._missing_schema(conn)
+        if missing:
+            raise BackendError(
+                "incomplete compact schema (missing " + ", ".join(sorted(missing)) + "); "
+                "open writable to restore derived indexes, or run mempalace repair rebuild-index "
+                "to complete an empty palace; missing data tables in populated palaces require a backup"
+            )
+
+    def repair_empty_schema(self, palace_path):
+        """Complete missing objects only; never drop tables or overwrite data."""
+        from ..palace import mine_palace_lock
+
+        with mine_palace_lock(palace_path):
+            db_path = Path(self._db_path(palace_path)).resolve()
+            if not db_path.is_file():
+                raise PalaceNotFoundError("compact palace database does not exist")
+            try:
+                conn = sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True)
+            except sqlite3.OperationalError as exc:
+                raise BackendError("could not open compact palace for repair") from exc
+            try:
+                if (
+                    not self._missing_schema(conn)
+                    and conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
+                ):
+                    return False
+                self._init_schema(conn, repair_empty=True)
+                return True
+            finally:
+                conn.close()
+
+    def _init_schema(self, conn, *, repair_empty=False):
         application_id = conn.execute("PRAGMA application_id").fetchone()[0]
-        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         if application_id != _APPLICATION_ID and (application_id != 0 or tables):
             raise BackendError("not a compact palace database (application_id mismatch)")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, _SCHEMA_VERSION):
-            raise BackendError(f"unsupported compact schema version: {version}")
-        if not tables:
+        fresh = not tables
+        if tables:
+            if version not in (1, _SCHEMA_VERSION):
+                self._check_version(conn)
+            missing_data = self._missing_data_schema(conn)
+            if missing_data:
+                if not repair_empty:
+                    self._validate_schema(conn)
+                if (
+                    "documents" in tables
+                    and conn.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
+                ):
+                    raise BackendError(
+                        "cannot complete compact schema containing documents; recover from a backup"
+                    )
+            if not self._missing_schema(conn) and version == _SCHEMA_VERSION:
+                if not conn.execute("SELECT 1 FROM meta WHERE key='file_id'").fetchone():
+                    conn.execute("INSERT INTO meta VALUES ('file_id',?)", (uuid.uuid4().hex,))
+                    conn.commit()
+                if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                    conn.execute("PRAGMA journal_mode=WAL")
+                return
+        elif version not in (0, _SCHEMA_VERSION):
+            self._check_version(conn)
+        # The format stamp and schema reach the main file in the same commit.
+        # Switching to WAL afterwards leaves detection correct even on a crash.
+        if fresh:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        try:
+            conn.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,dimension INTEGER,created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS dictionaries(id INTEGER PRIMARY KEY AUTOINCREMENT,collection_id INTEGER UNIQUE NOT NULL,data BLOB NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS immutable_dictionary BEFORE UPDATE ON dictionaries
+                    BEGIN SELECT RAISE(ABORT,'compact dictionaries are immutable'); END;
+                CREATE TABLE IF NOT EXISTS documents(
+                    rowid INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL,id TEXT NOT NULL,document BLOB NOT NULL,
+                    dictionary_id INTEGER,raw_size INTEGER NOT NULL,metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+                    wing AS (json_extract(metadata_json,'$.wing')) VIRTUAL,
+                    room AS (json_extract(metadata_json,'$.room')) VIRTUAL,
+                    hall AS (json_extract(metadata_json,'$.hall')) VIRTUAL,
+                    parent_drawer_id AS (json_extract(metadata_json,'$.parent_drawer_id')) VIRTUAL,
+                    parent_entry_id AS (json_extract(metadata_json,'$.parent_entry_id')) VIRTUAL,
+                    UNIQUE(collection_id,id));
+                CREATE TABLE IF NOT EXISTS vectors(rowid INTEGER PRIMARY KEY,collection_id INTEGER NOT NULL,
+                    embedding BLOB NOT NULL,scale BLOB NOT NULL,dim INTEGER NOT NULL,
+                    CHECK(length(embedding)=dim AND length(scale)=4 AND dim>0));
+                CREATE INDEX IF NOT EXISTS compact_vectors_collection ON vectors(collection_id);
+                CREATE TRIGGER IF NOT EXISTS delete_vector AFTER DELETE ON documents BEGIN
+                    DELETE FROM vectors WHERE rowid=old.rowid; END;
+                CREATE TRIGGER IF NOT EXISTS dictionary_in_use BEFORE DELETE ON dictionaries
+                    WHEN EXISTS(SELECT 1 FROM documents WHERE dictionary_id=old.id)
+                    BEGIN SELECT RAISE(ABORT,'compact dictionary is in use'); END;
+                CREATE INDEX IF NOT EXISTS compact_parent_drawer ON documents(parent_drawer_id,collection_id);
+                CREATE INDEX IF NOT EXISTS compact_parent_entry ON documents(parent_entry_id,collection_id);
+                CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(document,content='',contentless_delete=1);
+                INSERT OR IGNORE INTO meta VALUES ('fts5_available','1');
+            """)
+            self._ensure_locus_columns(conn)
+            conn.execute("INSERT OR IGNORE INTO meta VALUES ('file_id',?)", (uuid.uuid4().hex,))
+            conn.execute("CREATE INDEX IF NOT EXISTS compact_room ON documents(collection_id,room)")
             conn.execute(f"PRAGMA application_id={_APPLICATION_ID}")
             conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
-        else:
-            return
-        conn.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,dimension INTEGER,created_at TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS dictionaries(id INTEGER PRIMARY KEY AUTOINCREMENT,collection_id INTEGER UNIQUE NOT NULL,data BLOB NOT NULL);
-            CREATE TRIGGER IF NOT EXISTS immutable_dictionary BEFORE UPDATE ON dictionaries
-                BEGIN SELECT RAISE(ABORT,'compact dictionaries are immutable'); END;
-            CREATE TABLE IF NOT EXISTS documents(
-                rowid INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL,id TEXT NOT NULL,document BLOB NOT NULL,
-                dictionary_id INTEGER,raw_size INTEGER NOT NULL,metadata_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
-                wing AS (json_extract(metadata_json,'$.wing')) VIRTUAL,
-                room AS (json_extract(metadata_json,'$.room')) VIRTUAL,
-                hall AS (json_extract(metadata_json,'$.hall')) VIRTUAL,
-                parent_drawer_id AS (json_extract(metadata_json,'$.parent_drawer_id')) VIRTUAL,
-                parent_entry_id AS (json_extract(metadata_json,'$.parent_entry_id')) VIRTUAL,
-                UNIQUE(collection_id,id));
-            CREATE TABLE vectors(rowid INTEGER PRIMARY KEY,collection_id INTEGER NOT NULL,
-                embedding BLOB NOT NULL,scale BLOB NOT NULL,dim INTEGER NOT NULL,
-                CHECK(length(embedding)=dim AND length(scale)=4 AND dim>0));
-            CREATE INDEX compact_vectors_collection ON vectors(collection_id);
-            CREATE TRIGGER delete_vector AFTER DELETE ON documents BEGIN
-                DELETE FROM vectors WHERE rowid=old.rowid; END;
-            CREATE TRIGGER dictionary_in_use BEFORE DELETE ON dictionaries
-                WHEN EXISTS(SELECT 1 FROM documents WHERE dictionary_id=old.id)
-                BEGIN SELECT RAISE(ABORT,'compact dictionary is in use'); END;
-            CREATE INDEX IF NOT EXISTS compact_parent_drawer ON documents(parent_drawer_id,collection_id);
-            CREATE INDEX IF NOT EXISTS compact_parent_entry ON documents(parent_entry_id,collection_id);
-            CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(document,content='',contentless_delete=1);
-            INSERT OR IGNORE INTO meta VALUES ('fts5_available','1');
-        """)
-        self._ensure_locus_columns(conn)
-        conn.commit()
+            self._validate_schema(conn)
+            conn.commit()
+            if fresh:
+                conn.execute("PRAGMA journal_mode=WAL")
+        except BaseException:
+            conn.rollback()
+            raise
 
     def get_collection(self, *args, **kwargs):
         # sqlite_exact supplies lifecycle/creation; its returned wrapper has
@@ -966,6 +1655,7 @@ class CompactBackend(SQLiteExactBackend):
             cur.execute("DELETE FROM documents WHERE collection_id=?", (cid,))
             cur.execute("DELETE FROM dictionaries WHERE collection_id=?", (cid,))
             cur.execute("DELETE FROM collections WHERE id=?", (cid,))
+            collection._changed(cur, cid)
 
 
 # These readers touch only unchanged metadata columns, never compressed text.

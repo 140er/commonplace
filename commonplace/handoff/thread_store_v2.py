@@ -481,12 +481,16 @@ class ThreadStoreV2(V1ThreadStore):
     def _messages(self, stored_id, start, end, *, raw, cache=None):
         if start < 0 or (end is not None and (end < 0 or end < start)):
             return []
-        rows = self._conn.execute(
+        query = (
             "SELECT m.*, l.block_idx FROM message m JOIN line l "
             "ON l.thread_id=m.thread_id AND l.idx=m.line_idx "
-            "WHERE m.thread_id=? AND seq>=? AND (? IS NULL OR seq<=?) ORDER BY seq",
-            (stored_id, start, end, end),
-        ).fetchall()
+            "WHERE m.thread_id=? AND seq>=?"
+        )
+        params = (stored_id, start)
+        if end is not None:
+            query += " AND seq<=?"
+            params += (end,)
+        rows = self._conn.execute(query + " ORDER BY seq", params).fetchall()
         result = []
         if cache is None:
             cache = {}

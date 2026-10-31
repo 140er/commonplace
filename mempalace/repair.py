@@ -1785,7 +1785,11 @@ def rebuild_index(
         from .backends.embedding_wrapper import EmbeddingCollection
 
         with mine_palace_lock(palace_path):
-            collection = backend.get_collection(palace_path, collection_name)
+            recovered = backend.repair_empty_schema(palace_path)
+            collection = backend.get_collection(palace_path, collection_name, create=recovered)
+            if not collection.count():
+                progress("  Compact schema is complete; no records to reindex.")
+                return
             wrapper = EmbeddingCollection(collection)
             collection.reindex(wrapper._compact_vectors)
             _record_rebuilt_embedder_identity(collection, palace_path)
