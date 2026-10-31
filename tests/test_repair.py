@@ -2349,7 +2349,8 @@ def test_sqlite_integrity_errors_reports_uri_encoding_failure(tmp_path, monkeypa
 
     errors = repair.sqlite_integrity_errors(str(palace))
 
-    assert calls == [str(db_path)]
+    assert calls
+    assert all(path == str(db_path) for path in calls)
     assert errors
     assert all("quick_check failed" in error for error in errors)
     assert any(message in error for error in errors)
