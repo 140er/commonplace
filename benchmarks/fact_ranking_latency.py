@@ -5,8 +5,9 @@ The corpus mirrors the review probe: one source per fact, nine predicates,
 and entity names sharing common words. Queries cover broad, selective, and
 all-common terms, with broad gateway scopes, small non-empty scopes, and
 all matches hidden, as well as ordinary unscoped and single-wing reads.
-The scattered scope has 1,001 rows; the old wing takes the lowest 5,000
-available docids (fewer in the 5k corpus to leave room for other scopes).
+The scattered scope has 1,001 rows. The old_5k scope takes exactly the lowest
+5,000 available docids; old_5001 adds the next docid to the same scope. These
+two cases are omitted when the corpus cannot also fit the other scopes.
 Timings exclude seeding and the one-time index build, and
 report the optional fact lookup's added wall time per search.
 """
@@ -33,12 +34,22 @@ SCOPES = (
     ("gateway_1wing", ["wing_3"], ["public", "internal"]),
     (
         "gateway",
-        ["wing_0", "wing_1", "wing_2", "wing_3", "sparse", "scattered_1001", "old_5k"],
+        [
+            "wing_0",
+            "wing_1",
+            "wing_2",
+            "wing_3",
+            "sparse",
+            "scattered_1001",
+            "old_5k",
+            "old_boundary",
+        ],
         ["public", "internal"],
     ),
     ("sparse", ["sparse"], None),
     ("scattered_1001", ["scattered_1001"], None),
     ("old_5k", ["old_5k"], None),
+    ("old_5001", ["old_5k", "old_boundary"], None),
     ("hidden", ["hidden"], None),
 )
 PREDICATES = (
@@ -101,22 +112,31 @@ def measure(size, repeats=3):
                 )
             ]
             scattered_size = min(1001, len(ordered_ids))
-            # Leave ordinary wings populated in the smallest corpus too.
-            old_size = min(5000, (len(ordered_ids) - scattered_size) // 2)
+            # Keep both old scopes exact, with room for the ordinary wings too.
+            has_old_scopes = len(ordered_ids) > 5001 + scattered_size
+            old_end = 5001 if has_old_scopes else 0
             with conn:
-                conn.executemany(
-                    "UPDATE triples SET wing='old_5k' WHERE id=?",
-                    ((triple_id,) for triple_id in ordered_ids[:old_size]),
-                )
+                if has_old_scopes:
+                    conn.executemany(
+                        "UPDATE triples SET wing='old_5k' WHERE id=?",
+                        ((triple_id,) for triple_id in ordered_ids[:5000]),
+                    )
+                    conn.execute(
+                        "UPDATE triples SET wing='old_boundary' WHERE id=?", (ordered_ids[5000],)
+                    )
                 conn.executemany(
                     "UPDATE triples SET wing='scattered_1001' WHERE id=?",
                     (
                         (triple_id,)
-                        for triple_id in rng.sample(ordered_ids[old_size:], scattered_size)
+                        for triple_id in rng.sample(ordered_ids[old_end:], scattered_size)
                     ),
                 )
             rows = []
+            skipped_scopes = []
             for scope, wings, sensitivities in SCOPES:
+                if scope in ("old_5k", "old_5001") and not has_old_scopes:
+                    skipped_scopes.append(scope)
+                    continue
                 for query in QUERIES:
                     search_facts(kg, query, wings=wings, sensitivities=sensitivities)
                     samples = []
@@ -134,7 +154,12 @@ def measure(size, repeats=3):
                             "samples_ms": samples,
                         }
                     )
-            return {"facts": size, "repeats": repeats, "lookups": rows}
+            return {
+                "facts": size,
+                "repeats": repeats,
+                "lookups": rows,
+                "skipped_scopes": skipped_scopes,
+            }
 
 
 if __name__ == "__main__":

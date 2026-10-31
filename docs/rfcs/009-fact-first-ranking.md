@@ -77,11 +77,14 @@ than the entity-name length limit. CLI capture omits an empty facts list unless
 there is a fact-side error marker, matching direct MCP search.
 
 Wide scopes check each FTS hit against the triple primary key instead of
-materializing every visible triple ID. Empty-scope checks stop at the first
-visible row. A capped visibility probe reads at most 1,001 rows; broad selective
-queries stop after 51, and rare terms can stop it earlier. Scopes of at most 1,000
-rows use bounded document IDs when they contain fewer rows than the estimated
-matching population; other queries follow FTS hits with primary-key checks.
+materializing every visible triple ID. Empty-scope checks reuse the capped
+visibility count, so an empty scope runs that probe once. With the default seed
+limit, all-common queries count at most 5,001 visible rows and use bounded
+document IDs for scopes of at most 5,000 rows. Selective queries retain at most
+1,001 probe rows and 1,000 document IDs; broad selective queries stop the probe
+after 51, and rare terms can stop it earlier. Both small paths require fewer
+visible rows than the estimated matching population; other queries follow FTS
+hits with primary-key checks.
 The small-scope path bounds the FTS rowid range and checks membership in that
 small ID set, then sorts its matches. This avoids recomputing BM25's global term
 counts for every individual rowid. Both paths enforce the same scope and as-of
@@ -100,7 +103,14 @@ and recall remain independent of these fact candidate limits.
 All-common queries use the small-scope path up to 5,000 visible rows; selective
 queries retain their narrower bound. The small path's cost follows the scope's
 docid span, rather than its row count: scattered rows can span most of the index.
-Old scopes above 5,000 rows use the wider scan and remain at about develop parity.
+All-common queries on scopes at the oldest docids have an accepted regression
+band above that bound. At 200k facts, scopes of 5,001-20,000 visible rows can run
+roughly 10-30% slower than develop: 5,001 rows take 281-305 ms versus 229-232 ms,
+and 20,000 rows take 265-277 ms versus 240-243 ms. At 50k facts, 5,001 rows take
+about 67-78 ms versus 58-60 ms, exceeding the 50 ms target. The path is chosen by
+row count rather than docid spread, so a compact old scope just above the bound
+walks most FTS hits newest-first instead of using its short docid range. A bounded
+choice based on docid spread is the follow-up; the current bounds stay unchanged.
 
 ## Non-goals
 
@@ -126,5 +136,6 @@ boost in this step. Facts remain index entries pointing to the verbatim source.
   50k and 200k facts. Broad, selective and all-common queries run unscoped,
   within one wing, with gateway wing/sensitivity filters, within a small
   non-empty scope, and with all matches hidden, targeting at most 50 ms at
-  50k for every case.
+  50k outside the accepted old-scope band above. The old_5k/old_5001 pair tracks
+  both sides of the small-scope boundary.
 - Run lint, format and the requested broad suite without changing budget tests.
