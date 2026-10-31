@@ -170,7 +170,7 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 ok #145 → user:avery  review
 ```
 
-An agent can also hand off a card it does not hold, but only from `todo` and only to a person: that is how an agent asks a question before starting work.
+An agent can also hand off a card it does not hold, but only from `todo`, only when it is free or reserved for that agent, and only to a person: that is how an agent asks a question before starting work.
 
 ## Move rules
 
@@ -183,7 +183,7 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 | doing → done | `task_update` (holder) | yes |
 | review → done | `task_update` (asking agent only; subject to `done_needs_review`) | `decide` only |
 | review → other columns | `decide` only (never own asks) | `decide` only |
-| todo → review | `task_update` or `task_handoff` to a person | yes |
+| todo → review | `task_update` or `task_handoff` to a person (free or self-reserved) | yes |
 | todo → done | `task_update` | no |
 | done → todo | status-only `task_update` | yes |
 | any → backlog | holder, or a free `todo` card | yes |

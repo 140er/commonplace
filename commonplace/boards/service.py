@@ -1205,9 +1205,8 @@ class BoardService:
         person = target is not None and target.startswith("user:")
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        if row["status"] == "doing":
-            self._holder(row)
-        elif not person and not self.principal.person:
+        self._holder(row)
+        if row["status"] == "todo" and not person and not self.principal.person:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
         options = choices(options)
