@@ -25,7 +25,7 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo`), `assignee?` | slim, standard, full |
 | `task_comment` | `task`, `text` | slim, standard, full |
 | `task_take_next` | `board?`, `task?` | standard, full |
-| `task_update` | `task`, `title?`, `body?`, `status?` (`doing` \| `done` \| `backlog`), `before?`, `after?`, `link?`, `unlink?`, `lesson?` | standard, full |
+| `task_update` | `task`, `title?`, `body?`, `status?` (`backlog` \| `todo` \| `doing` \| `review` \| `done`), `before?`, `after?`, `link?`, `unlink?`, `lesson?` | standard, full |
 | `task_handoff` | `task`, `to`, `note`, `options?` | standard, full |
 
 `untrusted` tokens never get `task_take_next`, `task_update` or `task_handoff`, whatever their profile.
@@ -142,6 +142,7 @@ COMMIT;
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
 
+- Agents may move free or self-reserved `todo` cards to `review` or `done`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Leaving `review` requires `decide`; agents cannot answer their own asks.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with the ask `Done?` and options `ship | redo`.
 - `lesson` (with `status: "done"`) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
 - `before` / `after` take a task ID; the server picks a position between the neighbours.
@@ -178,11 +179,12 @@ An agent can also hand off a card it does not hold, but only from `todo` and onl
 | backlog → todo | no | yes |
 | todo → doing | `task_take_next` only | yes (holds it, no expiry) |
 | doing → todo | `task_handoff` (holder) | yes |
-| doing → review | `task_handoff` to a person (holder) | yes |
+| doing → review | `task_update` or `task_handoff` to a person (holder) | yes |
 | doing → done | `task_update` (holder) | yes |
 | review → anything | no | `decide` only |
-| todo → review | `task_handoff` to a person | yes |
-| done → todo | no | yes |
+| todo → review | `task_update` or `task_handoff` to a person | yes |
+| todo → done | `task_update` | no |
+| done → todo | status-only `task_update` | yes |
 | any → backlog | holder, or a free `todo` card | yes |
 
 ## HTTP JSON for the web UI

@@ -126,13 +126,17 @@ MOVES = [
     ("todo", "doing", "take", True),
     ("doing", "todo", "update", False),
     ("doing", "todo", "handoff", True),
-    ("doing", "review", "update", False),
+    ("doing", "review", "update", True),
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
+    ("review", "done", "update", False),
+    ("review", "backlog", "update", False),
     ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
     ("todo", "review", "handoff", True),
-    ("done", "todo", "update", False),
+    ("todo", "review", "update", True),
+    ("todo", "done", "update", True),
+    ("done", "todo", "update", True),
     ("todo", "backlog", "update", True),
     ("doing", "backlog", "update", True),
 ]
@@ -198,6 +202,21 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
         ok = status == 200
     assert ok is allowed
     assert owner.task_show(number)["status"] == (new if allowed else old)
+    if allowed and operation == "update":
+        with owner.store.connection() as conn:
+            event = conn.execute(
+                "SELECT * FROM task_events WHERE task_id=? AND kind='move' ORDER BY id DESC",
+                (number,),
+            ).fetchone()
+        assert event["stamp_connection"] == agent.actor.removeprefix("conn:")
+        assert (event["from_status"], event["to_status"]) == (old, new)
+        emitted = [
+            e
+            for e in events.after(hub.db, hub.workspace)
+            if e["kind"] == "card.moved" and e["data"]["number"] == number
+        ]
+        assert emitted[-1]["data"]["from"] == old
+        assert emitted[-1]["data"]["to"] == new
 
 
 @pytest.mark.parametrize(
@@ -879,3 +898,27 @@ def test_board_flags_union_privacy_scan_without_changing_text(hub, env):
     owner.task_comment(created["number"], "https://user:password@example.com")
     shown = owner.task_show(created["number"])
     assert "secret:password_url" in shown["flags"]
+
+
+@pytest.mark.parametrize("old", ["todo", "doing"])
+def test_agent_done_routes_to_review_with_audit(hub, env, old):
+    _token, agent, _person, _cookie, owner = env
+    worker = service(hub, agent)
+    created = worker.task_add(board="work", title="Finish")
+    if old == "doing":
+        worker.task_take_next(task=created["number"])
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='work'")
+    changed = worker.task_update(created["number"], status="done")
+    assert changed["status"] == "review"
+    assert changed["ask"] == "Done?"
+    assert changed["ask_options"] == ["ship", "redo"]
+    with owner.store.connection() as conn:
+        event = conn.execute(
+            "SELECT * FROM task_events WHERE task_id=? AND kind='move' ORDER BY id DESC",
+            (created["number"],),
+        ).fetchone()
+    assert event["stamp_connection"] == agent.actor.removeprefix("conn:")
+    assert (event["from_status"], event["to_status"]) == (old, "review")
+    with pytest.raises(ToolError):
+        worker.decide(task=created["number"], choice="ship", then="done")
