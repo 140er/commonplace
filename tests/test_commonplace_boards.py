@@ -947,7 +947,10 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
             ).fetchone()[0]
             == 0
         )
-    last = current["events"][-1]
+    with owner.store.connection() as conn:
+        last = conn.execute(
+            "SELECT * FROM task_events WHERE task_id=? ORDER BY id DESC", (number,)
+        ).fetchone()
     assert (last["from_status"], last["to_status"]) == (
         "review",
         "review" if needs_review else "done",
@@ -958,7 +961,8 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         assert current["return_to"] is None and current["ask_options"] == []
     if needs_review:
         assert last["text"] == "Done?"
-        assert last["options"] == ["ship", "redo"]
+        assert json.loads(last["options"]) == ["ship", "redo"]
+        assert current["events"][-1]["options"] == ["ship", "redo"]
         assert last["target"] == current["ask_to"]
         assert current["ask"] == "Done?"
         assert current["ask_options"] == ["ship", "redo"]

@@ -1182,7 +1182,7 @@ class BoardService:
             self._log(
                 conn,
                 row["id"],
-                "move" if moved else "edit",
+                "move" if moved or updates.get("ask") is not None else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
                 **ask,
