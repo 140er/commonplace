@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import tempfile
+from contextlib import ExitStack
 
 # ── Isolate HOME before any mempalace imports ──────────────────────────
 _original_env = {}
@@ -177,27 +178,47 @@ def _reset_loaded_mcp_writer_state(mcp_server) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _close_test_chroma_clients(monkeypatch):
-    """Own raw Chroma clients until teardown, including discarded references.
+def _close_test_storage_clients(monkeypatch):
+    """Own storage handles until teardown, including discarded references.
 
     Chroma's shared System retains SQLite and index handles until every client
-    closes. Deleting a Python client does not release its System reference.
-    Backend cache cleanup alone misses clients constructed directly by tests.
+    closes. Backend registries and SQLite connection cycles also outlive test
+    locals, so dereferencing temporary stores is not sufficient cleanup.
     """
     from chromadb.api.client import Client
 
-    clients = []
-    original_init = Client.__init__
+    from commonplace.control_db import ControlDB
+    from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
-    def tracked_init(client, *args, **kwargs):
-        original_init(client, *args, **kwargs)
-        clients.append(client)
+    resources = ExitStack()
+    palaces = set()
+    original_client_init = Client.__init__
+    original_control_init = ControlDB.__init__
+    original_connect = SQLiteExactBackend._connect
 
-    monkeypatch.setattr(Client, "__init__", tracked_init)
+    def tracked_client_init(client, *args, **kwargs):
+        original_client_init(client, *args, **kwargs)
+        resources.callback(client.close)
+
+    def tracked_control_init(database, *args, **kwargs):
+        original_control_init(database, *args, **kwargs)
+        resources.callback(database.close)
+
+    def tracked_connect(backend, palace_path, *args, **kwargs):
+        result = original_connect(backend, palace_path, *args, **kwargs)
+        key = (id(backend), palace_path)
+        if key not in palaces:
+            palaces.add(key)
+            # Release handles without closing the reusable registry backend.
+            resources.callback(backend.close_palace, palace_path)
+        return result
+
+    monkeypatch.setattr(Client, "__init__", tracked_client_init)
+    monkeypatch.setattr(ControlDB, "__init__", tracked_control_init)
+    monkeypatch.setattr(SQLiteExactBackend, "_connect", tracked_connect)
     yield
     try:
-        for client in reversed(clients):
-            client.close()
+        resources.close()
     finally:
         # Header probes deliberately retain connections while a palace is live
         # to preserve POSIX locks. Release them only after all test clients.
@@ -208,7 +229,7 @@ def _close_test_chroma_clients(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _release_palace_anchors(_close_test_chroma_clients):
+def _release_palace_anchors(_close_test_storage_clients):
     """Close anchor connections on ``chroma.sqlite3`` after each test.
 
     On Linux mempalace keeps one idle connection per database inode for the life
@@ -262,7 +283,7 @@ def _utc_local_zone(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_mcp_cache(monkeypatch, _close_test_chroma_clients):
+def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
     """Reset cached MCP state between tests without importing mcp_server.
 
     If mempalace.mcp_server is already imported, release its writer lease,
