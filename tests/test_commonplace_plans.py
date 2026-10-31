@@ -20,7 +20,8 @@ from commonplace.social import accounts
 from commonplace.social.providers import Profile
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_commonplace_boards import api
-from tests.test_commonplace_web import login
+from tests.test_commonplace_oauth import Client as OAuthClient
+from tests.test_commonplace_web import login, request
 
 STORAGE_MESSAGE = (
     "Je opslag is vol: het gratis plan heeft 250 MB. Verwijder iets om weer ruimte te maken. / "
@@ -191,6 +192,48 @@ def test_full_storage_allows_reads_worker_deletions_and_local_removals(hub, monk
     assert api(hub, token, "GET", "/api/boards")[0] == 200
     assert not tool(hub, token, "mempalace_list_wings")["result"].get("isError")
     assert "tools" in hub.rpc(token, "tools/list")["result"]
+    assert not audits(hub, "plan.limit")
+
+
+def test_full_storage_allows_logout_and_ends_session(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    monkeypatch.setenv("COMMONPLACE_PLANS", "on")
+    assign(hub)
+    fill(hub, plans.FREE.storage_bytes + 1)
+    status, _, _ = request(
+        hub, "/app/logout", "POST", headers={**cookie, "Content-Type": "application/json"}
+    )
+    assert status == 204
+    assert api(hub, cookie, "GET", "/api/me")[0] == 401
+    assert not audits(hub, "plan.limit")
+
+
+def test_full_storage_allows_oauth_consent(hub, monkeypatch):
+    client = OAuthClient(hub)
+    client_id = client.register(client_name="test")
+    client.login(email=hub.db.user(hub.admin)["email"])
+    monkeypatch.setenv("COMMONPLACE_PLANS", "on")
+    assign(hub)
+    fill(hub, plans.FREE.storage_bytes + 1)
+    assert client.consent(client_id)
+    assert not audits(hub, "plan.limit")
+
+
+def test_full_storage_allows_signed_in_provider_callback(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    monkeypatch.setitem(hub.gateway.sign_in.providers, "apple", SimpleNamespace(id="apple"))
+    monkeypatch.setenv("COMMONPLACE_PLANS", "on")
+    assign(hub)
+    fill(hub, plans.FREE.storage_bytes + 1)
+    status, headers, _ = request(
+        hub,
+        "/app/auth/apple/callback",
+        "POST",
+        body="state=missing",
+        headers={**cookie, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert status == 303
+    assert "signin=expired" in headers["Location"]
     assert not audits(hub, "plan.limit")
 
 

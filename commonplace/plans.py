@@ -186,9 +186,7 @@ class StorageMeter:
 
 
 def transcription_used(db, user_id: str) -> int:
-    """The future server transcription endpoint (Moonshine/Whisper) must call
-    use_transcription with the clip length before transcribing.
-    """
+    """Return today's transcription seconds (UTC)."""
     with db._lock:
         row = db._conn.execute(
             "SELECT seconds FROM transcription_usage WHERE user_id = ? AND day = ?",
@@ -198,6 +196,9 @@ def transcription_used(db, user_id: str) -> int:
 
 
 def use_transcription(db, user_id: str, seconds: int) -> None:
+    """The future server transcription endpoint (Moonshine/Whisper) must call
+    use_transcription with the clip length before transcribing.
+    """
     if not enabled():
         return
     plan = get_plan(db, user_id)

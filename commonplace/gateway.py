@@ -1265,6 +1265,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         handler(self)
 
     def _plan_limit(self, path, principal, request, plan):
+        if path != "/mcp" and not path.startswith("/api/"):
+            return False
         if plan is None or plan.storage_bytes is None:
             return False
         if not _write_request(self.command, path, request) or self.command == "DELETE":

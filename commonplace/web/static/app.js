@@ -2,6 +2,7 @@ import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js"
 import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { homeView, needItems } from "./home.js";
+import { planView } from "./plan.js";
 import { signinView, signinMessage } from "./signin.js";
 
 const signinParams = new URLSearchParams(location.search);
@@ -379,7 +380,6 @@ async function settingsView(epoch) {
   title("Settings");
   const content = root.querySelector("#content");
   if (!content.querySelector(".settings")) content.innerHTML = message("Loading settings…");
-  const { planView } = await import("./plan.js");
   const [connections, hooks, plan] = await Promise.allSettled([api("/api/connections"), api("/api/webhooks"), api("/api/plan")]);
   if (epoch !== state.screen) return;
   const saved = remember();
