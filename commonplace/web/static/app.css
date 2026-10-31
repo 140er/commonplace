@@ -162,3 +162,5 @@ kbd {
 .composer .field { height: 44px; background: var(--surface); padding-left: 16px; }
 .composer .send { width: 44px; display: grid; place-items: center; background: var(--surface); color: var(--wait); font-weight: 700; }
 .composer .send.go { background: var(--accent); color: var(--accent-ink); }
+
+.brand-v2 { display: none; }
