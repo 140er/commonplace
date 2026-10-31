@@ -383,6 +383,8 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
                                 import fcntl
 
                                 fcntl.flock(hold.file, fcntl.LOCK_UN)
+                        except OSError:
+                            pass
                         finally:
                             hold.file.close()
 

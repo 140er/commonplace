@@ -561,6 +561,80 @@ finally:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("body_error", [False, True], ids=["clean", "body-error"])
+@pytest.mark.parametrize("failure_at", ["seek", "unlock"])
+def test_unlock_error_preserves_body_outcome_and_closes_descriptor(
+    tmp_path, monkeypatch, body_error, failure_at
+):
+    _isolate_home(monkeypatch, tmp_path)
+    error = ValueError("body failure")
+    files = []
+
+    def fail(*args):
+        raise OSError("unlock failed")
+
+    def run():
+        with mine_palace_lock(str(tmp_path / "palace")):
+            file = next(iter(palace_mod._palace_lock_keys.values())).file
+            files.append(file)
+            if failure_at == "seek":
+                monkeypatch.setattr(file, "seek", fail)
+            elif os.name == "nt":
+                import msvcrt
+
+                monkeypatch.setattr(msvcrt, "locking", fail)
+            else:
+                import fcntl
+
+                monkeypatch.setattr(fcntl, "flock", fail)
+            if body_error:
+                raise error
+
+    if body_error:
+        with pytest.raises(ValueError) as caught:
+            run()
+        assert caught.value is error
+    else:
+        run()
+    assert files[0].closed
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is unavailable")
+def test_forked_child_does_not_retain_crashed_holders_lease(tmp_path, monkeypatch):
+    """A holder exiting without cleanup must free its lease while its child lives."""
+    _isolate_home(monkeypatch, tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sys
+import mempalace.palace as palace
+
+with palace.mine_palace_lock(sys.argv[1]):
+    inherited_hold = next(iter(palace._palace_lock_keys.values()))
+    ready, release = os.pipe()
+    child = os.fork()
+    if child != 0:
+        os._exit(0)  # No context unwinding or explicit unlock.
+    os.close(release)
+    assert os.read(ready, 1) == b""  # Wait for the holder to die.
+    os.close(ready)
+    # Retain inherited_hold: garbage collection must not free the descriptor.
+    with palace.mine_palace_lock(sys.argv[1]):
+        print("released", flush=True)
+    os._exit(0)
+""",
+            str(tmp_path / "palace"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "released", result.stderr
+
+
 # ---------------------------------------------------------------------------
 # reap_stale_mine_locks — orphaned per-source-file lock garbage collection
 # ---------------------------------------------------------------------------
