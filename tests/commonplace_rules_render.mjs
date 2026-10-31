@@ -75,6 +75,14 @@ assert.ok(html.includes('data-rule-action="suggestion-accept"') && html.includes
 assert.ok(html.includes('data-rule-form="new"') && html.includes('value="*">All agents'));
 assert.ok(html.includes('<details class="rule-retired"><summary>Retired (1)'));
 assert.ok(!html.includes('style="') && !html.includes("onclick="));
+const proposedActions = html.match(/data-rule-id="1"[\s\S]*?<div class="rule-actions">([\s\S]*?)<details/)[1];
+assert.equal((proposedActions.match(/class="blockbtn"/g) || []).length, 1);
+assert.ok(proposedActions.includes('data-rule-action="accept"'));
+for (const action of ["edit", "retire", "history"]) assert.ok(proposedActions.includes(`class="rule-text-button" data-rule-action="${action}"`));
+assert.ok(html.includes('<summary class="rule-text-button">Help me clarify</summary>'));
+assert.ok(!html.includes('<span class="pill">0</span>'));
+assert.ok(html.includes('<span class="pill you">3</span>'));
+assert.ok(!html.includes('>New rule<') && html.includes('id="rule-new" hidden'));
 const readonly = rulesView(payload, { owner: false });
 for (const action of ["accept", "retire", "restore", "edit", "accept_agent", "keep_edit", "suggestion-accept", "suggestion-dismiss"]) assert.ok(!readonly.includes(`data-rule-action="${action}"`));
 window.commonplaceDesktop = { version: 1, ask() {} };
@@ -103,6 +111,29 @@ ui.update(payload, { owner: false });
 await handlers.click(event);
 assert.equal(requests.length, 2);
 console.log("Rules render and request checks passed");
+
+// The header control toggles the inline form and obeys owner permissions.
+let focused = false, reset = false;
+const scopeInput = { required: true }, scopeField = { hidden: false };
+const newPanel = { hidden: true, querySelector: (selector) => selector === "textarea" ? { focus() { focused = true; } } : selector === "form" ? { reset() { reset = true; } } : selector === "[data-scope-ref]" ? scopeField : scopeInput };
+const newButton = { dataset: { ruleAction: "new" }, closest: () => null, setAttribute: (key, value) => { newButton[key] = value; }, focus() { focused = true; } };
+root.querySelector = (selector) => selector === ".rule-new" ? newPanel : selector.includes('data-rule-action="new"') ? newButton : null;
+const newEvent = { target: { closest: () => newButton } };
+await handlers.click(newEvent);
+assert.equal(newPanel.hidden, true);
+ui.update(payload, { owner: true });
+await handlers.click(newEvent);
+assert.equal(newPanel.hidden, false);
+assert.equal(newButton["aria-expanded"], "true");
+assert.equal(focused, true);
+const cancelButton = { dataset: { ruleAction: "cancel-new" }, closest: (selector) => selector === ".rule-new" ? newPanel : null };
+await handlers.click({ target: { closest: () => cancelButton } });
+assert.equal(newPanel.hidden, true);
+assert.equal(newButton["aria-expanded"], "false");
+assert.equal(reset, true);
+assert.equal(scopeField.hidden, true);
+assert.equal(scopeInput.required, false);
+root.querySelector = () => null;
 
 // All owner actions use the same versioned endpoint; suggestion decisions use their own.
 fail = false;
@@ -187,6 +218,7 @@ const shellCalls = [], updates = [], badgeCounts = [], shellErrors = [];
 const content = { innerHTML: "", children: [{}] };
 let shellPayload = { ...payload, can_edit: false };
 const noWork = () => {};
+let headerActions = "";
 const shellDeps = {
   state: shellState,
   api: async (path) => {
@@ -199,7 +231,7 @@ const shellDeps = {
   rulesUI: { busy: () => true, update: (...args) => updates.push(args) },
   rulesView,
   navigation: () => badgeCounts.push(shellState.rulesWaiting),
-  title: noWork, remember: noWork, capture: () => noWork, restore: noWork,
+  title: (_text, actions = "") => { headerActions = actions; }, remember: noWork, capture: () => noWork, restore: noWork,
   boardsView: noWork, showError: (error) => { if (error) shellErrors.push(error); },
 };
 const shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
@@ -207,12 +239,14 @@ assert.equal(await shellRefresh(), true);
 assert.deepEqual(updates.at(-1)[1], { owner: false });
 assert.ok(!content.innerHTML.includes("New rule") && !content.innerHTML.includes("Ask an agent"));
 assert.ok(content.innerHTML.includes("Copy prompt"));
+assert.equal(headerActions, "");
 assert.ok(shellCalls.includes("/api/rules") && !shellCalls.includes("/api/rules/count"));
 shellPayload = { ...shellPayload, can_edit: true, waiting: 4 };
 for (const kind of ["rule.changed", "rule.suggestion"]) {
   assert.equal(await shellRefresh({ background: true, events: [{ kind }] }), true);
   assert.deepEqual(updates.at(-1)[1], { owner: true });
-  assert.ok(content.innerHTML.includes("New rule"));
+  assert.ok(headerActions.includes('data-rule-action="new"') && headerActions.includes("New rule"));
+  assert.ok(!content.innerHTML.includes("New rule") && content.innerHTML.includes('id="rule-new" hidden'));
   assert.equal(badgeCounts.at(-1), 4);
 }
 shellState.base = shellState.route = "#/boards";

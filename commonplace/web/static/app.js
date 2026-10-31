@@ -481,11 +481,11 @@ async function refresh({ background = false, events = [] } = {}) {
     else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
     else if (state.base === "#/rules") {
-      title("Rules");
       if (!background || events.some((event) => event.kind.startsWith("rule.")) || !rulesUI.busy()) {
         rulesUI.update(rules, { owner: rules.can_edit });
         root.querySelector("#content").innerHTML = rulesView(rules, { owner: rules.can_edit });
       }
+      title("Rules", rules.can_edit ? `<button type="button" class="blockbtn" data-rule-action="new" aria-controls="rule-new" aria-expanded="${!!root.querySelector('.rule-new:not([hidden])')}">New rule</button>` : "");
     } else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
       if (!background || changed) await memoryView(epoch, background && !changed);
