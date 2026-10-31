@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 
 const source = await readFile(new URL("../commonplace/web/static/voice.js", import.meta.url), "utf8");
 const e = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const { languagePicker, pcm16, insertTranscript, voiceInput } = await import(`data:text/javascript;base64,${Buffer.from(source.replace(/^import[^\n]+\n/, `const e = ${e.toString()};\n`)).toString("base64")}`);
+const { languagePicker, voiceVariant, pcm16, insertTranscript, voiceInput } = await import(`data:text/javascript;base64,${Buffer.from(source.replace(/^import[^\n]+\n/, `const e = ${e.toString()};\n`)).toString("base64")}`);
 const saved = new Map(), storage = { getItem: (k) => saved.get(k), setItem: (k, v) => saved.set(k, v) };
 const picker = languagePicker(storage);
 assert.equal(picker.get(), "en"); picker.set("nl");
@@ -12,6 +12,14 @@ assert.equal(languagePicker(storage).get(), "nl"); picker.set("de");
 assert.equal(picker.get(), "nl");
 assert.equal(languagePicker({ getItem() { throw Error(); } }).get(), "en");
 languagePicker({ setItem() { throw Error(); } }).set("nl");
+
+// The design trial switch: default unless asked, remembered, and reset by any other value.
+const uiSaved = new Map(), uiStorage = { getItem: (k) => uiSaved.get(k), setItem: (k, v) => uiSaved.set(k, v), removeItem: (k) => uiSaved.delete(k) };
+assert.equal(voiceVariant("", uiStorage), "");
+assert.equal(voiceVariant("?voice_ui=b", uiStorage), "b");
+assert.equal(voiceVariant(undefined, uiStorage), "b");
+assert.equal(voiceVariant("?voice_ui=x", uiStorage), ""); assert.equal(voiceVariant("", uiStorage), "");
+assert.equal(voiceVariant("?voice_ui=c", { getItem() { throw Error(); }, setItem() { throw Error(); } }), "c");
 
 const shorts = (buffer) => Array.from({ length: buffer.byteLength / 2 }, (_, i) => new DataView(buffer).getInt16(i * 2, true));
 assert.deepEqual(shorts(pcm16(new Float32Array([-2, -1, 0, .5, 1, 2]), 16000)), [-32768, -32768, 0, 16384, 32767, 32767]);

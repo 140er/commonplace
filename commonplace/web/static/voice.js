@@ -1,8 +1,25 @@
 import { escape as e } from "./api.js";
 
 const languages = ["en", "nl"], storageKey = "commonplace-voice-language";
+const variants = ["a", "b", "c"], variantKey = "commonplace-voice-ui";
 const inputs = 'form[data-form="space-message"] textarea[data-draft], form[data-form="comment"] input[data-draft], form[data-form="reply"] input[data-draft]';
 const mic = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8"/></svg>';
+
+// Blocky glyph for the A/B/C variants; the default keeps the outline mic above.
+const block = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M9 2h6v10H9z"/><path d="M5 9h2.5v4.5h9V9H19v7h-5.75v3H16v3H8v-3h2.75v-3H5z"/></svg>';
+
+// Design trial: ?voice_ui=a|b|c picks a variant and remembers it; any other
+// value (e.g. ?voice_ui=default) returns to the shipped design.
+export function voiceVariant(search, storage) {
+  let ui = "";
+  try { ui = storage?.getItem(variantKey) || ""; } catch { /* Storage may be blocked. */ }
+  const asked = new URLSearchParams(search || "").get("voice_ui");
+  if (asked !== null) {
+    ui = variants.includes(asked) ? asked : "";
+    try { if (ui) storage?.setItem(variantKey, ui); else storage?.removeItem(variantKey); } catch { /* Keep it for this page. */ }
+  }
+  return variants.includes(ui) ? ui : "";
+}
 
 export function languagePicker(storage) {
   let language = "en";
@@ -41,7 +58,7 @@ export function insertTranscript(input, text, EventType = Event) {
 
 export function voiceInput(root, api, failed, browser = window) {
   let storage; try { storage = browser.localStorage; } catch { /* Private browsing. */ }
-  const picker = languagePicker(storage), jobs = new Map(), carets = new Map();
+  const picker = languagePicker(storage), ui = voiceVariant(browser.location?.search, storage), jobs = new Map(), carets = new Map();
   let config = { available: false, enabled: false, owner: false }, menu = null, generation = 0, saving = false;
   const scope = (input) => input.closest("#card-panel, #content")?.id || "";
   const identity = (input) => `${scope(input)}:${input.dataset.draft}`;
@@ -64,12 +81,26 @@ export function voiceInput(root, api, failed, browser = window) {
       control.dataset.state = phase;
       control.setAttribute("aria-busy", String(busy));
       const focused = control.contains?.(browser.document.activeElement) ? { ...browser.document.activeElement.dataset } : null;
-      control.innerHTML = `<button type="button" data-voice="mic" aria-label="${e(label)}" aria-pressed="${phase === "recording"}" ${busy || (!job && jobs.size) ? "disabled" : ""}>${phase === "recording" ? '<span class="voice-stop" aria-hidden="true"></span>' : busy ? '<span class="status-dot checks" aria-hidden="true"></span>' : mic}</button><button type="button" data-voice="language" aria-label="Voice language" aria-haspopup="menu" aria-expanded="${menu === identity(input)}" ${jobs.size ? "disabled" : ""}>${e(picker.get().toUpperCase())}</button>${menu === identity(input) ? `<div class="voice-menu" role="menu" aria-label="Voice language">${languages.map((lang) => `<button type="button" data-voice="choose" data-language="${e(lang)}" role="menuitemradio" aria-checked="${picker.get() === lang}">${e(lang.toUpperCase())}</button>`).join("")}</div>` : ""}`;
+      if (ui) control.dataset.ui = ui;
+      const glyph = phase === "recording" ? '<span class="voice-stop" aria-hidden="true"></span>' : busy ? '<span class="status-dot checks" aria-hidden="true"></span>' : ui ? block : mic;
+      const word = ui === "b" ? `<span class="voice-word" aria-hidden="true">${phase === "recording" ? "Stop" : busy ? "Wait" : "Talk"}</span>` : "";
+      const meter = ui === "c" && phase === "recording" ? `<span class="voice-meter" aria-hidden="true">${"<i></i>".repeat(8)}</span>` : "";
+      control.innerHTML = `<button type="button" data-voice="mic" aria-label="${e(label)}" aria-pressed="${phase === "recording"}" ${busy || (!job && jobs.size) ? "disabled" : ""}>${glyph}${word}${meter}</button><button type="button" data-voice="language" aria-label="Voice language" aria-haspopup="menu" aria-expanded="${menu === identity(input)}" ${jobs.size ? "disabled" : ""}>${e(picker.get().toUpperCase())}</button>${menu === identity(input) ? `<div class="voice-menu" role="menu" aria-label="Voice language">${languages.map((lang) => `<button type="button" data-voice="choose" data-language="${e(lang)}" role="menuitemradio" aria-checked="${picker.get() === lang}">${e(lang.toUpperCase())}</button>`).join("")}</div>` : ""}`;
       if (focused) control.querySelector(`[data-voice="${e(focused.voice)}"]${focused.language ? `[data-language="${e(focused.language)}"]` : ""}`)?.focus({ preventScroll: true });
       const caret = carets.get(identity(input));
       if (caret && job && browser.document.activeElement !== input) input.setSelectionRange(...caret);
     });
     root.querySelectorAll('[data-voice="enabled"]').forEach((button) => { button.textContent = config.enabled ? "On" : "Off"; button.setAttribute("aria-pressed", String(config.enabled)); button.disabled = saving; });
+  }
+  // Variant C's meter: eight blocks from -60 dBFS to -12 dBFS, about 10 updates a second.
+  function level(job, chunk) {
+    const now = Date.now();
+    if (now - (job.metered || 0) < 100) return;
+    job.metered = now;
+    let sum = 0; for (const sample of chunk) sum += sample * sample;
+    const db = 10 * Math.log10(sum / chunk.length + 1e-10);
+    const meter = find(job)?.form.querySelector(".voice-meter");
+    if (meter) meter.dataset.level = String(Math.max(0, Math.min(8, Math.round((db + 60) / 6))));
   }
   function settings() {
     return config.owner && config.available ? `<section class="settings-section" data-voice-settings><div class="setting-row"><span>Voice</span><button type="button" data-voice="enabled" aria-label="Voice" aria-pressed="${config.enabled}">${config.enabled ? "On" : "Off"}</button></div></section>` : "";
@@ -148,6 +179,7 @@ export function voiceInput(root, api, failed, browser = window) {
         const remaining = Math.max(0, Math.floor(job.context.sampleRate * 60) - job.length);
         const chunk = data.length <= remaining ? data : data.slice(0, remaining);
         if (chunk.length) { job.chunks.push(chunk); job.length += chunk.length; }
+        if (ui === "c" && chunk.length) level(job, chunk);
         if (job.length >= job.context.sampleRate * 60) void finish(job);
       };
       job.source = job.context.createMediaStreamSource(stream);

@@ -278,3 +278,55 @@ button.cs-row:hover { filter: none; background: var(--surface); }
 .reply-form:has(.voice-control) > button { min-width: 36px; }
 .item.sel .voice-control button { background: var(--bg); color: var(--accent); }
 .item.sel .voice-control[data-state="recording"] [data-voice="mic"] { background: var(--rec); color: var(--accent-ink); }
+
+/* Voice design trial (?voice_ui=a|b|c). Without the switch none of this applies. */
+.voice-control[data-ui] { background: none; }
+.voice-control[data-ui] [data-voice="mic"] svg { display: block; }
+/* The language is locked while recording, but stays readable as the active one. */
+.voice-control[data-ui][data-state="recording"] [data-voice="language"]:disabled { opacity: 1; cursor: default; }
+
+/* A, glyph: no tiles. The field carries the recording state. */
+.voice-control[data-ui="a"] { gap: 0; }
+.voice-control[data-ui="a"] > button { min-width: 36px; padding: 6px 8px; background: none; color: var(--muted); }
+.voice-control[data-ui="a"] [data-voice="language"] { min-width: 30px; padding: 6px 4px; font-size: 11px; font-weight: 700; }
+.voice-control[data-ui="a"][data-state="recording"] [data-voice="mic"] { background: var(--rec); color: var(--accent-ink); }
+form:has(> .voice-control[data-ui="a"][data-state="recording"]) [data-draft] { box-shadow: inset 3px 0 0 var(--rec); }
+.voice-control[data-ui="a"] .voice-menu { min-width: 72px; padding: 4px 0; gap: 0; background: var(--term); outline: 1px solid var(--wait); }
+.voice-control[data-ui="a"] .voice-menu button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px; background: none; color: var(--quiet); }
+.voice-control[data-ui="a"] .voice-menu button::before { content: ""; width: 6px; height: 6px; outline: 1px solid var(--wait); }
+.voice-control[data-ui="a"] .voice-menu [aria-checked="true"] { color: var(--ink); }
+.voice-control[data-ui="a"] .voice-menu [aria-checked="true"]::before { background: var(--ink); outline-color: var(--ink); }
+
+/* B, segment: one outlined heavy block, labelled. */
+.voice-control[data-ui="b"] { gap: 0; }
+.voice-control[data-ui="b"] > button { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border: 2px solid var(--ink); background: none; color: var(--ink); font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.voice-control[data-ui="b"] [data-voice="language"] { margin-left: -2px; min-width: 44px; justify-content: center; }
+@media (hover: hover) {
+  .voice-control[data-ui="a"] > button:hover:not(:disabled) { color: var(--ink); }
+  .voice-control[data-ui="b"] > button:hover:not(:disabled) { background: var(--ink); color: var(--bg); }
+}
+@media (max-width: 640px) { .reply-form .voice-control[data-ui="b"] .voice-word { display: none; } }
+.voice-control[data-ui="b"] [aria-expanded="true"] { background: var(--ink); color: var(--bg); }
+.voice-control[data-ui="b"] .voice-stop { width: 10px; height: 10px; }
+.voice-control[data-ui="b"][data-state="recording"] [data-voice="mic"] { position: relative; border-color: var(--rec); background: var(--rec); color: var(--accent-ink); }
+.voice-control[data-ui="b"] .voice-menu { flex-direction: row; min-width: 0; padding: 0; gap: 0; background: none; }
+.voice-control[data-ui="b"] .voice-menu button { justify-content: center; width: 52px; min-height: 44px; margin-left: -2px; border: 2px solid var(--ink); background: var(--bg); color: var(--ink); font-weight: 800; }
+.voice-control[data-ui="b"] .voice-menu [aria-checked="true"] { background: var(--ink); color: var(--bg); }
+.item.sel .voice-control[data-ui="b"] > button { border-color: var(--bg); }
+
+/* C, hex bar: the logo's hex as the button; recording opens a red bar with a level meter. */
+.voice-control[data-ui="c"] { gap: 2px; align-items: center; }
+.voice-control[data-ui="c"] [data-voice="mic"] { width: 40px; min-width: 40px; padding: 0; background: var(--ink); color: var(--bg); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.voice-control[data-ui="c"] [data-voice="language"] { min-width: 32px; padding: 6px 4px; background: none; color: var(--muted); font-size: 11px; font-weight: 800; }
+.voice-control[data-ui="c"][data-state="recording"] { gap: 0; padding: 0 14px; background: var(--rec); clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 14px 100%, 0 50%); }
+.voice-control[data-ui="c"][data-state="recording"] [data-voice="mic"] { display: flex; gap: 12px; width: auto; padding: 0 8px 0 2px; background: none; color: var(--accent-ink); clip-path: none; }
+.voice-control[data-ui="c"][data-state="recording"] [data-voice="language"] { color: var(--accent-ink); }
+.voice-meter { display: flex; gap: 2px; height: 16px; }
+.voice-meter i { width: 4px; background: var(--accent-ink); opacity: .25; }
+.voice-meter[data-level="1"] i:nth-child(-n+1), .voice-meter[data-level="2"] i:nth-child(-n+2), .voice-meter[data-level="3"] i:nth-child(-n+3), .voice-meter[data-level="4"] i:nth-child(-n+4),
+.voice-meter[data-level="5"] i:nth-child(-n+5), .voice-meter[data-level="6"] i:nth-child(-n+6), .voice-meter[data-level="7"] i:nth-child(-n+7), .voice-meter[data-level="8"] i { opacity: 1; }
+.voice-control[data-ui="c"] .voice-menu { min-width: 64px; padding: 10px 0 0; gap: 2px; background: var(--ink); clip-path: polygon(0 10px, 50% 0, 100% 10px, 100% 100%, 0 100%); }
+.voice-control[data-ui="c"] .voice-menu button { justify-content: center; background: var(--surface-3); color: var(--ink); font-weight: 800; }
+.voice-control[data-ui="c"] .voice-menu [aria-checked="true"] { background: var(--ink); color: var(--bg); }
+.item.sel .voice-control[data-ui="c"][data-state="recording"] [data-voice="mic"] { background: none; }
+@media (prefers-reduced-motion: reduce) { .voice-meter i { opacity: 1 !important; } }
