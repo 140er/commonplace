@@ -176,8 +176,9 @@ def test_vector_failure_joins_the_bounded_lexical_read():
 
 
 @pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+@pytest.mark.parametrize("oldest_best", [False, True])
 def test_saturated_union_pool_scores_best_match_beyond_early_row_limit(
-    tmp_path, monkeypatch, backend
+    tmp_path, monkeypatch, backend, oldest_best
 ):
     from mempalace.backends import embedding_wrapper
 
@@ -187,26 +188,32 @@ def test_saturated_union_pool_scores_best_match_beyond_early_row_limit(
     )
     palace = str(tmp_path / "palace")
     col = get_collection(palace, create=True)
+    rows = [
+        (
+            f"d{i}",
+            ("quartz" if i % 2 else "migration") + " engineering commentary " * 20,
+            [0.01, 1.0],
+        )
+        for i in range(400)
+    ]
+    rows.insert(0 if oldest_best else len(rows), ("needle", "quartz migration", [0.0, 0.0]))
     col.add(
-        ids=[f"d{i}" for i in range(400)] + ["last-best"],
-        documents=[
-            ("quartz" if i % 2 else "migration") + " engineering commentary " * 20
-            for i in range(400)
-        ]
-        + ["quartz migration"],
-        embeddings=[[0.01, 1.0]] * 400 + [[0.0, 0.0]],
-        metadatas=[{"wing": "public", "room": "notes"}] * 401,
+        ids=[row[0] for row in rows],
+        documents=[row[1] for row in rows],
+        embeddings=[row[2] for row in rows],
+        metadatas=[{"wing": "public", "room": "notes"}] * len(rows),
     )
     # Each selected term is under the scoped cutoff. All matches, not only
     # the first 5*limit rows, must be scored before taking the lexical top K.
+    # An oldest needle catches a recent-only LIMIT; a newest one catches the reverse.
     lexical = col.union_lexical_search(
         query="quartz migration", n_results=1, where={"wing": "public"}
     )
-    assert [h.id for h in lexical.hits] == ["last-best"]
+    assert [h.id for h in lexical.hits] == ["needle"]
     result = search_memories(
         "quartz migration", palace, wing="public", n_results=1, include_facts=False
     )
-    assert result["results"][0]["drawer_id"] == "last-best"
+    assert result["results"][0]["drawer_id"] == "needle"
     assert result["results"][0]["matched_via"] == "bm25_backend"
 
 
@@ -388,6 +395,9 @@ def test_scope_local_terms_ids_closets_and_full_responses_are_private(
             )
         return out
 
+    # Reject an over-cutoff term as a whole instead of ranking a partial pool.
+    saturated = col.union_lexical_search(query="quartz", n_results=20, where={"wing": "public"})
+    assert saturated.selected_terms == [] and saturated.hits == []
     before = outputs()
     mediator._fan_out_search(other, "mempalace_search", {"query": "marigold photon731", "limit": 5})
     assert outputs() == before
