@@ -131,12 +131,11 @@ def test_closet_query_keeps_all_capped_terms_without_drawer_selection():
 
 def test_ascii_fast_path_equals_sqlite_unicode61_property():
     import random
-    import string
 
     from mempalace.lexical import IndexWordNormalizer
 
     rng = random.Random(739251)
-    alphabet = string.printable.replace("_", "")
+    alphabet = "".join(chr(i) for i in range(128) if chr(i) != "_")
     with IndexWordNormalizer() as normalize:
         for _ in range(1000):
             text = "".join(rng.choices(alphabet, k=rng.randrange(300)))
@@ -247,3 +246,30 @@ def test_unicode61_closet_accents_match_develop_without_match_floor(tmp_path, mo
         after = col.union_lexical_search(query=query, where={"wing": "public"}, closet=True)
         assert [h.id for h in after.hits] == [h.id for h in before.hits]
         assert all(h.score > 0 for h in after.hits)
+
+
+def test_chroma_literal_keeps_separators_and_word_normalization(tmp_path, monkeypatch):
+    from mempalace.backends import embedding_wrapper
+    from mempalace.palace import get_collection
+    from mempalace.searcher import search_memories
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", "chroma")
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    col = get_collection(str(tmp_path), create=True)
+    col.add(
+        ids=[f"v{i}" for i in range(30)] + ["needle"],
+        documents=["foo bar" + "!" * (i + 1) for i in range(30)] + ["foo_bar"],
+        embeddings=[[0.01, 1.0]] * 30 + [[0.0, 0.0]],
+        metadatas=[{"wing": "public"}] * 31,
+    )
+    result = search_memories(
+        "foo_bar", str(tmp_path), wing="public", n_results=1, include_facts=False
+    )
+    assert result["results"][0]["drawer_id"] == "needle"
+    assert result["results"][0]["matched_via"] == "bm25_backend"
+    from mempalace.lexical import index_bm25_scores
+
+    assert index_bm25_scores(["cafe"], ["café"], trigram=True) == [0]
+    assert index_bm25_scores(["src/main.py"], ["src main py", "src/main.py"], trigram=True)[0] == 0

@@ -83,7 +83,7 @@ class IndexWordNormalizer:
 
     def __call__(self, text):
         text = (text or "").encode("utf-8", "replace").decode("utf-8")
-        if text.isascii() and "_" not in text:
+        if text.isascii() and "_" not in text and "\x00" not in text:
             return re.findall(r"[a-z0-9]+", text.lower())
         return self.native(text)
 
@@ -142,7 +142,7 @@ def lexical_query_terms(
     return sorted(candidates, key=lambda term: candidates[term])[:16], None
 
 
-def index_bm25_scores(terms, documents, matched_terms=None):
+def index_bm25_scores(terms, documents, matched_terms=None, *, trigram=False):
     """Scope-local BM25 with phrase tf and an index-confirmed match floor.
 
     ``matched_terms`` parallels documents. It records only terms whose bounded
@@ -152,7 +152,8 @@ def index_bm25_scores(terms, documents, matched_terms=None):
 
     if not documents or not terms:
         return [0.0] * len(documents)
-    with IndexWordNormalizer() as normalize:
+    with IndexWordNormalizer() as native_normalize:
+        normalize = tokenize if trigram else native_normalize
         phrases = [tuple(normalize(term)) for term in terms]
         tokenized = [normalize(text) for text in documents]
     lengths = [len(tokens) for tokens in tokenized]
@@ -164,7 +165,11 @@ def index_bm25_scores(terms, documents, matched_terms=None):
         row = []
         for term, phrase in zip(terms, phrases):
             size = len(phrase)
-            if getattr(term, "prefix", False) and size:
+            if trigram and any(c in term for c in "_/.: "):
+                # Trigram literals are whole substrings, including separators.
+                # Keep the historical word rules for ordinary word matches.
+                freq = (documents[i] or "").lower().count(term)
+            elif getattr(term, "prefix", False) and size:
                 freq = sum(
                     tuple(tokens[j : j + size - 1]) == phrase[:-1]
                     and tokens[j + size - 1].startswith(phrase[-1])

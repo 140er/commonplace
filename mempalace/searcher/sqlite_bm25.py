@@ -484,4 +484,5 @@ def _merge_bm25_union_candidates(
         evidence = {hit.id: getattr(hit, "matched_terms", ()) for hit in lexical.hits}
         for entry in hits:
             entry["_lexical_terms"] = lexical.selected_terms
+            entry["_lexical_trigram"] = getattr(drawers_col, "lexical_min_token_length", 2) == 3
             entry["_lexical_matches"] = evidence.get(entry.get("_stored_id"), ())

@@ -1748,8 +1748,31 @@ def _close_client(client) -> None:
     """
     if client is None:
         return
+    path = None
     try:
-        client.close()
+        settings = client.get_settings()
+        directory = settings.persist_directory
+        if isinstance(directory, (str, os.PathLike)):
+            path = os.path.join(directory, "chroma.sqlite3")
+    except Exception:
+        pass
+    try:
+        with palace_db_lock(path) if path else contextlib.nullcontext():
+            client.close()
+            if path:
+                from chromadb.api.shared_system_client import SharedSystemClient
+
+                identifier = getattr(client, "_identifier", None)
+                # Only the last native client may release Python's read
+                # anchors. A sibling backend/session still needs their guards.
+                if (
+                    isinstance(identifier, str)
+                    and identifier not in SharedSystemClient._identifier_to_system
+                    and not SharedSystemClient._identifier_to_refcount.get(identifier, 0)
+                ):
+                    from ._inproc_sqlite import release
+
+                    release(path)
     except Exception:
         logger.debug("client.close() unavailable or failed", exc_info=True)
 

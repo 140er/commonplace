@@ -194,3 +194,52 @@ def test_closet_substring_only_zero_scores_are_dropped(tmp_path):
         )
     finally:
         backend.close()
+
+
+def test_closing_one_backend_retains_sibling_anchor_guards(tmp_path):
+    from mempalace.backends import _inproc_sqlite
+
+    first, col = _seed(tmp_path)
+    second = ChromaBackend()
+    sibling = second.get_collection(str(tmp_path), "mempalace_drawers")
+    key = _inproc_sqlite._key(str(tmp_path / "chroma.sqlite3"))
+    assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+    first.close()
+    assert key in _inproc_sqlite._anchors or key in _inproc_sqlite._holders
+    vector = sibling.get(ids=["a"], include=["embeddings"]).embeddings[0]
+    sibling.upsert(ids=["a"], documents=["quartz updated"], embeddings=[vector])
+    assert sibling.get(ids=["a"]).documents == ["quartz updated"]
+    second.close()
+    assert key not in _inproc_sqlite._anchors and key not in _inproc_sqlite._holders
+
+
+def test_small_chroma_lexical_pool_decodes_once_without_changing_scores(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    backend, col = _seed(tmp_path)
+    original = col.lexical_scope
+    calls = {"load": 0, "hydrate": 0}
+
+    @contextmanager
+    def scope(where):
+        with original(where) as current:
+            old_load, old_hydrate = current.load_texts, current.hydrate
+
+            def load(ids):
+                calls["load"] += 1
+                return old_load(ids)
+
+            def hydrate(ids):
+                calls["hydrate"] += 1
+                return old_hydrate(ids)
+
+            current.load_texts, current.hydrate = load, hydrate
+            yield current
+
+    monkeypatch.setattr(col, "lexical_scope", scope)
+    try:
+        result = col.union_lexical_search(query="quartz", n_results=5, where={"wing": "public"})
+        assert [h.id for h in result.hits] == ["a"] and result.hits[0].score > 0
+        assert calls == {"load": 0, "hydrate": 1}
+    finally:
+        backend.close()

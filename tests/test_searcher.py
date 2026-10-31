@@ -1083,6 +1083,7 @@ def test_finalize_candidate_hits_forwards_stop_words_to_hybrid_rank(monkeypatch)
         n_results=5,
         max_distance=0.0,
         stop_words=frozenset({"a", "an"}),
+        where=None,
     )
 
     assert captured["stop_words"] == frozenset({"a", "an"})

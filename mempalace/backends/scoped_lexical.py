@@ -116,7 +116,23 @@ def scope_local_search(
             )[: max(100, 10 * n_results)]
         else:
             ordered = sorted(ids)
-        texts = scope.load_texts(ordered)
+        hydrated = None
+        if (
+            not closet
+            and getattr(collection, "lexical_min_token_length", 2) == 3
+            and len(ordered) <= n_results
+        ):
+            # Every candidate already fits the requested top K. Decode once,
+            # rather than loading the stored text and then decoding it again
+            # during hydration (notably expensive for mirrored transcripts).
+            hydrated = scope.hydrate(ordered)
+            texts = {
+                row_id: index_text(hydrated[row_id][1], hydrated[row_id][2], stored_form=False)
+                for row_id in ordered
+                if row_id in hydrated
+            }
+        else:
+            texts = scope.load_texts(ordered)
         if closet and getattr(collection, "lexical_min_token_length", 2) == 3:
             # Preserve develop's full-query word scorer, including dropping
             # trigram substring-only matches with zero word-level signal.
@@ -129,12 +145,14 @@ def scope_local_search(
                 [evidence[row_id] for row_id in ordered]
                 if not closet and getattr(collection, "lexical_min_token_length", 2) != 3
                 else None,
+                trigram=getattr(collection, "lexical_min_token_length", 2) == 3,
             )
         ranked = sorted(
             ((row_id, score) for row_id, score in zip(ordered, scores) if score > 0),
             key=lambda pair: -pair[1],
         )[:n_results]
-        hydrated = scope.hydrate([row_id for row_id, _ in ranked])
+        if hydrated is None:
+            hydrated = scope.hydrate([row_id for row_id, _ in ranked])
         return LexicalResult(
             hits=[
                 LexicalHit(

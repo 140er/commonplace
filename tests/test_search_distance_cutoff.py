@@ -114,12 +114,13 @@ def _union(col, *, max_distance, stats, known_distances=None):
         hits=[],
         drawers_col=col,
         query="lexical text",
-        wing=None,
-        room=None,
+        wing="w",
+        room="r",
         n_results=5,
         max_distance=max_distance,
         stats=stats,
         known_distances=known_distances,
+        where={"$and": [{"wing": "w"}, {"room": "r"}]},
     )
 
 

@@ -309,10 +309,11 @@ def test_union_results_use_parent_or_lexical_hit_id():
         hits=[],
         drawers_col=drawers_col,
         query="drawer identity",
-        wing=None,
-        room=None,
+        wing="work",
+        room="notes",
         n_results=5,
         max_distance=0.0,
+        where={"$and": [{"wing": "work"}, {"room": "notes"}]},
     )
 
     assert error is None
