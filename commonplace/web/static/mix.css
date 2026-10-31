@@ -54,7 +54,7 @@
   .panel .bar { flex-wrap: wrap; row-gap: 10px; }
   .panel .bar .right { order: 1; }
   .panel .bar .where { order: 2; flex-basis: 100%; margin-left: 0; }
-  .when { gap: 10px; padding: 6px 8px 20px; }
+  .when { right: var(--gap); bottom: calc(32px + var(--gap) * 2); height: 56px; gap: 10px; padding: 6px 8px 20px; }
   .when .sig { width: auto; }
   .when .peak { display: none; }
 }

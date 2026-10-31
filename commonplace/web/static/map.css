@@ -63,7 +63,6 @@
   .filter { width: auto; height: 44px; font-size: 14px; }
   .views { height: 44px; }
   .views button { height: 40px; padding: 0 12px; }
-  .stage { min-height: 0; }
   .legend { top: auto; bottom: var(--gap); left: var(--gap); right: var(--gap); flex-direction: row; overflow-x: auto; scrollbar-width: none; }
   .legend button { width: auto; flex: none; height: 32px; }
   .legend .c { margin-left: 4px; }
@@ -74,6 +73,5 @@
   .panel { position: fixed; width: auto; z-index: 6; }
   .panel::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--gap)); height: var(--gap); background: var(--bg); }
   .panel .grow .sec + .sec { margin-top: 0; }
-  .when { right: var(--gap); bottom: calc(32px + var(--gap) * 2); height: 56px; padding: 6px 8px 20px; }
   .tip { display: none; }
 }

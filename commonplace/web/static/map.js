@@ -17,7 +17,7 @@ export function mountMap(root, graph, onOpen) {
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const css = getComputedStyle(document.documentElement);
   const C = (v) => css.getPropertyValue(v).trim();
-  const palette = ["--strong", "--ok", "--person", "--paper"].map(C);
+  const palette = ["--strong", "--ok", "--person", "--muted"].map(C);
   const THEMES = (graph.themes || []).map((t, i) => ({ ...t, color: palette[i % palette.length], index: i }));
   for (const x of graph.nodes) if (x.theme && !THEMES.some((t) => t.id === x.theme)) THEMES.push({ id: x.theme, label: x.theme, color: palette[THEMES.length % palette.length], index: THEMES.length });
   const color = Object.fromEntries(THEMES.map((t) => [t.id, t.color]));
@@ -190,6 +190,7 @@ export function mountMap(root, graph, onOpen) {
         if (off.has(t.id)) continue;
         const ms = mems.filter((m) => m.theme === t.id);
         if (!ms.length) continue;
+        if ((fs || q) && !ms.some(lit)) continue;
         const cx = ms.reduce((s, m) => s + m.x, 0) / ms.length, cy = ms.reduce((s, m) => s + m.y, 0) / ms.length;
         const ds = ms.map((m) => Math.hypot(m.x - cx, m.y - cy)).sort((a, b) => a - b);
         const far = ds[Math.floor(ds.length * 0.85)], d = Math.hypot(cx, cy) || 1;
@@ -197,7 +198,6 @@ export function mountMap(root, graph, onOpen) {
         ctx.textAlign = Math.abs(cx / d) < 0.35 ? "center" : cx > 0 ? "left" : "right";
         ctx.textBaseline = "middle";
         ctx.font = FONT(700, 20 / cam.k); ctx.fillStyle = t.color; ctx.globalAlpha = 1;
-        ctx.font = FONT(700, 20 / cam.k);
         const tw = ctx.measureText(t.id).width, al = ctx.textAlign;
         const x0 = al === "center" ? lx - tw / 2 : al === "right" ? lx - tw : lx;
         const minX = (220 - cam.x) / cam.k, maxX = (W - panelW() - 56 - cam.x) / cam.k - tw;
@@ -269,6 +269,7 @@ export function mountMap(root, graph, onOpen) {
     const free = (r) => taken.every((t) => r[0] > t[0] + t[2] || r[0] + r[2] < t[0] || r[1] > t[1] + t[3] || r[1] + r[3] < t[1]);
     for (const x of nodes) {
       if (!visible(x) || x.kind === "memory") continue;
+      if ((fs || q) && !lit(x)) continue;
       if (x.kind === "card" && cam.k < 0.7 && !(fs && fs.has(x.id))) continue;
       const [sx, sy] = toScreen(x);
       const label = x.kind === "person" ? x.name : "#" + x.num;
