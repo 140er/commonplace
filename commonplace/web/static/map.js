@@ -15,7 +15,9 @@ export function mountMap(root, graph, onOpen) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const palette = ["#f7941d", "#7fd18b", "#a9bdf5", "#d9dbd6"];
+  const css = getComputedStyle(document.documentElement);
+  const C = (v) => css.getPropertyValue(v).trim();
+  const palette = ["--strong", "--ok", "--person", "--paper"].map(C);
   const THEMES = (graph.themes || []).map((t, i) => ({ ...t, color: palette[i % palette.length], index: i }));
   for (const x of graph.nodes) if (x.theme && !THEMES.some((t) => t.id === x.theme)) THEMES.push({ id: x.theme, label: x.theme, color: palette[THEMES.length % palette.length], index: THEMES.length });
   const color = Object.fromEntries(THEMES.map((t) => [t.id, t.color]));
@@ -140,9 +142,7 @@ export function mountMap(root, graph, onOpen) {
   const toScreen = (x) => [x.x * cam.k + cam.x, x.y * cam.k + cam.y];
 
   // ---------- Drawing ----------
-  const css = getComputedStyle(document.documentElement);
-  const C = (v) => css.getPropertyValue(v).trim();
-  const INK = C("--ink"), ACC = C("--accent"), QUIET = C("--quiet"), S2 = C("--surface-2"), S3 = C("--surface-3"), TERM = C("--term"), WAIT = C("--wait");
+  const INK = C("--ink"), STRONG = C("--strong"), QUIET = C("--quiet"), S2 = C("--surface-2"), S3 = C("--surface-3"), TERM = C("--term"), WAIT = C("--wait");
   const FONT = (w, s) => `${w} ${s}px "Geist Mono", ui-monospace, monospace`;
   // A short ID-style code per node, stable across renders.
   const code = (x) => {
@@ -170,7 +170,7 @@ export function mountMap(root, graph, onOpen) {
     // The site's chunky grid, as dots that move with the map.
     const g = 48 * cam.k;
     if (g > 14) {
-      ctx.fillStyle = "#151715";
+      ctx.fillStyle = C("--surface");
       for (let x = ((cam.x % g) + g) % g; x < W; x += g)
         for (let y = ((cam.y % g) + g) % g; y < H; y += g) ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2);
     }
@@ -196,7 +196,7 @@ export function mountMap(root, graph, onOpen) {
         const lx = cx + (cx / d) * (far + 24 / cam.k), ly = cy + (cy / d) * (far + 24 / cam.k);
         ctx.textAlign = Math.abs(cx / d) < 0.35 ? "center" : cx > 0 ? "left" : "right";
         ctx.textBaseline = "middle";
-        ctx.font = FONT(700, 20 / cam.k); ctx.fillStyle = t.color; ctx.globalAlpha = fs || q ? 0.35 : 1;
+        ctx.font = FONT(700, 20 / cam.k); ctx.fillStyle = t.color; ctx.globalAlpha = 1;
         ctx.font = FONT(700, 20 / cam.k);
         const tw = ctx.measureText(t.id).width, al = ctx.textAlign;
         const x0 = al === "center" ? lx - tw / 2 : al === "right" ? lx - tw : lx;
@@ -208,7 +208,7 @@ export function mountMap(root, graph, onOpen) {
       ctx.textAlign = "left"; ctx.globalAlpha = 1;
     }
 
-    // Links: quiet hairlines; the focused node's links draw out in orange, then a light pulse runs along them.
+    // Links: quiet hairlines; focused links draw out in ink, then carry a light pulse.
     ctx.lineWidth = 1 / cam.k;
     for (const l of links) {
       if (!visible(l.s) || !visible(l.t)) continue;
@@ -223,7 +223,7 @@ export function mountMap(root, graph, onOpen) {
     if (f) {
       const hot = links.filter((l) => (l.s === f || l.t === f) && visible(l.s) && visible(l.t));
       const ends = (l) => (l.s === f ? [l.s, l.t] : [l.t, l.s]);
-      ctx.strokeStyle = ACC; ctx.lineWidth = 1.5 / cam.k;
+      ctx.strokeStyle = STRONG; ctx.lineWidth = 1.5 / cam.k;
       for (const l of hot) {
         const [a, b] = ends(l);
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + (b.x - a.x) * ease, a.y + (b.y - a.y) * ease); ctx.stroke();
@@ -236,9 +236,7 @@ export function mountMap(root, graph, onOpen) {
           const seg = Math.min(0.45, 30 / len), t1 = ph * (1 + seg), t0 = Math.max(0, t1 - seg), t1c = Math.min(1, t1);
           if (t0 >= 1) continue;
           const at = (t) => [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t];
-          const g = ctx.createLinearGradient(...at(t0), ...at(t1c));
-          g.addColorStop(0, "rgba(232,233,229,0)"); g.addColorStop(1, INK);
-          ctx.strokeStyle = g;
+          ctx.strokeStyle = INK;
           ctx.beginPath(); ctx.moveTo(...at(t0)); ctx.lineTo(...at(t1c)); ctx.stroke();
           if (t1 <= 1) { const [hx, hy] = at(t1), s = 2 / cam.k; ctx.fillStyle = INK; ctx.fillRect(hx - s, hy - s, s * 2, s * 2); }
         }
@@ -256,10 +254,10 @@ export function mountMap(root, graph, onOpen) {
       if (x.kind === "memory") ctx.fillStyle = color[x.theme];
       else if (x.kind === "person") ctx.fillStyle = INK;
       else ctx.fillStyle = S3;
-      if (x === f) ctx.fillStyle = ACC;
+      if (x === f) ctx.fillStyle = STRONG;
       ctx.fillRect(x.x - s, x.y - s, s * 2, s * 2);
       if (x.kind === "card") { ctx.fillStyle = x === f ? TERM : INK; ctx.fillRect(x.x - s + 2, x.y - 1, s * 2 - 4, 2); }
-      if (x.fx != null) { ctx.fillStyle = ACC; ctx.fillRect(x.x + s - 1, x.y - s - 3, 4, 4); }
+      if (x.fx != null) { ctx.fillStyle = STRONG; ctx.fillRect(x.x + s - 1, x.y - s - 3, 4, 4); }
       if (x === open) brackets(x);
     }
     ctx.globalAlpha = 1;
@@ -272,7 +270,6 @@ export function mountMap(root, graph, onOpen) {
     for (const x of nodes) {
       if (!visible(x) || x.kind === "memory") continue;
       if (x.kind === "card" && cam.k < 0.7 && !(fs && fs.has(x.id))) continue;
-      const on = lit(x);
       const [sx, sy] = toScreen(x);
       const label = x.kind === "person" ? x.name : "#" + x.num;
       ctx.font = FONT(x.kind === "person" ? 700 : 500, x.kind === "person" ? 12 : 11);
@@ -282,9 +279,9 @@ export function mountMap(root, graph, onOpen) {
       if (!spot) continue;
       const [lx, ly] = spot;
       taken.push([lx - 3, ly - 9, tw + 6, 18]);
-      ctx.globalAlpha = on ? 1 : 0.3;
+      ctx.globalAlpha = 1;
       ctx.fillStyle = TERM; ctx.fillRect(lx - 3, ly - 9, tw + 6, 18);
-      ctx.fillStyle = x === f ? ACC : x.kind === "person" ? INK : QUIET;
+      ctx.fillStyle = x === f ? STRONG : x.kind === "person" ? INK : QUIET;
       ctx.fillText(label, lx, ly + 0.5);
     }
     ctx.globalAlpha = 1;
@@ -293,11 +290,11 @@ export function mountMap(root, graph, onOpen) {
       const [sx, sy] = toScreen(f), gap = f.r * cam.k + 6, c = code(f);
       ctx.font = FONT(500, 11); const cw = ctx.measureText(c).width;
       const tx = sx + gap + 18, ty = sy - gap - 20;
-      ctx.globalAlpha = ease; ctx.strokeStyle = ACC; ctx.lineWidth = 1;
+      ctx.globalAlpha = ease; ctx.strokeStyle = STRONG; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(sx + gap - 2, sy - gap + 2); ctx.lineTo(tx, ty + 9); ctx.stroke();
       ctx.fillStyle = TERM; ctx.fillRect(tx, ty, cw + 12, 18);
-      ctx.fillStyle = ACC; ctx.fillRect(tx, ty, 3, 18);
-      ctx.fillStyle = INK; ctx.fillText(c, tx + 8, ty + 9.5);
+      ctx.fillStyle = STRONG; ctx.fillRect(tx, ty, 3, 18);
+      ctx.globalAlpha = 1; ctx.fillStyle = INK; ctx.fillText(c, tx + 8, ty + 9.5);
       ctx.globalAlpha = 1;
     }
     pct.textContent = Math.round(cam.k * 100) + "%";
