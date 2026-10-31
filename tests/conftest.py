@@ -255,9 +255,16 @@ def _close_test_storage_clients(monkeypatch):
         resources.callback(database.close)
 
     def tracked_connect(backend, palace_path, *args, **kwargs):
+        already_open = any(
+            handle is not None and not handle.closed
+            for handle in (
+                backend._clients.get(palace_path),
+                backend._read_only_clients.get(palace_path),
+            )
+        )
         result = original_connect(backend, palace_path, *args, **kwargs)
         key = (id(backend), palace_path)
-        if key not in palaces:
+        if not already_open and key not in palaces:
             palaces.add(key)
             # Release handles without closing the reusable registry backend.
             resources.callback(backend.close_palace, palace_path)

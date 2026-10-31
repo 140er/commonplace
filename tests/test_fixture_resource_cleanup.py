@@ -32,6 +32,8 @@ def resources():
         key = (stat.st_dev, stat.st_ino)
         assert key not in _magic._retained_conns
         assert key not in _magic._positive
+        anchor_path = _inproc_sqlite._key(os.path.join(client._identifier, "chroma.sqlite3"))
+        assert anchor_path not in _inproc_sqlite._anchors
     for connection in probes:
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             connection.execute("SELECT 1")
@@ -111,7 +113,7 @@ import fcntl, sys
 with open(sys.argv[1], "r+b") as handle:
     try:
         fcntl.lockf(handle, fcntl.LOCK_EX | fcntl.LOCK_NB, 510, 0x40000002)
-    except BlockingIOError:
+    except OSError:
         print("held")
     else:
         print("released")
@@ -166,3 +168,46 @@ def test_module_writer_probe_survives_first_cleanup(module_writer):
 def test_module_writer_probe_survives_second_cleanup(module_writer):
     _assert_shared_lock(module_writer)
     assert _magic.has_sqlite_magic(str(module_writer))
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        ("sqlite_exact", False),
+        ("sqlite_exact", True),
+        ("rust_exact", False),
+        ("rust_exact", True),
+    ],
+)
+def module_exact_palace(request, tmp_path_factory):
+    from mempalace.backends.rust_exact import RustExactBackend
+
+    name, read_only = request.param
+    backend = RustExactBackend() if name == "rust_exact" else SQLiteExactBackend()
+    path = str(tmp_path_factory.mktemp(name))
+    collection = backend.get_collection(path, "shared", create=True)
+    collection.add(ids=["one"], documents=["shared document"], embeddings=[[1.0, 0.0]])
+    if read_only:
+        backend.close_palace(path)
+        collection = backend.get_collection(path, "shared", options={"read_only": True})
+    try:
+        yield backend, path, collection, read_only
+        # Also covers selecting either test alone: its teardown must leave
+        # the module fixture's collection usable.
+        assert collection.get(ids=["one"]).ids == ["one"]
+    finally:
+        backend.close()
+
+
+def test_module_exact_palace_survives_first_read(module_exact_palace):
+    backend, path, _, read_only = module_exact_palace
+    collection = backend.get_collection(path, "shared", options={"read_only": read_only})
+    assert collection.get(ids=["one"]).ids == ["one"]
+
+
+def test_module_exact_palace_survives_second_read(module_exact_palace):
+    backend, path, original, read_only = module_exact_palace
+    assert original.get(ids=["one"]).ids == ["one"]
+    assert backend.get_collection(path, "shared", options={"read_only": read_only}).get(
+        ids=["one"]
+    ).ids == ["one"]
