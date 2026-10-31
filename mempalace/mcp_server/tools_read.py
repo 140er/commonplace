@@ -705,7 +705,12 @@ def tool_search(
         except SearchError as exc:
             return {"error": str(exc)}
         fact_result = (
-            tool_kg_search(query, limit=limit, wings=[wing] if wing else None)
+            tool_kg_search(
+                sanitized["clean_query"],
+                limit=limit,
+                wings=[wing] if wing else None,
+                query_is_sanitized=True,
+            )
             if include_facts
             else {"facts": []}
         )
@@ -787,7 +792,12 @@ def tool_search(
     if result.get("error"):
         return result
     fact_result = (
-        tool_kg_search(sanitized["clean_query"], limit=limit, wings=[wing] if wing else None)
+        tool_kg_search(
+            sanitized["clean_query"],
+            limit=limit,
+            wings=[wing] if wing else None,
+            query_is_sanitized=True,
+        )
         if include_facts
         else {"facts": []}
     )

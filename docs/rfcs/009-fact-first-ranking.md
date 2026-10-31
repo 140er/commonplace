@@ -23,12 +23,15 @@ keep all remaining meaningful terms. Unknown words cannot suppress this fallback
 This avoids scanning the corpus for universal words when a selective term is
 available. Known query terms contribute to final IDF relevance.
 
-Use the best FTS5 BM25 match per subject/predicate key to select at most 50 scoped
-seed keys in SQL (one seed per key). History cannot crowd other keys out of the
-seed cap. Start with a bounded BM25 prefix; if duplicate keys leave slots empty,
-fill only those slots from the best remaining distinct keys, within the same SQL
-query. Expand only selected keys to retain visible history and current successors. Final
-lexical relevance is the fraction of query IDF weight matched:
+Select at most 50 scoped subject/predicate seed keys in SQL. Selective queries
+start with 50 BM25 matches; if duplicate keys leave slots empty, fill from a
+bounded prefix of up to 1,000 scoped matches. All-common queries use that bounded
+prefix directly, avoiding a full BM25 sort. Scope and as-of filters run inside
+both seed lookups, before their limits. Empty scopes and selective prefixes with
+distinct keys skip the fallback lookup entirely. Group the prefix by key using
+each key's best BM25 score, then expand selected keys to retain their full visible
+history and current successors. Final lexical relevance is the fraction of query
+IDF weight matched:
 
 `idf(term) = ln(1 + (N - df(term) + 0.5) / (df(term) + 0.5))`
 
@@ -76,8 +79,11 @@ there is a fact-side error marker, matching direct MCP search.
 
 Dutch stop words are out of scope; there is currently no Dutch locale. Without
 an applicable configured locale, non-English glue can still produce weak matches.
-Queries containing only common terms must rank all matching keys. History is
-retained in full for selected keys, so very large histories add lookup cost.
+All-common queries and duplicate-key top-ups consider only a bounded scoped
+prefix. Keys outside that prefix may be omitted, and a prefix dominated by one
+key may return fewer than 50 distinct keys. History is retained in full for
+selected keys, so very large histories still add lookup cost. Drawer retrieval
+and recall remain independent of these fact candidate limits.
 
 ## Non-goals
 
@@ -99,7 +105,8 @@ boost in this step. Facts remain index entries pointing to the verbatim source.
   seed cap with key history and diversity, unknown words in tiny graphs,
   capitalized names/acronyms, long queries across gateway and local MCP, optional
   FTS index setup, source ordering, generic error isolation, and VACUUM.
-- The seeded latency probe reports before/after added lookup time at 5k, 20k and
-  50k facts, targeting at most 50 ms at 50k for the broad and selective queries,
-  and separately reporting the worst-case all-common query.
+- The seeded latency probe reports before/after added lookup time at 5k, 20k,
+  50k and 200k facts. Broad, selective and all-common queries run unscoped,
+  within one wing, and with all matches hidden, targeting at most 50 ms at 50k
+  for every case.
 - Run lint, format and the requested broad suite without changing budget tests.

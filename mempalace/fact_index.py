@@ -5,6 +5,8 @@ import logging
 
 from . import fact_provenance
 
+FALLBACK_SEED_MULTIPLIER = 20
+
 
 def _drop_triggers(conn):
     for name in ("insert", "update", "delete", "rename"):
@@ -124,9 +126,9 @@ def candidates(
 ):
     """One SQL query: distinct BM25 seed keys, scoped history, sources and IDF.
 
-    FTS5's rank column uses bm25 by default. Each key has one seed score (its
-    best match), so history cannot consume another key's slot in the seed cap.
-    History expansion applies the same scope and as-of predicates as the seeds.
+    Selective terms start with the best BM25 matches. All-common queries and
+    duplicate-key top-ups use a bounded scoped prefix, before grouping by key.
+    Selected keys still expand to their full scoped, as-of history.
     """
     words = sorted(tokens)
     columns = (
@@ -139,13 +141,21 @@ def candidates(
         *fact_provenance.COLUMNS,
     )
     source_json = ", ".join(f"'{key}', fs.{key}" for key in columns)
-    match_sql = (
-        "SELECT t.subject, t.predicate, fact_search.rank AS relevance FROM fact_search "
-        "JOIN triples t ON t.id=fact_search.triple_id "
-        "WHERE fact_search MATCH COALESCE("
-        "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')"
+    scoped = bool(visible_sql or temporal_sql)
+    scope_cte = (
+        "scoped_facts AS MATERIALIZED (SELECT t.id FROM triples t WHERE 1"
         + visible_sql
         + temporal_sql
+        + "), "
+        if scoped
+        else ""
+    )
+    scope_filter = " AND triple_id IN (SELECT id FROM scoped_facts)" if scoped else ""
+    scope_exists = "EXISTS (SELECT 1 FROM scoped_facts)" if scoped else "1"
+    match_sql = (
+        "SELECT triple_id, fact_search.rank AS relevance FROM fact_search "
+        "WHERE fact_search MATCH COALESCE("
+        "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')" + scope_filter
     )
     rows = conn.execute(
         "WITH words(term) AS (VALUES " + ",".join("(?)" for _ in words) + "), "
@@ -155,16 +165,29 @@ def candidates(
         "stats AS MATERIALIZED ("
         "SELECT json_group_object(term, doc) AS frequencies, "
         "(SELECT count(*) FROM fact_search_keys) AS documents FROM term_stats), "
-        "chosen_terms AS MATERIALIZED ("
-        "SELECT term FROM term_stats WHERE doc > 0 AND "
-        "(doc <= ?*(SELECT documents FROM stats) "
-        "OR (SELECT min(doc) FROM term_stats WHERE doc > 0) > ?*(SELECT documents FROM stats))), "
-        "first_matches AS MATERIALIZED (" + match_sql + " ORDER BY fact_search.rank LIMIT ?), "
-        "first_keys AS MATERIALIZED (SELECT DISTINCT subject, predicate FROM first_matches), "
-        "extra_matches AS MATERIALIZED ("
+        "selective_terms AS MATERIALIZED ("
+        "SELECT term FROM term_stats WHERE doc > 0 AND doc <= ?*(SELECT documents FROM stats)), "
+        "chosen_terms AS MATERIALIZED (SELECT term FROM selective_terms UNION ALL "
+        "SELECT term FROM term_stats WHERE doc > 0 AND NOT EXISTS (SELECT 1 FROM selective_terms)), "
+        + scope_cte
+        + "first_seeds AS MATERIALIZED ("
         + match_sql
-        + " AND (SELECT count(*) FROM first_keys) < (SELECT count(*) FROM first_matches) "
-        "AND NOT EXISTS (SELECT 1 FROM first_keys k "
+        + " ORDER BY fact_search.rank LIMIT CASE WHEN EXISTS (SELECT 1 FROM selective_terms) "
+        "AND " + scope_exists + " THEN ? ELSE 0 END), "
+        "first_matches AS MATERIALIZED (SELECT t.subject, t.predicate, m.relevance "
+        "FROM first_seeds m JOIN triples t ON t.id=m.triple_id), "
+        "first_keys AS MATERIALIZED (SELECT DISTINCT subject, predicate FROM first_matches), "
+        "fallback_seeds AS MATERIALIZED ("
+        + match_sql
+        + " LIMIT CASE WHEN "
+        + scope_exists
+        + " AND ("
+        "NOT EXISTS (SELECT 1 FROM selective_terms) OR "
+        "(SELECT count(*) FROM first_keys) < (SELECT count(*) FROM first_matches)) "
+        "THEN ? ELSE 0 END), "
+        "extra_matches AS MATERIALIZED (SELECT t.subject, t.predicate, m.relevance "
+        "FROM fallback_seeds m JOIN triples t ON t.id=m.triple_id "
+        "WHERE NOT EXISTS (SELECT 1 FROM first_keys k "
         "WHERE k.subject=t.subject AND k.predicate=t.predicate)), "
         "extra_keys AS MATERIALIZED ("
         "SELECT subject, predicate FROM extra_matches GROUP BY subject, predicate "
@@ -183,12 +206,10 @@ def candidates(
         [
             *words,
             common_term_fraction,
-            common_term_fraction,
-            *visible_params,
-            *temporal_params,
+            *(visible_params if scoped else ()),
+            *(temporal_params if scoped else ()),
             limit,
-            *visible_params,
-            *temporal_params,
+            limit * FALLBACK_SEED_MULTIPLIER,
             limit,
             *visible_params,
             *temporal_params,

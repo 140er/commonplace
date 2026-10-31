@@ -3,7 +3,8 @@
 
 The corpus mirrors the review probe: one source per fact, nine predicates,
 and entity names sharing common words. Queries cover broad, selective, and
-all-common terms. Timings exclude seeding and the one-time index build, and
+all-common terms, without scope, within one wing, and with all matches hidden.
+Timings exclude seeding and the one-time index build, and
 report the optional fact lookup's added wall time per search.
 """
 
@@ -23,6 +24,7 @@ from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.searcher.facts import search_facts
 
 QUERIES = ("what is the status of the project", "Entity 42", "entity project")
+SCOPES = (("unscoped", None), ("wing_3", ["wing_3"]), ("hidden", ["hidden"]))
 PREDICATES = (
     "is_a",
     "works_at",
@@ -60,7 +62,7 @@ def measure(size, repeats=3):
                             f"e{rng.randrange(size // 5)}",
                             rng.choice(PREDICATES),
                             f"e{rng.randrange(size // 5)}",
-                            "shared",
+                            f"wing_{i % 5}",
                         )
                         for i in range(size)
                     ),
@@ -71,28 +73,30 @@ def measure(size, repeats=3):
                 )
         with KnowledgeGraph(db_path=path) as kg:
             rows = []
-            for query in QUERIES:
-                search_facts(kg, query)  # warm caches, outside the samples
-                samples = []
-                for _ in range(repeats):
-                    start = time.perf_counter()
-                    facts = search_facts(kg, query)
-                    samples.append((time.perf_counter() - start) * 1000)
-                rows.append(
-                    {
-                        "query": query,
-                        "facts": len(facts),
-                        "median_ms": statistics.median(samples),
-                        "max_ms": max(samples),
-                        "samples_ms": samples,
-                    }
-                )
+            for scope, wings in SCOPES:
+                for query in QUERIES:
+                    search_facts(kg, query, wings=wings)  # warm caches, outside the samples
+                    samples = []
+                    for _ in range(repeats):
+                        start = time.perf_counter()
+                        facts = search_facts(kg, query, wings=wings)
+                        samples.append((time.perf_counter() - start) * 1000)
+                    rows.append(
+                        {
+                            "query": query,
+                            "scope": scope,
+                            "facts": len(facts),
+                            "median_ms": statistics.median(samples),
+                            "max_ms": max(samples),
+                            "samples_ms": samples,
+                        }
+                    )
             return {"facts": size, "repeats": repeats, "lookups": rows}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sizes", nargs="+", type=int, default=[5000, 20000, 50000])
+    parser.add_argument("--sizes", nargs="+", type=int, default=[5000, 20000, 50000, 200000])
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     print(json.dumps([measure(size, args.repeats) for size in args.sizes], indent=2), flush=True)
