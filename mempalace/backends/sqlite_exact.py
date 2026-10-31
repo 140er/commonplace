@@ -1461,6 +1461,14 @@ class SQLiteExactCollection(BaseCollection):
             ).fetchall()
         return {str(decode_value(key)): int(count) for key, count in rows if key is not None}
 
+    def supports_bounded_lexical_filter(self, where=None):
+        return _equality_where_sql(where, locus_columns=self._handle.has_locus_columns) is not None
+
+    def lexical_scope(self, where=None):
+        from .scoped_lexical import sqlite_collection_scope
+
+        return sqlite_collection_scope(self, where)
+
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         validate_where(where)
         with self._cursor() as cur:
@@ -1641,6 +1649,7 @@ class SQLiteExactBackend(BaseBackend):
             "supports_metadata_filters",
             "supports_metadata_facets",
             "supports_lexical_search",
+            "bounded_lexical_search",
             "local_mode",
         }
     )

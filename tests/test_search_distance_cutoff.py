@@ -95,7 +95,7 @@ def test_distances_match_what_a_real_chroma_collection_reports(space):
 def _lexical_col(hits: list) -> MagicMock:
     col = MagicMock()
     col.distance_metric = "cosine"
-    col.lexical_search.return_value = LexicalResult(hits=hits)
+    col.union_lexical_search.return_value = LexicalResult(hits=hits)
     return col
 
 
@@ -114,12 +114,13 @@ def _union(col, *, max_distance, stats, known_distances=None):
         hits=[],
         drawers_col=col,
         query="lexical text",
-        wing=None,
-        room=None,
+        wing="w",
+        room="r",
         n_results=5,
         max_distance=max_distance,
         stats=stats,
         known_distances=known_distances,
+        where={"$and": [{"wing": "w"}, {"room": "r"}]},
     )
 
 
@@ -132,7 +133,7 @@ def test_union_does_not_readmit_what_the_vector_path_dropped():
         hits, _ = _union(col, max_distance=0.5, stats=stats, known_distances={"far": 0.71})
 
     assert [hit["source_file"] for hit in hits] == ["new.md"]
-    assert hits[0]["fallback_reason"] == "distance_unavailable"
+    assert "fallback_reason" not in hits[0]
     assert "filtered_by_max_distance" not in stats
 
 
@@ -140,7 +141,9 @@ def test_union_counts_each_dropped_drawer_once():
     """Four drawers past the cutoff on both the vector and lexical side are
     reported as four, and none comes back as an unscored lexical hit."""
     col = _vector_col("cosine", [0.6, 0.7, 0.8, 0.9])
-    col.lexical_search.return_value = LexicalResult(
+    col._backend.capabilities = {"bounded_lexical_search"}
+    col.supports_bounded_lexical_filter.return_value = True
+    col.union_lexical_search.return_value = LexicalResult(
         hits=[_lexical_hit(f"d{i}", f"/p/doc{i}.md") for i in range(4)]
     )
     col.get.side_effect = RuntimeError("embeddings unavailable")
@@ -163,7 +166,7 @@ def test_a_bm25_only_hit_survives_a_failed_distance_lookup():
     assert error is None
     assert [hit["source_file"] for hit in hits] == ["lex1.md"]
     assert hits[0]["distance"] is None
-    assert hits[0]["fallback_reason"] == "distance_unavailable"
+    assert "fallback_reason" not in hits[0]
     assert "filtered_by_max_distance" not in stats
 
 
@@ -182,14 +185,14 @@ def test_a_bm25_only_hit_past_the_cutoff_is_dropped_and_counted():
     assert stats["filtered_by_max_distance"] == 1
 
 
-def test_a_failed_lexical_fetch_is_reported_not_silent():
+def test_a_failed_lexical_fetch_stays_internal():
     col = MagicMock()
     col.distance_metric = "cosine"
-    col.lexical_search.side_effect = RuntimeError("fts down")
+    col.union_lexical_search.side_effect = RuntimeError("fts down")
     stats: dict = {}
 
     hits, error = _union(col, max_distance=None, stats=stats)
 
     assert error is None
     assert hits == []
-    assert stats["candidate_strategy_fallback"] == "lexical_search_failed"
+    assert "candidate_strategy_fallback" not in stats

@@ -70,6 +70,8 @@ Assets live in the fixed `mempalace_assets` collection, separate from verbatim d
 
 `--include-media` merges text/code and assets by cosine distance in the verified shared vector space. It requires compatible cosine collections; default drawer-only search retains its existing hybrid ranking. MCP `mempalace_search` accepts optional `include_media: true` and `query_task: "code"`, returning typed asset references with path, type, project, drawer link and live `available` status. Existing clients keep the default result behavior when these options are omitted. Experimental CLI routes run locally rather than forwarding unsupported options to an older hub.
 
+`candidate_strategy` applies to drawer-only search. Media/code task search always uses shared-space vector ranking, including when `candidate_strategy="union"` is supplied.
+
 Corrupt items are reported individually while healthy files continue. All discovered assets failing exits nonzero; missing dependencies or incompatible provider settings are fatal setup errors. Repeated ingestion upserts the same path ID and retains its original filing time.
 
 ## Rebuild safely

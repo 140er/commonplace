@@ -450,7 +450,10 @@ def run_gate(
 
                     vector_weight, bm25_weight = searcher._resolve_hybrid_rank_weights()
                     effective = (
-                        inspect.signature(search).parameters["candidate_strategy"].default
+                        searcher._resolve_candidate_strategy(
+                            inspect.signature(search).parameters["candidate_strategy"].default,
+                            collection,
+                        )
                         if strategy == "default"
                         else strategy
                     )

@@ -258,7 +258,7 @@ def fake_hub(isolated_home):
 
 def _register_hub(palace, hub, read_only=False, capabilities=None, search_config_fingerprint=None):
     if capabilities is None:
-        capabilities = ["search_cli_compatible"]
+        capabilities = ["search_cli_compatible", "search_candidate_union", "search_candidate_auto"]
     if search_config_fingerprint is None:
         search_config_fingerprint = MempalaceConfig(palace_path=palace).search_config_fingerprint
     server_registry.write_serverinfo(
@@ -384,7 +384,10 @@ class TestForwardMineToHub:
 
 
 class TestForwardSearchToHub:
-    def test_forwards_to_read_only_hub_and_prints_cli_results(self, isolated_home, capsys):
+    @pytest.mark.parametrize("strategy", ["union", "vector"])
+    def test_forwards_to_read_only_hub_and_prints_cli_results(
+        self, isolated_home, capsys, strategy
+    ):
         palace = str(isolated_home / "palace")
         hub = _FakeHub()
         try:
@@ -395,6 +398,7 @@ class TestForwardSearchToHub:
                 results=8,
                 since="2026-08-01",
                 before="2026-09-01",
+                candidate_strategy=strategy,
             )
             assert cli._forward_search_to_hub(args, palace) is True
             (request,) = hub.requests
@@ -403,6 +407,7 @@ class TestForwardSearchToHub:
                 "query": "needle",
                 "limit": 8,
                 "cli_compatible": True,
+                "candidate_strategy": strategy,
                 "wing": "project",
                 "room": "decisions",
                 "since": "2026-08-01",
@@ -525,6 +530,15 @@ class TestForwardSearchToHub:
         monkeypatch.setenv("MEMPALACE_HUB_FORWARD", "0")
         assert cli._forward_search_to_hub(_search_args(), palace) is False
         assert fake_hub.requests == []
+
+    def test_old_hub_without_union_capability_keeps_default_search_local(
+        self, isolated_home, fake_hub
+    ):
+        palace = str(isolated_home / "palace")
+        _register_hub(palace, fake_hub, capabilities=["search_cli_compatible"])
+        assert cli._forward_search_to_hub(_search_args(), palace) is False
+        assert fake_hub.requests == []
+        assert cli._forward_search_to_hub(_search_args(candidate_strategy="vector"), palace) is True
 
     def test_old_hub_without_cli_compatible_capability_keeps_direct_path(
         self, isolated_home, fake_hub

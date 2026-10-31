@@ -71,7 +71,9 @@ def date_search(request, monkeypatch, tmp_path):
             "metadatas": [[meta] if is_vector else []],
             "distances": [[0.1] if is_vector else []],
         }
-        col.lexical_search.return_value = LexicalResult(
+        col._backend.capabilities = {"bounded_lexical_search"}
+        col.supports_bounded_lexical_filter.return_value = True
+        col.union_lexical_search.return_value = LexicalResult(
             hits=[LexicalHit(id="archive", document=TEXT, metadata=meta, score=1.0)]
         )
         monkeypatch.setattr(searcher, "get_collection", lambda *a, **k: col)

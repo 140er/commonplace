@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
-
 _ALLOWED_FILTERS = frozenset({"wing", "room", "source_file", "since", "before"})
 
 
@@ -312,7 +311,7 @@ class LocalPalaceSearchSource:
         query = sanitize_query(case.query)["clean_query"]
         if self._injected_current_search is not None:
             current_search = self._injected_current_search
-        elif candidate_strategy == "vector" and self._hub_current_search is not None:
+        elif self._hub_current_search is not None:
             current_search = self._hub_current_search
         elif self._allow_direct_product_path:
             current_search = self._direct_current_search
@@ -320,8 +319,7 @@ class LocalPalaceSearchSource:
             profile = "union" if candidate_strategy == "union" else "current"
             raise RuntimeError(
                 f"{profile} requires the live Palace MCP hub for exact product replay; "
-                "union is not exposed by MCP, so run it only in a write-quiescent window "
-                "with --allow-direct-product-path"
+                "or run in a write-quiescent window with --allow-direct-product-path"
             )
 
         result = current_search(
@@ -356,11 +354,7 @@ class LocalPalaceSearchSource:
     def current_latency_scope(self, *, candidate_strategy: str) -> str:
         """Describe the boundary timed by ``current_ranking`` for this source."""
 
-        if (
-            self._injected_current_search is None
-            and candidate_strategy == "vector"
-            and self._hub_current_search is not None
-        ):
+        if self._injected_current_search is None and self._hub_current_search is not None:
             return "product_boundary"
         return "direct_product_path"
 
@@ -372,14 +366,11 @@ class HubSearchClient:
         self._hub = hub
 
     def __call__(self, query: str, palace_path: str, **kwargs) -> dict:
-        if kwargs.get("candidate_strategy") != "vector":
-            raise RuntimeError(
-                "the MCP search interface does not expose candidate_strategy='union'"
-            )
         arguments = {
             "query": query,
             "limit": kwargs["n_results"],
             "max_distance": kwargs["max_distance"],
+            "candidate_strategy": kwargs["candidate_strategy"],
         }
         for name in ("wing", "room", "source_file", "since", "before"):
             if kwargs.get(name) is not None:

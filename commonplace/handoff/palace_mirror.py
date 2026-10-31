@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 from typing import Callable
+
+from mempalace.lexical import ranking_stop_words, rerank_merged_hits
 
 from .models import MIRROR_WING, RecallHit, StoredThread
 
@@ -96,7 +99,7 @@ def _range_label(hit: dict):
 
 
 def _score(hit: dict) -> float:
-    for key, sign in (("similarity", 1), ("score", 1), ("distance", -1)):
+    for key, sign in (("score", 1), ("similarity", 1), ("distance", -1)):
         value = hit.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return sign * float(value)
@@ -138,12 +141,14 @@ def _chunk_text(call_tool: CallTool, principal, hit: dict, label, hydrated: dict
 def palace_search(
     call_tool: CallTool, principal, stored_ids: list[str], query: str, limit: int = 8
 ) -> list[RecallHit]:
-    """Semantic search over mirrored chunks of ``stored_ids`` only."""
+    """Default hybrid search over mirrored chunks of ``stored_ids`` only."""
     if limit <= 0:
         return []
     fetch_limit = min(limit * 4, 50)
     hits = {}
+    components = {}
     hydrated = {}
+    first = None
     for stored_id in dict.fromkeys(stored_ids):
         result = _call(
             call_tool,
@@ -157,6 +162,8 @@ def palace_search(
                 "include_facts": False,
             },
         )
+        if first is None:
+            first = result
         results = result.get("results")
         if not isinstance(results, list):
             raise MirrorError("Memory worker returned invalid search results")
@@ -186,4 +193,12 @@ def palace_search(
             key = (stored_id, index)
             if key not in hits or recalled.score > hits[key].score:
                 hits[key] = recalled
+                components[key] = {**hit, "text": text}
+    rerank_merged_hits(
+        (first or {}).get("query", query),
+        list(components.values()),
+        stop_words=ranking_stop_words(first or {}),
+    )
+    for key, hit in components.items():
+        hits[key] = replace(hits[key], score=_score(hit))
     return sorted(hits.values(), key=lambda hit: hit.score, reverse=True)[:limit]

@@ -132,6 +132,7 @@ def _bm25_only_via_sqlite(
     stop_words: frozenset = frozenset(),
     since_dt=None,
     before_dt=None,
+    wings=None,
 ) -> dict:
     """BM25-only search reading drawers directly from chroma.sqlite3.
 
@@ -160,6 +161,14 @@ def _bm25_only_via_sqlite(
 
         collection_name = get_configured_collection_name()
     wing_names = wing_aliases(wing, chroma_known_wings(palace_path)) if wing else []
+    filters = {"wing": wing, "room": room, "source_file": source_file}
+    if wings is not None:
+        known = chroma_known_wings(palace_path)
+        allowed = {alias for name in wings for alias in wing_aliases(name, known)}
+        wing_names = sorted(allowed & set(wing_names) if wing else allowed)
+        filters["wings"] = wings
+        if not wing_names:
+            return {"query": query, "filters": filters, "total_before_filter": 0, "results": []}
     scope = {
         "wing": wing_names,
         "room": [room] if room else [],
@@ -241,7 +250,7 @@ def _bm25_only_via_sqlite(
         if not candidate_ids:
             return {
                 "query": query,
-                "filters": {"wing": wing, "room": room, "source_file": source_file},
+                "filters": filters,
                 "total_before_filter": 0,
                 "results": [],
                 "fallback": "bm25_only_via_sqlite",
@@ -255,12 +264,12 @@ def _bm25_only_via_sqlite(
     # Apply wing/room filters in Python (FTS5 candidates may include
     # entries from other wings).
     candidates = []
-    wings = set(wing_names)
+    scope_wings = set(wing_names)
     for stored_drawer_id, text, meta in rows:
         text, meta = text or "", meta or {}
         if is_bookkeeping(meta, stored_drawer_id):
             continue
-        if wings and meta.get("wing") not in wings:
+        if scope_wings and meta.get("wing") not in scope_wings:
             continue
         if room and meta.get("room") != room:
             continue
@@ -301,6 +310,13 @@ def _bm25_only_via_sqlite(
     for c, raw in zip(candidates, bm25_raw):
         c["bm25_score"] = round(raw, 3)
         c["_score"] = (raw / max_bm25) if max_bm25 > 0 else 0.0
+        c["score"] = round(c["_score"], 6)
+        c["rank_components"] = {
+            "vector_similarity": 0.0,
+            "bm25": round(raw, 6),
+            "vector_weight": 0.0,
+            "bm25_weight": 1.0,
+        }
     candidates.sort(key=lambda c: c["_score"], reverse=True)
     hits = _fold_copies_across_sources(candidates, _search_hit_source, _search_hit_ref)[:n_results]
     for h in hits:
@@ -315,13 +331,30 @@ def _bm25_only_via_sqlite(
 
     result = {
         "query": query,
-        "filters": {"wing": wing, "room": room, "source_file": source_file},
+        "filters": filters,
         "total_before_filter": len(candidates),
         "results": hits,
         "fallback": "bm25_only_via_sqlite",
         "fallback_reason": "vector_search_disabled",
     }
     return _flag_truncations(result, window_pool_truncated, candidates_truncated)
+
+
+def _fetch_union_lexical_candidates(
+    drawers_col, query, n_results, where, stop_words, window_active
+):
+    from ..backends.base import LexicalResult
+
+    try:
+        return drawers_col.union_lexical_search(
+            query=query,
+            stop_words=stop_words,
+            n_results=_candidate_pool_size(n_results, window_active),
+            where=where or None,
+        )
+    except Exception:
+        logger.warning("Bounded lexical candidate retrieval failed")
+        return LexicalResult(hits=[])
 
 
 def _merge_bm25_union_candidates(
@@ -338,6 +371,9 @@ def _merge_bm25_union_candidates(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
+    *,
+    where: Optional[dict],
+    lexical_result=None,
 ) -> None:
     """Append top-K backend lexical candidates into ``hits`` in place.
 
@@ -346,37 +382,36 @@ def _merge_bm25_union_candidates(
     selection skips docs whose embeddings are far from the query even when
     BM25 signal is strong.
 
-    Dedup is chunk-precise: the key is ``(_source_file_full, _chunk_index)``
-    so two files sharing a basename in different directories don't collide,
-    and a vector hit on chunk N of a file doesn't block BM25 from
-    contributing chunk M of the same file. Falls back to ``source_file``
-    only when full-path/chunk metadata is absent.
+    Dedup uses the stored row id. Source metadata is optional and several
+    independent drawers can share one source and chunk index.
 
     BM25-only additions carry ``distance=None`` unless a ``max_distance``
     cutoff is set. Under a cutoff, union mode loads stored embeddings for
     lexical hits and computes their vector distance; a hit past the cutoff is
     dropped and counted in ``stats["filtered_by_max_distance"]``. A hit whose
     distance cannot be computed is kept with ``distance=None`` and
-    ``fallback_reason="distance_unavailable"`` rather than lost. A hit the
+    no data-dependent fallback cause is exposed. A hit the
     vector path already measured reuses that distance from
     ``known_distances``; if the vector path dropped it, it stays dropped and
     is not counted twice.
     """
     stats = {} if stats is None else stats
     known_distances = known_distances or {}
-    where = build_where_filter(wing, room, source_file, col=drawers_col)
-    try:
-        lexical = drawers_col.lexical_search(
-            query=query,
-            n_results=n_results * 3,
-            where=where or None,
+    lexical = (
+        lexical_result
+        if lexical_result is not None
+        else _fetch_union_lexical_candidates(
+            drawers_col,
+            query,
+            n_results,
+            where,
+            stop_words,
+            since_dt is not None or before_dt is not None,
         )
-    except UnsupportedCapabilityError:
-        raise
-    except Exception:
-        logger.warning("candidate_strategy=union: lexical fetch failed", exc_info=True)
-        stats["candidate_strategy_fallback"] = "lexical_search_failed"
-        return
+    )
+    skip = getattr(lexical, "skip_reason", None)
+    if skip in ("long_query_no_literal", "no_terms_after_stopwords"):
+        stats["lexical_skipped"] = skip
 
     metric = _metric_for_collection(drawers_col)
     unmeasured = [hit for hit in lexical.hits if hit.id not in known_distances]
@@ -411,6 +446,7 @@ def _merge_bm25_union_candidates(
         if distance is not None:
             distance = round(distance, 4)
         entry = {
+            "_stored_id": hit.id,
             "drawer_id": _result_drawer_id(meta, hit.id),
             "text": hit.document or "",
             "wing": meta.get("wing", "unknown"),
@@ -433,26 +469,20 @@ def _merge_bm25_union_candidates(
             "_source_file_full": full_source,
             "_chunk_index": meta.get("chunk_index"),
         }
-        if distance is None and _has_distance_cutoff(max_distance):
-            # The cutoff could not be checked; keep the hit and say why.
-            entry["fallback_reason"] = "distance_unavailable"
         bm25_extra.append(entry)
 
-    def _dedup_key(entry: dict):
-        full = entry.get("_source_file_full")
-        ci = entry.get("_chunk_index")
-        if full and ci is not None:
-            return (full, ci)
-        # Fall back to basename only when richer metadata is missing —
-        # avoids silently dropping candidates on legacy data while still
-        # giving chunk-precise dedup whenever the metadata is present.
-        return entry.get("source_file")
-
-    seen = {_dedup_key(h) for h in hits}
+    original_ids = {h.get("_stored_id") for h in hits}
+    seen = {h["_stored_id"] for h in hits if h.get("_stored_id")}
     for bh in bm25_extra:
-        key = _dedup_key(bh)
-        if not key or key == "?" or key in seen:
+        key = bh["_stored_id"]
+        if key in seen:
             continue
         bh["closet_boost"] = 0.0
         hits.append(bh)
         seen.add(key)
+    if lexical.selected_terms and any(h.get("_stored_id") not in original_ids for h in hits):
+        evidence = {hit.id: getattr(hit, "matched_terms", ()) for hit in lexical.hits}
+        for entry in hits:
+            entry["_lexical_terms"] = lexical.selected_terms
+            entry["_lexical_trigram"] = getattr(drawers_col, "lexical_min_token_length", 2) == 3
+            entry["_lexical_matches"] = evidence.get(entry.get("_stored_id"), ())

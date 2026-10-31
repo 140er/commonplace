@@ -35,17 +35,14 @@ def _candidate_pool_limits(
     """Return vector-query and pre-enrichment candidate limits.
 
     Date-window searches retain the wider current-develop pool because the
-    timestamp constraint is applied after retrieval. The normal vector path
-    also remains at least four times wide through closet enrichment. Union
-    mode keeps only the requested top vector candidates before lexical merge.
+    timestamp constraint is applied after retrieval. Both strategies retain
+    at least four times the requested vector candidates through closet
+    enrichment. Union adds lexical candidates without shrinking that pool.
     """
     base_query_limit = _candidate_pool_size(
         n_results,
         date_window_active,
     )
-
-    if candidate_strategy == "union":
-        return base_query_limit, n_results
 
     widened = max(
         base_query_limit,
@@ -72,17 +69,28 @@ def _ordered_source_chunks(source_drawers) -> list:
     return indexed
 
 
-def _load_source_chunks(cache: dict, drawers_col, full_source: str, parent_drawer_id):
-    cache_key = (full_source, parent_drawer_id)
+def _load_source_chunks(
+    cache: dict, drawers_col, full_source: str, parent_drawer_id, where=None, wing=None
+):
+    import json
+
+    source_where = _scoped_source_filter(full_source, parent_drawer_id)
+    clauses = [source_where]
+    if where:
+        clauses.append(where)
+    if wing and wing != "unknown":
+        clauses.append({"wing": wing})
+    scoped = {"$and": clauses} if len(clauses) > 1 else source_where
+    cache_key = (full_source, parent_drawer_id, json.dumps(scoped, sort_keys=True))
     if cache_key in cache:
         return cache[cache_key]
     try:
         source_drawers = drawers_col.get(
-            where=_scoped_source_filter(full_source, parent_drawer_id),
+            where=scoped,
             include=["documents", "metadatas"],
         )
     except Exception:
-        logger.debug("Neighbor fetch failed for %s", full_source, exc_info=True)
+        logger.debug("Scoped neighbor fetch unavailable")
         cache[cache_key] = None
         return None
     cache[cache_key] = _ordered_source_chunks(source_drawers)
@@ -120,7 +128,7 @@ def _neighbor_context(indexed: list, matched: int) -> str:
     return context
 
 
-def _enrich_closet_hits(hits: list, drawers_col) -> list:
+def _enrich_closet_hits(hits: list, drawers_col, where=None) -> list:
     """Keep each closet hit's own drawer text and attach neighbor context.
 
     ``text`` is the matched drawer, verbatim. Chunks beside that drawer's
@@ -140,6 +148,8 @@ def _enrich_closet_hits(hits: list, drawers_col) -> list:
             drawers_col,
             full_source,
             hit.get("_parent_drawer_id") or None,
+            where=where,
+            wing=hit.get("wing"),
         )
         if not indexed or len(indexed) <= 1:
             continue
@@ -235,7 +245,7 @@ def _search_hit_ref(hit: dict) -> dict:
 # project's complexity ceiling (C901 max-complexity=25). New strategies
 # register here.
 _CANDIDATE_MERGERS = {
-    "vector": None,  # default no-op
+    "vector": None,  # vector-only no-op
     "union": _merge_bm25_union_candidates,
 }
 
@@ -247,10 +257,24 @@ def _validate_candidate_strategy(strategy: str) -> None:
     fail consistently regardless of whether the call routes through the
     vector path, the BM25-only fallback, or returns an early error dict.
     """
-    if strategy not in _CANDIDATE_MERGERS:
+    if strategy is not None and strategy not in _CANDIDATE_MERGERS:
         raise ValueError(
             f"candidate_strategy must be one of {tuple(_CANDIDATE_MERGERS)}, got {strategy!r}"
         )
+
+
+def _resolve_candidate_strategy(strategy, col, where=None, stats=None):
+    if strategy == "vector":
+        return strategy
+    supports = getattr(col, "supports_bounded_lexical_filter", None)
+    bounded = (
+        "bounded_lexical_search" in _backend_capabilities(col)
+        and callable(supports)
+        and supports(where)
+    )
+    if not bounded and stats is not None:
+        stats["lexical_skipped"] = "lexical_unbounded_for_filter"
+    return "union" if bounded else "vector"
 
 
 def _apply_candidate_strategy(
@@ -267,6 +291,10 @@ def _apply_candidate_strategy(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
+    *,
+    where: Optional[dict],
+    lexical_result=None,
+    stop_words: frozenset = frozenset(),
 ) -> None:
     """Dispatch to the registered merger for ``strategy``.
 
@@ -290,6 +318,9 @@ def _apply_candidate_strategy(
             before_dt=before_dt,
             stats=stats,
             known_distances=known_distances,
+            where=where,
+            lexical_result=lexical_result,
+            stop_words=stop_words,
         )
 
 
@@ -309,31 +340,27 @@ def _finalize_candidate_hits(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
+    where: Optional[dict],
+    lexical_result=None,
 ) -> tuple:
-    try:
-        _apply_candidate_strategy(
-            candidate_strategy,
-            hits,
-            drawers_col,
-            query,
-            wing,
-            room,
-            n_results,
-            max_distance=max_distance,
-            source_file=source_file,
-            since_dt=since_dt,
-            before_dt=before_dt,
-            stats=stats,
-            known_distances=known_distances,
-        )
-    except UnsupportedCapabilityError:
-        return [], _search_error_result(
-            "candidate_strategy='union' requires a backend with lexical_search support",
-            unsupported_capability="supports_lexical_search",
-            hint=(
-                "Use candidate_strategy='vector' or select a backend that supports lexical search."
-            ),
-        )
+    _apply_candidate_strategy(
+        candidate_strategy,
+        hits,
+        drawers_col,
+        query,
+        wing,
+        room,
+        n_results,
+        max_distance=max_distance,
+        source_file=source_file,
+        since_dt=since_dt,
+        before_dt=before_dt,
+        stats=stats,
+        known_distances=known_distances,
+        where=where,
+        lexical_result=lexical_result,
+        stop_words=stop_words,
+    )
 
     vector_weight, bm25_weight = _resolve_hybrid_rank_weights()
     ranked = _hybrid_rank(
@@ -353,6 +380,7 @@ def _finalize_candidate_hits(
         hit.pop("_source_file_full", None)
         hit.pop("_chunk_index", None)
         hit.pop("_parent_drawer_id", None)
+        hit.pop("_stored_id", None)
         hit.pop("_index_metadata", None)
 
     return hits, None
@@ -407,8 +435,8 @@ def _search_result_envelope(
     full, drawers beyond the pool never got a chance to match the window —
     ``date_filter_pool_truncated`` flags it so a thin result under a date
     filter is never mistaken for "that's all there was". ``stats`` adds what
-    a filter dropped (``filtered_by_max_distance``) or a candidate source
-    that failed (``candidate_strategy_fallback``). ``distance_metric`` names
+    a filter dropped (``filtered_by_max_distance``) or a query-shape skip
+    reason. ``distance_metric`` names
     the scale each hit's raw ``distance`` is on.
     """
     result = {
@@ -445,6 +473,7 @@ def _window_and_fallback_gate(
     collection_name,
     source_file,
     stop_words: frozenset = frozenset(),
+    wings=None,
 ):
     """Front gate for ``search_memories``: parse the window, route the fallback.
 
@@ -478,6 +507,7 @@ def _window_and_fallback_gate(
                 since_dt=since_dt,
                 before_dt=before_dt,
                 stop_words=stop_words,
+                **({"wings": wings} if wings is not None else {}),
             ),
         )
     return since_dt, before_dt, active, None
@@ -527,6 +557,7 @@ def _vector_disabled_with_window(
     since_dt,
     before_dt,
     stop_words: frozenset = frozenset(),
+    wings=None,
 ) -> dict:
     """Run the BM25-only route and echo the raw window strings.
 
@@ -545,6 +576,7 @@ def _vector_disabled_with_window(
         since_dt=since_dt,
         before_dt=before_dt,
         stop_words=stop_words,
+        **({"wings": wings} if wings is not None else {}),
     )
     if "filters" in result:
         result["filters"]["since"] = since
@@ -564,6 +596,7 @@ def _vector_disabled_search(
     stop_words: frozenset = frozenset(),
     since_dt=None,
     before_dt=None,
+    wings=None,
 ) -> dict:
     try:
         backend_name = resolve_backend_name(palace_path)
@@ -589,4 +622,5 @@ def _vector_disabled_search(
         stop_words=stop_words,
         since_dt=since_dt,
         before_dt=before_dt,
+        **({"wings": wings} if wings is not None else {}),
     )

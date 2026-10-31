@@ -163,13 +163,15 @@ class WorkerClient:
 
     def call_tool(self, principal: Principal, name: str, arguments: dict):
         """Run one tool internally and return its parsed result."""
+        arguments = dict(arguments)
+        params = {"name": name, "arguments": arguments}
         response = self.post(
             principal,
             {
                 "jsonrpc": "2.0",
                 "id": "commonplace-internal",
                 "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
+                "params": params,
             },
         )
         if not isinstance(response, dict) or "error" in response:
@@ -311,7 +313,7 @@ class Mediator:
             response = _tool_response(req_id, plan["respond"])
         else:
             forwarded = dict(request)
-            forwarded["params"] = {**params, "arguments": args}
+            forwarded["params"] = {"name": name, "arguments": args}
             response = self.workers.post(principal, forwarded)
             response = self._after(principal, name, rule, args, response)
             if isinstance(plan, dict) and "facts" in plan:
@@ -381,7 +383,17 @@ class Mediator:
         return None
 
     def _before_search(self, principal, name, args, notes):
+        requested = args.get("wings")
+        if requested is not None and (
+            not isinstance(requested, list)
+            or len(requested) > 64
+            or any(not isinstance(w, str) or not w for w in requested)
+        ):
+            raise Denied("wings must be a list of at most 64 wing names")
         policy = principal.policy
+        if requested is not None:
+            requested = [w for w in requested if policy.can_read_wing(w)]
+            args["wings"] = requested
         wing = args.get("wing")
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
@@ -393,7 +405,11 @@ class Mediator:
         # A worker has workspace authority. Always suppress its unscoped fact
         # search, including captured CLI output, and attach the scoped read.
         args["include_facts"] = False
-        if policy.sees_all_wings or wing:
+        if wing or (policy.sees_all_wings and requested is None):
+            if requested is not None and not any(
+                canonical_wing(wing) == canonical_wing(w) for w in requested
+            ):
+                return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -410,6 +426,8 @@ class Mediator:
             call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
             if args.get("wing"):
                 call["wings"] = [args["wing"]]
+            elif args.get("wings") is not None:
+                call["wings"] = args["wings"]
             self._before_kg_read(principal, "mempalace_kg_query", call, [])
             result = self.workers.call_tool(principal, "mempalace_kg_query", call)
             if (
@@ -617,41 +635,34 @@ class Mediator:
         return wings
 
     def _fan_out_search(self, principal, name, args) -> dict:
-        """One search per readable wing, merged by score.
-
-        Each wing's own top ``limit`` is exact, so the merged top ``limit`` over
-        the readable wings is exact too; nothing outside them is ever queried.
-        """
-        policy = principal.policy
+        """One worker search and one ranking over the readable wing union."""
         listing = self.workers.call_tool(principal, "mempalace_list_wings", {}) or {}
-        wings = sorted(w for w in (listing.get("wings") or {}) if policy.can_read_wing(w))
+        requested = args.get("wings")
+        wings = sorted(
+            w
+            for w in (listing.get("wings") or {})
+            if principal.policy.can_read_wing(w)
+            and (
+                requested is None or any(canonical_wing(w) == canonical_wing(r) for r in requested)
+            )
+        )
         if len(wings) > MAX_FANOUT_WINGS:
             raise Denied(f"pass a wing: this connection reads {len(wings)} wings")
-        limit = args.get("limit") if isinstance(args.get("limit"), int) else 5
-        merged: list = []
-        first: Optional[dict] = None
-        seen = set()
-        for wing in wings:
-            result = self.workers.call_tool(principal, name, {**args, "wing": wing})
-            if not isinstance(result, dict):
-                continue
-            if result.get("error"):
-                return result
-            if first is None:
-                first = result
-            for hit in result.get("results") or []:
-                key = hit.get("drawer_id") or json.dumps(hit, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
-                    merged.append(hit)
-        merged.sort(key=_score_key)
-        merged = [h for h in merged if _scrub(h, policy.can_read_wing) is not _DROP]
-        out = dict(first or {"query": args.get("query", "")})
-        out["results"] = merged[: max(1, limit)]
-        if isinstance(out.get("filters"), dict):
-            out["filters"] = {**out["filters"], "wing": None}
-        out["wings_searched"] = wings
-        return out
+        if not wings:
+            return {"query": args.get("query", ""), "results": [], "wings_searched": []}
+        result = self.workers.call_tool(principal, name, {**args, "wings": wings})
+        if not isinstance(result, dict):
+            raise WorkerUnavailable()
+        if result.get("error"):
+            return result
+        result = dict(result)
+        result["results"] = [
+            h
+            for h in result.get("results", [])
+            if _scrub(h, principal.policy.can_read_wing) is not _DROP
+        ]
+        result["wings_searched"] = wings
+        return result
 
 
 # ── pure helpers ──
@@ -748,16 +759,6 @@ def _target_ids(args: dict, result) -> list:
             if isinstance(value, str) and value not in ids:
                 ids.append(value)
     return ids
-
-
-def _score_key(hit) -> tuple:
-    if not isinstance(hit, dict):
-        return (1, 0.0)
-    for key, sign in (("similarity", -1), ("score", -1), ("distance", 1)):
-        value = hit.get(key)
-        if isinstance(value, (int, float)):
-            return (0, sign * float(value))
-    return (1, 0.0)
 
 
 def _scrub(node, can_read: Callable[[str], bool]):

@@ -1115,6 +1115,11 @@ class CompactCollection(SQLiteExactCollection):
             return {key: self._result(cur, [row], spec) for key, row in by_id.items()}
         return self._result(cur, [by_id[r] for r in rowids if r in by_id], spec)
 
+    def lexical_scope(self, where=None):
+        from .scoped_lexical import sqlite_collection_scope
+
+        return sqlite_collection_scope(self, where, compact=True)
+
     def lexical_search(self, **kwargs):
         return self._retry_snapshot(lambda: self._lexical_once(**kwargs))
 

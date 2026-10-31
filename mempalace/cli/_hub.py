@@ -110,7 +110,7 @@ def _print_hub_search_result(args, result: dict) -> bool:
         print(f"  [{index}] {wing} / {room}")
         print(f"      Source: {source}")
         if similarity is None:
-            print(f"      Match:  bm25={bm25}  (vector disabled)")
+            print(f"      Match:  bm25={bm25}  (lexical candidate)")
         else:
             print(f"      Match:  similarity={similarity}  bm25={bm25}")
         print()
@@ -136,6 +136,11 @@ def _forward_search_to_hub(args, palace_path: str) -> bool:
     hub = HubClient.discover(palace_path, include_self=True)
     if hub is None or "search_cli_compatible" not in hub.capabilities:
         return False
+    strategy = getattr(args, "candidate_strategy", None)
+    if strategy is None and "search_candidate_auto" not in hub.capabilities:
+        return False
+    if strategy == "union" and "search_candidate_union" not in hub.capabilities:
+        return False
     if not search_fingerprint_matches(hub.info, palace_path) or not hub.healthy():
         return False
 
@@ -144,6 +149,8 @@ def _forward_search_to_hub(args, palace_path: str) -> bool:
         "limit": args.results,
         "cli_compatible": True,
     }
+    if strategy is not None:
+        arguments["candidate_strategy"] = strategy
     for name in ("wing", "room", "since", "before"):
         value = getattr(args, name, None)
         if value:
