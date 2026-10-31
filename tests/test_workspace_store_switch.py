@@ -1226,7 +1226,7 @@ def test_recorded_deletion_refuses_changed_files_during_downtime(workspace, monk
 
 @pytest.mark.parametrize(
     "missing,legacy",
-    [("threads.sqlite3", False), ("boards.sqlite3", False), ("threads.sqlite3", True)],
+    [("threads.sqlite3", False), ("boards.sqlite3", False), ("palace/chroma.sqlite3", True)],
 )
 def test_unrecorded_partial_deletion_is_named_and_saved_for_stat_only_doctor(
     workspace, monkeypatch, missing, legacy
@@ -1305,6 +1305,67 @@ def test_prune_classifies_changes_and_doctor_uses_saved_findings(
             lambda *args, **kwargs: pytest.fail("Doctor hashed retired data"),
         )
         assert switch.doctor_workspace(data, WORKSPACE)["retired_findings"][0]["kind"] == kind
+
+
+@pytest.mark.parametrize("layout", ["palace_only", "threads_only", "unknown"])
+@pytest.mark.parametrize("old_finding", [False, True])
+def test_legacy_optional_layouts_are_healthy_and_prunable(
+    workspace, monkeypatch, capsys, layout, old_finding
+):
+    from commonplace.cli import main
+    from commonplace.control_db import ControlDB
+
+    data, root, _ = workspace
+    with closing(ControlDB(str(data / "control.sqlite3"))) as db:
+        db.create_user("owner@example.test", is_admin=True)
+        wid = db.create_workspace("fixture", "owner@example.test")
+    root.rename(root.with_name(wid))
+    root = root.with_name(wid)
+    switch.switch_workspace(data, wid, "compact")
+    active = workspace_path(data, wid)
+    if layout != "threads_only":
+        (root / "threads.sqlite3").unlink()
+    else:
+        import shutil
+
+        shutil.rmtree(root / "palace")
+    if layout == "unknown":
+        (root / "palace" / "chroma.sqlite3").unlink()
+    pointer = read_json(root / POINTER)
+    entry = pointer["retained"][0]
+    entry.pop("expected_files")
+    entry["digest"] = switch._retirement_digest(root)
+    switch._write_pointer(root, pointer)
+    if old_finding:
+        switch._save_prune_findings(
+            root,
+            [
+                {
+                    "generation": root.name,
+                    "kind": "incomplete (interrupted deletion)",
+                    "at": entry["retired_at"],
+                }
+            ],
+        )
+    with monkeypatch.context() as context:
+        context.setattr(
+            switch,
+            "_retirement_digest",
+            lambda *args, **kwargs: pytest.fail("Doctor hashed legacy data"),
+        )
+        assert main(["--data", str(data), "doctor", "--workspace", "fixture"]) == 0
+        doctor = json.loads(capsys.readouterr().out)
+    assert doctor["retired_findings"] == []
+    verification = doctor["retained_generations"][0]["verification"]
+    assert verification == (
+        None if layout == "palace_only" else "unverified (legacy entry; prune checks it)"
+    )
+    now = entry["retired_at"] + 40 * 86400
+    assert switch.prune_generations(data, wid, now=now, report_only=True)["findings"] == []
+    switch.prune_generations(data, wid, now=now)
+    assert switch._generation_gone(root, root)
+    assert workspace_path(data, wid) == active
+    assert read_json(root / POINTER)["retained"] == []
 
 
 def test_report_only_hashes_expired_generations_and_doctor_never_hashes(workspace, monkeypatch):

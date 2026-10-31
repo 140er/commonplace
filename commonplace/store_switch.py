@@ -476,16 +476,25 @@ def _deletion_repair(name, *, recorded):
     )
 
 
+def _legacy_required_file(directory):
+    if not (directory / "palace").is_dir():
+        return None
+    compact = (directory / "threads.v2.sqlite3").exists() or (
+        directory / "palace" / "compact.sqlite3"
+    ).exists()
+    chroma = (directory / "threads.sqlite3").exists() or (
+        directory / "palace" / "chroma.sqlite3"
+    ).exists()
+    if compact == chroma:
+        return None
+    return "palace/compact.sqlite3" if compact else "palace/chroma.sqlite3"
+
+
 def _missing_retired_files(directory, item):
     expected = item.get("expected_files")
     if expected is None:
-        compact = (directory / "threads.v2.sqlite3").exists() or (
-            directory / "palace" / "compact.sqlite3"
-        ).exists()
-        expected = [
-            "threads.v2.sqlite3" if compact else "threads.sqlite3",
-            "palace/compact.sqlite3" if compact else "palace/chroma.sqlite3",
-        ]
+        required = _legacy_required_file(directory)
+        expected = [required] if required else []
     if not isinstance(expected, list) or any(
         not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
         for name in expected
@@ -500,10 +509,13 @@ def _missing_retired_files(directory, item):
 
 def _retired_kind(root, item):
     directory = generation_path(root, item["name"])
+    digest = item.get("digest")
+    current = _retirement_digest(directory) if digest else None
+    if "expected_files" not in item and digest and current == digest:
+        return None
     if _missing_retired_files(directory, item):
         return "incomplete (interrupted deletion)"
-    digest = item.get("digest")
-    changed = bool(digest) and _retirement_digest(directory) != digest
+    changed = bool(digest) and current != digest
     newer = newest_write(directory) > int(item["retired_at"] * 1_000_000_000)
     if changed and newer:
         return "newer writes"
@@ -555,15 +567,17 @@ def _retired_findings(root, pointer, state, *, inspect_expired=False, now=None):
         if name == pending or _generation_gone(root, directory):
             continue
         missing = _missing_retired_files(directory, item)
-        if missing:
-            kind = "incomplete (interrupted deletion)"
-        elif (
+        if (
             inspect_expired
             and (time.time() if now is None else now) - item["retired_at"] >= RETENTION_SECONDS
         ):
             kind = _retired_kind(root, item)
+        elif missing:
+            kind = "incomplete (interrupted deletion)"
         else:
             kind = known.get(name)
+            if "expected_files" not in item and kind == "incomplete (interrupted deletion)":
+                kind = None
             if kind is None and newest_write(directory) > int(item["retired_at"] * 1_000_000_000):
                 kind = "changed since retirement"
         if kind:
@@ -1372,6 +1386,11 @@ def doctor_workspace(data_dir, workspace_id):
                 "name": item["name"],
                 "older_than_14_days": time.time() - item["retired_at"] >= RETENTION_SECONDS,
                 "newer_writes": newest_write(path) > int(item["retired_at"] * 1_000_000_000),
+                "verification": (
+                    "unverified (legacy entry; prune checks it)"
+                    if "expected_files" not in item and _legacy_required_file(path) is None
+                    else None
+                ),
             }
         )
     return {

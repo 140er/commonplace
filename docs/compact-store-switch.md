@@ -147,6 +147,10 @@ with newer writes is named `newer writes`; other mismatches are named
 so doctor can show the cause without rehashing retained data.
 New retirement entries include a relative file inventory for structural checks;
 older entries use the known thread and palace layouts plus saved prune findings.
+Legacy layouts permit an absent thread database. Prune uses their stored content
+fingerprint as its authority: a match is healthy. When doctor cannot identify a
+legacy layout, it reports `unverified (legacy entry; prune checks it)` as information
+with exit 0; missing required files still identify an incomplete generation.
 Missing `retained` and `retained: []` are equivalent.
 Recovery can finish an interrupted publication when its pointer carries forward
 the previous copy's complete retained history. A partial pointer cannot bypass
