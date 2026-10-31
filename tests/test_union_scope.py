@@ -613,6 +613,7 @@ def test_moderately_common_pool_preranks_rowids_before_loading_text():
         yield SimpleNamespace(
             count=40000,
             fetch=fetch,
+            lengths=lambda ids: {i: 8 if i == 0 else 2 for i in ids},
             load_texts=load,
             hydrate=lambda ids: {i: (str(i), " ".join(terms), {}) for i in ids},
         )
@@ -620,3 +621,43 @@ def test_moderately_common_pool_preranks_rowids_before_loading_text():
     col = SimpleNamespace(lexical_scope=lexical_scope, lexical_min_token_length=2)
     result = scope_local_search(col, " ".join(terms), 5)
     assert len(loaded) == 100 and result.hits[0].id == "0"
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+@pytest.mark.parametrize("matches", [151, 1000])
+def test_one_word_pool_keeps_the_short_newest_note(tmp_path, monkeypatch, backend, matches):
+    from mempalace.backends import embedding_wrapper
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    col = get_collection(str(tmp_path), create=True)
+    col.add(
+        ids=[f"old{i}" for i in range(matches - 1)] + ["newest"],
+        documents=[f"marigold record{i} " + "routine " * 30 for i in range(matches - 1)]
+        + ["marigold"],
+        embeddings=[[0.01, 1.0]] * (matches - 1) + [[0.0, 0.0]],
+        metadatas=[{"wing": "public"}] * matches,
+    )
+    reference = col.lexical_search(query="marigold", n_results=1, where={"wing": "public"})
+    assert reference.hits[0].id == "newest"
+    result = search_memories(
+        "marigold", str(tmp_path), wing="public", n_results=5, include_facts=False
+    )
+    assert result["results"][0]["drawer_id"] == "newest"
+    assert result["results"][0]["matched_via"] == "bm25_backend"
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+def test_prerank_equal_lengths_prefer_the_newest_rowid(tmp_path, monkeypatch, backend):
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    col = get_collection(str(tmp_path), create=True)
+    col.add(
+        ids=[f"d{i}" for i in range(200)],
+        documents=["marigold"] * 200,
+        embeddings=[[1.0, 0.0]] * 200,
+        metadatas=[{"wing": "public"}] * 200,
+    )
+    result = col.union_lexical_search(query="marigold", n_results=1, where={"wing": "public"})
+    assert [hit.id for hit in result.hits] == ["d199"]

@@ -28,6 +28,36 @@ class ScopedFTS:
             conn.execute("CREATE TEMP TABLE lexical_scope(id INTEGER PRIMARY KEY)")
             conn.execute("INSERT INTO lexical_scope " + scope_sql, params)
 
+    def lengths(self, ids):
+        """Read only length metadata for these already scoped candidates."""
+        lengths = {}
+        for start in range(0, len(ids), 900):
+            chunk = ids[start : start + 900]
+            marks = ",".join("?" for _ in chunk)
+            if self.table == "docs_fts":
+                rows = self.conn.execute(
+                    f"SELECT id,sz FROM docs_fts_docsize WHERE id IN ({marks})", chunk
+                )
+                for row_id, encoded in rows:
+                    # FTS5 stores one base-128 varint per column. Unindexed
+                    # columns contribute zero; compact has just one column.
+                    total = value = 0
+                    for byte in encoded:
+                        value = (value << 7) | (byte & 127)
+                        if byte < 128:
+                            total += value
+                            value = 0
+                    lengths[row_id] = total
+            else:
+                lengths.update(
+                    self.conn.execute(
+                        f"SELECT rowid,length(string_value) FROM {self.table} "
+                        f"WHERE rowid IN ({marks})",
+                        chunk,
+                    )
+                )
+        return lengths
+
     def fetch(self, term, limit):
         if self.count <= 256:
             if not self.count:
@@ -108,8 +138,19 @@ def scope_local_search(
         # First stage needs only rowids. It bounds text decoding and Python
         # scoring independently of the accepted terms' full match counts.
         if not closet:
+            pool_size = max(100, 10 * n_results)
+            top = nsmallest(pool_size, weights, key=lambda row_id: -weights[row_id])
+            boundary = min((weights[row_id] for row_id in top), default=0)
+            eligible = [row_id for row_id in weights if weights[row_id] >= boundary]
+            lengths = scope.lengths(eligible)
             ordered = nsmallest(
-                max(100, 10 * n_results), weights, key=lambda row_id: (-weights[row_id], row_id)
+                pool_size,
+                eligible,
+                key=lambda row_id: (
+                    -weights[row_id],
+                    lengths.get(row_id, math.inf),
+                    -row_id,
+                ),
             )
         else:
             ordered = sorted(ids)
