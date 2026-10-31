@@ -53,12 +53,19 @@ C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vecto
 New and updated drawers retain their verbatim documents. Core detects validated
 base64 on the whole input before chunking. Each physical chunk indexes its own
 range: a span emits its placeholder where it starts, continuation fragments are
-removed, and a chunk wholly inside a span indexes the placeholder. No vectors are
-removed in A0; the vector count is unchanged. Keyword-only message policy is B1c.
+removed, and a chunk wholly inside a span indexes the placeholder. Padding-only
+intersections create no span and stay literal in index text, whether they would
+otherwise emit or continue a placeholder. No vectors are removed in A0; the vector
+count is unchanged. Keyword-only message policy is B1c.
 Queries use the same placeholder rule when they contain validated base64.
-Runs touching a Unicode letter or number on either side are part of a word,
-so `é<run>é` is no longer treated as base64. Unicode punctuation and whitespace
-remain delimiters. The detector and hint validator apply the same boundary rule.
+At visible candidate edges, Unicode letters (L*), numbers (N*), marks (M*),
+connector punctuation (Pc) and characters in the base64 alphabet continue a word;
+everything else delimits. Both edges look past format characters (Cf), except
+ZWSP (U+200B), to the nearest visible character. A document or chunk edge counts
+as a delimiter, and ZWSP is a separator. Word edges behave identically; elsewhere
+NFD never gets a placeholder NFC would not. Decomposable symbols such as ≠ can
+retain more text in NFD. The detector and hint validator share this rule and
+inspect original code points without normalization, preserving span offsets.
 The index view also replaces NUL and lone surrogates with spaces for inference,
 rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
 strings retain those characters through the existing reversible encoding.
@@ -73,11 +80,13 @@ to the same owner; drawer ingress strips caller-supplied hints. The SHA-256 bind
 a hint to its chunk but does not authenticate it. Complete runs are revalidated
 by the detector. Fragments at chunk edges cannot be fully validated without the
 whole content, so their acceptance, media label and decoded size rely on that
-trusted provenance. Validation still checks fragment characters, visible word
-boundaries and placeholder format and size bounds (150 to `sys.maxsize` decoded
-bytes, with an implied encoded length large enough to cover the fragment).
-Edge fragments can therefore remove or replace short tokens in the index;
-hints are not a security boundary
+trusted provenance. Every fragment must contain at least one payload character:
+padding-only hints are rejected whether emitting or continuing, and zero-byte
+placeholders are invalid. Validation still checks fragment characters, visible word
+boundaries using the shared original-code-point predicate, and placeholder
+format and size bounds (150 to `sys.maxsize` decoded bytes, with an implied
+encoded length large enough to cover the fragment). Edge fragments can therefore
+remove or replace short tokens in the index; hints are not a security boundary
 against a malicious palace writer. Stored documents remain verbatim.
 Removed hints are tombstoned on merging writes. A stale or invalid hint
 logs a rate-limited warning and falls back to detection on the supplied document. A projection failure logs a warning and stores the
