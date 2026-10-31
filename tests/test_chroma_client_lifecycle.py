@@ -118,6 +118,9 @@ def exercise(index):
             path = rng.choice(paths)
             with _inproc_sqlite.palace_db_lock(os.path.join(path, 'chroma.sqlite3')):
                 col = backend.get_collection(palace=PalaceRef(id=path, local_path=path), collection_name='mempalace_drawers', options=options)
+                client = backend._client(path)
+                assert client._identifier == path
+                assert client.get_settings().persist_directory == path
                 assert col.query(query_embeddings=[[1., 0.]], n_results=1).ids == [['a']]
                 if rng.randrange(2):
                     backend.close_palace(path)
