@@ -14,6 +14,7 @@ from .display import need_for
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
+    "parent_number": "INTEGER REFERENCES tasks(id)",
     "message_id": "INTEGER REFERENCES space_messages(id)",
     "repo": "TEXT",
     "branch": "TEXT",
@@ -71,6 +72,7 @@ def card(conn, row, principal=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     result = {
         "number": row["id"],
+        "parent": row["parent_number"],
         "board": row["board"],
         "title": row["title"],
         "body": row["body"],
@@ -82,7 +84,7 @@ def card(conn, row, principal=None) -> dict:
         "ask_to": row["ask_to"],
         "return_to": row["return_to"],
         "flags": json.loads(row["flags"] or "[]"),
-        **{key: row[key] for key in TASK_COLUMNS if key != "labels"},
+        **{key: row[key] for key in TASK_COLUMNS if key not in ("labels", "parent_number")},
         "labels": json.loads(row["labels"] or "[]"),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
@@ -92,6 +94,28 @@ def card(conn, row, principal=None) -> dict:
         "position": row["position"],
     }
     result["need"] = need_for(result, principal)
+    if row["parent_number"] is None:
+        children = []
+        for child in conn.execute(
+            "SELECT * FROM tasks WHERE board_id=? AND parent_number=? ORDER BY position,id",
+            (row["board_id"], row["id"]),
+        ):
+            fields = {**dict(child), "labels": json.loads(child["labels"] or "[]")}
+            children.append(
+                {
+                    "number": child["id"],
+                    "title": child["title"],
+                    "status": child["status"],
+                    "need": need_for(fields, principal),
+                }
+            )
+        if children:
+            result["children"] = {
+                "done": sum(c["status"] == "done" for c in children),
+                "total": len(children),
+            }
+            result["children_need_you"] = any(c["need"] == "you" for c in children)
+            result["child_cards"] = children
     return result
 
 
@@ -164,6 +188,9 @@ class BoardStore:
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS tasks_by_parent ON tasks(board_id,parent_number)"
+                )
                 conn.execute(
                     "UPDATE tasks SET created_by=CASE WHEN stamp_connection IS NOT NULL "
                     "THEN 'conn:' || stamp_connection ELSE 'user:' || stamp_user END "

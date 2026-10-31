@@ -19,6 +19,7 @@ def quoted(value):
 
 def line(c):
     result = f"#{c['number']} {c['status']} need:{c['need']}  {quoted(c['title'])}"
+    result += parent_line(c)
     if c["assignee"]:
         result += f"  {c['assignee']}"
     if c["claim_until"]:
@@ -26,6 +27,10 @@ def line(c):
     if c["ask_to"]:
         result += f" asks {c['ask_to']}"
     return result
+
+
+def parent_line(c):
+    return f"  parent:#{c['parent']}" if c["parent"] is not None else "  parent:none"
 
 
 def tree(stack):
@@ -115,13 +120,17 @@ def _run(ctx, name, args):
     if name == "task_show":
         return show(result) + f"\nlink: {card_url(ctx, result['number'])}"
     if name == "task_add":
-        return f"#{result['number']} added to {result['status']} on {result['board']}"
+        return (
+            f"#{result['number']} added to {result['status']} on {result['board']}"
+            + parent_line(result)
+        )
     if name == "task_take_next":
         if result is None:
             return "nothing to take"
         reply = f"#{result['number']} {quoted(result['title'])}  yours" + (
             f" until {result['claim_until']}" if result["claim_until"] else ""
         )
+        reply += parent_line(result)
         reply += f"\nbody: {quoted(result['body'])}"
         if "decision" in result:
             d = result["decision"]
@@ -129,7 +138,9 @@ def _run(ctx, name, args):
         return reply
     if name == "ask":
         return (
-            f"#{result['number']} waiting on {result['ask_to']}  {card_url(ctx, result['number'])}"
+            f"#{result['number']} waiting on {result['ask_to']}"
+            + parent_line(result)
+            + f"  {card_url(ctx, result['number'])}"
         )
     if name == "needs_me":
         if args.get("format") == "digest":
@@ -146,11 +157,15 @@ def _run(ctx, name, args):
                 lines.append(
                     label
                     + ": "
-                    + ", ".join(f"#{c['number']} {quoted(c['title'])}" for c in result[key])
+                    + ", ".join(
+                        f"#{c['number']} {quoted(c['title'])}" + parent_line(c) for c in result[key]
+                    )
                 )
         return "\n".join(lines) or "nothing waiting"
-    return f"ok #{result['number']} {result['status']}" + (
-        f"  until {result['claim_until']}" if result["claim_until"] else ""
+    return (
+        f"ok #{result['number']} {result['status']}"
+        + (f"  until {result['claim_until']}" if result["claim_until"] else "")
+        + parent_line(result)
     )
 
 
@@ -241,6 +256,10 @@ def register_tools():
             "status": {"type": "string", "enum": ["todo", "backlog"]},
             "assignee": STRING,
             "message_id": {"type": "integer", "minimum": 1},
+            "parent": {
+                **TASK,
+                "description": "Parent card on this board; only sub-actors can specify a card created by or assigned to their top-level actor.",
+            },
             "labels": ARRAY,
         },
         ("title",),

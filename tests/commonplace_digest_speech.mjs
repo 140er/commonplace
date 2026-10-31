@@ -88,7 +88,7 @@ const context = {
   speech: { supported: true }, speechState: { active: false, text: "" },
   state: { needs: {}, open: [], boards: [], route: "#/" }, needsCards: () => [],
   homeView: ({ speak }) => (speak ? '<button data-action="speak-digest">Speak</button>' : ""),
-  dot: () => "", taskRow: () => "",
+  dot: () => "", taskRow: () => "", children: () => "",
 };
 const view = runInNewContext([
   functionSource("function speechView()", "\nconst prLink"),

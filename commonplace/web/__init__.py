@@ -176,6 +176,8 @@ def install(gateway):
             "expires_at",
             "revoked_at",
             "last_used_at",
+            "parent_id",
+            "started_by",
         )
         rows = gateway.db.connections(principal.workspace_id)
         send_json(h, 200, {"connections": [{key: row[key] for key in fields} for row in rows]})

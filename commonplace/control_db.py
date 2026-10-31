@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS connections (
     expires_at TEXT,
     revoked_at TEXT,
     last_used_at TEXT,
+    parent_id TEXT REFERENCES connections(id),
+    started_by TEXT NOT NULL DEFAULT 'user' CHECK (started_by IN ('user','agent')),
     UNIQUE (workspace_id, name),
     FOREIGN KEY (workspace_id, user_id) REFERENCES memberships(workspace_id, user_id)
 );
@@ -188,6 +190,37 @@ class ControlDB:
         self._conn.execute("PRAGMA journal_mode = WAL")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            with self._tx() as conn:
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
+                if "parent_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE connections ADD COLUMN parent_id TEXT REFERENCES connections(id)"
+                    )
+                if "started_by" not in columns:
+                    conn.execute(
+                        "ALTER TABLE connections ADD COLUMN started_by TEXT NOT NULL DEFAULT 'user' "
+                        "CHECK (started_by IN ('user','agent'))"
+                    )
+            for operation in ("INSERT", "UPDATE OF parent_id, workspace_id, started_by, auth"):
+                suffix = "insert" if operation == "INSERT" else "update"
+                self._conn.executescript(f"""
+                    CREATE TRIGGER IF NOT EXISTS connections_parent_{suffix}
+                    BEFORE {operation} ON connections BEGIN
+                        SELECT RAISE(ABORT, 'parent must be an active connection in the same workspace')
+                        WHERE NEW.parent_id IS NOT NULL AND (
+                            NEW.started_by != 'agent' OR NEW.auth = 'oauth' OR NOT EXISTS (
+                                SELECT 1 FROM connections WHERE id = NEW.parent_id
+                                AND workspace_id = NEW.workspace_id AND revoked_at IS NULL
+                            )
+                        );
+                        WITH RECURSIVE ancestors(id) AS (
+                            SELECT NEW.parent_id UNION
+                            SELECT c.parent_id FROM connections c JOIN ancestors a ON c.id = a.id
+                            WHERE c.parent_id IS NOT NULL
+                        )
+                        SELECT RAISE(ABORT, 'connection parent cycle') FROM ancestors WHERE id = NEW.id;
+                    END;
+                """)
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -339,6 +372,7 @@ class ControlDB:
         policy: Policy,
         actor: str,
         expires_days: Optional[int] = DEFAULT_TOKEN_DAYS,
+        parent: Optional[str] = None,
     ) -> tuple:
         """Create a connection with a new token. Returns ``(connection_id, token)``.
 
@@ -366,11 +400,18 @@ class ControlDB:
         now = _now()
         expires = _iso(now + timedelta(days=expires_days)) if expires_days else None
         with self._lock:
+            if parent is not None and (not isinstance(parent, str) or not parent.strip()):
+                raise ControlError("parent must be a connection name or id")
+            if parent == name:
+                raise ControlError("a connection cannot be its own parent")
+            parent_row = self.connection(parent, ws["id"]) if parent is not None else None
+            if parent_row is not None and parent_row["revoked_at"]:
+                raise ControlError("parent connection is revoked")
             try:
                 self._conn.execute(
                     "INSERT INTO connections(id, workspace_id, user_id, name, client, auth, "
-                    "token_hash, token_hint, policy, created_by, created_at, expires_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "token_hash, token_hint, policy, created_by, created_at, expires_at, parent_id, started_by) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         cid,
                         ws["id"],
@@ -384,10 +425,14 @@ class ControlDB:
                         actor_id,
                         _iso(now),
                         expires,
+                        parent_row["id"] if parent_row is not None else None,
+                        "agent" if parent_row is not None else "user",
                     ),
                 )
-            except sqlite3.IntegrityError:
-                raise ControlError(f"a connection named {name!r} already exists") from None
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed: connections" in str(exc):
+                    raise ControlError(f"a connection named {name!r} already exists") from None
+                raise ControlError(str(exc)) from None
         self.audit(
             action="token.create",
             decision="ok",
@@ -397,6 +442,25 @@ class ControlDB:
             auth="pat",
         )
         return cid, token
+
+    def top_level_connection(self, connection_id: str, workspace_ref: str) -> sqlite3.Row:
+        """Follow stored connection ids, refusing invalid or cyclic ancestry."""
+        with self._lock:
+            workspace_id = self.workspace(workspace_ref)["id"]
+            seen = set()
+            while True:
+                if connection_id in seen:
+                    raise ControlError("connection parent cycle")
+                seen.add(connection_id)
+                row = self._conn.execute(
+                    "SELECT * FROM connections WHERE id=? AND workspace_id=?",
+                    (connection_id, workspace_id),
+                ).fetchone()
+                if row is None:
+                    raise ControlError("parent connection not found in this workspace")
+                if row["parent_id"] is None:
+                    return row
+                connection_id = row["parent_id"]
 
     def connection(self, ref: str, workspace_ref: Optional[str] = None) -> sqlite3.Row:
         sql = "SELECT * FROM connections WHERE (id = ? OR name = ?)"
