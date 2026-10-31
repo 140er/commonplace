@@ -77,6 +77,11 @@ def dispatch(service, h, parts, method):
                 return 200, service.action(
                     rule_id, **body(("version", "action"), ("version", "action"))
                 )
+            if parts[2] == "agent":
+                return 200, service.set_agent(
+                    rule_id,
+                    **body(("version", "agent", "note", "accept"), ("version", "agent")),
+                )
             if parts[2] == "suggestions":
                 return 201, service.suggest(
                     rule_id, **body(("text", "from_agent"), ("text", "from_agent"))

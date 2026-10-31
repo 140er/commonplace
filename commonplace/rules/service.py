@@ -17,7 +17,7 @@ from .store import RuleStore, now, sequence
 KINDS = ("permission", "limit", "instruction", "style")
 SCOPES = ("global", "board", "repo")
 RULE_FIELDS = (
-    "id agent key text agent_text kind scope scope_ref status source pending version seq "
+    "id agent key text agent_text agent_text_by kind scope scope_ref status source pending version seq "
     "retired_by updated_at updated_by"
 ).split()
 WAITING = "(status='proposed' OR pending=1) AND (status!='retired' OR retired_by='owner')"
@@ -40,6 +40,18 @@ def rule_json(row):
 
 def rule_text(value):
     return validate_text(value, "text", required=True, limit=4000)
+
+
+def agent_ref(agent):
+    if not isinstance(agent, str) or (
+        agent != "*" and (not agent.startswith("conn:") or not agent[5:].strip())
+    ):
+        raise ToolError("no: agent must be * or conn:<name>")
+    return agent
+
+
+def agent_name(agent):
+    return "All agents" if agent == "*" else agent.removeprefix("conn:")
 
 
 def rule_key(text):
@@ -76,6 +88,7 @@ class RuleService:
         self.principal = ctx.principal
         self.store = open_store(ctx.workspace_dir())
         self._board_visibility = {}
+        self._moved = []
 
     def _emit(self, kind, data):
         try:
@@ -91,12 +104,15 @@ class RuleService:
 
     @contextmanager
     def transaction(self):
+        # Rules moved to another agent also refresh the agent they left.
+        self._moved = []
         with self.store.transaction() as conn:
             before = sequence(conn)
             yield conn
             changed = conn.execute(
                 "SELECT agent,id,key FROM rules WHERE seq>? ORDER BY seq", (before,)
             ).fetchall()
+        changed = [*changed, *self._moved]
         for agent in dict.fromkeys(row["agent"] for row in changed):
             rows = [row for row in changed if row["agent"] == agent]
             self._emit(
@@ -130,15 +146,29 @@ class RuleService:
             and (row["scope"] != "board" or self._board_visible(row["scope_ref"]))
         )
 
+    def _agent_view(self, rule):
+        """An agent's wording on a moved rule stays between that agent and the owner."""
+        actor = self.principal.actor
+        if self.principal.person:
+            return rule
+        masked = dict(rule)
+        if rule["agent_text_by"] != actor:
+            masked.update(agent_text=None, agent_text_by=None, pending=0)
+        if str(rule["updated_by"]).startswith("conn:") and rule["updated_by"] != actor:
+            masked["updated_by"] = None
+        return masked
+
     def _snapshot(self, conn, rule_id, *, note=None, source=None):
         row = row_for(conn, rule_id)
         p = self.principal
         conn.execute(
-            "INSERT INTO rule_versions(rule_id,version,text,kind,scope,scope_ref,status,source,"
-            "note,stamp_user,stamp_connection,stamp_trust,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO rule_versions(rule_id,version,agent,text,kind,scope,scope_ref,status,"
+            "source,note,stamp_user,stamp_connection,stamp_trust,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row["id"],
                 row["version"],
+                row["agent"],
                 row["text"],
                 row["kind"],
                 row["scope"],
@@ -174,9 +204,11 @@ class RuleService:
         stamp = now()
         columns = dict(
             agent=agent,
+            origin_agent=None if agent == "*" else agent,
             key=key,
             **values,
             agent_text=None if owner else values["text"],
+            agent_text_by=None if owner else self.principal.actor,
             status="accepted" if owner else "proposed",
             source="owner" if owner else "agent",
             seq=sequence(conn),
@@ -225,52 +257,72 @@ class RuleService:
         result = []
         with self.transaction() as conn:
             for key, values in prepared.items():
+                actor = self.principal.actor
+                # A rule the owner moved to another agent still answers to its first agent.
                 row = conn.execute(
-                    "SELECT * FROM rules WHERE agent=? AND key=?", (self.principal.actor, key)
+                    "SELECT * FROM rules WHERE key=? AND (agent=? OR origin_agent=?) "
+                    "ORDER BY agent=? DESC, agent='*' DESC, id LIMIT 1",
+                    (key, actor, actor, actor),
                 ).fetchone()
                 if row is None:
-                    result.append(self._create(conn, self.principal.actor, key, values))
+                    result.append(self._create(conn, actor, key, values))
                     continue
                 if not self._visible(row):
                     # The owner moved it out of this agent's sight: skip it, reveal nothing.
                     continue
-                if row["retired_by"] == "agent":
+                # A rule moved here from another agent is handled like an owner edit.
+                owned = row["agent"] == actor and row["origin_agent"] in (None, actor)
+                if owned and row["retired_by"] == "agent":
                     updates = dict(
                         values,
                         agent_text=values["text"],
+                        agent_text_by=actor,
                         source="agent",
                         status="proposed",
                         pending=0,
                         retired_by=None,
                     )
-                elif row["source"] == "owner" or row["retired_by"] == "owner":
+                elif not owned or row["source"] == "owner" or row["retired_by"] == "owner":
                     updates = (
                         {
                             "agent_text": values["text"],
+                            "agent_text_by": actor,
                             "pending": int(values["text"] != row["text"]),
                         }
-                        if values["text"] != row["agent_text"]
+                        if values["text"] != row["agent_text"] or row["agent_text_by"] != actor
                         else {}
                     )
                 else:
-                    updates = dict(values, agent_text=values["text"], status="proposed", pending=0)
+                    updates = dict(
+                        values,
+                        agent_text=values["text"],
+                        agent_text_by=actor,
+                        status="proposed",
+                        pending=0,
+                    )
                     if all(row[k] == v for k, v in values.items()):
                         updates = {}
-                result.append(self._change(conn, row, updates) if updates else rule_json(row))
+                result.append(
+                    self._agent_view(
+                        self._change(conn, row, updates) if updates else rule_json(row)
+                    )
+                )
             if replace:
                 rows = conn.execute(
                     "SELECT * FROM rules WHERE agent=? AND source='agent' AND status!='retired' "
-                    "AND retired_by IS NULL",
+                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=agent",
                     (self.principal.actor,),
                 ).fetchall()
                 for row in rows:
                     if row["key"] not in prepared and self._visible(row):
                         result.append(
-                            self._change(
-                                conn,
-                                row,
-                                {"status": "retired", "retired_by": "agent"},
-                                note="dropped by agent",
+                            self._agent_view(
+                                self._change(
+                                    conn,
+                                    row,
+                                    {"status": "retired", "retired_by": "agent"},
+                                    note="dropped by agent",
+                                )
                             )
                         )
             total, active = conn.execute(
@@ -292,7 +344,7 @@ class RuleService:
             rows = conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
             return {
                 "rules": [
-                    rule_json(row)
+                    self._agent_view(rule_json(row))
                     for row in rows
                     if self._visible(row)
                     and (
@@ -383,10 +435,7 @@ class RuleService:
 
     def create(self, agent, text, kind, scope="global", scope_ref=None):
         self._person(owner=True)
-        if not isinstance(agent, str) or (
-            agent != "*" and (not agent.startswith("conn:") or not agent[5:].strip())
-        ):
-            raise ToolError("no: agent must be * or conn:<name>")
+        agent = agent_ref(agent)
         values = fields(text, kind, scope, scope_ref)
         with self.transaction() as conn:
             key = rule_key(text)
@@ -423,6 +472,41 @@ class RuleService:
                 row,
                 dict(values, status="edited", source="owner", pending=0, retired_by=None),
                 note=note,
+            )
+
+    def set_agent(self, rule_id, version, agent, note=None, accept=False):
+        """Move a rule to another agent target; `accept` also accepts a proposal."""
+        self._person(owner=True)
+        agent = agent_ref(agent)
+        if note is not None:
+            validate_text(note, "note")
+        if type(accept) is not bool:
+            raise ToolError("no: accept must be a boolean")
+        with self.transaction() as conn:
+            row = self._versioned(conn, rule_id, version)
+            if row["status"] == "retired":
+                raise ToolError("no: restore the rule first")
+            if accept and row["status"] != "proposed":
+                raise ToolError("no: invalid action")
+            if row["agent"] == agent:
+                raise ToolError("no: nothing to change")
+            if conn.execute(
+                "SELECT 1 FROM rules WHERE agent=? AND key=?", (agent, row["key"])
+            ).fetchone():
+                raise ToolError(f"no: {agent_name(agent)} already has a rule with this key")
+            self._moved.append({"agent": row["agent"], "id": row["id"], "key": row["key"]})
+            audit = f"Applies to: {agent_name(row['agent'])} → {agent_name(agent)}"
+            updates = {"agent": agent}
+            if accept:
+                updates["status"] = "accepted"
+            if row["origin_agent"] is None and agent != "*":
+                # A rule written for all agents first answers to the agent it moves to.
+                updates["origin_agent"] = agent
+            return self._change(
+                conn,
+                row,
+                updates,
+                note=f"{audit}\n{note}" if note and note.strip() else audit,
             )
 
     def action(self, rule_id, version, action):
