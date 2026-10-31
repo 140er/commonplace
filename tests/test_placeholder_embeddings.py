@@ -578,7 +578,23 @@ def test_all_unicode_marks_connectors_and_formats_reject_forged_edge_hints():
             text = "ab" + char + "cd"
             for start, end, emit in [(0, 2, False), (3, 5, True)]:
                 hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
-                assert index_text(text, hint) == text, f"U+{codepoint:04X}, emit={emit}"
+                if char == "\u200b":
+                    # ZWSP separates words, so either edge fragment can be replaced on its own.
+                    expected = text[:start] + ("[base64 binary 150 B]" if emit else "") + text[end:]
+                else:
+                    expected = text
+                assert index_text(text, hint) == expected, f"U+{codepoint:04X}, emit={emit}"
+
+
+@pytest.mark.parametrize("char", ["\u200c", "\u200d", "\ufeff", "\u2068", "\u2069", "\u00ad"])
+@pytest.mark.parametrize("emit", [False, True])
+def test_edge_fragments_look_past_formats_to_chunk_delimiters(char, emit, caplog):
+    text = char + "ab" if emit else "ab" + char
+    start, end = (1, 3) if emit else (0, 2)
+    hint = forged_hint(text, [[start, end, "[base64 binary 150 B]", emit]])
+    expected = char + "[base64 binary 150 B]" if emit else char
+    assert index_text(text, hint) == expected
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
 @pytest.mark.parametrize(

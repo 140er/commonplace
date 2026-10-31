@@ -59,12 +59,13 @@ otherwise emit or continue a placeholder. No vectors are removed in A0; the vect
 count is unchanged. Keyword-only message policy is B1c.
 Queries use the same placeholder rule when they contain validated base64.
 At visible candidate edges, Unicode letters (L*), numbers (N*), marks (M*),
-connector punctuation (Pc) and format characters (Cf) continue a word, as do
-characters in the base64 alphabet; everything else delimits. For word edges,
-NFD never gets a placeholder NFC would not. This does not imply parity for
-decomposable symbols such as ≠, whose decomposition can introduce a word character.
-The detector and hint validator share this rule and inspect original code points
-without normalization, preserving span offsets.
+connector punctuation (Pc) and characters in the base64 alphabet continue a word;
+everything else delimits. Both edges look past format characters (Cf), except
+ZWSP (U+200B), to the nearest visible character. A document or chunk edge counts
+as a delimiter, and ZWSP is a separator. Word edges behave identically; elsewhere
+NFD never gets a placeholder NFC would not. Decomposable symbols such as ≠ can
+retain more text in NFD. The detector and hint validator share this rule and
+inspect original code points without normalization, preserving span offsets.
 The index view also replaces NUL and lone surrogates with spaces for inference,
 rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
 strings retain those characters through the existing reversible encoding.

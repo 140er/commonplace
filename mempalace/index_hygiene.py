@@ -56,12 +56,29 @@ class Base64Span:
 def is_word_character(char: str) -> bool:
     """Whether one original code point continues a word at a visible edge."""
     category = unicodedata.category(char)
-    return category[0] in "LNM" or category in ("Pc", "Cf")
+    return category[0] in "LNM" or category == "Pc"
+
+
+def _invisible_format(char: str) -> bool:
+    return char != "\u200b" and unicodedata.category(char) == "Cf"
 
 
 def continues_run(char: str) -> bool:
     """Whether one original code point continues a base64 run or its word."""
     return is_word_character(char) or char in "+/-"
+
+
+def run_touches_word(text: str, start: int, end: int) -> bool:
+    """Look past invisible format characters to the nearest visible neighbours."""
+    i = start - 1
+    while i >= 0 and _invisible_format(text[i]):
+        i -= 1
+    j = end
+    while j < len(text) and _invisible_format(text[j]):
+        j += 1
+    return (i >= 0 and continues_run(text[i])) or (
+        j < len(text) and (continues_run(text[j]) or text[j] == "=")
+    )
 
 
 def _media_type(data: bytes) -> str:
@@ -102,18 +119,17 @@ def find_base64_spans(text: str) -> list[Base64Span]:
     padding characters. The total length must be divisible by four, including
     for unpadded URL-safe runs. Whitespace/wrapped payloads are separate runs.
     Media labels come from decoded headers, never a data URI's claim.
-    A run touching a Unicode letter, number, mark, connector punctuation or
-    format character is retained as part of a word. Everything outside those
-    categories and the base64 alphabet delimits. Source text is never normalized.
+    A run touching a Unicode letter, number, mark or connector punctuation is
+    retained as part of a word. Edges look past format characters except ZWSP
+    to the nearest visible character or text boundary. Everything outside those
+    word categories and the base64 alphabet delimits. Text is never normalized.
     Wrapped 64/76-column payloads are deliberately left in. High-entropy
     alphabetic/base32 identifiers and words glued to a run may satisfy this
     same encoding rule; corpus recall/token gates remain necessary.
     """
     spans = []
     for match in _RUN.finditer(text):
-        if (match.start() > 0 and continues_run(text[match.start() - 1])) or (
-            match.end() < len(text) and continues_run(text[match.end()])
-        ):
+        if run_touches_word(text, match.start(), match.end()):
             continue
         run = match.group()
         if len(run) % 4:

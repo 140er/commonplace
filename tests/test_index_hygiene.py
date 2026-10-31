@@ -86,12 +86,17 @@ def test_delimited_spans_preserve_original_unicode_offsets(form):
 @pytest.mark.parametrize("size", [150, 151, 152])
 @pytest.mark.parametrize("edge", ["\u0301", "\u093e", "\u20dd", "\u200c", "\u200d"])
 @pytest.mark.parametrize("side", ["before", "after"])
-def test_marks_and_joiners_preserve_adjacent_runs(size, edge, side):
+def test_marks_and_joiners_at_document_edges(size, edge, side):
     _, encoded = payload(size)
     before, after = (edge, "") if side == "before" else ("", edge)
     text = before + encoded + after
-    assert find_base64_spans(text) == []
-    assert index_text(text) == text
+    if edge in "\u200c\u200d":
+        # At either outer edge, ZWJ/ZWNJ look through to the document delimiter.
+        [span] = find_base64_spans(text)
+        assert index_text(text) == before + span.placeholder + after
+    else:
+        assert find_base64_spans(text) == []
+        assert index_text(text) == text
     assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
 
 
@@ -101,8 +106,42 @@ def test_all_unicode_marks_connectors_and_formats_preserve_visible_edges():
         edge = chr(codepoint)
         category = unicodedata.category(edge)
         if category.startswith("M") or category in ("Pc", "Cf"):
-            assert find_base64_spans(edge + encoded) == [], f"before U+{codepoint:04X}"
-            assert find_base64_spans(encoded + edge) == [], f"after U+{codepoint:04X}"
+            if category == "Cf":
+                # An outer Cf reaches the document delimiter; ZWSP itself is a separator.
+                assert len(find_base64_spans(edge + encoded)) == 1, f"before U+{codepoint:04X}"
+                assert len(find_base64_spans(encoded + edge)) == 1, f"after U+{codepoint:04X}"
+            else:
+                assert find_base64_spans(edge + encoded) == [], f"before U+{codepoint:04X}"
+                assert find_base64_spans(encoded + edge) == [], f"after U+{codepoint:04X}"
+            if edge != "\u200b":
+                assert find_base64_spans("x" + edge + encoded) == [], f"before U+{codepoint:04X}"
+                assert find_base64_spans(encoded + edge + "x") == [], f"after U+{codepoint:04X}"
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        pytest.param("\ufeff", "", id="bom-at-document-start"),
+        pytest.param("notes\n\ufeff", "\n", id="bom-mid-text"),
+        pytest.param("see ", "\u200b next", id="zwsp-after-run"),
+        pytest.param("สวัสดี\u200b", "\u200bครับ", id="zwsp-between-words"),
+        pytest.param("שלום \u200e", "", id="lrm-before-run"),
+        pytest.param("value \u2068", "\u2069 sent", id="fsi-pdi-isolates"),
+        pytest.param("x ", "\u00ad", id="trailing-soft-hyphen"),
+    ],
+)
+def test_format_characters_keep_delimited_payload_coverage(before, after, caplog):
+    from mempalace.stored_text import IndexSource, index_text as hinted_index_text
+
+    _, encoded = payload(prefix=b"\x89PNG\r\n\x1a\n")
+    text = before + encoded + after
+    [span] = find_base64_spans(text)
+    assert (span.start, span.end) == (len(before), len(before) + len(encoded))
+    expected = before + span.placeholder + after
+    assert index_text(text) == expected
+    source = IndexSource(text)
+    assert hinted_index_text(text, source.metadata(0, len(text))) == expected
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
 def test_all_letters_and_numbers_keep_word_edges_after_decomposition():
