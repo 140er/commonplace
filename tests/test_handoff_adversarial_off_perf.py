@@ -810,6 +810,9 @@ def test_legacy_cli_outputs_match(gateway, legacy, monkeypatch, capsys):
     with legacy.server(gateway.path):
         for args in (["user", "list"], ["workspace", "list"], ["token", "list"], ["audit"]):
             expected_status, output, errors = legacy.cli(args)
+            if args == ["token", "list"]:
+                # Ancestry extends the listing; every legacy column stays verbatim.
+                output = output.replace("  last used ", "  parent -  started_by user  last used ")
             assert cli.main(args) == expected_status
             assert capsys.readouterr() == (output, errors)
 

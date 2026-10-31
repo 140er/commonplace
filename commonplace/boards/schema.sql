@@ -60,6 +60,7 @@ BEGIN UPDATE meta SET value = value + 1 WHERE key = 'changes'; END;
 CREATE TABLE IF NOT EXISTS tasks (
     id            INTEGER PRIMARY KEY,              -- shown as #142; one sequence per workspace
     board_id      INTEGER NOT NULL REFERENCES boards(id),
+    parent_number INTEGER REFERENCES tasks(id),     -- always the top-level card on this board
     title         TEXT NOT NULL,
     body          TEXT NOT NULL DEFAULT '',
     status        TEXT NOT NULL

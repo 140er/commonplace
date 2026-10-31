@@ -8,6 +8,7 @@ import { bindSwipe, SWIPE } from "./decide-swipe.js";
 import { planView } from "./plan.js";
 import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
+import { childProgress } from "./children.js";
 
 const signinParams = new URLSearchParams(location.search);
 const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
@@ -23,9 +24,10 @@ const state = {
   me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
-  chat: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
+  chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), rulesWaiting: 0, queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
+  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0,
+  queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -55,6 +57,7 @@ function dot(card) {
   const need = needLabels[card.need] ? card.need : "idle";
   return `<i class="status-dot ${need}" data-need="${need}" role="img" aria-label="${needLabels[need]}"></i>`;
 }
+const children = (card, scope) => childProgress(card, state.expandedChildren.has(card.number), dot, scope);
 // One task row: dot, title, elapsed; then #N, context, branch and PR.
 const taskRow = (card, context = "") => `<div class="trow">${dot(card)}<a class="tt" href="#/card/${card.number}">${e(card.title)}</a><time data-elapsed="${e(card.updated_at)}" datetime="${e(card.updated_at)}">${elapsed(card.updated_at)}</time><div class="tm"><a href="#/card/${card.number}">#${card.number}</a>${card.flags?.length ? '<span class="flag" aria-label="Flagged">!</span>' : ""}${context}${card.branch ? `<span class="branch">${e(card.branch)}</span>` : ""}${prLink(card)}</div></div>`;
 const rowFoot = (card) => `${card.claim_until ? `<div class="task-meta">${claim(card)}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
@@ -165,7 +168,7 @@ async function signin(code = null) {
   speech.stop(); voice.reset();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
-  state.chat = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
+  state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
   providersPromise ||= api("/app/auth/providers").catch(() => ({}));
   const { providers = [], paused = [] } = await providersPromise;
   if (state.me) return;
@@ -237,7 +240,7 @@ function needsView() {
   if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
   // Keep the Speak/Stop node (and its focus) through live refreshes.
   const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
-  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow });
+  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow, children });
   if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
   speechView();
 }
@@ -248,7 +251,7 @@ function boardView() {
   root.querySelector("#content").innerHTML = `<div class="cols ${state.backlog ? "expanded" : ""}">${statuses.map((status) => {
     const all = state.cards.filter((c) => c.status === status);
     const list = status === "done" ? [...all].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 20) : all;
-    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}</article>`).join("")}</div></section>`;
+    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}${children(card, "board")}</article>`).join("")}</div></section>`;
   }).join("")}</div>`;
   markOpenCard();
 }
@@ -257,8 +260,8 @@ function markOpenCard() {
     card.classList.toggle("open", state.route === `#/card/${card.dataset.card}`);
   });
 }
-function spaceTask(card) {
-  return `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}</article>`;
+function spaceTask(card, inline) {
+  return `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}${children(card, inline ? "chat" : "space")}</article>`;
 }
 function syncSpaceTasks(parent, cards, inline = false) {
   const nodes = new Map([...parent.children].filter((n) => n.dataset.task).map((n) => [Number(n.dataset.task), n]));
@@ -269,10 +272,10 @@ function syncSpaceTasks(parent, cards, inline = false) {
     nodes.delete(card.number);
     const cached = state.chatTasks.get(card.number), detail = cached?.version === card.version;
     const controls = state.route !== `#/card/${card.number}`;
-    const signature = JSON.stringify([card.version, card.need, inline && detail, inline && controls, state.pending.has(`card-${card.number}`)]);
+    const signature = JSON.stringify([card.version, card.need, card.children, card.children_need_you, card.child_cards, state.expandedChildren.has(card.number), inline && detail, inline && controls, state.pending.has(`card-${card.number}`)]);
     if (node.dataset.signature !== signature) {
       const full = inline && detail ? { ...cached, ...card } : card;
-      node.innerHTML = spaceTask(full) + (inline ? `<ol class="space-asks">${conversation({ ...full, events: (full.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls })}</ol>` : "");
+      node.innerHTML = spaceTask(full, inline) + (inline ? `<ol class="space-asks">${conversation({ ...full, events: (full.events || []).filter((ev) => ev.options || ev.kind === "decide") }, { compact: true, controls })}</ol>` : "");
       node.dataset.signature = signature;
     }
     if (node !== next) parent.insertBefore(node, next);
@@ -283,7 +286,7 @@ function syncSpaceTasks(parent, cards, inline = false) {
 async function hydrateSpaceTasks() {
   const epoch = state.screen, board = state.chatBoard;
   const current = () => epoch === state.screen && state.chatBoard === board && state.base === `#/space/${enc(board)}`;
-  const changed = await Promise.all(state.cards.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
+  const changed = await Promise.all(state.linked.filter((c) => state.chatVisible.has(c.message_id)).map(async (card) => {
     if (state.chatTasks.get(card.number)?.version === card.version) return false;
     const pending = state.chatTaskRequests.get(card.number);
     if (pending?.version === card.version && pending.epoch === epoch) return false;
@@ -291,7 +294,7 @@ async function hydrateSpaceTasks() {
     state.chatTaskRequests.set(card.number, request);
     try {
       const detail = await api(`/api/cards/${card.number}`);
-      if (!current() || state.cards.find((c) => c.number === card.number)?.version !== detail.version) return false;
+      if (!current() || state.linked.find((c) => c.number === card.number)?.version !== detail.version) return false;
       state.chatTasks.set(card.number, detail);
       return true;
     } catch (error) { if (current()) showError(error.message); return false; }
@@ -344,7 +347,7 @@ function spaceView() {
   const stream = content.querySelector(".space-stream"), older = stream.querySelector("[data-older]");
   older.hidden = !state.chatHasMore;
   const linked = new Map();
-  state.cards.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
+  state.linked.forEach((c) => { if (!linked.has(c.message_id)) linked.set(c.message_id, []); linked.get(c.message_id).push(c); });
   let next = older.nextElementSibling;
   for (const m of state.chat) {
     let node = stream.querySelector(`[data-message="${m.id}"]`);
@@ -467,6 +470,7 @@ async function refresh({ background = false, events = [] } = {}) {
       const result = await api(`/api/boards/${enc(slug)}/cards`);
       if (!current()) return;
       state.cards = result.cards;
+      state.linked = result.linked;
       if (state.base.startsWith("#/space/")) {
         if (state.chatBoard !== slug) {
           const page = await api(`/api/boards/${enc(slug)}/chat?last=50`);
@@ -747,7 +751,7 @@ async function route() {
 // The current view's list first, so a write never sends a version left over from another view.
 function findCard(number) {
   if (state.card?.number === number) return state.card;
-  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.open, needsCards()] : [state.open, needsCards(), state.cards];
+  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
 async function mutate(key, action) {
@@ -825,7 +829,15 @@ root.addEventListener("click", async (event) => {
       await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
     else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
-    else if (action === "cs-toggle") {
+    else if (action === "children-toggle") {
+      const card = findCard(number);
+      if (!card) return;
+      if (!state.expandedChildren.delete(number)) state.expandedChildren.add(number);
+      const saved = remember();
+      b.closest(".task-children").outerHTML = children(card, b.dataset.scope);
+      restore(saved);
+      root.querySelector(`.child-toggle[data-card="${number}"][data-scope="${b.dataset.scope}"]`)?.focus({ preventScroll: true });
+    } else if (action === "cs-toggle") {
       const key = `${state.card.number}:${b.dataset.path}`, saved = remember();
       if (!state.toggled.delete(key)) state.toggled.add(key);
       b.closest(".cs").outerHTML = callTree(state.card);

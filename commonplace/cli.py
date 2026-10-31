@@ -173,6 +173,7 @@ def cmd_token_add(args) -> int:
         policy=policy,
         actor=actor,
         expires_days=args.expires_days or None,
+        parent=args.parent,
     )
     # The only time the token is shown. Stdout carries nothing else, so
     # `commonplace token add ... > file` captures exactly the token.
@@ -188,6 +189,7 @@ def cmd_token_list(args) -> int:
         policy = Policy.from_json(c["policy"]).summary()
         print(
             f"{c['name']}  {c['token_hint']}  {c['client']}  {c['workspace_id']}  {state}  "
+            f"parent {c['parent_id'] or '-'}  started_by {c['started_by']}  "
             f"last used {c['last_used_at'] or 'never'}  {json.dumps(policy)}"
         )
     return 0
@@ -734,6 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--workspace", required=True)
     s.add_argument("--user", help="token holder (default: --by)")
     s.add_argument("--client", default="other")
+    s.add_argument("--parent", help="parent connection name or id")
     s.add_argument("--profile", choices=sorted(PROFILES))
     s.add_argument("--tools", help="explicit tool list instead of --profile")
     s.add_argument("--scopes")

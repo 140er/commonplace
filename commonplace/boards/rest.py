@@ -5,7 +5,7 @@ from commonplace.extensions import ToolContext, ToolError
 from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json, send_text
 from .digest import ssml
 from .display import NEEDS, with_urls
-from .service import BoardService, VersionClash
+from .service import BoardService, ParentError, VersionClash
 
 OPEN_LIMIT, OPEN_LIMIT_MAX = 200, 500
 
@@ -27,6 +27,9 @@ def install(gateway):
             return
         except HTTPError as exc:
             send_json(h, exc.status, {"error": str(exc)})
+            return
+        except ParentError as exc:
+            send_json(h, 400, {"error": str(exc).removeprefix("no: ")})
             return
         except ToolError as exc:
             message = str(exc).removeprefix("no: ")
@@ -133,22 +136,24 @@ def dispatch(service, h, parts, method):
             return routed
     if parts == ["boards"]:
         if method == "GET":
-            return 200, {"boards": service.board_list()}
+            return 200, {"boards": service.board_list(top_level=True)}
         if method == "POST":
             return 201, service.board_add(**read_json(h))
     if len(parts) == 3 and parts[0] == "boards" and parts[2] == "cards":
         if method == "GET":
+            cards = service.task_list(
+                board=parts[1], status=query(h).get("status") or None, all_statuses=True
+            )
             return 200, {
-                "cards": service.task_list(
-                    board=parts[1], status=query(h).get("status") or None, all_statuses=True
-                )
+                "cards": [c for c in cards if c["parent"] is None],
+                "linked": [c for c in cards if c["message_id"] is not None],
             }
         if method == "POST":
             body = read_json(h)
             body.pop("board", None)
             return 201, service.task_add(board=parts[1], **body)
     if parts == ["cards"] and method == "GET":
-        return 200, open_cards(service.task_list(), query(h).get("limit"))
+        return 200, open_cards(service.task_list(top_level=True), query(h).get("limit"))
     if parts == ["needs-me"] and method == "GET":
         return 200, service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":
