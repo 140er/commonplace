@@ -3,7 +3,9 @@
 import base64
 import random
 import re
+import sys
 import time
+import unicodedata
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -52,6 +54,49 @@ def test_unicode_letters_and_numbers_preserve_adjacent_runs(size, before, after)
     assert find_base64_spans(text) == []
     assert index_text(text) == text
     assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+@pytest.mark.parametrize("before,after", [("café", ""), ("", "élan")])
+def test_composed_and_decomposed_word_edges_are_unchanged(form, before, after):
+    _, encoded = payload()
+    before, after = (unicodedata.normalize(form, part) for part in (before, after))
+    text = before + encoded + after
+    assert find_base64_spans(text) == []
+    assert index_text(text) == text
+
+
+@pytest.mark.parametrize("form", ["NFC", "NFD"])
+def test_delimited_spans_preserve_original_unicode_offsets(form):
+    _, encoded = payload()
+    before = unicodedata.normalize(form, "café") + " '"
+    after = "' " + unicodedata.normalize(form, "élan")
+    text = before + encoded + after
+    [span] = find_base64_spans(text)
+    assert (span.start, span.end) == (len(before), len(before) + len(encoded))
+    assert text[span.start : span.end] == encoded
+    assert index_text(text) == before + span.placeholder + after
+
+
+@pytest.mark.parametrize("size", [150, 151, 152])
+@pytest.mark.parametrize("edge", ["\u0301", "\u093e", "\u20dd", "\u200c", "\u200d"])
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_marks_and_joiners_preserve_adjacent_runs(size, edge, side):
+    _, encoded = payload(size)
+    before, after = (edge, "") if side == "before" else ("", edge)
+    text = before + encoded + after
+    assert find_base64_spans(text) == []
+    assert index_text(text) == text
+    assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
+
+
+def test_all_unicode_mark_categories_preserve_visible_edges():
+    _, encoded = payload()
+    for codepoint in range(sys.maxunicode + 1):
+        edge = chr(codepoint)
+        if unicodedata.category(edge).startswith("M"):
+            assert find_base64_spans(edge + encoded) == [], f"before U+{codepoint:04X}"
+            assert find_base64_spans(encoded + edge) == [], f"after U+{codepoint:04X}"
 
 
 @pytest.mark.parametrize("before,after", [("…", "—"), ("«", "»"), ("\u2003", "\n"), ("🧭", "🌿")])
@@ -237,6 +282,7 @@ def test_public_placeholder_format_and_parser():
             "decoded_bytes": "245760",
         }
     for invalid in (
+        "[base64 binary 0 B]",
         "[base64 binary -1 B]",
         "[base64 binary 01 B]",
         "[base64 unknown 10 B]",

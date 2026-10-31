@@ -13,12 +13,18 @@ import base64
 import binascii
 import math
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
-_RUN = re.compile(r"(?<![\w+/\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![\w+/=\-])")
+# ASCII lookarounds keep maximal-run matching linear. Unicode word edges are
+# checked separately, without changing the source characters or their offsets.
+BASE64_BOUNDARY_CLASS = r"[A-Za-z0-9+/_\-]"
+_RUN = re.compile(
+    rf"(?<!{BASE64_BOUNDARY_CLASS}){BASE64_BOUNDARY_CLASS}{{200,}}={{0,2}}(?!{BASE64_BOUNDARY_CLASS}|=)"
+)
 # Retain Unicode-adjacent candidates so whole-source rejections survive cuts.
-_CANDIDATE_RUN = re.compile(r"(?<![A-Za-z0-9+/_\-])[A-Za-z0-9+/_\-]{200,}=*")
+_CANDIDATE_RUN = re.compile(rf"(?<!{BASE64_BOUNDARY_CLASS}){BASE64_BOUNDARY_CLASS}{{200,}}=*")
 _STANDARD = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}\Z")
 _URLSAFE = re.compile(r"[A-Za-z0-9_\-]{200,}={0,2}\Z")
 
@@ -27,7 +33,7 @@ PLACEHOLDER_FORMAT = "[base64 {media_type} {decoded_bytes} B]"
 PLACEHOLDER_RE = re.compile(
     r"\[base64 (?P<media_type>image/(?:png|jpeg|gif|webp|svg\+xml)|"
     r"application/(?:pdf|zip|gzip)|font/woff2|binary) "
-    r"(?P<decoded_bytes>0|[1-9][0-9]*) B\]"
+    r"(?P<decoded_bytes>[1-9][0-9]*) B\]"
 )
 
 
@@ -45,6 +51,11 @@ class Base64Span:
         return PLACEHOLDER_FORMAT.format(
             media_type=self.media_type, decoded_bytes=self.decoded_bytes
         )
+
+
+def is_word_character(char: str) -> bool:
+    """Whether one original code point continues a word at a visible edge."""
+    return char == "_" or char in "\u200c\u200d" or unicodedata.category(char)[0] in "LNM"
 
 
 def _media_type(data: bytes) -> str:
@@ -85,14 +96,19 @@ def find_base64_spans(text: str) -> list[Base64Span]:
     padding characters. The total length must be divisible by four, including
     for unpadded URL-safe runs. Whitespace/wrapped payloads are separate runs.
     Media labels come from decoded headers, never a data URI's claim.
-    A run touching a Unicode letter or number is retained as part of a word;
-    Unicode punctuation and whitespace remain delimiters.
+    A run touching a Unicode letter, number, combining mark, underscore or
+    ZWJ/ZWNJ is retained as part of a word. Punctuation outside the base64
+    alphabet and whitespace remain delimiters. Source text is never normalized.
     Wrapped 64/76-column payloads are deliberately left in. High-entropy
     alphabetic/base32 identifiers and words glued to a run may satisfy this
     same encoding rule; corpus recall/token gates remain necessary.
     """
     spans = []
     for match in _RUN.finditer(text):
+        if (match.start() > 0 and is_word_character(text[match.start() - 1])) or (
+            match.end() < len(text) and is_word_character(text[match.end()])
+        ):
+            continue
         run = match.group()
         if len(run) % 4:
             continue

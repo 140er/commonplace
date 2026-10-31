@@ -49,6 +49,9 @@ def corpus(size=1831):
             ("=", ";"),
             ("key=", ";"),
             ("Ω", "é"),
+            ("cafe\u0301", ""),
+            ("\u0301", "\u20dd"),
+            ("\u200c", "\u200d"),
             ("٢", "Ⅳ"),
             ("…", "🧭"),
         ]
@@ -74,6 +77,9 @@ def test_index_changes_only_validated_span_intersections(size, width, prose, edg
             for span in source.spans:
                 if span.start >= end or span.end <= start:
                     continue
+                # Padding-only intersections carry no searchable payload and stay literal.
+                if not text[max(start, span.start) : min(end, span.end)].strip("="):
+                    continue
                 expected.append(text[cursor : max(start, span.start)])
                 if start <= span.start < end or span.start <= start < end <= span.end:
                     expected.append(span.placeholder)
@@ -96,6 +102,19 @@ def test_boundary_tail_has_no_fragment_or_duplicate_placeholder():
     start = span.end - 7
     assert index_text(text[start:], source.metadata(start, len(text))) == text[span.end :]
     assert index_text(text[start : span.end], source.metadata(start, span.end)) == span.placeholder
+
+
+@pytest.mark.parametrize("size", [151, 152])
+@pytest.mark.parametrize("tail", ["", "; after needle"])
+def test_producer_leaves_padding_only_intersections_literal(size, tail, caplog):
+    run = base64.b64encode(random.Random(size).randbytes(size)).decode()
+    text = run + tail
+    start = len(run.rstrip("="))
+    document = text[start:]
+    metadata = IndexSource(text).metadata(start, len(text))
+    assert json.loads(metadata[INDEX_SPANS])["spans"] == []
+    assert index_text(document, metadata) == document
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
 @pytest.mark.parametrize("change", ["document", "version", "malformed"])
@@ -506,6 +525,16 @@ def test_edge_hints_require_a_possible_fragment_of_the_declared_run(fragment, ca
     assert "Ignoring stale or invalid index span hint" in caplog.text
 
 
+@pytest.mark.parametrize("padding", ["=", "=="])
+@pytest.mark.parametrize("emit", [False, True])
+def test_forged_padding_only_spans_are_rejected(padding, emit, caplog):
+    text = "x " + padding if emit else padding + " after"
+    start = 2 if emit else 0
+    hint = forged_hint(text, [[start, start + len(padding), "[base64 binary 151 B]", emit]])
+    assert index_text(text, hint) == text
+    assert "Ignoring stale or invalid index span hint" in caplog.text
+
+
 @pytest.mark.parametrize(
     "text,start,end,emit",
     [
@@ -513,6 +542,16 @@ def test_edge_hints_require_a_possible_fragment_of_the_declared_run(fragment, ca
         ("naïve", 3, 5, True),
         ("wordⅣ", 0, 4, False),
         ("٢word", 1, 5, True),
+        ("nai\u0308ve", 0, 3, False),
+        ("nai\u0308ve", 4, 6, True),
+        ("ab\u093ecd", 0, 2, False),
+        ("ab\u093ecd", 3, 5, True),
+        ("ab\u20ddcd", 0, 2, False),
+        ("ab\u20ddcd", 3, 5, True),
+        ("ab\u200ccd", 0, 2, False),
+        ("ab\u200ccd", 3, 5, True),
+        ("ab\u200dcd", 0, 2, False),
+        ("ab\u200dcd", 3, 5, True),
     ],
 )
 def test_edge_hints_cannot_split_unicode_words(text, start, end, emit, caplog):
@@ -757,6 +796,9 @@ def test_event_and_artifact_metadata_remain_verbatim_at_client_boundaries():
             ("=", ";"),
             ("key=", ";"),
             ("Ω", "é"),
+            ("cafe\u0301", ""),
+            ("\u0301", "\u20dd"),
+            ("\u200c", "\u200d"),
             ("٢", "Ⅳ"),
             ("…", "🧭"),
         ]
@@ -832,6 +874,9 @@ def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, pr
             expected, cursor = [], start
             for left, right, placeholder in projected:
                 if left >= end or right <= start:
+                    continue
+                # Padding-only intersections carry no searchable payload and stay literal.
+                if not view[max(start, left) : min(end, right)].strip("="):
                     continue
                 expected.append(view[cursor : max(start, left)])
                 if start <= left < end or left <= start < end <= right:
