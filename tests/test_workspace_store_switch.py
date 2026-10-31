@@ -550,9 +550,20 @@ def test_cli_store_doctor_and_rollback(workspace, monkeypatch, capsys):
     (stable / POINTER_PREVIOUS).write_text("{}")
     assert switch.doctor_workspace(data, wid)["previous_pointer_difference"]
     assert read_json(stable / POINTER_PREVIOUS) == {}
+    assert main(args + ["doctor", "--workspace", "fixture"]) == 3
+    difference = json.loads(capsys.readouterr().out)
+    assert "restore .store-pointer.prev.json" in difference["repair"]
     assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 3
     assert "previous_pointer_differs" in json.loads(capsys.readouterr().out)["findings"]
     assert read_json(stable / POINTER_PREVIOUS) == {}
+    assert main(args + ["workspace", "prune-stores", "fixture"]) == 2
+    refusal = capsys.readouterr().err
+    assert (
+        "restore .store-pointer.prev.json" in refusal
+        and "or delete .store-pointer.prev.json" in refusal
+    )
+    assert read_json(stable / POINTER_PREVIOUS) == {}
+    (stable / POINTER_PREVIOUS).unlink()
     assert main(args + ["workspace", "prune-stores", "fixture"]) == 0
     assert read_json(stable / POINTER_PREVIOUS) == read_json(stable / POINTER)
     assert main(args + ["workspace", "prune-stores", "fixture", "--report-only"]) == 0
@@ -708,8 +719,10 @@ def test_prune_drops_missing_generation_and_resets_crash_state(workspace):
     assert switch.doctor_workspace(data, WORKSPACE)["backfill"] == "failed"
 
 
-def test_minimal_pointer_preserves_unlisted_published_generations_and_recovery_copy(
-    workspace, caplog
+@pytest.mark.parametrize("edit", ["minimal", "partial"])
+@pytest.mark.parametrize("operation", ["prune", "switch", "unchanged"])
+def test_pointer_edits_refuse_before_switch_or_prune_and_preserve_all_history(
+    workspace, monkeypatch, edit, operation
 ):
     data, root, _ = workspace
     switch.switch_workspace(data, WORKSPACE, "compact")
@@ -718,16 +731,31 @@ def test_minimal_pointer_preserves_unlisted_published_generations_and_recovery_c
     active = workspace_path(data, WORKSPACE)
     expected = read_json(root / POINTER)
     assert read_json(root / POINTER_PREVIOUS) == expected
-    before = switch._retirement_digest(retained)
-    (root / POINTER).write_text(json.dumps({"active": active.name}))
-    switch.prune_generations(data, WORKSPACE)
-    switch.switch_workspace(data, WORKSPACE, "v1")
-    assert switch._retirement_digest(retained) == before
+    changed = {"active": active.name}
+    if edit == "partial":
+        changed["retained"] = [expected["retained"][0]]
+    (root / POINTER).write_text(json.dumps(changed))
+    before = _generation_bytes(root, retained, active)
+    monkeypatch.setattr(
+        switch, "backup_workspace", lambda *args: pytest.fail("Backup preceded pointer refusal")
+    )
+    with pytest.raises(ValueError, match="Pointer differs from the last-good prev copy") as error:
+        if operation == "prune":
+            switch.prune_generations(data, WORKSPACE)
+        else:
+            switch.switch_workspace(data, WORKSPACE, "compact" if operation == "switch" else "v1")
+    assert "restore .store-pointer.prev.json" in str(error.value)
+    assert "or delete .store-pointer.prev.json" in str(error.value)
+    assert _generation_bytes(root, retained, active) == before
     assert read_json(root / POINTER_PREVIOUS) == expected
     difference = switch.doctor_workspace(data, WORKSPACE)["previous_pointer_difference"]
     assert difference["message"] == "pointer differs from prev copy"
-    assert difference["entries"] == sorted([root.name, retained.name])
-    assert "Preserving unlisted published generation " + retained.name in caplog.text
+    assert difference["entries"] == sorted(
+        [root.name, retained.name] if edit == "minimal" else [retained.name]
+    )
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert "previous_pointer_differs" in report["findings"]
+    assert "restore .store-pointer.prev.json" in report["repair"]
 
 
 def _write_after_publication(directory):
@@ -836,6 +864,123 @@ def test_previous_pointer_refresh_allows_only_retained_entries_that_are_gone(wor
     (root / POINTER).write_text(json.dumps(pointer))
     switch.prune_generations(data, WORKSPACE)
     assert read_json(root / POINTER_PREVIOUS) == pointer
+
+
+def test_missing_active_directory_does_not_make_prev_disposable(workspace):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    first = workspace_path(data, WORKSPACE)
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    second = workspace_path(data, WORKSPACE)
+    previous = (root / POINTER_PREVIOUS).read_bytes()
+    moved = second.with_name("moved-active-generation")
+    second.rename(moved)
+    (root / POINTER).write_text(json.dumps({"active": first.name}))
+    before = _generation_bytes(root, first, moved)
+    with pytest.raises(ValueError, match="Pointer differs from the last-good prev copy") as error:
+        switch.prune_generations(data, WORKSPACE)
+    assert second.name in str(error.value) and first.name in str(error.value)
+    assert _generation_bytes(root, first, moved) == before
+    assert (root / POINTER_PREVIOUS).read_bytes() == previous
+    assert workspace_path(data, WORKSPACE) == first
+
+
+@pytest.mark.parametrize("operation", ["prune", "switch"])
+@pytest.mark.parametrize("state", ["copying", "published"])
+def test_pending_publication_cannot_mirror_a_partial_pointer_over_prev(workspace, operation, state):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    first = workspace_path(data, WORKSPACE)
+    previous = (root / POINTER_PREVIOUS).read_bytes()
+    switch.switch_workspace(data, WORKSPACE, "v1")
+    second = workspace_path(data, WORKSPACE)
+    recorded = {"state": state, "staging": second.name}
+    if state == "published":
+        recorded["pointer"] = read_json(root / POINTER)
+    (root / POINTER_PREVIOUS).write_bytes(previous)
+    (root / POINTER).write_text(json.dumps({"active": second.name}))
+    (root / switch.STATE).write_text(json.dumps(recorded))
+    before = _generation_bytes(root, first, second)
+    with pytest.raises(ValueError, match="Pointer differs from the last-good prev copy"):
+        if operation == "prune":
+            switch.prune_generations(data, WORKSPACE)
+        else:
+            switch.switch_workspace(data, WORKSPACE, "compact")
+    assert _generation_bytes(root, first, second) == before
+    assert (root / POINTER_PREVIOUS).read_bytes() == previous
+
+
+@pytest.mark.parametrize(
+    "contents,parsed",
+    [
+        ("{", False),
+        ("[]", True),
+        ("null", True),
+        ('{"active":"ws_fixture"}', True),
+        ('{"active":"ws_missing"}', True),
+    ],
+)
+def test_prev_parseability_is_separate_from_pointer_validity(workspace, contents, parsed):
+    data, root, _ = workspace
+    pointer = {"active": root.name, "retained": []}
+    switch._write_pointer(root, pointer)
+    (root / POINTER_PREVIOUS).write_text(contents)
+    before = _generation_bytes(root)
+    if parsed:
+        with pytest.raises(ValueError, match="Pointer differs from the last-good prev copy"):
+            switch.prune_generations(data, WORKSPACE)
+        assert _generation_bytes(root) == before
+    else:
+        switch.prune_generations(data, WORKSPACE)
+        assert read_json(root / POINTER_PREVIOUS) == pointer
+
+
+@pytest.mark.parametrize("operation", ["prune", "switch"])
+def test_prune_pointer_write_crash_requires_explicit_history_choice(workspace, operation):
+    import subprocess
+
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    retired_at = read_json(root / POINTER)["retained"][0]["retired_at"]
+    code = """
+import os,sys
+from pathlib import Path
+from commonplace import store_switch as switch
+switch._verify_offline = lambda path: None
+write_json = switch.atomic_write_json
+def crash_write(path, data, **kwargs):
+    write_json(path, data, **kwargs)
+    if Path(path).name == switch.POINTER and not data.get('retained'):
+        os._exit(94)
+switch.atomic_write_json = crash_write
+switch.prune_generations(Path(sys.argv[1]),sys.argv[2],now=float(sys.argv[3]))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(data), WORKSPACE, str(retired_at + 40 * 24 * 60 * 60)],
+        capture_output=True,
+        timeout=60,
+    )
+    assert result.returncode == 94, result.stderr.decode()
+    assert read_json(root / POINTER)["retained"] == []
+    assert read_json(root / POINTER_PREVIOUS)["retained"][0]["name"] == root.name
+    assert root.is_dir() and not (root / "threads.sqlite3").exists()
+    before = _generation_bytes(root, active)
+    with pytest.raises(ValueError, match="Pointer differs from the last-good prev copy") as error:
+        if operation == "prune":
+            switch.prune_generations(data, WORKSPACE)
+        else:
+            switch.switch_workspace(data, WORKSPACE, "compact")
+    assert "restore .store-pointer.prev.json" in str(error.value)
+    assert "or delete .store-pointer.prev.json" in str(error.value)
+    assert _generation_bytes(root, active) == before
+    report = switch.prune_generations(data, WORKSPACE, report_only=True)
+    assert "previous_pointer_differs" in report["findings"]
+    assert report["previous_pointer_difference"]["entries"] == [root.name]
+    (root / POINTER_PREVIOUS).unlink()
+    switch.prune_generations(data, WORKSPACE)
+    assert read_json(root / POINTER_PREVIOUS) == read_json(root / POINTER)
+    assert switch.prune_generations(data, WORKSPACE, report_only=True)["findings"] == []
 
 
 @pytest.mark.parametrize("restore", ["stale_previous", "handwritten_root"])
