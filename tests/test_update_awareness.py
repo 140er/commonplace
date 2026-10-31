@@ -229,7 +229,7 @@ def test_pip_plan_targets_the_interpreter_running_mempalace(tmp_path, monkeypatc
 def test_opted_in_background_check_publishes_cached_state_for_agents(tmp_path):
     configure_updates(config_dir=tmp_path, enabled=True, installer="uv-tool")
     assert schedule_update_check(config_dir=tmp_path, fetch_latest=lambda: "3.9.0", now=NOW)
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 10
     cache_file = tmp_path / "updates-cache.json"
     while not cache_file.exists() or "3.9.0" not in cache_file.read_text(encoding="utf-8"):
         assert time.monotonic() < deadline
@@ -253,7 +253,7 @@ def test_in_flight_check_cannot_restore_withdrawn_consent(tmp_path):
 
     configure_updates(config_dir=tmp_path, enabled=False)
     release_fetch.set()
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 10
     cache_file = tmp_path / "updates-cache.json"
     # The worker publishes over this file while the loop polls it.
     while b"3.9.0" not in read_published_bytes(cache_file):

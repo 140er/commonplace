@@ -2333,6 +2333,7 @@ def test_sqlite_integrity_errors_reports_uri_encoding_failure(tmp_path, monkeypa
     palace = tmp_path / "palace"
     palace.mkdir()
     db_path = palace / "chroma.sqlite3"
+    # WAL without sidecars skips URI encoding; keep rollback-journal mode here.
     with closing(sqlite3.connect(db_path)) as conn:
         assert conn.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)
         conn.execute("CREATE TABLE dummy(id INTEGER PRIMARY KEY)")
@@ -2343,7 +2344,7 @@ def test_sqlite_integrity_errors_reports_uri_encoding_failure(tmp_path, monkeypa
 
     def reject_path(path):
         calls.append(path)
-        raise ValueError(message)
+        raise UnicodeEncodeError("utf-8", "\udcff", 0, 1, message)
 
     monkeypatch.setattr("urllib.request.pathname2url", reject_path)
 
