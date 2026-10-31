@@ -32,7 +32,7 @@ backlog │ todo │ doing │ review │ done
 
 | Column | Holds | Who puts cards here |
 |---|---|---|
-| `backlog` | Ideas, and anything filed by an `inbox` token. Agents never take from it. | Untrusted tokens and cloud clients (always), anyone (on purpose) |
+| `backlog` | Ideas, and anything filed by an `inbox` token. Trusted, unrestricted board writers may promote or explicitly take available cards of unrestricted origin without a pending person decision. | Untrusted tokens and cloud clients (always), anyone (on purpose) |
 | `todo` | Ready work. A card may be reserved for one agent. | People (from backlog or new), trusted and standard agents, decisions |
 | `doing` | Held by exactly one actor. An agent's hold expires. | `task_take_next`, or a person dragging a card |
 | `review` | Waiting on a person: a question, or finished work to check. | `task_handoff` to a person |
@@ -54,7 +54,7 @@ backlog │ todo │ doing │ review │ done
 
 The full table of who may make each move is in [API.md](API.md#move-rules). Three rules carry the design:
 
-- **Only people move cards out of `backlog`. Only the asking agent may close a `review` card via `task_update`; other review exits require `decide`.** That keeps the §9 injection guard (nothing an untrusted bot files reaches an agent unseen) and means an agent can never answer its own question.
+- **People and trusted, unrestricted board writers may move available cards out of `backlog`; restricted-origin submissions and cards waiting on a person require a person.** Origin restrictions are recorded when a card is filed, including trusted inbox submissions. Legacy agent backlog uses its trust stamp and the stamping connection's current policy in the same workspace; untrusted stamps and missing, inactive or ambiguous origins remain person-only. Automatic pickup stays on `todo`, and backlog promotion preserves the caller's reservation. Only the asking agent may close a `review` card via `task_update`; other review exits require `decide`. An agent can never answer its own question. Untrusted and inbox-restricted connections still only submit cards and comments.
 - **Only the holder changes a `doing` card.** Others can comment.
 - **Cards are never deleted.** Closing one with a reason is a move to `done`. The event log is append-only (enforced by triggers in `schema.sql`).
 
@@ -68,7 +68,7 @@ The full table of who may make each move is in [API.md](API.md#move-rules). Thre
 
 The race check behind this: four processes claiming from 2,001 cards, interleaved (1 / 11 / 653 / 1,336 claims each), got 2,001 distinct cards and expired the one stale claim. B's done test repeats this with real Claude Code and Codex sessions.
 
-**Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to `todo`, free, with an `expire` event, so the next agent sees "conn:codex:vm lost this at 14:30Z" and the comments before it.
+**Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to the lane it was claimed from (`todo` or `backlog`), free, with an `expire` event naming its former holder. Explicit backlog selection cannot turn into automatic work through expiry. Claims created before lane tracking return to `todo` as before.
 
 People's holds never expire. Avery dragging a card into `doing` means he is on it.
 
@@ -164,7 +164,7 @@ Taken in this doc, easy to overrule:
 - [x] Fifth column `review`, instead of a waiting flag on `doing`.
 - [x] Agent claims expire after 30 minutes without a write; people's holds never do.
 - [x] One extra tool, `task_handoff` (8 in total), instead of overloading `task_update`.
-- [x] Only people move cards out of `backlog` and `review`.
+- [x] Backlog pickup requires a person or a trusted, unrestricted board writer; person decisions remain protected.
 - [x] Cards are never deleted; the event log is append-only.
 - [x] After a decision, the card goes back to the agent that asked by default.
 
