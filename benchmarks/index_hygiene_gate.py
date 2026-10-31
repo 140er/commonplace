@@ -33,7 +33,7 @@ import sqlite3
 import sys
 import tempfile
 from collections import Counter
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -386,12 +386,19 @@ def product_search(directory, collection):
 
 
 @contextmanager
-def index_compact_chat(corpus: Corpus, *, policy: bool, embedder):
+def index_compact_chat(corpus: Corpus, *, policy: bool, embedder, work_dir=None):
     """Exercise the real drawer writer, split handling and nullable vectors."""
     from mempalace.backends.compact import CompactBackend
     from mempalace.backends.embedding_wrapper import EmbeddingCollection
 
-    with tempfile.TemporaryDirectory(prefix="compact-hygiene-") as directory:
+    if work_dir is not None:
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+    workspace = (
+        nullcontext(tempfile.mkdtemp(prefix="compact-hygiene-", dir=work_dir))
+        if work_dir is not None
+        else tempfile.TemporaryDirectory(prefix="compact-hygiene-")
+    )
+    with workspace as directory:
         backend = CompactBackend()
         try:
             inner = backend.create_collection(directory, "gate_drawers")
@@ -508,6 +515,7 @@ def run_gate(
     noise: int = 24,
     embedding="synthetic",
     backend: str = "sqlite_exact",
+    work_dir=None,
 ) -> dict:
     if strategy not in {"default", "vector", "union"}:
         raise ValueError("strategy must be default, vector or union")
@@ -532,7 +540,11 @@ def run_gate(
         for fmt, chat in formats.items():
             kinds = {message.id: message.kind for message in chat.messages}
             writer = index_compact_chat if backend == "compact" else index_chat
-            with writer(chat, policy=policy, embedder=embedder) as (directory, collection):
+            controls = {"work_dir": work_dir} if backend == "compact" else {}
+            with writer(chat, policy=policy, embedder=embedder, **controls) as (
+                directory,
+                collection,
+            ):
                 kinds = getattr(collection, "record_kinds", kinds)
                 with product_search(directory, collection) as search:
                     from mempalace import searcher
@@ -672,6 +684,9 @@ def main(argv=None) -> int:
     parser.add_argument("--noise", type=int, default=24)
     parser.add_argument("--embedding", choices=("synthetic", "minilm"), default="synthetic")
     parser.add_argument("--backend", choices=("sqlite_exact", "compact"), default="sqlite_exact")
+    parser.add_argument(
+        "--work-dir", type=Path, help="Keep compact benchmark palaces in this directory"
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     report = run_gate(
@@ -680,6 +695,7 @@ def main(argv=None) -> int:
         noise=args.noise,
         embedding=args.embedding,
         backend=args.backend,
+        work_dir=args.work_dir,
     )
     # The MCP server redirects sys.stdout on import; CLI reports still belong
     # on the original stdout stream, including machine-readable JSON.
