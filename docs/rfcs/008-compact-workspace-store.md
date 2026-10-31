@@ -65,9 +65,9 @@ ZWSP (U+200B), to the nearest visible character. A document or chunk edge counts
 as a delimiter, and ZWSP is a separator. Look-past is capped at 32 Cf characters
 per edge; longer stretches conservatively count as touching a word. Word edges
 behave identically; elsewhere NFD never gets a placeholder NFC would not.
-Decomposable symbols such as ≠ can
-retain more text in NFD. The detector and hint validator share this rule and
-inspect original code points without normalization, preserving span offsets.
+Decomposable symbols such as ≠ can retain more text in NFD. The detector and hint
+validator share this rule and inspect original code points without normalization,
+preserving span offsets.
 The index view also replaces NUL and lone surrogates with spaces for inference,
 rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
 strings retain those characters through the existing reversible encoding.

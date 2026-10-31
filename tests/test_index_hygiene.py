@@ -36,8 +36,10 @@ def test_candidate_detection_is_bounded_on_adversarial_short_runs():
     assert min(candidate_times) < 2.0
 
 
-def test_format_look_past_is_bounded_on_adversarial_runs():
-    text = ("A" * 200 + "\u00ad" * 4_000) * 1_000
+@pytest.mark.parametrize("separator", ["", " "], ids=["backward", "forward"])
+def test_format_look_past_is_bounded_on_adversarial_runs(separator):
+    # Spaces keep the preceding edge visible so every run exercises the forward cap.
+    text = ("A" * 200 + "\u00ad" * 4_000 + separator) * 1_000
     # The former detector's Unicode lookarounds delimit these low-entropy runs.
     baseline = re.compile(r"(?<![\w+/\-])[A-Za-z0-9+/_\-]{200,}={0,2}(?![\w+/=\-])")
     detector_times, baseline_times = [], []
@@ -172,6 +174,30 @@ def test_long_format_stretches_preserve_runs_conservatively(count, side):
     else:
         assert spans == []
         assert index_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        pytest.param("\u00ad" * 32, "\u00ad" * 32, id="independent-edge-caps"),
+        pytest.param(
+            "x" + "\u00ad" * 2_000 + "\u200b" + "\u00ad" * 32,
+            "\u00ad" * 32 + "\u200b" + "\u00ad" * 2_000 + "x",
+            id="zwsp-delimits-long-stretches",
+        ),
+    ],
+)
+def test_format_caps_are_per_edge_and_stop_at_zwsp(before, after, caplog):
+    from mempalace.stored_text import IndexSource, index_text as hinted_index_text
+
+    _, encoded = payload()
+    text = before + encoded + after
+    [span] = find_base64_spans(text)
+    assert (span.start, span.end) == (len(before), len(before) + len(encoded))
+    expected = before + span.placeholder + after
+    assert index_text(text) == expected
+    assert hinted_index_text(text, IndexSource(text).metadata(0, len(text))) == expected
+    assert "Ignoring stale or invalid index span hint" not in caplog.text
 
 
 def test_all_letters_and_numbers_keep_word_edges_after_decomposition():
