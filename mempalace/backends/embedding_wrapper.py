@@ -293,6 +293,9 @@ class EmbeddingCollection(BaseCollection):
     def health(self):
         return self._inner.health()
 
+    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
+        return self._inner.lexical_term_frequencies(terms, limit=limit)
+
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         return self._inner.lexical_search(query=query, n_results=n_results, where=where)
 

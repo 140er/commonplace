@@ -55,6 +55,8 @@ LOG = LOG_PREFIX + " ".join(
     ).split()[i % 15]
     for i in range(123 - len(tokenize(LOG_PREFIX)))
 )
+QUESTION12 = "what did we decide about the deployment configuration and the error handling"
+COMMON8 = "error deployment configuration team decided implementation verification component"
 NEEDLES = (
     (
         "ZXQ739251",
@@ -67,10 +69,22 @@ NEEDLES = (
     ("marigold", "The marigold note is stored here."),
     ("quartz", "The quartz note is stored here."),
     ("lantern", "The lantern note is stored here."),
+    (
+        "What did Sarah Okonkwo say about the budget review at our meeting on Tuesday afternoon?",
+        "Okonkwo signed off on it.",
+    ),
+    (
+        'Please find what we wrote down about the "marigold protocol" from the meeting with the vendor team last spring',
+        "Marigold protocol: rotate keys every Friday.",
+    ),
+    (
+        "Traceback at /srv/archive/project/src/module/file.py line 42 in handler: KeyError PR-38 E42 ZQ9",
+        "Ticket ZQ9 tracks the flaky import.",
+    ),
 )
 
 
-def run(backend, repeats, recall_only=False):
+def run(backend, repeats, recall_only=False, cold_probes=False):
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
     cache = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH) / "onnx"
@@ -90,7 +104,7 @@ def run(backend, repeats, recall_only=False):
     os.environ["MEMPALACE_EMBEDDING_MODEL"] = "minilm"
     templates = [
         f"Engineering notes about {topic}. Revision {revision}: record the decision, implementation, "
-        "verification and operational followup for this component."
+        "verification and operational followup for this component, and then we discussed what to do next with the team."
         for topic in TOPICS
         for revision in range(10)
     ]
@@ -99,6 +113,7 @@ def run(backend, repeats, recall_only=False):
     report = {
         "backend": backend,
         "repeats": repeats,
+        "cold_probes": cold_probes,
         "prompt_words": len(PROMPT.split()),
         "log_tokens": len(tokenize(LOG)),
         "rows": [],
@@ -131,12 +146,26 @@ def run(backend, repeats, recall_only=False):
                         for i in range(start, stop)
                     ],
                 )
+            reader = get_collection(palace, create=False, read_only=True)
+
+            def drawer_search(query, strategy, wing=None, limit=5, reader=reader, palace=palace):
+                if cold_probes and backend == "sqlite_exact":
+                    reader._handle._lexical_frequency_cache.clear()
+                    reader._handle._lexical_document_counts.clear()
+                return search_memories(
+                    query, palace, n_results=limit, wing=wing, candidate_strategy=strategy
+                )
+
             cases = (
                 [("log123_all", LOG, None, False), ("prompt50_gateway8", PROMPT, None, True)]
                 if size == 20_000
                 else [
                     ("prompt50_all", PROMPT, None, False),
                     ("prompt50_wing", PROMPT, "engineering", False),
+                    ("question12_all", QUESTION12, None, False),
+                    ("question12_wing", QUESTION12, "engineering", False),
+                    ("question12_gateway8", QUESTION12, None, True),
+                    ("common8_all", COMMON8, None, False),
                 ]
             )
             if recall_only:
@@ -145,20 +174,14 @@ def run(backend, repeats, recall_only=False):
 
                 def search(strategy, query=query, wing=wing, gateway=gateway):
                     if not gateway:
-                        result = search_memories(
-                            query, palace, n_results=5, wing=wing, candidate_strategy=strategy
-                        )
+                        result = drawer_search(query, strategy, wing)
                     else:
 
                         def call_tool(principal, name, args):
                             if name == "mempalace_list_wings":
                                 return {"wings": {w: {} for w in wings}}
-                            return search_memories(
-                                args["query"],
-                                palace,
-                                n_results=args["limit"],
-                                wing=args["wing"],
-                                candidate_strategy=strategy,
+                            return drawer_search(
+                                args["query"], strategy, args["wing"], args["limit"]
                             )
 
                         mediator = object.__new__(Mediator)
@@ -218,7 +241,12 @@ if __name__ == "__main__":
     parser.add_argument("--backend", choices=["chroma", "sqlite_exact"], default="chroma")
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--recall-only", action="store_true")
+    parser.add_argument(
+        "--cold-probes",
+        action="store_true",
+        help="Clear SQLite frequency counts before each search, including each wing",
+    )
     args = parser.parse_args()
-    report = run(args.backend, args.repeats, args.recall_only)
+    report = run(args.backend, args.repeats, args.recall_only, args.cold_probes)
     print(json.dumps(report, indent=2))
     sys.exit(0 if report["pass"] else 1)

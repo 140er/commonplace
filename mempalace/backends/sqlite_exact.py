@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ..lexical import bm25_scores, select_lexical_terms
+from ..lexical import bm25_scores, tokenize
 from ..stored_text import (
     decode_record,
     decode_value,
@@ -454,6 +454,11 @@ class _SQLiteExactHandle:
         # Native accelerators share one versioned index per collection across
         # the short-lived wrappers created by application searches.
         self._native_cache: dict[str, tuple[tuple, Any]] = {}
+        # Reuse bounded probes across turns/scopes, invalidated by the same
+        # own/peer-write snapshot token as the vector index.
+        self._lexical_frequency_version = None
+        self._lexical_frequency_cache: dict[tuple, int] = {}
+        self._lexical_document_counts: dict[int, int] = {}
 
 
 class SQLiteExactCollection(BaseCollection):
@@ -1428,12 +1433,52 @@ class SQLiteExactCollection(BaseCollection):
             ).fetchall()
         return {str(decode_value(key)): int(count) for key, count in rows if key is not None}
 
+    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
+        with self._cursor() as cur:
+            if not self._fts_available(cur):
+                return None
+            collection_id = self._collection_id(cur)
+            try:
+                handle = self._handle
+                version = self._index_version(cur)
+                cache = handle._lexical_frequency_cache
+                if handle._lexical_frequency_version != version or len(cache) + len(terms) > 512:
+                    cache.clear()
+                    handle._lexical_document_counts.clear()
+                    handle._lexical_frequency_version = version
+                synced = cur.execute(
+                    "SELECT value FROM meta WHERE key = 'fts5_rowid_synced'"
+                ).fetchone()
+                # The covering index avoids hydrating FTS content or embedding
+                # rows for common terms. Legacy unsynced readers use FTS's own
+                # collection column, which makes no rowid-alignment assumption.
+                scope = "collection_id = ?"
+                if synced and synced[0] == "1":
+                    scope = (
+                        "EXISTS (SELECT 1 FROM documents d INDEXED BY idx_documents_collection "
+                        "WHERE d.collection_id = ? AND d.rowid = docs_fts.rowid)"
+                    )
+                counts = {}
+                for term in terms:
+                    key = (collection_id, term, limit)
+                    if key not in cache:
+                        cache[key] = cur.execute(
+                            "SELECT count(*) FROM (SELECT 1 FROM docs_fts "
+                            f"WHERE docs_fts MATCH ? AND {scope} LIMIT ?)",
+                            ('"' + term.replace('"', '""') + '"', collection_id, limit),
+                        ).fetchone()[0]
+                    counts[term] = cache[key]
+                if collection_id not in handle._lexical_document_counts:
+                    handle._lexical_document_counts[collection_id] = cur.execute(
+                        "SELECT count(*) FROM documents WHERE collection_id = ?", (collection_id,)
+                    ).fetchone()[0]
+                total = handle._lexical_document_counts[collection_id]
+                return counts, total
+            except (sqlite3.Error, _SnapshotChanged):
+                return None
+
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         validate_where(where)
-        terms, skip = select_lexical_terms(query)
-        if skip or not terms:
-            return LexicalResult(hits=[])
-        query = " ".join(terms)
         with self._cursor() as cur:
             hits = self._lexical_search_fts(cur, query=query, n_results=n_results, where=where)
             if hits is not None:
@@ -1456,9 +1501,7 @@ class SQLiteExactCollection(BaseCollection):
     def _lexical_search_fts(self, cur, *, query: str, n_results: int, where: Optional[dict]):
         if not self._fts_available(cur):
             return None
-        tokens, skip = select_lexical_terms(query)
-        if skip:
-            return []
+        tokens = tokenize(query)
         if not tokens:
             return None
         fts_query = " OR ".join(tokens)

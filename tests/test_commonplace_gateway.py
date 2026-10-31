@@ -759,3 +759,43 @@ def test_audit_fields_are_capped(hub):
     hub.call(token, "mempalace_add_drawer", wing="w" * 5_000, room="r", content="c")
     for entry in hub.db.audit_entries(limit=5):
         assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200
+
+
+def test_multiwing_rerank_uses_worker_query_and_locale(monkeypatch):
+    from commonplace.gateway import Mediator
+    from mempalace.i18n import get_stopwords
+    from mempalace.searcher import _hybrid_rank
+
+    clean = "session ZXQ739251"
+    raw = "Kubernetes cluster migration session " * 20 + clean
+    monkeypatch.setenv("MEMPALACE_LANG", "de")
+    by_wing = {
+        "shared": [
+            {"drawer_id": "needle", "wing": "shared", "text": "ZXQ739251", "distance": None}
+        ],
+        "project_a": [
+            {
+                "drawer_id": "offtopic",
+                "wing": "project_a",
+                "text": "session " * 20 + "Kubernetes cluster migration",
+                "distance": 0.5,
+            }
+        ],
+    }
+    for hits in by_wing.values():
+        _hybrid_rank(hits, clean, stop_words=frozenset(get_stopwords("en")))
+
+    def call_tool(principal, name, args):
+        if name == "mempalace_list_wings":
+            return {"wings": {wing: {} for wing in by_wing}}
+        return {"query": clean, "ranking_lang": "en", "results": by_wing[args["wing"]]}
+
+    mediator = object.__new__(Mediator)
+    mediator.workers = SimpleNamespace(call_tool=call_tool)
+    result = mediator._fan_out_search(
+        SimpleNamespace(policy=Policy.build(**CODER)),
+        "mempalace_search",
+        {"query": raw, "limit": 1},
+    )
+    assert result["query"] == clean
+    assert result["results"][0]["drawer_id"] == "needle"

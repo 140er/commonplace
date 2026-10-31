@@ -255,8 +255,7 @@ def search_memories(
               them into the rerank pool (deduped by stored row ID). Date windows
               widen the lexical pool. Queries use at most eight selected terms;
               long queries without literal-looking terms keep vector candidates.
-              Catches docs
-              with strong BM25 signal that are vector-distant from the query.
+              Finds vector-distant drawers with strong BM25 signal.
               Backends without lexical search retain vector candidates and
               report ``candidate_strategy_fallback="lexical_search_unsupported"``.
 
@@ -301,7 +300,8 @@ def search_memories(
     # Resolve stop words once up-front so every BM25 site (the vector path's
     # `_hybrid_rank`, the `vector_disabled` fallback, and the union-merge
     # candidate gather) tokenizes against the same locale.
-    stop_words = _resolve_stop_words(lang)
+    rank_lang = _resolve_rank_lang(lang)
+    stop_words = _resolve_stop_words(rank_lang)
 
     since_dt, before_dt, date_window_active, short_circuit = _window_and_fallback_gate(
         since,
@@ -317,6 +317,8 @@ def search_memories(
         stop_words=stop_words,
     )
     if short_circuit is not None:
+        if rank_lang:
+            short_circuit["ranking_lang"] = rank_lang
         return short_circuit
 
     drawers_col, open_error = _open_search_collection(palace_path, collection_name)
@@ -489,6 +491,8 @@ def search_memories(
         stats=stats,
         distance_metric=metric,
     )
+    if rank_lang:
+        envelope["ranking_lang"] = rank_lang
     if _pool_left_results_short(
         hits, n_results, candidates_fetched, pool_size, bookkeeping_dropped
     ):

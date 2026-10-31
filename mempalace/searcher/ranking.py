@@ -47,6 +47,8 @@ def _stopwords_for_lang(lang: str) -> frozenset:
     name) while the lru_cache lives on ``_stopwords_for_canonical`` to
     keep the cache key normalized.
     """
+    if not lang:
+        return frozenset()
     canonical = _canonical_lang(lang) or lang.lower()
     return _stopwords_for_canonical(canonical)
 
@@ -67,6 +69,11 @@ def _resolve_stop_words(lang: Optional[str]) -> frozenset:
     Palaces that never configured a language get an empty set, preserving
     pre-PR scoring byte-for-byte.
     """
+    return _stopwords_for_lang(_resolve_rank_lang(lang))
+
+
+def _resolve_rank_lang(lang: Optional[str]) -> str:
+    """Resolve the worker locale once and echo it for cross-scope ranking."""
     if lang is None:
         env_val = os.environ.get("MEMPALACE_LANG") or os.environ.get("MEMPAL_LANG")
         if env_val and env_val.strip():
@@ -76,10 +83,10 @@ def _resolve_stop_words(lang: Optional[str]) -> frozenset:
                 lang = MempalaceConfig().lang_explicit
             except Exception:
                 logger.debug("lang resolution failed, skipping stop-word filter", exc_info=True)
-                return frozenset()
+                return ""
         if lang is None:
-            return frozenset()
-    return _stopwords_for_lang(lang)
+            return ""
+    return lang
 
 
 def _resolve_hybrid_rank_weights() -> tuple:
@@ -219,10 +226,10 @@ def _hybrid_rank(
         score = vector_weight * vec_sim + bm25_weight * norm
         r["score"] = round(score, 6)
         r["rank_components"] = {
-            "vector_similarity": vec_sim,
-            "bm25": raw,
-            "vector_weight": vector_weight,
-            "bm25_weight": bm25_weight,
+            "vector_similarity": round(vec_sim, 6),
+            "bm25": round(raw, 6),
+            "vector_weight": round(vector_weight, 6),
+            "bm25_weight": round(bm25_weight, 6),
         }
         scored.append((score, r))
 

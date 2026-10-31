@@ -62,6 +62,7 @@ from .chroma_sqlite import (
     sqlite_list_id_metadata as sqlite_list_id_metadata,
     sqlite_metadata_snapshot as sqlite_metadata_snapshot,
     sqlite_room_wing_hall_counts as sqlite_room_wing_hall_counts,
+    sqlite_term_frequencies,
     sqlite_wing_names as sqlite_wing_names,
     sqlite_wing_source_counts as sqlite_wing_source_counts,
 )
@@ -2325,6 +2326,13 @@ class ChromaCollection(BaseCollection):
             embeddings=None,
         )
 
+    lexical_min_token_length = 3
+
+    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
+        if not self._palace_path or not self._collection_name():
+            return None
+        return sqlite_term_frequencies(self._palace_path, self._collection_name(), terms, limit)
+
     def lexical_search(
         self,
         *,
@@ -2338,13 +2346,7 @@ class ChromaCollection(BaseCollection):
         backend capability. The HNSW-disabled fallback in ``searcher.py`` still
         reads ``chroma.sqlite3`` directly and remains Chroma-only.
         """
-        from ..lexical import select_lexical_terms
-
         validate_where(where)
-        terms, skip = select_lexical_terms(query)
-        if skip or not terms:
-            return LexicalResult(hits=[])
-        query = " ".join(terms)
         sqlite_hits = self._lexical_search_via_sqlite(query=query, n_results=n_results, where=where)
         if sqlite_hits is not None:
             return LexicalResult(hits=sqlite_hits)

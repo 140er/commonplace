@@ -201,3 +201,63 @@ def test_default_cli_keeps_vector_results_without_lexical_support(
     monkeypatch.setattr(col, "lexical_search", unsupported)
     search("engineering", palace, collection=col)
     assert "Routine engineering note" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact"])
+def test_long_vector_query_preserves_public_lexical_closet_boost(tmp_path, monkeypatch, backend):
+    import mempalace.backends.embedding_wrapper as wrapper
+    from mempalace.palace import get_closets_collection
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0] for _ in texts])
+    palace = str(tmp_path / "palace")
+    drawers = get_collection(palace, create=True)
+    drawers.add(
+        ids=["needle"],
+        documents=["Nightly backup moved after the outage."],
+        embeddings=[[1.0, 0.0]],
+        metadatas=[{"source_file": "backup.md"}],
+    )
+    closets = get_closets_collection(palace, create=True)
+    closets.add(
+        ids=["pointer"],
+        documents=["backup storage cluster outage|nightly job|→needle"],
+        embeddings=[[1.0, 0.0]],
+        metadatas=[{"source_file": "backup.md"}],
+    )
+    query = "where did we decide to move the nightly backup job after that storage cluster outage happened last month"
+    assert closets.lexical_search(query=query).hits
+    for strategy in ("vector", "union"):
+        result = search_memories(query, palace, candidate_strategy=strategy)
+        assert result["results"][0]["closet_boost"] == 0.4
+        assert result["results"][0]["matched_via"] == "drawer+closet"
+
+
+@pytest.mark.parametrize(
+    "query,text",
+    [
+        (
+            "What did Sarah Okonkwo say about the budget review at our meeting on Tuesday afternoon?",
+            "Okonkwo signed off on it.",
+        ),
+        (
+            'Please find what we wrote down about the "marigold protocol" from the meeting with the vendor team last spring',
+            "Marigold protocol: rotate keys every Friday.",
+        ),
+        (
+            "Traceback at /srv/archive/project/src/module/file.py line 42 in handler: KeyError PR-38 E42 ZQ9",
+            "Ticket ZQ9 tracks the flaky import.",
+        ),
+    ],
+)
+def test_long_question_shapes_find_lexical_only_needles(lexical_palace, query, text):
+    palace, col = lexical_palace
+    col.update(ids=["artifact"], documents=[text], embeddings=[[0.0, 0.0]])
+    result = search_memories(query, palace)
+    needle = next(hit for hit in result["results"] if hit["drawer_id"] == "artifact")
+    assert needle["matched_via"] == "bm25_backend"
+
+
+def test_stop_words_only_query_reports_skip(lexical_palace):
+    palace, _ = lexical_palace
+    assert search_memories("session summary", palace)["lexical_skipped"] == "no_lexical_terms"

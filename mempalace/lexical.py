@@ -19,38 +19,105 @@ def _query_stop_words():
 
 
 def select_lexical_terms(
-    query: str, stop_words: frozenset = frozenset()
+    query: str,
+    stop_words: frozenset = frozenset(),
+    *,
+    frequencies=None,
+    min_length: int = 2,
 ) -> tuple[list[str], str | None]:
-    """Bound candidate retrieval to eight discriminative terms.
+    """Select union drawer terms only; public lexical/closet queries stay intact.
 
-    IDs, paths and mixed-case names precede long words, then other words.
-    Queries longer than twelve tokens need one of those true literals;
-    ordinary prose retains vector candidates without a lexical index query.
-    Existing FTS indexes have no cheaply readable vocabulary frequencies, so
-    length is the rarity proxy; computing frequencies would scan the index.
-    This affects candidate gathering only, never the stored text or BM25 rank.
+    Probe at most 32 terms without ranking, counting at most 2,001 documents
+    per term. Drop misses and common terms using a 5% collection cutoff
+    bounded between 1,000 and 2,000 documents, then rank at most eight terms.
+    Numeric IDs precede quoted words, proper names and paths;
+    document frequency breaks ties before length. Without a probe, length is
+    the rarity proxy. Long prose without a literal retains vector candidates.
     """
+    min_length = min_length if isinstance(min_length, int) else 2
     ignored = _query_stop_words() | stop_words
+    quoted = {
+        word.lower()
+        for span in re.findall(r'"([^"\n]+)"|“([^”\n]+)”', query or "")
+        for text in span
+        for word in TOKEN_RE.findall(text)
+    }
+    starters = {
+        "please",
+        "what",
+        "where",
+        "when",
+        "who",
+        "how",
+        "why",
+        "traceback",
+        "can",
+        "could",
+        "would",
+        "should",
+        "tell",
+        "find",
+        "explain",
+        "review",
+    }
     candidates = {}
     for part in _QUERY_PART_RE.findall(query or ""):
-        strong = (
-            any(c.isdigit() for c in part)
-            or any(c.isupper() for c in part[1:])
-            or any(c in part for c in "_-/.:")
-        )
+        technical = any(c.isupper() for c in part[1:]) or any(c in part for c in "_-/.:")
         for word in TOKEN_RE.findall(part):
             term = word.lower()
-            if term in ignored:
+            if len(term) < min_length or term in ignored:
                 continue
-            priority = 0 if strong else (1 if len(term) >= 8 else 2)
+            if any(c.isdigit() for c in word):
+                priority = 0
+            elif term in quoted:
+                priority = 1
+            elif word[0].isupper() and word[1:].islower() and term not in starters:
+                priority = 2
+            else:
+                priority = 3 if technical else 4
             candidates[term] = min(priority, candidates.get(term, priority))
-    if len(tokenize(query)) > 12 and not any(priority == 0 for priority in candidates.values()):
+    if not candidates:
+        return [], "no_lexical_terms"
+    if len(tokenize(query)) > 12 and not any(p < 4 for p in candidates.values()):
         return [], "long_query_no_literal"
-    terms = sorted(candidates, key=lambda term: (candidates[term], -len(term), term))
-    return terms[:8], None
+    probes = sorted(candidates, key=lambda t: (candidates[t], -len(t), t))[:32]
+
+    def rare(terms):
+        counts = frequencies(terms, limit=2001) if callable(frequencies) else None
+        threshold = 2000
+        if isinstance(counts, tuple):
+            counts, total = counts
+            threshold = min(threshold, max(1000, total // 20))
+        if isinstance(counts, dict):
+            terms = [t for t in terms if 0 < counts.get(t, 0) <= threshold]
+            terms.sort(key=lambda t: (candidates[t], counts[t], -len(t), t))
+        return terms
+
+    literals = [t for t in probes if candidates[t] < 4]
+    # A long log's rare IDs/paths already identify its candidate source.
+    # Avoid probing all surrounding prose once those literals have matches.
+    if len(tokenize(query)) > 12 and literals:
+        selected = rare(literals)
+        if selected:
+            return selected[:8], None
+        probes = [t for t in probes if candidates[t] == 4]
+    probes = rare(probes) if probes else []
+    if not probes:
+        return [], "no_discriminative_terms"
+    return probes[:8], None
 
 
-def rerank_merged_hits(query: str, hits: list) -> None:
+def ranking_stop_words(result: dict) -> frozenset:
+    """Use the worker's explicit locale, rather than the client's config."""
+    lang = result.get("ranking_lang")
+    if not isinstance(lang, str) or not lang:
+        return frozenset()
+    from .i18n import get_stopwords
+
+    return frozenset(get_stopwords(lang))
+
+
+def rerank_merged_hits(query: str, hits: list, stop_words: frozenset = frozenset()) -> None:
     """Normalize BM25 once across a merged pool when every hit has components.
 
     Older workers have no components and retain their previous score order.
@@ -68,11 +135,12 @@ def rerank_merged_hits(query: str, hits: list) -> None:
                 or not math.isfinite(value)
             ):
                 return
-    raw = bm25_scores(query, [hit.get("text") or "" for hit in hits])
+    raw = bm25_scores(query, [hit.get("text") or "" for hit in hits], stop_words=stop_words)
     maximum = max(raw, default=0.0)
     for hit, bm25 in zip(hits, raw):
         parts = hit["rank_components"]
         hit["bm25_score"] = round(bm25, 3)
+        parts["bm25"] = round(bm25, 6)
         hit["score"] = round(
             parts["vector_weight"] * parts["vector_similarity"]
             + parts["bm25_weight"] * (bm25 / maximum if maximum else 0.0),

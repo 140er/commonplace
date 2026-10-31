@@ -77,16 +77,22 @@ Hybrid search over vector and lexical candidates. Returns verbatim drawer conten
 
 `score` is the hybrid rank score, normalized within one candidate pool. Hits also
 carry `rank_components` (vector similarity, raw BM25, and ranking weights).
-Commonplace gateway and handoff recall re-rank merged scopes once; Python callers
-can use `mempalace.lexical.rerank_merged_hits(query, hits)` before sorting by score.
+Commonplace gateway and handoff recall re-rank merged scopes once using the
+worker’s echoed query and explicit `ranking_lang` stop words; Python callers
+can use `mempalace.lexical.rerank_merged_hits(result["query"], hits, stop_words=mempalace.lexical.ranking_stop_words(result))` before sorting by score.
 Older workers without components retain approximate ordering across scopes.
 `similarity` remains the raw vector similarity and can be null for a lexical-only hit.
 Media/code task search always uses shared-space vector ranking, regardless of `candidate_strategy`.
 
-Lexical retrieval uses at most eight terms, prioritizing tokens with digits,
-mixed case, or `_ - / . :`, then longer words as a rarity proxy. Queries longer
-than twelve tokens without those literals keep vector candidates and report
-`lexical_skipped: "long_query_no_literal"`; short keyword queries remain lexical.
+Union drawer retrieval selects at most eight terms, prioritizing IDs, quoted
+spans, capitalized names, and paths. Bounded frequency probes drop terms found
+in more than 5% of the collection, with the cutoff bounded between 1,000 and
+2,000 documents. At most 32 terms are probed, without ranking, with at most
+2,001 matches counted per term. Backends without probes prefer longer terms.
+Queries longer than twelve tokens without a literal report
+`lexical_skipped: "long_query_no_literal"`; empty selections report
+`no_lexical_terms`, and only common/missing terms report `no_discriminative_terms`.
+Public backend lexical search and closet boosts keep their full-query behavior.
 
 When `max_distance` drops results, the response says how many in
 `filtered_by_max_distance`. With `candidate_strategy: "union"`, a lexical-only

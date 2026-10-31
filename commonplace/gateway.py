@@ -580,9 +580,13 @@ class Mediator:
                     seen.add(key)
                     merged.append(hit)
         merged = [h for h in merged if _scrub(h, policy.can_read_wing) is not _DROP]
-        from mempalace.lexical import rerank_merged_hits
+        from mempalace.lexical import ranking_stop_words, rerank_merged_hits
 
-        rerank_merged_hits(args.get("query", ""), merged)
+        rerank_merged_hits(
+            (first or {}).get("query", args.get("query", "")),
+            merged,
+            stop_words=ranking_stop_words(first or {}),
+        )
         merged.sort(key=_score_key)
         out = dict(first or {"query": args.get("query", "")})
         out["results"] = merged[: max(1, limit)]

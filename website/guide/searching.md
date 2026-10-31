@@ -31,9 +31,11 @@ mempalace search "deploy process" --candidate-strategy vector
 3. Optional wing/room filters narrow both candidate sources.
 4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
 
-Lexical retrieval selects at most eight terms, prioritizing identifiers, paths, mixed-case names, and tokens containing digits or `_ - / . :`, then longer words as a rarity proxy. For queries longer than twelve tokens without one of those literals, search keeps vector candidates and reports `lexical_skipped: "long_query_no_literal"`. Short keyword queries retain lexical retrieval.
+Union drawer retrieval selects at most eight terms, prioritizing IDs, quoted spans, capitalized names, and paths. Both local backends probe at most 32 terms without ranking, counting at most 2,001 documents per term. Terms found in more than 5% of the collection are dropped, with a cutoff bounded between 1,000 and 2,000 documents; this keeps small-palace keyword recall while bounding large-corpus work. Remaining terms sort by frequency, then length. Backends without probes use length as a rarity proxy.
 
-The returned hybrid `score` is normalized within each candidate pool. Commonplace gateway and handoff recall re-rank merged scopes once using the returned `rank_components` and verbatim text. Python integrations can do the same with `mempalace.lexical.rerank_merged_hits(query, hits)` before sorting by `score`. Results from older workers without those components retain approximate score ordering.
+Queries longer than twelve tokens without a literal keep vector candidates and report `lexical_skipped: "long_query_no_literal"`. Empty selections report `no_lexical_terms`; selections containing only misses or common terms report `no_discriminative_terms`. Public backend lexical search and closet boosts retain their full-query behavior.
+
+The returned hybrid `score` is normalized within each candidate pool. Commonplace gateway and handoff recall re-rank merged scopes once using the worker’s echoed query, explicit `ranking_lang` stop words, returned `rank_components`, and verbatim text. Python integrations can do the same with `mempalace.lexical.rerank_merged_hits(result["query"], hits, stop_words=mempalace.lexical.ranking_stop_words(result))` before sorting by `score`. Results from older workers without those components retain approximate score ordering.
 
 A backend without lexical search keeps vector results and reports `candidate_strategy_fallback: "lexical_search_unsupported"`. Experimental media/code task search always uses shared-space vector ranking.
 

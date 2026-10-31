@@ -303,7 +303,7 @@ def _bm25_only_via_sqlite(
         c["score"] = round(c["_score"], 6)
         c["rank_components"] = {
             "vector_similarity": 0.0,
-            "bm25": raw,
+            "bm25": round(raw, 6),
             "vector_weight": 0.0,
             "bm25_weight": 1.0,
         }
@@ -365,7 +365,12 @@ def _merge_bm25_union_candidates(
     is not counted twice.
     """
     stats = {} if stats is None else stats
-    terms, skipped = select_lexical_terms(query, stop_words)
+    terms, skipped = select_lexical_terms(
+        query,
+        stop_words,
+        frequencies=getattr(drawers_col, "lexical_term_frequencies", None),
+        min_length=getattr(drawers_col, "lexical_min_token_length", 2),
+    )
     if skipped:
         stats["lexical_skipped"] = skipped
         return

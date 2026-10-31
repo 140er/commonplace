@@ -794,6 +794,15 @@ class BaseCollection(ABC):
         """
         raise UnsupportedMaintenanceKindError(f"backend does not support maintenance kind {kind!r}")
 
+    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
+        """Optional bounded document counts for union candidate selection.
+
+        Return ``(counts, document_count)``. Counts at ``limit`` mean at
+        least that many matching documents.
+        ``None`` keeps the selector's length-based rarity fallback.
+        """
+        return None
+
     def lexical_search(
         self,
         *,

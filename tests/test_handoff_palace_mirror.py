@@ -489,3 +489,37 @@ def test_real_worker_mirrors_three_chunks_and_recalls_the_matching_chunk(
     assert continuation.text == chunks[2].text
     assert (continuation.seq_start, continuation.seq_end) == (1, 1)
     assert palace_search(call_tool, principal, ["thr_missing"], "violet compass") == []
+
+
+def test_cross_thread_rerank_uses_worker_query_and_locale(monkeypatch):
+    from mempalace.i18n import get_stopwords
+    from mempalace.searcher import _hybrid_rank
+
+    clean = "session ZXQ739251"
+    raw = "Kubernetes cluster migration session " * 20 + clean
+    monkeypatch.setenv("MEMPALACE_LANG", "de")
+    worker = FakeWorker()
+    worker.search_results["thr_first"] = _hybrid_rank(
+        [
+            _hit(
+                text="[0] user message: session " * 20 + "Kubernetes cluster migration",
+                distance=0.5,
+            )
+        ],
+        clean,
+        stop_words=frozenset(get_stopwords("en")),
+    )
+    worker.search_results["thr_second"] = _hybrid_rank(
+        [_hit("thr_second", text="[0] user message: ZXQ739251", distance=None)],
+        clean,
+        stop_words=frozenset(get_stopwords("en")),
+    )
+
+    def call(principal, name, args):
+        result = worker(principal, name, args)
+        if name == "mempalace_search":
+            return {**result, "query": clean, "ranking_lang": "en"}
+        return result
+
+    hits = palace_search(call, object(), ["thr_first", "thr_second"], raw, limit=1)
+    assert hits[0].stored_thread_id == "thr_second"

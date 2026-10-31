@@ -15,7 +15,7 @@ import sqlite3
 from collections import defaultdict
 from typing import Iterable, Iterator, Optional
 
-from ..lexical import select_lexical_terms, tokenize
+from ..lexical import tokenize
 from ..stored_text import FLAG, decode_record, decode_value, encode_filter, encode_where
 from ..timeutil import recency_floor, recency_key
 from ._filters import matches_where
@@ -444,6 +444,40 @@ def _newest_row_ids(
         return newest("e.id DESC")
 
 
+def sqlite_term_frequencies(palace_path: str, collection_name: str, terms: list[str], limit: int):
+    """Bounded, unranked FTS probes scoped to one collection."""
+
+    def read(conn):
+        segments = [
+            row[0]
+            for row in conn.execute(
+                "SELECT s.id FROM segments s JOIN collections c ON s.collection = c.id "
+                "WHERE c.name = ? AND s.scope = 'METADATA'",
+                (collection_name,),
+            )
+        ]
+        if not segments:
+            return dict.fromkeys(terms, 0), 0
+        total = conn.execute(
+            f"SELECT count(*) FROM embeddings WHERE segment_id IN ({_marks(segments)})", segments
+        ).fetchone()[0]
+        sql = f"""SELECT count(*) FROM (
+            SELECT 1 FROM embedding_fulltext_search
+            WHERE embedding_fulltext_search MATCH ? AND EXISTS (
+                SELECT 1 FROM embeddings e WHERE e.id = embedding_fulltext_search.rowid
+                AND e.segment_id IN ({_marks(segments)})) LIMIT ?)
+        """
+        counts = {
+            term: conn.execute(
+                sql, ('"' + term.replace('"', '""') + '"', *segments, limit)
+            ).fetchone()[0]
+            for term in terms
+        }
+        return counts, total
+
+    return _read_db(palace_path, read)
+
+
 def sqlite_lexical_rows(
     palace_path: str,
     collection_name: str,
@@ -461,10 +495,7 @@ def sqlite_lexical_rows(
     full-text query fails; a clean miss stays empty. ``[]`` when the database
     is missing or unreadable.
     """
-    selected, skip = select_lexical_terms(query)
-    if skip:
-        return []
-    tokens = [t for t in selected if len(t) >= 3]
+    tokens = [t for t in tokenize(query) if len(t) >= 3]
     equalities = _string_equalities(encode_where(where))
     filter_sql, filter_params = (
         _match_sql(equalities, "e.id") if equalities is not None else ("", [])
