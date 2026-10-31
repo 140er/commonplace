@@ -1947,6 +1947,54 @@ def test_review_edit_history_preserves_previous_values_and_visible_links(hub, en
     assert_review_event(hub, owner, number, principal.actor, "review")
 
 
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+@pytest.mark.parametrize("removed", [False, True])
+def test_review_history_hides_other_editors_private_links(hub, env, surface, removed):
+    _token, _agent, _person, _cookie, owner = env
+    token, _principal, worker = review_worker(hub, member=True)
+    waiting = worker.ask("Keep this ask", board="work")
+    number = waiting["number"]
+    private, shared = [
+        owner.ctx.memory(
+            "mempalace_add_drawer", {"content": text, "wing": wing, "room": "general"}
+        )["drawer_id"]
+        for text, wing in (("Private evidence", "private.hidden"), ("Shared evidence", "shared"))
+    ]
+    owner.task_update(number, link=private)
+    owner.task_update(number, link=shared)
+    owner.task_update(number, unlink=shared)
+    if removed:
+        owner.task_update(number, unlink=private)
+    with owner.store.connection() as conn:
+        stored = [
+            row["text"]
+            for row in conn.execute(
+                "SELECT text FROM task_events WHERE task_id=? AND kind='edit'", (number,)
+            )
+        ]
+    assert any(private in text for text in stored if text)
+    if surface == "mcp":
+        ok, text = mcp(hub, token, "task_show", task=number)
+        assert ok
+    else:
+        code, current = api(hub, token, "GET", f"/api/cards/{number}")
+        assert code == 200
+        text = json.dumps(current)
+    assert private not in text and shared in text
+    history = worker.task_show(number)["events"]
+    snapshots = [json.loads(event["text"]) for event in history if event["kind"] == "edit"]
+    assert any(shared in snapshot.get("links", []) for snapshot in snapshots)
+    assert all(private not in snapshot.get("links", []) for snapshot in snapshots)
+    assert owner.task_show(number)["ask"] == waiting["ask"]
+    with owner.store.connection() as conn:
+        assert stored == [
+            row["text"]
+            for row in conn.execute(
+                "SELECT text FROM task_events WHERE task_id=? AND kind='edit'", (number,)
+            )
+        ]
+
+
 def test_stale_mcp_decide_after_review_edit_is_a_version_clash(hub, env):
     relay_token, relay, _person, _cookie, owner = env
     _token, principal, requester = review_worker(hub, member=True)

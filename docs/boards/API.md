@@ -197,6 +197,9 @@ in the card's history. Withdrawal never records a `decide` event and does
 not answer the ask. `reason` is accepted only on these review returns; an
 empty or omitted reason is stored as `NULL`.
 
+Link IDs in history are filtered by the reader's memory access, including
+links since removed from the card. Stored audit snapshots remain unchanged.
+
 ### task_handoff
 
 Ends the caller's hold and gives the card to someone else. `note` is required, so the next holder knows where things stand. It is stored verbatim as a `handoff` event.

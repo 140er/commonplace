@@ -706,11 +706,48 @@ class BoardService:
                     result.append(card(conn, task, self.principal))
             return result
 
+    def _history_link_visible(self, memory_id, visibility):
+        if self.principal.policy.sees_all_wings:
+            return True
+        if memory_id not in visibility:
+            try:
+                theme, _title = self._memory_theme(memory_id)
+            except ToolError:
+                visibility[memory_id] = False
+            else:
+                visibility[memory_id] = self.principal.policy.can_read_wing(theme)
+        return visibility[memory_id]
+
+    def _history_text(self, event, visibility):
+        text = event["text"]
+        if (
+            not text
+            or event["kind"] not in ("edit", "move")
+            or event["from_status"] != "review"
+            or self.principal.policy.sees_all_wings
+        ):
+            return text
+        try:
+            previous = json.loads(text)
+        except ValueError:
+            return text
+        if not isinstance(previous, dict) or not isinstance(previous.get("links"), list):
+            return text
+        previous["links"] = [
+            memory_id
+            for memory_id in previous["links"]
+            if self._history_link_visible(memory_id, visibility)
+        ]
+        return json.dumps(previous, ensure_ascii=False)
+
     def task_show(self, task):
         with self.transaction() as conn:
             row, _board = self._get(conn, task)
             result = card(conn, row, self.principal)
             hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
+            linked = self.store.links(conn, row["id"], self.principal)
+            visibility = {memory_id: False for memory_id in hidden}
+            visibility.update({link["drawer_id"]: True for link in linked})
             result["events"] = [
                 {
                     "kind": r["kind"],
@@ -719,7 +756,7 @@ class BoardService:
                     else r["stamp_user"]
                     if r["stamp_user"].startswith(("user:", "system"))
                     else f"user:{r['stamp_user']}",
-                    "text": r["text"],
+                    "text": self._history_text(r, visibility),
                     "at": r["created_at"],
                     "choice": r["choice"],
                     "target": r["target"],
@@ -734,9 +771,12 @@ class BoardService:
                 for r in conn.execute(
                     "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
                 )
-                if not (r["kind"] in ("link", "unlink") and r["target"] in hidden)
+                if not (
+                    r["kind"] in ("link", "unlink")
+                    and not self._history_link_visible(r["target"], visibility)
+                )
             ]
-            result["linked"] = self.store.links(conn, row["id"], self.principal)
+            result["linked"] = linked
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
             return result
 
