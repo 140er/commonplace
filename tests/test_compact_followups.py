@@ -815,7 +815,7 @@ def test_vector_reload_skips_metadata_and_loci_load_uses_index(store):
         assert not cache.loci_ready
         assert _query(col, {"wing": "w"}) == ["a"]
         assert cache.loci_ready
-        locus_sql = next(sql for sql in statements if sql.startswith("SELECT rowid,wing,room"))
+        locus_sql = next(sql for sql in statements if sql.startswith("SELECT group_concat(rowid)"))
         conn = col._handle.conn
         assert any(
             "idx_documents_coll_wing_room_hall" in row[3]
@@ -828,25 +828,35 @@ def test_vector_reload_skips_metadata_and_loci_load_uses_index(store):
         col._handle.conn.set_trace_callback(None)
 
 
-def test_loci_loader_covering_opcodes_when_supported(store):
+def test_loci_rowid_lookups_never_evaluate_table_json(store):
     _, col, _ = store
     col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]], metadatas=[{"wing": "w"}])
     statements = []
     col._handle.conn.set_trace_callback(statements.append)
     try:
         _query(col, {"wing": "w"})
-        locus_sql = next(sql for sql in statements if sql.startswith("SELECT rowid,wing,room"))
+        lookups = [sql for sql in statements if sql.startswith("SELECT group_concat(rowid)")]
+        assert len(lookups) == 2  # one wing value and the NULL room value
         conn = col._handle.conn
-        # Table cursors may be opened even when all values come from the index.
-        opcodes = conn.execute("EXPLAIN " + locus_sql).fetchall()
         table_root = conn.execute(
             "SELECT rootpage FROM sqlite_master WHERE name='documents'"
         ).fetchone()[0]
-        table_cursors = {row[2] for row in opcodes if row[1] == "OpenRead" and row[3] == table_root}
-        reads_table = any(row[1] == "Column" and row[2] in table_cursors for row in opcodes)
-        if reads_table and any("json_extract" in str(row[5]) for row in opcodes):
-            pytest.skip("SQLite evaluates virtual columns instead of covering their reads")
-        assert not reads_table
+        for sql in lookups:
+            index = (
+                "compact_room"
+                if "INDEXED BY compact_room" in sql
+                else "idx_documents_coll_wing_room_hall"
+            )
+            plan = [row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql)]
+            assert any(index in detail for detail in plan)
+            assert not any("SCAN documents" in detail for detail in plan)
+            opcodes = conn.execute("EXPLAIN " + sql).fetchall()
+            assert not any("json_extract" in str(row[5]) for row in opcodes)
+            # Table cursors may be opened without reading table columns.
+            table_cursors = {
+                row[2] for row in opcodes if row[1] == "OpenRead" and row[3] == table_root
+            }
+            assert not any(row[1] == "Column" and row[2] in table_cursors for row in opcodes)
     finally:
         col._handle.conn.set_trace_callback(None)
 
@@ -976,3 +986,130 @@ def test_writer_waits_for_cache_without_holding_cross_process_lease(store):
     assert not worker.is_alive()
     assert not errors
     assert result.returncode == 0, result.stderr
+
+
+def test_index_lookup_loci_preserve_decoded_json_types(store):
+    from mempalace.backends.compact import _Codes
+
+    _, col, _ = store
+    values = [
+        None,
+        True,
+        1,
+        1.0,
+        False,
+        0,
+        2.5,
+        "1",
+        "[w]",
+        '["w"]',
+        ["w"],
+        '{"key":1}',
+        {"key": 1},
+        "a\0b",
+        "\x01mpesc:z",
+        "",
+        " [lit",
+    ]
+    col.add(
+        ids=[str(i) for i in range(len(values))],
+        documents=["alpha"] * len(values),
+        embeddings=[[1, 0]] * len(values),
+        metadatas=[{"wing": value, "room": values[-i - 1]} for i, value in enumerate(values)],
+    )
+    _query(col, {"wing": {"$in": ["1", None]}})
+    cache = col._handle._vector_cache[1]
+    assert cache.loci_ready
+    for row in col._handle.conn.execute("SELECT rowid,id FROM documents"):
+        position = cache.positions([row["rowid"]])[0]
+        meta = col.get(ids=[row["id"]], include=["metadatas"]).metadatas[0]
+        for key in ("wing", "room"):
+            assert getattr(cache, key)[position] == cache.books[key].values[_Codes.key(meta[key])]
+    for key in ("wing", "room"):
+        for value in values:
+            if isinstance(value, (list, dict)):
+                continue
+            where = {key: {"$in": [value]}}
+            expected = {
+                str(i)
+                for i, item in enumerate(values)
+                if matches_where({"wing": item, "room": values[-i - 1]}, where)
+            }
+            assert set(_query(col, where)) == expected
+
+
+@pytest.mark.parametrize("field", ["wing", "room"])
+def test_high_cardinality_loci_keep_sql_without_repeated_builds(store, monkeypatch, field):
+    from mempalace.backends import compact
+
+    monkeypatch.setattr(compact, "_MAX_LOCUS_VALUES", 2)
+    _, col, _ = store
+    col.add(
+        ids=["0", "1", "2"],
+        documents=["alpha"] * 3,
+        embeddings=[[1, 0]] * 3,
+        metadatas=[{"wing": "w", "room": "r", field: str(i)} for i in range(3)],
+    )
+    where = {field: "1"}
+    assert _query(col, where) == ["1"]
+    cache = col._handle._vector_cache[1]
+    assert cache.loci_attempted and not cache.loci_ready
+    assert not cache.books["wing"].values and not cache.books["room"].values
+    statements = []
+    col._handle.conn.set_trace_callback(statements.append)
+    try:
+        assert _query(col, where) == ["1"]
+        assert not any(
+            "ORDER BY wing LIMIT 1" in sql
+            or "ORDER BY room LIMIT 1" in sql
+            or sql.startswith("SELECT group_concat(rowid)")
+            for sql in statements
+        )
+    finally:
+        col._handle.conn.set_trace_callback(None)
+
+
+@pytest.mark.parametrize("close", ["close", "close_palace"])
+def test_close_releases_client_registry_before_waiting_for_queries(store, close):
+    import threading
+
+    backend, col, directory = store
+    owner = threading.get_ident()
+    waiting = threading.Event()
+    errors = []
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.RLock()
+
+        def __enter__(self):
+            if threading.get_ident() != owner:
+                waiting.set()
+            self.lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    col._handle.lock = ObservedLock()
+
+    def shutdown():
+        try:
+            if close == "close":
+                backend.close()
+            else:
+                backend.close_palace(str(directory))
+        except BaseException as exc:
+            errors.append(exc)
+
+    with col._handle.lock:
+        worker = threading.Thread(target=shutdown)
+        worker.start()
+        assert waiting.wait(10)
+        available = backend._clients_lock.acquire(blocking=False)
+        if available:
+            backend._clients_lock.release()
+    worker.join(30)
+    assert not worker.is_alive() and not errors
+    assert available
+    assert col._handle.compact_shared is None

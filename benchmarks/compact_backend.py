@@ -274,11 +274,21 @@ else:
     from mempalace.backends.compact import CompactBackend as Backend
 b=Backend()
 try:
-    c=b.get_collection(sys.argv[2], 'bench', options={'read_only':sys.argv[1]=='probe'})
+    c=b.get_collection(sys.argv[2], 'bench', options={'read_only':sys.argv[1].startswith('probe')})
     q=json.loads(sys.argv[4])
     if sys.argv[1]=='write':
         c.upsert(ids=['external'], documents=['synthetic external write'], metadatas=[json.loads(sys.argv[5])], embeddings=[q])
     else:
+        loci=[]
+        if hasattr(c,'_load_loci'):
+            original=c._load_loci
+            def tracked(*args):
+                begin=time.perf_counter()
+                try:
+                    return original(*args)
+                finally:
+                    loci.append((time.perf_counter()-begin)*1000)
+            c._load_loci=tracked
         process=psutil.Process()
         peak=[process.memory_info().rss]
         stopped=threading.Event()
@@ -289,7 +299,8 @@ try:
         sampler.start()
         try:
             begin=time.perf_counter()
-            c.query(query_embeddings=[q], n_results=10, include=[])
+            where={'wing':{'$in':['w3']}} if sys.argv[1]=='probe_filtered' else None
+            c.query(query_embeddings=[q], n_results=10, where=where, include=[])
             elapsed=(time.perf_counter()-begin)*1000
         finally:
             peak[0]=max(peak[0],process.memory_info().rss)
@@ -299,6 +310,7 @@ try:
         arrays=[getattr(cache, name) for name in ('matrix','rowids','norms','wing','room','rowid_index')] if hasattr(cache,'matrix') else list(cache[1:])
         result={'cold_query_ms':elapsed,'cache_mib':sum(a.nbytes for a in arrays if isinstance(a,np.ndarray))/2**20}
         result['peak_rss_mib']=peak[0]/2**20
+        result['loci_build_ms']=sum(loci)
         print(json.dumps(result))
 finally:
     b.close()
@@ -359,10 +371,17 @@ def read_only_latency(
                 text=True,
                 timeout=60,
             )
-            return json.loads(completed.stdout) if mode == "probe" else None
+            return json.loads(completed.stdout) if mode.startswith("probe") else None
 
         cold = [worker("probe") for _ in range(3)]
         measurements = {key: statistics.median(sample[key] for sample in cold) for key in cold[0]}
+        filtered_cold = [worker("probe_filtered") for _ in range(3)]
+        measurements["cold_first_filtered_ms"] = statistics.median(
+            sample["cold_query_ms"] for sample in filtered_cold
+        )
+        measurements["loci_build_ms"] = statistics.median(
+            sample["loci_build_ms"] for sample in filtered_cold
+        )
         measurements["metadata_keys"] = len(drawer_metadata(size // 2, "w0", "r0"))
         measurements["metadata_bytes"] = len(
             json.dumps(drawer_metadata(size // 2, "w0", "r0"), separators=(",", ":"))
@@ -384,7 +403,7 @@ def read_only_latency(
         }.items():
             query_ms(where)
             measurements[name + "_ms"] = statistics.median(query_ms(where) for _ in range(repeats))
-        own, writes = [], []
+        own, own_filtered, writes = [], [], []
         for _ in range(repeats):
             begin = time.perf_counter()
             writer.upsert(
@@ -394,14 +413,22 @@ def read_only_latency(
                 embeddings=[query],
             )
             writes.append((time.perf_counter() - begin) * 1000)
+            own_filtered.append(query_ms({"wing": {"$in": ["w3"]}}))
             own.append(query_ms())
         measurements["own_write_ms"] = statistics.median(writes)
-        measurements["query_after_own_write_ms"] = statistics.median(own)
-        external = []
-        for _ in range(3):
+        measurements["unfiltered_after_filtered_own_write_ms"] = statistics.median(own)
+        measurements["filtered_after_own_write_ms"] = statistics.median(own_filtered)
+        external, filtered, fanout = [], [], []
+        for _ in range(5):
+            worker("write")
+            filtered.append(query_ms({"wing": {"$in": ["w3"]}}))
+            worker("write")
+            fanout.append(sum(query_ms({"wing": {"$in": [wing]}}) for wing in ("w3", "w7", "w11")))
             worker("write")
             external.append(query_ms())
         measurements["query_after_external_write_ms"] = statistics.median(external)
+        measurements["filtered_after_external_write_ms"] = statistics.median(filtered)
+        measurements["fanout3_after_external_write_ms"] = statistics.median(fanout)
         return {key: round(value, 3) for key, value in measurements.items()}
     finally:
         backend.close()

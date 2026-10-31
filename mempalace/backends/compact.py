@@ -62,6 +62,7 @@ _APPLICATION_ID = 0x4D504343  # MPCC
 _SCHEMA_VERSION = 2
 _DICTIONARY_SIZE = 32768
 _SAMPLE_CAP = 1024 * 1024
+_MAX_LOCUS_VALUES = 1000
 _LOG = logging.getLogger(__name__)
 _FILE_CACHES = weakref.WeakValueDictionary()
 _FILE_CACHES_LOCK = threading.RLock()
@@ -319,6 +320,7 @@ class _VectorCache:
         self.size = 0
         self.books = {"wing": _Codes(), "room": _Codes()}
         self.loci_ready = False
+        self.loci_attempted = False
         self.offset = first_rowid
         self.rowid_index = np.full(max(16, last_rowid - first_rowid + 17), -1, np.int32)
         self._allocate(max(16, capacity + capacity // 64))
@@ -938,46 +940,61 @@ class CompactCollection(SQLiteExactCollection):
         )
 
     def _load_loci(self, cur, cid, cache):
-        """Read dedicated locus columns separately from the vector reload.
+        """Enumerate distinct indexed values, then collect their indexed rowids.
 
-        The locus index supplies the collection range. Some SQLite builds also
-        cover virtual-column reads; others evaluate their generated expressions.
-        JSON types are needed only for array/object-looking values.
+        Reading virtual columns across the entire collection evaluates JSON on
+        some SQLite builds. Seek to each distinct value instead; the rowid
+        aggregation needs only index entries. High-cardinality loci retain SQL
+        masks until the next vector reload rather than repeating this probe.
         """
-        loader = cur.connection.cursor()
-        loader.row_factory = None
-        try:
-            loader.execute(
-                "SELECT rowid,wing,room FROM documents INDEXED BY idx_documents_coll_wing_room_hall WHERE collection_id=?",
-                (cid,),
-            )
-            while rows := loader.fetchmany(4096):
-                ids = np.fromiter((row[0] for row in rows), np.int64, count=len(rows))
+        fields = (("wing", "idx_documents_coll_wing_room_hall"), ("room", "compact_room"))
+        distinct = {}
+        for key, index in fields:
+            prefix = f"FROM documents INDEXED BY {index} WHERE collection_id=? AND {key}"
+            values = []
+            if cur.execute(f"SELECT 1 {prefix} IS NULL LIMIT 1", (cid,)).fetchone():
+                values.append(None)
+            row = cur.execute(
+                f"SELECT {key} {prefix} IS NOT NULL ORDER BY {key} LIMIT 1", (cid,)
+            ).fetchone()
+            while row is not None:
+                values.append(row[0])
+                if len(values) > _MAX_LOCUS_VALUES:
+                    cache.loci_attempted = True
+                    return
+                row = cur.execute(
+                    f"SELECT {key} {prefix}>? ORDER BY {key} LIMIT 1", (cid, row[0])
+                ).fetchone()
+            distinct[key] = values
+        for key, index in fields:
+            book, array = cache.books[key], getattr(cache, key)
+            for raw in distinct[key]:
+                text = cur.execute(
+                    f"SELECT group_concat(rowid) FROM documents INDEXED BY {index} WHERE collection_id=? AND {key} IS ?",
+                    (cid, raw),
+                ).fetchone()[0]
+                ids = (
+                    np.fromstring(text, sep=",", dtype=np.int64) if text else np.empty(0, np.int64)
+                )
                 positions = cache.positions(ids)
                 valid = positions >= 0
-                for column, key in ((1, "wing"), (2, "room")):
-                    book = cache.books[key]
-                    for raw in {row[column] for row in rows}:
-                        if not (isinstance(raw, str) and raw.startswith(("[", "{"))):
-                            book.code(raw)
-                    codes = np.fromiter(
-                        (book.raw.get(row[column], -1) for row in rows), np.int32, count=len(rows)
-                    )
-                    unusual = np.flatnonzero(codes < 0)
-                    if len(unusual):
+                if isinstance(raw, str) and raw.startswith(("[", "{")):
+                    # SQLite stores arrays/objects as text in the same index
+                    # range as JSON-looking strings. Split only these rows.
+                    ids, positions = ids[valid], positions[valid]
+                    for start in range(0, len(ids), 4096):
                         kinds = dict(
                             cur.execute(
                                 f"SELECT rowid,json_type(metadata_json,'$.{key}') FROM documents WHERE rowid IN (SELECT value FROM json_each(?))",
-                                (json.dumps(ids[unusual].tolist()),),
+                                (json.dumps(ids[start : start + 4096].tolist()),),
                             )
                         )
-                        for index in unusual:
-                            row = rows[index]
-                            codes[index] = book.code(row[column], kinds[row[0]])
-                    getattr(cache, key)[positions[valid]] = codes[valid]
-            cache.loci_ready = True
-        finally:
-            loader.close()
+                        array[positions[start : start + 4096]] = [
+                            book.code(raw, kinds[int(rowid)]) for rowid in ids[start : start + 4096]
+                        ]
+                else:
+                    array[positions[valid]] = book.code(raw)
+        cache.loci_ready = cache.loci_attempted = True
 
     def _query_once(
         self,
@@ -1025,7 +1042,7 @@ class CompactCollection(SQLiteExactCollection):
                 candidates = candidates[candidates >= 0]
                 candidates.sort()
                 if (
-                    not cache.loci_ready
+                    not cache.loci_attempted
                     and where
                     and not where_document
                     and self._supports_loci(where)
@@ -1386,21 +1403,22 @@ class CompactBackend(SQLiteExactBackend):
         path = palace.local_path if hasattr(palace, "local_path") else palace
         with self._clients_lock:
             handles = [self._clients.get(path), self._read_only_clients.get(path)]
-            try:
-                super().close_palace(palace)
-            finally:
-                for handle in handles:
-                    if handle is not None:
-                        self._release_cache(handle)
+        try:
+            super().close_palace(palace)
+        finally:
+            for handle in handles:
+                if handle is not None:
+                    self._release_cache(handle)
 
     def close(self):
         with self._clients_lock:
             handles = list(self._clients.values()) + list(self._read_only_clients.values())
-            try:
-                super().close()
-            finally:
-                for handle in handles:
-                    self._release_cache(handle)
+            self._closed = True
+        try:
+            super().close()
+        finally:
+            for handle in handles:
+                self._release_cache(handle)
 
     @staticmethod
     def _missing_schema(conn):
@@ -1436,8 +1454,9 @@ class CompactBackend(SQLiteExactBackend):
                 "upgrade MemPalace"
                 if version > _SCHEMA_VERSION
                 else (
-                    "read-only searches require an in-place upgrade first; run "
-                    "mempalace --palace PATH repair rebuild-index (opens writable to upgrade)"
+                    "read-only searches require an in-place upgrade first; open writable once "
+                    "to upgrade without rebuilding, or run mempalace --palace PATH repair "
+                    "rebuild-index (re-embeds every drawer)"
                     if version == 1
                     else "recover from a backup"
                 )
