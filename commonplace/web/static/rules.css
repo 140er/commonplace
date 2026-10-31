@@ -1,11 +1,11 @@
 /* Rules use the shared square tiles, chips and controls. */
 .rules-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--gap); }
 .rule-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: var(--gap); align-items: start; }
-.rule-tile { min-width: 0; background: var(--surface); }
+.rule-tile { min-width: 0; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .rule-tile > header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 18px; }
-.rule-tile h2 { min-width: 0; font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+.rule-tile h2 { min-width: 0; overflow-wrap: anywhere; color: var(--strong); font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; }
 .rule-tile h4 { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
-.rule-row { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--surface); }
+.rule-row { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .rule-row + .rule-row { margin-top: var(--gap); }
 .rule-chips { display: flex; flex-wrap: wrap; gap: var(--gap); }
 .rule-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
@@ -13,39 +13,40 @@
 .rule-text del + ins { margin-left: .3em; }
 .rule-text ins { color: var(--ink); text-decoration: none; font-weight: 600; }
 .rules-view .opts { flex-wrap: wrap; margin-top: 12px; }
-.rule-proposal { background: var(--surface-2); padding: 12px; display: flex; flex-direction: column; gap: var(--gap); }
-.rule-proposal .opt { background: var(--surface); }
-.rule-clarify { min-width: 0; }
+.rule-proposal { padding: 12px; display: flex; flex-direction: column; gap: var(--gap); background: var(--surface); }
+.rule-proposal .opt { background: none; }
+.rule-clarify, .rule-move { min-width: 0; }
 .rules-view summary { cursor: pointer; list-style: none; }
 .rules-view summary::-webkit-details-marker { display: none; }
-.rule-clarify > summary { display: inline-flex; }
+.rule-clarify > summary, .rule-move > summary { display: inline-flex; }
 .rule-tile > header > .rule-clarify[open] { flex-basis: 100%; }
-.rule-clarify-panel { padding: 12px; margin-top: var(--gap); background: var(--surface-2); }
+.rule-clarify-panel { padding: 12px; margin-top: var(--gap); background: var(--surface); }
 .rule-clarify-panel .opts { margin-top: 0; }
-.rule-clarify-panel .opt { background: var(--surface); }
+.rule-clarify-panel .opt { background: none; }
 .rule-clarify-panel [data-rule-reply]:not(:empty) { margin-top: 12px; }
 .rule-ask { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gap); margin-top: 12px; }
 .rule-ask label { flex: 1; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
-.rule-new { background: var(--surface); padding: 12px; }
+.rule-new { padding: 12px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .rule-new .form-tile, .rule-row .form-tile { padding: 0; margin-top: 12px; }
+
 /* Secondary actions share a quiet, wrapping line. */
 .rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; margin-top: 12px; }
 .rule-text-button { display: inline-flex; align-items: center; min-height: 32px; padding: 0; background: none; color: var(--quiet); font-weight: 400; }
-.rule-text-button:hover, .rule-text-button:focus-visible { color: var(--ink); filter: none; }
-.rule-text-button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
-.rule-actions > .rule-clarify[open] { flex-basis: 100%; }
+.rule-text-button:hover { color: var(--ink); filter: none; }
+.rule-text-button:focus-visible { color: var(--ink); filter: none; outline: 2px solid var(--ink); outline-offset: 3px; }
+.rule-actions > .rule-clarify[open], .rule-actions > .rule-move[open] { flex-basis: 100%; }
 .rule-new[hidden] { display: none; }
 .rule-fields { display: flex; flex-wrap: wrap; gap: var(--gap); }
 .rule-fields label { flex: 1; min-width: 120px; }
 .rule-fields [data-scope-ref] { flex-basis: 100%; }
 .rule-fields input, .rule-fields select, .rules-view textarea { width: 100%; }
 .rule-empty, .rule-retired > summary { padding: 12px 18px; color: var(--quiet); }
-.rule-retired { background: var(--bg); }
+.rule-retired { background: none; }
 .rule-retired > summary::before { content: "+ "; }
 .rule-retired[open] > summary::before { content: "− "; }
-[data-rule-history] { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-2); }
-.mtabs [data-rules-count] { padding: 0 4px; background: var(--accent); color: var(--bg); font-size: 11px; font-weight: 700; }
-.navs a [data-rules-count][data-waiting="false"], .mtabs [data-rules-count][data-waiting="false"] { background: var(--surface-2); color: var(--quiet); }
+[data-rule-history] { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface); }
+.mtabs [data-rules-count] { font-weight: 700; min-width: 0; padding: 0; background: none; color: var(--accent); font-size: 12px; }
+.mtabs [data-rules-count][data-waiting="false"] { background: none; color: var(--quiet); }
 .rule-copy { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 @media (max-width: 1100px) {
   .app:has(.space) .mtabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -58,6 +59,5 @@
   .rules-view .opt, .rules-view .blockbtn { min-height: 44px; justify-content: center; }
   .rule-fields { flex-direction: column; }
   .rule-fields label { min-width: 0; }
-  .rules-view select, .rules-view input { min-height: 44px; }
-  .rule-text-button { min-height: 44px; }
+  .rules-view select, .rules-view input, .rule-text-button { min-height: 44px; }
 }

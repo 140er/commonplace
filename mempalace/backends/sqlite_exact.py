@@ -486,14 +486,36 @@ class SQLiteExactCollection(BaseCollection):
                     self._handle = self._backend._connect(path, create=False, read_only=True)
 
     @contextlib.contextmanager
+    def _read_lock(self):
+        for _ in range(3):
+            self._refresh_read_handle()
+            handle = self._handle
+            with handle.lock:
+                if handle is not self._handle:
+                    continue
+                # Retirement can win after refresh but before this lock. Only
+                # retry within the original lifetime: an explicit close must
+                # still fail, even if the same palace has since reopened.
+                # Do not acquire the registry lock while holding handle.lock.
+                if (
+                    handle.retired
+                    and not self._closed
+                    and self._backend is not None
+                    and self._backend._palace_lifetimes.get(handle.palace_path) is handle.lifetime
+                ):
+                    continue
+                self._ensure_open()
+                yield handle
+                return
+        raise BackendError("Palace changed repeatedly while acquiring a reader; retry the query")
+
+    @contextlib.contextmanager
     def _write_lock(self):
         """Serialize this handle before taking process-wide writer ownership.
 
-        ``mine_palace_lock`` grants cross-thread re-entrant access whenever
-        this process already owns the palace. Taking it before ``handle.lock``
-        lets a waiting thread consume that re-entrant credit, outlive the
-        thread that owns the OS lease, and then mutate after the lease has been
-        released. The handle mutex must therefore be the outer context.
+        ``mine_palace_lock`` retains process-wide ownership until all overlapping
+        users exit. Queue on ``handle.lock`` first so a waiting thread reserves
+        that ownership only once it can proceed with its write.
         """
         # Late import avoids a palace.py -> backend -> palace.py cycle.
         from ..palace import mine_palace_lock
@@ -505,25 +527,27 @@ class SQLiteExactCollection(BaseCollection):
 
     @contextlib.contextmanager
     def _cursor(self, *, write: bool = False):
-        self._refresh_read_handle()
-        serialization = self._write_lock() if write else self._handle.lock
+        if write:
+            self._refresh_read_handle()
+        serialization = self._write_lock() if write else self._read_lock()
         with serialization:
             self._ensure_open()
-            cur = self._handle.conn.cursor()
+            handle = self._handle
+            cur = handle.conn.cursor()
             try:
                 yield cur
             except Exception:
-                self._handle.conn.rollback()
+                handle.conn.rollback()
                 raise
             else:
                 # No-op write cursors never start a transaction. Bumping them
                 # would drop a warm immutable snapshot that still matches disk.
-                if write and self._handle.conn.in_transaction:
+                if write and handle.conn.in_transaction:
                     _bump_write_generation(cur)
-                self._handle.conn.commit()
+                handle.conn.commit()
                 if write:
-                    self._handle._vector_cache.clear()
-                    self._handle._native_cache.clear()
+                    handle._vector_cache.clear()
+                    handle._native_cache.clear()
             finally:
                 cur.close()
 
@@ -1581,8 +1605,8 @@ class SQLiteExactCollection(BaseCollection):
 
         # compact → VACUUM. It cannot run inside a transaction, so flip the
         # connection to autocommit for the duration. _write_lock takes the
-        # handle mutex before the palace lease so a waiting thread cannot
-        # retain stale process-reentrant ownership after another thread exits.
+        # handle mutex before the palace lease so a queued thread does not
+        # reserve writer ownership until it can proceed.
         before = self.maintenance_state()
         with self._write_lock():
             conn = self._handle.conn
@@ -1990,25 +2014,33 @@ class SQLiteExactBackend(BaseBackend):
             raise PalaceNotFoundError("SQLiteExactBackend requires PalaceRef.local_path")
         if not create and not os.path.isdir(palace_path):
             raise PalaceNotFoundError(palace_path)
-        handle = self._connect(palace_path, create=create, read_only=read_only)
-        with handle.lock:
-            row = handle.conn.execute(
-                "SELECT id FROM collections WHERE name = ?",
-                (collection_name,),
-            ).fetchone()
-            if row is None:
-                if not create:
-                    raise CollectionNotInitializedError(collection_name)
-                from ..palace import mine_palace_lock
+        for _ in range(3):
+            handle = self._connect(palace_path, create=create, read_only=read_only)
+            with handle.lock:
+                # Another reader may have retired this immutable snapshot
+                # after selection. Retirement keeps the palace lifetime open.
+                if handle.retired:
+                    continue
+                if handle.closed:
+                    raise BackendClosedError("SQLiteExactCollection has been closed")
+                row = handle.conn.execute(
+                    "SELECT id FROM collections WHERE name = ?",
+                    (collection_name,),
+                ).fetchone()
+                if row is None:
+                    if not create:
+                        raise CollectionNotInitializedError(collection_name)
+                    from ..palace import mine_palace_lock
 
-                with mine_palace_lock(palace_path):
-                    handle.conn.execute(
-                        "INSERT INTO collections(name, created_at) VALUES (?, ?)",
-                        (collection_name, _utcnow()),
-                    )
-                    _bump_write_generation(handle.conn)
-                    handle.conn.commit()
-        return SQLiteExactCollection(handle, collection_name, backend=self)
+                    with mine_palace_lock(palace_path):
+                        handle.conn.execute(
+                            "INSERT INTO collections(name, created_at) VALUES (?, ?)",
+                            (collection_name, _utcnow()),
+                        )
+                        _bump_write_generation(handle.conn)
+                        handle.conn.commit()
+                return SQLiteExactCollection(handle, collection_name, backend=self)
+        raise BackendError("Palace changed repeatedly while opening a collection; retry the open")
 
     @staticmethod
     def _normalize_args(args, kwargs):
@@ -2070,9 +2102,13 @@ class SQLiteExactBackend(BaseBackend):
             ]
         for cached in cached_handles:
             if cached is not None:
-                with cached.lock:
-                    cached.closed = True
-                    cached.conn.close()
+                self._close_handle(cached)
+
+    def _close_handle(self, handle: _SQLiteExactHandle) -> None:
+        """Close a handle removed from the registry, outside the registry lock."""
+        with handle.lock:
+            handle.closed = True
+            handle.conn.close()
 
     def close(self) -> None:
         # Flip _closed under the registry lock so a concurrent _connect either
@@ -2087,9 +2123,7 @@ class SQLiteExactBackend(BaseBackend):
             self._palace_lifetimes.clear()
             self._closed = True
         for handle in handles:
-            with handle.lock:
-                handle.closed = True
-                handle.conn.close()
+            self._close_handle(handle)
 
     def health(self, palace: Optional[PalaceRef] = None) -> HealthStatus:
         if self._closed:

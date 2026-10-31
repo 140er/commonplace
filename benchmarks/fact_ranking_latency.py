@@ -3,7 +3,12 @@
 
 The corpus mirrors the review probe: one source per fact, nine predicates,
 and entity names sharing common words. Queries cover broad, selective, and
-all-common terms. Timings exclude seeding and the one-time index build, and
+all-common terms, with broad gateway scopes, small non-empty scopes, and
+all matches hidden, as well as ordinary unscoped and single-wing reads.
+The scattered scope has 1,001 rows. The old_5k scope takes exactly the lowest
+5,000 available docids; old_5001 adds the next docid to the same scope. These
+two cases are omitted when the corpus cannot also fit the other scopes.
+Timings exclude seeding and the one-time index build, and
 report the optional fact lookup's added wall time per search.
 """
 
@@ -23,6 +28,30 @@ from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.searcher.facts import search_facts
 
 QUERIES = ("what is the status of the project", "Entity 42", "entity project")
+SCOPES = (
+    ("unscoped", None, None),
+    ("wing_3", ["wing_3"], None),
+    ("gateway_1wing", ["wing_3"], ["public", "internal"]),
+    (
+        "gateway",
+        [
+            "wing_0",
+            "wing_1",
+            "wing_2",
+            "wing_3",
+            "sparse",
+            "scattered_1001",
+            "old_5k",
+            "old_boundary",
+        ],
+        ["public", "internal"],
+    ),
+    ("sparse", ["sparse"], None),
+    ("scattered_1001", ["scattered_1001"], None),
+    ("old_5k", ["old_5k"], None),
+    ("old_5001", ["old_5k", "old_boundary"], None),
+    ("hidden", ["hidden"], None),
+)
 PREDICATES = (
     "is_a",
     "works_at",
@@ -60,7 +89,7 @@ def measure(size, repeats=3):
                             f"e{rng.randrange(size // 5)}",
                             rng.choice(PREDICATES),
                             f"e{rng.randrange(size // 5)}",
-                            "shared",
+                            f"wing_{i % 5}",
                         )
                         for i in range(size)
                     ),
@@ -69,30 +98,73 @@ def measure(size, repeats=3):
                     "INSERT INTO fact_sources(triple_id,source_thread,added_at) VALUES(?,?,?)",
                     ((f"t{i}", "thr_source", "2026-01-01T00:00:00+00:00") for i in range(size)),
                 )
-        with KnowledgeGraph(db_path=path) as kg:
-            rows = []
-            for query in QUERIES:
-                search_facts(kg, query)  # warm caches, outside the samples
-                samples = []
-                for _ in range(repeats):
-                    start = time.perf_counter()
-                    facts = search_facts(kg, query)
-                    samples.append((time.perf_counter() - start) * 1000)
-                rows.append(
-                    {
-                        "query": query,
-                        "facts": len(facts),
-                        "median_ms": statistics.median(samples),
-                        "max_ms": max(samples),
-                        "samples_ms": samples,
-                    }
+                conn.execute(
+                    "UPDATE triples SET wing='sparse', subject='e42', predicate='status_of' "
+                    "WHERE id IN ('t7', 't12', 't99')"
                 )
-            return {"facts": size, "repeats": repeats, "lookups": rows}
+        with KnowledgeGraph(db_path=path) as kg:
+            conn = kg._conn()
+            ordered_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT k.triple_id FROM fact_search_keys k "
+                    "JOIN triples t ON t.id=k.triple_id WHERE t.wing!='sparse' ORDER BY k.docid"
+                )
+            ]
+            scattered_size = min(1001, len(ordered_ids))
+            # Keep both old scopes exact, with room for the ordinary wings too.
+            has_old_scopes = len(ordered_ids) > 5001 + scattered_size
+            old_end = 5001 if has_old_scopes else 0
+            with conn:
+                if has_old_scopes:
+                    conn.executemany(
+                        "UPDATE triples SET wing='old_5k' WHERE id=?",
+                        ((triple_id,) for triple_id in ordered_ids[:5000]),
+                    )
+                    conn.execute(
+                        "UPDATE triples SET wing='old_boundary' WHERE id=?", (ordered_ids[5000],)
+                    )
+                conn.executemany(
+                    "UPDATE triples SET wing='scattered_1001' WHERE id=?",
+                    (
+                        (triple_id,)
+                        for triple_id in rng.sample(ordered_ids[old_end:], scattered_size)
+                    ),
+                )
+            rows = []
+            skipped_scopes = []
+            for scope, wings, sensitivities in SCOPES:
+                if scope in ("old_5k", "old_5001") and not has_old_scopes:
+                    skipped_scopes.append(scope)
+                    continue
+                for query in QUERIES:
+                    search_facts(kg, query, wings=wings, sensitivities=sensitivities)
+                    samples = []
+                    for _ in range(repeats):
+                        start = time.perf_counter()
+                        facts = search_facts(kg, query, wings=wings, sensitivities=sensitivities)
+                        samples.append((time.perf_counter() - start) * 1000)
+                    rows.append(
+                        {
+                            "query": query,
+                            "scope": scope,
+                            "facts": len(facts),
+                            "median_ms": statistics.median(samples),
+                            "max_ms": max(samples),
+                            "samples_ms": samples,
+                        }
+                    )
+            return {
+                "facts": size,
+                "repeats": repeats,
+                "lookups": rows,
+                "skipped_scopes": skipped_scopes,
+            }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sizes", nargs="+", type=int, default=[5000, 20000, 50000])
+    parser.add_argument("--sizes", nargs="+", type=int, default=[5000, 20000, 50000, 200000])
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     print(json.dumps([measure(size, args.repeats) for size in args.sizes], indent=2), flush=True)

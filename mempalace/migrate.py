@@ -80,7 +80,9 @@ def _is_chroma_storage(name: str, path: str) -> bool:
     return True
 
 
-def _carry_over_palace_files(source_palace: str, dest_palace: str) -> None:
+def _carry_over_palace_files(
+    source_palace: str, dest_palace: str, *, exclude_storage: str = "chroma"
+) -> None:
     """Copy everything but Chroma's storage from the live palace to the rebuild.
 
     The rebuild writes the collections, the knowledge graph and the embedder
@@ -93,7 +95,12 @@ def _carry_over_palace_files(source_palace: str, dest_palace: str) -> None:
     for name in os.listdir(source_palace):
         src = os.path.join(source_palace, name)
         dst = os.path.join(dest_palace, name)
-        if _is_chroma_storage(name, src) or os.path.lexists(dst):
+        storage = (
+            name.startswith("compact.sqlite3")
+            if exclude_storage == "compact"
+            else _is_chroma_storage(name, src)
+        )
+        if storage or os.path.lexists(dst):
             continue
         # Sockets and pipes are runtime artifacts; SQLite journals are folded
         # into their database by the backup below.

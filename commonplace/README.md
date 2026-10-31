@@ -9,9 +9,26 @@ commonplace token add grok:coordinator --workspace personal --client grok \
 commonplace serve --host 127.0.0.1 --port 8765
 ```
 
-`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus `workspaces/<id>/palace`.
+`token add` prints the `cmmn_…` token once on stdout. Clients send it as `Authorization: Bearer cmmn_…` to `POST /mcp`. Data lives in `$COMMONPLACE_DATA` (default `~/.commonplace`): `control.sqlite3` plus workspace generation directories. `workspaces/<id>` is the stable generation-pointer container; use `commonplace doctor --workspace <workspace>` to find the active path.
 
 Social sign-in: [provider setup](SETUP.md).
+
+## Mail
+
+`commonplace login-link <email> --send` emails the sign-in link to the account's address and prints only `login link sent to <address>`; the link itself is never printed. Without `--send` the link is printed as before. The link uses `--base-url`, else `COMMONPLACE_APP_URL`, else `COMMONPLACE_BASE_URL`.
+
+Mail is off until `COMMONPLACE_SMTP_HOST` and `COMMONPLACE_SMTP_FROM` are set. With mail off, `--send` exits with `mail not configured` and creates no link. If sending fails, the new link is deleted.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COMMONPLACE_SMTP_HOST` | unset (mail off) | SMTP server |
+| `COMMONPLACE_SMTP_PORT` | 587, or 465 with SSL, or 25 without TLS | SMTP port |
+| `COMMONPLACE_SMTP_FROM` | required with a host | From address, e.g. `Commonplace <noreply@example.com>` |
+| `COMMONPLACE_SMTP_USER`, `COMMONPLACE_SMTP_PASSWORD` | unset (no auth) | Set both or neither |
+| `COMMONPLACE_SMTP_STARTTLS` | `true` | `false` sends without TLS, e.g. to a relay without auth; with credentials only when the host is loopback |
+| `COMMONPLACE_SMTP_SSL` | `true` on port 465, else `false` | Implicit TLS; set only one of SSL and STARTTLS |
+
+Certificates are always verified. The password is never logged or shown in errors.
 
 Claude Code: [local setup and repeatable fresh-install check](../docs/commonplace-client-setup.md).
 
@@ -52,3 +69,5 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 - Searches without a wing run once per readable wing and merge by score.
 
 The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
+
+Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.

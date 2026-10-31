@@ -154,7 +154,9 @@ def has_sqlite_magic(db_path: str) -> bool:
 
     uri = sqlite_read_uri(db_path) + "&immutable=1"
     try:
-        conn = sqlite3.connect(uri, uri=True)
+        # Retained probes may be closed by teardown after their creating
+        # thread has finished. Cached reads are serialized by _lock.
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     except sqlite3.Error:
         conn = None
 
@@ -207,6 +209,6 @@ def close_retained() -> None:
         for conn in _retained_conns.values():
             try:
                 conn.close()
-            except Exception:
+            except OSError:
                 pass
         _retained_conns.clear()

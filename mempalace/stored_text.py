@@ -36,10 +36,13 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import threading
 import time
 from bisect import bisect_left, bisect_right
+from collections.abc import Mapping
 
+from .index_hygiene import run_touches_word
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
@@ -50,7 +53,7 @@ INDEX_VERSION = 1
 logger = logging.getLogger(__name__)
 _hint_warning_times = {}
 _hint_warning_lock = threading.Lock()
-_BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/_\-]+={0,2}|={1,2})\Z")
+_BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/]+|[A-Za-z0-9_\-]+)={0,2}\Z")
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -178,6 +181,7 @@ class IndexSource:
         result = dict(metadata or {})
         if INDEX_SPANS in result:
             result[INDEX_SPANS] = None
+        # Validated runs have padding only at the end; padding-only slices stay literal.
         spans = [
             [
                 max(start, s.start) - start,
@@ -186,6 +190,7 @@ class IndexSource:
                 start <= s.start < end or (s.start <= start and end <= s.end),
             ]
             for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
+            if self.text[max(start, s.start)] != "="
         ]
         touches_run = bisect_right(self._candidate_ends, start) < bisect_left(
             self._candidate_starts, end
@@ -282,7 +287,7 @@ def chunk_index_metadata(chunk: dict) -> dict:
 
 def user_metadata(metadata):
     """Strip server-owned drawer markers; raw internal copies retain them."""
-    if isinstance(metadata, dict):
+    if isinstance(metadata, Mapping):
         return {key: value for key, value in metadata.items() if key not in RESERVED_METADATA}
     if isinstance(metadata, (list, tuple)):
         return type(metadata)(user_metadata(item) for item in metadata)
@@ -344,7 +349,11 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
     NUL and lone surrogates become spaces: the index never returns text, and
     neither can be tokenized or UTF-8 encoded.
     """
-    from .index_hygiene import PLACEHOLDER_RE, index_text as detect_index_text
+    from .index_hygiene import (
+        PLACEHOLDER_RE,
+        find_base64_spans,
+        index_text as detect_index_text,
+    )
 
     text = _decode(stored) if stored_form else stored
     hint = (metadata or {}).get(INDEX_SPANS)
@@ -360,11 +369,32 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     and type(end) is int
                     and cursor <= start < end <= len(text)
                     and isinstance(placeholder, str)
-                    and PLACEHOLDER_RE.fullmatch(placeholder)
                     and _BASE64_FRAGMENT.fullmatch(text[start:end])
                     and type(emit) is bool
+                    and (emit or (start == 0 and end < len(text)))
+                    and not run_touches_word(text, start, end)
                 ):
                     raise ValueError("invalid span")
+                match = PLACEHOLDER_RE.fullmatch(placeholder)
+                if match is None:
+                    raise ValueError("invalid placeholder")
+                size = int(match["decoded_bytes"])
+                # The detector requires 200 payload characters (150 bytes).
+                # A full run must fit in a Python bytes object and cover this
+                # fragment, including only the padding its byte count permits.
+                if not (
+                    150 <= size <= sys.maxsize
+                    and end - start <= 4 * ((size + 2) // 3)
+                    and text[start:end].count("=") <= -size % 3
+                ):
+                    raise ValueError("invalid placeholder size")
+                if emit and end < len(text):
+                    # Emitting spans with a visible end are complete runs,
+                    # even at offset zero. They must satisfy the detector's rule,
+                    # including its threshold, alphabets, pad bits and entropy.
+                    spans = find_base64_spans(text[start:end])
+                    if len(spans) != 1 or spans[0].placeholder != placeholder:
+                        raise ValueError("invalid complete run")
                 parts.extend((text[cursor:start], placeholder if emit else ""))
                 cursor = end
             parts.append(text[cursor:])

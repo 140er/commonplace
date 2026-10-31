@@ -1,7 +1,7 @@
 """Lossless thread store with a full-text index. Owner: part T02.
 
-One SQLite file per workspace (``<data>/workspaces/<id>/threads.sqlite3``,
-mode 0600). Messages are stored whole, verbatim, one row per
+One SQLite file per workspace (``threads.sqlite3`` in the resolved active
+workspace generation, mode 0600). Messages are stored whole, verbatim, one row per
 ``ThreadMessage`` (``raw`` included). Chunks are views over consecutive
 messages (``chunk_messages``) indexed in FTS5 for ``search``.
 

@@ -1,47 +1,44 @@
 /* Home: the Needs you box, one tile per space, then every open task. */
 .home { display: flex; flex-direction: column; gap: var(--gap); background: none; }
 .home > section { flex: none; }
-.home h2 { font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); padding: 0; background: none; }
+.home h2 { font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; padding: 0; background: none; color: var(--strong); }
 .home h2 .n { color: var(--accent); }
 .home .home-tasks h2 .n { color: var(--quiet); font-weight: 500; margin-left: 6px; }
-
-.needbox { background: var(--surface); padding: 6px 0 10px; }
-.needbox.waiting { box-shadow: inset 2px 0 0 var(--accent); }
+.needbox { padding: 6px 0 10px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
+.needbox.waiting { box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
 .needbox header { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 20px; }
-.needbox header .speak { margin-left: auto; }
+.needbox header .need-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.needbox .need-actions .opt { min-width: 44px; min-height: 44px; justify-content: center; }
 .needbox .digest-captions { margin: 4px 20px 8px; }
 .nline { display: grid; grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr); align-items: center; column-gap: 12px; min-height: 36px; padding: 6px 20px; }
-.nline .tt { font-weight: 700; letter-spacing: -0.015em; overflow-wrap: break-word; }
+.nline .tt { font-weight: 700; letter-spacing: -0.015em; overflow-wrap: break-word; color: var(--strong); }
 .nline .tt:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nline .why { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nline.sel { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+.nline.sel { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
 .nline:focus-visible { outline-offset: -2px; }
-
 .home-spaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--gap); }
-.home-space { background: var(--surface); padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+.home-space { padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 12px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .home-space header { display: flex; align-items: center; gap: 12px; }
-.home-space h3 { flex: 1; min-width: 0; font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.home-space h3 { flex: 1; min-width: 0; font-size: 15px; line-height: 22px; font-weight: 700; letter-spacing: -0.02em; overflow-wrap: anywhere; color: var(--strong); }
 .home-space .home-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; color: var(--quiet); }
 .home-space .home-facts > span:not(.pill) { display: inline-flex; gap: 14px; }
 .home-space .hot { color: var(--accent); }
-
-.pill { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0 10px; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
-.pill.you { background: var(--accent); color: var(--accent-ink); }
-.pill.you .status-dot { background: var(--accent-ink); }
+.pill { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0 10px; font-size: 12px; font-weight: 700; white-space: nowrap; background: none; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-2); }
+.pill.you { background: none; color: var(--accent); box-shadow: inset 0 0 0 1px rgba(247, 148, 29, 0.5); }
+.pill.you .status-dot { background: var(--accent); }
 .pill.plan, .pill.merge, .pill.stale { color: var(--ink); }
-
-.home-tasks { background: var(--surface); padding: 16px 0 6px; }
+.home-tasks { padding: 16px 0 6px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .home-tasks h2 { padding: 0 20px 10px; }
 .home-tasks table { width: 100%; border-collapse: collapse; }
-.home-tasks th { text-align: left; font-size: 12px; font-weight: 500; color: var(--quiet); padding: 6px 12px; white-space: nowrap; }
-.home-tasks td { padding: 10px 12px; border-top: 2px solid var(--bg); vertical-align: middle; }
+.home-tasks th { text-align: left; font-size: 12px; font-weight: 500; padding: 6px 12px; white-space: nowrap; color: var(--quiet); }
+.home-tasks td { padding: 10px 12px; vertical-align: middle; border-top: 1px solid var(--line); }
 .home-tasks th:first-child, .home-tasks td:first-child { padding-left: 20px; }
 .home-tasks th:last-child, .home-tasks td:last-child { padding-right: 20px; }
 .home-tasks td.task { width: 100%; }
-.home-tasks td.task a { font-weight: 500; letter-spacing: -0.015em; overflow-wrap: break-word; }
-.home-tasks tr.sel td { background: var(--surface-2); }
+.home-tasks td.task a { font-weight: 500; letter-spacing: -0.015em; overflow-wrap: break-word; color: var(--strong); }
+.home-tasks tr.sel td { background: var(--surface); }
 .home-tasks tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
-.home-tasks tr.sel .opt, .trow-card.sel .opt { background: var(--surface-3); }
+.home-tasks tr.sel .opt, .trow-card.sel .opt { background: none; }
 .home-tasks .sub { display: flex; flex-wrap: wrap; gap: 0 12px; font-size: 12px; line-height: 16px; color: var(--quiet); }
 .home-tasks td:nth-child(2) { color: var(--muted); white-space: nowrap; }
 .home-tasks td time { font-size: 12px; color: var(--quiet); white-space: nowrap; }
@@ -51,12 +48,17 @@
 .home-tasks .empty { padding: 4px 20px 12px; color: var(--muted); }
 
 /* Beside an open card only task, status and action stay; narrow screens get the stacked rows. */
-@media (min-width: 1100px) { .main:has(#card-panel:not([hidden])) .home-tasks :is(th, td):is(:nth-child(2), :nth-child(4)) { display: none; } }
+.trow-card.sel { background: var(--surface); }
+.trow-card { border-top: 1px solid var(--line); }
+.trow-card .tt { color: var(--strong); }
+@media (min-width: 1100px) {
+  .main:has(#card-panel:not([hidden])) .home-tasks :is(th, td):is(:nth-child(2), :nth-child(4)) { display: none; }
+}
 @media (max-width: 900px) {
   .home-tasks table { display: none; }
   .home-tasks .tstack { display: flex; flex-direction: column; }
-  .trow-card { container-type: inline-size; padding: 12px 20px; border-top: 2px solid var(--bg); display: flex; flex-direction: column; gap: 10px; }
-  .trow-card.sel { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .trow-card { container-type: inline-size; padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .trow-card.sel { box-shadow: inset 2px 0 0 var(--accent); }
   .trow-card .opts { margin-left: 18px; }
 }
 @media (max-width: 640px) {

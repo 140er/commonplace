@@ -33,11 +33,15 @@ def test_mcp_ingress_strips_reserved_policy(name, arguments, monkeypatch):
     assert seen == [arguments]
 
 
-def test_cli_metadata_strips_reserved_policy():
+def test_cli_event_and_artifact_metadata_remain_verbatim():
     from mempalace import cli
 
-    metadata = {**dict.fromkeys(RESERVED_METADATA, True), "topic": "normal"}
-    assert cli._parse_metadata_arg(json.dumps(metadata)) == {"topic": "normal"}
+    metadata = {
+        **dict.fromkeys(RESERVED_METADATA, True),
+        "topic": "normal",
+        "nested": dict.fromkeys(RESERVED_METADATA, "literal"),
+    }
+    assert cli._parse_metadata_arg(json.dumps(metadata)) == metadata
 
 
 def test_hub_forwarding_strips_metadata_without_mutating_caller(monkeypatch):

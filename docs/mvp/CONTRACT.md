@@ -5,7 +5,7 @@ This file defines the module contracts. Product rules: the UI says Memory / memo
 ## The seam (already on feat/mvp, don't change without the coordinator)
 
 - `commonplace/extensions.py`: `LocalTool`, `register()`, `ToolContext`, `ToolError`. A module listed in `extensions.MODULES` registers its MCP tools at import time and its HTTP routes in `install(gateway)`.
-  - `ToolContext.principal` (a `control_db.Principal`), `.db` (ControlDB), `.workspace_dir()` (str path of `<data>/workspaces/<ws_id>`), `.memory(name, args)` (runs a `mempalace_*` tool through the caller's policy; raises `ToolError` on refusal).
+  - `ToolContext.principal` (a `control_db.Principal`), `.db` (ControlDB), `.workspace_dir()` (str path of the resolved active workspace generation), `.memory(name, args)` (runs a `mempalace_*` tool through the caller's policy; raises `ToolError` on refusal).
   - Handlers return `str` (sent as text) or JSON-able data. Raise `ToolError("no: …")` for refusals.
   - Profiles: `ALL_PROFILES` (slim, standard, full) or `WORK_PROFILES` (standard, full). `trusted_only=True` refuses untrusted tokens. `owner_only=True` hides the tool from non-owners.
 - `commonplace/events.py`: `emit(db, workspace_id, kind, subject=, actor=, data=)`, `after(db, ws, seq, limit)`, `latest_seq`, `add_listener(fn)`. Kinds listed in the module docstring. `data` never holds memory text.
@@ -157,7 +157,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
 
 ## CLI, stdio bridge, seed (W5)
 
-- `commonplace login-link <email> [--workspace] [--base-url]` prints `<base>/app/login?t=…`.
+- `commonplace login-link <email> [--workspace] [--base-url] [--minutes] [--send]` prints `<base>/app/login?t=…`; with `--send` it emails the link instead (SMTP via `COMMONPLACE_SMTP_*`, see `commonplace/README.md`) and prints only `login link sent to <address>`.
 - `commonplace connect --url <base>/mcp [--token-env COMMONPLACE_TOKEN]`: stdio ↔ HTTP MCP bridge (newline-delimited JSON-RPC on stdin/stdout; POST each to the URL with the Bearer; 202 → no output). For clients that only speak stdio.
 - `commonplace token add … --client claude-code|codex|grok|t3|chatgpt|claude-ai` presets (when `--profile`/wings not given): coding agents → standard, read `*` minus private, write `project_*`,`shared`, trusted, kg:read off; grok → slim, read `shared,inbox`, write_wing `inbox`, untrusted; claude-ai/chatgpt → slim, standard, write_wing `inbox`.
 - `commonplace seed <file.json> --workspace` imports boards + cards (`[{"board","title","body","status","labels","repo","branch","pr_url"}]`), idempotent on (board, title).

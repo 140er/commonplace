@@ -1,0 +1,175 @@
+/* Decide queue. Phone: one question, the answers pinned to the bottom. Desktop keeps the shell. */
+.decide { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.decide-bar { flex: none; display: flex; align-items: center; gap: 12px; min-height: 68px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); }
+.decide-mark { display: grid; place-items: center; width: 28px; height: 44px; }
+.decide-mark svg { width: 22px; height: 22px; fill: var(--strong); }
+.decide-bar h1 { font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: -0.04em; color: var(--strong); }
+.decide-bar .decide-meter { margin-left: auto; }
+.decide-meter { display: inline-flex; gap: 3px; align-items: center; }
+.decide-meter i { width: 10px; height: 14px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.decide-meter i.done { background: var(--ink); box-shadow: none; }
+.decide-meter i.now { background: var(--accent); box-shadow: none; }
+.frac { font-size: 12px; color: var(--muted); }
+.decide .close, .decide-tools .close {
+  min-width: 44px; min-height: 44px; display: grid; place-items: center; margin-left: 4px;
+  color: var(--ink); font-size: 18px; box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.decide-tools { display: flex; align-items: center; gap: 10px; }
+.decide-list { display: none; }
+.decide-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* Status line: undo, failed, offline, answered elsewhere. */
+.decide-status { flex: none; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.decide-status .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.decide-status .num { color: var(--quiet); }
+.decide-status b { color: var(--strong); }
+.decide-status .end { display: flex; align-items: center; gap: 12px; flex: none; }
+.decide-status .opt { min-width: 44px; min-height: 44px; padding: 0 16px; font-size: 15px; color: var(--strong); justify-content: center; }
+.blocks { display: inline-flex; gap: 2px; }
+.blocks i { width: 6px; height: 10px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.blocks i.on { background: var(--ink); box-shadow: none; }
+.decide-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--accent); }
+.decide-dot.ok { background: var(--ok); }
+.decide-dot.bad { background: var(--rec); }
+.decide-dot.hollow { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.decide-dot.ring { width: 10px; height: 10px; background: none; box-shadow: inset 0 0 0 2px var(--person); }
+
+/* The card, with the next question peeking out under it. */
+.decide-stage { flex: 1; min-height: 0; position: relative; margin: 16px 16px 0; }
+.decide-card {
+  position: absolute; inset: 0 0 8px; z-index: 1; display: flex; flex-direction: column; gap: 16px;
+  padding: 18px; background: var(--surface); border: 1px solid var(--line-2); overflow: hidden;
+}
+.decide-card.now { border-left: 2px solid var(--accent); padding-left: 17px; }
+.decide-card.under { inset: 4px 6px 4px; z-index: 0; border-color: var(--line); }
+.decide-card.under :is(b, .decide-title, .decide-q, .decide-prop) { color: var(--quiet); }
+.decide-edge { position: absolute; inset: 8px 12px 0; border: 1px solid var(--line); background: var(--surface); }
+.decide-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.decide-card .meta { flex-wrap: wrap; }
+.decide-card .meta b { color: var(--strong); font-weight: 700; }
+.decide-title { font-weight: 700; color: var(--muted); overflow-wrap: anywhere; }
+.decide-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.decide-q { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.decide-not { font-size: 12px; color: var(--quiet); overflow-wrap: anywhere; }
+.decide-not s { color: var(--quiet); }
+.decide-foot { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.decide-of { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--quiet); }
+.tag { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; font-size: 11px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-2); }
+.tag.new { color: var(--person); box-shadow: inset 0 0 0 1px var(--person); }
+.decide-prop { font-size: 30px; line-height: 38px; font-weight: 800; letter-spacing: -0.045em; color: var(--strong); overflow-wrap: anywhere; }
+.decide-then, .decide-ask { font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.035em; color: var(--strong); white-space: pre-wrap; overflow-wrap: anywhere; }
+.decide-card.stale .decide-ask { color: var(--muted); }
+.decide-card :is(h2, .decide-prop):focus { outline: none; }
+.decide-card :is(h2, .decide-prop):focus-visible { outline: 2px solid var(--strong); outline-offset: 3px; }
+.decide-wait { display: flex; flex-direction: column; gap: 10px; padding: 18px 16px; border: 1px solid var(--line); }
+.decide-wait h2 { display: flex; align-items: center; gap: 12px; font-size: 15px; line-height: 22px; font-weight: 700; color: var(--strong); }
+.decide-back { color: var(--quiet); }
+
+/* Swipe feedback: stamp, coloured frame, lit button and the track. */
+.decide-card[data-swipe="on"] { touch-action: pan-y; transform-origin: 50% 130%; }
+.decide-card.dragging { user-select: none; -webkit-user-select: none; }
+.stamp { position: absolute; top: 30%; z-index: 2; padding: 4px 12px; font-size: 22px; line-height: 30px; font-weight: 800; opacity: 0; pointer-events: none; }
+.stamp.yes { left: 18px; color: var(--ok); box-shadow: inset 0 0 0 2px var(--ok); transform: rotate(-8deg); }
+.stamp.no { right: 18px; color: var(--strong); box-shadow: inset 0 0 0 2px var(--strong); transform: rotate(8deg); }
+.decide-card[data-drag="yes"] .stamp.yes, .decide-card[data-drag="no"] .stamp.no { opacity: var(--stamp, 0); }
+.decide-card[data-drag="yes"] { outline: 2px solid var(--ok); outline-offset: -1px; }
+.decide-card[data-drag="no"] { outline: 2px solid var(--strong); outline-offset: -1px; }
+.decide-track { position: absolute; top: -6px; left: 16px; right: 16px; height: 20px; display: none; align-items: center; gap: 16px; }
+.decide-dock[data-drag="yes"] .decide-track, .decide-dock[data-drag="no"] .decide-track { display: flex; }
+.decide-track .rail { position: relative; flex: 1; height: 20px; }
+.decide-track .rail::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line-2); }
+.decide-track .tick { position: absolute; top: 5px; width: 1px; height: 10px; background: var(--muted); }
+.decide-track .tick.l { left: 15%; }
+.decide-track .tick.r { left: 85%; }
+.decide-track .fill { position: absolute; top: 8.5px; height: 3px; width: calc(var(--fill, 0) * 50%); background: var(--ok); }
+.decide-dock[data-drag="yes"] .fill { left: 50%; }
+.decide-dock[data-drag="no"] .fill { right: 50%; background: var(--strong); }
+.decide-track .label { flex: none; min-width: 15ch; font-size: 12px; color: var(--muted); text-align: right; }
+.decide-dock[data-drag="yes"] .yes { box-shadow: 0 0 0 2px var(--ok); }
+.decide-dock[data-drag="no"] .no { box-shadow: inset 0 0 0 2px var(--strong); }
+
+/* The dock: always at the bottom, never over 60% of the screen. */
+.decide-dock {
+  flex: none; position: relative; display: flex; flex-direction: column; gap: var(--gap); max-height: 60dvh;
+  padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+}
+.decide-dock .opt { justify-content: center; font-size: 15px; }
+.decide-dock .opt:disabled { opacity: 1; cursor: default; color: var(--wait); background: none; box-shadow: inset 0 0 0 1px var(--line); }
+.decide-yn, .decide-more { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+.decide-yn .opt { min-height: 56px; color: var(--strong); }
+.decide-yn .opt.go { color: var(--bg); }
+.decide-yn .opt.go:disabled { background: none; color: var(--wait); }
+.decide-more .opt, .decide-dock > .opt.soft { min-height: 44px; }
+.decide-dock .opt.soft { font-size: 13px; font-weight: 400; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.decide-dock > .opt.wide { width: 100%; min-height: 44px; }
+.decide-dock > .opt.go.wide { min-height: 56px; }
+.decide-rows { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; overflow: auto; flex: 0 1 auto; }
+.decide-dock .opt.row { flex: none; width: 100%; min-height: 56px; justify-content: flex-start; padding: 8px 18px; color: var(--strong); text-align: left; }
+.decide-dock .opt.row > span { margin-right: auto; overflow-wrap: anywhere; }
+.decide-rule { flex: none; border: 0; border-top: 1px solid var(--line); margin: 0; }
+.decide-dock .opt.ask { flex: none; width: 100%; min-height: 44px; color: var(--strong); }
+.decide-reply { flex: none; display: flex; gap: var(--gap); }
+.decide-dock .opt.back { min-height: 44px; padding: 0 18px; color: var(--strong); }
+.decide-field { flex: 1; min-width: 0; display: flex; align-items: stretch; min-height: 44px; background: var(--side); box-shadow: inset 0 0 0 1px var(--line-2); }
+.decide-field input { flex: 1; width: 0; min-height: 44px; padding: 0 0 0 16px; font-size: 15px; background: transparent; box-shadow: none; }
+.decide-field input:focus-visible { outline: none; }
+.decide-field:focus-within { box-shadow: inset 0 0 0 1px var(--muted); }
+.decide-field .send { position: relative; flex: none; width: 44px; min-height: 44px; color: var(--muted); }
+.decide-field .send::before { content: ""; position: absolute; inset: 4px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.decide-field.solo { min-height: 56px; }
+.decide-field.solo .send { width: 56px; }
+.decide-field.solo .send::before { inset: 10px; }
+.decide-field .send:disabled { color: var(--wait); cursor: default; opacity: 1; }
+.decide .k { display: none; }
+
+/* With four or more rows the card shrinks to its text and the rows scroll. */
+.decide-stage.short { flex: 0 1 auto; display: flex; flex-direction: column; }
+.decide-stage.short .decide-card { position: relative; inset: auto; flex: 0 1 auto; min-height: 0; margin-bottom: 0; }
+
+/* All done. */
+.decide-done { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 20px; padding: 24px 16px 0; }
+.done-title { display: flex; flex-direction: column; font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.035em; color: var(--strong); }
+.done-title:focus { outline: none; }
+.decide-done li { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.decide-done .num { color: var(--quiet); }
+.decide-done .said { color: var(--ink); overflow-wrap: anywhere; }
+.decide-dock > .opt .decide-dot { margin-right: 4px; }
+
+/* Screen swaps: yes rises the next card, no flips in place. */
+.decide-card.rise { animation: decide-rise 180ms ease-out; }
+.decide-card.flip { animation: decide-flip 180ms ease-out; }
+@keyframes decide-rise { from { transform: translateY(8px) scale(0.985); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes decide-flip { from { transform: perspective(900px) rotateY(-90deg); } to { transform: none; } }
+
+@media (max-width: 640px) {
+  .app[data-screen="decide"] { grid-template-rows: minmax(0, 1fr); height: 100dvh; }
+  .app[data-screen="decide"] :is(.head, .mtabs, #connection-state) { display: none; }
+  .app[data-screen="decide"] #content { padding: 0; overflow: hidden; }
+}
+
+@media (min-width: 641px) {
+  .decide { display: grid; grid-template-columns: 360px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 24px; }
+  .decide-bar { display: none; }
+  .decide-list { display: block; grid-column: 1; grid-row: 1; overflow: auto; min-height: 0; border: 1px solid var(--line); }
+  .decide-list li + li { border-top: 1px solid var(--line); }
+  .decide-list li button {
+    width: 100%; min-height: 56px; display: grid; grid-template-columns: 10px minmax(0, 1fr);
+    column-gap: 12px; row-gap: 2px; text-align: left; padding: 10px 16px;
+  }
+  .decide-list .decide-dot { grid-row: 1 / span 2; align-self: center; }
+  .decide-list .lt { font-weight: 700; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .decide-list .ls { color: var(--quiet); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .decide-list li.sel button { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
+  .decide-main { grid-column: 2; grid-row: 1; max-width: 560px; }
+  .decide-status { border: 1px solid var(--line); margin-bottom: 16px; }
+  .decide-stage { margin: 0; }
+  .decide-dock { padding: 16px 0 0; }
+  .decide-done { padding: 0; }
+  .decide .k { display: inline-grid; margin-left: auto; }
+  .decide-yn .k, .decide-more .k, .decide-dock .opt.ask .k { margin-left: 8px; }
+  .decide-yn .opt.go .k { color: var(--bg); box-shadow: inset 0 0 0 1px rgba(14, 17, 22, 0.25); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decide-card.rise, .decide-card.flip { animation: none; }
+}

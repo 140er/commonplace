@@ -10,12 +10,13 @@ import sqlite3
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from . import plans
 from .backup import BackupError, data_lock
 from .control_db import ControlDB, ControlError
 from .extensions import ToolError
+from .mailer import MailError
 from .policy import PROFILES, TRUST_LEVELS, Policy, PolicyError
 
 DATA_ENV = "COMMONPLACE_DATA"
@@ -173,6 +174,7 @@ def cmd_token_add(args) -> int:
         policy=policy,
         actor=actor,
         expires_days=args.expires_days or None,
+        parent=args.parent,
     )
     # The only time the token is shown. Stdout carries nothing else, so
     # `commonplace token add ... > file` captures exactly the token.
@@ -188,6 +190,7 @@ def cmd_token_list(args) -> int:
         policy = Policy.from_json(c["policy"]).summary()
         print(
             f"{c['name']}  {c['token_hint']}  {c['client']}  {c['workspace_id']}  {state}  "
+            f"parent {c['parent_id'] or '-'}  started_by {c['started_by']}  "
             f"last used {c['last_used_at'] or 'never'}  {json.dumps(policy)}"
         )
     return 0
@@ -334,15 +337,15 @@ def cmd_handoff_show(args) -> int:
 
 
 def _stores(args, stack, *, root=None):
-    from .handoff.thread_store import ThreadStore
+    from .workspace_store import open_threads, workspace_path
 
     stores = {}
 
     def store_for(workspace_id):
         if workspace_id not in stores:
-            path = (root or _data_dir(args)) / "workspaces" / workspace_id / "threads.sqlite3"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            store = stores[workspace_id] = ThreadStore(str(path))
+            directory = workspace_path(root or _data_dir(args), workspace_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            store = stores[workspace_id] = open_threads(directory)
             stack.callback(store.close)
         return stores[workspace_id]
 
@@ -574,7 +577,35 @@ def add_webhook_commands(sub):
 def cmd_login_link(args) -> int:
     from .bridge import create_login_url
 
-    print(create_login_url(_db(args), args.email, args.workspace, args.base_url, args.minutes))
+    if not args.send:
+        print(create_login_url(_db(args), args.email, args.workspace, args.base_url, args.minutes))
+        return 0
+    from datetime import datetime, timedelta, timezone
+
+    from . import sessions
+    from .mailer import NOT_CONFIGURED, MailNotConfigured, from_env
+
+    # Check mail before minting, so an unconfigured server never creates a link.
+    mailer = from_env()
+    if not mailer.configured:
+        raise MailNotConfigured(NOT_CONFIGURED)
+    db = _db(args)
+    to = db.user(args.email)["email"]
+    minutes = sessions._link_minutes(args.minutes)
+    url = create_login_url(db, to, args.workspace, args.base_url, minutes)
+    until = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).strftime("%H:%M UTC")
+    text = (
+        f"Sign in to Commonplace:\n\n{url}\n\n"
+        f"This link works once and expires in {minutes} minutes (at {until}).\n"
+        "If you did not ask for it, ignore this email.\n"
+    )
+    try:
+        mailer.send(to, "Your Commonplace sign-in link", text)
+    except BaseException:
+        # The link was never delivered: make sure it can never be used.
+        sessions.discard_login_link(db, parse_qs(urlsplit(url).query)["t"][0])
+        raise
+    print(f"login link sent to {to}")
     return 0
 
 
@@ -590,6 +621,76 @@ def cmd_seed(args) -> int:
     db = _db(args)
     result = seed_workspace(db, _data_dir(args), args.workspace, args.file, _actor(db, args))
     print(json.dumps(result))
+    return 0
+
+
+def cmd_workspace_store(args) -> int:
+    from .store_switch import switch_workspace
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            row = db.workspace(ref)
+            if row is None:
+                raise ControlError("no such workspace")
+            _owner(db, args, row["id"])
+            return row["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            switch_workspace(_data_dir(args), args.workspace, args.store, authorize=authorize),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    from .store_switch import doctor_workspace
+
+    db = _db(args)
+    status = 0
+    try:
+        rows = [db.workspace(args.workspace)] if args.workspace else db.workspaces()
+        for workspace in rows:
+            report = doctor_workspace(_data_dir(args), workspace["id"])
+            print(json.dumps(report, sort_keys=True))
+            if (
+                report.get("previous_pointer_difference")
+                or report.get("recovery_conflict")
+                or report.get("emptied_retained_root")
+                or report.get("interrupted_deletions")
+                or report.get("retired_findings")
+            ):
+                status = 3
+    finally:
+        db.close()
+    return status
+
+
+def cmd_workspace_prune(args) -> int:
+    from .store_switch import prune_generations
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            row = db.workspace(ref)
+            if row is None:
+                raise ControlError("no such workspace")
+            _owner(db, args, row["id"])
+            return row["id"]
+        finally:
+            db.close()
+
+    report = prune_generations(
+        _data_dir(args), args.workspace, authorize=authorize, report_only=args.report_only
+    )
+    if report is not None:
+        print(json.dumps(report, sort_keys=True))
+        if report.get("findings") or report.get("repair"):
+            return 3
     return 0
 
 
@@ -636,6 +737,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--owner", required=True)
     s.set_defaults(func=cmd_workspace_add)
     ws.add_parser("list").set_defaults(func=cmd_workspace_list)
+    s = ws.add_parser("store")
+    s.add_argument("workspace")
+    s.add_argument("store", choices=("v1", "compact"))
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_workspace_store)
+    s = ws.add_parser("prune-stores")
+    s.add_argument("workspace")
+    s.add_argument("--by")
+    s.add_argument("--report-only", action="store_true")
+    s.set_defaults(func=cmd_workspace_prune)
+    s = sub.add_parser("doctor")
+    s.add_argument("--workspace")
+    s.set_defaults(func=cmd_doctor)
 
     member = sub.add_parser("member").add_subparsers(dest="action", required=True)
     s = member.add_parser("add")
@@ -651,6 +765,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--workspace", required=True)
     s.add_argument("--user", help="token holder (default: --by)")
     s.add_argument("--client", default="other")
+    s.add_argument("--parent", help="parent connection name or id")
     s.add_argument("--profile", choices=sorted(PROFILES))
     s.add_argument("--tools", help="explicit tool list instead of --profile")
     s.add_argument("--scopes")
@@ -688,6 +803,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--workspace")
     s.add_argument("--base-url")
     s.add_argument("--minutes", type=int, default=15, help="valid for (max 1440); works once")
+    s.add_argument("--send", action="store_true", help="email the link instead of printing it")
     s.set_defaults(func=cmd_login_link)
 
     s = sub.add_parser("connect")
@@ -709,7 +825,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    errors = (ControlError, PolicyError, BackupError, ToolError, OSError, sqlite3.Error)
+    errors = (ControlError, PolicyError, BackupError, ToolError, MailError, OSError, sqlite3.Error)
     if args.command in ("handoff", "thread"):
         from .handoff.db import HandoffDBError
         from .handoff.manual import ManualHandoffError
@@ -719,7 +835,9 @@ def main(argv=None) -> int:
 
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
-        if args.command in {"connect", "backup"}:
+        if args.command in {"connect", "backup"} or (
+            args.command == "workspace" and args.action in {"store", "prune-stores"}
+        ):
             return args.func(args)
         with data_lock(_data_dir(args)):
             return args.func(args)
@@ -727,7 +845,7 @@ def main(argv=None) -> int:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"login-link", "seed", "backup"}:
+        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor"}:
             raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2

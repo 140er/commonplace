@@ -13,9 +13,10 @@ const providers = [
   ["google", "Google"], ["github", "GitHub"], ["apple", "Apple"], ["x", "X"], ["discord", "Discord"],
 ].map(([id, name]) => ({ id, name, url: `https://app.example/app/auth/${id}` }));
 const tokenForm = '<form data-form="login"><input name="token" aria-label="Token" autocomplete="off" required><button class="blockbtn">Sign in</button></form>';
+const brand = '<a class="brand-home" href="/app/" aria-label="Commonplace"><img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a>';
 
 test("no providers preserves the token form without a nav or message", () => {
-  assert.equal(signinView({}), `<main class="signin"><h1>Sign in</h1>${tokenForm}</main>`);
+  assert.equal(signinView({}), `<main class="signin">${brand}<h1>Sign in</h1>${tokenForm}</main>`);
 });
 
 test("provider buttons precede the token form and use the supplied marks", () => {
@@ -30,7 +31,8 @@ test("provider buttons precede the token form and use the supplied marks", () =>
   const buttons = [...html.matchAll(/<a class="provider" href="([^"]+)">.*?<span>Continue with (.*?)<\/span><\/a>/g)];
   assert.deepEqual(buttons.map((m) => [m[1], m[2]]), providers.map((p) => [p.url, p.name]));
   assert.ok(html.indexOf("</nav>") < html.indexOf(tokenForm));
-  assert.doesNotMatch(html, /\sstyle=|xmlns=|<script|<img|\son\w+=/);
+  assert.ok(html.includes(brand));
+  assert.doesNotMatch(html.replace(brand, ""), /\sstyle=|xmlns=|<script|<img|\son\w+=/);
 });
 
 test("provider names, URLs, messages and destinations cannot inject markup", () => {

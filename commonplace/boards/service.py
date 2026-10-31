@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from commonplace import events, privacy
 from commonplace.callstack import LIMITS
+from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
@@ -24,6 +25,7 @@ from .store import (
     expire_claims,
     now,
     require_visible,
+    task_number,
     task_row,
 )
 
@@ -38,6 +40,10 @@ class VersionClash(ToolError):
     def __init__(self, current):
         super().__init__("no: card changed")
         self.current = current
+
+
+class ParentError(ToolError):
+    """An explicit parent is invalid or outside this actor's work."""
 
 
 def validate_text(value, name, *, required=False, limit=100_000):
@@ -224,6 +230,7 @@ class BoardService:
         data = {
             "board": row["board"],
             "number": number,
+            "parent": row["parent_number"],
             "title": row["title"],
             "status": row["status"],
             "assignee": row["assignee"],
@@ -437,7 +444,7 @@ class BoardService:
         ):
             raise ToolError("no: take this card before editing it")
 
-    def board_list(self):
+    def board_list(self, *, top_level=False):
         with self.transaction() as conn:
             result = []
             for board in self._visible_boards(conn):
@@ -447,7 +454,9 @@ class BoardService:
                     {
                         r["status"]: r["n"]
                         for r in conn.execute(
-                            "SELECT status,count(*) n FROM tasks WHERE board_id=? GROUP BY status",
+                            "SELECT status,count(*) n FROM tasks WHERE board_id=? "
+                            + ("AND parent_number IS NULL " if top_level else "")
+                            + "GROUP BY status",
                             (board["id"],),
                         )
                     }
@@ -617,7 +626,9 @@ class BoardService:
             )
             return self._message(row)
 
-    def task_list(self, board=None, status=None, mine=False, *, all_statuses=False):
+    def task_list(
+        self, board=None, status=None, mine=False, *, all_statuses=False, top_level=False
+    ):
         with self.transaction() as conn:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
@@ -626,7 +637,10 @@ class BoardService:
             for b in boards:
                 self._expire(conn, b)
                 for row in conn.execute(
-                    "SELECT id FROM tasks WHERE board_id=? ORDER BY position,id", (b["id"],)
+                    "SELECT id FROM tasks WHERE board_id=? "
+                    + ("AND parent_number IS NULL " if top_level else "")
+                    + "ORDER BY position,id",
+                    (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
                     if task["status"] not in (
@@ -679,6 +693,58 @@ class BoardService:
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
             return result
 
+    def _parent_card(self, conn, board, parent):
+        p = self.principal
+        root = None
+        if not p.person:
+            try:
+                ancestor = self.ctx.db.top_level_connection(p.connection_id, p.workspace_id)
+            except ControlError as exc:
+                raise ParentError(f"no: invalid connection ancestry: {exc}") from None
+            if ancestor["id"] != p.connection_id:
+                root = f"conn:{ancestor['name']}"
+        if parent is not None:
+            if root is None:
+                raise ParentError("no: only a sub-actor can specify a parent card")
+            try:
+                number = task_number(parent)
+                if number >= 2**63:
+                    raise ToolError("no: card not found")
+                row = task_row(conn, number)
+            except ToolError:
+                raise ParentError("no: parent card not found on this board") from None
+            if row["board_id"] != board["id"]:
+                raise ParentError("no: parent card must be on this board")
+        elif root is not None:
+            row = conn.execute(
+                "SELECT id,parent_number,board_id,created_by,assignee FROM tasks WHERE board_id=? "
+                "AND status='doing' AND assignee=? ORDER BY updated_at DESC,id DESC LIMIT 1",
+                (board["id"], root),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT id,parent_number,board_id,created_by,assignee FROM tasks WHERE board_id=? "
+                    "AND status!='done' AND created_by=? ORDER BY created_at DESC,id DESC LIMIT 1",
+                    (board["id"], root),
+                ).fetchone()
+        else:
+            row = None
+        seen = set()
+        while row is not None and row["parent_number"] is not None:
+            if row["id"] in seen:
+                raise ParentError("no: parent card cycle")
+            seen.add(row["id"])
+            row = task_row(conn, row["parent_number"])
+            if row["board_id"] != board["id"]:
+                raise ParentError("no: parent card must be on this board")
+        if row is not None and root not in (row["created_by"], row["assignee"]):
+            if parent is not None:
+                raise ParentError(
+                    "no: parent card must be created by or assigned to the top-level actor on this board"
+                )
+            return None
+        return row["id"] if row is not None else None
+
     def _new_card(
         self,
         conn,
@@ -693,8 +759,10 @@ class BoardService:
         options=None,
         target=None,
         message_id=None,
+        parent=None,
     ):
         p = self.principal
+        parent_number = self._parent_card(conn, board, parent)
         if message_id is not None:
             if (
                 isinstance(message_id, bool)
@@ -729,8 +797,8 @@ class BoardService:
         at = now()
         cur = conn.execute(
             "INSERT INTO tasks(board_id,title,body,status,position,assignee,ask,ask_options,ask_to,return_to,flags,"
-            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks,message_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "stamp_user,stamp_connection,stamp_trust,created_at,updated_at,updated_by,created_by,repo,labels,checks,message_id,parent_number) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 board["id"],
                 title,
@@ -754,6 +822,7 @@ class BoardService:
                 json.dumps(labels),
                 "",
                 message_id,
+                parent_number,
             ),
         )
         number = cur.lastrowid
@@ -773,7 +842,15 @@ class BoardService:
         return card(conn, task_row(conn, number), self.principal)
 
     def task_add(
-        self, title, body="", board=None, status="todo", assignee=None, labels=None, message_id=None
+        self,
+        title,
+        body="",
+        board=None,
+        status="todo",
+        assignee=None,
+        labels=None,
+        message_id=None,
+        parent=None,
     ):
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
@@ -788,6 +865,7 @@ class BoardService:
                 assignee=assignee,
                 labels=labels,
                 message_id=message_id,
+                parent=parent,
             )
 
     def task_comment(self, task, text, version=None):
@@ -884,7 +962,7 @@ class BoardService:
         old = row["status"]
         if status == old:
             return
-        if old == "review":
+        if old == "review" and not (not self.principal.person and status == "done"):
             raise ToolError("no: use decide to move a card from review")
         if self.principal.person:
             allowed = {
@@ -904,6 +982,7 @@ class BoardService:
                 ("doing", "review"),
                 ("todo", "done"),
                 ("doing", "done"),
+                ("review", "done"),
                 ("done", "todo"),
                 ("doing", "backlog"),
             }:
@@ -998,7 +1077,16 @@ class BoardService:
             )
             # The agent that asked for review may still refresh the PR's call tree.
             refresh = set(args) == {"callstack"} and row["return_to"] == self.principal.actor
-            if row["status"] == "review" and not self.principal.person and not refresh:
+            if (
+                row["status"] == "review"
+                and not self.principal.person
+                and not refresh
+                and not (
+                    row["return_to"] == self.principal.actor
+                    and set(args) <= {"status", "lesson"}
+                    and args.get("status") in ("review", "done")
+                )
+            ):
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status") != "done":
                 raise ToolError("no: a lesson requires status done")
@@ -1036,6 +1124,8 @@ class BoardService:
                 updates.update(
                     status=status, claim_until=None, done_at=now() if status == "done" else None
                 )
+                if row["status"] == "review":
+                    updates.update(ask=None, ask_options=None, ask_to=None, return_to=None)
                 if status == "doing":
                     updates["assignee"] = self.principal.actor
                 else:
@@ -1088,13 +1178,13 @@ class BoardService:
                     "target": updates["ask_to"],
                     "options": json.loads(updates["ask_options"]),
                 }
-                if moved and updates["status"] == "review"
+                if updates.get("ask") is not None
                 else {}
             )
             self._log(
                 conn,
                 row["id"],
-                "move" if moved else "edit",
+                "move" if moved or updates.get("ask") is not None else "edit",
                 from_status=row["status"],
                 to_status=updates.get("status", row["status"]),
                 **ask,
@@ -1115,9 +1205,8 @@ class BoardService:
         person = target is not None and target.startswith("user:")
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        if row["status"] == "doing":
-            self._holder(row)
-        elif not person and not self.principal.person:
+        self._holder(row)
+        if row["status"] == "todo" and not person and not self.principal.person:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
         options = choices(options)
