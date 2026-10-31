@@ -138,9 +138,13 @@ class ThreadStoreV2(V1ThreadStore):
 
     def _reindex(self, version):
         self._conn.execute("INSERT INTO chunk_fts(chunk_fts) VALUES ('delete-all')")
-        rows = self._conn.execute("SELECT rowid, * FROM chunk ORDER BY rowid").fetchall()
+        rows = self._conn.execute("SELECT rowid, * FROM chunk ORDER BY thread_id, idx").fetchall()
         cache = {}
+        thread_id = None
         for row in rows:
+            if row["thread_id"] != thread_id:
+                cache.clear()
+                thread_id = row["thread_id"]
             self._conn.execute(
                 "INSERT INTO chunk_fts(rowid, text) VALUES (?, ?)",
                 (row["rowid"], _index_text(self._chunk_text(row, cache), version)),
@@ -492,6 +496,14 @@ class ThreadStoreV2(V1ThreadStore):
                     self._frame(block, "raw") if raw else None,
                 )
             block, texts, raws = cache[key]
+            if raw and raws is None:
+                # A text-only cache entry deliberately omitted raw columns.
+                raw_block = self._conn.execute(
+                    "SELECT raw_dict, zraw FROM block WHERE thread_id=? AND idx=?",
+                    (stored_id, idx),
+                ).fetchone()
+                raws = self._frame(raw_block, "raw")
+                cache[key] = (block, texts, raws)
             result.append(
                 ThreadMessage(
                     seq=row["seq"],

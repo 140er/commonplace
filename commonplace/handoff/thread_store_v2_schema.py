@@ -90,6 +90,8 @@ CREATE TRIGGER used_dict_delete BEFORE DELETE ON dict
 BEGIN SELECT RAISE(ABORT, 'A used thread dictionary is immutable'); END;
 CREATE TRIGGER sealed_block_update BEFORE UPDATE ON block
 WHEN old.idx < (SELECT MAX(idx) FROM block WHERE thread_id=old.thread_id)
+ OR new.thread_id IS NOT old.thread_id OR new.idx IS NOT old.idx
+ OR new.first_line IS NOT old.first_line OR new.first_seq IS NOT old.first_seq
 BEGIN SELECT RAISE(ABORT, 'Only the last thread block may be extended'); END;
 CREATE TRIGGER block_delete BEFORE DELETE ON block
 BEGIN SELECT RAISE(ABORT, 'Thread blocks are append-only'); END;

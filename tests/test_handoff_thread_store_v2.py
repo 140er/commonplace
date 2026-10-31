@@ -787,3 +787,82 @@ def test_migration_reads_back_thread_metadata_rows(tmp_path):
         assert new._conn.execute("SELECT count(*) FROM threads").fetchone()[0] == 0
     finally:
         new.close()
+
+
+def test_reindex_releases_previous_thread_cache(store, monkeypatch):
+    from collections import Counter
+
+    items = simple(["needle " * 10000, "second " * 10000])
+    # Interleave append-time chunks so rowid order cannot bound the cache.
+    threads = [store.store("workspace", str(index), items[:1], actor="actor") for index in range(3)]
+    for thread in reversed(threads):
+        store.append(thread.id, items)
+    original_chunk = store._chunk_text
+    original_frame = store._frame
+    calls = Counter()
+    visited = []
+
+    def chunk(row, cache):
+        assert all(key[0] == row["thread_id"] for key in cache)
+        visited.append((row["thread_id"], row["idx"]))
+        return original_chunk(row, cache)
+
+    def frame(block, kind):
+        # Text-only block rows omit the thread id; first_seq identifies a block
+        # within the thread currently being visited.
+        calls[visited[-1][0], block["first_seq"], kind] += 1
+        return original_frame(block, kind)
+
+    monkeypatch.setattr(store, "_chunk_text", chunk)
+    monkeypatch.setattr(store, "_frame", frame)
+    store.reindex()
+    assert visited == sorted(visited)
+    assert len(calls) == store._conn.execute("SELECT count(*) FROM block").fetchone()[0]
+    assert set(calls.values()) == {1}
+    assert all(kind == "text" for _, _, kind in calls)
+    for thread in threads:
+        assert store.search([thread.id], "needle")
+
+
+def test_shared_cache_text_then_raw_decodes_each_frame_once(store, monkeypatch):
+    from collections import Counter
+
+    items = parse(transcript("messages", "needle \0\ud800"))
+    thread = store.store("workspace", "source", items, actor="actor")
+    original = store._frame
+    calls = Counter()
+
+    def frame(block, kind):
+        calls[kind] += 1
+        return original(block, kind)
+
+    monkeypatch.setattr(store, "_frame", frame)
+    cache = {}
+    for raw in (False, False, True, True, False):
+        expected = items if raw else [replace(item, raw="") for item in items]
+        assert store._messages(thread.id, 0, None, raw=raw, cache=cache) == expected
+    assert calls == {"text": 1, "raw": 1}
+
+
+@pytest.mark.parametrize("recursive", [False, True])
+@pytest.mark.parametrize(
+    "assignment", ["idx=0", "thread_id='other'", "first_line=99", "first_seq=99"]
+)
+def test_replace_cannot_change_last_block_identity(store, tmp_path, recursive, assignment):
+    thread = store.store("workspace", "source", simple(["first " * 20000, "second"]), actor="actor")
+    with sqlite3.connect(tmp_path / FILENAME) as conn:
+        conn.execute(f"PRAGMA recursive_triggers={int(recursive)}")
+        before = conn.execute("SELECT * FROM block ORDER BY thread_id, idx").fetchall()
+        assert len(before) == 2
+        with pytest.raises(sqlite3.IntegrityError, match="last"):
+            conn.execute(
+                f"UPDATE OR REPLACE block SET {assignment} WHERE thread_id=? AND idx=1",
+                (thread.id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="last"):
+            conn.execute(
+                "INSERT OR REPLACE INTO block VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                before[0],
+            )
+        assert conn.execute("SELECT * FROM block ORDER BY thread_id, idx").fetchall() == before
+    assert store.messages(thread.id) == simple(["first " * 20000, "second"])
