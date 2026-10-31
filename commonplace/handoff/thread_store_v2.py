@@ -77,6 +77,8 @@ class ThreadStoreV2(V1ThreadStore):
             raise
 
     def _initialize(self):
+        # Version 3 adds mirror progress in place. Older version-2-only
+        # readers reject this store rather than silently losing its progress.
         app = self._conn.execute("PRAGMA application_id").fetchone()[0]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         tables = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

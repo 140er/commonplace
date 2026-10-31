@@ -133,6 +133,11 @@ class Recall:
         limit: int = 8,
         follow_chain: bool = True,
     ) -> list[RecallHit]:
+        """Return one ranked excerpt per overlapping message range.
+
+        For oversized messages, use ``get`` on that range for every piece;
+        the selected excerpt need not contain every query match.
+        """
         query = query.strip()
         if not query:
             self.thread(principal, stored_thread_id)

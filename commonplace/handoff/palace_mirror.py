@@ -310,7 +310,11 @@ def _chunk_text(call_tool: CallTool, principal, hit: dict, label, hydrated: dict
 def palace_search(
     call_tool: CallTool, principal, stored_ids: list[str], query: str, limit: int = 8
 ) -> list[RecallHit]:
-    """Default hybrid search over mirrored chunks of ``stored_ids`` only."""
+    """Default hybrid search, returning one excerpt per overlapping range.
+
+    An oversized message may have further matching continuation pieces.
+    Fetch its returned sequence range to read the complete verbatim message.
+    """
     if limit <= 0:
         return []
     fetch_limit = min(limit * 4, 50)
