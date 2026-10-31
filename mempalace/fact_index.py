@@ -6,7 +6,8 @@ import logging
 from . import fact_provenance
 
 FALLBACK_SEED_MULTIPLIER = 20
-SMALL_SCOPE_LIMIT = 1000
+SELECTIVE_SCOPE_LIMIT = 1000
+COMMON_SCOPE_LIMIT = 5000
 
 
 def _drop_triggers(conn):
@@ -165,12 +166,12 @@ def candidates(
             [
                 limit * FALLBACK_SEED_MULTIPLIER,
                 limit,
-                SMALL_SCOPE_LIMIT,
-                SMALL_SCOPE_LIMIT,
+                SELECTIVE_SCOPE_LIMIT,
+                COMMON_SCOPE_LIMIT,
                 *scope_params,
             ]
         )
-        scope_exists = "EXISTS (SELECT 1 FROM triples t WHERE 1" + scope_sql + ")"
+        scope_exists = "(SELECT size FROM scope_size) > 0"
         scope_filter = scope_sql
         small_gate = (
             "(SELECT size FROM scope_size) BETWEEN 1 AND (SELECT max_rows FROM scope_bound) "
@@ -203,7 +204,7 @@ def candidates(
             "AND +fact_search.rowid IN (SELECT docid FROM small_docids) "
             "LIMIT (SELECT count(*) FROM small_docids)), "
         )
-        params.extend([*scope_params, *scope_params])
+        params.extend(scope_params)
 
     def seed_query(order, term_gate, seed_limit):
         queries = []
@@ -232,7 +233,7 @@ def candidates(
             + " THEN ? ELSE 0 END)"
         )
         if scoped:
-            params.extend([*scope_params, *scope_params])
+            params.extend(scope_params)
         params.append(seed_limit)
         return " UNION ALL ".join(queries)
 

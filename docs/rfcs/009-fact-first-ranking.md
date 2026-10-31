@@ -97,6 +97,11 @@ key may return fewer than 50 distinct keys. History is retained in full for
 selected keys, so very large histories still add lookup cost. Drawer retrieval
 and recall remain independent of these fact candidate limits.
 
+All-common queries use the small-scope path up to 5,000 visible rows; selective
+queries retain their narrower bound. The small path's cost follows the scope's
+docid span, rather than its row count: scattered rows can span most of the index.
+Old scopes above 5,000 rows use the wider scan and remain at about develop parity.
+
 ## Non-goals
 
 No extraction, embeddings, AAAK, external services, source replication or import

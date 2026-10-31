@@ -153,6 +153,38 @@ def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
         assert expanded_steps <= initial_steps + 1000
 
 
+def test_common_scope_above_1000_keeps_work_bounded_as_newer_hidden_matches_grow():
+    with KnowledgeGraph.empty() as kg:
+        conn = kg._conn()
+        conn.executemany(
+            "INSERT INTO entities(id,name) VALUES(?,?)",
+            ((f"e{i}", f"Entity project {i}") for i in range(1002)),
+        )
+        conn.executemany(
+            "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+            ((f"v{i}", f"e{i}", "status", "e0", "shared") for i in range(1001)),
+        )
+
+        def append(start, end):
+            conn.executemany(
+                "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+                ((f"h{i}", "e1001", "status", "e0", "vault") for i in range(start, end)),
+            )
+
+        append(0, 2000)
+        initial, initial_steps = _search_steps(
+            kg, {"entity", "project"}, wings=["shared"], sensitivities=["internal"]
+        )
+        append(2000, 10000)
+        expanded, expanded_steps = _search_steps(
+            kg, {"entity", "project"}, wings=["shared"], sensitivities=["internal"]
+        )
+        assert len(initial) == fact_search.FACT_CANDIDATE_LIMIT
+        assert initial == expanded
+        # The visible docid range stays fixed as newer hidden matches grow.
+        assert expanded_steps <= initial_steps + 1000
+
+
 @pytest.mark.parametrize("tokens", [{"entity", "project"}, {"needle"}])
 @pytest.mark.parametrize("as_of", [None, "2025-01-15"])
 @pytest.mark.parametrize("wings", [["shared"], ["shared", "vault"], []])
@@ -182,7 +214,8 @@ def test_small_and_wide_scope_strategies_return_identical_rows(
             kg.add_triple(f"Filler {i}", "status", "other", wing="outside")
         results = []
         for threshold in (1000, 0):
-            monkeypatch.setattr(fact_index, "SMALL_SCOPE_LIMIT", threshold)
+            monkeypatch.setattr(fact_index, "SELECTIVE_SCOPE_LIMIT", threshold)
+            monkeypatch.setattr(fact_index, "COMMON_SCOPE_LIMIT", threshold)
             results.append(
                 kg.search_fact_rows(
                     tokens,

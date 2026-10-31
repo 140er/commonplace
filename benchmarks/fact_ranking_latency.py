@@ -3,8 +3,10 @@
 
 The corpus mirrors the review probe: one source per fact, nine predicates,
 and entity names sharing common words. Queries cover broad, selective, and
-all-common terms, with broad gateway scopes, a small non-empty scope, and
+all-common terms, with broad gateway scopes, small non-empty scopes, and
 all matches hidden, as well as ordinary unscoped and single-wing reads.
+The scattered scope has 1,001 rows; the old wing takes the lowest 5,000
+available docids (fewer in the 5k corpus to leave room for other scopes).
 Timings exclude seeding and the one-time index build, and
 report the optional fact lookup's added wall time per search.
 """
@@ -31,10 +33,12 @@ SCOPES = (
     ("gateway_1wing", ["wing_3"], ["public", "internal"]),
     (
         "gateway",
-        ["wing_0", "wing_1", "wing_2", "wing_3", "sparse"],
+        ["wing_0", "wing_1", "wing_2", "wing_3", "sparse", "scattered_1001", "old_5k"],
         ["public", "internal"],
     ),
     ("sparse", ["sparse"], None),
+    ("scattered_1001", ["scattered_1001"], None),
+    ("old_5k", ["old_5k"], None),
     ("hidden", ["hidden"], None),
 )
 PREDICATES = (
@@ -88,6 +92,29 @@ def measure(size, repeats=3):
                     "WHERE id IN ('t7', 't12', 't99')"
                 )
         with KnowledgeGraph(db_path=path) as kg:
+            conn = kg._conn()
+            ordered_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT k.triple_id FROM fact_search_keys k "
+                    "JOIN triples t ON t.id=k.triple_id WHERE t.wing!='sparse' ORDER BY k.docid"
+                )
+            ]
+            scattered_size = min(1001, len(ordered_ids))
+            # Leave ordinary wings populated in the smallest corpus too.
+            old_size = min(5000, (len(ordered_ids) - scattered_size) // 2)
+            with conn:
+                conn.executemany(
+                    "UPDATE triples SET wing='old_5k' WHERE id=?",
+                    ((triple_id,) for triple_id in ordered_ids[:old_size]),
+                )
+                conn.executemany(
+                    "UPDATE triples SET wing='scattered_1001' WHERE id=?",
+                    (
+                        (triple_id,)
+                        for triple_id in rng.sample(ordered_ids[old_size:], scattered_size)
+                    ),
+                )
             rows = []
             for scope, wings, sensitivities in SCOPES:
                 for query in QUERIES:
