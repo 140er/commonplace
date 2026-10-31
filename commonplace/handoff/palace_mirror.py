@@ -1,13 +1,13 @@
 """Mirror stored threads into the workspace palace. Owner: part T03.
 
-Each chunk becomes one drawer in wing ``MIRROR_WING`` (``private_threads``), room
-``<stored thread id>``, verbatim chunk text, so normal Memory search finds
-old threads too. Written through the gateway's own worker client
-(``call_tool(principal, "mempalace_add_drawer", args)``), so authorship is
-server-stamped. Idempotent: a retry adds no duplicate drawers.
+Class-pure units become logical drawers in wing ``MIRROR_WING``
+(``private_threads``), room ``<stored thread id>``. The authenticated internal
+worker operation preserves unit identities and index provenance. Legacy chunks
+retain their public drawer-write path. Both paths stamp authorship and preserve
+verbatim text; retries add no duplicate drawers.
 
-Best effort: the lossless copy is ``thread_store``; a mirror failure is
-logged and reported, it does not fail the handoff.
+Best effort: ``thread_store`` remains the lossless copy. A mirror failure
+does not fail the handoff.
 """
 
 from __future__ import annotations
@@ -117,8 +117,12 @@ def _call(call_tool: CallTool, principal, name: str, arguments: dict, *, missing
         result = call_tool(principal, name, arguments)
     except Exception as exc:
         raise MirrorError("Memory worker call failed") from exc
-    if missing_ok and isinstance(result, dict) and result.get("error") == "No palace found":
-        return {"drawers": [], "total": 0}
+    if missing_ok and isinstance(result, dict):
+        absent = result.get("error") == "No palace found" or (
+            result.get("backend") == "chroma" and result.get("error") == "Chroma database missing"
+        )
+        if absent:
+            return {"drawers": [], "total": 0}
     if (
         not isinstance(result, dict)
         or result.get("error")
@@ -180,7 +184,7 @@ def mirror_pending(call_tool, principal, stored, store):
 
 
 def mirror(call_tool: CallTool, principal, stored: StoredThread, chunks: list) -> list[str]:
-    """Return one drawer id per input chunk; identical text reuses an id."""
+    """Return stable unit IDs; legacy chunks retain content-based deduplication."""
     if chunks and isinstance(chunks[0], MirrorUnit):
         drawer_ids = []
         for offset in range(0, len(chunks), 64):

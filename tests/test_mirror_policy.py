@@ -528,3 +528,70 @@ def test_real_worker_authentication_separates_internal_writes_from_tokens(writer
     assert (records.embeddings[0] is None) == (backend == "compact")
     assert records.metadatas[0]["hub_connection"] == "writer"
     assert col.count() == 2
+
+
+@pytest.mark.parametrize("backend", ["compact", "sqlite_exact", "chroma"])
+def test_first_mirror_creates_absent_palace_and_default_search_finds_it(hub, monkeypatch, backend):
+    from commonplace.handoff.models import ThreadMessage
+    from commonplace.handoff.palace_mirror import mirror_pending
+    from mempalace import mcp_server as server
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(server, "_args", SimpleNamespace(transport="http"))
+    assert server._get_collection() is None
+    principal = hub.db.authenticate_token(hub.owner_token())
+    ctx = hub.gateway.handoff
+    store = ctx.store_for(hub.workspace)
+    text = "ZXQ739251 exact first tool output"
+    stored = store.store(
+        hub.workspace,
+        "first-mirror",
+        [ThreadMessage(0, "tool", "tool_result", text, "raw")],
+        actor=principal.actor,
+    )
+    ids = mirror_pending(ctx.call_tool, principal, stored, store)
+    assert len(ids) == 1
+    assert store.mirror_progress(stored.id) == (0, 0)
+    assert mirror_pending(ctx.call_tool, principal, stored, store) == []
+    result = ctx.call_tool(
+        principal,
+        "mempalace_search",
+        {
+            "query": "ZXQ739251",
+            "wing": "private_threads",
+            "room": stored.id,
+            "limit": 10,
+            "include_facts": False,
+        },
+    )
+    assert ids[0] in [hit["drawer_id"] for hit in result["results"]]
+    records = server._get_collection().get(ids=ids, include=["embeddings", "metadatas"])
+    assert len(records.ids) == 1
+    assert (records.embeddings[0] is None) == (backend == "compact")
+    ctx.close()
+
+
+@pytest.mark.parametrize(
+    "response,accepted",
+    [
+        ({"error": "No palace found"}, True),
+        ({"backend": "chroma", "error": "Chroma database missing"}, True),
+        ({"backend": "compact", "error": "Chroma database missing"}, False),
+        ({"backend": "chroma", "error": "Backend open failed"}, False),
+        ({"backend": "compact", "error": "Backend mismatch"}, False),
+        ({"error": "permission denied"}, False),
+    ],
+)
+def test_bootstrap_only_treats_known_missing_palace_errors_as_empty(response, accepted):
+    from commonplace.handoff.palace_mirror import MirrorError, _legacy_mirrored_seq
+
+    stored = SimpleNamespace(id="thr_new", message_count=1)
+
+    def read(*_args):
+        return response
+
+    if accepted:
+        assert _legacy_mirrored_seq(read, None, stored) == -1
+    else:
+        with pytest.raises(MirrorError):
+            _legacy_mirrored_seq(read, None, stored)
