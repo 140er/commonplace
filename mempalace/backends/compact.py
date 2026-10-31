@@ -37,6 +37,7 @@ from ..timeutil import utc_now_iso
 from ._filters import _compare, matches_where, validate_where
 from ._magic import read_header_fields
 from .base import (
+    BackendClosedError,
     BackendError,
     DimensionMismatchError,
     GetResult,
@@ -319,8 +320,8 @@ class _VectorCache:
         self.dimension = dimension
         self.size = 0
         self.books = {"wing": _Codes(), "room": _Codes()}
-        self.loci_ready = False
-        self.loci_attempted = False
+        self.loci_ready = set()
+        self.loci_attempted = set()
         self.offset = first_rowid
         self.rowid_index = np.full(max(16, last_rowid - first_rowid + 17), -1, np.int32)
         self._allocate(max(16, capacity + capacity // 64))
@@ -385,8 +386,6 @@ class _VectorCache:
 
     def filter(self, where):
         """Return a vectorized mask, or None when a predicate needs SQL."""
-        if not self.loci_ready:
-            return None
         parts = []
         for key, value in (where or {}).items():
             if key in {"$and", "$or"}:
@@ -398,7 +397,7 @@ class _VectorCache:
                 for child in children:
                     combine(mask, child, out=mask)
                 parts.append(mask)
-            elif key in self.books and _indexed_operand(value):
+            elif key in self.loci_ready and _indexed_operand(value):
                 operations = value if isinstance(value, dict) else {"$eq": value}
                 book = self.books[key]
                 array = getattr(self, key)[: self.size]
@@ -543,7 +542,10 @@ class CompactCollection(SQLiteExactCollection):
             cache.put(row["rowid"], None)
         elif cache.loci_ready:
             codes = [
-                cache.books[key].code(row[key], row[key + "_type"]) for key in ("wing", "room")
+                cache.books[key].code(row[key], row[key + "_type"])
+                if key in cache.loci_ready
+                else 0
+                for key in ("wing", "room")
             ]
             cache.put(row["rowid"], row["embedding"], *codes)
         else:
@@ -948,8 +950,9 @@ class CompactCollection(SQLiteExactCollection):
         masks until the next vector reload rather than repeating this probe.
         """
         fields = (("wing", "idx_documents_coll_wing_room_hall"), ("room", "compact_room"))
-        distinct = {}
         for key, index in fields:
+            if key in cache.loci_attempted:
+                continue
             prefix = f"FROM documents INDEXED BY {index} WHERE collection_id=? AND {key}"
             values = []
             if cur.execute(f"SELECT 1 {prefix} IS NULL LIMIT 1", (cid,)).fetchone():
@@ -960,15 +963,15 @@ class CompactCollection(SQLiteExactCollection):
             while row is not None:
                 values.append(row[0])
                 if len(values) > _MAX_LOCUS_VALUES:
-                    cache.loci_attempted = True
-                    return
+                    break
                 row = cur.execute(
                     f"SELECT {key} {prefix}>? ORDER BY {key} LIMIT 1", (cid, row[0])
                 ).fetchone()
-            distinct[key] = values
-        for key, index in fields:
+            cache.loci_attempted.add(key)
+            if len(values) > _MAX_LOCUS_VALUES:
+                continue
             book, array = cache.books[key], getattr(cache, key)
-            for raw in distinct[key]:
+            for raw in values:
                 text = cur.execute(
                     f"SELECT group_concat(rowid) FROM documents INDEXED BY {index} WHERE collection_id=? AND {key} IS ?",
                     (cid, raw),
@@ -994,7 +997,7 @@ class CompactCollection(SQLiteExactCollection):
                         ]
                 else:
                     array[positions[valid]] = book.code(raw)
-        cache.loci_ready = cache.loci_attempted = True
+            cache.loci_ready.add(key)
 
     def _query_once(
         self,
@@ -1042,7 +1045,7 @@ class CompactCollection(SQLiteExactCollection):
                 candidates = candidates[candidates >= 0]
                 candidates.sort()
                 if (
-                    not cache.loci_attempted
+                    cache.loci_attempted != cache.books.keys()
                     and where
                     and not where_document
                     and self._supports_loci(where)
@@ -1344,6 +1347,8 @@ class CompactBackend(SQLiteExactBackend):
             raise BackendError("compact requires SQLite >= 3.43 (contentless_delete FTS5)")
         handle = super()._connect(palace_path, create, read_only=read_only)
         with handle.lock:
+            if handle.closed:
+                raise BackendClosedError("CompactCollection has been closed")
             if getattr(handle, "compact_functions_registered", False):
                 return handle
             if handle.conn.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
@@ -1399,25 +1404,11 @@ class CompactBackend(SQLiteExactBackend):
         finally:
             self._release_cache(handle)
 
-    def close_palace(self, palace):
-        path = palace.local_path if hasattr(palace, "local_path") else palace
-        with self._clients_lock:
-            handles = [self._clients.get(path), self._read_only_clients.get(path)]
-        try:
-            super().close_palace(palace)
-        finally:
-            for handle in handles:
-                if handle is not None:
-                    self._release_cache(handle)
-
-    def close(self):
-        with self._clients_lock:
-            handles = list(self._clients.values()) + list(self._read_only_clients.values())
-            self._closed = True
-        try:
-            super().close()
-        finally:
-            for handle in handles:
+    def _close_handle(self, handle):
+        with handle.lock:
+            try:
+                super()._close_handle(handle)
+            finally:
                 self._release_cache(handle)
 
     @staticmethod

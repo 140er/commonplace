@@ -1992,6 +1992,8 @@ class SQLiteExactBackend(BaseBackend):
             raise PalaceNotFoundError(palace_path)
         handle = self._connect(palace_path, create=create, read_only=read_only)
         with handle.lock:
+            if handle.closed:
+                raise BackendClosedError("SQLiteExactCollection has been closed")
             row = handle.conn.execute(
                 "SELECT id FROM collections WHERE name = ?",
                 (collection_name,),
@@ -2070,9 +2072,13 @@ class SQLiteExactBackend(BaseBackend):
             ]
         for cached in cached_handles:
             if cached is not None:
-                with cached.lock:
-                    cached.closed = True
-                    cached.conn.close()
+                self._close_handle(cached)
+
+    def _close_handle(self, handle: _SQLiteExactHandle) -> None:
+        """Close a handle removed from the registry, outside its lock."""
+        with handle.lock:
+            handle.closed = True
+            handle.conn.close()
 
     def close(self) -> None:
         # Flip _closed under the registry lock so a concurrent _connect either
@@ -2087,9 +2093,7 @@ class SQLiteExactBackend(BaseBackend):
             self._palace_lifetimes.clear()
             self._closed = True
         for handle in handles:
-            with handle.lock:
-                handle.closed = True
-                handle.conn.close()
+            self._close_handle(handle)
 
     def health(self, palace: Optional[PalaceRef] = None) -> HealthStatus:
         if self._closed:

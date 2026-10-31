@@ -1053,8 +1053,10 @@ def test_high_cardinality_loci_keep_sql_without_repeated_builds(store, monkeypat
     where = {field: "1"}
     assert _query(col, where) == ["1"]
     cache = col._handle._vector_cache[1]
-    assert cache.loci_attempted and not cache.loci_ready
-    assert not cache.books["wing"].values and not cache.books["room"].values
+    other = "room" if field == "wing" else "wing"
+    assert cache.loci_attempted == {"wing", "room"}
+    assert cache.loci_ready == {other}
+    assert not cache.books[field].values and cache.books[other].values
     statements = []
     col._handle.conn.set_trace_callback(statements.append)
     try:
@@ -1113,3 +1115,96 @@ def test_close_releases_client_registry_before_waiting_for_queries(store, close)
     assert not worker.is_alive() and not errors
     assert available
     assert col._handle.compact_shared is None
+
+
+@pytest.mark.parametrize("field", ["wing", "room"])
+def test_locus_cap_is_per_field_and_ready_masks_survive_writes(store, field):
+    _, col, _ = store
+    other = "room" if field == "wing" else "wing"
+    count = 1001
+    col.add(
+        ids=[str(i) for i in range(count)],
+        documents=["alpha"] * count,
+        embeddings=[[1, 0]] * count,
+        metadatas=[{field: str(i), other: str(i % 3)} for i in range(count)],
+    )
+    assert _query(col, {field: "1"}) == ["1"]
+    cache = col._handle._vector_cache[1]
+    assert cache.loci_attempted == {"wing", "room"}
+    assert cache.loci_ready == {other}
+    assert cache.filter({field: "1"}) is None
+    assert cache.filter({other: "1"}).sum() == 334
+    assert cache.filter({"$and": [{field: "1"}, {other: "1"}]}) is None
+
+    # The usable field keeps its codes correct through incremental writes.
+    col.add(
+        ids=["new"],
+        documents=["alpha"],
+        embeddings=[[1, 0]],
+        metadatas=[{field: "new", other: "1"}],
+    )
+    col.update(ids=["0"], metadatas=[{field: "changed", other: "1"}])
+    col.delete(ids=["1"])
+    assert col._handle._vector_cache[1] is cache
+    assert cache.filter({other: "1"}).sum() == 335
+    statements = []
+    col._handle.conn.set_trace_callback(statements.append)
+    try:
+        expected = [str(i) for i in range(4, count, 3)][:99]
+        assert _query(col, {other: "1"}) == ["0", *expected]
+        assert not any(sql.startswith("SELECT d.rowid FROM documents") for sql in statements)
+        assert _query(col, {field: "new"}) == ["new"]
+        assert any(sql.startswith("SELECT d.rowid FROM documents") for sql in statements)
+    finally:
+        col._handle.conn.set_trace_callback(None)
+
+
+def test_close_palace_releases_handles_reopened_before_registry_pop(store, monkeypatch):
+    import gc
+    import threading
+    import weakref
+
+    from mempalace.backends.sqlite_exact import SQLiteExactBackend
+
+    backend, col, directory = store
+    col.add(ids=["a"], documents=["alpha"], embeddings=[[1, 0]])
+    selected, resume = threading.Event(), threading.Event()
+    owner = threading.get_ident()
+    errors = []
+    close_palace = SQLiteExactBackend.close_palace
+
+    def paused_close(self, palace):
+        if threading.get_ident() != owner:
+            selected.set()
+            assert resume.wait(10)
+        return close_palace(self, palace)
+
+    monkeypatch.setattr(SQLiteExactBackend, "close_palace", paused_close)
+
+    def shutdown():
+        try:
+            backend.close_palace(str(directory))
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=shutdown)
+    worker.start()
+    try:
+        assert selected.wait(10)
+        # A second close/open occurs before the first close pops the registry.
+        backend.close_palace(str(directory))
+        writer = backend.get_collection(str(directory), "records")
+        reader = backend.get_collection(str(directory), "records", options={"read_only": True})
+        assert _query(reader) == ["a"]
+        shared_ref = weakref.ref(reader._handle.compact_shared)
+    finally:
+        resume.set()
+        worker.join(30)
+    assert not worker.is_alive() and not errors
+    for handle in (writer._handle, reader._handle):
+        assert handle.closed
+        assert handle.compact_shared is None
+        assert not handle._vector_cache
+    gc.collect()
+    assert shared_ref() is None
+    assert _query(backend.get_collection(str(directory), "records")) == ["a"]
