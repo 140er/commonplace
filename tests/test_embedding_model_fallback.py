@@ -1141,7 +1141,9 @@ def _openai_compat_palace_with_a_dead_endpoint(unknown_model_palace, monkeypatch
         )
     )
     embedding._EF_CACHE.clear()
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     try:
         mine(str(project), str(palace))

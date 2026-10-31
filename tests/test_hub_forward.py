@@ -237,19 +237,30 @@ class _FakeHub:
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
         self.thread.start()
 
     def stop(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+        self.thread.join(timeout=5)
+        assert not self.thread.is_alive(), "fake hub did not stop"
 
 
-@pytest.fixture
-def fake_hub(isolated_home):
+@pytest.fixture(scope="module")
+def _default_fake_hub():
     hub = _FakeHub()
     yield hub
     hub.stop()
+
+
+@pytest.fixture
+def fake_hub(isolated_home, _default_fake_hub):
+    _default_fake_hub.requests.clear()
+    _default_fake_hub.auth_headers.clear()
+    return _default_fake_hub
 
 
 def _register_hub(palace, hub, read_only=False, capabilities=None, search_config_fingerprint=None):
