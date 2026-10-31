@@ -436,7 +436,9 @@ class CompactCollection(SQLiteExactCollection):
         # SQLite may prefer a collection-wide covering index and sort it.
         hint = " NOT INDEXED" if "d.rowid IN (" in sql else ""
         vector_join = " LEFT JOIN vectors v ON v.rowid=d.rowid" if spec.embeddings else ""
-        sql = f"SELECT {','.join(cols)} FROM documents d{hint}{vector_join} WHERE d.collection_id=? AND ({sql}) ORDER BY {order}"
+        sql = f"SELECT {','.join(cols)} FROM documents d{hint}{vector_join} WHERE d.collection_id=? AND ({sql})"
+        if not rowids_only:
+            sql += f" ORDER BY {order}"
         params = [cid, *params]
         if limit is not None or offset:
             sql += " LIMIT ? OFFSET ?"
@@ -560,6 +562,9 @@ class CompactCollection(SQLiteExactCollection):
                 selected = np.fromiter(
                     (r["rowid"] for r in found), dtype=np.int64, count=len(found)
                 )
+                # SQL masks need no row ordering. Sort compact rowids here
+                # for contiguous cache access without steering SQLite to a scan.
+                selected.sort()
                 candidates = np.searchsorted(rowids, selected)
                 valid = candidates < len(rowids)
                 candidates = candidates[valid]

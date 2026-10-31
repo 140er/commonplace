@@ -738,17 +738,23 @@ def test_vector_wing_mask_after_analyze_reads_only_index_rowids(compact):
     query = {"query_embeddings": [[1, 0, 0, 0]], "where": where, "n_results": 10}
     expected = col.query(**query).ids
     col.run_maintenance("analyze")
-    statements = []
     conn = col._handle.conn
+    # Exercise the planner's large-collection choice without a million-row
+    # fixture. Keep unique-key cardinalities while scaling locus groups.
+    for table, index, stat in conn.execute("SELECT tbl,idx,stat FROM sqlite_stat1").fetchall():
+        large = " ".join(str(int(v) * 1000 if int(v) > 4 else int(v)) for v in stat.split())
+        conn.execute("UPDATE sqlite_stat1 SET stat=? WHERE tbl=? AND idx=?", (large, table, index))
+    conn.execute("ANALYZE sqlite_schema")
+    conn.commit()
+    statements = []
     conn.set_trace_callback(statements.append)
     assert col.query(**query).ids == expected
     conn.set_trace_callback(None)
     sql = next(s for s in statements if s.startswith("SELECT d.rowid FROM documents d"))
     plan = [r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql)]
-    assert len(plan) == 2, plan
+    assert len(plan) == 1, plan
     assert plan[0].startswith("SEARCH d USING INDEX idx_documents_coll_wing_"), plan
     assert plan[0].endswith("(collection_id=? AND wing=?)"), plan
-    assert plan[1] == "USE TEMP B-TREE FOR ORDER BY", plan
     bytecode = list(conn.execute("EXPLAIN " + sql))
     root = conn.execute("SELECT rootpage FROM sqlite_master WHERE name='documents'").fetchone()[0]
     document_cursors = {r[2] for r in bytecode if r[1] == "OpenRead" and r[3] == root}
