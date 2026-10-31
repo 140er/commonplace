@@ -46,8 +46,9 @@ uv run pytest tests/ --ignore=tests/benchmarks -m "timing and not (benchmark or 
 
 Run both commands to cover the same tests as the default serial suite. The
 `timing` marker keeps short clock budgets out of concurrent worker activity;
-their assertions and thresholds are unchanged. Each worker has its own home
-and configuration directory.
+their assertions and thresholds are unchanged. Timing tests need an idle
+system. Each worker has its own home, and configuration follows each test's
+HOME.
 
 ### Property-based tests (optional)
 

@@ -152,6 +152,7 @@ class TestPalaceReadsDoNotStarveTheHub:
         return started
 
     @pytest.mark.parametrize("method", ["initialize", "tools/list"])
+    @pytest.mark.timing
     def test_protocol_method_completes_while_search_holds(self, http_server, monkeypatch, method):
         port, _ = http_server
         started = self._patch_slow_search(monkeypatch, hold_s=0.8)
@@ -350,6 +351,7 @@ class TestEmbeddingDoesNotHoldTheHttpLock:
         except json.JSONDecodeError:
             return payload["result"]
 
+    @pytest.mark.timing
     def test_status_completes_while_diary_write_embeds(self, http_server, monkeypatch):
         """A write's embedding phase must not stall an unrelated status read."""
 
@@ -397,6 +399,7 @@ class TestEmbeddingDoesNotHoldTheHttpLock:
         assert result["total_drawers"] == 0
         assert elapsed < 0.5, f"status waited on diary embedding: {elapsed:.3f}s"
 
+    @pytest.mark.timing
     def test_status_completes_while_search_embeds(self, http_server, monkeypatch):
         port, _ = http_server
         embed_started = threading.Event()

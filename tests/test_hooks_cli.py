@@ -729,6 +729,7 @@ def test_stop_hook_checkpoint_visible_to_diary_read(monkeypatch, config, palace_
     assert legacy.get("entries") == []
 
 
+@pytest.mark.timing
 def test_stop_foreground_does_not_import_mcp_server(tmp_path):
     """The default Stop path must stay inside the 500ms budget.
 

@@ -29,8 +29,7 @@ os.environ["HOME"] = _session_tmp
 os.environ["USERPROFILE"] = _session_tmp
 os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
-os.environ["XDG_CONFIG_HOME"] = os.path.join(_session_tmp, ".config")
-os.makedirs(os.environ["XDG_CONFIG_HOME"], exist_ok=True)
+os.environ.pop("XDG_CONFIG_HOME", None)
 
 # Now it is safe to import mempalace modules that trigger initialisation.
 import chromadb  # noqa: E402

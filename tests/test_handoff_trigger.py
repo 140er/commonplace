@@ -355,6 +355,7 @@ def test_should_handoff(usage, settings, expected):
 
 
 @pytest.mark.parametrize("usage_at_end", [True, False])
+@pytest.mark.timing
 def test_fifty_megabyte_transcript_stays_fast_and_bounded(
     tmp_path, monkeypatch, record_property, usage_at_end
 ):

@@ -18,6 +18,7 @@ from mempalace.index_hygiene import (
 )
 
 
+@pytest.mark.timing
 def test_candidate_detection_is_bounded_on_adversarial_short_runs():
     # Without the start boundary, each 199-character run is retried 199 times.
     text = ("A" * 199 + " ") * 20_000
@@ -37,6 +38,7 @@ def test_candidate_detection_is_bounded_on_adversarial_short_runs():
 
 
 @pytest.mark.parametrize("separator", ["", " "], ids=["backward", "forward"])
+@pytest.mark.timing
 def test_format_look_past_is_bounded_on_adversarial_runs(separator):
     # Spaces keep the preceding edge visible so every run exercises the forward cap.
     text = ("A" * 200 + "\u00ad" * 4_000 + separator) * 1_000
