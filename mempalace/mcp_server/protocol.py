@@ -679,6 +679,9 @@ def _tool_result_is_error(result) -> bool:
 
 def _tool_call_response(req_id, result) -> dict:
     """The JSON-RPC response carrying a tool's result as MCP text content."""
+    from ..stored_text import strip_index_hints
+
+    result = strip_index_hints(result)
     tool_result = {
         "content": [{"type": "text", "text": json.dumps(result, indent=2, ensure_ascii=False)}]
     }
@@ -925,7 +928,9 @@ def call_tool(req_id, params: dict, internal: bool = False):
             "Invalid params: 'name' must be a string and 'arguments' an object",
         ), None
     tool_name = params.get("name")
-    tool_args = params.get("arguments") or {}
+    from ..stored_text import strip_index_hints
+
+    tool_args = strip_index_hints(params.get("arguments") or {})
     if tool_name not in TOOLS:
         return _json_rpc_error(req_id, -32601, f"Unknown tool: {tool_name}"), None
     # Whitelist arguments to declared schema properties only.

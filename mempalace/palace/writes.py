@@ -81,6 +81,7 @@ def _split_unchanged(collection, batch: list) -> tuple:
     re-embeds those drawers instead of failing the mine.
     """
     from ..backends.embedding_wrapper import _metadata_title
+    from ..stored_text import index_text
 
     existing = collection.get(
         ids=[drawer_id for drawer_id, _, _ in batch],
@@ -98,7 +99,12 @@ def _split_unchanged(collection, batch: list) -> tuple:
         old_doc, old_meta = stored.get(drawer_id, (None, {}))
         if merges:
             meta = {**dict.fromkeys(set(old_meta) - set(meta)), **meta}
-        same = old_doc == doc and _metadata_title(old_meta) == _metadata_title(meta)
+        same = (
+            old_doc == doc
+            and _metadata_title(old_meta) == _metadata_title(meta)
+            and index_text(old_doc, old_meta, stored_form=False)
+            == index_text(doc, meta, stored_form=False)
+        )
         rows.append((drawer_id, doc, meta, same))
         if same:
             unchanged.append(drawer_id)

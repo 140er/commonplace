@@ -521,7 +521,9 @@ def _checked_chroma_collection(raw, *, create):
     _enforce_embedder_identity(
         collection, _config.palace_path, _config.collection_name, create=create
     )
-    return collection
+    from ..backends.embedding_wrapper import EmbeddingCollection
+
+    return EmbeddingCollection(collection)
 
 
 def _model_mismatch_error(exc) -> dict:

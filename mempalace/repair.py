@@ -346,9 +346,11 @@ def _delete_collection_if_exists(backend, palace_path: str, collection_name: str
 
 
 def _embeddinggemma2_collection(collection, enabled: bool):
-    """Wrap rebuild writes with EmbeddingGemma 2's metadata-aware encoder."""
-    if not enabled:
-        return collection
+    """Use the core index-text encoder for every text rebuild.
+
+    ``enabled`` is retained for the existing model-selection call sites.
+    All models now need explicit vectors to keep raw documents out of inference.
+    """
     from .backends.embedding_wrapper import EmbeddingCollection
 
     return EmbeddingCollection(collection)

@@ -1,10 +1,10 @@
-"""Pure, opt-in base64 detection for index text, never for stored transcripts.
+"""Pure base64 detection for index text, never for stored transcripts.
 
 Call on a whole message before chunking. Maximal runs are checked as a unit:
 mixed alphabets cannot yield a valid substring. An equals sign before a run
 is a delimiter (``key=payload``), while trailing equals signs are padding.
 This is an encoding heuristic, not a file validator or proof of binary data.
-No production ingest path uses it until the recall gate passes.
+Core storage uses this detector for index views; stored documents stay verbatim.
 """
 
 from __future__ import annotations

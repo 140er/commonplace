@@ -81,8 +81,14 @@ def _embed_texts(
     if not texts:
         return []
     from ..embedding import configured_embedding_function, embedding_section
+    from ..stored_text import index_text
 
-    texts = _embeddable(texts)
+    texts = _embeddable(
+        [
+            index_text(text, metadatas[i] if metadatas is not None else None, stored_form=False)
+            for i, text in enumerate(texts)
+        ]
+    )
     with embedding_section():
         ef = configured_embedding_function() if embedder is None else embedder
         if query and callable(getattr(ef, "embed_query", None)):

@@ -294,9 +294,13 @@ def chunk_exchanges(
     lines = content.split("\n")
     quote_lines = sum(1 for line in lines if line.strip().startswith(">"))
 
+    from .stored_text import annotate_chunks
+
     if quote_lines >= 3:
-        return _chunk_by_exchange(lines, chunk_size, min_chunk_size)
-    return _chunk_by_paragraph(content, chunk_size, min_chunk_size)
+        chunks = _chunk_by_exchange(lines, chunk_size, min_chunk_size)
+    else:
+        chunks = _chunk_by_paragraph(content, chunk_size, min_chunk_size)
+    return annotate_chunks(content, chunks)
 
 
 def _chunk_by_exchange(lines: list, chunk_size: int, min_chunk_size: int) -> list:
@@ -711,6 +715,9 @@ def _file_chunks_locked(
             drawer_id = make_convo_drawer_id(
                 wing, chunk_room, source_file, extract_mode, chunk["chunk_index"]
             )
+            from .stored_text import chunk_index_metadata
+
+            meta.update(chunk_index_metadata(chunk))
             drawers.append((drawer_id, chunk["content"], meta))
         drawers_added = write_file_drawers(
             collection, source_file, drawers, extract_mode=extract_mode, aaak_col=aaak_col

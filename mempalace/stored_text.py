@@ -32,12 +32,18 @@ A service that only takes valid Unicode (an embedder, an LLM API) gets
 ``config.strip_lone_surrogates``.
 """
 
+import hashlib
 import json
+import logging
 import re
+from bisect import bisect_left, bisect_right
 
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
+INDEX_SPANS = "_mempalace_index_spans"
+INDEX_VERSION = 1
+logger = logging.getLogger(__name__)
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -125,13 +131,136 @@ def decode_value(value):
     return _decode(value)
 
 
-def index_text(stored: str) -> str:
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+class IndexSource:
+    """Detect once on whole content, then project into unchanged chunk ranges."""
+
+    def __init__(self, text: str):
+        from .index_hygiene import find_base64_spans
+
+        self.text = text
+        self.spans = find_base64_spans(text)
+        self._ends = [span.end for span in self.spans]
+        self._starts = [span.start for span in self.spans]
+
+    def metadata(self, start: int, end: int, metadata=None) -> dict:
+        """Copy metadata, replacing any old hint with this range's provenance."""
+        result = {k: v for k, v in (metadata or {}).items() if k != INDEX_SPANS}
+        spans = [
+            [
+                max(start, s.start) - start,
+                min(end, s.end) - start,
+                s.placeholder,
+                start <= s.start < end or (s.start <= start and end <= s.end),
+            ]
+            for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
+            if s.start < end and s.end > start
+        ]
+        if spans:
+            result[INDEX_SPANS] = json.dumps(
+                {"v": INDEX_VERSION, "sha256": _text_hash(self.text[start:end]), "spans": spans},
+                separators=(",", ":"),
+            )
+        return result
+
+
+def annotate_chunks(text: str, chunks: list) -> list:
+    """Attach whole-source provenance to ordered, non-overlapping text slices."""
+    source = IndexSource(text)
+    if not source.spans:
+        return chunks
+    cursor = 0
+    for chunk in chunks:
+        content = chunk["content"]
+        start = text.find(content, cursor)
+        if start < 0:
+            # Conversation chunkers trim whitespace around turn headers and
+            # merge small units. Preserve their established documents while
+            # mapping the original validated runs into the concatenated view.
+            # A run contains no whitespace, so those edits cannot split it.
+            from .index_hygiene import Base64Span
+
+            view = "".join(chunk["content"] for chunk in chunks)
+            mapped, position = [], 0
+            for span in source.spans:
+                payload = text[span.start : span.end]
+                found = view.find(payload, position)
+                if found < 0:
+                    raise ValueError("validated span missing from chunked source")
+                mapped.append(
+                    Base64Span(found, found + len(payload), span.media_type, span.decoded_bytes)
+                )
+                position = found + len(payload)
+            source.text = view
+            source.spans = mapped
+            source._starts = [span.start for span in mapped]
+            source._ends = [span.end for span in mapped]
+            position = 0
+            for item in chunks:
+                end = position + len(item["content"])
+                item.pop(INDEX_SPANS, None)
+                item.update(source.metadata(position, end))
+                position = end
+            return chunks
+        chunk.update(source.metadata(start, start + len(content)))
+        cursor = start + len(content)
+    return chunks
+
+
+def chunk_index_metadata(chunk: dict) -> dict:
+    return {INDEX_SPANS: chunk[INDEX_SPANS]} if INDEX_SPANS in chunk else {}
+
+
+def public_metadata(metadata):
+    """Drop index provenance at client boundaries, retaining raw internal copies."""
+    return {k: v for k, v in (metadata or {}).items() if k != INDEX_SPANS}
+
+
+def strip_index_hints(value):
+    """Remove reserved provenance from untrusted arguments or public results."""
+    if isinstance(value, dict):
+        return {k: strip_index_hints(v) for k, v in value.items() if k != INDEX_SPANS}
+    if isinstance(value, list):
+        return [strip_index_hints(v) for v in value]
+    return value
+
+
+def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
     """The words of a stored document for a full-text index.
 
     NUL and lone surrogates become spaces: the index never returns text, and
     neither can be tokenized or UTF-8 encoded.
     """
-    return _BAD.sub(" ", _decode(stored))
+    from .index_hygiene import PLACEHOLDER_RE, index_text as detect_index_text
+
+    text = _decode(stored) if stored_form else stored
+    hint = (metadata or {}).get(INDEX_SPANS)
+    if hint:
+        try:
+            data = json.loads(hint)
+            if data["v"] != INDEX_VERSION or data["sha256"] != _text_hash(text):
+                raise ValueError("version or content changed")
+            parts, cursor = [], 0
+            for start, end, placeholder, emit in data["spans"]:
+                if not (
+                    type(start) is int
+                    and type(end) is int
+                    and cursor <= start < end <= len(text)
+                    and isinstance(placeholder, str)
+                    and PLACEHOLDER_RE.fullmatch(placeholder)
+                    and type(emit) is bool
+                ):
+                    raise ValueError("invalid span")
+                parts.extend((text[cursor:start], placeholder if emit else ""))
+                cursor = end
+            parts.append(text[cursor:])
+            return _BAD.sub(" ", "".join(parts))
+        except (ValueError, TypeError, KeyError):
+            logger.warning("Ignoring stale or invalid index span hint")
+    return _BAD.sub(" ", detect_index_text(text))
 
 
 _EQUALITY_OPS = ("$eq", "$ne", "$in", "$nin")
@@ -260,4 +389,6 @@ def dumps_client(obj, **kwargs) -> str:
     Some clients' JSON parsers reject a lone-surrogate escape and with it the
     whole response. The display is lossy; the stored text is not.
     """
-    return _LONE_SURROGATE.sub("�", json.dumps(obj, ensure_ascii=False, **kwargs))
+    return _LONE_SURROGATE.sub(
+        "�", json.dumps(strip_index_hints(obj), ensure_ascii=False, **kwargs)
+    )

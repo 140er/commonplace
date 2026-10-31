@@ -610,6 +610,7 @@ class SQLiteExactCollection(BaseCollection):
         doc_id: str,
         document: str,
         *,
+        metadata=None,
         doc_rowid: Optional[int] = None,
         existed: bool = True,
         fts_enabled: Optional[bool] = None,
@@ -618,7 +619,7 @@ class SQLiteExactCollection(BaseCollection):
             fts_enabled = self._fts_available(cur)
         if not fts_enabled:
             return
-        document = index_text(document)
+        document = index_text(document, metadata)
         if doc_rowid is None:
             row = cur.execute(
                 "SELECT rowid FROM documents WHERE collection_id = ? AND id = ?",
@@ -682,6 +683,7 @@ class SQLiteExactCollection(BaseCollection):
                     collection_id,
                     doc_id,
                     doc,
+                    metadata=meta,
                     doc_rowid=int(cur.lastrowid),
                     existed=False,
                     fts_enabled=fts_enabled,
@@ -731,6 +733,7 @@ class SQLiteExactCollection(BaseCollection):
                         collection_id,
                         doc_id,
                         doc,
+                        metadata=meta,
                         doc_rowid=int(cur.lastrowid),
                         existed=False,
                         fts_enabled=fts_enabled,
@@ -757,6 +760,7 @@ class SQLiteExactCollection(BaseCollection):
                         collection_id,
                         doc_id,
                         doc,
+                        metadata=meta,
                         doc_rowid=doc_rowid,
                         existed=True,
                         fts_enabled=fts_enabled,
@@ -842,6 +846,7 @@ class SQLiteExactCollection(BaseCollection):
                         collection_id,
                         doc_id,
                         doc,
+                        metadata=meta,
                         doc_rowid=doc_rowid,
                         existed=True,
                         fts_enabled=fts_enabled,
@@ -1892,14 +1897,20 @@ class SQLiteExactBackend(BaseBackend):
                     )
                     """
                 )
-                conn.execute(
+                missing = conn.execute(
                     """
-                    INSERT INTO docs_fts(rowid, collection_id, doc_id, document)
-                    SELECT d.rowid, d.collection_id, d.id, d.document
+                    SELECT d.rowid, d.collection_id, d.id, d.document, d.metadata_json
                     FROM documents d
                     LEFT JOIN docs_fts f ON f.rowid = d.rowid
                     WHERE f.rowid IS NULL
                     """
+                )
+                conn.executemany(
+                    "INSERT INTO docs_fts(rowid, collection_id, doc_id, document) VALUES (?, ?, ?, ?)",
+                    (
+                        (rowid, collection_id, doc_id, index_text(doc, _json_loads(meta)))
+                        for rowid, collection_id, doc_id, doc, meta in missing
+                    ),
                 )
         conn.execute(
             """
