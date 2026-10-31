@@ -52,8 +52,8 @@
 .card .ct { font-weight: 500; line-height: 19px; letter-spacing: -0.015em; }
 .card .cq { background: var(--term); color: var(--ink); padding: 8px 10px; font-size: 12px; line-height: 18px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .card.focus { box-shadow: inset 3px 0 0 var(--ink); }
-.card.open { background: var(--ink); color: var(--bg); }
-.card.open .meta, .card.open .actor { color: #4a4d47; }
+:where(:root[data-look]) .card.open { background: var(--ink); color: var(--bg); }
+:where(:root[data-look]) .card.open .meta, :where(:root[data-look]) .card.open .actor { color: #4a4d47; }
 .card .pre { color: var(--quiet); }
 
 .done-list { flex: 1; min-height: 0; background: var(--surface); padding: 4px 0; overflow: hidden; }
