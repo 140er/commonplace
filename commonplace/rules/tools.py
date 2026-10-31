@@ -48,7 +48,9 @@ def run(ctx, name, args):
     elif name == "rules_publish":
         lines = [f"{row['key']} {row['status']} {row['version']}" for row in rows]
     else:
-        lines = [f"{row['key']} {row['status']}" for row in rows]
+        if result.get("reset"):
+            return f"reset\nseq {result['seq']}"
+        lines = [f"{row['key']} {row['status']} {row['target']}" for row in rows]
         return "\n".join([f"seq {result['seq']}", *lines])
     return "\n".join([*lines, f"seq {result['seq']}"])
 

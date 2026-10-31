@@ -59,7 +59,7 @@ window.commonplaceDesktop = { version: 1 };
 assert.equal(desktopBridge(), null);
 const pending = rule(4, { status: "edited", pending: 1, text: "Keep mine", agent_text: "Try theirs" });
 const all = rule(5, { agent: "*", status: "accepted", text: '<script> "&' });
-const payload = { waiting: 3, waiting_by_agent: { "conn:writer": 3 }, rules: [first, board, retired, pending, all], suggestions: [{ id: 8, rule_id: 1, text: "A clearer rule", from_agent: "reader" }], agents: ["writer", "reader"] };
+const payload = { waiting: 3, waiting_by_agent: { "conn:writer": 3 }, rules: [first, board, retired, pending, all], suggestions: [{ id: 8, rule_id: 1, base_version: first.version, text: "A clearer rule", from_agent: "reader" }], agents: ["writer", "reader"] };
 assert.equal(waitingCount(payload.rules), 3);
 assert.equal(waitingCount([rule(6, { pending: 1 })]), 1);
 assert.equal(waitingCount([]), 0);
@@ -210,7 +210,7 @@ assert.equal(refreshes, previousRefreshes + 1);
 assert.equal(errors.at(-1), "Rule changed. Review it and try again.");
 
 // Exercise the shell refresh itself: other screens request only the count;
-// rule events update both the badge and the screen even with a panel open.
+// rule events update the badge immediately and defer the screen while busy.
 const shellSource = await read("app.js");
 const refreshSource = shellSource.slice(shellSource.indexOf("async function refresh("), shellSource.indexOf("async function route()"));
 const shellState = { me: {}, screen: 1, refreshRequest: 0, base: "#/rules", route: "#/rules" };
@@ -218,7 +218,14 @@ const shellCalls = [], updates = [], badgeCounts = [], shellErrors = [];
 const content = { innerHTML: "", children: [{}] };
 let shellPayload = { ...payload, can_edit: false };
 const noWork = () => {};
-let headerActions = "";
+let headerActions = "", shellBusy = true, shellRefresh;
+const shellHandlers = {};
+const shellUI = rulesHandlers({
+  addEventListener: (type, fn) => { shellHandlers[type] = fn; },
+  querySelector: () => shellBusy ? {} : null,
+}, async () => {}, () => shellRefresh(), (error) => shellErrors.push(error));
+const updateShellUI = shellUI.update;
+shellUI.update = (...args) => { updates.push(args); updateShellUI(...args); };
 const shellDeps = {
   state: shellState,
   api: async (path) => {
@@ -228,13 +235,13 @@ const shellDeps = {
     return { boards: [] };
   },
   root: { querySelector: () => content },
-  rulesUI: { busy: () => true, update: (...args) => updates.push(args) },
+  rulesUI: shellUI,
   rulesView,
   navigation: () => badgeCounts.push(shellState.rulesWaiting),
   title: (_text, actions = "") => { headerActions = actions; }, remember: noWork, capture: () => noWork, restore: noWork,
   boardsView: noWork, showError: (error) => { if (error) shellErrors.push(error); },
 };
-const shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
+shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
 assert.equal(await shellRefresh(), true);
 assert.deepEqual(updates.at(-1)[1], { owner: false });
 assert.ok(!content.innerHTML.includes("New rule") && !content.innerHTML.includes("Ask an agent"));
@@ -242,13 +249,20 @@ assert.ok(content.innerHTML.includes("Copy prompt"));
 assert.equal(headerActions, "");
 assert.ok(shellCalls.includes("/api/rules") && !shellCalls.includes("/api/rules/count"));
 shellPayload = { ...shellPayload, can_edit: true, waiting: 4 };
+const busyHTML = content.innerHTML;
 for (const kind of ["rule.changed", "rule.suggestion"]) {
   assert.equal(await shellRefresh({ background: true, events: [{ kind }] }), true);
-  assert.deepEqual(updates.at(-1)[1], { owner: true });
-  assert.ok(headerActions.includes('data-rule-action="new"') && headerActions.includes("New rule"));
-  assert.ok(!content.innerHTML.includes("New rule") && content.innerHTML.includes('id="rule-new" hidden'));
+  assert.deepEqual(updates.at(-1)[1], { owner: false });
+  assert.equal(content.innerHTML, busyHTML);
+  assert.equal(shellDeps.rulesUI.stale, true);
   assert.equal(badgeCounts.at(-1), 4);
 }
+shellBusy = false;
+await shellHandlers.toggle({ target: { matches: () => true, open: false } });
+assert.deepEqual(updates.at(-1)[1], { owner: true });
+assert.equal(shellDeps.rulesUI.stale, false);
+assert.notEqual(content.innerHTML, busyHTML);
+assert.ok(headerActions.includes('data-rule-action="new"'));
 shellState.base = shellState.route = "#/boards";
 shellCalls.length = 0;
 assert.equal(await shellRefresh({ background: true, events: [{ kind: "rule.changed" }] }), true);
@@ -256,3 +270,67 @@ assert.ok(shellCalls.includes("/api/rules/count") && !shellCalls.includes("/api/
 assert.equal(badgeCounts.at(-1), 7);
 assert.deepEqual(shellErrors, []);
 console.log("Rules permissions, retirement, counts and shell refresh checks passed");
+
+
+// Outdated and retired suggestions stay visible with Dismiss as their only action.
+for (const [current, baseVersion, outdated] of [
+  [first, first.version, false],
+  [first, first.version - 1, true],
+  [retired, retired.version, false],
+  [retired, retired.version - 1, true],
+  [retiredProposal, retiredProposal.version, false],
+]) {
+  const view = rulesView({ rules: [current], suggestions: [
+    { id: 20, rule_id: current.id, base_version: baseVersion, text: "Suggestion", from_agent: "reader", status: "open" },
+    { id: 21, rule_id: current.id, base_version: baseVersion, text: "Dismissed", from_agent: "reader", status: "dismissed" },
+  ] });
+  const proposal = view.match(/<section class="rule-proposal" data-suggestion-id="20">([\s\S]*?)<\/section>/)[1];
+  assert.equal(proposal.includes('<span class="pill">outdated</span>'), outdated);
+  assert.equal(proposal.includes('data-rule-action="suggestion-accept"'), !outdated && current.status !== "retired");
+  assert.ok(proposal.includes('data-rule-action="suggestion-dismiss"'));
+  assert.ok(!view.includes('data-suggestion-id="21"'));
+}
+
+// Each busy-state exit releases a deferred render, including a failed mutation.
+const exitHandlers = {};
+let exitBusy = false, exitRefreshes = 0;
+const exitTrigger = { setAttribute() {}, focus() {} };
+const exitPanel = { hidden: false, querySelector: (selector) => selector === "form" ? { reset() {} } : {} };
+const exitHistory = { hidden: false };
+const exitRow = { dataset: { ruleId: "1", version: "3" }, querySelector: () => exitHistory, querySelectorAll: () => [] };
+const exitRoot = {
+  addEventListener: (type, fn) => { exitHandlers[type] = fn; },
+  querySelector: (selector) => selector === '[data-rule-action="new"]' ? exitTrigger : exitBusy ? {} : null,
+};
+let exitUI;
+exitUI = rulesHandlers(exitRoot, async () => { throw new Error("Write failed"); }, async () => { exitRefreshes++; exitUI.update(payload); }, () => {});
+exitUI.update(payload);
+const exitClick = async (action) => {
+  const button = { dataset: { ruleAction: action }, closest: (selector) => selector === ".rule-new" ? exitPanel : selector === "[data-rule-id]" ? exitRow : null };
+  await exitHandlers.click({ target: { closest: () => button } });
+};
+for (const action of ["cancel-new", "cancel-edit", "history", "retire"]) {
+  exitUI.stale = true;
+  const before = exitRefreshes;
+  await exitClick(action);
+  assert.equal(exitRefreshes, before + 1, action);
+  assert.equal(exitUI.stale, false);
+}
+for (const open of [true, false]) {
+  exitUI.stale = true;
+  const before = exitRefreshes;
+  await exitHandlers.toggle({ target: { matches: () => true, open } });
+  assert.equal(exitRefreshes, before + (open ? 0 : 1));
+}
+exitUI.stale = true;
+exitBusy = true;
+await exitHandlers.toggle({ target: { matches: () => true, open: false } });
+assert.equal(exitUI.stale, true);
+exitBusy = false;
+await exitHandlers.toggle({ target: { matches: () => true, open: false } });
+assert.equal(exitUI.stale, false);
+for (const selector of ['.rule-clarify[open] [data-ask-agent]', '.rule-clarify[open] [data-reply-text]']) {
+  exitRoot.querySelector = (query) => query.includes(selector) ? {} : null;
+  assert.equal(exitUI.busy(), true);
+}
+console.log("Rules suggestion and deferred-render checks passed");

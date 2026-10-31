@@ -80,7 +80,7 @@ def test_publish_get_changed_and_profiles(hub, env):
         and output
         == "one [instruction global proposed agent v1] " + json.dumps(rule()["text"]) + "\nseq 1"
     )
-    assert mcp(hub, env.token, "rules_changed", since=0) == (True, "seq 1\none proposed")
+    assert mcp(hub, env.token, "rules_changed", since=0) == (True, "seq 1\none proposed own")
     assert env.worker.rules_changed(1) == {"rules": [], "seq": 1}
     assert publish(env) == current
     assert env.worker.store.seq == 1
@@ -197,7 +197,7 @@ def test_retire_restore_in_changed_and_get(hub, env, owner_source):
     assert env.worker.rules_get()["rules"] == []
     assert env.worker.rules_get(include_retired=True)["rules"] == [retired]
     assert env.worker.rules_changed(before)["rules"] == [
-        {"key": current["key"], "status": "retired"}
+        {"key": current["key"], "status": "retired", "target": "all" if owner_source else "own"}
     ]
     restored = action(hub, env, retired, "restore")
     assert restored["status"] == ("edited" if owner_source else "accepted")
@@ -294,6 +294,7 @@ def test_rest_owner_only_people_read_and_agents_cannot_write(hub, env):
             assert api(hub, auth, method, path, body)[0] == 403
     status, listing = api(hub, member_cookie, "GET", "/api/rules")
     assert status == 200 and listing["can_edit"] is False
+    assert listing["agents"] == []
     assert api(hub, env.cookie, "GET", "/api/rules")[1]["can_edit"] is True
     assert api(hub, member_cookie, "GET", "/api/rules/count") == (200, {"waiting": 1, "seq": 1})
     assert api(hub, env.token, "GET", "/api/rules/count")[0] == 403
@@ -403,7 +404,7 @@ def test_changed_uses_sequence_index_without_loading_text(hub, env):
         plan = conn.execute("EXPLAIN QUERY PLAN " + query, (0,)).fetchall()
         assert any("rules_by_seq" in r[3] for r in plan)
     assert env.worker.rules_changed(0) == {
-        "rules": [{"key": current["key"], "status": "proposed"}],
+        "rules": [{"key": current["key"], "status": "proposed", "target": "own"}],
         "seq": 1,
     }
 
@@ -448,7 +449,7 @@ def test_owner_creates_shared_rule_over_rest(hub, env):
     assert env.worker.rules_get()["rules"] == [current]
     assert mcp(hub, env.token, "rules_changed", since=0) == (
         True,
-        f"seq 1\n{current['key']} accepted",
+        f"seq 1\n{current['key']} accepted all",
     )
     assert env.owner.history(current["id"])[0]["stamp_connection"] is None
     assert (
@@ -815,3 +816,122 @@ def test_unknown_arguments_and_internal_type_errors(hub, env, monkeypatch):
         run(env.worker.ctx, "rules_get", {})
     monkeypatch.setattr(RuleService, "list_rules", broken)
     assert api(hub, env.cookie, "GET", "/api/rules") == (500, {"error": "internal error"})
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kind": "style"},
+        {"scope": "repo", "repo": "example.test/org/project"},
+        {"scope": "repo", "repo": "example.test/org/other"},
+    ],
+)
+def test_agent_classification_changes_require_owner_review(hub, env, changes):
+    initial = (
+        {"scope": "repo", "repo": "example.test/org/project"}
+        if changes.get("repo", "").endswith("other")
+        else {}
+    )
+    current = publish(env, **initial)
+    accepted = action(hub, env, current, "accept")
+    changed = publish(env, **changes)
+    assert changed["text"] == accepted["text"]
+    assert changed["status"] == "proposed"
+    assert changed["version"] == accepted["version"] + 1
+    assert changed["seq"] == accepted["seq"] + 1
+    assert publish(env, **changes) == changed
+
+
+def test_owner_classification_ignores_agent_only_kind_change(hub, env):
+    current = publish(env)
+    edited = env.owner.edit(current["id"], current["version"], kind="limit")
+    history = env.owner.history(current["id"])
+    assert publish(env, kind="style") == edited
+    assert env.owner.store.seq == edited["seq"]
+    assert env.owner.history(current["id"]) == history
+
+
+def test_owner_restore_keeps_agent_dropped_rule(hub, env):
+    publish(env)
+    retired = env.worker.rules_publish([], replace=True)["rules"][0]
+    restored = action(hub, env, retired, "restore")
+    assert restored["status"] == "accepted" and restored["source"] == "owner"
+    assert restored["retired_by"] is None
+    assert env.worker.rules_publish([], replace=True)["rules"] == []
+    assert env.worker.rules_get()["rules"] == [restored]
+    proposal = publish(env, text="Different agent wording", kind="style")
+    assert proposal["pending"] == 1 and proposal["agent_text"] == "Different agent wording"
+    assert proposal["text"] == restored["text"] and proposal["kind"] == restored["kind"]
+    assert proposal["source"] == "owner" and proposal["status"] == "accepted"
+
+
+@pytest.mark.parametrize("retired_by", ["owner", "agent"])
+@pytest.mark.parametrize("changes", [{}, {"text": "Attempted edit"}])
+def test_patch_retired_rule_requires_restore(hub, env, retired_by, changes):
+    current = publish(env)
+    retired = (
+        action(hub, env, current, "retire")
+        if retired_by == "owner"
+        else env.worker.rules_publish([], replace=True)["rules"][0]
+    )
+    history = env.owner.history(current["id"])
+    assert api(
+        hub,
+        env.cookie,
+        "PATCH",
+        f"/api/rules/{current['id']}",
+        {"version": retired["version"], **changes},
+    ) == (400, {"error": "restore the rule first"})
+    assert env.owner.store.seq == retired["seq"]
+    assert env.owner.history(current["id"]) == history
+
+
+def test_changed_reset_and_same_key_targets(hub, env):
+    assert mcp(hub, env.token, "rules_changed", since=9) == (True, "reset\nseq 0")
+    shared = env.owner.create("*", "Shared text", "limit")
+    own = publish(env, key=shared["key"])
+    assert env.worker.rules_changed(0) == {
+        "rules": [
+            {"key": shared["key"], "status": "accepted", "target": "all"},
+            {"key": own["key"], "status": "proposed", "target": "own"},
+        ],
+        "seq": 2,
+    }
+    assert mcp(hub, env.token, "rules_changed", since=0) == (
+        True,
+        f"seq 2\n{shared['key']} accepted all\n{own['key']} proposed own",
+    )
+    assert mcp(hub, env.token, "rules_changed", since=3) == (True, "reset\nseq 2")
+    assert mcp(hub, env.token, "rules_changed", since=2) == (True, "seq 2")
+
+
+@pytest.mark.parametrize("operation", ["get", "changed", "replace"])
+def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operation):
+    boards = BoardService(ToolContext(principal=env.person, gateway=hub.gateway))
+    boards.board_add(slug="visible", wing="shared")
+    env.worker.rules_publish(
+        [rule(key=f"rule-{i}", scope="board", board="visible") for i in range(3)]
+    )
+    original_connect = sqlite3.connect
+    lookups = []
+
+    def connect(path, *args, **kwargs):
+        if "boards.sqlite3" in str(path):
+            lookups.append(path)
+        return original_connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    worker = service(hub, env.agent)
+    if operation == "get":
+        assert len(worker.rules_get(board="visible")["rules"]) == 3
+    elif operation == "changed":
+        assert len(worker.rules_changed(0)["rules"]) == 3
+    else:
+        assert len(worker.rules_publish([], replace=True)["rules"]) == 3
+    assert len(lookups) == 1
+    assert worker._board_visible("missing") is False
+    assert worker._board_visible("missing") is False
+    assert len(lookups) == 2
+    # A new request must recheck current visibility, including cached misses.
+    boards.board_add(slug="missing", wing="shared")
+    assert service(hub, env.agent)._board_visible("missing") is True

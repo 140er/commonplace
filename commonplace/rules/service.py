@@ -75,6 +75,7 @@ class RuleService:
         self.ctx = ctx
         self.principal = ctx.principal
         self.store = open_store(ctx.workspace_dir())
+        self._board_visibility = {}
 
     def _emit(self, kind, data):
         try:
@@ -110,6 +111,11 @@ class RuleService:
             )
 
     def _board_visible(self, slug):
+        if slug not in self._board_visibility:
+            self._board_visibility[slug] = self._lookup_board_visible(slug)
+        return self._board_visibility[slug]
+
+    def _lookup_board_visible(self, slug):
         # Opening BoardStore would migrate it; rules only inspect the existing store.
         path = Path(self.ctx.workspace_dir()) / "boards.sqlite3"
         if not path.is_file():
@@ -236,15 +242,15 @@ class RuleService:
                         pending=0,
                         retired_by=None,
                     )
-                elif values["text"] == row["agent_text"]:
-                    updates = {}
                 elif row["source"] == "owner" or row["retired_by"] == "owner":
-                    updates = {
-                        "agent_text": values["text"],
-                        "pending": int(values["text"] != row["text"]),
-                    }
-                    if all(row[k] == v for k, v in updates.items()):
-                        updates = {}
+                    updates = (
+                        {
+                            "agent_text": values["text"],
+                            "pending": int(values["text"] != row["text"]),
+                        }
+                        if values["text"] != row["agent_text"]
+                        else {}
+                    )
                 else:
                     updates = dict(values, agent_text=values["text"], status="proposed", pending=0)
                     if all(row[k] == v for k, v in values.items()):
@@ -302,17 +308,24 @@ class RuleService:
         if type(since) is not int or since < 0:
             raise ToolError("no: since must be a nonnegative integer")
         with self.store.read() as conn:
+            seq = sequence(conn)
+            if since > seq:
+                return {"rules": [], "seq": seq, "reset": True}
             rows = conn.execute(
                 "SELECT agent,key,status,scope,scope_ref FROM rules WHERE seq>? ORDER BY seq",
                 (since,),
             )
             return {
                 "rules": [
-                    {"key": row["key"], "status": row["status"]}
+                    {
+                        "key": row["key"],
+                        "status": row["status"],
+                        "target": "all" if row["agent"] == "*" else "own",
+                    }
                     for row in rows
                     if self._visible(row)
                 ],
-                "seq": sequence(conn),
+                "seq": seq,
             }
 
     def list_rules(self):
@@ -330,7 +343,9 @@ class RuleService:
                     r["name"]
                     for r in self.ctx.db.connections(self.principal.workspace_id)
                     if not r["revoked_at"]
-                ],
+                ]
+                if self.principal.role == "owner"
+                else [],
                 "seq": sequence(conn),
                 "can_edit": self.principal.role == "owner",
                 "waiting": conn.execute(f"SELECT count(*) FROM rules WHERE {WAITING}").fetchone()[
@@ -395,6 +410,8 @@ class RuleService:
             validate_text(note, "note")
         with self.transaction() as conn:
             row = self._versioned(conn, rule_id, version)
+            if row["status"] == "retired":
+                raise ToolError("no: restore the rule first")
             values = fields(
                 **{k: changes.get(k, row[k]) for k in ("text", "kind", "scope", "scope_ref")}
             )
@@ -420,6 +437,8 @@ class RuleService:
                     "status": "edited" if row["source"] == "owner" else "accepted",
                     "retired_by": None,
                 }
+                if row["retired_by"] == "agent":
+                    updates.update(status="accepted", source="owner")
             elif action == "accept_agent" and row["pending"] == 1 and row["agent_text"] is not None:
                 updates = dict(
                     text=row["agent_text"],
