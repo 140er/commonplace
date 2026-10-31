@@ -109,12 +109,18 @@ def test_import_merges_only_one_exact_instance(tmp_path):
         before = _row(target, "another-instance")
         with provenance.verified(PERSON):
             _save(source, thread="mcp:approval")
+    with KnowledgeGraph(dst) as target:
+        sources_before = target.sources(["another-instance"])["another-instance"]
+        (legacy_source,) = sources_before
+        assert legacy_source["source_thread"] == original["source_thread"]
+        assert legacy_source["source_seq_start"] == 1 and legacy_source["source_seq_end"] == 2
+        assert legacy_source["approval_status"] == legacy_source["origin_kind"] == "unknown"
     counts = import_graph_rows(src, dst, apply=True)
     assert counts["triples"]["present"] == 1
     with KnowledgeGraph(dst) as target:
         assert _row(target, tid)["approval_status"] == "approved"
         assert _row(target, "another-instance") == before
-        assert target.sources(["another-instance"])["another-instance"] == []
+        assert target.sources(["another-instance"])["another-instance"] == sources_before
 
 
 def test_import_does_not_choose_between_two_open_instances(tmp_path):

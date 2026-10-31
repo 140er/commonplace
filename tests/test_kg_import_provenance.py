@@ -230,6 +230,10 @@ def test_import_rolls_back_entities_ends_links_and_sources_on_interruption(tmp_p
                 WHEN NEW.source_thread='mcp:new'
                 BEGIN SELECT RAISE(ABORT, 'interrupted import'); END;
             """)
+    # Open-time source recovery precedes the import transaction being tested.
+    with KnowledgeGraph(dst) as target:
+        (legacy_source,) = target.sources(["target-old"])["target-old"]
+        assert legacy_source["source_thread"] == "mcp:old"
     before, source_before = _snapshot(dst), _snapshot(src)
     if failure == "exception":
         with pytest.raises(sqlite3.IntegrityError, match="interrupted import"):
