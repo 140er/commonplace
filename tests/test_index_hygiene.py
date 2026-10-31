@@ -2,11 +2,63 @@
 
 import base64
 import random
+import re
+import time
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from mempalace.index_hygiene import find_base64_spans, index_text
+from mempalace.index_hygiene import base64_candidate_ranges, find_base64_spans, index_text
+
+
+def test_candidate_detection_is_bounded_on_adversarial_short_runs():
+    # Without the start boundary, each 199-character run is retried 199 times.
+    text = ("A" * 199 + " ") * 20_000
+    linear_scan = re.compile(r"[A-Za-z0-9+/_\-]+").findall
+    candidate_times, baseline_times = [], []
+    for _ in range(3):
+        start = time.perf_counter()
+        assert base64_candidate_ranges(text) == []
+        candidate_times.append(time.perf_counter() - start)
+        start = time.perf_counter()
+        assert len(linear_scan(text)) == 20_000
+        baseline_times.append(time.perf_counter() - start)
+    # Scale to the machine's speed; the old regex takes about 50x the
+    # linear scan, while the boundary-checked regex takes about 5x.
+    assert min(candidate_times) < 20 * min(baseline_times)
+    assert min(candidate_times) < 2.0
+
+
+def test_candidate_ranges_keep_rejected_runs_whole():
+    rejected = "A" * 200 + "_+/==="
+    text = "A" * 199 + " " + rejected + " end"
+    assert base64_candidate_ranges(text) == [(200, 200 + len(rejected))]
+
+
+@pytest.mark.parametrize("size", [150, 151, 152])
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("é", ""),
+        ("", "é"),
+        ("Ω", "漢"),
+        ("٢", ""),
+        ("", "Ⅳ"),
+    ],
+)
+def test_unicode_letters_and_numbers_preserve_adjacent_runs(size, before, after):
+    _, encoded = payload(size)
+    text = before + encoded + after
+    assert find_base64_spans(text) == []
+    assert index_text(text) == text
+    assert base64_candidate_ranges(text) == [(len(before), len(before) + len(encoded))]
+
+
+@pytest.mark.parametrize("before,after", [("…", "—"), ("«", "»"), ("\u2003", "\n"), ("🧭", "🌿")])
+def test_unicode_punctuation_and_whitespace_delimit_runs(before, after):
+    _, encoded = payload()
+    [span] = find_base64_spans(before + encoded + after)
+    assert (span.start, span.end) == (len(before), len(before) + len(encoded))
 
 
 def payload(size=300, prefix=b"", urlsafe=False):
