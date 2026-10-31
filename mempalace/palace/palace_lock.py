@@ -146,7 +146,7 @@ def palace_write_serial() -> int:
 # (`mcp_server._acquire_mcp_writer_lock`) but dispatches each write request on a
 # different worker thread. A thread-local guard makes those handlers fail to see
 # the process-held lease, re-acquire the flock, and self-conflict
-# ("palace ... is held by PID <self>"). flock is per-process and HTTP writes are
+# ("palace ... is held by PID <self>"). HTTP writes are
 # serialized by ``_HTTP_REQUEST_LOCK``'s exclusive side, so the process is the
 # correct re-entrancy boundary even though palace reads may overlap.
 #
@@ -154,7 +154,10 @@ def palace_write_serial() -> int:
 # re-entrant credit from its parent: the OS-level flock IS NOT inherited as a
 # "we hold it" semantically — the child must reacquire. The pid check clears
 # stale state so a forked child correctly hits the fcntl path. Access is guarded
-# by ``_palace_lock_guard`` because the set is now shared across threads.
+# by ``_palace_lock_guard`` because the registry is shared across threads.
+# Acquisition and registration happen under that guard, closing the gap where
+# a second thread could conflict with its own not-yet-registered OS lease.
+# Every overlapping context retains the descriptor until the last user exits.
 #
 # Fork safety: ``_palace_lock_guard`` is a real ``threading.Lock``, so a child
 # forked while another thread held it would inherit it locked (the holder thread
@@ -163,14 +166,24 @@ def palace_write_serial() -> int:
 # clears state in the child, which must reacquire the flock anyway.
 _palace_lock_guard = threading.Lock()
 _palace_lock_pid = None
-_palace_lock_keys = set()
+_palace_lock_keys = {}
+
+
+class _PalaceLockHold:
+    def __init__(self, lock_file):
+        self.file = lock_file
+        self.users = 1
 
 
 def _reset_palace_lock_state_after_fork() -> None:
     """Reset lock state in a forked child to avoid an inherited-locked deadlock."""
     global _palace_lock_guard, _palace_lock_pid, _palace_lock_keys
     _palace_lock_guard = threading.Lock()
-    _palace_lock_keys = set()
+    # Close inherited descriptors without unlocking their shared open-file
+    # descriptions: the parent must retain ownership of its OS leases.
+    for hold in _palace_lock_keys.values():
+        hold.file.close()
+    _palace_lock_keys = {}
     _palace_lock_pid = os.getpid()
 
 
@@ -180,14 +193,14 @@ if hasattr(os, "register_at_fork"):
 
 
 def _holder_keys_locked():
-    """Return the process-wide held-key set, refreshing after fork.
+    """Return the process-wide lease registry, refreshing after fork.
 
     Caller MUST hold ``_palace_lock_guard``.
     """
     global _palace_lock_pid, _palace_lock_keys
     current_pid = os.getpid()
     if _palace_lock_pid != current_pid:
-        _palace_lock_keys = set()
+        _palace_lock_keys = {}
         _palace_lock_pid = current_pid
     return _palace_lock_keys
 
@@ -198,14 +211,9 @@ def _held_by_this_process(lock_key: str) -> bool:
         return lock_key in _holder_keys_locked()
 
 
-def _mark_held(lock_key: str) -> None:
-    with _palace_lock_guard:
-        _holder_keys_locked().add(lock_key)
-
-
-def _mark_released(lock_key: str) -> None:
-    with _palace_lock_guard:
-        _holder_keys_locked().discard(lock_key)
+def _mark_held(lock_key: str, hold: _PalaceLockHold) -> None:
+    """Register an acquired lease; caller holds ``_palace_lock_guard``."""
+    _holder_keys_locked()[lock_key] = hold
 
 
 def _format_lock_holder(content: str) -> str:
@@ -259,6 +267,40 @@ def _write_lock_holder(lock_file) -> None:
         pass
 
 
+def _acquire_palace_lock_file(lock_path: str, resolved: str):
+    """Acquire an OS lease; caller serializes process-local registration."""
+    # Never truncate the prior holder's identity before acquiring the lock.
+    # Byte zero is the lock sentinel, including on Windows.
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    # No buffered I/O mutex may be inherited locked by a forked child.
+    lf = os.fdopen(fd, "r+b", buffering=0)
+    try:
+        lf.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        try:
+            if os.name != "nt" and not isinstance(exc, BlockingIOError):
+                raise
+            holder = _read_lock_holder(lf)
+        finally:
+            lf.close()
+        raise MineAlreadyRunning(
+            f"palace {resolved} is held by {holder}; "
+            "wait for it to finish or stop the holder before retrying"
+        ) from exc
+    except BaseException:
+        lf.close()
+        raise
+    return lf
+
+
 @contextlib.contextmanager
 def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
     """Per-palace non-blocking lock around the full `mine` pipeline.
@@ -289,7 +331,8 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
     piling up as a waiting worker.
 
     Re-entrant: if the current process already holds the lock for the same
-    palace, the context manager passes through without re-acquiring. This
+    palace, the context manager retains that lease without re-acquiring it.
+    The OS lease is released only after the last overlapping context exits. This
     lets ChromaCollection write methods (which acquire the lock themselves
     to protect MCP/direct callers) compose with miner.mine() (which holds
     the outer lock for the entire mine pipeline) without self-deadlock, and
@@ -303,85 +346,39 @@ def mine_palace_lock(palace_path: str, *, lock_dir: Optional[str] = None):
     lock_path = os.path.join(lock_dir, f"mine_palace_{palace_key}.lock")
 
     lock_key = os.path.normcase(os.path.realpath(lock_path))
-    if _held_by_this_process(lock_key):
-        # This process already holds the lock for this palace — pass through.
-        yield
-        return
-
-    # Ensure the file exists, then open r+ so we can both read the prior
-    # holder's identity (for failure diagnostics) and write our own. "w"
-    # truncates and erases the prior holder. "a+" puts the position at EOF,
-    # which on Windows breaks ``msvcrt.locking`` (it locks 1 byte at the
-    # *current* position, so two contenders end up locking different bytes
-    # and silently both acquire — observed as Windows-CI lock test
-    # failures).
-    if not os.path.exists(lock_path):
-        # Touch atomically: O_CREAT|O_EXCL would fail if a concurrent
-        # contender just created it, which is fine — we proceed to open.
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
-            os.close(fd)
-        except FileExistsError:
-            pass
-    lf = open(lock_path, "r+b")
-    acquired = False
+    hold = None
     try:
-        # Lock byte 0 explicitly. msvcrt.locking is byte-position dependent;
-        # fcntl.flock is whole-file but the seek is harmless there.
-        lf.seek(0)
-        if os.name == "nt":
-            import msvcrt
-
-            try:
-                msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
-                acquired = True
-            except OSError as exc:
-                holder = _read_lock_holder(lf)
-                raise MineAlreadyRunning(
-                    f"palace {resolved} is held by {holder}; "
-                    "wait for it to finish or stop the holder before retrying"
-                ) from exc
-        else:
-            import fcntl
-
-            try:
-                fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-            except BlockingIOError as exc:
-                holder = _read_lock_holder(lf)
-                raise MineAlreadyRunning(
-                    f"palace {resolved} is held by {holder}; "
-                    "wait for it to finish or stop the holder before retrying"
-                ) from exc
-        # Record our own identity for any later contender's diagnostic message.
-        _write_lock_holder(lf)
-        # Mark the hold from inside the try so it always pairs with
-        # _mark_released. If it sat before the try, an async exception
-        # (a SIGINT/KeyboardInterrupt) landing in the gap would orphan
-        # palace_key in the holder set while the outer finally frees the
-        # flock, so the in-memory hold would outlive the OS lock and a later
-        # re-entrant acquire would pass through and write without the flock.
-        try:
-            _mark_held(lock_key)
-            yield
-        finally:
-            _mark_released(lock_key)
+        with _palace_lock_guard:
+            holds = _holder_keys_locked()
+            hold = holds.get(lock_key)
+            if hold is not None:
+                hold.users += 1
+            else:
+                # Keep acquisition and registration atomic with respect to
+                # other threads. OS acquisition is non-blocking, so this guard
+                # never waits for another process to finish mining.
+                hold = _PalaceLockHold(_acquire_palace_lock_file(lock_path, resolved))
+                try:
+                    _write_lock_holder(hold.file)
+                    _mark_held(lock_key, hold)
+                except BaseException:
+                    holds.pop(lock_key, None)
+                    hold.file.close()
+                    hold = None
+                    raise
+        yield
     finally:
-        if acquired:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    # Match the lock region: byte 0.
-                    lf.seek(0)
-                    msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(lf, fcntl.LOCK_UN)
-            except Exception:
-                pass
-        lf.close()
+        if hold is not None:
+            with _palace_lock_guard:
+                holds = _holder_keys_locked()
+                # A child forked inside this context has no ownership credit.
+                if holds.get(lock_key) is hold:
+                    hold.users -= 1
+                    if hold.users == 0:
+                        del holds[lock_key]
+                        # Closing releases the byte-range lock on Windows and
+                        # the flock on POSIX, including exceptional exits.
+                        hold.file.close()
 
 
 # Backward-compatible alias (previous patch iteration used a single global

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -408,11 +409,10 @@ def test_holder_set_not_orphaned_by_interrupt_after_mark_held(tmp_path, monkeypa
     """An async interrupt right after the hold is recorded must not leave the
     palace key stranded in the process-wide holder set.
 
-    ``_mark_held`` sits inside the ``try`` whose ``finally`` runs
-    ``_mark_released``, so the two are paired on every exit. If ``_mark_held``
-    ran before the ``try``, a ``KeyboardInterrupt``/signal landing in the gap
-    would strand the key: the outer ``finally`` still frees the flock, so
-    ``_held_by_this_process`` would report a hold the OS lock no longer backs,
+    Registration is protected by cleanup on every exceptional exit. A
+    ``KeyboardInterrupt``/signal after ``_mark_held`` must not strand the key
+    after cleanup frees the flock, or ``_held_by_this_process`` would report
+    a hold the OS lock no longer backs,
     and the next re-entrant acquire in this process would pass through and
     write without the flock (two concurrent writers into one palace).
     """
@@ -425,8 +425,8 @@ def test_holder_set_not_orphaned_by_interrupt_after_mark_held(tmp_path, monkeypa
     # raise, as a signal arriving at that instant would.
     real_mark_held = palace_mod._mark_held
 
-    def _mark_then_interrupt(lock_key):
-        real_mark_held(lock_key)
+    def _mark_then_interrupt(lock_key, hold):
+        real_mark_held(lock_key, hold)
         raise KeyboardInterrupt
 
     palace_mod._mark_held = _mark_then_interrupt
@@ -446,6 +446,49 @@ def test_holder_set_not_orphaned_by_interrupt_after_mark_held(tmp_path, monkeypa
     # The flock was freed and no stale hold remains, so the lock is reusable.
     with mine_palace_lock(palace):
         pass
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is unavailable")
+def test_forked_context_cannot_release_parent_lease(tmp_path, monkeypatch):
+    """Child cleanup drops inherited credit without unlocking the parent's lease."""
+    _isolate_home(monkeypatch, tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import fcntl, os, sys
+import mempalace.palace as palace
+with palace.mine_palace_lock(sys.argv[1]):
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            with palace.mine_palace_lock(sys.argv[1]):
+                pass
+        except palace.MineAlreadyRunning:
+            code = 0
+    else:
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+        # Bypass re-entrant credit to probe the actual parent-owned OS lease.
+        with open(next(iter(palace._palace_lock_keys)), "r+b") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise AssertionError("child released the parent's lease")
+if pid == 0:
+    os._exit(code)
+""",
+            str(tmp_path / "palace"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 # ---------------------------------------------------------------------------

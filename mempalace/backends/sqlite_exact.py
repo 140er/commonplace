@@ -489,11 +489,9 @@ class SQLiteExactCollection(BaseCollection):
     def _write_lock(self):
         """Serialize this handle before taking process-wide writer ownership.
 
-        ``mine_palace_lock`` grants cross-thread re-entrant access whenever
-        this process already owns the palace. Taking it before ``handle.lock``
-        lets a waiting thread consume that re-entrant credit, outlive the
-        thread that owns the OS lease, and then mutate after the lease has been
-        released. The handle mutex must therefore be the outer context.
+        ``mine_palace_lock`` retains process-wide ownership until all overlapping
+        users exit. Queue on ``handle.lock`` first so a waiting thread reserves
+        that ownership only once it can proceed with its write.
         """
         # Late import avoids a palace.py -> backend -> palace.py cycle.
         from ..palace import mine_palace_lock
@@ -1581,8 +1579,8 @@ class SQLiteExactCollection(BaseCollection):
 
         # compact → VACUUM. It cannot run inside a transaction, so flip the
         # connection to autocommit for the duration. _write_lock takes the
-        # handle mutex before the palace lease so a waiting thread cannot
-        # retain stale process-reentrant ownership after another thread exits.
+        # handle mutex before the palace lease so a queued thread does not
+        # reserve writer ownership until it can proceed.
         before = self.maintenance_state()
         with self._write_lock():
             conn = self._handle.conn
