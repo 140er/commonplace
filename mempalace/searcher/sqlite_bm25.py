@@ -353,7 +353,7 @@ def _fetch_union_lexical_candidates(
             where=where or None,
         )
     except Exception:
-        logger.debug("Bounded lexical candidates unavailable")
+        logger.warning("Bounded lexical candidate retrieval failed")
         return LexicalResult(hits=[])
 
 
@@ -371,7 +371,8 @@ def _merge_bm25_union_candidates(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
-    where: Optional[dict] = None,
+    *,
+    where: Optional[dict],
     lexical_result=None,
 ) -> None:
     """Append top-K backend lexical candidates into ``hits`` in place.
@@ -395,7 +396,6 @@ def _merge_bm25_union_candidates(
     is not counted twice.
     """
     stats = {} if stats is None else stats
-    where = build_where_filter(wing, room, source_file, col=drawers_col) if where is None else where
     known_distances = known_distances or {}
     lexical = (
         lexical_result
@@ -471,6 +471,7 @@ def _merge_bm25_union_candidates(
         }
         bm25_extra.append(entry)
 
+    original_ids = {h.get("_stored_id") for h in hits}
     seen = {h["_stored_id"] for h in hits if h.get("_stored_id")}
     for bh in bm25_extra:
         key = bh["_stored_id"]
@@ -479,3 +480,8 @@ def _merge_bm25_union_candidates(
         bh["closet_boost"] = 0.0
         hits.append(bh)
         seen.add(key)
+    if lexical.selected_terms and any(h.get("_stored_id") not in original_ids for h in hits):
+        evidence = {hit.id: getattr(hit, "matched_terms", ()) for hit in lexical.hits}
+        for entry in hits:
+            entry["_lexical_terms"] = lexical.selected_terms
+            entry["_lexical_matches"] = evidence.get(entry.get("_stored_id"), ())

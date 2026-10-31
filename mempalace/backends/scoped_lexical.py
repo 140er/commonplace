@@ -1,9 +1,10 @@
 """One-call FTS scope: bounded term fetches and local ranking, without caches."""
 
 import logging
+import math
 from contextlib import contextmanager
 
-from ..lexical import bm25_scores, lexical_query_terms, tokenize
+from ..lexical import bm25_scores, index_bm25_scores, lexical_query_terms, tokenize
 from ..stored_text import INDEX_SPANS, decode_record, index_text
 from .base import LexicalHit, LexicalResult
 
@@ -46,7 +47,14 @@ class ScopedFTS:
             for row in self.conn.execute(
                 f"SELECT rowid FROM {self.table} WHERE {self.table} MATCH ? AND {predicate} "
                 "ORDER BY rowid DESC LIMIT ?",
-                ('"' + term.replace('"', '""') + '"', *params, limit),
+                (
+                    '"'
+                    + term.replace('"', '""')
+                    + '"'
+                    + ("*" if getattr(term, "prefix", False) else ""),
+                    *params,
+                    limit,
+                ),
             )
         ]
 
@@ -77,7 +85,7 @@ def scope_local_search(
         return LexicalResult(hits=[], skip_reason=skip)
     with collection.lexical_scope(where) as scope:
         cutoff = min(2000, max(1000, scope.count // 20))
-        selected, ids = [], set()
+        selected, ids, evidence = [], set(), {}
         for term in terms:
             matches = scope.fetch(term, 5000 if closet else cutoff + 1)
             if closet and len(matches) >= 5000:
@@ -87,17 +95,45 @@ def scope_local_search(
             if matches and (closet or len(matches) <= cutoff):
                 selected.append(term)
                 ids.update(matches)
+                for row_id in matches:
+                    evidence.setdefault(row_id, set()).add(term)
                 if not closet and len(selected) == 8:
                     break
         # Every accepted term's complete match set is present. Drawer pools
         # contain at most 8*2000 ids; closets retain the complete capped query.
-        ordered = sorted(ids)
+        # First stage needs only rowids. It bounds text decoding and Python
+        # scoring independently of the accepted terms' full match counts.
+        if not closet:
+            idf = {
+                term: math.log(
+                    (max(scope.count, len(ids)) + 1)
+                    / (sum(term in e for e in evidence.values()) + 0.5)
+                )
+                for term in selected
+            }
+            ordered = sorted(
+                ids, key=lambda row_id: (-sum(idf[t] for t in evidence[row_id]), row_id)
+            )[: max(100, 10 * n_results)]
+        else:
+            ordered = sorted(ids)
         texts = scope.load_texts(ordered)
-        rank_query = (
-            " ".join(term[:64] for term in tokenize(query)[:256]) if closet else " ".join(selected)
-        )
-        scores = bm25_scores(rank_query, [texts.get(row_id, "") for row_id in ordered])
-        ranked = sorted(zip(ordered, scores), key=lambda pair: -pair[1])[:n_results]
+        if closet:
+            # Preserve develop's full-query word scorer, including dropping
+            # trigram substring-only matches with zero word-level signal.
+            rank_query = " ".join(term[:64] for term in tokenize(query)[:256])
+            scores = bm25_scores(rank_query, [texts.get(row_id, "") for row_id in ordered])
+        else:
+            scores = index_bm25_scores(
+                selected,
+                [texts.get(row_id, "") for row_id in ordered],
+                [evidence[row_id] for row_id in ordered]
+                if getattr(collection, "lexical_min_token_length", 2) != 3
+                else None,
+            )
+        ranked = sorted(
+            ((row_id, score) for row_id, score in zip(ordered, scores) if score > 0),
+            key=lambda pair: -pair[1],
+        )[:n_results]
         hydrated = scope.hydrate([row_id for row_id, _ in ranked])
         return LexicalResult(
             hits=[
@@ -106,6 +142,9 @@ def scope_local_search(
                     document=hydrated[row_id][1],
                     metadata=hydrated[row_id][2],
                     score=score,
+                    matched_terms=tuple(evidence[row_id])
+                    if not closet and getattr(collection, "lexical_min_token_length", 2) != 3
+                    else (),
                 )
                 for row_id, score in ranked
                 if row_id in hydrated

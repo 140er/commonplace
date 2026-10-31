@@ -1,4 +1,4 @@
-"""RFC 009: scoped statistics, bounded probes and capability defaults."""
+"""RFC 009 drawer/closet privacy with facts excluded; bounded defaults."""
 
 from types import SimpleNamespace
 
@@ -65,7 +65,7 @@ def test_only_query_shape_skip_reasons_leave_the_lexical_boundary(reason):
         union_lexical_search=lambda **kw: LexicalResult(hits=[], skip_reason=reason),
     )
     stats = {}
-    _merge_bm25_union_candidates([], col, "query", None, None, n_results=5, stats=stats)
+    _merge_bm25_union_candidates([], col, "query", None, None, n_results=5, stats=stats, where=None)
     assert stats == ({} if reason == "no_discriminative_terms" else {"lexical_skipped": reason})
 
 
@@ -536,3 +536,87 @@ def test_closet_statistics_exclude_drawers_even_in_the_same_wing(tmp_path, monke
         ("a", 0.40),
         ("b", 0.25),
     ]
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+def test_cli_compatible_wing_union_never_prints_private_drawer(monkeypatch, config, kg, backend):
+    from _mcp_server_helpers import _patch_mcp_server
+
+    from commonplace.gateway import Mediator
+    from mempalace import mcp_server
+    from mempalace.backends import embedding_wrapper
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    _patch_mcp_server(monkeypatch, config, kg)
+    palace = config.palace_path
+    col = get_collection(palace, create=True)
+    col.add(
+        ids=[f"d{i}" for i in range(30)] + ["public-needle", "private-needle"],
+        documents=["routine note"] * 30 + ["ZXQ739251 PUBLIC_NEEDLE", "ZXQ739251 PRIVATE_SECRET"],
+        embeddings=[[0.01, 1.0]] * 30 + [[0.0, 0.0]] * 2,
+        metadatas=[{"wing": "public"}] * 31 + [{"wing": "private"}],
+    )
+    monkeypatch.setattr(mcp_server, "_refresh_vector_disabled_flag", lambda: None)
+    monkeypatch.setattr(mcp_server, "_vector_disabled", False)
+    session_col = col
+    if backend == "chroma":
+        session_col = mcp_server._checked_chroma_collection(col._inner._collection, create=False)
+        assert _resolve_candidate_strategy(None, session_col) == "union"
+    monkeypatch.setattr(mcp_server, "_get_collection", lambda: session_col)
+    direct = mcp_server.tool_search(
+        "ZXQ739251", wings=["public"], cli_compatible=True, include_facts=False
+    )
+    assert "PUBLIC_NEEDLE" in direct["cli_output"] and "PRIVATE_SECRET" not in direct["cli_output"]
+    monkeypatch.setattr(mcp_server, "_get_collection", lambda: col)
+    without_hub = mcp_server.tool_search(
+        "ZXQ739251", wings=["public"], cli_compatible=True, include_facts=False
+    )
+    assert direct == without_hub
+    mediator = object.__new__(Mediator)
+
+    def call_tool(principal, name, args):
+        if name == "mempalace_list_wings":
+            return {"wings": {"public": {}, "private": {}}}
+        return mcp_server.tool_search(**args)
+
+    mediator.workers = SimpleNamespace(call_tool=call_tool)
+    principal = SimpleNamespace(policy=SimpleNamespace(can_read_wing=lambda wing: wing == "public"))
+    result = mediator._fan_out_search(
+        principal,
+        "mempalace_search",
+        {"query": "ZXQ739251", "cli_compatible": True, "include_facts": False},
+    )
+    assert "PUBLIC_NEEDLE" in result["cli_output"] and "PRIVATE_SECRET" not in result["cli_output"]
+
+
+def test_moderately_common_pool_preranks_rowids_before_loading_text():
+    from contextlib import contextmanager
+
+    from mempalace.backends.scoped_lexical import scope_local_search
+
+    terms = ["quartz", "marigold", "lantern", "kestrel", "migration", "rollout", "deploy", "copper"]
+    loaded = []
+
+    @contextmanager
+    def lexical_scope(where):
+        def fetch(term, limit):
+            i = terms.index(term)
+            return [0] + list(range(1 + 2000 * i, 2000 * (i + 1)))
+
+        def load(ids):
+            loaded.extend(ids)
+            return {i: " ".join(terms) if i == 0 else "quartz noise" for i in ids}
+
+        yield SimpleNamespace(
+            count=40000,
+            fetch=fetch,
+            load_texts=load,
+            hydrate=lambda ids: {i: (str(i), " ".join(terms), {}) for i in ids},
+        )
+
+    col = SimpleNamespace(lexical_scope=lexical_scope, lexical_min_token_length=2)
+    result = scope_local_search(col, " ".join(terms), 5)
+    assert len(loaded) == 100 and result.hits[0].id == "0"

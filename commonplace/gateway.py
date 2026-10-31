@@ -761,16 +761,6 @@ def _target_ids(args: dict, result) -> list:
     return ids
 
 
-def _score_key(hit) -> tuple:
-    if not isinstance(hit, dict):
-        return (1, 0.0)
-    for key, sign in (("score", -1), ("similarity", -1), ("distance", 1)):
-        value = hit.get(key)
-        if isinstance(value, (int, float)):
-            return (0, sign * float(value))
-    return (1, 0.0)
-
-
 def _scrub(node, can_read: Callable[[str], bool]):
     """``node`` without anything from an unreadable wing.
 

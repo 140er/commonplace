@@ -215,7 +215,16 @@ def _hybrid_rank(
         )
         for r in results
     ]
-    bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
+    if any("_lexical_terms" in r for r in results):
+        from ..lexical import index_bm25_scores
+
+        terms = next(r["_lexical_terms"] for r in results if "_lexical_terms" in r)
+        bm25_raw = index_bm25_scores(terms, docs, [r.get("_lexical_matches", ()) for r in results])
+        for r in results:
+            r.pop("_lexical_terms", None)
+            r.pop("_lexical_matches", None)
+    else:
+        bm25_raw = bm25_scores(query, docs, stop_words=stop_words)
     max_bm25 = max(bm25_raw) if bm25_raw else 0.0
     bm25_norm = [s / max_bm25 for s in bm25_raw] if max_bm25 > 0 else [0.0] * len(bm25_raw)
 

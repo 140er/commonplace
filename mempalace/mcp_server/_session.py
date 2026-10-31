@@ -83,6 +83,8 @@ class _SessionFreshness:
     """Stands in for ``ChromaCollection``'s owning backend so the session's own
     writes re-baseline its freshness stat (see :func:`_restamp_palace_db`)."""
 
+    capabilities = ChromaBackend.capabilities
+
     @staticmethod
     def _restamp(palace_path: str) -> None:
         if palace_path == _config.palace_path:

@@ -205,6 +205,8 @@ def _cli_ranked_hits(
         before_dt=window[1] if window else None,
         known_distances=known_distances,
         stats=stats,
+        where=where,
+        stop_words=stop_words,
     )
     for hit in hits:
         if "metadata" not in hit:

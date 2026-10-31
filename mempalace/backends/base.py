@@ -398,6 +398,7 @@ class LexicalHit:
     document: str
     metadata: dict
     score: float
+    matched_terms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

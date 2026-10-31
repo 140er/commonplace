@@ -87,27 +87,27 @@ def test_literal_name_and_other_priority_is_stable():
 def test_long_prose_does_not_turn_initial_capital_caps_or_hyphens_into_literals(starter):
     query = (
         starter
-        + " what did we decide about the deployment configuration and error handling patterns before we review the database migration next week"
+        + " what did we decide about the deployment configuration and error handling patterns before we review the database migration next week implementation verification architecture latency"
     )
     assert lexical_query_terms(query) == ([], "long_query_no_literal")
 
 
 def test_long_questions_use_names_and_literals_only():
     terms, skip = lexical_query_terms(
-        "What did Sarah Okonkwo say about the budget review at our meeting on Tuesday afternoon with the vendor team last spring?"
+        "What did Sarah Okonkwo say about the budget review at our meeting on Tuesday afternoon with the vendor team last spring planning implementation verification architecture latency?"
     )
     assert skip is None and "okonkwo" in terms
     assert "budget" not in terms
     terms, skip = lexical_query_terms(
         'Please find what we wrote down about the "marigold protocol" from the meeting with the vendor team last spring'
     )
-    assert skip is None and {"marigold", "protocol"} <= set(terms)
+    assert skip is None and "marigold protocol" in terms
 
 
 def test_index_normalization_query_caps_and_shape_reasons():
     assert lexical_query_terms("session summary") == ([], "no_terms_after_stopwords")
     assert lexical_query_terms("the " * 300 + "ZQ9") == ([], "no_terms_after_stopwords")
-    assert lexical_query_terms("café PORT foo_bar")[0] == ["foo", "bar", "cafe", "port"]
+    assert lexical_query_terms("café PORT foo_bar")[0] == ["foo_bar", "cafe", "port"]
     terms, _ = lexical_query_terms(" ".join(f"id{i}" for i in range(400)))
     assert len(terms) == 16
     assert all(len(t) <= 64 for t in lexical_query_terms("x" * 400)[0])
@@ -121,9 +121,110 @@ def test_sentence_starts_and_short_words_are_not_names():
 
 def test_repeated_word_keeps_its_highest_priority_class():
     terms, _ = lexical_query_terms("discuss brown next Brown manifest /srv/manifest.lock")
-    assert terms.index("manifest") < terms.index("brown") < terms.index("discuss")
+    assert terms.index("/srv/manifest.lock") < terms.index("brown") < terms.index("discuss")
 
 
 def test_closet_query_keeps_all_capped_terms_without_drawer_selection():
     terms, skip = lexical_query_terms(" ".join(f"term{i}" for i in range(300)), closet=True)
     assert skip is None and len(terms) == 256
+
+
+def test_ascii_fast_path_equals_sqlite_unicode61_property():
+    import random
+    import string
+
+    from mempalace.lexical import IndexWordNormalizer
+
+    rng = random.Random(739251)
+    alphabet = string.printable.replace("_", "")
+    with IndexWordNormalizer() as normalize:
+        for _ in range(1000):
+            text = "".join(rng.choices(alphabet, k=rng.randrange(300)))
+            assert normalize(text) == normalize.native(text)
+        assert normalize("foo_bar café cafe 東京 中文 a 1") == [
+            "foo",
+            "bar",
+            "cafe",
+            "cafe",
+            "東京",
+            "中文",
+            "a",
+            "1",
+        ]
+
+
+def test_index_phrase_tf_and_match_floor():
+    from mempalace.lexical import index_bm25_scores
+
+    scores = index_bm25_scores(["foo_bar"], ["foo bar", "bar foo", "foo_bar foo_bar"])
+    assert scores[0] > 0 and scores[1] == 0 and scores[2] > scores[0]
+    assert index_bm25_scores(["cafe"], ["café"])[0] > 0
+    assert index_bm25_scores(["needle"], ["mismatch"], [{"needle"}])[0] > 0
+
+
+@pytest.mark.parametrize("backend", ["chroma", "sqlite_exact", "compact"])
+@pytest.mark.parametrize("saturated", [False, True])
+def test_index_literals_are_single_phrases_among_subword_confusers(
+    tmp_path, monkeypatch, backend, saturated
+):
+    from mempalace.backends import embedding_wrapper
+    from mempalace.palace import get_closets_collection, get_collection
+    from mempalace.searcher import search_memories
+
+    monkeypatch.setenv("MEMPALACE_BACKEND_EXPLICIT", backend)
+    monkeypatch.setattr(
+        embedding_wrapper, "_embed_texts", lambda texts, **kw: [[1.0, 0.0]] * len(texts)
+    )
+    palace = str(tmp_path / "palace")
+    col = get_collection(palace, create=True)
+    shapes = [
+        ("foo_bar", "foo_bar", ["foo", "bar"]),
+        ("src/main.py", "src/main.py", ["src", "main", "py"]),
+        ("build.alpha.7", "build.alpha.7", ["build", "alpha", "7"]),
+        ("server:8473", "server:8473", ["server", "8473"]),
+        ('"marigold protocol"', "marigold protocol", ["marigold", "protocol"]),
+        ("café", "café", ["coffee", "crema"]),
+        ("cafe", "cafe", ["coffee", "crema"]),
+        ("项目部署配置", "项目部署配置", ["项目", "部署", "配置"]),
+        ("x" * 81, "x" * 81, ["xenon", "xavier"]),
+    ]
+    count = 1005 if saturated else 20
+    rows = [(f"n{i}", text, [0.0, 0.0]) for i, (_, text, _) in enumerate(shapes)]
+    for i in range(count):
+        for j, word in enumerate(dict.fromkeys(w for _, _, words in shapes for w in words)):
+            rows.append((f"d{i}-{j}", word + " ordinary unrelated commentary", [0.01, 1.0]))
+    for start in range(0, len(rows), 500):
+        batch = rows[start : start + 500]
+        col.add(
+            ids=[r[0] for r in batch],
+            documents=[r[1] for r in batch],
+            embeddings=[r[2] for r in batch],
+            metadatas=[{"wing": "public"}] * len(batch),
+        )
+    for i, (query, _, _) in enumerate(shapes):
+        lexical = col.union_lexical_search(query=query, n_results=5, where={"wing": "public"})
+        assert f"n{i}" in {h.id for h in lexical.hits}, (backend, query, lexical)
+        if i < 5:
+            assert lexical.selected_terms == [query.strip('"')]
+        result = search_memories(query, palace, wing="public", n_results=5, include_facts=False)
+        match = next(h for h in result["results"] if h["drawer_id"] == f"n{i}")
+        assert match["matched_via"] == "bm25_backend" and match["bm25_score"] > 0
+    # Closet queries also normalize both sides of an underscore identically.
+    closets = get_closets_collection(palace, create=True)
+    closets.add(
+        ids=["closet-needle", "closet-confuser"],
+        documents=["foo_bar|team|→n0", "foo alpha|team|→n1"],
+        embeddings=[[1.0, 0.0]] * 2,
+        metadatas=[{"wing": "public"}] * 2,
+    )
+    scoped = closets.union_lexical_search(
+        query="foo_bar", n_results=1, where={"wing": "public"}, closet=True
+    )
+    assert scoped.hits[0].id == "closet-needle" and scoped.hits[0].score > 0
+
+
+def test_function_words_do_not_make_everyday_question_long():
+    terms, skip = lexical_query_terms(
+        "can you remind me what we agreed on for the release notes of the mobile app"
+    )
+    assert skip is None and {"agreed", "release", "mobile", "app"} <= set(terms)

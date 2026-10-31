@@ -60,7 +60,7 @@ COMMON8 = "error deployment configuration team decided implementation verificati
 DATE_QUESTION = "what did we decide in March 2024 about the kestrel migration and the rollback window for the cluster"
 LONG_DATE_QUESTION = (
     DATE_QUESTION
-    + " deployment configuration authentication middleware followup verification component"
+    + " deployment configuration authentication middleware followup verification component architecture latency release rollback integration design reliability maintenance"
 )
 NEEDLES = (
     (
@@ -91,9 +91,38 @@ NEEDLES = (
         "Kestrel migration: rollback window is Sunday night.",
     ),
 )
+NEEDLES += (
+    ("foo_bar", "foo_bar is the exact function name."),
+    ("src/main.py", "src/main.py contains the entry point."),
+    ("build.alpha.7", "build.alpha.7 identifies this release."),
+    ("server:8473", "server:8473 accepts the connection."),
+    ('"copper lantern"', "The copper lantern is stored here."),
+    ("café", "The café receipt is stored here."),
+    ("项目部署配置", "项目部署配置 is the deployment note."),
+    ("x" * 81, "x" * 81 + " is the long identifier."),
+)
+MID_WORDS = (
+    "deployment",
+    "configuration",
+    "error",
+    "handling",
+    "authentication",
+    "middleware",
+    "database",
+    "optimization",
+)
 
 
-def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, cases_filter=None):
+def run(
+    backend,
+    repeats,
+    recall_only=False,
+    cold_probes=False,
+    sizes=None,
+    cases_filter=None,
+    corpus="standard",
+):
+
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
     cache = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH) / "onnx"
@@ -121,6 +150,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
     wings = ["engineering"] + [f"ops{i}" for i in range(6)] + ["small"]
     report = {
         "backend": backend,
+        "corpus": corpus,
         "repeats": repeats,
         "cold_probes": cold_probes,
         "prompt_words": len(PROMPT.split()),
@@ -130,6 +160,23 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
         "date_question": {},
         "scope_index_overhead": {},
     }
+
+    def document(i):
+        if i < len(NEEDLES):
+            return NEEDLES[i][1]
+        if corpus == "standard":
+            return f"{templates[i % 100]} Record {i:06d}."
+        # Each everyday query word occurs in 1,400 drawers, not in all
+        # templates or just a single needle. Disjoint term sets stress the
+        # complete 11,200-row pre-rank pool before bounded text loading.
+        word = MID_WORDS[i // 1400] if i < 1400 * len(MID_WORDS) else "archive"
+        text = f"Routine archive entry {word}. Record {i:06d}."
+        if corpus == "identifiers":
+            text += (
+                f" get_user_id_{i} lib/module_{i}.py trace.record.{i} node:{9000 + i} résumé 東京"
+            )
+        return text
+
     for size in (20_000,) if recall_only else (sizes or (60_000, 200_000)):
         with tempfile.TemporaryDirectory(prefix="query-budget-") as palace:
             col = get_collection(palace, create=True, backend=backend)
@@ -137,12 +184,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
                 stop = min(start + 500, size)
                 col.add(
                     ids=[f"d{i}" for i in range(start, stop)],
-                    documents=[
-                        NEEDLES[i][1]
-                        if i < len(NEEDLES)
-                        else f"{templates[i % 100]} Record {i:06d}."
-                        for i in range(start, stop)
-                    ],
+                    documents=[document(i) for i in range(start, stop)],
                     embeddings=[
                         [0.0] * len(vectors[0]) if i < len(NEEDLES) else vectors[i % 100]
                         for i in range(start, stop)
@@ -160,7 +202,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
             from mempalace.palace import get_backend_for_palace
 
             store_backend = get_backend_for_palace(palace)
-            if backend == "chroma":
+            if backend == "chroma" and corpus == "standard":
                 from mempalace.backends._inproc_sqlite import open_writer
                 from mempalace.backends.chroma_sqlite import SCOPE_INDEX, ensure_scope_index
                 from mempalace.backends.scoped_lexical import lexical_reader
@@ -175,7 +217,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
                 batch = list(range(size - 500, size))
                 write = {
                     "ids": [f"d{i}" for i in batch],
-                    "documents": [f"{templates[i % 100]} Record {i:06d}." for i in batch],
+                    "documents": [document(i) for i in batch],
                     "embeddings": [vectors[i % 100] for i in batch],
                     "metadatas": [
                         {
@@ -235,6 +277,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
                 ("prompt50", PROMPT),
                 ("question12", QUESTION12),
                 ("common8", COMMON8),
+                ("mid8", " ".join(MID_WORDS)),
                 ("long_literal", PROMPT + " ZQ9"),
                 ("cjk", "项目部署配置故障排查"),
                 ("capital50", "Remind" + PROMPT[len("Please") :]),
@@ -357,7 +400,12 @@ def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, case
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=["chroma", "sqlite_exact"], default="chroma")
+    parser.add_argument(
+        "--backend", choices=["chroma", "sqlite_exact", "compact"], default="chroma"
+    )
+    parser.add_argument(
+        "--corpus", choices=["standard", "moderate", "identifiers"], default="standard"
+    )
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--recall-only", action="store_true")
     parser.add_argument(
@@ -371,7 +419,13 @@ if __name__ == "__main__":
     parser.add_argument("--cases", nargs="+")
     args = parser.parse_args()
     report = run(
-        args.backend, args.repeats, args.recall_only, args.cold_probes, args.sizes, args.cases
+        args.backend,
+        args.repeats,
+        args.recall_only,
+        args.cold_probes,
+        args.sizes,
+        args.cases,
+        args.corpus,
     )
     print(json.dumps(report, indent=2))
     sys.exit(0 if report["pass"] else 1)

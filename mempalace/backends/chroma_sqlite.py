@@ -15,6 +15,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from typing import Iterable, Iterator, Optional
 
@@ -73,9 +74,21 @@ def ensure_scope_index(conn):
     return True
 
 
+_scope_index_retry_after = {}
+
+
 def ensure_palace_scope_index(palace_path):
     path = _db_file(palace_path)
     if path is None:
+        return
+    if _read_db(
+        palace_path,
+        lambda conn: conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
+        ).fetchone(),
+    ):
+        return
+    if time.monotonic() < _scope_index_retry_after.get(path, 0):
         return
     try:
         # A different process owns its SQLite locks: closing its writer
@@ -88,6 +101,9 @@ def ensure_palace_scope_index(palace_path):
         )
         if result.returncode:
             logger.debug("Optional lexical scope index unavailable")
+    except subprocess.TimeoutExpired:
+        _scope_index_retry_after[path] = time.monotonic() + 60
+        logger.debug("Optional lexical scope index creation timed out")
     except (OSError, subprocess.SubprocessError):
         # The index changes the plan, never eligibility or search results.
         logger.debug("Optional lexical scope index unavailable")
@@ -234,7 +250,7 @@ def _metadata_value_columns(conn) -> list[str]:
     return [c for c in ("string_value", "int_value", "float_value", "bool_value") if c in present]
 
 
-def _decoded_rows(conn, row_ids, where: Optional[dict] = None) -> list[tuple]:
+def _decoded_rows(conn, row_ids, where: Optional[dict] = None, *, with_row_ids=False):
     """``(drawer_id, document, metadata)`` for ``row_ids``, in that order, decoded.
 
     The shape Chroma's ``get`` returns: a missing document is ``None``, as is
@@ -274,12 +290,13 @@ def _decoded_rows(conn, row_ids, where: Optional[dict] = None) -> list[tuple]:
                     record[2] = {}
                 record[2][key] = value
     stored_where = encode_where(where) if where else None
-    return [
-        (records[row_id][0], *decode_record(records[row_id][1], records[row_id][2]))
+    decoded = {
+        row_id: (records[row_id][0], *decode_record(records[row_id][1], records[row_id][2]))
         for row_id in row_ids
         if row_id in records
         and (stored_where is None or matches_where(records[row_id][2] or {}, stored_where))
-    ]
+    }
+    return decoded if with_row_ids else list(decoded.values())
 
 
 def _scalar_rows(rows) -> list[tuple]:
@@ -593,7 +610,7 @@ def sqlite_lexical_scope(palace_path, collection_name, where=None):
             }
 
         def hydrate(ids):
-            return dict(zip(ids, _decoded_rows(conn, ids)))
+            return _decoded_rows(conn, ids, with_row_ids=True)
 
         yield ScopedFTS(
             conn,

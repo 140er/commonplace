@@ -291,7 +291,8 @@ def _apply_candidate_strategy(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
-    where: Optional[dict] = None,
+    *,
+    where: Optional[dict],
     lexical_result=None,
     stop_words: frozenset = frozenset(),
 ) -> None:
@@ -339,7 +340,7 @@ def _finalize_candidate_hits(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
-    where: Optional[dict] = None,
+    where: Optional[dict],
     lexical_result=None,
 ) -> tuple:
     _apply_candidate_strategy(

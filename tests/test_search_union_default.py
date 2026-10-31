@@ -165,11 +165,11 @@ def test_long_plain_query_skips_lexical_and_keeps_vector_results(lexical_palace,
     palace, col = lexical_palace
     query = (
         "review the deployment configuration authentication middleware and database "
-        "optimization before discussing implementation verification operational followup"
+        "optimization before discussing implementation verification operational followup architecture reliability maintenance"
     )
     vector = search_memories(query, palace, candidate_strategy="vector")
     monkeypatch.setattr(
-        col, "lexical_search", lambda **kw: pytest.fail("long plain query used lexical")
+        col, "union_lexical_search", lambda **kw: pytest.fail("long plain query used lexical")
     )
     default = search_memories(query, palace)
     assert default["lexical_skipped"] == "long_query_no_literal"

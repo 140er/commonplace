@@ -10,17 +10,20 @@ Status: proposed, 31 Oct 2026. Redesign of the union default (PR #38). Revised a
 
 For a search scoped to wings W, everything the response contains (hits, scores, order, stats, reasons) is a function of the query and the content of W only. Timing is out of scope: response time already depends on unrelated load. What is in scope is anything that lets one principal observe another's queries. So caches are never shared across principals.
 
+Known exceptions (pre-existing, follow-up): fact ranking uses graph-wide statistics, and Chroma’s vector-disabled fallback uses whole-index FTS rank above 20,000 scoped drawers. The drawer/closet differential tests exclude facts and that fallback.
+
 ## Rules
 
 1. **Bounded per call.** Union-mode lexical retrieval runs only when the `where` filter and a LIMIT can both go inside the index query: Chroma's SQLite FTS path, sqlite_exact, compact, for filters on wing/room/source that push down. Otherwise the search resolves to `vector`, with no post-filter, recency or scan fallback. Backends with no bounded path (pgvector, Qdrant, Milvus) always resolve to `vector`, and a test pins it.
 2. **Default.** `candidate_strategy` defaults to `None`, resolved per call by rule 1: `union` when bounded, else `vector`. An explicit `union` follows rule 1 too. An explicit `vector` is honoured.
 3. **Scope-local ranking.** Per selected term: `MATCH '"<term>"' AND <filter> ORDER BY rowid DESC LIMIT cutoff+1`.
    - The fetch gives the term's in-scope document frequency.
-   - Candidates are ranked by BM25 with in-scope IDF and in-scope length statistics, and the top k are hydrated.
+   - Drawer candidates are first ranked by the sum of in-scope IDF of matched terms using rowid sets only. At most max(100, 10 × requested lexical results) candidates receive full BM25 scoring; this is approximate within equally covered terms. BM25 uses candidate-pool N and average length, both entirely in scope. The top k are hydrated. Closets retain their full bounded match pool.
    - There is no separate probe query and no probe cache.
    - The same scope-local ranking replaces `bm25()` in the closet lexical path, so closet boosts no longer depend on other wings. Closets use full-query scope-local BM25 without the union term selection or DF rejection: the cutoff bounds drawer candidate pools, while closet pointer lines must preserve develop's boosts. Closet queries retain the 256-token/64-character caps and quoted terms. Each term fetch has a hard LIMIT of 5,000 matched closets; reaching that LIMIT disables all closet boosts for that search instead of scanning or ranking an incomplete pool. Statistics come only from in-scope closets, so removing the old table-wide influence of drawers and other collections can reorder boosted closets; closets never gate drawer recall.
 4. **Term selection** (shared, deterministic):
    - Normalise terms with the index tokenizer.
+   - A literal stays one term; where the index tokenizer splits it, it is fetched and scored as a phrase.
    - Cap the query at 256 tokens and each term at 64 characters. Drop terms shorter than the index minimum (Chroma trigram: 3). Quote every term, doubling any `"`.
    - Classes in priority order: literals (a digit, `_ / . :`, a quoted span, or mixed case inside a word such as `getUser`; not hyphens alone, not all-caps words alone), then proper names (capitalised words that are not the first word of a sentence: the query start or after `. ! ?`), then other words.
    - Take the first 8 terms in priority order whose in-scope df is between 1 and the cutoff (5% of the scope, bounded to 1,000–2,000). At most 16 term fetches per search.

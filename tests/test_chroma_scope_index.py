@@ -143,3 +143,54 @@ def test_repair_and_migration_recreate_scope_index(tmp_path, operation):
         assert "a" in col.query(query_texts=["quartz"], n_results=2).ids[0]
     finally:
         backend.close()
+
+
+def test_writable_reopen_skips_index_subprocess_and_timeout_backs_off(tmp_path, monkeypatch):
+    import subprocess
+
+    from mempalace.backends import chroma_sqlite
+
+    backend, _ = _seed(tmp_path)
+    calls = []
+
+    def timeout(*args, **kwargs):
+        calls.append(args)
+        raise subprocess.TimeoutExpired("index installer", 10)
+
+    monkeypatch.setattr(chroma_sqlite.subprocess, "run", timeout)
+    chroma_sqlite.ensure_palace_scope_index(str(tmp_path))
+    assert calls == []
+    backend.close()
+    _drop_index(tmp_path)
+    chroma_sqlite.ensure_palace_scope_index(str(tmp_path))
+    chroma_sqlite.ensure_palace_scope_index(str(tmp_path))
+    assert len(calls) == 1
+
+
+def test_scope_hydration_keeps_row_identity_when_a_row_is_missing(tmp_path):
+    backend, col = _seed(tmp_path)
+    try:
+        with col.lexical_scope({"wing": "public"}) as scope:
+            row_id = scope.fetch("quartz", 10)[0]
+            hydrated = scope.hydrate([10**12, row_id])
+            assert set(hydrated) == {row_id} and hydrated[row_id][0] == "a"
+    finally:
+        backend.close()
+
+
+def test_closet_substring_only_zero_scores_are_dropped(tmp_path):
+    backend = ChromaBackend()
+    try:
+        col = backend.get_collection(str(tmp_path), "mempalace_closets", create=True)
+        col.add(
+            ids=["substring"],
+            documents=["foobar|team|→drawer"],
+            embeddings=[[1.0, 0.0]],
+            metadatas=[{"wing": "public"}],
+        )
+        assert col.lexical_search(query="foo", where={"wing": "public"}).hits == []
+        assert (
+            col.union_lexical_search(query="foo", where={"wing": "public"}, closet=True).hits == []
+        )
+    finally:
+        backend.close()
