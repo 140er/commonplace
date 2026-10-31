@@ -934,6 +934,8 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         conn.execute("UPDATE boards SET done_needs_review=? WHERE slug='work'", (needs_review,))
     with pytest.raises(ToolError):
         worker.decide(task=number, choice="yes", then="done")
+    with pytest.raises(ToolError, match="card is waiting on a person"):
+        worker.task_update(number, status="review", checks="passing")
     assert mcp(hub, token, "task_update", task=number, status="review")[0]
     assert mcp(hub, token, "task_update", task=number, status="done")[0]
     current = owner.task_show(number)
@@ -945,7 +947,19 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
             ).fetchone()[0]
             == 0
         )
+    last = current["events"][-1]
+    assert (last["from_status"], last["to_status"]) == (
+        "review",
+        "review" if needs_review else "done",
+    )
+    assert last["stamp_connection"] == agent.actor.removeprefix("conn:")
+    if not needs_review:
+        assert current["ask"] is None and current["ask_to"] is None
+        assert current["return_to"] is None and current["ask_options"] == []
     if needs_review:
+        assert last["text"] == "Done?"
+        assert last["options"] == ["ship", "redo"]
+        assert last["target"] == current["ask_to"]
         assert current["ask"] == "Done?"
         assert current["ask_options"] == ["ship", "redo"]
         with pytest.raises(ToolError):
