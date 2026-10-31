@@ -1082,7 +1082,9 @@ class BoardService:
                 and not self.principal.person
                 and not refresh
                 and not (
-                    set(args) <= {"status", "lesson"} and args.get("status") in ("review", "done")
+                    row["return_to"] == self.principal.actor
+                    and set(args) <= {"status", "lesson"}
+                    and args.get("status") in ("review", "done")
                 )
             ):
                 raise ToolError("no: card is waiting on a person")
