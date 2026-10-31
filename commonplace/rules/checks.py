@@ -1,0 +1,203 @@
+"""Check settings, store identity guards and thread-local internal calls.
+
+All probes use SQLite modes that cannot create a missing store. Store bindings
+live outside the workspace generation, while copied stores retain their ids.
+"""
+
+import logging
+import os
+import sqlite3
+from contextlib import contextmanager
+from contextvars import ContextVar
+from pathlib import Path
+
+from commonplace import events
+from commonplace.extensions import ToolError
+from commonplace.http_util import log_failure
+
+from .store import bump, migrate, now
+
+logger = logging.getLogger(__name__)
+STORE_LOST = "rules_seq store_lost: a rules or boards store was replaced; the owner must confirm it"
+LOST_ERROR = "the rules store was replaced; the owner must confirm it"
+_internal = ContextVar("commonplace_internal_call", default=False)
+
+
+@contextmanager
+def internal_call():
+    token = _internal.set(True)
+    try:
+        yield
+    finally:
+        _internal.reset(token)
+
+
+def is_internal_call():
+    return _internal.get()
+
+
+class StoreLost(ToolError):
+    def __init__(self):
+        super().__init__("no: " + LOST_ERROR)
+
+
+@contextmanager
+def connection(path, *, write=False, timeout=0.1):
+    conn = sqlite3.connect(
+        Path(path).resolve().as_uri() + ("?mode=rw" if write else "?mode=ro"),
+        uri=True,
+        timeout=max(0, timeout),
+        isolation_level=None,
+    )
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def meta(path, key, *, timeout=0.1):
+    if not Path(path).exists():
+        return None
+    with connection(path, timeout=timeout) as conn:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone():
+            return None
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row is not None else None
+
+
+def guard(db, workspace_id, directory, *, bind=True, emit=True, timeout=0.1):
+    """Compare both files before an opener can recreate either of them."""
+    directory = Path(directory)
+    ids = [
+        meta(directory / f"{name}.sqlite3", "store_id", timeout=timeout)
+        for name in ("rules", "boards")
+    ]
+    bound = db.rule_stores(workspace_id) or {}
+    if bind and any(
+        value is not None and bound.get(key) is None
+        for key, value in zip(("rules_store_id", "boards_store_id"), ids)
+    ):
+        bound = db.bind_rule_stores(workspace_id, *ids)
+    lost = any(
+        bound.get(key) is not None and bound[key] != value
+        for key, value in zip(("rules_store_id", "boards_store_id"), ids)
+    )
+    if lost:
+        if emit:
+            try:
+                events.emit(db, workspace_id, "rule.store_lost", data={})
+            except Exception as exc:
+                log_failure(logger, "rules store loss event failed", exc)
+        raise StoreLost()
+    return "ready" if (directory / "rules.sqlite3").exists() else "empty"
+
+
+def mode(gateway, principal):
+    if getattr(gateway, "rules_check_off", False):
+        return "off"
+    try:
+        values = gateway.db.rule_checks(principal.workspace_id)
+        return values.get(principal.actor, values.get("*", "off"))
+    except Exception:
+        return "unknown"
+
+
+def visibility(directory, *, timeout=0.1):
+    return meta(Path(directory) / "boards.sqlite3", "visibility", timeout=timeout) or 0
+
+
+def reconcile(db, workspace_id, directory, *, timeout=0.2, bind=True, emit=True):
+    """One short, independent transaction catches changes and restored boards."""
+    state = guard(db, workspace_id, directory, bind=bind, emit=emit, timeout=min(0.1, timeout))
+    if state == "empty":
+        return
+    path = Path(directory) / "rules.sqlite3"
+    current = visibility(directory, timeout=min(0.1, timeout))
+    with connection(path, timeout=min(0.1, timeout)) as conn:
+        seen = conn.execute("SELECT value FROM meta WHERE key='boards_visibility_seen'").fetchone()
+        migrated = (
+            conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_seq','agent_served')"
+            ).fetchone()[0]
+            == 2
+        )
+        if migrated and seen is not None and seen[0] == current:
+            return
+    with connection(path, write=True, timeout=timeout) as conn:
+        # Migration and the bump share one short write transaction.
+        guard(db, workspace_id, directory, bind=bind, emit=emit, timeout=min(0.1, timeout))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            migrate(conn, current)
+            current = visibility(directory, timeout=min(0.1, timeout))
+            seen = conn.execute(
+                "SELECT value FROM meta WHERE key='boards_visibility_seen'"
+            ).fetchone()[0]
+            if seen != current:
+                if conn.execute(
+                    "SELECT 1 FROM rules WHERE scope IN ('board','repo') LIMIT 1"
+                ).fetchone():
+                    bump(conn, "*")
+                    conn.execute("UPDATE meta SET value=value+1 WHERE key='seq'")
+                conn.execute(
+                    "UPDATE meta SET value=? WHERE key='boards_visibility_seen'", (current,)
+                )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def record_served(ctx, rules_seq, state):
+    directory = ctx.workspace_dir()
+    guard(ctx.db, ctx.principal.workspace_id, directory)
+    with connection(Path(directory) / "rules.sqlite3", write=True, timeout=0.2) as conn:
+        migrate(conn, visibility(directory))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO agent_served VALUES (?,?,?,?) ON CONFLICT(agent) DO UPDATE SET "
+                "state=excluded.state,rules_seq=excluded.rules_seq,at=excluded.at "
+                "WHERE agent_served.state!=excluded.state OR agent_served.rules_seq IS NOT excluded.rules_seq",
+                (ctx.principal.actor, state, rules_seq, now()),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def migrate_workspace(db, workspace_id, directory, *, accept=False):
+    """Deploy/owner migration opens present files only, and binds after all succeed."""
+    directory = Path(directory)
+    boards = directory / "boards.sqlite3"
+    rules = directory / "rules.sqlite3"
+    if boards.exists():
+        from commonplace.boards.store import BoardStore
+
+        BoardStore(directory, create=False)
+    if rules.exists():
+        with connection(rules, write=True, timeout=0.2) as conn:
+            migrate(conn, visibility(directory))
+    ids = [meta(path, "store_id") for path in (rules, boards)]
+    db.bind_rule_stores(workspace_id, *ids, accept=accept)
+    return {"accepted": True} if accept else None
+
+
+def deploy(gateway):
+    for workspace in gateway.db.workspaces():
+        try:
+            if gateway.db.rule_stores(workspace["id"]) is None:
+                migrate_workspace(
+                    gateway.db, workspace["id"], gateway.workspace_dir(workspace["id"])
+                )
+        except Exception as exc:
+            log_failure(logger, "rules store deployment migration failed", exc)
+
+
+def configure(gateway):
+    gateway.rules_check_off = os.environ.get("COMMONPLACE_RULES_CHECK", "").lower() == "off"
+    gateway.rules_inject_off = os.environ.get("COMMONPLACE_RULES_INJECT", "").lower() == "off"

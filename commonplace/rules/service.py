@@ -12,7 +12,8 @@ from commonplace.boards.service import normalize_repo, validate_text
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from .store import RuleStore, now, sequence
+from . import checks, render
+from .store import RuleStore, bump, now, rules_sequence, sequence
 
 KINDS = ("permission", "limit", "instruction", "style")
 SCOPES = ("global", "board", "repo")
@@ -39,7 +40,10 @@ def rule_json(row):
 
 
 def rule_text(value):
-    return validate_text(value, "text", required=True, limit=4000)
+    value = validate_text(value, "text", required=True, limit=4000)
+    if render.length(render.quote(value)) > render.RULE_BYTES:
+        raise ToolError("no: rule text too long once escaped")
+    return value
 
 
 def agent_ref(agent):
@@ -86,9 +90,19 @@ class RuleService:
     def __init__(self, ctx):
         self.ctx = ctx
         self.principal = ctx.principal
-        self.store = open_store(ctx.workspace_dir())
+        self._store = None
+        self._affected = set()
         self._board_visibility = {}
         self._moved = []
+
+    @property
+    def store(self):
+        directory = self.ctx.workspace_dir()
+        checks.guard(self.ctx.db, self.principal.workspace_id, directory)
+        if self._store is None or Path(self._store.path).parent != Path(directory):
+            self._store = open_store(directory)
+            checks.guard(self.ctx.db, self.principal.workspace_id, directory)
+        return self._store
 
     def _emit(self, kind, data):
         try:
@@ -106,9 +120,12 @@ class RuleService:
     def transaction(self):
         # Rules moved to another agent also refresh the agent they left.
         self._moved = []
+        self._affected = set()
         with self.store.transaction() as conn:
             before = sequence(conn)
             yield conn
+            for agent in self._affected:
+                bump(conn, agent)
             changed = conn.execute(
                 "SELECT agent,id,key FROM rules WHERE seq>? ORDER BY seq", (before,)
             ).fetchall()
@@ -185,6 +202,8 @@ class RuleService:
         return rule_json(row)
 
     def _change(self, conn, row, updates, *, note=None, source=None):
+        if "text" in updates:
+            rule_text(updates["text"])
         conn.execute("UPDATE meta SET value=value+1 WHERE key='seq'")
         updates = dict(
             updates,
@@ -197,6 +216,23 @@ class RuleService:
             "UPDATE rules SET " + ",".join(f"{key}=?" for key in updates) + " WHERE id=?",
             (*updates.values(), row["id"]),
         )
+        after = row_for(conn, row["id"])
+        effective_fields = ("text", "kind", "scope", "scope_ref", "agent")
+        before_set = (
+            tuple(row[k] for k in effective_fields)
+            if row["status"] in ("accepted", "edited")
+            else None
+        )
+        after_set = (
+            tuple(after[k] for k in effective_fields)
+            if after["status"] in ("accepted", "edited")
+            else None
+        )
+        if before_set != after_set:
+            if before_set is not None:
+                self._affected.add(row["agent"])
+            if after_set is not None:
+                self._affected.add(after["agent"])
         return self._snapshot(conn, row["id"], note=note, source=source)
 
     def _create(self, conn, agent, key, values, *, owner=False):
@@ -224,6 +260,8 @@ class RuleService:
             + ")",
             tuple(columns.values()),
         )
+        if owner:
+            self._affected.add(agent)
         return self._snapshot(conn, cursor.lastrowid)
 
     def rules_publish(self, rules, replace=False):
@@ -333,7 +371,41 @@ class RuleService:
                 raise ToolError("no: agent rule limit exceeded (500 non-retired, 2000 total)")
             return {"rules": result, "seq": sequence(conn)}
 
-    def rules_get(self, board=None, repo=None, format="text", include_retired=False):
+    def rules_get(
+        self, board=None, repo=None, format="text", include_retired=False, effective=False
+    ):
+        if type(effective) is not bool:
+            raise ToolError("no: effective must be a boolean")
+        if effective:
+            if self.principal.person:
+                raise ToolError("no: effective=true is for agent connections")
+            if board is not None or repo is not None or include_retired:
+                raise ToolError(
+                    "no: effective=true always returns your full set and takes only format"
+                )
+            if format not in ("text", "md"):
+                raise ToolError("no: invalid format or include_retired")
+            try:
+                if not (Path(self.ctx.workspace_dir()) / "rules.sqlite3").exists():
+                    _ = self.store  # Only a first tool read creates the store.
+                result = effective_rules(self.ctx, bind=True, emit=True)
+                mode = checks.mode(self.ctx.gateway, self.principal)
+                if mode == "unknown":
+                    raise RuntimeError("check settings unavailable")
+                reply, state = render.effective(
+                    result["rules"], result["seq"], result["rules_seq"], format=format, mode=mode
+                )
+                checks.record_served(self.ctx, result["rules_seq"], state)
+                if state == "too_large":
+                    self._emit("rule.too_large", {"agent": self.principal.actor})
+                return dict(result, reply=reply, state=state)
+            except checks.StoreLost:
+                return {"reply": checks.STORE_LOST}
+            except Exception as exc:
+                log_failure(logger, "effective rules unavailable", exc)
+                return {
+                    "reply": "rules_seq unavailable: could not build the complete rule set; keep your last copy"
+                }
         if format not in ("text", "md") or type(include_retired) is not bool:
             raise ToolError("no: invalid format or include_retired")
         if board is not None:
@@ -400,6 +472,7 @@ class RuleService:
                 if self.principal.role == "owner"
                 else [],
                 "seq": sequence(conn),
+                "checks": self.ctx.db.rule_checks(self.principal.workspace_id),
                 "can_edit": self.principal.role == "owner",
                 "waiting": conn.execute(f"SELECT count(*) FROM rules WHERE {WAITING}").fetchone()[
                     0
@@ -411,6 +484,35 @@ class RuleService:
                     )
                 },
             }
+
+    def set_check(self, agent, mode):
+        self._person(owner=True)
+        agent = agent_ref(agent)
+        if mode not in ("default", "off", "warn", "enforce") or (
+            agent == "*" and mode == "default"
+        ):
+            raise ToolError("no: invalid check mode")
+        if agent != "*":
+            from commonplace.control_db import ControlError
+            from commonplace.policy import Policy
+
+            try:
+                row = self.ctx.db.connection(agent[5:], self.principal.workspace_id)
+            except ControlError:
+                raise ToolError("no: connection not found") from None
+            if mode == "enforce" and not Policy.from_json(row["policy"]).tool_visible("rules_get"):
+                raise ToolError("no: this connection cannot read rules")
+        self.ctx.db.set_rule_check(self.principal.workspace_id, agent, mode, self.principal)
+        self._emit("rule.check", {"agent": agent, "mode": mode})
+        return {"checks": self.ctx.db.rule_checks(self.principal.workspace_id)}
+
+    def accept_store(self):
+        self._person(owner=True)
+        result = checks.migrate_workspace(
+            self.ctx.db, self.principal.workspace_id, self.ctx.workspace_dir(), accept=True
+        )
+        self._store = None
+        return result
 
     def count(self):
         self._person()
@@ -614,3 +716,67 @@ class RuleService:
                 },
             )
         return result
+
+
+def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
+    """Read an agent's complete authorized set on independent read-only snapshots.
+
+    Only reconciliation writes. This function never constructs RuleService or
+    creates a store and never records served; injection can use it directly.
+    """
+    if ctx.principal.person:
+        raise ToolError("no: effective=true is for agent connections")
+    directory = Path(ctx.workspace_dir())
+    checks.reconcile(
+        ctx.db, ctx.principal.workspace_id, directory, timeout=timeout, bind=bind, emit=emit
+    )
+    if not (directory / "rules.sqlite3").exists():
+        return {"rules": [], "seq": 0, "rules_seq": None, "served": None, "empty": True}
+    visible_boards, linked_repos, visible_repos = set(), set(), set()
+    if (directory / "boards.sqlite3").exists():
+        with checks.connection(directory / "boards.sqlite3", timeout=timeout) as conn:
+            conn.execute("BEGIN")
+            for board in conn.execute("SELECT slug,wing,archived FROM boards"):
+                if not board["archived"] and ctx.principal.policy.can_read_wing(board["wing"]):
+                    visible_boards.add(board["slug"])
+            for repo in conn.execute(
+                "SELECT r.repo,b.slug FROM board_repos r JOIN boards b ON b.id=r.board_id"
+            ):
+                linked_repos.add(repo["repo"])
+                if repo["slug"] in visible_boards:
+                    visible_repos.add(repo["repo"])
+    with checks.connection(directory / "rules.sqlite3", timeout=timeout) as conn:
+        conn.execute("BEGIN")
+        rows = conn.execute(
+            "SELECT * FROM rules WHERE agent IN (?, '*') AND status IN ('accepted','edited') ORDER BY id",
+            (ctx.principal.actor,),
+        ).fetchall()
+        selected = []
+        for row in rows:
+            visible = row["scope"] == "global" or (
+                row["scope"] == "board" and row["scope_ref"] in visible_boards
+            )
+            if row["scope"] == "repo":
+                visible = row["scope_ref"] in visible_repos or (
+                    ctx.principal.policy.trust == "trusted" and row["scope_ref"] not in linked_repos
+                )
+            if visible:
+                # The enforcement view contains only the owner's effective text.
+                value = rule_json(row)
+                value.update(agent_text=None, agent_text_by=None, pending=0)
+                if (
+                    str(value["updated_by"]).startswith("conn:")
+                    and value["updated_by"] != ctx.principal.actor
+                ):
+                    value["updated_by"] = None
+                selected.append(value)
+        served = conn.execute(
+            "SELECT * FROM agent_served WHERE agent=?", (ctx.principal.actor,)
+        ).fetchone()
+        return {
+            "rules": selected,
+            "seq": sequence(conn),
+            "rules_seq": rules_sequence(conn, ctx.principal.actor),
+            "served": dict(served) if served is not None else None,
+            "empty": False,
+        }

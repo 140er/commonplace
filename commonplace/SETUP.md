@@ -45,3 +45,25 @@ Unverified email never links or creates an account; an already linked provider a
 
 Google, GitHub and Discord sign-in are free. Apple requires the paid Developer Program: US$99/year; local pricing is shown at checkout before the owner approves enrollment.
 X uses prepaid API credits: one `GET /2/users/me` per sign-in is approximately US$0.01 at the published user-read rate; repeat reads of the same user within a UTC day are generally deduplicated. Confirm the rate in the console before funding.
+
+
+## Rules core
+
+Before upgrading an existing workspace, open its Rules screen and confirm the
+rules are present. Startup binds the identities of its present rules and
+boards stores. If a bound store later goes missing or is replaced, rules reads
+return `rules_seq store_lost` and keep the previous local copy valid for recovery.
+An owner can confirm intentional replacement with `POST /api/rules/store/accept`
+using an empty JSON object. Review the store contents before accepting it.
+
+Agent connections can call `rules_get format=md effective=true` for their full
+authorized, approved set. The first line gives its total rule count. A complete
+reply ends with `rules_seq off` when checking is disabled, or a nine-digit value
+when configured for warn or enforce. `too_large`, `unavailable` and `store_lost`
+markers mean the client must retain its last complete rules file.
+
+Owners configure the workspace default or a connection override with
+`PATCH /api/rules/checks`, for example `{"agent":"*","mode":"warn"}`.
+Use `{"agent":"conn:builder","mode":"default"}` to remove an override.
+The shared core stores these settings; connection injection, session hooks and
+write enforcement are separate integrations.

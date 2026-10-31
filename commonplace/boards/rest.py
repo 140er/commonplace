@@ -2,12 +2,26 @@
 
 from commonplace.extensions import ToolContext, ToolError
 
-from ._http import HTTPError, path_parts, query, read_json, require_principal, send_json, send_text
+from ._http import (
+    HTTPError,
+    path_parts,
+    query,
+    read_json as _read_json,
+    require_principal,
+    send_json,
+    send_text,
+)
 from .digest import ssml
 from .display import NEEDS, with_urls
 from .service import BoardService, ParentError, VersionClash
 
 OPEN_LIMIT, OPEN_LIMIT_MAX = 200, 500
+
+
+def read_json(h):
+    body = _read_json(h)
+    body.pop("rules_seq", None)
+    return body
 
 
 def install(gateway):

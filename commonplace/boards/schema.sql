@@ -153,3 +153,19 @@ BEGIN SELECT RAISE(ABORT, 'task_events is append-only'); END;
 -- whose text says why; workspace deletion drops the whole file.
 CREATE TRIGGER IF NOT EXISTS tasks_no_delete BEFORE DELETE ON tasks
 BEGIN SELECT RAISE(ABORT, 'tasks are never deleted'); END;
+
+-- Rules visibility changes atomically with every board or repository mutation.
+INSERT OR IGNORE INTO meta VALUES ('store_id', (random() & 0x7fffffffffffffff) | 1);
+INSERT OR IGNORE INTO meta VALUES ('visibility', (random() & 0x7fffffffffffffff) | 1);
+CREATE TRIGGER IF NOT EXISTS rules_visibility_boards_insert AFTER INSERT ON boards
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;
+CREATE TRIGGER IF NOT EXISTS rules_visibility_boards_delete AFTER DELETE ON boards
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;
+CREATE TRIGGER IF NOT EXISTS rules_visibility_boards_update AFTER UPDATE OF slug, wing, archived ON boards
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;
+CREATE TRIGGER IF NOT EXISTS rules_visibility_board_repos_insert AFTER INSERT ON board_repos
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;
+CREATE TRIGGER IF NOT EXISTS rules_visibility_board_repos_delete AFTER DELETE ON board_repos
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;
+CREATE TRIGGER IF NOT EXISTS rules_visibility_board_repos_update AFTER UPDATE ON board_repos
+BEGIN UPDATE meta SET value=(random() & 0x7fffffffffffffff) | 1 WHERE key='visibility'; END;

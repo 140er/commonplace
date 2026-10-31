@@ -429,6 +429,7 @@ _RANGE = {"source_thread", "source_seq_start", "source_seq_end"}
 _FACT = {"wing", "sensitivity"}
 _FILTER = {"wings", "sensitivities"}
 ADDED_SINCE_BASELINE = {
+    "rules_get": {"effective"},
     "memory_save": {"source"},
     "mempalace_add_drawer": _RANGE,
     "mempalace_kg_add": _RANGE | _FACT | {"sensitivities"},

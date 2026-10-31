@@ -843,3 +843,28 @@ def test_session_json_writes_accept_app_and_request_origins(surface, monkeypatch
             "default-port": "https://app.example:443",
         }[origin]
     assert request(surface, "POST", "/api/boards", headers=headers, body=b"{}")[0] == 200
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("PATCH", "/api/rules/checks", {"agent": "*", "mode": "warn"}),
+        ("POST", "/api/rules/store/accept", {}),
+    ],
+)
+def test_rules_control_routes_require_a_person_owner(surface, method, path, body):
+    response = request(
+        surface, method, path, body=json.dumps(body), headers={"Content-Type": "application/json"}
+    )
+    assert hardened(response) == 401
+    _cid, _value, headers = token(surface)
+    response = request(
+        surface,
+        method,
+        path,
+        body=json.dumps(body),
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    assert hardened(response) == 403
+    assert surface.db.rule_checks(surface.workspace) == {}
+    assert surface.db.rule_stores(surface.workspace) is None

@@ -276,6 +276,7 @@ class Mediator:
         from mempalace.stored_text import user_tool_arguments
 
         args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
+        args.pop("rules_seq", None)
         policy = principal.policy
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
@@ -977,6 +978,9 @@ class Gateway:
         authenticators: Optional[list] = None,
     ):
         self.db = db
+        from commonplace.rules.checks import configure
+
+        configure(self)
         self.supervisor = supervisor
         self.authenticators: list = authenticators or [PersonalTokenAuthenticator(db)]
         self.mediator = Mediator(db, WorkerClient(supervisor))
@@ -1042,7 +1046,10 @@ class Gateway:
             "params": {"name": name, "arguments": arguments},
         }
         try:
-            response = self.mediator._tools_call(principal, request)
+            from commonplace.rules.checks import internal_call
+
+            with internal_call():
+                response = self.mediator._tools_call(principal, request)
         except WorkerUnavailable:
             raise extensions.ToolError("Memory is unavailable right now") from None
         if "error" in response:
@@ -1072,6 +1079,9 @@ class Gateway:
         return server
 
     def serve(self, host: str, port: int, idle_check_s: float = 60.0) -> None:
+        from commonplace.rules.checks import deploy
+
+        deploy(self)
         server = self.build_server(host, port)
         stop = threading.Event()
 

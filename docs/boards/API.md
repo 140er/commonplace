@@ -381,3 +381,11 @@ asks; answered asks stay in the conversation. `#/board/<slug>` keeps the kanban 
 Webhook authentication may reference an operator-defined environment variable,
 for example `env:COMMONPLACE_WEBHOOK_AUTH_COORDINATOR`. Set the variable only
 in the server environment; the database stores the reference, not its value.
+
+
+## Rules version compatibility
+
+Board and card REST write bodies may carry `rules_seq` as an integer or string.
+The rules core discards it before passing the remaining fields to board
+operations; write enforcement is delivered separately. Existing response shapes
+are unchanged. The internal PR repository backfill does not add a card field.

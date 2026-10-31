@@ -491,7 +491,11 @@ def _can_receive(db, gateway, row, event):
             return False
         from .boards.service import open_store
 
-        store = open_store(gateway.workspace_dir(row["workspace_id"]))
+        store = open_store(
+            gateway.workspace_dir(row["workspace_id"]),
+            db=gateway.db,
+            workspace_id=row["workspace_id"],
+        )
         with store.connection() as conn:
             found = conn.execute(
                 "SELECT wing,coordinator FROM boards WHERE slug=? AND archived=0", (board,)

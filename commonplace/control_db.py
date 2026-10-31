@@ -99,6 +99,19 @@ CREATE TABLE IF NOT EXISTS transcription_usage (
     seconds INTEGER NOT NULL,
     PRIMARY KEY(user_id, day)
 );
+CREATE TABLE IF NOT EXISTS rule_checks (
+    workspace_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('off','warn','enforce')),
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, agent)
+);
+CREATE TABLE IF NOT EXISTS rule_stores (
+    workspace_id TEXT PRIMARY KEY,
+    rules_store_id INTEGER,
+    boards_store_id INTEGER
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
@@ -565,6 +578,74 @@ class ControlDB:
         with self._lock:
             self._conn.execute(
                 "UPDATE connections SET last_used_at = ? WHERE id = ?", (_iso(now), row["id"])
+            )
+
+    def rule_checks(self, workspace_id):
+        with self._lock:
+            return dict(
+                self._conn.execute(
+                    "SELECT agent,mode FROM rule_checks WHERE workspace_id=?", (workspace_id,)
+                )
+            )
+
+    def set_rule_check(self, workspace_id, agent, mode, principal):
+        if mode not in ("default", "off", "warn", "enforce"):
+            raise ControlError("invalid check mode")
+        with self._lock, self._tx() as conn:
+            if mode == "default":
+                conn.execute(
+                    "DELETE FROM rule_checks WHERE workspace_id=? AND agent=?",
+                    (workspace_id, agent),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO rule_checks VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,agent) "
+                    "DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+                    (workspace_id, agent, mode, _iso(_now()), principal.actor),
+                )
+            self.audit(
+                action="rules.check",
+                decision=mode,
+                workspace_id=workspace_id,
+                user_id=principal.user_id,
+                connection_id=principal.connection_id,
+                auth=principal.auth,
+                target_ids=(agent,),
+            )
+
+    def rule_stores(self, workspace_id):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM rule_stores WHERE workspace_id=?", (workspace_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def bind_rule_stores(self, workspace_id, rules_store_id, boards_store_id, *, accept=False):
+        # A replacement must never win a race against the first binding.
+        with self._lock, self._tx() as conn:
+            if accept:
+                conn.execute(
+                    "INSERT INTO rule_stores VALUES (?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET "
+                    "rules_store_id=excluded.rules_store_id,boards_store_id=excluded.boards_store_id",
+                    (workspace_id, rules_store_id, boards_store_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO rule_stores VALUES (?,NULL,NULL)", (workspace_id,)
+                )
+                for name, value in (
+                    ("rules_store_id", rules_store_id),
+                    ("boards_store_id", boards_store_id),
+                ):
+                    if value is not None:
+                        conn.execute(
+                            f"UPDATE rule_stores SET {name}=? WHERE workspace_id=? AND {name} IS NULL",
+                            (value, workspace_id),
+                        )
+            return dict(
+                conn.execute(
+                    "SELECT * FROM rule_stores WHERE workspace_id=?", (workspace_id,)
+                ).fetchone()
             )
 
     # ── audit log ──

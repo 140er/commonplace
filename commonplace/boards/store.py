@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from commonplace.extensions import ToolError
 
@@ -20,11 +21,39 @@ TASK_COLUMNS = {
     "branch": "TEXT",
     "pr_url": "TEXT",
     "pr_number": "INTEGER",
+    "pr_repo": "TEXT",
     "checks": "TEXT",
     "status_line": "TEXT",
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
 }
+
+
+def pr_repository(url):
+    """Repository part of a PR URL, including GitLab and plural pulls URLs."""
+    if not isinstance(url, str):
+        return None
+    from .service import normalize_repo
+
+    try:
+        parsed = urlsplit(url if "://" in url else "https://" + url)
+    except ValueError:
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or len(parts) < 4:
+        return None
+    if (
+        parts[-2] not in ("pull", "pulls", "merge_requests")
+        or not parts[-1].isdigit()
+        or int(parts[-1]) < 1
+    ):
+        return None
+    prefix = parts[:-2]
+    if prefix[-1] == "-":
+        prefix.pop()
+    if len(prefix) >= 2:
+        return normalize_repo(parsed.netloc + "/" + "/".join(prefix))
+    return None
 
 
 def now() -> str:
@@ -84,7 +113,11 @@ def card(conn, row, principal=None) -> dict:
         "ask_to": row["ask_to"],
         "return_to": row["return_to"],
         "flags": json.loads(row["flags"] or "[]"),
-        **{key: row[key] for key in TASK_COLUMNS if key not in ("labels", "parent_number")},
+        **{
+            key: row[key]
+            for key in TASK_COLUMNS
+            if key not in ("labels", "parent_number", "pr_repo")
+        },
         "labels": json.loads(row["labels"] or "[]"),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
@@ -174,9 +207,11 @@ class BoardStore:
     Calls without it are the contract's trusted, local workspace API.
     """
 
-    def __init__(self, workspace_dir, *, legacy_origin=None):
+    def __init__(self, workspace_dir, *, legacy_origin=None, create=True):
         directory = Path(workspace_dir)
-        directory.mkdir(parents=True, exist_ok=True)
+        if create:
+            directory.mkdir(parents=True, exist_ok=True)
+        self.create = create
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
             conn.executescript(Path(__file__).with_name("schema.sql").read_text())
@@ -232,6 +267,12 @@ class BoardStore:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
                     )
+                for row in conn.execute(
+                    "SELECT id,pr_url FROM tasks WHERE pr_repo IS NULL OR pr_repo=''"
+                ).fetchall():
+                    repo = pr_repository(row["pr_url"])
+                    if repo:
+                        conn.execute("UPDATE tasks SET pr_repo=? WHERE id=?", (repo, row["id"]))
                 conn.commit()
             except BaseException:
                 conn.rollback()
@@ -239,7 +280,10 @@ class BoardStore:
 
     @contextmanager
     def connection(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        target = self.path if self.create else Path(self.path).resolve().as_uri() + "?mode=rw"
+        conn = sqlite3.connect(
+            target, uri=not self.create, timeout=10 if self.create else 0.2, isolation_level=None
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         try:

@@ -56,7 +56,7 @@ Rules are never deleted. Retiring keeps the row and its history.
 
 | Event | Result |
 |---|---|
-| Agent publishes a new key | `proposed`, `source=agent`, `text=agent_text`. The agent follows it right away. "Proposed" means the owner hasn't reviewed it yet. |
+| Agent publishes a new key | `proposed`, `source=agent`, `text=agent_text`. The default read includes it. It enters the enforcement view only after owner approval. "Proposed" means the owner hasn't reviewed it yet. |
 | Owner accepts a `proposed` rule | `accepted`; other states are refused |
 | Owner edits the text, kind or scope | Requires an active rule; retired rules return 400 "restore the rule first". Sets `edited`, `source=owner`. `agent_text` stays, so the UI can show the diff. |
 | Agent republishes an unchanged rule | On `source=agent`, a full no-op requires matching text, kind, scope and scope reference. On `source=owner` or an owner-retired rule, matching `agent_text` is enough; pending stays as it is. No version, sequence or history change. An agent-retired key revives as below. |
@@ -91,7 +91,7 @@ All tools are registered from a new extension module, `commonplace.rules` (added
 | Tool | Scope | Kind | Arguments | Reply |
 |---|---|---|---|---|
 | `rules_publish` | `memory:write` | write | `rules: [{key?, text, kind, scope?, board?, repo?}]` (max 200), `replace?: bool` (default false) | One line per rule (`key status version`), then `seq N`. With `replace=true` the call is a bulk replace: keys it leaves out are retired. |
-| `rules_get` | `memory:read` | read | `board?`, `repo?`, `format?: "text" \| "md"`, `include_retired?: bool` | The rules that apply to me: my own plus `*`, global plus the given board and repo, with `status`, `source`, `version` and the effective text. `format=md` gives a Markdown rules file grouped by kind, with retired rules left out. The last line is `seq N`. |
+| `rules_get` | `memory:read` | read | `board?`, `repo?`, `format?: "text" \| "md"`, `include_retired?: bool`, `effective?: bool` | The rules that apply to me: my own plus `*`, global plus the given board and repo, with `status`, `source`, `version` and the effective text. `format=md` gives a Markdown rules file grouped by kind, with retired rules left out. The last line is `seq N`. |
 | `rules_changed` | `memory:read` | read | `since: int` | `seq N` plus `key status own\|all` lines for changes after `since` (`own` for the caller's rules, `all` for `*` rules). If `since` exceeds the current sequence, returns `reset` then `seq N`. It does no text work; meant to run on every session start. |
 
 Untrusted tokens may publish: what they publish starts as a proposal for the owner, and nothing else is written. Rule text is stored verbatim, and replies quote it as data the way board tools do.
@@ -171,8 +171,103 @@ window.commonplaceDesktop = {
 - The bridge runs the agent locally. The page sends only the prompt it built, and the reply comes back to it as text. The page then stores the reply with `POST /api/rules/:id/suggestions`, where `from_agent` is the name of the agent that was asked. Nothing is applied until the owner presses Accept.
 - The hub has no endpoint for this and does no relaying.
 
+## Enforcement
+
+### Shared rules core
+
+`rules_get effective=true` returns the connection's full authorized set of
+accepted or edited rules, including owner edits and excluding retired rules.
+It accepts only `format=text|md`; people use the Rules screen instead. Global
+rules apply everywhere. Board rules require a readable, unarchived board.
+Repo rules require a link to such a board; trusted connections also see rules
+for repos with no board links. Private and workstation wings retain their
+normal policy checks. The default `rules_get` selection remains unchanged.
+
+The first line, `effective rules: N`, gives the total authorized count. Replies
+quote rule text with JSON escaping, including controls, formatting characters,
+`<`, `>`, `&` and `@` (`\u0040`). Scoped Markdown lines include their board or
+repo label; labels outside the safe character set are quoted too. Publishing
+or editing text that exceeds 6,000 bytes after escaping is refused. The whole
+effective reply is capped at 24,000 UTF-8 bytes. Only whole rules fit; an
+incomplete reply states how many are missing and ends with `rules_seq too_large`,
+including when checking is off. It never proves the connection read the set.
+
+The existing global `seq` remains the cursor for `rules_changed`. A separate
+random nine-digit `rules_seq` combines the connection's token with the shared
+`*` token. Effective changes bump affected targets in the same transaction;
+proposals and pending agent wording do not. Fetching a complete effective reply
+records `served` for that connection at that version. An over-cap reply records
+`too_large` at its version. Default reads, change polls and publishing never
+record served. All threads sharing one connection share its served state.
+
+Board and repository mutations update a random visibility value through SQLite
+triggers. Before a version read, reconciliation compares it with the last seen
+value in the rules store. A difference bumps `*` and global `seq` once while
+any scoped rule exists. This also covers archived boards and restored older
+boards files. It deliberately makes every connection stale, including those
+whose rules did not change. Private board creation therefore exposes a small
+metadata signal through version changes, without revealing board names or text.
+Future policy changes must also invalidate the affected rules versions.
+
+Both stores carry stable random identities, bound in the control database.
+Every rules path checks them before opening a store that could create a file.
+The guard's own identity probes are read-only. A missing or replaced bound
+store yields only `rules_seq store_lost`; publication is refused, and owner
+routes return 409 with `store_lost: true`. `PATCH /api/rules/checks` and
+`POST /api/rules/store/accept` remain available. Acceptance binds present files
+and clears missing ones; it does not invent missing rules. An unavailable
+complete view returns no rules or count and ends with `rules_seq unavailable`.
+Clients must keep their last complete copy on either marker.
+
+At serving startup, present stores in every workspace without a binding row
+are migrated and bound together. Failures are logged and retried next start.
+Before the first deployment, confirm each workspace's rules on the Rules
+screen: a file lost before binding, or a control-database rollback to before
+that file existed together with its loss, cannot be distinguished from an
+earlier empty workspace. Restores of the same store are normal restores.
+Store-generation switches copy both identities; switching back to a retained
+generation is a normal restore too.
+
+Check modes live in the control database: a connection's `off`, `warn` or
+`enforce` overrides the `*` default; no row means off. `GET /api/rules` includes
+`checks: {agent: mode}`. Owners set `{agent, mode}` through
+`PATCH /api/rules/checks`; `default` removes a connection override. Enforce is
+refused when that connection cannot call `rules_get`. Mode changes record an
+ids-only `rules.check` audit entry and emit `rule.check`. The server reads
+`COMMONPLACE_RULES_CHECK=off` and `COMMONPLACE_RULES_INJECT=off` at startup.
+This core stores settings without checking writes yet. MCP calls and board,
+memory and fact REST writes already discard an optional `rules_seq` field.
+Internal gateway calls use a thread-local `internal_call()` context, so one
+request cannot exempt another request on a different thread.
+
+Rollback is additive: the previous code ignores the extra tables, identities,
+visibility triggers and internal `pr_repo` column. After a later redeployment,
+a file recreated by the older code is detected as replaced and requires owner
+acceptance. Public card shapes keep `pr_repo` internal.
+
+### Connection injection
+
+The connection-instruction integration is delivered separately and uses the
+shared authorized view and renderer.
+
+### Session-start hook
+
+The session-start integration is delivered separately and preserves the last
+complete local rules file on refresh failure.
+
+### Write sequence checks
+
+Write enforcement is delivered separately using the shared version, served
+state, control settings and internal-call marker.
+
+### Reviewer checks
+
+Review blocks and review attestations are delivered separately. An orchestrator
+must fetch its own complete effective rules before posting attestations when
+write checks are enforced.
+
 ## Out of scope
 
-- Card moves and board permissions. Rules only describe what an agent does; they don't enforce anything. A future card can map rules of kind `limit` onto board settings.
+- Card moves and board permissions. A future change can map rules of kind `limit` onto board settings.
 - The desktop app itself (only the contract is defined here).
 - Mirroring rules into Memory.

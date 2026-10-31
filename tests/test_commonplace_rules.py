@@ -917,15 +917,15 @@ def test_board_visibility_cached_for_each_request(hub, env, monkeypatch, operati
     env.worker.rules_publish(
         [rule(key=f"rule-{i}", scope="board", board="visible") for i in range(3)]
     )
-    original_connect = sqlite3.connect
+    original_lookup = RuleService._lookup_board_visible
     lookups = []
 
-    def connect(path, *args, **kwargs):
-        if "boards.sqlite3" in str(path):
-            lookups.append(path)
-        return original_connect(path, *args, **kwargs)
+    def lookup(worker, slug):
+        # Identity probes are separate from the cached authorization lookup.
+        lookups.append(slug)
+        return original_lookup(worker, slug)
 
-    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(RuleService, "_lookup_board_visible", lookup)
     worker = service(hub, env.agent)
     if operation == "get":
         assert len(worker.rules_get(board="visible")["rules"]) == 3
