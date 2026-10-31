@@ -10,6 +10,6 @@ export function planView(payload) {
   const paid = payload.plan === "paid";
   const storage = paid ? "<em>unlimited</em>**" : `${e(quantity(payload.storage.used, 1024 * 1024))} of ${e(quantity(payload.storage.limit, 1024 * 1024))} MB`;
   const voice = paid ? "<em>unlimited</em>**" : `${e(quantity(payload.transcription.used_today, 60))} of ${e(quantity(payload.transcription.limit, 60))} min today`;
-  const sync = paid ? "live" : `every ${e(quantity(payload.sync.interval_seconds, 60))} min`;
-  return `<section class="settings-section"><h2>${paid ? "Paid" : "Free"}</h2><div class="setting-row"><span>Storage</span><span>${storage}</span></div><div class="setting-row"><span>Voice transcription</span><span>${voice}</span></div><div class="setting-row"><span>Chat sync</span><span>${sync}</span></div>${paid ? "<p>** zolang de server het aankan / as long as the server can handle it</p>" : ""}</section>`;
+  const sync = paid ? "Live" : `Every ${e(quantity(payload.sync.interval_seconds, 60))} min`;
+  return `<section class="settings-section"><h2>${paid ? "Paid plan" : "Free plan"}</h2><div class="setting-row"><span>Storage</span><span>${storage}</span></div><div class="setting-row"><span>Voice transcription</span><span>${voice}</span></div><div class="setting-row"><span>Chat sync</span><span>${sync}</span></div>${paid ? "<p>** zolang de server het aankan / as long as the server can handle it</p>" : ""}</section>`;
 }
