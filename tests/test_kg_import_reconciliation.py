@@ -404,6 +404,10 @@ def test_import_reports_a_second_source_claim_without_rewriting_the_first(tmp_pa
     # Put both Acme instances before either successor, reproducing snapshots
     # whose row order differs from the order in which the facts were filed.
     first = ("t_a1", "alice", "works_at", "acme", None, "2026-03-01", "superseded", "t_b1")
+    # The target id is not held by another source instance, so both source
+    # histories may attempt a remap. Only the first may claim that target.
+    target_id = "target-first"
+    target_first = (target_id, *first[1:])
     beta = ("t_b1", "alice", "works_at", "beta", "2026-03-01", "2026-04-01", "active", None)
     second_end = "2026-03-01" if exact else "2026-05-01"
     with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
@@ -418,10 +422,10 @@ def test_import_reports_a_second_source_claim_without_rewriting_the_first(tmp_pa
         )
         _seed_rows(
             target,
-            [first, beta]
+            [target_first, beta]
             if exact
             else [
-                ("t_a1", "alice", "works_at", "acme", None, None, "active", None),
+                (target_id, "alice", "works_at", "acme", None, None, "active", None),
             ],
         )
         source._conn().execute(
@@ -445,13 +449,14 @@ def test_import_reports_a_second_source_claim_without_rewriting_the_first(tmp_pa
     assert applied["triples"]["superseded"] == int(not exact)
     [conflict] = applied["triples"]["conflicts"]
     assert conflict["reason"] == "target_already_claimed"
-    assert conflict["id"] == "t_a3" and conflict["target_id"] == conflict["claimed_by"] == "t_a1"
+    assert conflict["id"] == "t_a3" and conflict["target_id"] == target_id
+    assert conflict["claimed_by"] == "t_a1"
     assert applied["fact_sources"]["skipped"] == [2]
     with KnowledgeGraph(dst) as target:
-        old = _row(target, "t_a1")
+        old = _row(target, target_id)
         assert old["valid_to"] == "2026-03-01" and old["superseded_by"] == "t_b1"
         assert old["approval_status"] == "unknown"
-        assert [s["source_thread"] for s in target.sources(["t_a1"])["t_a1"]] == ["mcp:first"]
+        assert [s["source_thread"] for s in target.sources([target_id])[target_id]] == ["mcp:first"]
         assert not target._conn().execute("SELECT 1 FROM triples WHERE id='t_a3'").fetchone()
 
 
@@ -561,3 +566,177 @@ def test_cli_labels_an_already_closed_approved_conflict_accurately(tmp_path, cap
     assert "approved target kept as is" in output and "approved target kept open" not in output
     with KnowledgeGraph(dst) as target:
         assert _row(target, old) == before
+
+
+@pytest.mark.parametrize("closed", [False, True], ids=["open-exact", "closed-exact"])
+def test_import_exact_match_cannot_move_old_approval_onto_a_reassertion(tmp_path, closed):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        with provenance.verified(PERSON):
+            old = _save(source)
+        source._conn().backup(target._conn())
+        with provenance.verified(PERSON):
+            target.invalidate("Alice", "works_at", "Acme", ended="2026-02-01", wing="shared")
+        with provenance.verified(AGENT):
+            current = _save(target, thread="mcp:reasserted")
+            if closed:
+                target.invalidate("Alice", "works_at", "Acme", ended="2026-03-01", wing="shared")
+        if closed:
+            with provenance.verified(PERSON):
+                source.invalidate("Alice", "works_at", "Acme", ended="2026-03-01", wing="shared")
+        before = {tid: _row(target, tid) for tid in (old, current)}
+        observed = target.sources([old, current])
+
+    preview = import_graph_rows(src, dst)
+    applied = import_graph_rows(src, dst, apply=True)
+    assert applied == preview
+    assert applied["triples"]["id_conflicts"] == [old]
+    assert applied["triples"]["present"] == applied["triples"]["added"] == 0
+    assert applied["triples"]["superseded"] == 0
+    assert applied["fact_sources"]["added"] == 0
+    assert len(applied["fact_sources"]["skipped"]) == 1
+    with KnowledgeGraph(dst) as target:
+        assert {tid: _row(target, tid) for tid in (old, current)} == before
+        assert target.sources([old, current]) == observed
+        assert _row(target, current)["approval_status"] == "proposal"
+
+
+def test_import_does_not_claim_an_open_id_held_by_another_source_row(tmp_path):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    current = ("t_a2", "alice", "works_at", "acme", None, None, "active", None)
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        _seed_rows(
+            source,
+            [
+                ("t_a1", "alice", "works_at", "acme", None, "2026-03-01", "superseded", "t_b1"),
+                ("t_b1", "alice", "works_at", "beta", "2026-03-01", "2026-04-01", "active", None),
+                current,
+            ],
+        )
+        _seed_rows(target, [current])
+        source._conn().execute(
+            "UPDATE triples SET approval_status='approved', approved_by='person-a', "
+            "approval_link='/app/threads/thr_old' WHERE id='t_a1'"
+        )
+        source._conn().execute(
+            "INSERT INTO fact_sources (triple_id, source_thread, added_at) "
+            "VALUES ('t_a1', 'mcp:old', '2026-01-01')"
+        )
+        source._conn().commit()
+        before = _row(target, "t_a2")
+    preview = import_graph_rows(src, dst)
+    applied = import_graph_rows(src, dst, apply=True)
+    assert applied == preview
+    assert applied["triples"]["added"] == 2
+    assert applied["triples"]["present"] == 1
+    assert applied["triples"]["superseded"] == 0
+    assert applied["triples"]["conflicts"] == applied["triples"]["id_conflicts"] == []
+    with KnowledgeGraph(dst) as target:
+        assert _row(target, "t_a2") == before
+        assert target.sources(["t_a2"])["t_a2"] == []
+        assert _row(target, "t_a1")["superseded_by"] == "t_b1"
+        assert target.sources(["t_a1"])["t_a1"][0]["source_thread"] == "mcp:old"
+
+
+@pytest.mark.parametrize("target_id", [None, "t_d1", "t_d2", "target-history"])
+def test_import_identical_source_duplicates_share_observations_without_another_merge(
+    tmp_path, target_id
+):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    content = ("alice", "likes", "tea", None, "2026-01-01", "active", None)
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        _seed_rows(source, [("t_d1", *content), ("t_d2", *content)])
+        if target_id:
+            _seed_rows(target, [(target_id, *content)])
+        # Duplicate source metadata is not another lifecycle/approval merge.
+        # Put the extra approval on the alias, whichever native id is present.
+        alias_id = "t_d1" if target_id == "t_d2" else "t_d2"
+        source._conn().execute(
+            "UPDATE triples SET approval_status='approved', approved_by='person-a', "
+            "approval_link='/app/threads/thr_duplicate' WHERE id=?",
+            (alias_id,),
+        )
+        source._conn().executemany(
+            "INSERT INTO fact_sources (triple_id, source_thread, added_at) "
+            "VALUES (?, ?, '2026-01-01')",
+            [("t_d1", "mcp:first"), ("t_d2", "mcp:duplicate"), ("t_d2", "mcp:first")],
+        )
+        source._conn().commit()
+    preview = import_graph_rows(src, dst)
+    applied = import_graph_rows(src, dst, apply=True)
+    assert applied == preview
+    assert applied["triples"]["added"] == int(target_id is None)
+    assert applied["triples"]["present"] == 2 - int(target_id is None)
+    assert applied["triples"]["conflicts"] == applied["triples"]["id_conflicts"] == []
+    assert applied["triples"]["superseded"] == 0
+    assert applied["fact_sources"] == {"added": 2, "present": 1, "skipped": []}
+    with KnowledgeGraph(dst) as target:
+        [stored] = target.dump_rows("triples")
+        assert stored["id"] == (target_id or "t_d1")
+        assert stored["approval_status"] == "unknown"
+        assert {s["source_thread"] for s in target.sources([stored["id"]])[stored["id"]]} == {
+            "mcp:first",
+            "mcp:duplicate",
+        }
+        before = _row(target, stored["id"])
+        observations = target.dump_rows("fact_sources")
+    retry = import_graph_rows(src, dst, apply=True)
+    assert retry["triples"]["present"] == 2
+    assert retry["triples"]["conflicts"] == []
+    assert retry["fact_sources"] == {"added": 0, "present": 3, "skipped": []}
+    with KnowledgeGraph(dst) as target:
+        assert _row(target, stored["id"]) == before
+        assert target.dump_rows("fact_sources") == observations
+
+
+def test_import_exact_match_rejects_an_id_owned_by_a_different_source_instance(tmp_path):
+    src, dst = str(tmp_path / "source.db"), str(tmp_path / "target.db")
+    history = ("alice", "likes", "tea", None, "2026-01-01", "active", None)
+    with KnowledgeGraph(src) as source, KnowledgeGraph(dst) as target:
+        _seed_rows(
+            source,
+            [
+                ("t_old", *history),
+                ("t_other", "bob", "likes", "coffee", None, "2026-01-01", "active", None),
+            ],
+        )
+        _seed_rows(target, [("t_other", *history)])
+        source._conn().execute(
+            "UPDATE triples SET approval_status='approved', approved_by='person-a', "
+            "approval_link='/app/threads/thr_old' WHERE id='t_old'"
+        )
+        source._conn().execute(
+            "INSERT INTO fact_sources (triple_id, source_thread, added_at) "
+            "VALUES ('t_old', 'mcp:old', '2026-01-01')"
+        )
+        source._conn().commit()
+        before = _row(target, "t_other")
+    applied = import_graph_rows(src, dst, apply=True)
+    assert applied["triples"]["id_conflicts"] == ["t_other"]
+    assert applied["triples"]["added"] == 1 and applied["triples"]["present"] == 0
+    with KnowledgeGraph(dst) as target:
+        assert _row(target, "t_other") == before
+        assert target.sources(["t_other"])["t_other"] == []
+        assert target.sources(["t_old"])["t_old"][0]["source_thread"] == "mcp:old"
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["snapshot-id", "legacy-triple-id"])
+def test_replication_observation_cannot_approve_a_different_reassertion(legacy):
+    with KnowledgeGraph.empty() as source, KnowledgeGraph.empty() as target:
+        with provenance.verified(PERSON):
+            old = _save(source)
+        source._conn().backup(target._conn())
+        with provenance.verified(PERSON):
+            target.invalidate("Alice", "works_at", "Acme", ended="2026-02-01", wing="shared")
+        with provenance.verified(AGENT):
+            current = _save(target, thread="mcp:reasserted")
+        before = {tid: _row(target, tid) for tid in (old, current)}
+        observed = target.sources([old, current])
+        [peer] = source.dump_rows("fact_sources")
+        assert peer["_triple"]["id"] == old
+        if legacy:
+            peer["_triple"].pop("id")
+        report = target.apply_row("fact_sources", peer)
+        assert not report["applied"] and report["reason"] == "no_matching_triple"
+        assert {tid: _row(target, tid) for tid in (old, current)} == before
+        assert target.sources([old, current]) == observed

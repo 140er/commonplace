@@ -83,19 +83,22 @@ def test_import_maps_successors_by_identity_or_reports_the_omitted_link(tmp_path
     assert hashlib.sha256(Path(src).read_bytes()).hexdigest() == source_hash
     with KnowledgeGraph(dst) as target:
         ended = _triple(target, old)
-        if successor in ("present", "id_conflict"):
+        if successor == "present":
             assert ended["superseded_by"] == "target-successor"
             assert applied["triples"]["unresolved_link_count"] == 0
-            if successor == "id_conflict":
-                assert _triple(target, new)["subject"] == "unrelated"
         else:
             assert ended["superseded_by"] is None
             assert applied["triples"]["unresolved_link_count"] == 1
             assert applied["triples"]["unresolved_links"] == [
                 {"id": old, "superseded_by": "absent" if successor == "missing" else new}
             ]
+        if successor in ("id_conflict", "blocked_id"):
+            # Even an exact successor elsewhere cannot substitute for a
+            # source id already held by a divergent target instance.
+            assert applied["triples"]["id_conflicts"] == [new]
+            assert _triple(target, new)["subject"] == "unrelated"
         assert len(applied["fact_sources"]["skipped"]) == int(
-            successor in ("blocked_id", "different_value")
+            successor in ("id_conflict", "blocked_id", "different_value")
         )
         before = _snapshot(dst)
     retry = import_graph_rows(src, dst, apply=True)

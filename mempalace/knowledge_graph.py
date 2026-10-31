@@ -170,7 +170,16 @@ def _insert_import_row(conn, table, row):
 _TRIPLE_IDENTITY = ("subject", "predicate", "object", "valid_from", "valid_to", "wing")
 
 
-def _identical_triples(conn, row, *, allow_superseded_end=False):
+def _same_triple_instance(conn, row, candidate, source_ids):
+    if candidate["id"] == row.get("id"):
+        return True
+    return (
+        candidate["id"] not in source_ids
+        and not conn.execute("SELECT 1 FROM triples WHERE id=?", (row.get("id"),)).fetchone()
+    )
+
+
+def _identical_triples(conn, row, *, source_ids=(), allow_superseded_end=False):
     columns = [c for c in _TRIPLE_IDENTITY if c != "valid_to"]
     where = " AND ".join(f"{c} IS ?" for c in columns)
     args = [row.get(c) for c in columns]
@@ -181,7 +190,7 @@ def _identical_triples(conn, row, *, allow_superseded_end=False):
     if exact or not (
         allow_superseded_end and row.get("status") == "superseded" and row.get("valid_to")
     ):
-        return exact
+        return exact if exact and _same_triple_instance(conn, row, exact[0], source_ids) else []
     # A reassertion can share the old fact's start (including NULL). An exact
     # history row always wins; an ambiguous open instance is never reconciled.
     opened = conn.execute(
@@ -190,12 +199,9 @@ def _identical_triples(conn, row, *, allow_superseded_end=False):
     ).fetchall()
     if len(opened) != 1:
         return []
-    # Equal ids identify the same instance even when its history diverged.
-    # A different open row is a reassertion, not a destination for that history.
-    if (
-        opened[0]["id"] != row.get("id")
-        and conn.execute("SELECT 1 FROM triples WHERE id=?", (row.get("id"),)).fetchone()
-    ):
+    # A remap is safe only when neither graph already identifies the other
+    # instance. This applies to exact matches and open fallbacks alike.
+    if not _same_triple_instance(conn, row, opened[0], source_ids):
         return []
     return opened
 
@@ -212,13 +218,33 @@ def _import_triples(conn, rows):
         "end_not_carried": [],
     }
     by_id = {r["id"]: r for r in rows}
+    source_ids = set(by_id)
+    native_ids = {
+        source_id
+        for source_id in source_ids
+        if conn.execute("SELECT 1 FROM triples WHERE id=?", (source_id,)).fetchone()
+    }
     id_map, links, pending_ends = {}, [], {}
-    claimed = {}
+    claimed, duplicates = {}, {}
     # Stage history first. A current successor may replace only the open rows
     # waiting for that very successor; carry their ends after it is accepted.
-    for raw in sorted(rows, key=lambda r: r.get("valid_to") is None):
+    # Prefer native instances so duplicate aliases also work when the target
+    # holds a later duplicate's id rather than the first source row's id.
+    for raw in sorted(rows, key=lambda r: (r.get("valid_to") is None, r["id"] not in native_ids)):
         row = {**raw, **fact_provenance.imported_fields(raw)}
-        same = _identical_triples(conn, row, allow_superseded_end=True)
+        duplicate_key = tuple(row.get(c) for c in (*_TRIPLE_IDENTITY, "status", "superseded_by"))
+        duplicate_id = duplicates.get(duplicate_key)
+        if (
+            duplicate_id is not None
+            and not conn.execute("SELECT 1 FROM triples WHERE id=?", (row["id"],)).fetchone()
+        ):
+            # Legacy duplicates in this source alias the accepted instance for
+            # observations only. Never stage another end or copy fact metadata.
+            id_map[row["id"]] = id_map[duplicate_id]
+            numbers["present"] += 1
+            _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
+            continue
+        same = _identical_triples(conn, row, source_ids=source_ids, allow_superseded_end=True)
         if same:
             existing = same[0]
             if existing["id"] in claimed:
@@ -235,6 +261,7 @@ def _import_triples(conn, rows):
                 continue
             claimed[existing["id"]] = row["id"]
             id_map[row["id"]] = existing["id"]
+            duplicates.setdefault(duplicate_key, row["id"])
             _merge_imported_triple(conn, existing, row, by_id, numbers, links, pending_ends)
             _carry_imported_ends(conn, pending_ends, id_map, numbers, row.get("superseded_by"))
             _carry_imported_ends(conn, pending_ends, id_map, numbers, row["id"])
@@ -265,6 +292,7 @@ def _import_triples(conn, rows):
         _insert_import_row(conn, "triples", row)
         id_map[row["id"]] = row["id"]
         claimed[row["id"]] = row["id"]
+        duplicates.setdefault(duplicate_key, row["id"])
         numbers["added"] += 1
         if successor:
             links.append((row["id"], row["id"], successor))
@@ -2233,7 +2261,10 @@ class KnowledgeGraph:
         for row in rows:
             item = dict(row)
             if table == "fact_sources":
-                item["_triple"] = {c: item.pop(f"_triple_{c}") for c in _TRIPLE_IDENTITY}
+                item["_triple"] = {
+                    "id": item["triple_id"],
+                    **{c: item.pop(f"_triple_{c}") for c in _TRIPLE_IDENTITY},
+                }
             result.append(item)
         return result
 
@@ -2248,8 +2279,9 @@ class KnowledgeGraph:
         an open target stays open until its successor resolves. Retry those
         rows after applying their dependencies.
 
-        Observations dedupe by source key after resolving exact triple identity;
-        their integer ids are graph-local. An orphan returns a skip report so
+        Observations dedupe by source key after resolving exact triple identity
+        and checking the source fact id for divergent local history; their
+        integer ids are graph-local. An orphan returns a skip report so
         replication can continue. Missing row ids or source identity still
         raise ValueError.
         """
@@ -2262,6 +2294,9 @@ class KnowledgeGraph:
             identity = row.get("_triple")
             if not isinstance(identity, dict) or any(c not in identity for c in _TRIPLE_IDENTITY):
                 raise ValueError("replicated fact source is missing triple identity")
+            # Older snapshots already carry the source fact id in triple_id.
+            # It is not the graph-local integer observation id.
+            identity = {**identity, "id": row.get("triple_id")}
             with self._lock:
                 conn = self._conn()
                 with conn:
