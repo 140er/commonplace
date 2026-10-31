@@ -668,3 +668,14 @@ The original draft sequenced cleanup → spec → ChromaBackend → in-flight re
 9. Finish the `mempalace migrate` CLI (§8) and the parametrized core suite gate (§7.2, `MEMPALACE_TEST_ALL_BACKENDS=1` in CI).
 10. Rebase / reconcile the remaining community backend PRs (§11) against the merged contract.
 11. Update [ROADMAP.md](../../ROADMAP.md) with spec v1.0 adoption under v4.0.0-alpha.
+
+### Base64 index text (RFC 008 A0)
+
+Core embeddings use `stored_text.index_text` for every explicit-vector backend,
+including Chroma. Documents remain verbatim. Local `sqlite_exact` and `compact` full-text rows
+use that same index view, including whole-input provenance for split spans.
+
+Chroma's internal FTS and remote plugin full-text indexes still cover their
+stored documents. A0 does not alter external schemas or rebuild those indexes;
+Qdrant, Milvus and pgvector lexical paths therefore retain this limitation.
+Separate index-text fields for remote plugins require a follow-up migration.

@@ -46,7 +46,50 @@ C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vecto
 ## A0: Placeholder embeddings (all backends)
 
 - Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text; the stored document stays verbatim.
-- Chroma accepts explicit embeddings, so this ships on Chroma too. It cuts embedding CPU on base64-heavy drawers and removes junk vectors. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
+- Chroma accepts explicit embeddings, so this ships on Chroma too. It removes base64 from embedding input; CPU savings depend on the model, and fixed-length padding can retain most inference cost. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
+
+### A0 indexing policy
+
+New and updated drawers retain their verbatim documents. Core detects validated
+base64 on the whole input before chunking. Each physical chunk indexes its own
+range: a span emits its placeholder where it starts, continuation fragments are
+removed, and a chunk wholly inside a span indexes the placeholder. No vectors are
+removed in A0; the vector count is unchanged. Keyword-only message policy is B1c.
+Queries use the same placeholder rule when they contain validated base64.
+The index view also replaces NUL and lone surrogates with spaces for inference,
+rather than the previous surrogate-to-U+FFFD embedding-only cleanup. Stored
+strings retain those characters through the existing reversible encoding.
+
+The reserved `_mempalace_index_spans` metadata key carries version 1 JSON with a
+SHA-256 of the verbatim chunk and clipped local spans. This preserves boundary
+context during repair, migration and replication without storing another prose
+copy. An empty span list records a whole-input rejection of a base64-shaped
+run, so a valid-looking fragment cannot override that decision after splitting.
+Removed hints are tombstoned on merging writes. A stale version or content hash
+logs a rate-limited warning and falls back to detection on the supplied document. A projection failure logs a warning and stores the
+verbatim chunks without hints rather than losing the source. The hint is removed
+from drawer arguments and public responses; it never changes the document returned by `get_drawer`.
+
+The embedding wrapper supplies explicit vectors on Chroma and the other vector
+backends. The `sqlite_exact` and `compact` backends' `docs_fts` rows receive the same core index view, including persisted span hints. Chroma's own FTS
+continues to index the stored document: its internal FTS cannot be given separate
+index text. A0 therefore does not remove base64 from Chroma's internal word index. Remote
+plugin lexical paths (Qdrant, Milvus and pgvector) also retain their stored-text
+behavior; separate remote index fields and schema migration are follow-up work.
+
+Existing data is not re-embedded or reindexed automatically. An operator can
+optionally run `mempalace repair rebuild-index` on a backed-up Chroma palace to
+rebuild vectors with this policy. Existing span hints survive that rebuild.
+Pre-A0 fragments without provenance can only be detected independently; to recover
+whole-input context, re-ingest the original source through an explicit operator
+workflow. This change does not run either operation.
+
+The mirror currently calls `add_drawer` with 4,000-character transcript chunks.
+A0 protects each whole `add_drawer` input and its subsequent physical split.
+A base64 run already split at the upstream 4,000-character boundary can leave
+short fragments without enough context for validation. B1c replaces that mirror
+unit with message-class groups and supplies whole-message context; A0 does not
+change the mirror transport or the ThreadStore lexical policy.
 
 ## B1a: Thread store v2
 

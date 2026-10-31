@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
 from ..source_identity import source_directory_identity
+from ..stored_text import public_metadata
 from .base import DrawerRecord
 
 
@@ -99,9 +100,7 @@ class PalaceContext:
         this machine's filesystem, and a value from anywhere else would be a
         number ``sync`` weighs a removal against.
         """
-        from ..stored_text import user_metadata
-
-        meta = user_metadata(dict(record.metadata))
+        meta = public_metadata(record.metadata)
         meta.setdefault("source_file", record.source_file)
         meta.setdefault("chunk_index", record.chunk_index)
         # A drawer an adapter files names a source the same way a mined one

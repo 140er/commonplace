@@ -435,6 +435,7 @@ def _search_drawer_memories(
             "_source_file_full": source,
             "_chunk_index": meta.get("chunk_index"),
             "_parent_drawer_id": meta.get("parent_drawer_id"),
+            "_index_metadata": {INDEX_SPANS: meta.get(INDEX_SPANS)},
         }
         if closet_preview:
             entry["closet_preview"] = closet_preview

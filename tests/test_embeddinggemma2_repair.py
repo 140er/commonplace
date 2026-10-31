@@ -76,13 +76,13 @@ def test_rebuild_index_migrates_old_identity_and_preserves_drawers(
 
     monkeypatch.setattr(embedding_wrapper, "_embed_texts", _fake_embed_texts)
     wrapped_for_eg2 = []
-    original_wrap = repair._embeddinggemma2_collection
+    original_wrap = repair._text_embedding_collection
 
     def _record_wrapper(collection, enabled):
         wrapped_for_eg2.append(enabled)
         return original_wrap(collection, enabled)
 
-    monkeypatch.setattr(repair, "_embeddinggemma2_collection", _record_wrapper)
+    monkeypatch.setattr(repair, "_text_embedding_collection", _record_wrapper)
     monkeypatch.setattr(repair, "check_extraction_safety", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(repair, "_post_rebuild_cleanup", lambda *_args, **_kwargs: None)
 
