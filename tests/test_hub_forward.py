@@ -237,12 +237,16 @@ class _FakeHub:
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.httpd.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
         self.thread.start()
 
     def stop(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+        self.thread.join(timeout=5)
+        assert not self.thread.is_alive(), "fake hub did not stop"
 
 
 @pytest.fixture

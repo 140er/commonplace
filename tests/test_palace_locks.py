@@ -54,7 +54,7 @@ def _isolate_home(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _hold_lock(palace_path: str, ready_flag: str, release_flag: str) -> int:
+def _hold_lock(palace_path: str, ready_flag, release_flag) -> int:
     """Acquire mine_palace_lock, signal readiness, wait for release flag.
 
     Returns 0 if we acquired the lock, 1 if MineAlreadyRunning was raised.
@@ -62,13 +62,8 @@ def _hold_lock(palace_path: str, ready_flag: str, release_flag: str) -> int:
     """
     try:
         with mine_palace_lock(palace_path):
-            # Tell the parent we hold the lock
-            open(ready_flag, "w").close()
-            # Wait until parent tells us to release
-            for _ in range(500):
-                if os.path.exists(release_flag):
-                    return 0
-                time.sleep(0.01)
+            ready_flag.set()
+            assert release_flag.wait(5), "parent did not release the lock holder"
             return 0
     except MineAlreadyRunning:
         return 1
@@ -138,26 +133,19 @@ def test_same_palace_serializes_across_processes(tmp_path, monkeypatch):
     """Two processes contending for the same palace: second must be rejected."""
     _isolate_home(monkeypatch, tmp_path)
     palace = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
     ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
     holder = ctx.Process(target=_hold_lock, args=(palace, ready, release))
     holder.start()
     try:
-        # Wait for the holder to acquire
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock in time"
+        assert ready.wait(5), "holder failed to acquire lock in time"
 
         # From the parent, we must not be able to acquire the same palace lock
         with pytest.raises(MineAlreadyRunning):
             with mine_palace_lock(palace):
                 pytest.fail("second acquire of same palace should have raised")
     finally:
-        open(release, "w").close()
+        release.set()
         holder.join(timeout=5)
         assert holder.exitcode == 0
 
@@ -167,24 +155,18 @@ def test_different_palaces_dont_conflict(tmp_path, monkeypatch):
     _isolate_home(monkeypatch, tmp_path)
     palace_a = str(tmp_path / "palace_a")
     palace_b = str(tmp_path / "palace_b")
-    ready = str(tmp_path / "ready_a")
-    release = str(tmp_path / "release_a")
-
     ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
     holder = ctx.Process(target=_hold_lock, args=(palace_a, ready, release))
     holder.start()
     try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock in time"
+        assert ready.wait(5), "holder failed to acquire lock in time"
 
         # Different palace — must succeed even while palace_a is held
         with mine_palace_lock(palace_b):
             pass  # no exception expected
     finally:
-        open(release, "w").close()
+        release.set()
         holder.join(timeout=5)
 
 
@@ -202,18 +184,12 @@ def test_palace_path_is_normalized(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     os.makedirs(tmp_path / "palace", exist_ok=True)
     absolute = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
     ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
     holder = ctx.Process(target=_hold_lock, args=(absolute, ready, release))
     holder.start()
     try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock in time"
+        assert ready.wait(5), "holder failed to acquire lock in time"
 
         # Parent holds CWD = tmp_path so "palace" is the same on-disk dir as
         # the absolute form. The lock key is sha256(realpath+normcase) so the
@@ -222,7 +198,7 @@ def test_palace_path_is_normalized(tmp_path, monkeypatch):
             with mine_palace_lock("palace"):
                 pytest.fail("normalized path collision should have raised")
     finally:
-        open(release, "w").close()
+        release.set()
         holder.join(timeout=5)
 
 
@@ -269,18 +245,15 @@ def _try_acquire_expect_busy(palace_path, result_q):
         result_q.put("busy")
 
 
-def _hold_lock_send_pid(palace_path: str, ready_flag: str, release_flag: str, pid_q) -> None:
+def _hold_lock_send_pid(palace_path: str, ready_flag, release_flag, pid_q) -> None:
     """Acquire the lock, push our PID + cmdline through the queue, then wait."""
     import sys as _sys
 
     try:
         with mine_palace_lock(palace_path):
             pid_q.put((os.getpid(), list(_sys.argv[:3])))
-            open(ready_flag, "w").close()
-            for _ in range(500):
-                if os.path.exists(release_flag):
-                    return
-                time.sleep(0.01)
+            ready_flag.set()
+            assert release_flag.wait(5), "parent did not release the lock holder"
     except MineAlreadyRunning:
         pid_q.put(("error", "raised"))
 
@@ -297,19 +270,13 @@ def test_lock_failure_message_names_holder(tmp_path, monkeypatch):
     """
     _isolate_home(monkeypatch, tmp_path)
     palace = str(tmp_path / "palace")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
     ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
     pid_q = ctx.Queue()
     holder = ctx.Process(target=_hold_lock_send_pid, args=(palace, ready, release, pid_q))
     holder.start()
     try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock in time"
+        assert ready.wait(5), "holder failed to acquire lock in time"
         holder_pid, _holder_argv = pid_q.get(timeout=2)
 
         with pytest.raises(MineAlreadyRunning) as excinfo:
@@ -321,7 +288,7 @@ def test_lock_failure_message_names_holder(tmp_path, monkeypatch):
             f"lock-failure message must name the holder PID; got: {msg!r}"
         )
     finally:
-        open(release, "w").close()
+        release.set()
         holder.join(timeout=5)
 
 
@@ -672,7 +639,7 @@ os.close(release)
 # reaper added to reclaim them safely.
 
 
-def _hold_source_lock(source_file: str, ready_flag: str, release_flag: str) -> int:
+def _hold_source_lock(source_file: str, ready_flag, release_flag) -> int:
     """Acquire mine_lock(source_file), signal readiness, wait for release.
 
     Runs in a child process for true cross-process locking semantics,
@@ -680,11 +647,8 @@ def _hold_source_lock(source_file: str, ready_flag: str, release_flag: str) -> i
     rather than the per-palace mine_palace_lock.
     """
     with mine_lock(source_file):
-        open(ready_flag, "w").close()
-        for _ in range(500):
-            if os.path.exists(release_flag):
-                return 0
-            time.sleep(0.01)
+        ready_flag.set()
+        assert release_flag.wait(5), "parent did not release the lock holder"
         return 0
 
 
@@ -730,18 +694,12 @@ def test_reap_never_removes_a_lock_held_by_another_process(tmp_path, monkeypatch
     a courtesy throttle, the flock check is the actual safety mechanism."""
     _isolate_home(monkeypatch, tmp_path)
     source_file = str(tmp_path / "some_source.py")
-    ready = str(tmp_path / "ready")
-    release = str(tmp_path / "release")
-
     ctx = _get_mp_context()
+    ready, release = ctx.Event(), ctx.Event()
     holder = ctx.Process(target=_hold_source_lock, args=(source_file, ready, release))
     holder.start()
     try:
-        for _ in range(500):
-            if os.path.exists(ready):
-                break
-            time.sleep(0.01)
-        assert os.path.exists(ready), "holder failed to acquire lock in time"
+        assert ready.wait(5), "holder failed to acquire lock in time"
 
         lock_dir = tmp_path / ".mempalace" / "locks"
         lock_files = list(lock_dir.glob("*.lock"))
@@ -757,7 +715,7 @@ def test_reap_never_removes_a_lock_held_by_another_process(tmp_path, monkeypatch
         assert skipped == 1
         assert lock_files[0].exists(), "a held lock must never be removed by the reaper"
     finally:
-        open(release, "w").close()
+        release.set()
         holder.join(timeout=5)
         assert holder.exitcode == 0
 
