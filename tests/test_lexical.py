@@ -8,7 +8,7 @@ every backend, so it must be deliberate.
 
 import pytest
 
-from mempalace.lexical import bm25_scores, select_lexical_terms, tokenize
+from mempalace.lexical import bm25_scores, lexical_query_terms, tokenize
 
 CORPUS = [
     "Kubernetes rollout notes: we rolled back the deploy on Friday.",
@@ -73,72 +73,57 @@ def test_stop_words_drop_from_query_and_documents():
     assert bm25_scores("the on", CORPUS, stop_words=stop) == [0.0] * len(CORPUS)
 
 
-def test_literal_terms_precede_long_words_and_stop_words_are_removed():
-    query = "the authentication configuration verification implementation deployment " * 10
-    query += " ZXQ739251 /srv/archive/kestrel/manifest.lock FooBar port_8473"
-    terms, skip = select_lexical_terms(query)
-    assert skip is None and len(terms) <= 8
-    assert {"zxq739251", "manifest", "foobar", "port_8473"} <= set(terms)
-    assert "the" not in terms
-
-
-def test_long_plain_query_has_explicit_skip_reason():
-    terms, skip = select_lexical_terms(
-        "please help me find where we put the old file and tell me how to use it now"
+def test_literal_name_and_other_priority_is_stable():
+    terms, skip = lexical_query_terms(
+        'please find deployment getUser ID734 "/srv/manifest.lock" Sarah Okonkwo'
     )
-    assert terms == [] and skip == "long_query_no_literal"
+    assert skip is None
+    assert terms.index("getuser") < terms.index("deployment")
+    assert terms.index("id734") < terms.index("sarah")
+    assert terms.index("sarah") < terms.index("deployment")
 
 
-def test_long_words_alone_do_not_make_prose_a_literal_query():
-    terms, skip = select_lexical_terms(
-        "review the deployment configuration authentication middleware and database "
-        "optimization before discussing implementation verification operational followup"
+@pytest.mark.parametrize("starter", ["Remind", "Engineering", "ERROR", "follow-up"])
+def test_long_prose_does_not_turn_initial_capital_caps_or_hyphens_into_literals(starter):
+    query = (
+        starter
+        + " what did we decide about the deployment configuration and error handling patterns before we review the database migration next week"
     )
-    assert terms == [] and skip == "long_query_no_literal"
+    assert lexical_query_terms(query) == ([], "long_query_no_literal")
 
 
-def test_short_keywords_and_sentence_punctuation():
-    assert select_lexical_terms("the lamp port.") == (["lamp", "port"], None)
-
-
-def test_frequency_probe_removes_common_terms_and_ranks_rare_literals():
-    def frequencies(terms, *, limit):
-        assert limit == 2001
-        assert len(terms) <= 32
-        return {term: {"zq9": 1, "okonkwo": 2}.get(term, 2001) for term in terms}, 60000
-
-    terms, skip = select_lexical_terms(
-        'What did Sarah Okonkwo say about "marigold protocol" in /srv/source/file.py ZQ9',
-        frequencies=frequencies,
+def test_long_questions_use_names_and_literals_only():
+    terms, skip = lexical_query_terms(
+        "What did Sarah Okonkwo say about the budget review at our meeting on Tuesday afternoon with the vendor team last spring?"
     )
-    assert terms == ["zq9", "okonkwo"] and skip is None
-
-
-def test_frequency_cutoff_uses_five_percent_or_two_thousand():
-    assert select_lexical_terms(
-        "common rare", frequencies=lambda terms, **kw: ({"common": 1001, "rare": 1}, 20000)
-    ) == (["rare"], None)
-    assert select_lexical_terms(
-        "common", frequencies=lambda terms, **kw: ({"common": 2001}, 60000)
-    ) == ([], "no_discriminative_terms")
-
-
-def test_empty_selection_reports_reason_and_minimum_length_precedes_cap():
-    assert select_lexical_terms("session summary") == ([], "no_lexical_terms")
-    query = " ".join([f"{i:02d}" for i in range(20)]) + " Marigold"
-    assert select_lexical_terms(query, min_length=3) == (["marigold"], None)
-
-
-def test_long_literal_probe_avoids_surrounding_prose_after_a_match():
-    calls = []
-
-    def frequencies(terms, *, limit):
-        calls.append(terms)
-        return {term: 1 if term == "zq9" else 0 for term in terms}, 20000
-
-    terms, skip = select_lexical_terms(
-        "review deployment configuration and authentication middleware before we discuss the implementation verification and followup ZQ9",
-        frequencies=frequencies,
+    assert skip is None and "okonkwo" in terms
+    assert "budget" not in terms
+    terms, skip = lexical_query_terms(
+        'Please find what we wrote down about the "marigold protocol" from the meeting with the vendor team last spring'
     )
-    assert terms == ["zq9"] and skip is None
-    assert calls == [["zq9"]]
+    assert skip is None and {"marigold", "protocol"} <= set(terms)
+
+
+def test_index_normalization_query_caps_and_shape_reasons():
+    assert lexical_query_terms("session summary") == ([], "no_terms_after_stopwords")
+    assert lexical_query_terms("the " * 300 + "ZQ9") == ([], "no_terms_after_stopwords")
+    assert lexical_query_terms("café PORT foo_bar")[0] == ["foo", "bar", "cafe", "port"]
+    terms, _ = lexical_query_terms(" ".join(f"id{i}" for i in range(400)))
+    assert len(terms) == 16
+    assert all(len(t) <= 64 for t in lexical_query_terms("x" * 400)[0])
+    assert lexical_query_terms("aa bb marigold", min_length=3, trigram=True)[0] == ["marigold"]
+
+
+def test_sentence_starts_and_short_words_are_not_names():
+    query = "Remind me what we decided about this project last week. Engineering notes should explain the planned deployment configuration and error handling patterns for this component"
+    assert lexical_query_terms(query) == ([], "long_query_no_literal")
+
+
+def test_repeated_word_keeps_its_highest_priority_class():
+    terms, _ = lexical_query_terms("discuss brown next Brown manifest /srv/manifest.lock")
+    assert terms.index("manifest") < terms.index("brown") < terms.index("discuss")
+
+
+def test_closet_query_keeps_all_capped_terms_without_drawer_selection():
+    terms, skip = lexical_query_terms(" ".join(f"term{i}" for i in range(300)), closet=True)
+    assert skip is None and len(terms) == 256

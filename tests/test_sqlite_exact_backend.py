@@ -954,7 +954,7 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
 
     called = {"query": 0, "lex": 0}
     orig_query = SQLiteExactCollection.query
-    orig_lex = SQLiteExactCollection.lexical_search
+    orig_lex = SQLiteExactCollection.union_lexical_search
 
     def wrapped_query(self, *args, **kwargs):
         if self._collection_name == "mempalace_closets":
@@ -967,7 +967,7 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
         return orig_lex(self, *args, **kwargs)
 
     monkeypatch.setattr(SQLiteExactCollection, "query", wrapped_query)
-    monkeypatch.setattr(SQLiteExactCollection, "lexical_search", wrapped_lex)
+    monkeypatch.setattr(SQLiteExactCollection, "union_lexical_search", wrapped_lex)
 
     result = search_memories("meshkit", str(tmp_path), n_results=1)
     assert "error" not in result
@@ -1006,7 +1006,8 @@ def test_search_union_falls_back_on_unsupported_lexical_capability(monkeypatch, 
     )
 
     assert "error" not in result
-    assert result["candidate_strategy_fallback"] == "lexical_search_unsupported"
+    assert "candidate_strategy_fallback" not in result
+    assert result["lexical_skipped"] == "lexical_unbounded_for_filter"
     assert result["results"][0]["drawer_id"] == "a"
 
 
@@ -1040,7 +1041,10 @@ def test_readonly_lexical_scope_survives_legacy_fts_rowid_drift(tmp_path):
         create=False,
         options={"read_only": True},
     )
-    assert readonly.lexical_term_frequencies(["zxq739251"]) == ({"zxq739251": 2}, 2)
+    assert [
+        h.id
+        for h in readonly.union_lexical_search(query="ZXQ739251", where={"wing": "target"}).hits
+    ] == ["needle"]
     result = readonly.lexical_search(query="ZXQ739251", where={"wing": "target"})
     assert [hit.id for hit in result.hits] == ["needle"]
     with sqlite3.connect(path) as conn:
@@ -2232,29 +2236,20 @@ def test_sqlite_exact_recency_indexes_are_additive_and_skipped_read_only(tmp_pat
             backend.close_palace(palace)
 
 
-def test_lexical_frequency_cache_invalidates_after_own_and_peer_writes(tmp_path):
+def test_scope_local_lexical_reads_observe_own_and_peer_writes(tmp_path):
     backend, col = _collection(tmp_path)
     col.add(ids=["a"], documents=["marigold"], embeddings=[[1.0, 0.0]])
-    assert col.lexical_term_frequencies(["marigold"]) == ({"marigold": 1}, 1)
-    statements = []
-    col._handle.conn.set_trace_callback(statements.append)
-    assert col.lexical_term_frequencies(["marigold"]) == ({"marigold": 1}, 1)
-    col._handle.conn.set_trace_callback(None)
-    assert not any("docs_fts MATCH" in sql for sql in statements)
-
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a"}
     col.add(ids=["b"], documents=["marigold"], embeddings=[[1.0, 0.0]])
-    assert col.lexical_term_frequencies(["marigold"]) == ({"marigold": 2}, 2)
     peer, other = _collection(tmp_path, create=False)
     other.add(ids=["c"], documents=["marigold"], embeddings=[[1.0, 0.0]])
-    assert col.lexical_term_frequencies(["marigold"]) == ({"marigold": 3}, 3)
-    # The limit is part of the cache key, and collections never share counts.
-    assert col.lexical_term_frequencies(["marigold"], limit=1) == ({"marigold": 1}, 3)
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a", "b", "c"}
     closets = backend.get_collection(
         palace=PalaceRef(id=str(tmp_path), local_path=str(tmp_path)),
         collection_name="mempalace_closets",
         create=True,
     )
     closets.add(ids=["x"], documents=["marigold"], embeddings=[[1.0, 0.0]])
-    assert closets.lexical_term_frequencies(["marigold"]) == ({"marigold": 1}, 1)
-    assert col.lexical_term_frequencies(["marigold"]) == ({"marigold": 3}, 3)
+    assert {h.id for h in closets.union_lexical_search(query="marigold", closet=True).hits} == {"x"}
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a", "b", "c"}
     peer.close_palace(str(tmp_path))

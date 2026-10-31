@@ -1,6 +1,6 @@
 # Searching Memories
 
-MemPalace combines semantic vector candidates with BM25 lexical candidates by default (`union`). This also finds exact paths, identifiers, and error strings that embeddings miss. When you search, you get **verbatim text** — the exact words, never summaries.
+MemPalace combines semantic vector candidates with BM25 lexical candidates by default on bounded lexical backends (`union`): Chroma, sqlite_exact and compact. Other backends default to vector candidates. This also finds exact paths, identifiers, and error strings that embeddings miss. When you search, you get **verbatim text** — the exact words, never summaries.
 
 ## CLI Search
 
@@ -27,17 +27,21 @@ mempalace search "deploy process" --candidate-strategy vector
 ## How Search Works
 
 1. Your query is embedded using the vector store's default model (`all-MiniLM-L6-v2` with the default ChromaDB backend).
-2. Vector matches and backend BM25 lexical matches form the candidate pool. `candidate_strategy="vector"` keeps vector candidates only.
+2. On Chroma, sqlite_exact and compact, vector matches and bounded backend BM25 lexical matches form the candidate pool. Other backends use vector candidates by default. `candidate_strategy="vector"` keeps vector candidates only.
 3. Optional wing/room filters narrow both candidate sources.
 4. Hybrid ranking orders the merged candidates. Results include source metadata and similarity scores; a lexical-only hit can have `similarity: null` and `distance: null` when no vector distance was measured.
 
-Union drawer retrieval selects at most eight terms, prioritizing IDs, quoted spans, capitalized names, and paths. Both local backends probe at most 32 terms without ranking, counting at most 2,001 documents per term. Terms found in more than 5% of the collection are dropped, with a cutoff bounded between 1,000 and 2,000 documents; this keeps small-palace keyword recall while bounding large-corpus work. Remaining terms sort by frequency, then length. Backends without probes use length as a rarity proxy.
+Union drawer retrieval selects up to eight index-normalized terms, prioritizing literals and proper names outside sentence starts. A term fetch applies the complete scope inside FTS and stops after the scoped cutoff plus one row. The cutoff is 5% of the scope, bounded between 1,000 and 2,000 records. There are at most sixteen term fetches, no separate frequency probes, and no shared query-statistics cache. The complete accepted-term pool is ranked using only in-scope text and statistics, then the top results are hydrated. Closets use the same scope-local path. Public backend `lexical_search` retains its signature.
 
-Queries longer than twelve tokens without a literal keep vector candidates and report `lexical_skipped: "long_query_no_literal"`. Empty selections report `no_lexical_terms`; selections containing only misses or common terms report `no_discriminative_terms`. Public backend lexical search and closet boosts retain their full-query behavior.
+Closets retain full-query scope-local BM25 without the drawer term selection or DF cutoff. They keep the query caps and quoted terms; reaching 5,000 matches for any term disables all closet boosts for that search.
 
-The returned hybrid `score` is normalized within each candidate pool. Commonplace gateway and handoff recall re-rank merged scopes once using the worker’s echoed query, explicit `ranking_lang` stop words, returned `rank_components`, and verbatim text. Python integrations can do the same with `mempalace.lexical.rerank_merged_hits(result["query"], hits, stop_words=mempalace.lexical.ranking_stop_words(result))` before sorting by `score`. Results from older workers without those components retain approximate score ordering.
+Writable Chroma opens maintain a partial covering index over wing, room and source metadata. It indexes no document text. Read-only palaces use the same bounded retrieval without creating the optional index.
 
-A backend without lexical search keeps vector results and reports `candidate_strategy_fallback: "lexical_search_unsupported"`. Experimental media/code task search always uses shared-space vector ranking.
+Queries are capped at 256 tokens and terms at 64 characters. Queries longer than twelve tokens after stop-word removal use literals and names only; without either they report `lexical_skipped: "long_query_no_literal"`. Stop-word-only selections report `no_terms_after_stopwords`. A long question with an incidental date can miss a lexical-only answer containing only ordinary topic words. Unsupported backend/filter shapes use vector candidates and report `lexical_unbounded_for_filter`, including explicit union requests. Corpus-dependent selection details and fallback causes are never returned. See [RFC 009](../../docs/rfcs/009-union-where-bounded.md).
+
+Commonplace searches its readable wing union in one worker call using the public `wings` list. The gateway intersects requested wings with the connection's readable wings, including the separate private-read requirement. This produces one candidate pool and one ranking. `wing` and `wings` together mean their intersection.
+
+The returned hybrid `score` is normalized within the candidate pool. Handoff recall can still merge thread scopes using the worker's sanitized query and explicit locale. Media/code task search always uses shared-space vector ranking and does not accept `wings`.
 
 ### Why Scoping Matters
 

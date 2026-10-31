@@ -277,7 +277,7 @@ def test_search_fans_out_over_readable_wings_only(hub):
     assert denied["denied"]
 
 
-def test_multiwing_search_merges_by_hybrid_score_before_limit():
+def test_multiwing_search_uses_one_joint_worker_ranking_before_limit():
     from mempalace.searcher import _hybrid_rank
 
     results = {
@@ -310,7 +310,9 @@ def test_multiwing_search_merges_by_hybrid_score_before_limit():
     def call_tool(principal, name, args):
         if name == "mempalace_list_wings":
             return {"wings": {"shared": {}, "project_a": {}, "vault": {}}}
-        return {"results": results[args["wing"]]}
+        assert args["wings"] == ["project_a", "shared"]
+        joint = [hit for wing in args["wings"] for hit in results[wing]]
+        return {"results": _hybrid_rank(joint, args["query"])[: args["limit"]]}
 
     from commonplace.gateway import Mediator
 
@@ -324,7 +326,7 @@ def test_multiwing_search_merges_by_hybrid_score_before_limit():
     assert [hit["drawer_id"] for hit in result["results"]] == ["lexical"]
 
 
-def test_multiwing_search_normalizes_bm25_over_the_merged_pool():
+def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments():
     from commonplace.gateway import Mediator
     from mempalace.searcher import _hybrid_rank
 
@@ -358,11 +360,11 @@ def test_multiwing_search_normalizes_bm25_over_the_merged_pool():
     assert results["project_a"][0]["score"] > results["shared"][0]["score"]
 
     def call_tool(principal, name, args):
-        return (
-            {"wings": {"shared": {}, "project_a": {}}}
-            if name == "mempalace_list_wings"
-            else {"results": results[args["wing"]]}
-        )
+        if name == "mempalace_list_wings":
+            return {"wings": {"shared": {}, "project_a": {}}}
+        assert args["wings"] == ["project_a", "shared"]
+        joint = [hit for wing in args["wings"] for hit in results[wing]]
+        return {"results": _hybrid_rank(joint, args["query"])[: args["limit"]]}
 
     mediator = object.__new__(Mediator)
     mediator.workers = SimpleNamespace(call_tool=call_tool)
@@ -761,46 +763,6 @@ def test_audit_fields_are_capped(hub):
         assert len(entry["tool"] or "") <= 120 and len(entry["wing"] or "") <= 200
 
 
-def test_multiwing_rerank_uses_worker_query_and_locale(monkeypatch):
-    from commonplace.gateway import Mediator
-    from mempalace.i18n import get_stopwords
-    from mempalace.searcher import _hybrid_rank
-
-    clean = "session ZXQ739251"
-    raw = "Kubernetes cluster migration session " * 20 + clean
-    monkeypatch.setenv("MEMPALACE_LANG", "de")
-    by_wing = {
-        "shared": [
-            {"drawer_id": "needle", "wing": "shared", "text": "ZXQ739251", "distance": None}
-        ],
-        "project_a": [
-            {
-                "drawer_id": "offtopic",
-                "wing": "project_a",
-                "text": "session " * 20 + "Kubernetes cluster migration",
-                "distance": 0.5,
-            }
-        ],
-    }
-    for hits in by_wing.values():
-        _hybrid_rank(hits, clean, stop_words=frozenset(get_stopwords("en")))
-
-    def call_tool(principal, name, args):
-        if name == "mempalace_list_wings":
-            return {"wings": {wing: {} for wing in by_wing}}
-        return {"query": clean, "ranking_lang": "en", "results": by_wing[args["wing"]]}
-
-    mediator = object.__new__(Mediator)
-    mediator.workers = SimpleNamespace(call_tool=call_tool)
-    result = mediator._fan_out_search(
-        SimpleNamespace(policy=Policy.build(**CODER)),
-        "mempalace_search",
-        {"query": raw, "limit": 1},
-    )
-    assert result["query"] == clean
-    assert result["results"][0]["drawer_id"] == "needle"
-
-
 def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypatch):
     from commonplace.gateway import WorkerClient
     from mempalace.stored_text import RESERVED_METADATA
@@ -824,3 +786,47 @@ def test_all_reserved_metadata_is_removed_before_worker_forwarding(hub, monkeypa
     )
     assert result["success"]
     assert forwarded and all(not RESERVED_METADATA.intersection(args) for args in forwarded)
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
+def test_public_wings_are_intersected_and_searched_once(hub, monkeypatch, wing):
+    from commonplace.gateway import WorkerClient
+
+    owner = hub.owner_token()
+    for stored_wing in ("shared", "project_a", "private_notes"):
+        assert hub.call(
+            owner,
+            "mempalace_add_drawer",
+            wing=stored_wing,
+            room="notes",
+            content="marigold ZXQ739251",
+        )[0]["success"]
+    token = hub.token("scoped-search", **CODER)
+    recorded = []
+    original = WorkerClient.post
+
+    def post(self, principal, request):
+        recorded.append(request)
+        return original(self, principal, request)
+
+    monkeypatch.setattr(WorkerClient, "post", post)
+    result, _ = hub.call(
+        token,
+        "mempalace_search",
+        query="ZXQ739251",
+        **({"wing": wing} if wing else {}),
+        wings=["shared", "project_a", "private_notes"],
+        include_facts=False,
+    )
+    assert not result.get("error")
+    searches = [
+        r["params"] for r in recorded if r.get("params", {}).get("name") == "mempalace_search"
+    ]
+    assert len(searches) == 1
+    assert sorted(searches[0]["arguments"]["wings"]) == ["project_a", "shared"]
+    assert all(
+        hit["wing"] in ({wing} if wing else {"project_a", "shared"}) for hit in result["results"]
+    )
+    from mempalace.mcp_server import TOOLS
+
+    assert "lexical_terms" not in TOOLS["mempalace_search"]["input_schema"]["properties"]

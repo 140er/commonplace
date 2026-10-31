@@ -254,7 +254,7 @@ def fake_hub(isolated_home):
 
 def _register_hub(palace, hub, read_only=False, capabilities=None, search_config_fingerprint=None):
     if capabilities is None:
-        capabilities = ["search_cli_compatible", "search_candidate_union"]
+        capabilities = ["search_cli_compatible", "search_candidate_union", "search_candidate_auto"]
     if search_config_fingerprint is None:
         search_config_fingerprint = MempalaceConfig(palace_path=palace).search_config_fingerprint
     server_registry.write_serverinfo(

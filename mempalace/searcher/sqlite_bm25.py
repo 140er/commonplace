@@ -132,6 +132,7 @@ def _bm25_only_via_sqlite(
     stop_words: frozenset = frozenset(),
     since_dt=None,
     before_dt=None,
+    wings=None,
 ) -> dict:
     """BM25-only search reading drawers directly from chroma.sqlite3.
 
@@ -160,6 +161,14 @@ def _bm25_only_via_sqlite(
 
         collection_name = get_configured_collection_name()
     wing_names = wing_aliases(wing, chroma_known_wings(palace_path)) if wing else []
+    filters = {"wing": wing, "room": room, "source_file": source_file}
+    if wings is not None:
+        known = chroma_known_wings(palace_path)
+        allowed = {alias for name in wings for alias in wing_aliases(name, known)}
+        wing_names = sorted(allowed & set(wing_names) if wing else allowed)
+        filters["wings"] = wings
+        if not wing_names:
+            return {"query": query, "filters": filters, "total_before_filter": 0, "results": []}
     scope = {
         "wing": wing_names,
         "room": [room] if room else [],
@@ -241,7 +250,7 @@ def _bm25_only_via_sqlite(
         if not candidate_ids:
             return {
                 "query": query,
-                "filters": {"wing": wing, "room": room, "source_file": source_file},
+                "filters": filters,
                 "total_before_filter": 0,
                 "results": [],
                 "fallback": "bm25_only_via_sqlite",
@@ -255,12 +264,12 @@ def _bm25_only_via_sqlite(
     # Apply wing/room filters in Python (FTS5 candidates may include
     # entries from other wings).
     candidates = []
-    wings = set(wing_names)
+    scope_wings = set(wing_names)
     for stored_drawer_id, text, meta in rows:
         text, meta = text or "", meta or {}
         if is_bookkeeping(meta, stored_drawer_id):
             continue
-        if wings and meta.get("wing") not in wings:
+        if scope_wings and meta.get("wing") not in scope_wings:
             continue
         if room and meta.get("room") != room:
             continue
@@ -322,13 +331,30 @@ def _bm25_only_via_sqlite(
 
     result = {
         "query": query,
-        "filters": {"wing": wing, "room": room, "source_file": source_file},
+        "filters": filters,
         "total_before_filter": len(candidates),
         "results": hits,
         "fallback": "bm25_only_via_sqlite",
         "fallback_reason": "vector_search_disabled",
     }
     return _flag_truncations(result, window_pool_truncated, candidates_truncated)
+
+
+def _fetch_union_lexical_candidates(
+    drawers_col, query, n_results, where, stop_words, window_active
+):
+    from ..backends.base import LexicalResult
+
+    try:
+        return drawers_col.union_lexical_search(
+            query=query,
+            stop_words=stop_words,
+            n_results=_candidate_pool_size(n_results, window_active),
+            where=where or None,
+        )
+    except Exception:
+        logger.debug("Bounded lexical candidates unavailable")
+        return LexicalResult(hits=[])
 
 
 def _merge_bm25_union_candidates(
@@ -345,6 +371,8 @@ def _merge_bm25_union_candidates(
     before_dt=None,
     stats: dict = None,
     known_distances: dict = None,
+    where: Optional[dict] = None,
+    lexical_result=None,
 ) -> None:
     """Append top-K backend lexical candidates into ``hits`` in place.
 
@@ -361,40 +389,29 @@ def _merge_bm25_union_candidates(
     lexical hits and computes their vector distance; a hit past the cutoff is
     dropped and counted in ``stats["filtered_by_max_distance"]``. A hit whose
     distance cannot be computed is kept with ``distance=None`` and
-    ``fallback_reason="distance_unavailable"`` rather than lost. A hit the
+    no data-dependent fallback cause is exposed. A hit the
     vector path already measured reuses that distance from
     ``known_distances``; if the vector path dropped it, it stays dropped and
     is not counted twice.
     """
     stats = {} if stats is None else stats
-    terms, skipped = select_lexical_terms(
-        query,
-        stop_words,
-        frequencies=getattr(drawers_col, "lexical_term_frequencies", None),
-        min_length=getattr(drawers_col, "lexical_min_token_length", 2),
-    )
-    if skipped:
-        stats["lexical_skipped"] = skipped
-        return
-    if not terms:
-        return
+    where = build_where_filter(wing, room, source_file, col=drawers_col) if where is None else where
     known_distances = known_distances or {}
-    where = build_where_filter(wing, room, source_file, col=drawers_col)
-    try:
-        lexical = drawers_col.lexical_search(
-            query=" ".join(terms),
-            n_results=_candidate_pool_size(
-                n_results, since_dt is not None or before_dt is not None
-            ),
-            where=where or None,
+    lexical = (
+        lexical_result
+        if lexical_result is not None
+        else _fetch_union_lexical_candidates(
+            drawers_col,
+            query,
+            n_results,
+            where,
+            stop_words,
+            since_dt is not None or before_dt is not None,
         )
-    except UnsupportedCapabilityError:
-        stats["candidate_strategy_fallback"] = "lexical_search_unsupported"
-        return
-    except Exception:
-        logger.warning("candidate_strategy=union: lexical fetch failed", exc_info=True)
-        stats["candidate_strategy_fallback"] = "lexical_search_failed"
-        return
+    )
+    skip = getattr(lexical, "skip_reason", None)
+    if skip in ("long_query_no_literal", "no_terms_after_stopwords"):
+        stats["lexical_skipped"] = skip
 
     metric = _metric_for_collection(drawers_col)
     unmeasured = [hit for hit in lexical.hits if hit.id not in known_distances]
@@ -452,9 +469,6 @@ def _merge_bm25_union_candidates(
             "_source_file_full": full_source,
             "_chunk_index": meta.get("chunk_index"),
         }
-        if distance is None and _has_distance_cutoff(max_distance):
-            # The cutoff could not be checked; keep the hit and say why.
-            entry["fallback_reason"] = "distance_unavailable"
         bm25_extra.append(entry)
 
     seen = {h["_stored_id"] for h in hits if h.get("_stored_id")}

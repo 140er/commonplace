@@ -173,7 +173,7 @@ class TestSearchTool:
 
     @pytest.mark.parametrize("strategy", [None, "vector", "union"])
     def test_search_passes_candidate_strategy(self, monkeypatch, config, kg, strategy):
-        """MCP defaults to union and still forwards explicit vector selection."""
+        """MCP forwards None for capability resolution and keeps explicit selection."""
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
@@ -189,7 +189,7 @@ class TestSearchTool:
         result = mcp_server.tool_search(query="rareterm", **arguments)
 
         assert "error" not in result
-        assert seen["candidate_strategy"] == (strategy or "union")
+        assert seen["candidate_strategy"] == strategy
 
     def test_search_applies_no_default_max_distance(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
@@ -231,7 +231,7 @@ class TestSearchTool:
         assert result == {"query": "needle", "cli_output": "exact CLI\n"}
         assert seen["collection"] is collection
         assert seen["n_results"] == 7
-        assert seen["candidate_strategy"] == (strategy or "union")
+        assert seen["candidate_strategy"] == strategy
 
     def test_search_cli_compatible_rejects_embedder_identity_mismatch(
         self, monkeypatch, config, kg

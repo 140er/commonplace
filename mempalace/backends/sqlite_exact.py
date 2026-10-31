@@ -458,11 +458,6 @@ class _SQLiteExactHandle:
         # Native accelerators share one versioned index per collection across
         # the short-lived wrappers created by application searches.
         self._native_cache: dict[str, tuple[tuple, Any]] = {}
-        # Reuse bounded probes across turns/scopes, invalidated by the same
-        # own/peer-write snapshot token as the vector index.
-        self._lexical_frequency_version = None
-        self._lexical_frequency_cache: dict[tuple, int] = {}
-        self._lexical_document_counts: dict[int, int] = {}
 
 
 class SQLiteExactCollection(BaseCollection):
@@ -1442,49 +1437,13 @@ class SQLiteExactCollection(BaseCollection):
             ).fetchall()
         return {str(decode_value(key)): int(count) for key, count in rows if key is not None}
 
-    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
-        with self._cursor() as cur:
-            if not self._fts_available(cur):
-                return None
-            collection_id = self._collection_id(cur)
-            try:
-                handle = self._handle
-                version = self._index_version(cur)
-                cache = handle._lexical_frequency_cache
-                if handle._lexical_frequency_version != version or len(cache) + len(terms) > 512:
-                    cache.clear()
-                    handle._lexical_document_counts.clear()
-                    handle._lexical_frequency_version = version
-                synced = cur.execute(
-                    "SELECT value FROM meta WHERE key = 'fts5_rowid_synced'"
-                ).fetchone()
-                # The covering index avoids hydrating FTS content or embedding
-                # rows for common terms. Legacy unsynced readers use FTS's own
-                # collection column, which makes no rowid-alignment assumption.
-                scope = "collection_id = ?"
-                if synced and synced[0] == "1":
-                    scope = (
-                        "EXISTS (SELECT 1 FROM documents d INDEXED BY idx_documents_collection "
-                        "WHERE d.collection_id = ? AND d.rowid = docs_fts.rowid)"
-                    )
-                counts = {}
-                for term in terms:
-                    key = (collection_id, term, limit)
-                    if key not in cache:
-                        cache[key] = cur.execute(
-                            "SELECT count(*) FROM (SELECT 1 FROM docs_fts "
-                            f"WHERE docs_fts MATCH ? AND {scope} LIMIT ?)",
-                            ('"' + term.replace('"', '""') + '"', collection_id, limit),
-                        ).fetchone()[0]
-                    counts[term] = cache[key]
-                if collection_id not in handle._lexical_document_counts:
-                    handle._lexical_document_counts[collection_id] = cur.execute(
-                        "SELECT count(*) FROM documents WHERE collection_id = ?", (collection_id,)
-                    ).fetchone()[0]
-                total = handle._lexical_document_counts[collection_id]
-                return counts, total
-            except (sqlite3.Error, _SnapshotChanged):
-                return None
+    def supports_bounded_lexical_filter(self, where=None):
+        return _equality_where_sql(where, locus_columns=self._handle.has_locus_columns) is not None
+
+    def lexical_scope(self, where=None):
+        from .scoped_lexical import sqlite_collection_scope
+
+        return sqlite_collection_scope(self, where)
 
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         validate_where(where)
@@ -1512,32 +1471,21 @@ class SQLiteExactCollection(BaseCollection):
     def _lexical_search_fts(self, cur, *, query: str, n_results: int, where: Optional[dict]):
         if not self._fts_available(cur):
             return None
-        tokens = tokenize(query)
+        tokens = [t for t in tokenize(query) if len(t) >= 2]
         if not tokens:
             return None
         fts_query = " OR ".join(tokens)
         collection_id = self._collection_id(cur)
         try:
-            pushed = _equality_where_sql(where, locus_columns=self._handle.has_locus_columns)
-            scope_sql = ""
+            limit_sql = "" if where else "LIMIT ?"
             params = (fts_query, collection_id)
-            if pushed is not None and where:
-                filter_sql, filter_params = pushed
-                scope_sql = (
-                    "AND EXISTS (SELECT 1 FROM documents "
-                    "WHERE documents.id = docs_fts.doc_id "
-                    f"AND collection_id = ? AND ({filter_sql}))"
-                )
-                params = (*params, collection_id, *filter_params)
-            limit_sql = "LIMIT ?" if pushed is not None else ""
-            if pushed is not None:
+            if not where:
                 params = (*params, max(n_results * 5, n_results))
             rows = cur.execute(
                 f"""
-                SELECT doc_id, rank
+                SELECT doc_id, bm25(docs_fts) AS rank
                 FROM docs_fts
                 WHERE docs_fts MATCH ? AND collection_id = ?
-                {scope_sql}
                 ORDER BY rank
                 {limit_sql}
                 """,
@@ -1677,6 +1625,7 @@ class SQLiteExactBackend(BaseBackend):
             "supports_metadata_filters",
             "supports_metadata_facets",
             "supports_lexical_search",
+            "bounded_lexical_search",
             "local_mode",
         }
     )

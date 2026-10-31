@@ -13,6 +13,7 @@ def _print_search_results_bm25_only(
     since_dt=None,
     before_dt=None,
     facts=(),
+    wings=None,
 ) -> None:
     """CLI fallback printer for when HNSW divergence fences off vector search.
 
@@ -40,6 +41,7 @@ def _print_search_results_bm25_only(
         stop_words=stop_words,
         since_dt=since_dt,
         before_dt=before_dt,
+        **({"wings": wings} if wings is not None else {}),
     )
     hits = result.get("results", [])
     from ..fact_render import format_facts
@@ -204,11 +206,6 @@ def _cli_ranked_hits(
         known_distances=known_distances,
         stats=stats,
     )
-    if stats.get("candidate_strategy_fallback"):
-        import sys
-
-        print(f"  Candidate fallback: {stats['candidate_strategy_fallback']}", file=sys.stderr)
-
     for hit in hits:
         if "metadata" not in hit:
             hit["metadata"] = {
@@ -229,12 +226,18 @@ def _cli_ranked_hits(
     return _fold_copies_across_sources(hits, _cli_hit_source, _cli_hit_ref), fetched, skipped
 
 
-def _cli_fact_matches(query, palace_path, wing, n_results):
+def _cli_fact_matches(query, palace_path, wing, n_results, wings=None):
     """Optional facts can report a generic failure but never stop CLI drawers."""
     try:
         from .facts import palace_facts
 
-        result = palace_facts(query, palace_path, wing=wing, limit=n_results)
+        result = palace_facts(
+            query,
+            palace_path,
+            wing=wing,
+            limit=n_results,
+            **({"wings": wings} if wings is not None else {}),
+        )
         if result.get("facts_error"):
             print("  facts_error: unavailable")
         return result["facts"]
@@ -264,8 +267,9 @@ def search(
     collection=None,
     include_media: bool = False,
     query_task: str = "search",
-    candidate_strategy: str = "union",
+    candidate_strategy: Optional[str] = None,
     facts=None,
+    wings=None,
 ):
     """
     Search the palace. Returns verbatim drawer content.
@@ -329,7 +333,13 @@ def search(
     from ..fact_render import format_facts
 
     if facts is None:
-        facts = _cli_fact_matches(query, palace_path, wing, n_results)
+        facts = _cli_fact_matches(
+            query,
+            palace_path,
+            wing,
+            n_results,
+            **({"wings": wings} if wings is not None else {}),
+        )
 
     # Probe a Chroma palace before get_collection(). Opening the client can
     # load native index state, and embedder-identity enforcement may call
@@ -358,6 +368,7 @@ def search(
                 since_dt=since_dt,
                 before_dt=before_dt,
                 facts=facts,
+                **({"wings": wings} if wings is not None else {}),
             )
 
         col = _open_collection_or_explain(palace_path, opener=get_collection, read_only=True)
@@ -370,7 +381,8 @@ def search(
     # creation — their similarity scores will be junk until they run repair.
     _warn_if_legacy_metric(col)
 
-    where = build_where_filter(wing, room, col=col)
+    where = build_where_filter(wing, room, col=col, wings=wings)
+    candidate_strategy = _resolve_candidate_strategy(candidate_strategy, col, where)
 
     metric = _metric_for_collection(col)
     fetch = _candidate_pool_size(n_results, date_window_active)

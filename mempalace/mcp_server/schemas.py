@@ -522,11 +522,16 @@ TOOLS = {
                     "type": "boolean",
                     "description": "Include matching facts (default true); drawer results are unchanged.",
                 },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 64,
+                    "description": "Search the union of these wings in one candidate pool. Combined with wing, uses their intersection.",
+                },
                 "candidate_strategy": {
                     "type": "string",
                     "enum": ["vector", "union"],
-                    "default": "union",
-                    "description": "Drawer-only candidate strategy. Default 'union' merges vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only. Media/code task search always uses shared-space vector ranking.",
+                    "description": "Drawer-only candidate strategy. By default, bounded lexical backends merge vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only. Media/code task search always uses shared-space vector ranking.",
                 },
                 "cli_compatible": {
                     "type": "boolean",

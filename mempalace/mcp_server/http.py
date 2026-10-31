@@ -1544,6 +1544,7 @@ def _serve_http(host: str, port: int) -> None:
                     "mine_include_subagents",
                     "search_cli_compatible",
                     "search_candidate_union",
+                    "search_candidate_auto",
                 ],
                 search_config_fingerprint=_config.search_config_fingerprint,
             )

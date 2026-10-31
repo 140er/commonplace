@@ -10,16 +10,87 @@ their stored form in :func:`_decoded_rows`.
 """
 
 import contextlib
+import logging
 import os
 import sqlite3
+import subprocess
+import sys
 from collections import defaultdict
 from typing import Iterable, Iterator, Optional
 
 from ..lexical import tokenize
-from ..stored_text import FLAG, decode_record, decode_value, encode_filter, encode_where
+from ..stored_text import (
+    FLAG,
+    INDEX_SPANS,
+    decode_record,
+    decode_value,
+    encode_filter,
+    encode_where,
+    index_text,
+)
 from ..timeutil import recency_floor, recency_key
 from ._filters import matches_where
 from ._inproc_sqlite import open_reader as open_palace_reader
+
+logger = logging.getLogger(__name__)
+SCOPE_INDEX = "mempalace_scope_metadata"
+_SCOPE_KEYS_SQL = "('wing','room','source_file')"
+_SCOPE_INDEX_SQL = (
+    f"CREATE INDEX IF NOT EXISTS {SCOPE_INDEX} ON embedding_metadata(key,string_value,id) "
+    f"WHERE key IN {_SCOPE_KEYS_SQL}"
+)
+_SCOPE_INDEX_INSTALL = """
+import sqlite3, sys
+from pathlib import Path
+conn = sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + '?mode=rw', uri=True, timeout=0.1)
+try:
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (sys.argv[2],)).fetchone():
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute(sys.argv[3])
+        conn.commit()
+finally:
+    conn.close()
+"""
+
+
+def ensure_scope_index(conn):
+    """Install the derived scope index atomically; never index document text."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
+    ).fetchone():
+        return False
+    own_transaction = not conn.in_transaction
+    if own_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(_SCOPE_INDEX_SQL)
+        if own_transaction:
+            conn.commit()
+    except Exception:
+        if own_transaction:
+            conn.rollback()
+        raise
+    return True
+
+
+def ensure_palace_scope_index(palace_path):
+    path = _db_file(palace_path)
+    if path is None:
+        return
+    try:
+        # A different process owns its SQLite locks: closing its writer
+        # cannot release the native Chroma client's locks or retain guards
+        # after that client closes. No model or package imports in the helper.
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", _SCOPE_INDEX_INSTALL, path, SCOPE_INDEX, _SCOPE_INDEX_SQL],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode:
+            logger.debug("Optional lexical scope index unavailable")
+    except (OSError, subprocess.SubprocessError):
+        # The index changes the plan, never eligibility or search results.
+        logger.debug("Optional lexical scope index unavailable")
 
 
 class MetadataRecoveryPending(sqlite3.OperationalError):
@@ -444,38 +515,94 @@ def _newest_row_ids(
         return newest("e.id DESC")
 
 
-def sqlite_term_frequencies(palace_path: str, collection_name: str, terms: list[str], limit: int):
-    """Bounded, unranked FTS probes scoped to one collection."""
-
-    def read(conn):
-        segments = [
-            row[0]
-            for row in conn.execute(
-                "SELECT s.id FROM segments s JOIN collections c ON s.collection = c.id "
-                "WHERE c.name = ? AND s.scope = 'METADATA'",
-                (collection_name,),
-            )
-        ]
-        if not segments:
-            return dict.fromkeys(terms, 0), 0
+def _lexical_scope_sql(collection_name, equalities, conn=None):
+    filter_sql, filter_params = _match_sql(equalities[1:], "e.id", alias="f")
+    segments = "SELECT s.id FROM segments s JOIN collections c ON s.collection=c.id WHERE c.name=? AND s.scope='METADATA'"
+    if conn is not None:
         total = conn.execute(
-            f"SELECT count(*) FROM embeddings WHERE segment_id IN ({_marks(segments)})", segments
+            f"SELECT count(*) FROM embeddings WHERE segment_id IN ({segments})",
+            (collection_name,),
         ).fetchone()[0]
-        sql = f"""SELECT count(*) FROM (
-            SELECT 1 FROM embedding_fulltext_search
-            WHERE embedding_fulltext_search MATCH ? AND EXISTS (
-                SELECT 1 FROM embeddings e WHERE e.id = embedding_fulltext_search.rowid
-                AND e.segment_id IN ({_marks(segments)})) LIMIT ?)
-        """
-        counts = {
-            term: conn.execute(
-                sql, ('"' + term.replace('"', '""') + '"', *segments, limit)
-            ).fetchone()[0]
-            for term in terms
-        }
-        return counts, total
+        if total > 20000:
+            # COUNT uses the segment prefix index; the primary-key endpoints
+            # stop at one row instead of aggregating min/max over every id.
+            bounds = [
+                conn.execute(
+                    f"SELECT id FROM embeddings NOT INDEXED WHERE segment_id IN ({segments}) "
+                    f"ORDER BY id {order} LIMIT 1",
+                    (collection_name,),
+                ).fetchone()[0]
+                for order in ("ASC", "DESC")
+            ]
+            low, high = bounds
+        else:
+            low, high = conn.execute(
+                f"SELECT min(id),max(id) FROM embeddings WHERE segment_id IN ({segments})",
+                (collection_name,),
+            ).fetchone()
+        if total and high - low + 1 == total:
+            # A verified contiguous collection range needs no per-match
+            # embeddings lookup. Mixed/interleaved collections retain the join.
+            if not equalities:
+                return "SELECT id FROM embeddings WHERE id BETWEEN ? AND ?", (low, high)
+            key, values = equalities[0]
+            rest_sql, rest_params = _match_sql(equalities[1:], "w.id", alias="f")
+            scope_key = (
+                f"AND w.key IN {_SCOPE_KEYS_SQL}" if key in {"wing", "room", "source_file"} else ""
+            )
+            return (
+                f"SELECT w.id FROM embedding_metadata w WHERE w.id BETWEEN ? AND ? AND w.key=? AND w.string_value IN ({_marks(values)}) {scope_key} {rest_sql}",
+                (low, high, key, *values, *rest_params),
+            )
+    if equalities:
+        key, values = equalities[0]
+        scope_key = (
+            f"AND w.key IN {_SCOPE_KEYS_SQL}" if key in {"wing", "room", "source_file"} else ""
+        )
+        return (
+            "SELECT e.id FROM embedding_metadata w CROSS JOIN embeddings e ON e.id=w.id "
+            f"WHERE w.key=? AND w.string_value IN ({_marks(values)}) {scope_key} AND e.segment_id IN ({segments}) {filter_sql}",
+            (key, *values, collection_name, *filter_params),
+        )
+    return f"SELECT e.id FROM embeddings e WHERE e.segment_id IN ({segments})", (collection_name,)
 
-    return _read_db(palace_path, read)
+
+@contextlib.contextmanager
+def sqlite_lexical_scope(palace_path, collection_name, where=None):
+    from .scoped_lexical import ScopedFTS, lexical_reader
+
+    equalities = _string_equalities(encode_where(where))
+    if equalities is None:
+        raise ValueError("lexical filter cannot be bounded")
+    with lexical_reader(_db_file(palace_path)) as conn:
+        scope_sql, scope_params = _lexical_scope_sql(collection_name, equalities, conn)
+
+        def load_texts(ids):
+            texts, hints = {}, {}
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                for row_id, key, value in conn.execute(
+                    f"SELECT id,key,string_value FROM embedding_metadata WHERE id IN ({_marks(chunk)}) "
+                    "AND key IN ('chroma:document', ?)",
+                    (*chunk, INDEX_SPANS),
+                ):
+                    (texts if key == "chroma:document" else hints)[row_id] = value
+            return {
+                row_id: index_text(texts.get(row_id) or "", {INDEX_SPANS: hints.get(row_id)})
+                for row_id in ids
+            }
+
+        def hydrate(ids):
+            return dict(zip(ids, _decoded_rows(conn, ids)))
+
+        yield ScopedFTS(
+            conn,
+            "embedding_fulltext_search",
+            scope_sql,
+            scope_params,
+            load_texts,
+            hydrate,
+        )
 
 
 def sqlite_lexical_rows(
@@ -488,51 +615,41 @@ def sqlite_lexical_rows(
 ) -> list[tuple]:
     """Decoded ``(drawer_id, document, metadata)`` worth BM25-ranking for ``query``.
 
-    Equality scopes are applied in SQL before the FTS rank limit. Other
-    filters retain the post-filter path so a cap cannot starve them.
-    The newest ``limit``
+    The best ``limit`` full-text matches by FTS rank, or every match under a
+    ``where``, which is applied to the stored metadata afterwards: a cap
+    before filtering could fill with wrong-scope rows. The newest ``limit``
     rows stand in when no query term is three characters long or the
     full-text query fails; a clean miss stays empty. ``[]`` when the database
     is missing or unreadable.
     """
     tokens = [t for t in tokenize(query) if len(t) >= 3]
-    equalities = _string_equalities(encode_where(where))
-    filter_sql, filter_params = (
-        _match_sql(equalities, "e.id") if equalities is not None else ("", [])
-    )
 
     def read(conn):
         row_ids: list[int] = []
         recency = not tokens
         if tokens:
-            limit_sql = (
-                "ORDER BY embedding_fulltext_search.rank LIMIT ?" if equalities is not None else ""
-            )
+            limit_sql = "" if where else "ORDER BY embedding_fulltext_search.rank LIMIT ?"
             try:
                 row_ids = [
                     row[0]
                     for row in conn.execute(
                         f"""
-                        SELECT embedding_fulltext_search.rowid
+                        SELECT e.id
                         FROM embedding_fulltext_search
+                        JOIN embeddings e ON e.id = embedding_fulltext_search.rowid
+                        JOIN segments s ON e.segment_id = s.id
+                        JOIN collections c ON s.collection = c.id
                         WHERE embedding_fulltext_search MATCH ?
-                          AND EXISTS (
-                            SELECT 1 FROM embeddings e
-                            JOIN segments s ON e.segment_id = s.id
-                            JOIN collections c ON s.collection = c.id
-                            WHERE e.id = embedding_fulltext_search.rowid AND c.name = ?
-                          {filter_sql}
-                          )
+                          AND c.name = ?
                         {limit_sql}
                         """,
-                        (" OR ".join(tokens), collection_name, *filter_params)
-                        + ((limit,) if equalities is not None else ()),
+                        (" OR ".join(tokens), collection_name) + (() if where else (limit,)),
                     )
                 ]
             except sqlite3.Error:
                 recency = True
         if not row_ids and recency:
-            row_ids = _newest_row_ids(conn, collection_name, limit, filter_sql, filter_params)
+            row_ids = _newest_row_ids(conn, collection_name, limit)
         return _decoded_rows(conn, row_ids, where)
 
     return _read_db(palace_path, read) or []

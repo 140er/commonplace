@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline long-query latency gates and literal/keyword recall on 20k/60k drawers.
+"""Offline query latency gates and literal/keyword recall on 60k/200k drawers.
 
 Set MEMPALACE_BENCH_CODE_ROOT to a source snapshot to compare an earlier
 revision using the same corpus and harness. Gateway rows use the production
@@ -57,6 +57,11 @@ LOG = LOG_PREFIX + " ".join(
 )
 QUESTION12 = "what did we decide about the deployment configuration and the error handling"
 COMMON8 = "error deployment configuration team decided implementation verification component"
+DATE_QUESTION = "what did we decide in March 2024 about the kestrel migration and the rollback window for the cluster"
+LONG_DATE_QUESTION = (
+    DATE_QUESTION
+    + " deployment configuration authentication middleware followup verification component"
+)
 NEEDLES = (
     (
         "ZXQ739251",
@@ -81,10 +86,14 @@ NEEDLES = (
         "Traceback at /srv/archive/project/src/module/file.py line 42 in handler: KeyError PR-38 E42 ZQ9",
         "Ticket ZQ9 tracks the flaky import.",
     ),
+    (
+        "March 2024 kestrel migration rollback window",
+        "Kestrel migration: rollback window is Sunday night.",
+    ),
 )
 
 
-def run(backend, repeats, recall_only=False, cold_probes=False):
+def run(backend, repeats, recall_only=False, cold_probes=False, sizes=None, cases_filter=None):
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
     cache = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH) / "onnx"
@@ -109,7 +118,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
         for revision in range(10)
     ]
     vectors = _embed_texts(templates)
-    wings = ["engineering"] + [f"ops{i}" for i in range(7)]
+    wings = ["engineering"] + [f"ops{i}" for i in range(6)] + ["small"]
     report = {
         "backend": backend,
         "repeats": repeats,
@@ -118,8 +127,10 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
         "log_tokens": len(tokenize(LOG)),
         "rows": [],
         "recall": {},
+        "date_question": {},
+        "scope_index_overhead": {},
     }
-    for size in (20_000,) if recall_only else (20_000, 60_000):
+    for size in (20_000,) if recall_only else (sizes or (60_000, 200_000)):
         with tempfile.TemporaryDirectory(prefix="query-budget-") as palace:
             col = get_collection(palace, create=True, backend=backend)
             for start in range(0, size, 500):
@@ -138,7 +149,7 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
                     ],
                     metadatas=[
                         {
-                            "wing": wings[i % 8],
+                            "wing": "small" if i >= size - 64 else wings[i % 7],
                             "room": "notes",
                             "source_file": f"record-{i}.txt",
                             "chunk_index": 0,
@@ -146,33 +157,114 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
                         for i in range(start, stop)
                     ],
                 )
-            reader = get_collection(palace, create=False, read_only=True)
+            from mempalace.palace import get_backend_for_palace
 
-            def drawer_search(query, strategy, wing=None, limit=5, reader=reader, palace=palace):
-                if cold_probes and backend == "sqlite_exact":
-                    reader._handle._lexical_frequency_cache.clear()
-                    reader._handle._lexical_document_counts.clear()
+            store_backend = get_backend_for_palace(palace)
+            if backend == "chroma":
+                from mempalace.backends._inproc_sqlite import open_writer
+                from mempalace.backends.chroma_sqlite import SCOPE_INDEX, ensure_scope_index
+                from mempalace.backends.scoped_lexical import lexical_reader
+
+                # Establish the normal fast-reader guards before timing
+                # in-process DDL beside Chroma's independent SQLite library.
+                with lexical_reader(Path(palace) / "chroma.sqlite3"):
+                    pass
+
+                # Rewrite the same last 500 records: corpus content, ids and
+                # embeddings stay fixed while the optional index is toggled.
+                batch = list(range(size - 500, size))
+                write = {
+                    "ids": [f"d{i}" for i in batch],
+                    "documents": [f"{templates[i % 100]} Record {i:06d}." for i in batch],
+                    "embeddings": [vectors[i % 100] for i in batch],
+                    "metadatas": [
+                        {
+                            "wing": "small" if i >= size - 64 else wings[i % 7],
+                            "room": "notes",
+                            "source_file": f"record-{i}.txt",
+                            "chunk_index": 0,
+                        }
+                        for i in batch
+                    ],
+                }
+                samples = {"indexed": [], "unindexed": []}
+                build_ms = []
+                for repeat in range(5):
+                    for indexed in (True, False) if repeat % 2 == 0 else (False, True):
+                        with open_writer(Path(palace) / "chroma.sqlite3") as conn:
+                            if indexed:
+                                began = time.perf_counter()
+                                created = ensure_scope_index(conn)
+                                if created:
+                                    build_ms.append((time.perf_counter() - began) * 1000)
+                            else:
+                                conn.execute(f"DROP INDEX IF EXISTS {SCOPE_INDEX}")
+                        began = time.perf_counter()
+                        col.upsert(**write)
+                        samples["indexed" if indexed else "unindexed"].append(
+                            (time.perf_counter() - began) * 1000
+                        )
+                with open_writer(Path(palace) / "chroma.sqlite3") as conn:
+                    ensure_scope_index(conn)
+                    index_bytes = conn.execute(
+                        "SELECT sum(pgsize) FROM dbstat WHERE name=?", (SCOPE_INDEX,)
+                    ).fetchone()[0]
+                report["scope_index_overhead"][str(size)] = {
+                    "index_bytes": index_bytes,
+                    "build_p50_ms": float(np.percentile(build_ms, 50)),
+                    "upsert_500_p50_ms": {
+                        key: float(np.percentile(values, 50)) for key, values in samples.items()
+                    },
+                }
+
+            def drawer_search(
+                query, strategy, wing=None, limit=5, requested_wings=None, palace=palace
+            ):
                 return search_memories(
-                    query, palace, n_results=limit, wing=wing, candidate_strategy=strategy
+                    query,
+                    palace,
+                    n_results=limit,
+                    wing=wing,
+                    wings=requested_wings,
+                    candidate_strategy=strategy,
+                    include_facts=False,
                 )
 
-            cases = (
-                [("log123_all", LOG, None, False), ("prompt50_gateway8", PROMPT, None, True)]
-                if size == 20_000
-                else [
-                    ("prompt50_all", PROMPT, None, False),
-                    ("prompt50_wing", PROMPT, "engineering", False),
-                    ("question12_all", QUESTION12, None, False),
-                    ("question12_wing", QUESTION12, "engineering", False),
-                    ("question12_gateway8", QUESTION12, None, True),
-                    ("common8_all", COMMON8, None, False),
+            shapes = [
+                ("log123", LOG),
+                ("prompt50", PROMPT),
+                ("question12", QUESTION12),
+                ("common8", COMMON8),
+                ("long_literal", PROMPT + " ZQ9"),
+                ("cjk", "项目部署配置故障排查"),
+                ("capital50", "Remind" + PROMPT[len("Please") :]),
+                (
+                    "capital19",
+                    "Remind me what the team decided about the deployment configuration and the error handling patterns for the authentication middleware last week",
+                ),
+                (
+                    "capital_notes",
+                    "Engineering notes: what did we decide about the deployment configuration and the error handling for this component with the team?",
+                ),
+            ]
+            cases = [
+                (f"{label}_{scope}", query, wing, gateway)
+                for label, query in shapes
+                for scope, wing, gateway in [
+                    ("all", None, False),
+                    ("wing", "engineering", False),
+                    ("small", "small", False),
+                    ("gateway8", None, True),
                 ]
-            )
+                if not cases_filter or f"{label}_{scope}" in cases_filter
+            ]
             if recall_only:
                 cases = []
             for label, query, wing, gateway in cases:
 
                 def search(strategy, query=query, wing=wing, gateway=gateway):
+                    if cold_probes:
+                        store_backend.close_palace(palace)
                     if not gateway:
                         result = drawer_search(query, strategy, wing)
                     else:
@@ -181,7 +273,11 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
                             if name == "mempalace_list_wings":
                                 return {"wings": {w: {} for w in wings}}
                             return drawer_search(
-                                args["query"], strategy, args["wing"], args["limit"]
+                                args["query"],
+                                strategy,
+                                args.get("wing"),
+                                args["limit"],
+                                args.get("wings"),
                             )
 
                         mediator = object.__new__(Mediator)
@@ -223,16 +319,39 @@ def run(backend, repeats, recall_only=False, cold_probes=False):
                 )
                 row["pass"] = row["latency_ms"]["union"]["p95"] <= row["union_p95_limit_ms"]
                 report["rows"].append(row)
-            if size == 20_000:
-                for strategy in ("vector", "union"):
-                    outcomes = []
-                    for i, (query, _) in enumerate(NEEDLES):
+            recall = {}
+            for strategy in ("vector", "union", None):
+                outcomes = {5: [], 10: []}
+                for i, (query, _) in enumerate(NEEDLES):
+                    for limit in outcomes:
                         result = search_memories(
-                            query, palace, n_results=5, candidate_strategy=strategy
+                            query, palace, n_results=limit, candidate_strategy=strategy
                         )
-                        outcomes.append(f"d{i}" in {h["drawer_id"] for h in result["results"]})
-                    report["recall"][strategy] = outcomes
-    report["pass"] = all(row["pass"] for row in report["rows"])
+                        outcomes[limit].append(
+                            f"d{i}" in {h["drawer_id"] for h in result["results"]}
+                        )
+                recall[strategy or "default"] = {
+                    f"at_{limit}": found for limit, found in outcomes.items()
+                }
+            report["recall"][str(size)] = recall
+            from mempalace.lexical import _query_stop_words
+
+            report["date_question"][str(size)] = {}
+            for label, query in (("original", DATE_QUESTION), ("long", LONG_DATE_QUESTION)):
+                result = drawer_search(query, None, limit=10)
+                report["date_question"][str(size)][label] = {
+                    "post_stopword_tokens": len(
+                        [term for term in tokenize(query) if term not in _query_stop_words()]
+                    ),
+                    "needle_at_10": "d8" in {hit["drawer_id"] for hit in result["results"]},
+                }
+    report["recall_pass"] = all(
+        all(found)
+        for recall in report["recall"].values()
+        for strategy in ("union", "default")
+        for found in recall[strategy].values()
+    )
+    report["pass"] = report["recall_pass"] and all(row["pass"] for row in report["rows"])
     return report
 
 
@@ -242,11 +361,17 @@ if __name__ == "__main__":
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--recall-only", action="store_true")
     parser.add_argument(
+        "--cold",
         "--cold-probes",
+        dest="cold_probes",
         action="store_true",
-        help="Clear SQLite frequency counts before each search, including each wing",
+        help="Close storage handles before every search; model remains warm. No probe cache exists.",
     )
+    parser.add_argument("--sizes", nargs="+", type=int, default=[60000, 200000])
+    parser.add_argument("--cases", nargs="+")
     args = parser.parse_args()
-    report = run(args.backend, args.repeats, args.recall_only, args.cold_probes)
+    report = run(
+        args.backend, args.repeats, args.recall_only, args.cold_probes, args.sizes, args.cases
+    )
     print(json.dumps(report, indent=2))
     sys.exit(0 if report["pass"] else 1)

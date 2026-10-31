@@ -164,7 +164,7 @@ class TestCandidateUnion:
         )
         for h in filtered["results"]:
             if h.get("distance") is None:
-                assert h.get("fallback_reason") == "distance_unavailable", h
+                assert "fallback_reason" not in h, h
                 continue
             assert h["distance"] <= 0.5, f"hit violates max_distance=0.5: distance={h['distance']}"
 

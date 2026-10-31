@@ -15,96 +15,66 @@ _QUERY_PART_RE = re.compile(r"[/\w]+(?:[.\-:/][/\w]+)*", re.UNICODE)
 def _query_stop_words():
     from .i18n import get_stopwords
 
-    return frozenset(get_stopwords("en"))
+    # The historical ranking list omits these basic function words. Union
+    # selection drops them without changing the full-query hybrid scorer.
+    return frozenset(get_stopwords("en")) | {"and", "what", "did"}
 
 
-def select_lexical_terms(
-    query: str,
-    stop_words: frozenset = frozenset(),
-    *,
-    frequencies=None,
-    min_length: int = 2,
-) -> tuple[list[str], str | None]:
-    """Select union drawer terms only; public lexical/closet queries stay intact.
+def lexical_query_terms(
+    query, stop_words=frozenset(), *, min_length=2, trigram=False, closet=False
+):
+    """RFC 009 shape-only selection. Corpus-dependent selection happens in scope."""
+    import unicodedata
 
-    Probe at most 32 terms without ranking, counting at most 2,001 documents
-    per term. Drop misses and common terms using a 5% collection cutoff
-    bounded between 1,000 and 2,000 documents, then rank at most eight terms.
-    Numeric IDs precede quoted words, proper names and paths;
-    document frequency breaks ties before length. Without a probe, length is
-    the rarity proxy. Long prose without a literal retains vector candidates.
-    """
-    min_length = min_length if isinstance(min_length, int) else 2
-    ignored = _query_stop_words() | stop_words
+    ignored = stop_words if closet else _query_stop_words() | stop_words
     quoted = {
         word.lower()
         for span in re.findall(r'"([^"\n]+)"|“([^”\n]+)”', query or "")
         for text in span
         for word in TOKEN_RE.findall(text)
     }
-    starters = {
-        "please",
-        "what",
-        "where",
-        "when",
-        "who",
-        "how",
-        "why",
-        "traceback",
-        "can",
-        "could",
-        "would",
-        "should",
-        "tell",
-        "find",
-        "explain",
-        "review",
-    }
     candidates = {}
-    for part in _QUERY_PART_RE.findall(query or ""):
-        technical = any(c.isupper() for c in part[1:]) or any(c in part for c in "_-/.:")
-        for word in TOKEN_RE.findall(part):
+    start, last_end, token_count, seen_tokens = True, 0, 0, 0
+    for match in _QUERY_PART_RE.finditer(query or ""):
+        if re.search(r"[.!?](?:\s|$)", query[last_end : match.start()]):
+            start = True
+        part = match.group()
+        technical = any(c in part for c in "_/.:") or (
+            any(c.isupper() for c in part[1:]) and any(c.islower() for c in part)
+        )
+        words = TOKEN_RE.findall(part) if trigram else re.findall(r"[^\W_]{2,}", part)
+        for word in words:
+            seen_tokens += 1
+            if seen_tokens > 256:
+                break
             term = word.lower()
-            if len(term) < min_length or term in ignored:
+            if not trigram:
+                term = "".join(
+                    c for c in unicodedata.normalize("NFD", term) if unicodedata.category(c) != "Mn"
+                )
+            term = term[:64]
+            name = word[0].isupper() and word[1:].islower() and not start
+            start = False
+            if term in ignored:
                 continue
-            if any(c.isdigit() for c in word):
-                priority = 0
-            elif term in quoted:
-                priority = 1
-            elif word[0].isupper() and word[1:].islower() and term not in starters:
-                priority = 2
-            else:
-                priority = 3 if technical else 4
-            candidates[term] = min(priority, candidates.get(term, priority))
+            token_count += 1
+            if len(term) < min_length:
+                continue
+            literal = technical or any(c.isdigit() for c in word) or word.lower() in quoted
+            priority = 0 if literal else 1 if name else 2
+            candidates[term] = min(candidates.get(term, priority), priority)
+        start, last_end = False, match.end()
+        if seen_tokens >= 256:
+            break
     if not candidates:
-        return [], "no_lexical_terms"
-    if len(tokenize(query)) > 12 and not any(p < 4 for p in candidates.values()):
-        return [], "long_query_no_literal"
-    probes = sorted(candidates, key=lambda t: (candidates[t], -len(t), t))[:32]
-
-    def rare(terms):
-        counts = frequencies(terms, limit=2001) if callable(frequencies) else None
-        threshold = 2000
-        if isinstance(counts, tuple):
-            counts, total = counts
-            threshold = min(threshold, max(1000, total // 20))
-        if isinstance(counts, dict):
-            terms = [t for t in terms if 0 < counts.get(t, 0) <= threshold]
-            terms.sort(key=lambda t: (candidates[t], counts[t], -len(t), t))
-        return terms
-
-    literals = [t for t in probes if candidates[t] < 4]
-    # A long log's rare IDs/paths already identify its candidate source.
-    # Avoid probing all surrounding prose once those literals have matches.
-    if len(tokenize(query)) > 12 and literals:
-        selected = rare(literals)
-        if selected:
-            return selected[:8], None
-        probes = [t for t in probes if candidates[t] == 4]
-    probes = rare(probes) if probes else []
-    if not probes:
-        return [], "no_discriminative_terms"
-    return probes[:8], None
+        return [], "no_terms_after_stopwords"
+    if token_count > 12 and not closet:
+        candidates = {term: priority for term, priority in candidates.items() if priority < 2}
+        if not candidates:
+            return [], "long_query_no_literal"
+    if closet:
+        return list(candidates), None
+    return sorted(candidates, key=lambda term: candidates[term])[:16], None
 
 
 def ranking_stop_words(result: dict) -> frozenset:

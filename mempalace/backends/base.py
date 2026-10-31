@@ -405,6 +405,8 @@ class LexicalResult:
     """Typed return from ``BaseCollection.lexical_search``."""
 
     hits: list[LexicalHit]
+    selected_terms: list[str] = field(default_factory=list)
+    skip_reason: Optional[str] = None
 
 
 def recency_sort_key(meta: Optional[dict], order_field: str = "filed_at") -> tuple:
@@ -794,14 +796,19 @@ class BaseCollection(ABC):
         """
         raise UnsupportedMaintenanceKindError(f"backend does not support maintenance kind {kind!r}")
 
-    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
-        """Optional bounded document counts for union candidate selection.
+    def supports_bounded_lexical_filter(self, where=None):
+        return False
 
-        Return ``(counts, document_count)``. Counts at ``limit`` mean at
-        least that many matching documents.
-        ``None`` keeps the selector's length-based rarity fallback.
-        """
-        return None
+    def union_lexical_search(
+        self, *, query: str, n_results: int = 10, where=None, closet=False, stop_words=frozenset()
+    ):
+        from .scoped_lexical import scope_local_search
+
+        if not self.supports_bounded_lexical_filter(where):
+            raise UnsupportedCapabilityError("bounded lexical filter is unavailable")
+        return scope_local_search(
+            self, query, n_results, where, closet=closet, stop_words=stop_words
+        )
 
     def lexical_search(
         self,

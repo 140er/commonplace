@@ -101,7 +101,7 @@ def test_default_union_filters_both_wings_with_in_scope_drawers(lexical_palace, 
     assert "Build ZXQ739251" in output and "Hidden ZXQOTHER8540" not in output
 
 
-@pytest.mark.parametrize("backend,max_decoded", [("chroma", 500), ("sqlite_exact", 10)])
+@pytest.mark.parametrize("backend,max_decoded", [("chroma", 2), ("sqlite_exact", 2)])
 def test_filtered_lexical_search_bounds_hydration(tmp_path, monkeypatch, backend, max_decoded):
     import importlib
 
@@ -118,7 +118,7 @@ def test_filtered_lexical_search_bounds_hydration(tmp_path, monkeypatch, backend
             ],
         )
     module = importlib.import_module(
-        f"mempalace.backends.{'chroma_sqlite' if backend == 'chroma' else backend}"
+        f"mempalace.backends.{'chroma_sqlite' if backend == 'chroma' else 'scoped_lexical'}"
     )
     decode = module.decode_record
     count = 0
@@ -129,7 +129,7 @@ def test_filtered_lexical_search_bounds_hydration(tmp_path, monkeypatch, backend
         return decode(*args, **kwargs)
 
     monkeypatch.setattr(module, "decode_record", counted)
-    result = col.lexical_search(
+    result = col.union_lexical_search(
         query="commonword record",
         n_results=2,
         where={"$and": [{"wing": "target"}, {"room": "logs"}]},
@@ -198,7 +198,7 @@ def test_default_cli_keeps_vector_results_without_lexical_support(
     def unsupported(**kwargs):
         raise UnsupportedCapabilityError("lexical search is unavailable")
 
-    monkeypatch.setattr(col, "lexical_search", unsupported)
+    monkeypatch.setattr(col, "union_lexical_search", unsupported)
     search("engineering", palace, collection=col)
     assert "Routine engineering note" in capsys.readouterr().out
 
@@ -260,4 +260,6 @@ def test_long_question_shapes_find_lexical_only_needles(lexical_palace, query, t
 
 def test_stop_words_only_query_reports_skip(lexical_palace):
     palace, _ = lexical_palace
-    assert search_memories("session summary", palace)["lexical_skipped"] == "no_lexical_terms"
+    assert (
+        search_memories("session summary", palace)["lexical_skipped"] == "no_terms_after_stopwords"
+    )

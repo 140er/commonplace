@@ -194,14 +194,17 @@ def search_facts(kg, query, *, wings=None, sensitivities=None, limit=5, as_of=No
     return ranked
 
 
-def palace_facts(query, palace_path, *, wing=None, limit=5):
+def palace_facts(query, palace_path, *, wing=None, wings=None, limit=5):
     """A local owner's read; missing graphs never create a file."""
     try:
         from ..knowledge_graph import open_graph
         from ..paths import knowledge_graph_path
 
+        scope = [wing] if wing else wings
+        if wing and wings is not None and wing not in wings:
+            scope = []
         with open_graph(knowledge_graph_path(palace_path), read=True) as kg:
-            return {"facts": search_facts(kg, query, wings=[wing] if wing else None, limit=limit)}
+            return {"facts": search_facts(kg, query, wings=scope, limit=limit)}
     except Exception:
         logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
         return {"facts": [], "facts_error": "unavailable"}

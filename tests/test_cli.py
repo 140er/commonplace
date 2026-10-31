@@ -170,7 +170,7 @@ def test_cmd_search_calls_search(mock_config_cls, strategy):
             n_results=3,
             since="2026-04-01",
             before=None,
-            **({"candidate_strategy": "vector"} if strategy == "vector" else {}),
+            **({"candidate_strategy": strategy} if strategy is not None else {}),
         )
 
 

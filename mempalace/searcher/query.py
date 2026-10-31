@@ -76,6 +76,10 @@ def _query_drawers_with_filter_fallback(
             _first_or_empty(raw, "distances"),
         ):
             meta = meta or {}
+            from ..backends._filters import matches_where
+
+            if not matches_where(meta, where):
+                continue
             if wings and meta.get("wing") not in wings:
                 continue
             if room and meta.get("room") != room:
@@ -92,6 +96,40 @@ def _query_drawers_with_filter_fallback(
             "metadatas": [fmetas],
             "distances": [fdists],
         }
+
+
+def _query_drawer_candidates(
+    col,
+    kwargs,
+    query,
+    n_results,
+    wing,
+    room,
+    source_file,
+    strategy,
+    where,
+    stop_words,
+    window_active,
+    lexical_result=None,
+):
+    """Independent bounded retrievals overlap; each call owns and joins its task."""
+
+    def vector():
+        return _query_drawers_with_filter_fallback(
+            col, kwargs, query, n_results, wing, room, source_file
+        )
+
+    if strategy != "union" or lexical_result is not None:
+        return vector(), lexical_result
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        lexical = executor.submit(
+            _fetch_union_lexical_candidates, col, query, n_results, where, stop_words, window_active
+        )
+        # The executor also joins the lexical read if the vector query raises.
+        vectors = vector()
+        return vectors, lexical.result()
 
 
 def _backend_capabilities(col) -> frozenset:
@@ -114,13 +152,15 @@ def _closet_boosts(closets_col, *, query: str, n_results: int, where: dict) -> d
     AAAK summaries an older ``compress`` left in the closets are dropped
     before ranking, and the window is widened once if they crowded it.
     """
-    lexical = "supports_lexical_search" in _backend_capabilities(closets_col)
+    lexical = _resolve_candidate_strategy(None, closets_col, where) == "union"
     closet_metric = None if lexical else _metric_for_collection(closets_col)
 
     def fetch(n_hits):
         """``(document, metadata, distance)`` per hit, in rank order."""
         if lexical:
-            result = closets_col.lexical_search(query=query, n_results=n_hits, where=where or None)
+            result = closets_col.union_lexical_search(
+                query=query, n_results=n_hits, where=where or None, closet=True
+            )
             return [
                 (hit.document, hit.metadata, 0.0) for hit in getattr(result, "hits", None) or []
             ]
@@ -197,12 +237,14 @@ def _search_drawer_memories(
     n_results: int = 5,
     max_distance: Optional[float] = None,
     vector_disabled: bool = False,
-    candidate_strategy: str = "union",
+    candidate_strategy: Optional[str] = None,
     collection_name: str = None,
     lang: Optional[str] = None,
     _pool_scale: int = 1,
+    _lexical_result=None,
     include_media: bool = False,
     query_task: str = "search",
+    wings: Optional[list[str]] = None,
 ) -> dict:
     """Programmatic search — returns a dict instead of printing.
 
@@ -246,23 +288,24 @@ def _search_drawer_memories(
             Applies to drawer-only search. Experimental ``include_media`` /
             ``query_task="code"`` search always uses shared-space vector ranking.
 
+            * ``None`` (default) — union when the backend declares bounded lexical
+              search; vector otherwise.
             * ``"vector"`` — preserves historical behavior: top
               ``n_results * 4`` rows from the vector index are the rerank pool.
               Cheap; works well when query and target docs agree in the
               embedding space.
-            * ``"union"`` (default) — also pull top ``n_results * 3`` lexical candidates
-              through the backend's ``lexical_search`` capability and merge
+            * ``"union"`` — also pull top ``n_results * 3`` lexical candidates
+              through the backend's bounded scope-local path and merge
               them into the rerank pool (deduped by stored row ID). Date windows
               widen the lexical pool. Queries use at most eight selected terms;
-              long queries without literal-looking terms keep vector candidates.
+              long queries without literals or proper names keep vector candidates.
               Finds vector-distant drawers with strong BM25 signal.
-              Backends without lexical search retain vector candidates and
-              report ``candidate_strategy_fallback="lexical_search_unsupported"``.
+              Unbounded backends or filter shapes use vector candidates, even
+              for explicit union, with ``lexical_unbounded_for_filter``.
 
               When ``max_distance`` is also set, a BM25-only candidate whose
               computed vector distance is past it is dropped; one whose
-              distance cannot be computed is kept with ``distance=None`` and
-              ``fallback_reason="distance_unavailable"``.
+              distance cannot be computed is kept with ``distance=None``.
         lang: Locale code for BM25 stop-word filtering (opt-in). When
             omitted, reads ``MempalaceConfig().lang_explicit`` — returns an
             empty set unless the user has set ``MEMPALACE_LANG`` /
@@ -315,6 +358,7 @@ def _search_drawer_memories(
         collection_name=collection_name,
         source_file=source_file,
         stop_words=stop_words,
+        **({"wings": wings} if wings is not None else {}),
     )
     if short_circuit is not None:
         if rank_lang:
@@ -326,7 +370,11 @@ def _search_drawer_memories(
         return open_error
 
     metric = _metric_for_collection(drawers_col)
-    where = build_where_filter(wing, room, source_file, col=drawers_col)
+    where = build_where_filter(wing, room, source_file, col=drawers_col, wings=wings)
+    strategy_stats = {}
+    candidate_strategy = _resolve_candidate_strategy(
+        candidate_strategy, drawers_col, where, strategy_stats
+    )
 
     # Hybrid retrieval: always query drawers directly (the floor), then use
     # closet hits to boost rankings. Closets are a ranking SIGNAL, never a
@@ -347,8 +395,19 @@ def _search_drawer_memories(
         }
         if where:
             dkwargs["where"] = where
-        drawer_results = _query_drawers_with_filter_fallback(
-            drawers_col, dkwargs, query, n_results, wing, room, source_file
+        drawer_results, lexical_result = _query_drawer_candidates(
+            drawers_col,
+            dkwargs,
+            query,
+            n_results,
+            wing,
+            room,
+            source_file,
+            candidate_strategy,
+            where,
+            stop_words,
+            date_window_active,
+            lexical_result=_lexical_result,
         )
     except Exception as e:
         # The configured embedding function could not be built: the
@@ -376,7 +435,7 @@ def _search_drawer_memories(
     CLOSET_DISTANCE_CAP = 1.5  # cosine dist > 1.5 = too weak to use as signal
 
     scored: list = []
-    stats: dict = {}
+    stats: dict = dict(strategy_stats)
     # Every candidate the vector path measured, kept or dropped, so union
     # mode neither re-admits nor re-counts a drawer this loop already gated.
     measured: dict = {}
@@ -452,10 +511,10 @@ def _search_drawer_memories(
     scored.sort(key=lambda h: h["_sort_key"])
     hits = scored[:pre_enrichment_limit]
 
-    hits = _enrich_closet_hits(hits, drawers_col)
+    hits = _enrich_closet_hits(hits, drawers_col, where=where)
 
     # Candidate strategy hook: widen the rerank pool's *source*
-    # before ranking. "vector" is a no-op; default "union" merges top-K
+    # before ranking. "vector" is a no-op; "union" merges top-K
     # backend lexical candidates. See `_apply_candidate_strategy`.
     # ``max_distance`` is forwarded so union mode checks its BM25-only
     # candidates against the same cutoff where their distance is computable.
@@ -476,6 +535,8 @@ def _search_drawer_memories(
         before_dt=before_dt,
         stats=stats,
         known_distances=measured,
+        where=where,
+        lexical_result=lexical_result,
     )
     candidates_fetched = len(_first_or_empty(drawer_results, "documents"))
     envelope = _search_result_envelope(
@@ -492,6 +553,8 @@ def _search_drawer_memories(
         stats=stats,
         distance_metric=metric,
     )
+    if wings is not None:
+        envelope["filters"]["wings"] = wings
     if rank_lang:
         envelope["ranking_lang"] = rank_lang
     if _pool_left_results_short(
@@ -513,6 +576,8 @@ def _search_drawer_memories(
                 collection_name=collection_name,
                 lang=lang,
                 _pool_scale=_pool_scale * 4,
+                _lexical_result=lexical_result,
+                wings=wings,
             )
         envelope["distinct_results_truncated"] = True
     return envelope
@@ -539,9 +604,10 @@ def search_memories(
 
             bound = _DRAWER_SEARCH_SIGNATURE.bind(query, palace_path, *args, **kwargs)
             bound.apply_defaults()
-            fact_result = palace_facts(
-                query, palace_path, wing=bound.arguments["wing"], limit=bound.arguments["n_results"]
-            )
+            controls = {"wing": bound.arguments["wing"], "limit": bound.arguments["n_results"]}
+            if bound.arguments["wings"] is not None:
+                controls["wings"] = bound.arguments["wings"]
+            fact_result = palace_facts(query, palace_path, **controls)
         except Exception:
             logger.warning("Fact index unavailable; preserving drawer search", exc_info=True)
             fact_result = {"facts": [], "facts_error": "unavailable"}

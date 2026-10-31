@@ -136,7 +136,9 @@ def _forward_search_to_hub(args, palace_path: str) -> bool:
     hub = HubClient.discover(palace_path, include_self=True)
     if hub is None or "search_cli_compatible" not in hub.capabilities:
         return False
-    strategy = getattr(args, "candidate_strategy", "union")
+    strategy = getattr(args, "candidate_strategy", None)
+    if strategy is None and "search_candidate_auto" not in hub.capabilities:
+        return False
     if strategy == "union" and "search_candidate_union" not in hub.capabilities:
         return False
     if not search_fingerprint_matches(hub.info, palace_path) or not hub.healthy():
@@ -146,8 +148,9 @@ def _forward_search_to_hub(args, palace_path: str) -> bool:
         "query": args.query,
         "limit": args.results,
         "cli_compatible": True,
-        "candidate_strategy": strategy,
     }
+    if strategy is not None:
+        arguments["candidate_strategy"] = strategy
     for name in ("wing", "room", "since", "before"):
         value = getattr(args, name, None)
         if value:

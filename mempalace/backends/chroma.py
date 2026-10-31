@@ -59,16 +59,17 @@ from .chroma_sqlite import (
     _sqlite_embedding_count,
     _sqlite_recent_records,
     _string_equalities,
+    ensure_palace_scope_index,
     not_bookkeeping_sql as not_bookkeeping_sql,
     sqlite_diary_rows as sqlite_diary_rows,
     sqlite_documents_for_ids as sqlite_documents_for_ids,
     sqlite_drawer_rows as sqlite_drawer_rows,
     sqlite_iter_metadata,
     sqlite_lexical_rows,
+    sqlite_lexical_scope,
     sqlite_list_id_metadata as sqlite_list_id_metadata,
     sqlite_metadata_snapshot as sqlite_metadata_snapshot,
     sqlite_room_wing_hall_counts as sqlite_room_wing_hall_counts,
-    sqlite_term_frequencies,
     sqlite_wing_names as sqlite_wing_names,
     sqlite_wing_source_counts as sqlite_wing_source_counts,
 )
@@ -2334,10 +2335,15 @@ class ChromaCollection(BaseCollection):
 
     lexical_min_token_length = 3
 
-    def lexical_term_frequencies(self, terms: list[str], *, limit: int = 2001):
-        if not self._palace_path or not self._collection_name():
-            return None
-        return sqlite_term_frequencies(self._palace_path, self._collection_name(), terms, limit)
+    def supports_bounded_lexical_filter(self, where=None):
+        return bool(
+            self._palace_path
+            and self._collection_name()
+            and _string_equalities(encode_where(where)) is not None
+        )
+
+    def lexical_scope(self, where=None):
+        return sqlite_lexical_scope(self._palace_path, self._collection_name(), where)
 
     def lexical_search(
         self,
@@ -2536,6 +2542,7 @@ class ChromaBackend(BaseBackend):
             "supports_metadata_filters",
             "supports_contains_fast",
             "supports_lexical_search",
+            "bounded_lexical_search",
             "supports_recency_order",
             "local_mode",
         }
@@ -2977,6 +2984,8 @@ class ChromaBackend(BaseBackend):
                 _require_caller_vector_collection(collection)
             elif not read_only:
                 _pin_hnsw_threads(collection)
+            if not read_only:
+                ensure_palace_scope_index(palace_path)
             # Our own client construction and collection open just wrote to
             # chroma.sqlite3; re-baseline so the next _client() call does not read
             # that as an external change and rebuild the client.
@@ -3060,6 +3069,7 @@ class ChromaBackend(BaseBackend):
                 metadata=_hnsw_creation_metadata({"hnsw_space": hnsw_space}),
                 **ef_kwargs,
             )
+            ensure_palace_scope_index(palace_path)
             self._restamp(palace_path)
         return ChromaCollection(collection, palace_path=palace_path, backend=self)
 

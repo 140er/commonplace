@@ -21,7 +21,7 @@ def cmd_search(args):
     from ..searcher import SearchError, search
 
     experimental = {}
-    if getattr(args, "candidate_strategy", "union") != "union":
+    if getattr(args, "candidate_strategy", None) is not None:
         experimental["candidate_strategy"] = args.candidate_strategy
     if getattr(args, "include_media", False):
         experimental["include_media"] = True

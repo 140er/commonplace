@@ -337,8 +337,8 @@ def main():
     p_search.add_argument(
         "--candidate-strategy",
         choices=["vector", "union"],
-        default="union",
-        help="Candidate sources before reranking (default: union of vector and lexical)",
+        default=None,
+        help="Candidate sources before reranking (default: union on bounded lexical backends, otherwise vector)",
     )
     p_search.add_argument(
         "--include-media",

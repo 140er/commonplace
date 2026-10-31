@@ -276,7 +276,7 @@ def test_bm25_sqlite_results_use_parent_or_stored_id(
 def test_union_results_use_parent_or_lexical_hit_id():
     drawers_col = MagicMock()
     drawers_col.distance_metric = "cosine"
-    drawers_col.lexical_search.return_value = LexicalResult(
+    drawers_col.union_lexical_search.return_value = LexicalResult(
         hits=[
             LexicalHit(
                 id="union-parent_chunk_000001",
@@ -316,7 +316,7 @@ def test_union_results_use_parent_or_lexical_hit_id():
     )
 
     assert error is None
-    drawers_col.lexical_search.assert_called_once()
+    drawers_col.union_lexical_search.assert_called_once()
 
     by_source = {hit["source_file"]: hit for hit in hits}
 

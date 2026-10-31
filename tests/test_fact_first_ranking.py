@@ -237,6 +237,18 @@ def test_drawer_results_and_all_existing_metadata_are_identical(palace_path, see
     }
 
 
+@pytest.mark.parametrize("wings,found", [(["notes"], True), (["other"], False), ([], False)])
+def test_fact_search_respects_the_wing_and_wings_intersection(
+    palace_path, seeded_collection, wings, found
+):
+    from mempalace.paths import knowledge_graph_path
+
+    with KnowledgeGraph(db_path=knowledge_graph_path(palace_path)) as kg:
+        kg.save_fact("JWT", "uses", "authentication", source_drawer_id="d1", wing="notes")
+    result = search_memories("JWT authentication", palace_path, wing="notes", wings=wings)
+    assert bool(result["facts"]) == found
+
+
 def test_cli_facts_appear_above_verbatim_drawers(palace_path, seeded_collection, capsys):
     from mempalace.paths import knowledge_graph_path
 

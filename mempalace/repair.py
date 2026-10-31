@@ -1694,6 +1694,10 @@ def _vacuum_and_rebuild_fts5(
                 )
                 conn.commit()
                 progress("  FTS5 index rebuilt.")
+            if "embedding_metadata" in tables:
+                from .backends.chroma_sqlite import ensure_scope_index
+
+                ensure_scope_index(conn)
             conn.execute("VACUUM")
             progress("  SQLite VACUUM complete.")
             if strict:
