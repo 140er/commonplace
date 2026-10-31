@@ -1467,11 +1467,15 @@ def test_promote_temp_collection_reads_from_temp_not_broken_live():
     backend.create_collection.assert_called_once_with("/palace", "mempalace_drawers")
     # The exact extracted payload must land in the new collection, unmodified
     # and unswapped (ids must stay ids, documents must stay documents).
-    mock_new_col.upsert.assert_called_once_with(
-        documents=["doc1", "doc2"],
-        ids=["id1", "id2"],
-        metadatas=[{"wing": "a"}, {"wing": "b"}],
-    )
+    mock_new_col.upsert.assert_called_once()
+    written = dict(mock_new_col.upsert.call_args.kwargs)
+    vectors = written.pop("embeddings")
+    assert len(vectors) == 2 and all(len(vector) > 0 for vector in vectors)
+    assert written == {
+        "documents": ["doc1", "doc2"],
+        "ids": ["id1", "id2"],
+        "metadatas": [{"wing": "a"}, {"wing": "b"}],
+    }
     # The temp copy is only removed after the promotion is verified.
     backend.delete_collection.assert_any_call("/palace", "mempalace_drawers__repair_tmp")
 
