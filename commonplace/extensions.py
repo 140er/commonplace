@@ -30,6 +30,7 @@ logger = logging.getLogger("commonplace.extensions")
 # Imported in this order by the gateway. Missing modules are skipped.
 MODULES = (
     "commonplace.boards",
+    "commonplace.rules",
     "commonplace.memory_tools",
     "commonplace.webhooks",
     "commonplace.oauth",

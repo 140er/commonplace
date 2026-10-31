@@ -52,6 +52,7 @@ PREFIX = {
         for method in ("GET", "POST", "PATCH", "DELETE")
         for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/")
     },
+    **{(method, "/api/rules/"): "authenticated" for method in ("GET", "POST", "PATCH")},
     ("GET", "/api/memory/"): "authenticated",
     ("POST", "/api/memory/"): "authenticated",
     ("GET", "/api/webhooks/"): "authenticated",

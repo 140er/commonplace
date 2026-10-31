@@ -1,0 +1,393 @@
+"""Verified identity, scope visibility and the rule lifecycle for MCP and REST."""
+
+import hashlib
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+from commonplace.boards.service import normalize_repo, validate_text
+from commonplace.extensions import ToolError
+
+from .store import RuleStore, now, sequence
+
+KINDS = ("permission", "limit", "instruction", "style")
+SCOPES = ("global", "board", "repo")
+RULE_FIELDS = (
+    "id agent key text agent_text kind scope scope_ref status source pending version seq "
+    "updated_at updated_by"
+).split()
+
+
+def open_store(workspace_dir):
+    return RuleStore(workspace_dir)
+
+
+class VersionClash(ToolError):
+    def __init__(self, current):
+        super().__init__("no: rule changed")
+        self.current = current
+
+
+def rule_json(row):
+    return {key: row[key] for key in RULE_FIELDS}
+
+
+def rule_text(value):
+    return validate_text(value, "text", required=True, limit=4000)
+
+
+def rule_key(text):
+    return "r-" + hashlib.sha1(" ".join(text.split()).encode()).hexdigest()[:10]
+
+
+def fields(text, kind, scope="global", scope_ref=None):
+    text = rule_text(text)
+    if kind not in KINDS or scope not in SCOPES:
+        raise ToolError("no: invalid kind or scope")
+    if scope == "global":
+        scope_ref = None
+    else:
+        scope_ref = validate_text(scope_ref, "scope_ref", required=True, limit=1000)
+        if scope == "repo":
+            scope_ref = normalize_repo(scope_ref)
+            if len(scope_ref.split("/")) != 3 or not all(scope_ref.split("/")):
+                raise ToolError("no: repo must be host/owner/name")
+    return dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
+
+
+def row_for(conn, rule_id):
+    if type(rule_id) not in (str, int) or not str(rule_id).isdigit():
+        raise ToolError("no: rule not found")
+    row = conn.execute("SELECT * FROM rules WHERE id=?", (rule_id,)).fetchone()
+    if row is None:
+        raise ToolError("no: rule not found")
+    return row
+
+
+class RuleService:
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.principal = ctx.principal
+        self.store = open_store(ctx.workspace_dir())
+
+    def _person(self, *, owner=False):
+        if not self.principal.person or (owner and self.principal.role != "owner"):
+            raise ToolError(
+                "no: only a workspace owner can do that" if owner else "no: people only"
+            )
+
+    def _board_visible(self, slug):
+        # Opening BoardStore would migrate it; rules only inspect the existing store.
+        path = Path(self.ctx.workspace_dir()) / "boards.sqlite3"
+        if not path.is_file():
+            return False
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+            row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
+        return row is not None and self.principal.policy.can_read_wing(row[0])
+
+    def _visible(self, row):
+        return self.principal.person or (
+            row["agent"] in (self.principal.actor, "*")
+            and (row["scope"] != "board" or self._board_visible(row["scope_ref"]))
+        )
+
+    def _snapshot(self, conn, rule_id, *, note=None, source=None):
+        row = row_for(conn, rule_id)
+        p = self.principal
+        conn.execute(
+            "INSERT INTO rule_versions(rule_id,version,text,kind,scope,scope_ref,status,source,"
+            "note,stamp_user,stamp_connection,stamp_trust,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                row["id"],
+                row["version"],
+                row["text"],
+                row["kind"],
+                row["scope"],
+                row["scope_ref"],
+                row["status"],
+                source or row["source"],
+                note,
+                p.user_id,
+                None if p.person else p.actor.removeprefix("conn:"),
+                p.policy.trust,
+                now(),
+            ),
+        )
+        return rule_json(row)
+
+    def _change(self, conn, row, updates, *, note=None, source=None):
+        conn.execute("UPDATE meta SET value=value+1 WHERE key='seq'")
+        updates = dict(
+            updates,
+            version=row["version"] + 1,
+            seq=sequence(conn),
+            updated_at=now(),
+            updated_by=self.principal.actor,
+        )
+        conn.execute(
+            "UPDATE rules SET " + ",".join(f"{key}=?" for key in updates) + " WHERE id=?",
+            (*updates.values(), row["id"]),
+        )
+        return self._snapshot(conn, row["id"], note=note, source=source)
+
+    def _create(self, conn, agent, key, values, *, owner=False):
+        conn.execute("UPDATE meta SET value=value+1 WHERE key='seq'")
+        stamp = now()
+        columns = dict(
+            agent=agent,
+            key=key,
+            **values,
+            agent_text=None if owner else values["text"],
+            status="accepted" if owner else "proposed",
+            source="owner" if owner else "agent",
+            seq=sequence(conn),
+            created_at=stamp,
+            updated_at=stamp,
+            updated_by=self.principal.actor,
+        )
+        cursor = conn.execute(
+            "INSERT INTO rules("
+            + ",".join(columns)
+            + ") VALUES ("
+            + ",".join("?" for _ in columns)
+            + ")",
+            tuple(columns.values()),
+        )
+        return self._snapshot(conn, cursor.lastrowid)
+
+    def rules_publish(self, rules, replace=False):
+        if self.principal.person or not self.principal.policy.has_scope("memory:write"):
+            raise ToolError("no: an agent with memory:write is required")
+        if not isinstance(rules, list) or len(rules) > 200 or type(replace) is not bool:
+            raise ToolError("no: publish requires up to 200 rules and a boolean replace")
+        prepared = {}
+        for item in rules:
+            if not isinstance(item, dict) or set(item) - {
+                "key",
+                "text",
+                "kind",
+                "scope",
+                "board",
+                "repo",
+            }:
+                raise ToolError("no: invalid rule")
+            scope = item.get("scope", "global")
+            if scope not in SCOPES:
+                raise ToolError("no: invalid scope")
+            values = fields(item.get("text"), item.get("kind"), scope, item.get(scope))
+            key = item.get("key", rule_key(values["text"]))
+            validate_text(key, "key", required=True, limit=1000)
+            if key in prepared:
+                raise ToolError("no: duplicate rule key")
+            if scope == "board" and not self._board_visible(values["scope_ref"]):
+                raise ToolError("no: board not found")
+            prepared[key] = values
+        result = []
+        with self.store.transaction() as conn:
+            for key, values in prepared.items():
+                row = conn.execute(
+                    "SELECT * FROM rules WHERE agent=? AND key=?", (self.principal.actor, key)
+                ).fetchone()
+                if row is None:
+                    result.append(self._create(conn, self.principal.actor, key, values))
+                    continue
+                if not self._visible(row):
+                    raise ToolError("no: rule not found")
+                if row["source"] == "owner":
+                    updates = {
+                        "agent_text": values["text"],
+                        "pending": int(values["text"] != row["text"]),
+                    }
+                    if all(row[k] == v for k, v in updates.items()):
+                        updates = {}
+                else:
+                    updates = dict(values, agent_text=values["text"], status="proposed", pending=0)
+                    if all(row[k] == v for k, v in values.items()):
+                        updates = {}
+                result.append(self._change(conn, row, updates) if updates else rule_json(row))
+            if replace:
+                rows = conn.execute(
+                    "SELECT * FROM rules WHERE agent=? AND agent_text IS NOT NULL AND status!='retired'",
+                    (self.principal.actor,),
+                ).fetchall()
+                for row in rows:
+                    if row["key"] not in prepared and self._visible(row):
+                        result.append(
+                            self._change(conn, row, {"status": "retired"}, note="dropped by agent")
+                        )
+            return {"rules": result, "seq": sequence(conn)}
+
+    def rules_get(self, board=None, repo=None, format="text", include_retired=False):
+        if format not in ("text", "md") or type(include_retired) is not bool:
+            raise ToolError("no: invalid format or include_retired")
+        if board is not None:
+            validate_text(board, "board", required=True, limit=1000)
+        if repo is not None:
+            repo = fields("repo", "instruction", "repo", repo)["scope_ref"]
+        with self.store.read() as conn:
+            rows = conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
+            return {
+                "rules": [
+                    rule_json(row)
+                    for row in rows
+                    if self._visible(row)
+                    and (
+                        row["scope"] == "global"
+                        or (row["scope"] == "board" and row["scope_ref"] == board)
+                        or (row["scope"] == "repo" and row["scope_ref"] == repo)
+                    )
+                    and (row["status"] != "retired" or (include_retired and format != "md"))
+                ],
+                "seq": sequence(conn),
+            }
+
+    def rules_changed(self, since):
+        if type(since) is not int or since < 0:
+            raise ToolError("no: since must be a nonnegative integer")
+        with self.store.read() as conn:
+            rows = conn.execute(
+                "SELECT agent,key,status,scope,scope_ref FROM rules WHERE seq>? ORDER BY seq",
+                (since,),
+            )
+            return {
+                "rules": [
+                    {"key": row["key"], "status": row["status"]}
+                    for row in rows
+                    if self._visible(row)
+                ],
+                "seq": sequence(conn),
+            }
+
+    def list_rules(self):
+        self._person()
+        with self.store.read() as conn:
+            return {
+                "rules": [rule_json(r) for r in conn.execute("SELECT * FROM rules ORDER BY id")],
+                "suggestions": [
+                    dict(r)
+                    for r in conn.execute(
+                        "SELECT * FROM rule_suggestions WHERE status='open' ORDER BY id"
+                    )
+                ],
+                "agents": [
+                    r["name"]
+                    for r in self.ctx.db.connections(self.principal.workspace_id)
+                    if not r["revoked_at"]
+                ],
+                "seq": sequence(conn),
+            }
+
+    def history(self, rule_id):
+        self._person()
+        with self.store.connection() as conn:
+            row = row_for(conn, rule_id)
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM rule_versions WHERE rule_id=? ORDER BY id", (row["id"],)
+                )
+            ]
+
+    def create(self, agent, text, kind, scope="global", scope_ref=None):
+        self._person(owner=True)
+        if not isinstance(agent, str) or (
+            agent != "*" and (not agent.startswith("conn:") or not agent[5:].strip())
+        ):
+            raise ToolError("no: agent must be * or conn:<name>")
+        values = fields(text, kind, scope, scope_ref)
+        with self.store.transaction() as conn:
+            key = rule_key(text)
+            if conn.execute("SELECT 1 FROM rules WHERE agent=? AND key=?", (agent, key)).fetchone():
+                raise ToolError("no: rule key already exists")
+            return self._create(conn, agent, key, values, owner=True)
+
+    def _versioned(self, conn, rule_id, version):
+        row = row_for(conn, rule_id)
+        if type(version) is not int:
+            raise ToolError("no: version must be an integer")
+        if row["version"] != version:
+            raise VersionClash(rule_json(row))
+        return row
+
+    def edit(self, rule_id, version, **changes):
+        self._person(owner=True)
+        if not changes or set(changes) - {"text", "kind", "scope", "scope_ref", "note"}:
+            raise ToolError("no: invalid edit")
+        note = changes.pop("note", None)
+        if note is not None:
+            validate_text(note, "note")
+        with self.store.transaction() as conn:
+            row = self._versioned(conn, rule_id, version)
+            values = fields(
+                **{k: changes.get(k, row[k]) for k in ("text", "kind", "scope", "scope_ref")}
+            )
+            return self._change(
+                conn, row, dict(values, status="edited", source="owner", pending=0), note=note
+            )
+
+    def action(self, rule_id, version, action):
+        self._person(owner=True)
+        with self.store.transaction() as conn:
+            row = self._versioned(conn, rule_id, version)
+            if action == "accept":
+                updates = {"status": "accepted"}
+            elif action == "retire":
+                updates = {"status": "retired"}
+            elif action == "restore":
+                updates = {"status": "edited" if row["source"] == "owner" else "accepted"}
+            elif action == "accept_agent" and row["agent_text"] is not None:
+                updates = dict(text=row["agent_text"], source="agent", status="accepted", pending=0)
+            elif action == "keep_edit":
+                updates = {"pending": 0}
+            else:
+                raise ToolError("no: invalid action")
+            return self._change(conn, row, updates)
+
+    def suggest(self, rule_id, text, from_agent):
+        self._person(owner=True)
+        rule_text(text)
+        validate_text(from_agent, "from_agent", required=True, limit=1000)
+        with self.store.transaction() as conn:
+            row = row_for(conn, rule_id)
+            cursor = conn.execute(
+                "INSERT INTO rule_suggestions(rule_id,text,from_agent,status,stamp_user,created_at) VALUES (?,?,?,'open',?,?)",
+                (row["id"], text, from_agent, self.principal.user_id, now()),
+            )
+            self._change(conn, row, {}, note=text)
+            return dict(
+                conn.execute(
+                    "SELECT * FROM rule_suggestions WHERE id=?", (cursor.lastrowid,)
+                ).fetchone()
+            )
+
+    def decide_suggestion(self, suggestion_id, action):
+        self._person(owner=True)
+        if action not in ("accept", "dismiss"):
+            raise ToolError("no: invalid action")
+        if type(suggestion_id) not in (str, int) or not str(suggestion_id).isdigit():
+            raise ToolError("no: suggestion not found")
+        with self.store.transaction() as conn:
+            suggestion = conn.execute(
+                "SELECT * FROM rule_suggestions WHERE id=?", (suggestion_id,)
+            ).fetchone()
+            if suggestion is None:
+                raise ToolError("no: suggestion not found")
+            if suggestion["status"] != "open":
+                raise ToolError("no: suggestion already decided")
+            row = row_for(conn, suggestion["rule_id"])
+            updates = (
+                dict(text=suggestion["text"], status="edited", source="owner", pending=0)
+                if action == "accept"
+                else {}
+            )
+            conn.execute(
+                "UPDATE rule_suggestions SET status=?,decided_at=? WHERE id=?",
+                ("accepted" if action == "accept" else "dismissed", now(), suggestion_id),
+            )
+            return self._change(
+                conn,
+                row,
+                updates,
+                note=suggestion["text"],
+                source="suggestion" if action == "accept" else None,
+            )
