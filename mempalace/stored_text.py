@@ -42,6 +42,7 @@ import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping
 
+from .index_hygiene import run_touches_word
 from .metadata_types import coerce_metadata_types
 
 FLAG = "_mempalace_escaped"
@@ -52,8 +53,7 @@ INDEX_VERSION = 1
 logger = logging.getLogger(__name__)
 _hint_warning_times = {}
 _hint_warning_lock = threading.Lock()
-_BASE64_FRAGMENT = re.compile(r"(?:(?:[A-Za-z0-9+/]+|[A-Za-z0-9_\-]+)={0,2}|={1,2})\Z")
-_RUN_BOUNDARY_CHAR = re.compile(r"[\w+/\-]")
+_BASE64_FRAGMENT = re.compile(r"(?:[A-Za-z0-9+/]+|[A-Za-z0-9_\-]+)={0,2}\Z")
 _PREFIX = "\x01mpesc:"
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _BAD = re.compile(r"[\x00\ud800-\udfff]")
@@ -181,6 +181,7 @@ class IndexSource:
         result = dict(metadata or {})
         if INDEX_SPANS in result:
             result[INDEX_SPANS] = None
+        # Validated runs have padding only at the end; padding-only slices stay literal.
         spans = [
             [
                 max(start, s.start) - start,
@@ -189,6 +190,7 @@ class IndexSource:
                 start <= s.start < end or (s.start <= start and end <= s.end),
             ]
             for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
+            if self.text[max(start, s.start)] != "="
         ]
         touches_run = bisect_right(self._candidate_ends, start) < bisect_left(
             self._candidate_starts, end
@@ -370,11 +372,7 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
                     and _BASE64_FRAGMENT.fullmatch(text[start:end])
                     and type(emit) is bool
                     and (emit or (start == 0 and end < len(text)))
-                    and (start == 0 or not _RUN_BOUNDARY_CHAR.fullmatch(text[start - 1]))
-                    and (
-                        end == len(text)
-                        or not (_RUN_BOUNDARY_CHAR.fullmatch(text[end]) or text[end] == "=")
-                    )
+                    and not run_touches_word(text, start, end)
                 ):
                     raise ValueError("invalid span")
                 match = PLACEHOLDER_RE.fullmatch(placeholder)

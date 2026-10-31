@@ -166,6 +166,20 @@ def test_app_sends_the_rendered_version_and_keeps_one_live_place():
     app = (Path(STATIC) / "app.js").read_text()
     assert 'data-version="${e(card.version)}"' in app
     assert "body: { ...payload, version }" in app
-    # Home draws no decision controls at all: an open ask is answered in its card.
+    # Home draws no choice buttons. A question in the needbox opens the decide queue.
     assert "homeView(" in app and "decision(card)" not in app
     assert 'data-action="decide"' not in (Path(STATIC) / "home.js").read_text()
+
+
+def test_a_repeat_decide_with_the_old_version_returns_409(hub, owner, agent):
+    created = agent.ask("Ship it?", options=["yes", "no"], board="work")
+    path = f"/api/cards/{created['number']}/decide"
+    status, body = post(
+        hub, path, {"choice": "yes", "version": created["version"], "then": "return"}
+    )
+    assert status == 200 and body["status"] == "todo"
+    status, body = post(
+        hub, path, {"choice": "yes", "version": created["version"], "then": "return"}
+    )
+    assert status == 409 and body["error"] == "card changed"
+    assert owner.task_show(created["number"])["status"] == "todo"
