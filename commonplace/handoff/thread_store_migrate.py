@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
+from .thread_frames import sql_string
 from .thread_store import ThreadStore, canonical_sha256
 from .thread_store_v2 import ThreadStoreV2
 from .thread_store_v2_schema import FILENAME
@@ -17,6 +19,121 @@ from .thread_store_v2_schema import FILENAME
 
 class MigrationMismatch(ValueError):
     """The source's rows or the copied content fail lossless verification."""
+
+
+@contextmanager
+def read_store(path, *, compact=False):
+    """Read a snapshot without initializing or repairing the source file."""
+    cls = ThreadStoreV2 if compact else ThreadStore
+    store = cls.__new__(cls)
+    store._lock = threading.RLock()
+    store._conn = sqlite3.connect(
+        Path(path).resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None
+    )
+    store._conn.row_factory = sqlite3.Row
+    try:
+        store._conn.execute("BEGIN")
+        store._fts_enabled = bool(
+            store._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name=?",
+                ("chunk_fts" if compact else "chunks_fts",),
+            ).fetchone()
+        )
+        yield store
+    finally:
+        store.close()
+
+
+def verify_stores(source, target):
+    """Compare identities, auxiliary rows, all fields, boundaries and digests."""
+    for table in ("threads", "handoff_docs", "fact_extraction"):
+        original = list(map(tuple, source._conn.execute(f"SELECT * FROM {table} ORDER BY 1")))
+        copied = list(map(tuple, target._conn.execute(f"SELECT * FROM {table} ORDER BY 1")))
+        if original != copied:
+            raise MigrationMismatch("Copied thread or auxiliary rows mismatch")
+    for row in source._conn.execute("SELECT * FROM threads ORDER BY id"):
+        items = source.messages(row["id"])
+        chunks = source.chunks(row["id"])
+        if (
+            len(items) != row["message_count"]
+            or len(chunks) != row["chunk_count"]
+            or any(item.seq != seq for seq, item in enumerate(items))
+            or any(chunk.index != idx for idx, chunk in enumerate(chunks))
+            or items != target.messages(row["id"])
+            or chunks != target.chunks(row["id"])
+            or canonical_sha256(items) != row["sha256"]
+            or canonical_sha256(target.messages(row["id"])) != row["sha256"]
+        ):
+            raise MigrationMismatch("Copied messages, chunks or digest mismatch")
+
+
+def migrate_v2(source: str, destination: str) -> int:
+    """Reverse row copy, including writes and append-time boundaries from v2."""
+    if Path(source).resolve() == Path(destination).resolve():
+        raise ValueError("Migration needs a separate v1 file")
+    with read_store(source, compact=True) as old:
+        new = ThreadStore(destination)
+        try:
+            with new._lock, new._conn:
+                new._conn.execute("BEGIN IMMEDIATE")
+                for table in ("threads", "messages", "chunks", "handoff_docs", "fact_extraction"):
+                    if new._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                        raise ValueError("Migration destination must be empty")
+                rows = old._conn.execute("SELECT * FROM threads ORDER BY rowid").fetchall()
+                for table in ("threads", "handoff_docs", "fact_extraction"):
+                    for row in old._conn.execute(f"SELECT * FROM {table}"):
+                        placeholders = ",".join("?" for _ in row)
+                        new._conn.execute(
+                            f"INSERT INTO {table} VALUES ({placeholders})", tuple(row)
+                        )
+                for row in rows:
+                    for item in old.messages(row["id"]):
+                        new._conn.execute(
+                            "INSERT INTO messages VALUES (?,?,?,?,?,?,?,?,?)",
+                            (
+                                row["id"],
+                                item.seq,
+                                *map(
+                                    sql_string,
+                                    (
+                                        item.role,
+                                        item.kind,
+                                        item.name,
+                                        item.call_id,
+                                        item.at,
+                                        item.text,
+                                        item.raw,
+                                    ),
+                                ),
+                            ),
+                        )
+                    for chunk in old.chunks(row["id"]):
+                        cursor = new._conn.execute(
+                            "INSERT INTO chunks VALUES (?,?,?,?,?)",
+                            (
+                                row["id"],
+                                chunk.index,
+                                chunk.seq_start,
+                                chunk.seq_end,
+                                sql_string(chunk.text),
+                            ),
+                        )
+                        if new._fts_enabled:
+                            from .thread_store_v2 import _index_text
+
+                            new._conn.execute(
+                                "INSERT INTO chunks_fts(rowid,thread_id,idx,text) VALUES (?,?,?,?)",
+                                (
+                                    cursor.lastrowid,
+                                    row["id"],
+                                    chunk.index,
+                                    _index_text(chunk.text, 0),
+                                ),
+                            )
+                verify_stores(old, new)
+                return len(rows)
+        finally:
+            new.close()
 
 
 def migrate_v1(source: str, destination: str | None = None) -> int:

@@ -940,3 +940,31 @@ def test_reopen_refreshes_legacy_block_triggers(tmp_path):
             value._conn.execute("PRAGMA recursive_triggers=OFF")
             with pytest.raises(sqlite3.IntegrityError, match="last"):
                 value._conn.execute("UPDATE OR REPLACE block SET rowid=1 WHERE idx=1")
+
+
+def test_reverse_copy_retains_post_switch_appends_and_auxiliary_rows(tmp_path):
+    from commonplace.handoff.thread_store_migrate import migrate_v2, read_store, verify_stores
+
+    source, target, restored = (
+        tmp_path / "threads.sqlite3",
+        tmp_path / FILENAME,
+        tmp_path / "restored.sqlite3",
+    )
+    with closing(ThreadStore(str(source))) as old:
+        items = simple(["first"])
+        thread = old.store("workspace", "source", items, actor="actor")
+        old.append(thread.id, simple(["first", "second"]))
+        old.store(
+            "workspace", "child", simple(["child"]), actor="actor", parent_stored_id=thread.id
+        )
+        old.put_doc("handoff", "verbatim document")
+        old.advance_fact_cursor(thread.id, 1, 1)
+    migrate_v1(str(source), str(target))
+    with closing(ThreadStoreV2(str(target))) as new:
+        new.append(thread.id, simple(["first", "second", "after switch"]))
+        new.put_doc("handoff", "updated verbatim document")
+        new.advance_fact_cursor(thread.id, 1, 3)
+    assert migrate_v2(str(target), str(restored)) == 2
+    with read_store(target, compact=True) as new, read_store(restored) as old:
+        verify_stores(new, old)
+        assert len(old.chunks(thread.id)) == 3
