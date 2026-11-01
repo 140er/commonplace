@@ -197,7 +197,31 @@ class Mediator:
             return _rpc_error(req_id, -32600, "Invalid request")
         try:
             if method in _FORWARDED_METHODS or method.startswith("notifications/"):
-                return self.workers.post(principal, request)
+                response = self.workers.post(principal, request)
+                if (
+                    method == "initialize"
+                    and isinstance(response, dict)
+                    and isinstance(response.get("result"), dict)
+                ):
+                    from .rules import render
+                    from .rules.service import instructions_for
+
+                    previous = response["result"].get("instructions", "")
+                    if not isinstance(previous, str):
+                        return response
+                    budget = render.INSTRUCTIONS_BUDGET - (
+                        render.length(previous) + 2 if previous else 0
+                    )
+                    instructions = instructions_for(
+                        extensions.ToolContext(principal, self.gateway), budget=budget
+                    )
+                    if instructions:
+                        response = copy.copy(response)
+                        response["result"] = dict(response["result"])
+                        response["result"]["instructions"] = instructions + (
+                            "\n\n" + previous if previous else ""
+                        )
+                return response
             if method == "tools/list":
                 return self._tools_list(principal, request)
             if method == "tools/call":

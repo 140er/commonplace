@@ -10,6 +10,7 @@ import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from time import monotonic
 
 from commonplace import events
 from commonplace.extensions import ToolError
@@ -21,6 +22,52 @@ logger = logging.getLogger(__name__)
 STORE_LOST = "rules_seq store_lost: a rules or boards store was replaced; the owner must confirm it"
 LOST_ERROR = "the rules store was replaced; the owner must confirm it"
 _internal = ContextVar("commonplace_internal_call", default=False)
+_deadline = ContextVar("commonplace_rules_deadline", default=None)
+
+
+def remaining(timeout):
+    end = _deadline.get()
+    if end is None:
+        return timeout
+    left = end - monotonic()
+    if left <= 0:
+        raise TimeoutError("rules deadline expired")
+    return min(timeout, left)
+
+
+@contextmanager
+def deadline(timeout):
+    """Nested readers may shorten a caller's deadline, never extend it."""
+    end = monotonic() + timeout
+    prior = _deadline.get()
+    token = _deadline.set(min(prior, end) if prior is not None else end)
+    try:
+        remaining(timeout)
+        yield
+        remaining(timeout)
+    finally:
+        _deadline.reset(token)
+
+
+class _DeadlineConnection(sqlite3.Connection):
+    """Refresh lock waits before each statement; interrupt long SQLite work."""
+
+    def _refresh(self):
+        milliseconds = int(remaining(self.wait_limit) * 1000)
+        super().execute(f"PRAGMA busy_timeout={milliseconds}")
+
+    def execute(self, *args, **kwargs):
+        self._refresh()
+        return super().execute(*args, **kwargs)
+
+    def commit(self):
+        self._refresh()
+        return super().commit()
+
+    def rollback(self):
+        # Cleanup must still run after expiry, including an interrupted writer.
+        self.set_progress_handler(None, 0)
+        return super().rollback()
 
 
 @contextmanager
@@ -43,13 +90,19 @@ class StoreLost(ToolError):
 
 @contextmanager
 def connection(path, *, write=False, timeout=0.1):
+    bounded = _deadline.get() is not None
     conn = sqlite3.connect(
         Path(path).resolve().as_uri() + ("?mode=rw" if write else "?mode=ro"),
         uri=True,
-        timeout=max(0, timeout),
+        timeout=max(0, remaining(timeout)),
         isolation_level=None,
+        factory=_DeadlineConnection if bounded else sqlite3.Connection,
     )
     conn.row_factory = sqlite3.Row
+    if bounded:
+        conn.wait_limit = timeout
+        end = _deadline.get()
+        conn.set_progress_handler(lambda: monotonic() >= end, 1000)
     try:
         yield conn
     finally:
@@ -75,7 +128,16 @@ def guard(db, workspace_id, directory, *, bind=True, emit=True, timeout=0.1):
         meta(directory / f"{name}.sqlite3", "store_id", timeout=timeout)
         for name in ("rules", "boards")
     ]
-    bound = db.rule_stores(workspace_id) or {}
+    if _deadline.get() is None:
+        bound = db.rule_stores(workspace_id) or {}
+    else:
+        # The shared control connection has a long lock wait and a Python lock.
+        # Injection uses an independent read-only connection under its deadline.
+        with connection(db.path, timeout=timeout) as conn:
+            row = conn.execute(
+                "SELECT * FROM rule_stores WHERE workspace_id=?", (workspace_id,)
+            ).fetchone()
+            bound = dict(row) if row is not None else {}
     if bind and any(
         value is not None and bound.get(key) is None
         for key, value in zip(("rules_store_id", "boards_store_id"), ids)
@@ -99,7 +161,16 @@ def mode(gateway, principal):
     if getattr(gateway, "rules_check_off", False):
         return "off"
     try:
-        values = gateway.db.rule_checks(principal.workspace_id)
+        if _deadline.get() is None:
+            values = gateway.db.rule_checks(principal.workspace_id)
+        else:
+            with connection(gateway.db.path) as conn:
+                values = dict(
+                    conn.execute(
+                        "SELECT agent,mode FROM rule_checks WHERE workspace_id=?",
+                        (principal.workspace_id,),
+                    )
+                )
         return values.get(principal.actor, values.get("*", "off"))
     except Exception:
         return "unknown"
