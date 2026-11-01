@@ -86,7 +86,8 @@ def board_store(monkeypatch):
     store = FakeStore()
     paths = []
 
-    def open_store(path):
+    def open_store(path, *, db, workspace_id):
+        assert db is not None and workspace_id.startswith("ws_")
         paths.append(path)
         return store
 

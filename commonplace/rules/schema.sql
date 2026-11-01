@@ -57,3 +57,13 @@ CREATE TABLE IF NOT EXISTS rule_suggestions (
     created_at TEXT NOT NULL,
     decided_at TEXT
 );
+
+INSERT OR IGNORE INTO meta VALUES ('store_id', (random() & 0x7fffffffffffffff) | 1);
+CREATE TABLE IF NOT EXISTS agent_seq (agent TEXT PRIMARY KEY, token INTEGER NOT NULL);
+INSERT OR IGNORE INTO agent_seq VALUES ('*', (random() & 0x7fffffffffffffff) | 1);
+CREATE TABLE IF NOT EXISTS agent_served (
+    agent TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state IN ('served','too_large')),
+    rules_seq INTEGER,
+    at TEXT NOT NULL
+);

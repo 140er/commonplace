@@ -55,15 +55,18 @@ class HandoffContext:
         Extraction is automatic, so its facts stay proposals even when a person
         uploaded the transcript: uploading is not approving what was parsed out.
         """
-        response = self.gateway.mediator.handle(
-            dataclasses.replace(principal, person=False),
-            {
-                "jsonrpc": "2.0",
-                "id": "handoff-fact",
-                "method": "tools/call",
-                "params": {"name": "fact_save", "arguments": arguments},
-            },
-        )
+        from commonplace.rules.checks import internal_call
+
+        with internal_call():
+            response = self.gateway.mediator.handle(
+                dataclasses.replace(principal, person=False),
+                {
+                    "jsonrpc": "2.0",
+                    "id": "handoff-fact",
+                    "method": "tools/call",
+                    "params": {"name": "fact_save", "arguments": arguments},
+                },
+            )
         result = response.get("result") if isinstance(response, dict) else None
         if not isinstance(result, dict) or result.get("isError") or response.get("error"):
             raise RuntimeError("handoff fact write refused or unavailable")

@@ -32,8 +32,13 @@ from .store import (
 logger = logging.getLogger(__name__)
 
 
-def open_store(workspace_dir, *, legacy_origin=None) -> BoardStore:
-    return BoardStore(workspace_dir, legacy_origin=legacy_origin)
+def open_store(workspace_dir, *, legacy_origin=None, db=None, workspace_id=None) -> BoardStore:
+    store = BoardStore(workspace_dir, legacy_origin=legacy_origin)
+    if db is not None and (db.rule_stores(workspace_id) or {}).get("boards_store_id") is None:
+        from commonplace.rules.checks import meta
+
+        db.bind_rule_stores(workspace_id, None, meta(store.path, "store_id"))
+    return store
 
 
 class VersionClash(ToolError):
@@ -213,7 +218,12 @@ class BoardService:
     def __init__(self, ctx):
         self.ctx = ctx
         self.principal = ctx.principal
-        self.store = open_store(ctx.workspace_dir(), legacy_origin=self._legacy_restricted_origin)
+        self.store = open_store(
+            ctx.workspace_dir(),
+            legacy_origin=self._legacy_restricted_origin,
+            db=ctx.db,
+            workspace_id=self.principal.workspace_id,
+        )
         self.pending = []
 
     def _legacy_restricted_origin(self, row):

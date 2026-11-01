@@ -34,6 +34,7 @@ def test_gateway_closes_background_handoff_work_before_permanently_closing_worke
     monkeypatch.setattr(signal, "signal", lambda *_args: None)
     gateway = Gateway.__new__(Gateway)
     gateway.build_server = lambda *_args: Server()
+    gateway.db = SimpleNamespace(workspaces=lambda: [])
     gateway.handoff = SimpleNamespace(close=lambda: calls.append("handoff"))
     gateway.supervisor = SimpleNamespace(
         stop_idle=lambda: None, close=lambda: calls.append("workers")

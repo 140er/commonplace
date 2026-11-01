@@ -100,7 +100,9 @@ def _boards(ctx, required=False):
         if required:
             raise ToolError("no: boards unavailable") from None
         return None
-    return service.open_store(ctx.workspace_dir())
+    return service.open_store(
+        ctx.workspace_dir(), db=ctx.db, workspace_id=ctx.principal.workspace_id
+    )
 
 
 def _task(args):
@@ -502,7 +504,9 @@ def install(gateway):
             if h.command == "POST" and not parts:
                 if principal.policy.refusal("memory_save"):
                     raise ToolError("no: memory write refused")
-                memory_id, _ = _save(ctx, read_json(h))
+                body = read_json(h)
+                body.pop("rules_seq", None)
+                memory_id, _ = _save(ctx, body)
                 send_json(h, 201, {"id": memory_id})
             elif h.command == "GET" and parts == ["search"]:
                 if principal.policy.refusal("memory_search"):
@@ -536,7 +540,9 @@ def install(gateway):
             if principal.policy.refusal("fact_save"):
                 raise ToolError("no: fact write refused")
             ctx = ToolContext(principal=principal, gateway=gateway)
-            result = _file_fact(ctx, read_json(h))
+            body = read_json(h)
+            body.pop("rules_seq", None)
+            result = _file_fact(ctx, body)
             _emit(ctx, "fact.saved", result.get("triple_id"), action=result.get("action"))
             send_json(h, 201, result)
         except BadRequest:
