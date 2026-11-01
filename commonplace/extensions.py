@@ -32,6 +32,7 @@ MODULES = (
     "commonplace.boards",
     "commonplace.rules",
     "commonplace.memory_tools",
+    "commonplace.session",
     "commonplace.webhooks",
     "commonplace.oauth",
     "commonplace.web",
