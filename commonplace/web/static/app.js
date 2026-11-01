@@ -911,10 +911,11 @@ root.addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   state.pending.add(formKey);
   try {
-    if (kind === "login") {
-      let token = payload.token.trim();
-      try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
-      location.assign(`/app/login?t=${enc(token)}`);
+    if (kind === "email-login") {
+      const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
+      let status = root.querySelector(".signin [role=status]");
+      if (!status) { status = document.createElement("div"); status.className = "message"; status.setAttribute("role", "status"); form.after(status); }
+      status.textContent = result.message;
     } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
