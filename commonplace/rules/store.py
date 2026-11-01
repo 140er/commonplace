@@ -34,7 +34,7 @@ def rules_sequence(conn, agent):
 
 
 def migrate(conn, boards_visibility=0):
-    """Add the agent-target columns; existing rule_versions rows keep agent NULL."""
+    """Add display and target columns without changing existing rule text or history."""
     own_transaction = not conn.in_transaction
     if own_transaction:
         conn.execute("BEGIN IMMEDIATE")
@@ -65,6 +65,9 @@ def migrate(conn, boards_visibility=0):
             conn.execute("UPDATE rules SET agent_text_by=origin_agent WHERE agent_text IS NOT NULL")
         if "agent" not in {r[1] for r in conn.execute("PRAGMA table_info(rule_versions)")}:
             conn.execute("ALTER TABLE rule_versions ADD COLUMN agent TEXT")
+        for table in ("rules", "rule_versions"):
+            if "summary" not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN summary TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS rules_by_origin ON rules(origin_agent, key)")
         if own_transaction:
             conn.commit()

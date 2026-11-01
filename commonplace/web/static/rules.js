@@ -68,7 +68,7 @@ export function wordDiff(before, after) {
 const actionButton = (action, label, attrs = "", cls = "opt") => `<button type="button" class="${cls}" data-rule-action="${action}" ${attrs}>${e(label)}</button>`;
 const choices = (values, current) => values.map((value) => `<option value="${e(value)}"${value === current ? " selected" : ""}>${e(value)}</option>`).join("");
 function fields(rule = {}) {
-  return `<label>Text<textarea name="text" required>${e(rule.text || "")}</textarea></label><div class="rule-fields"><label>Kind<select name="kind">${choices(kinds, rule.kind || "instruction")}</select></label><label>Scope<select name="scope">${choices(scopes, rule.scope || "global")}</select></label><label data-scope-ref${!rule.scope || rule.scope === "global" ? " hidden" : ""}>Scope reference<input name="scope_ref" value="${e(rule.scope_ref || "")}"${rule.scope && rule.scope !== "global" ? " required" : ""}></label></div>`;
+  return `<label>Text<textarea name="text" required>${e(rule.text || "")}</textarea></label><label>Summary (optional)<textarea name="summary" maxlength="400">${e(rule.summary || "")}</textarea></label><div class="rule-fields"><label>Kind<select name="kind">${choices(kinds, rule.kind || "instruction")}</select></label><label>Scope<select name="scope">${choices(scopes, rule.scope || "global")}</select></label><label data-scope-ref${!rule.scope || rule.scope === "global" ? " hidden" : ""}>Scope reference<input name="scope_ref" value="${e(rule.scope_ref || "")}"${rule.scope && rule.scope !== "global" ? " required" : ""}></label></div>`;
 }
 function clarifyPanel(attrs, bridge) {
   return `<details class="rule-clarify" ${attrs}><summary class="rule-text-button">Help me clarify</summary><div class="rule-clarify-panel"><div class="opts">${actionButton("copy-prompt", "Copy prompt")}${bridge ? actionButton("agents", "Ask an agent") : ""}</div><div data-rule-ask></div><div data-rule-reply role="status" aria-live="polite"></div></div></details>`;
@@ -84,7 +84,9 @@ function movePanel(rule, targets) {
 function ruleRow(rule, suggestions, owner, bridge, targets = []) {
   const waiting = isActive(rule) && (rule.status === "proposed" || Number(rule.pending) === 1), edited = rule.status === "edited" && rule.agent_text != null;
   const controls = `<div class="rule-actions">${owner ? `${rule.status === "proposed" && !rule.pending ? `${actionButton("accept", "Accept", "", "blockbtn")}${rule.agent !== "*" ? actionButton("accept-all", "Accept for all agents", "", "rule-text-button") : ""}` : ""}${rule.status === "retired" ? actionButton("restore", "Restore", "", "rule-text-button") : `${actionButton("edit", "Edit", "", "rule-text-button")}${actionButton("retire", "Retire", "", "rule-text-button")}${movePanel(rule, targets)}`}` : ""}${actionButton("history", "History", "", "rule-text-button")}${clarifyPanel(`data-clarify-rule="${e(rule.id)}"`, owner && bridge)}</div>`;
-  return `<article class="rule-row" data-rule-id="${e(rule.id)}" data-version="${e(rule.version)}"><div class="rule-chips"><span class="pill">${e(rule.kind)}</span>${rule.scope !== "global" ? `<span class="pill">${e(rule.scope)} ${e(rule.scope_ref)}</span>` : ""}<span class="pill${waiting ? " you" : ""}">${e(rule.status)}</span>${rule.pending ? '<span class="pill you">Agent changed</span>' : ""}</div><div data-rule-body><p class="rule-text">${edited ? wordDiff(rule.agent_text, rule.text) : e(rule.text)}</p>${controls}</div>${rule.pending ? `<section class="rule-proposal"><h4>${rule.agent_text_by && rule.agent_text_by !== rule.agent ? e(`${agentName(rule.agent_text_by)}’s wording`) : "Agent’s wording"}</h4><p class="rule-text">${wordDiff(rule.text, rule.agent_text)}</p>${owner ? `<div class="opts">${actionButton("accept_agent", "Use agent's")}${actionButton("keep_edit", "Keep mine")}</div>` : ""}</section>` : ""}${suggestions.map((suggestion) => suggestionView(rule, suggestion, owner)).join("")}<div data-rule-history hidden></div></article>`;
+  const fullId = `rule-full-${rule.id}`;
+  const summary = rule.display_summary || rule.summary || String(rule.text).split(/(?<=[.!?])\s+/)[0].slice(0, 240);
+  return `<article class="rule-row" data-rule-id="${e(rule.id)}" data-version="${e(rule.version)}"><div class="rule-chips"><span class="pill">${e(rule.kind)}</span>${rule.scope !== "global" ? `<span class="pill">${e(rule.scope)} ${e(rule.scope_ref)}</span>` : ""}<span class="pill${waiting ? " you" : ""}">${e(rule.status)}</span>${rule.pending ? '<span class="pill you">Agent changed</span>' : ""}</div><div data-rule-body><button type="button" class="rule-summary" data-rule-action="expand" aria-expanded="false" aria-controls="${e(fullId)}"><span>${e(summary)}</span><span data-rule-expand-icon aria-hidden="true">+</span></button><div id="${e(fullId)}" data-rule-full hidden><p class="rule-text">${edited ? wordDiff(rule.agent_text, rule.text) : e(rule.text)}</p>${rule.pending ? `<section class="rule-proposal"><h4>${rule.agent_text_by && rule.agent_text_by !== rule.agent ? e(`${agentName(rule.agent_text_by)}’s wording`) : "Agent’s wording"}</h4><p class="rule-text">${wordDiff(rule.text, rule.agent_text)}</p>${owner ? `<div class="opts">${actionButton("accept_agent", "Use agent's")}${actionButton("keep_edit", "Keep mine")}</div>` : ""}</section>` : ""}${suggestions.map((suggestion) => suggestionView(rule, suggestion, owner)).join("")}</div>${controls}</div><div data-rule-history hidden></div></article>`;
 }
 export function rulesView({ rules = [], suggestions = [], agents = [], waiting = 0, waiting_by_agent = {} } = {}, { owner = true } = {}) {
   const bridge = desktopBridge();
@@ -147,7 +149,13 @@ export function rulesHandlers(root, api, refresh, showError) {
     const action = button.dataset.ruleAction, row = button.closest("[data-rule-id]"), rule = ruleFor(row);
     const panel = button.closest(".rule-clarify");
     try {
-      if (action === "new" && owner) {
+      if (action === "expand" && rule) {
+        const full = row.querySelector("[data-rule-full]");
+        full.hidden = !full.hidden;
+        button.setAttribute("aria-expanded", String(!full.hidden));
+        button.querySelector("[data-rule-expand-icon]").textContent = full.hidden ? "+" : "−";
+        if (full.hidden) await refreshIfStale();
+      } else if (action === "new" && owner) {
         const form = root.querySelector(".rule-new");
         form.hidden = !form.hidden;
         button.setAttribute("aria-expanded", String(!form.hidden));
@@ -218,7 +226,7 @@ export function rulesHandlers(root, api, refresh, showError) {
     stale: false,
     force: false,
     update(next, options = {}) { payload = next; owner = options.owner ?? true; ui.stale = false; ui.force = false; },
-    busy() { return pending.size > 0 || !!root.querySelector('.rules-view .rule-new:not([hidden]), .rules-view form[data-rule-form="edit"], .rules-view details[open], .rules-view [data-rule-history]:not([hidden]), .rules-view .rule-clarify[open] [data-ask-agent], .rules-view .rule-clarify[open] [data-reply-text]'); },
+    busy() { return pending.size > 0 || !!root.querySelector('.rules-view .rule-new:not([hidden]), .rules-view form[data-rule-form="edit"], .rules-view details[open], .rules-view [data-rule-history]:not([hidden]), .rules-view [data-rule-full]:not([hidden]), .rules-view .rule-clarify[open] [data-ask-agent], .rules-view .rule-clarify[open] [data-reply-text]'); },
   };
   return ui;
 }

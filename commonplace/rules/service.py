@@ -18,7 +18,7 @@ from .store import RuleStore, bump, now, rules_sequence, sequence
 KINDS = ("permission", "limit", "instruction", "style")
 SCOPES = ("global", "board", "repo")
 RULE_FIELDS = (
-    "id agent key text agent_text agent_text_by kind scope scope_ref status source pending version seq "
+    "id agent key text summary agent_text agent_text_by kind scope scope_ref status source pending version seq "
     "retired_by updated_at updated_by"
 ).split()
 WAITING = "(status='proposed' OR pending=1) AND (status!='retired' OR retired_by='owner')"
@@ -37,8 +37,43 @@ class VersionClash(ToolError):
         self.current = current
 
 
-def rule_json(row):
-    return {key: row[key] for key in RULE_FIELDS}
+def rule_json(row, *, include_display=True):
+    value = {key: row[key] for key in RULE_FIELDS}
+    if include_display:
+        value["display_summary"] = display_summary(row["summary"], row["text"])
+    return value
+
+
+def sentences(value):
+    """Split punctuation followed by whitespace; keep common abbreviations together."""
+    parts = re.split(
+        r"(?<=[.!?])\s+|(?<=[.!?][\"'”’])\s+|(?<=[。！？])\s*", " ".join(value.split())
+    )
+    result = []
+    for part in parts:
+        if not part:
+            continue
+        if result and re.search(r"\b(?:e\.g|i\.e|Mr|Mrs|Ms|Dr|Prof|vs)\.$", result[-1]):
+            result[-1] += " " + part
+        else:
+            result.append(part)
+    return result
+
+
+def summary_text(value):
+    if value is None:
+        return None
+    value = validate_text(value, "summary", limit=400).strip()
+    if len(sentences(value)) > 2:
+        raise ToolError("no: summary must be at most two sentences")
+    return value or None
+
+
+def display_summary(summary, text):
+    if summary:
+        return summary
+    first = sentences(text)[0]
+    return first if len(first) <= 240 else first[:239].rstrip() + "…"
 
 
 def rule_text(value):
@@ -64,7 +99,7 @@ def rule_key(text):
     return "r-" + hashlib.sha1(" ".join(text.split()).encode()).hexdigest()[:10]
 
 
-def fields(text, kind, scope="global", scope_ref=None):
+def fields(text, kind, scope="global", scope_ref=None, summary=_UNSET):
     text = rule_text(text)
     if kind not in KINDS or scope not in SCOPES:
         raise ToolError("no: invalid kind or scope")
@@ -80,7 +115,10 @@ def fields(text, kind, scope="global", scope_ref=None):
                 or "@" in scope_ref.split("/")[0]
             ):
                 raise ToolError("no: repo must be host/owner/name")
-    return dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
+    values = dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
+    if summary is not _UNSET:
+        values["summary"] = summary_text(summary)
+    return values
 
 
 def row_for(conn, rule_id):
@@ -185,14 +223,15 @@ class RuleService:
         row = row_for(conn, rule_id)
         p = self.principal
         conn.execute(
-            "INSERT INTO rule_versions(rule_id,version,agent,text,kind,scope,scope_ref,status,"
+            "INSERT INTO rule_versions(rule_id,version,agent,text,summary,kind,scope,scope_ref,status,"
             "source,note,stamp_user,stamp_connection,stamp_trust,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row["id"],
                 row["version"],
                 row["agent"],
                 row["text"],
+                row["summary"],
                 row["kind"],
                 row["scope"],
                 row["scope_ref"],
@@ -280,6 +319,7 @@ class RuleService:
             if not isinstance(item, dict) or set(item) - {
                 "key",
                 "text",
+                "summary",
                 "kind",
                 "scope",
                 "board",
@@ -289,7 +329,13 @@ class RuleService:
             scope = item.get("scope", "global")
             if scope not in SCOPES:
                 raise ToolError("no: invalid scope")
-            values = fields(item.get("text"), item.get("kind"), scope, item.get(scope))
+            values = fields(
+                item.get("text"),
+                item.get("kind"),
+                scope,
+                item.get(scope),
+                summary=item.get("summary", _UNSET),
+            )
             key = item.get("key", rule_key(values["text"]))
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", key):
                 raise ToolError("no: key must match [A-Za-z0-9._-]{1,100}")
@@ -346,6 +392,9 @@ class RuleService:
                     )
                     if all(row[k] == v for k, v in values.items()):
                         updates = {}
+                    elif all(row[k] == v for k, v in values.items() if k != "summary"):
+                        # Display-only changes never reopen an accepted rule.
+                        updates = {"summary": values["summary"]}
                 result.append(
                     self._agent_view(
                         self._change(conn, row, updates) if updates else rule_json(row)
@@ -551,10 +600,10 @@ class RuleService:
                 )
             ]
 
-    def create(self, agent, text, kind, scope="global", scope_ref=None):
+    def create(self, agent, text, kind, scope="global", scope_ref=None, summary=None):
         self._person(owner=True)
         agent = agent_ref(agent)
-        values = fields(text, kind, scope, scope_ref)
+        values = fields(text, kind, scope, scope_ref, summary)
         with self.transaction() as conn:
             key = rule_key(text)
             if conn.execute("SELECT 1 FROM rules WHERE agent=? AND key=?", (agent, key)).fetchone():
@@ -571,7 +620,7 @@ class RuleService:
 
     def edit(self, rule_id, version, **changes):
         self._person(owner=True)
-        if set(changes) - {"text", "kind", "scope", "scope_ref", "note"}:
+        if set(changes) - {"text", "summary", "kind", "scope", "scope_ref", "note"}:
             raise ToolError("no: invalid edit")
         note = changes.pop("note", None)
         if note is not None:
@@ -581,14 +630,20 @@ class RuleService:
             if row["status"] == "retired":
                 raise ToolError("no: restore the rule first")
             values = fields(
-                **{k: changes.get(k, row[k]) for k in ("text", "kind", "scope", "scope_ref")}
+                **{
+                    k: changes.get(k, row[k])
+                    for k in ("text", "summary", "kind", "scope", "scope_ref")
+                }
             )
             if all(row[k] == value for k, value in values.items()):
                 raise ToolError("no: nothing to change")
+            updates = dict(values, status="edited", source="owner", pending=0, retired_by=None)
+            if all(row[k] == value for k, value in values.items() if k != "summary"):
+                updates = {"summary": values["summary"]}
             return self._change(
                 conn,
                 row,
-                dict(values, status="edited", source="owner", pending=0, retired_by=None),
+                updates,
                 note=note,
             )
 
@@ -816,7 +871,7 @@ def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
                 )
             if visible:
                 # The enforcement view contains only the owner's effective text.
-                value = rule_json(row)
+                value = rule_json(row, include_display=False)
                 value.update(agent_text=None, agent_text_by=None, pending=0)
                 if (
                     str(value["updated_by"]).startswith("conn:")

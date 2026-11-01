@@ -55,6 +55,7 @@ def register_tools():
         "properties": {
             "key": STRING,
             "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "summary": {"type": ["string", "null"], "maxLength": 400},
             "kind": {"type": "string", "enum": list(KINDS)},
             "scope": {"type": "string", "enum": list(SCOPES)},
             "board": STRING,
@@ -70,7 +71,7 @@ def register_tools():
                 "replace": {"type": "boolean"},
             },
             ["rules"],
-            "Publish your own verbatim rules; replace retires omitted keys. Owner edits win.",
+            "Publish your own verbatim rules; optional summary is display-only (at most two sentences). Replace retires omitted keys. Owner edits win.",
         ),
         "rules_get": (
             {

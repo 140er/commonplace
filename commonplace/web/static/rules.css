@@ -8,6 +8,13 @@
 .rule-row { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .rule-row + .rule-row { margin-top: var(--gap); }
 .rule-chips { display: flex; flex-wrap: wrap; gap: var(--gap); }
+.rule-summary { width: 100%; display: flex; justify-content: space-between; gap: 16px; padding: 0; text-align: left; background: none; color: var(--ink); font: inherit; line-height: 22px; overflow-wrap: anywhere; }
+.rule-summary:hover { filter: none; color: var(--strong); }
+.rule-summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+.rule-summary [data-rule-expand-icon] { flex: none; color: var(--quiet); }
+[data-rule-full] { margin-top: 16px; }
+[data-rule-full][hidden] { display: none; }
+[data-rule-full] > .rule-proposal { margin-top: 12px; }
 .rule-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
 .rule-text del { color: var(--quiet); }
 .rule-text del + ins { margin-left: .3em; }
@@ -59,5 +66,5 @@
   .rules-view .opt, .rules-view .blockbtn { min-height: 44px; justify-content: center; }
   .rule-fields { flex-direction: column; }
   .rule-fields label { min-width: 0; }
-  .rules-view select, .rules-view input, .rule-text-button { min-height: 44px; }
+  .rules-view select, .rules-view input, .rule-text-button, .rule-summary { min-height: 44px; }
 }

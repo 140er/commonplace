@@ -395,3 +395,34 @@ console.log("Rules suggestion and deferred-render checks passed");
   assert.ok(rulesView({ rules: [{ ...shared, agent_text_by: "conn:<b>" }] }).includes("<h4>&lt;b&gt;’s wording</h4>"));
 }
 console.log("Rules agent-target checks passed");
+
+// Summaries are escaped, full text is initially hidden, and expansion is local/read-only.
+{
+  const text = "Keep the entire original. Preserve all context. Preserve the last line.";
+  const summarized = rule(42, { text, summary: "Keep <every> word. Preserve context.", display_summary: "Keep <every> word. Preserve context." });
+  const view = rulesView({ rules: [summarized] }, { owner: false });
+  assert.ok(view.includes('type="button" class="rule-summary" data-rule-action="expand" aria-expanded="false" aria-controls="rule-full-42"'));
+  assert.ok(view.includes('<span>Keep &lt;every&gt; word. Preserve context.</span>'));
+  assert.ok(view.includes(`<div id="rule-full-42" data-rule-full hidden><p class="rule-text">${text}</p>`));
+  assert.ok(rulesView({ rules: [summarized] }).includes('name="summary" maxlength="400"'));
+  const listeners = {}, full = { hidden: true }, icon = { textContent: "+" }, attrs = {};
+  const ruleRow = { dataset: { ruleId: "42" }, querySelector: () => full };
+  const toggle = { dataset: { ruleAction: "expand" }, closest: (selector) => selector === "[data-rule-id]" ? ruleRow : null,
+    setAttribute: (key, value) => { attrs[key] = value; }, querySelector: () => icon };
+  let mutations = 0;
+  const root = { addEventListener: (name, fn) => { listeners[name] = fn; }, querySelector: (selector) => selector.includes("data-rule-full") && !full.hidden ? full : null };
+  const disclosure = rulesHandlers(root, () => { mutations++; }, async () => {}, assert.fail);
+  disclosure.update({ rules: [summarized] }, { owner: false });
+  const click = { target: { closest: () => toggle } };
+  await listeners.click(click);
+  assert.equal(full.hidden, false);
+  assert.equal(attrs["aria-expanded"], "true");
+  assert.equal(icon.textContent, "−");
+  assert.equal(disclosure.busy(), true, "Background refresh must preserve an open rule");
+  await listeners.click(click);
+  assert.equal(full.hidden, true);
+  assert.equal(attrs["aria-expanded"], "false");
+  assert.equal(disclosure.busy(), false);
+  assert.equal(mutations, 0, "All readers may expand without a rule mutation");
+}
+console.log("Rules summary disclosure checks passed");
