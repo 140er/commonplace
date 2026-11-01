@@ -66,7 +66,10 @@ def dispatch(service, h, parts, method):
             return 200, service.list_rules()
         if method == "POST":
             return 201, service.create(
-                **body(("agent", "text", "kind", "scope", "scope_ref"), ("agent", "text", "kind"))
+                **body(
+                    ("agent", "text", "summary", "kind", "scope", "scope_ref"),
+                    ("agent", "text", "kind"),
+                )
             )
     if len(parts) == 3 and parts[:2] == ["rules", "suggestions"] and method == "POST":
         values = body(("action", "version"), ("action",))
@@ -80,7 +83,10 @@ def dispatch(service, h, parts, method):
         if len(parts) == 2 and method == "PATCH":
             return 200, service.edit(
                 rule_id,
-                **body(("version", "text", "kind", "scope", "scope_ref", "note"), ("version",)),
+                **body(
+                    ("version", "text", "summary", "kind", "scope", "scope_ref", "note"),
+                    ("version",),
+                ),
             )
         if len(parts) == 3 and method == "POST":
             if parts[2] == "action":
