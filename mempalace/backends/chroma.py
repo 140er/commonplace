@@ -1858,6 +1858,7 @@ def _drain_pending_clients(palace_path=None, *, blocking=True) -> int:
 
 def _close_pending_clients() -> None:
     global _pending_close_worker
+    retry_delay = 0.05
     try:
         while True:
             with _CLIENT_REGISTRY_LOCK:
@@ -1865,14 +1866,23 @@ def _close_pending_clients() -> None:
                     _pending_close_worker = None
                     return
                 paths = list(dict.fromkeys(path for path, _ in _PENDING_CLIENT_CLOSES.values()))
-            closed = sum(_drain_pending_clients(palace_path=path, blocking=False) for path in paths)
-            closed += _drain_pending_guard_releases(blocking=False)
+            try:
+                closed = sum(
+                    _drain_pending_clients(palace_path=path, blocking=False) for path in paths
+                )
+                closed += _drain_pending_guard_releases(blocking=False)
+            except Exception:
+                logger.warning("Pending Chroma client cleanup failed", exc_info=True)
+                # Keep ownership of the worker slot until queued cleanup is
+                # drained. A transient failure must not need another caller.
+                threading.Event().wait(retry_delay)
+                retry_delay = min(retry_delay * 2, 1.0)
+                continue
+            retry_delay = 0.05
             if not closed:
                 # A writer can own one palace for a long time. Retry without
                 # keeping other palaces' clients queued behind that lock.
                 threading.Event().wait(0.05)
-    except Exception:
-        logger.warning("Pending Chroma client cleanup failed", exc_info=True)
     finally:
         with _CLIENT_REGISTRY_LOCK:
             if _pending_close_worker is threading.current_thread():
