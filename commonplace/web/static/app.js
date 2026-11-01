@@ -26,7 +26,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0,
+  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, rulesLost: false,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
 const statuses = ["backlog", "todo", "doing", "review", "done"];
@@ -188,7 +188,7 @@ function navigation() {
   if (!boardNav) return;
   boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
+  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = state.rulesLost ? "!" : count; n.dataset.waiting = String(state.rulesLost || count > 0); n.setAttribute("aria-label", state.rulesLost ? "Rules store needs confirmation" : `${count} rules awaiting review`); });
   root.querySelector(".app")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   const key = state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
   root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
@@ -460,10 +460,10 @@ async function refresh({ background = false, events = [] } = {}) {
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
     const home = state.base === "#/";
-    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
+    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (error.status === 409 && error.payload?.store_lost) return { ...error.payload, waiting: 0 }; if (state.base === "#/rules") throw error; return null; })]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
-    if (rules) state.rulesWaiting = rules.waiting;
+    if (rules) { state.rulesWaiting = rules.waiting; state.rulesLost = !!rules.store_lost; }
     if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -495,11 +495,11 @@ async function refresh({ background = false, events = [] } = {}) {
     else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards") boardsView();
     else if (state.base === "#/rules") {
-      if (!background || rulesUI.force || !rulesUI.busy()) {
+      if (rules.store_lost || !background || rulesUI.force || !rulesUI.busy()) {
         rulesUI.update(rules, { owner: rules.can_edit });
         root.querySelector("#content").innerHTML = rulesView(rules, { owner: rules.can_edit });
       } else rulesUI.stale = true;
-      title("Rules", rules.can_edit ? `<button type="button" class="blockbtn" data-rule-action="new" aria-controls="rule-new" aria-expanded="${!!root.querySelector('.rule-new:not([hidden])')}">New rule</button>` : "");
+      title("Rules", rules.can_edit && !rules.store_lost ? `<button type="button" class="blockbtn" data-rule-action="new" aria-controls="rule-new" aria-expanded="${!!root.querySelector('.rule-new:not([hidden])')}">New rule</button>` : "");
     } else if (state.base.startsWith("#/memory")) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
       if (!background || changed) await memoryView(epoch, background && !changed);

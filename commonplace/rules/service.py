@@ -465,9 +465,25 @@ class RuleService:
 
     def list_rules(self):
         self._person()
-        with self.store.read() as conn:
+        store = self.store
+        checks.reconcile(self.ctx.db, self.principal.workspace_id, self.ctx.workspace_dir())
+        # Use authenticated connection ids, never caller-supplied audit targets.
+        with self.ctx.db._lock:
+            unchecked = {
+                "conn:" + row["name"]: row["total"]
+                for row in self.ctx.db._conn.execute(
+                    "SELECT c.name,count(*) AS total FROM audit_log a "
+                    "JOIN connections c ON c.id=a.connection_id AND c.workspace_id=a.workspace_id "
+                    "WHERE a.workspace_id=? AND a.reason LIKE 'rules_seq unchecked%' "
+                    "AND julianday(a.at) BETWEEN julianday('now','-1 day') AND julianday('now') "
+                    "GROUP BY c.id,c.name",
+                    (self.principal.workspace_id,),
+                )
+            }
+        with store.read() as conn:
+            rules = [rule_json(r) for r in conn.execute("SELECT * FROM rules ORDER BY id")]
             return {
-                "rules": [rule_json(r) for r in conn.execute("SELECT * FROM rules ORDER BY id")],
+                "rules": rules,
                 "suggestions": [
                     dict(r)
                     for r in conn.execute(
@@ -483,6 +499,17 @@ class RuleService:
                 else [],
                 "seq": sequence(conn),
                 "checks": self.ctx.db.rule_checks(self.principal.workspace_id),
+                "unchecked_by_agent": unchecked,
+                "too_large_by_agent": {
+                    row["agent"]: True
+                    for row in conn.execute("SELECT * FROM agent_served WHERE state='too_large'")
+                    if row["rules_seq"] == rules_sequence(conn, row["agent"])
+                },
+                "oversized_rule_ids": [
+                    r["id"]
+                    for r in rules
+                    if render.length(render.quote(r["text"])) > render.RULE_BYTES
+                ],
                 "can_edit": self.principal.role == "owner",
                 "waiting": conn.execute(f"SELECT count(*) FROM rules WHERE {WAITING}").fetchone()[
                     0

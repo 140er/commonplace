@@ -18,7 +18,15 @@ def install(gateway):
             service = RuleService(ToolContext(principal=principal, gateway=gateway))
             status, result = dispatch(service, h, path_parts(h, "/api/"), h.command)
         except checks.StoreLost:
-            send_json(h, 409, {"error": checks.LOST_ERROR, "store_lost": True})
+            send_json(
+                h,
+                409,
+                {
+                    "error": checks.LOST_ERROR,
+                    "store_lost": True,
+                    "can_edit": principal.role == "owner",
+                },
+            )
             return
         except VersionClash as exc:
             send_json(h, 409, {"error": "rule changed", "current": exc.current})

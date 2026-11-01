@@ -89,7 +89,7 @@ window.commonplaceDesktop = { version: 1, ask() {} };
 assert.equal(desktopBridge(), window.commonplaceDesktop);
 assert.ok(rulesView(payload).includes("Ask an agent"));
 assert.ok(!rulesView(payload, { owner: false }).includes("Ask an agent"));
-assert.ok(rulesView().includes("No rules"));
+assert.ok(rulesView().includes("No active rules") && rulesView().includes('data-rule-check="*"'));
 
 // Requests carry the displayed version, including when a newer payload arrives later.
 const handlers = {}, errors = [], requests = [];
@@ -250,7 +250,7 @@ assert.equal(headerActions, "");
 assert.ok(shellCalls.includes("/api/rules") && !shellCalls.includes("/api/rules/count"));
 shellPayload = { ...shellPayload, can_edit: true, waiting: 4 };
 const busyHTML = content.innerHTML;
-for (const kind of ["rule.changed", "rule.suggestion"]) {
+for (const kind of ["rule.changed", "rule.suggestion", "rule.check", "rule.unchecked", "rule.too_large"]) {
   assert.equal(await shellRefresh({ background: true, events: [{ kind }] }), true);
   assert.deepEqual(updates.at(-1)[1], { owner: false });
   assert.equal(content.innerHTML, busyHTML);
@@ -395,3 +395,96 @@ console.log("Rules suggestion and deferred-render checks passed");
   assert.ok(rulesView({ rules: [{ ...shared, agent_text_by: "conn:<b>" }] }).includes("<h4>&lt;b&gt;’s wording</h4>"));
 }
 console.log("Rules agent-target checks passed");
+
+// Check settings use native selects; status values come from the owner projection.
+{
+  const view = rulesView({ ...payload, checks: { "*": "warn", "conn:writer": "enforce" }, unchecked_by_agent: { "conn:writer": 7, "conn:reader": 0 }, too_large_by_agent: { "conn:writer": true }, oversized_rule_ids: [first.id] });
+  const options = (agent) => view.match(new RegExp(`data-rule-check="${agent.replace("*", "\\*")}"[^>]*>([\\s\\S]*?)</select>`))[1];
+  assert.ok(options("*").includes('value="warn" selected') && !options("*").includes('value="default"'));
+  assert.ok(options("conn:writer").includes('value="enforce" selected'));
+  assert.ok(options("conn:reader").includes('value="default" selected'));
+  assert.ok(view.includes('aria-label="Check for writer"'));
+  assert.ok(view.includes("7 unchecked · 24h") && !view.includes("0 unchecked"));
+  assert.ok(view.includes("Rule set too large") && view.includes("Text too large"));
+  assert.ok(!rulesView({ ...payload, checks: { "*": "warn" } }, { owner: false }).includes("data-rule-check"));
+  assert.ok(rulesView({ checks: { "conn:configured": "off" } }).includes('data-rule-agent="conn:configured"'));
+  const hostile = rulesView({ unchecked_by_agent: { 'conn:<script>"': 2 } });
+  assert.ok(!hostile.includes("<script>") && hostile.includes("&lt;script&gt;&quot;"));
+  const lost = rulesView({ ...payload, store_lost: true });
+  assert.ok(lost.includes('role="alert"') && lost.includes('data-rule-action="accept-store"'));
+  assert.ok(!lost.includes("data-rule-id") && !lost.includes("data-rule-check") && !lost.includes("Always preserve"));
+  assert.ok(!rulesView({ store_lost: true }, { owner: false }).includes("accept-store"));
+}
+{
+  globalThis.CSS = { escape: (value) => value };
+  const events = {}, sent = [], errors = [];
+  let refreshed = 0, focused = 0, fail = false, release;
+  const control = { dataset: { ruleCheck: "conn:writer" }, value: "warn", disabled: false, focus: () => { focused++; }, closest: (selector) => selector === "[data-rule-check]" ? control : tile };
+  const tile = { querySelectorAll: () => [control] };
+  const root = { addEventListener: (type, fn) => { events[type] = fn; }, querySelector: () => control };
+  const ui = rulesHandlers(root, async (path, options) => {
+    sent.push([path, options]);
+    if (fail) throw new Error("This connection cannot read rules");
+    await new Promise((done) => { release = done; });
+  }, async () => { refreshed++; }, (text) => errors.push(text));
+  ui.update({ ...payload, checks: { "conn:writer": "off" } });
+  const pending = events.change({ target: control });
+  assert.equal(control.disabled, true);
+  assert.equal(ui.busy(), true);
+  await events.change({ target: control });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], ["/api/rules/checks", { method: "PATCH", body: { agent: "conn:writer", mode: "warn" } }]);
+  release(); await pending;
+  assert.equal(control.disabled, false);
+  assert.equal(refreshed, 1);
+  assert.equal(focused, 1);
+  fail = true; control.value = "enforce";
+  await events.change({ target: control });
+  assert.equal(control.value, "off");
+  assert.equal(control.disabled, false);
+  assert.deepEqual(errors, ["This connection cannot read rules"]);
+  ui.update(payload, { owner: false });
+  await events.change({ target: control });
+  assert.equal(sent.length, 2);
+}
+// Accepting replacement stores needs a confirmation, with retryable failures.
+{
+  const events = {}, sent = [], errors = [], confirmations = [];
+  let allow = false, fail = false, refreshed = 0;
+  window.confirm = (text) => { confirmations.push(text); return allow; };
+  const panel = { querySelectorAll: () => [] };
+  const button = { dataset: { ruleAction: "accept-store" }, closest: (selector) => selector === ".rule-store-lost" ? panel : null };
+  const ui = rulesHandlers({ addEventListener: (type, fn) => { events[type] = fn; }, querySelector: () => null }, async (path, options) => { sent.push([path, options]); if (fail) throw new Error("Try again"); }, async () => { refreshed++; }, (text) => errors.push(text));
+  ui.update({ store_lost: true, rules: [] });
+  const click = () => events.click({ target: { closest: () => button } });
+  await click(); assert.equal(sent.length, 0);
+  assert.ok(confirmations[0].includes("Missing stores will be accepted as empty"));
+  allow = true; fail = true; await click();
+  assert.deepEqual(errors, ["Try again"]);
+  assert.equal(refreshed, 0);
+  fail = false; await click();
+  assert.deepEqual(sent.at(-1), ["/api/rules/store/accept", { method: "POST", body: {} }]);
+  assert.equal(refreshed, 1);
+  ui.update({ store_lost: true, rules: [] }, { owner: false });
+  await click(); assert.equal(sent.length, 2);
+}
+// Lost-store responses replace even a busy screen and refresh the badge on other screens.
+{
+  const oldApi = shellDeps.api;
+  const lostApi = async (path) => {
+    if (path.startsWith("/api/rules")) throw Object.assign(new Error("Store replaced"), { status: 409, payload: { store_lost: true, can_edit: true } });
+    return oldApi(path);
+  };
+  const refresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values({ ...shellDeps, api: lostApi }));
+  shellState.base = shellState.route = "#/rules";
+  shellBusy = true;
+  assert.equal(await refresh({ background: true, events: [{ kind: "rule.store_lost" }] }), true);
+  assert.ok(content.innerHTML.includes("accept-store") && !content.innerHTML.includes("data-rule-id"));
+  assert.equal(headerActions, "");
+  assert.equal(shellState.rulesLost, true);
+  assert.equal(shellState.rulesWaiting, 0);
+  shellState.base = shellState.route = "#/boards";
+  assert.equal(await refresh({ background: true, events: [{ kind: "rule.store_lost" }] }), true);
+  assert.equal(shellState.rulesLost, true);
+}
+console.log("Rules check controls, projections and store recovery checks passed");
