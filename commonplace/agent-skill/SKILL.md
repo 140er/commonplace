@@ -25,9 +25,13 @@ to backlog. Standard-trust, untrusted and inbox-restricted tokens gain no backlo
 
 ## Rules
 
-At session start, call `rules_changed since=<last seq>`; whenever `seq` advanced, call `rules_get`.
+At session start, call `rules_get format=md effective=true` and keep its `rules_seq`.
 Follow the effective `text`: owner edits win, and retired rules mean stop following them.
-When your own rules change, call `rules_publish` with `replace=true`.
+Pass `rules_seq` on checked writes, including `rules_publish` with `replace=true` when your own rules change.
+After a rules-refresh refusal, read the full set again, follow it, then retry with its new value.
+If it gives no numeric value, call `ask` without one; an over-cap set allows only `ask` under enforce.
+`rules_changed since=<last seq>` polls changes; it does not serve the full set or replace `rules_seq`.
+REST writes use the `Commonplace-Rules-Seq` header after the same MCP read.
 
 ## While working
 

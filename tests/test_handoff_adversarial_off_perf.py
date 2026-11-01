@@ -6,7 +6,6 @@ import inspect
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -418,9 +417,9 @@ def _token(local, policy, name="review"):
     return token
 
 
-# Develop after PR #14: the baseline "off" must match. A commit in
+# Rules core before write enforcement: the baseline "off" must match. A commit in
 # this branch's own history, so any clone of the branch can read it.
-DEVELOP_BASELINE = "c07bb354"
+DEVELOP_BASELINE = "77575e3899536e8d90ad6eab1983228f8f2e24d5"
 
 # Optional arguments tools gained after the baseline: first the chat range on
 # saves and facts. Off mode must still match the baseline in everything else.
@@ -463,6 +462,10 @@ def _as_baseline(reply, baseline):
     tools = body.get("result", {}).get("tools", []) if isinstance(body, dict) else []
     before = baseline[1] if isinstance(baseline[1], dict) else {}
     known = {t.get("name") for t in before.get("result", {}).get("tools", [])}
+    baseline_properties = {
+        t.get("name"): t.get("inputSchema", {}).get("properties", {})
+        for t in before.get("result", {}).get("tools", [])
+    }
     tools[:] = [
         t
         for t in tools
@@ -472,7 +475,8 @@ def _as_baseline(reply, baseline):
     for tool in tools:
         properties = tool.get("inputSchema", {}).get("properties", {})
         for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
-            properties.pop(name, None)
+            if name not in baseline_properties.get(tool.get("name"), {}):
+                properties.pop(name, None)
     return status, body
 
 
@@ -494,18 +498,8 @@ def legacy(tmp_path_factory):
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as source:
         source.extractall(snapshot, filter="data")
-    # Boards and the PR call tree are not part of handoff and keep changing on
-    # develop: take them from this tree, so only handoff's surface stays pinned.
-    shutil.rmtree(snapshot / "commonplace" / "boards")
-    shutil.copytree(
-        ROOT / "commonplace" / "boards",
-        snapshot / "commonplace" / "boards",
-        ignore=shutil.ignore_patterns("__pycache__"),
-    )
-    shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
-    # Overlaid board tools use the current registry contract; handoff remains
-    # absent from the baseline's enabled modules below.
-    shutil.copy2(ROOT / "commonplace" / "extensions.py", snapshot / "commonplace" / "extensions.py")
+    # Keep the entire baseline independent: overlaying live dispatchers would
+    # also import the enforcement code this comparison is meant to detect.
     # A separate interpreter keeps relative and dynamic imports, policies and
     # extension registrations entirely on the pinned source tree.
     script = (

@@ -28,6 +28,9 @@ import math
 from dataclasses import fields, is_dataclass, replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from commonplace.extensions import ToolContext
+from commonplace.rules.enforce import RulesRefresh, rest_write
+
 from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError
 from .models import (
@@ -157,6 +160,7 @@ def _read_json(handler, limit: int = MAX_BODY_BYTES, *, allow_empty: bool = Fals
         raise _RequestError(400, "invalid JSON") from None
     if not isinstance(data, dict):
         raise _RequestError(400, "JSON object required")
+    data.pop("rules_seq", None)
     return data
 
 
@@ -262,6 +266,8 @@ class _API:
             target = urlsplit(handler.path)
             query = parse_qs(target.query, keep_blank_values=True)
             status, result = self.dispatch(handler, principal, target.path, query)
+        except RulesRefresh as error:
+            status, result = 428, error.payload
         except _RequestError as error:
             status, result = error.status, {"error": error.message}
         except HandoffPermissionError as error:
@@ -339,7 +345,7 @@ class _API:
     def dispatch(self, handler, principal, path: str, query: dict):
         method = handler.command
         workspace = principal.workspace_id
-        if path == "/api/handoff":
+        if path == "/api/handoff" and method == "POST":
             require_launch_authority(principal)
             request = _handoff_request(_read_json(handler, MAX_HANDOFF_BYTES))
             key = request.idempotency_key or f"thread:{request.meta.thread_id}"
@@ -390,10 +396,13 @@ class _API:
                 if parts[1] == "relaunch":
                     require_launch_authority(principal)
                     self.handoff(principal, record_id, write=True)
-                    _object(_read_json(handler, allow_empty=True), set())
-                    return 200, self.result(
-                        principal, self.ctx.service.relaunch(principal, record_id)
-                    )
+                    body = _read_json(handler, allow_empty=True)
+                    ctx = ToolContext(principal=principal, gateway=self.ctx.gateway)
+                    with rest_write(ctx, handler, "relaunch", body):
+                        _object(body, set())
+                        return 200, self.result(
+                            principal, self.ctx.service.relaunch(principal, record_id)
+                        )
                 self.require(principal, SCOPE_HANDOFF)
                 self.handoff(principal, record_id, write=True)
                 if parts[1] == "launch-failed":
@@ -488,16 +497,18 @@ class _API:
             if row.workspace_id != workspace:
                 _missing()
             return 200, _public(row)
-        self.require(principal, owner=True)
-        scope = _query(query, "scope")
-        ref = _query(query, "ref")
-        if scope not in SETTING_SCOPES:
-            raise _RequestError(400, "invalid scope")
-        if not self.ctx.settings.clear(
-            workspace, scope, ref, actor=principal.actor, is_owner=owner
-        ):
-            _missing()
-        return 200, {"deleted": True}
+        if handler.command == "DELETE":
+            self.require(principal, owner=True)
+            scope = _query(query, "scope")
+            ref = _query(query, "ref")
+            if scope not in SETTING_SCOPES:
+                raise _RequestError(400, "invalid scope")
+            if not self.ctx.settings.clear(
+                workspace, scope, ref, actor=principal.actor, is_owner=owner
+            ):
+                _missing()
+            return 200, {"deleted": True}
+        _missing()
 
 
 def register(ctx) -> None:

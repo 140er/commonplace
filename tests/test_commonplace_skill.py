@@ -34,7 +34,7 @@ def _contract_tools() -> set:
 
 
 _TOOLISH = re.compile(r"\b(?:task|board|memory|needs|rules|ask|decide)(?:_[a-z]+)*\b")
-_ARGS = {"status_line"}
+_ARGS = {"status_line", "rules_seq"}
 
 
 def test_tool_references_match_contract():
@@ -127,7 +127,10 @@ def test_rules_session_loop():
     text = SKILL.read_text(encoding="utf-8").split("## Rules\n", 1)[1].split("\n## ", 1)[0]
     for phrase in (
         "rules_changed since=<last seq>",
-        "rules_get",
+        "rules_get format=md effective=true",
+        "rules_seq",
+        "Commonplace-Rules-Seq",
+        "call `ask` without one",
         "text",
         "owner edits win",
         "retired",

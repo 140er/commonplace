@@ -243,10 +243,82 @@ Check modes live in the control database: a connection's `off`, `warn` or
 refused when that connection cannot call `rules_get`. Mode changes record an
 ids-only `rules.check` audit entry and emit `rule.check`. The server reads
 `COMMONPLACE_RULES_CHECK=off` and `COMMONPLACE_RULES_INJECT=off` at startup.
-This core stores settings without checking writes yet. MCP calls and board,
-memory and fact REST writes already discard an optional `rules_seq` field.
 Internal gateway calls use a thread-local `internal_call()` context, so one
 request cannot exempt another request on a different thread.
+
+### Checked client writes
+
+Agent calls to `task_add`, `task_update`, `task_comment`, `task_take_next`,
+`task_handoff`, `ask`, `space_post`, `board_add`, `memory_save`, `memory_link`,
+`fact_save`, `handoff_start`, `decide`, `board_set` and every `rules_publish`
+carry `rules_seq`, as an integer or decimal string. Fetch it with
+`rules_get format=md effective=true`, follow the returned rules, then pass that
+value on writes. A guessed current value is insufficient: the same connection
+must have fetched the complete authorized set at that version. This tracks
+connections, not sessions; threads sharing a token share served state.
+
+Off keeps existing schemas and behavior. Warn adds an optional field, runs the
+write and appends a separate notice block, leaving a JSON first block intact.
+Enforce requires the field except on `ask`, refuses stale, missing or unread
+versions with an MCP error result, and writes nothing. Schemas are copied per
+caller. Every tool discards the argument before dispatch. People are exempt,
+including over MCP; the owner's agent tokens are checked. Internal automatic
+calls retain policy checks but bypass freshness.
+
+An over-cap read records its version without serving it. While that version
+is current, enforce permits `ask` with any value or none, before parsing the
+argument, and refuses other checked writes. Warn runs them with a notice.
+After a trim or any later version bump, missing and old values are refused
+again, including on `ask`: read the full set once more. If the reply gives no
+numeric value, call `ask` without one. A current value without a served record
+gets the not-read refusal. Refusals and notices never reveal a version number.
+
+REST board/card mutations, chat posts, memory and fact saves, and manual
+handoff relaunch use `Commonplace-Rules-Seq`; see the boards API. A refusal is
+428 with `rules_refresh: true`; warn uses `Commonplace-Rules-Notice`. Body
+`rules_seq` fields are discarded and never substitute for the header.
+
+Unreadable, unmigrated or lost stores fail open with no notice and an audit
+reason starting `rules_seq unchecked`. Store identities are guarded in every
+mode, including off; loss emits its own immediate alarm. An unenforceable
+connection that cannot call `rules_get` uses warn behavior instead. No rules
+file and no binding means no rules yet: writes pass as fresh. Audit rows keep
+authenticated workspace and immutable connection ids, stable reasons
+(`rules_seq missing`, `stale`, `not served`, `unchecked`, `unenforceable`,
+`too_large`), `(warn)` where applicable, and `transport=mcp|rest`. More than
+five unchecked writes for a connection within an hour emit one ids-only
+`rule.unchecked` event per hour. No request text or supplied version is logged.
+
+### Deliberately open paths
+
+The following paths retain existing authorization checks and bypass freshness:
+
+- All reads, including `POST /api/threads/<id>/recall`; people-only routes stay
+  people-only. The local CLI is outside the gateway check.
+- `webhook_add`, `webhook_remove`, `webhook_test` and their REST aliases: outbound
+  automation and configuration. `PUT` and `DELETE /api/settings/handoff` are
+  also configuration.
+- Automatic `POST /api/handoff`, successor and launch-failed REST calls. Upload
+  may file memory and facts. Intentional MCP `handoff_start` remains checked.
+- Card PATCH bodies containing exactly `version` and `callstack` (after the
+  compatibility field is removed). This machine upload cannot edit other fields.
+- Memory/graph worker writes: `mempalace_add_drawer`, `mempalace_update_drawer`,
+  `mempalace_diary_write`, `mempalace_kg_add`, `mempalace_kg_invalidate`,
+  `mempalace_kg_supersede`, `mempalace_kg_save`, `mempalace_create_tunnel`,
+  `mempalace_checkpoint`, `mempalace_memories_filed_away`.
+- Worker deletes: `mempalace_delete_drawer`, `mempalace_delete_drawers`,
+  `mempalace_delete_by_source`, `mempalace_delete_tunnel`,
+  `mempalace_delete_hallway`. Delete scope, trust and wing restrictions still apply.
+- Legacy worker events: `mempalace_event_append`, `mempalace_task_create`,
+  `mempalace_patch_submit`, `mempalace_artifact_put`, `mempalace_event_ack`.
+
+The gateway never serves `mempalace_hook_settings`, `mempalace_mine`,
+`mempalace_sync` or `mempalace_reconnect`. Open worker writes can store the same
+content as checked aliases; this is an accepted limit of this version.
+
+Reviewer checklist: a new REST write shape needs a route-map entry in
+`rules/enforce.py`; a new gateway write tool must be checked or explicitly
+exempt with a reason. Router and AST tests enforce the inventory.
 
 Rollback is additive: the previous code ignores the extra tables, identities,
 visibility triggers and internal `pr_repo` column. After a later redeployment,
