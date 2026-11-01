@@ -96,6 +96,28 @@ python -m venv .venv && source .venv/bin/activate
 pip install mempalace
 ```
 
+### Commonplace agents
+
+To connect agents to Commonplace for shared rules, verbatim memory and task boards,
+make your connection token available in `COMMONPLACE_TOKEN`, then run:
+
+```bash
+commonplace onboard --dry-run
+commonplace onboard
+commonplace remember "Keep this decision in its exact words."
+commonplace rule "Preserve original source text." --agent '*'
+commonplace check
+```
+
+Onboarding installs client connections, session hooks and short instruction pointers.
+The default server is `https://app.cmmn.dev`; `--url` or `COMMONPLACE_URL` selects
+your own server, including localhost. `--token-env` selects the credential variable;
+configuration stores its name rather than its value. `--no-project` skips project files.
+Existing managed files are backed up and verified verbatim before replacement.
+Imported and shared rule proposals need owner approval. Codex retains its native
+hook trust review; MCP startup provides context as well.
+See [agent onboarding](docs/agent-onboarding.md) for migration limits and recovery.
+
 ### Android / Termux
 
 Native Termux installation is not currently supported because compiled
