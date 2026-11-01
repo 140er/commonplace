@@ -417,9 +417,15 @@ def test_decision_context_preserves_progress_body_and_history(hub):
     assert reviewed["review_context"] == CONTEXT
     event = worker.task_show(created["number"])["events"][-1]
     assert event["context"] == CONTEXT
-    worker.task_update(created["number"], status="done")
-    assert worker.task_show(created["number"])["review_context"] is None
-    assert worker.task_show(created["number"])["events"][-2]["context"] == CONTEXT
+    owner = service(hub, sessions.person_principal(hub.db, hub.admin, hub.workspace))
+    owner.decide(created["number"], choice=OPTIONS[0], then="done")
+    completed = worker.task_show(created["number"])
+    assert completed["status"] == "done"
+    assert completed["body"] == reviewed["body"]
+    assert completed["status_line"] == reviewed["status_line"]
+    assert completed["review_context"] is None
+    assert any(event.get("context") == CONTEXT for event in completed["events"])
+    assert completed["events"][-1]["kind"] == "decide"
 
 
 def test_restricted_child_can_claim_after_direct_parent_approval(hub):

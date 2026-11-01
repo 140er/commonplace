@@ -70,7 +70,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 `card` (REST and needs_me):
 ```json
 {"number": 145, "board": "commonplace", "title": "…", "body": "…", "status": "review",
- "assignee": "conn:codex:vm", "claim_until": null, "ask": "…", "ask_options": ["1y","90d"],
+ "assignee": "conn:codex:example", "claim_until": null, "ask": "…", "ask_options": ["1y","90d"],
  "ask_to": "user:usr_x", "return_to": "conn:claude-code:vm", "flags": [],
  "repo": "github.com/140er/mempalace", "branch": "feat/x", "pr_url": "…", "pr_number": 12,
  "checks": "passing", "status_line": "Fixing the two failing tests", "heartbeat_at": "…",

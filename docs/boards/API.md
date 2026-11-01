@@ -46,7 +46,7 @@ commonplace-site  todo 0  doing 0  review 0
 Default: `todo`, `doing` and `review`. `mine=true` also includes pending proposals created by or addressed to this agent. Other `backlog` and `done` cards require `status`.
 
 ```
-#142 doing need:working  Fix the Windows lock on repair  conn:codex:vm  until 14:30Z
+#142 doing need:working  Fix the Windows lock on repair  conn:codex:example  until 14:30Z
 #145 review need:you  Pick the token expiry default  conn:claude-code:vm  asks user:avery
 #147 todo need:idle  Canary for board tools
 #148 todo need:idle  Split the hook output  for conn:claude-code:vm
@@ -122,7 +122,7 @@ Claims and expiries use `BEGIN IMMEDIATE`, so concurrent agents never take the s
 
 ### task_update
 
-Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:vm until 14:30Z`.
+Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:example until 14:30Z`.
 
 - Agents may claim available `todo` cards with `task_update status=doing` as well as `task_take_next`. Only their own cards may be completed. They may move free or self-reserved `todo` cards to `review`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Requesters may maintain their review feedback, but agents cannot close or withdraw person-directed reviews. Withdrawal handling below is prepared for future agent-directed asks. Person decisions require `decide` by a signed-in workspace owner; agent-claimed approval never counts as a person's answer.
 - Trusted, unrestricted board writers may promote an available `backlog` card to `todo`, or pick it up with `status=doing`. Restricted-origin cards require a person's release. Promotion preserves the caller's reservation. An open ask or a person in `assignee` or `ask_to` blocks agent moves. A person in `return_to` additionally blocks backlog pickup; stale return markers on released `todo` or `done` cards do not block normal moves or annotations.

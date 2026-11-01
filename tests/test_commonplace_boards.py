@@ -1692,7 +1692,7 @@ def test_an_agent_never_answers_its_own_question(hub, env):
     card = owner.task_show(number)
     assert card["status"] == "review"
     ok, text = mcp(hub, token, "decide", task=number, choice="yes")
-    assert not ok and "only the owner" in text
+    assert not ok and "signed-in workspace owner" in text
     assert owner.task_show(number)["status"] == "review"
 
 

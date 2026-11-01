@@ -250,3 +250,35 @@ def test_handoff_cannot_clear_a_pending_person_recipient(hub, fresh, surface):
             assert status == 403
         assert fresh.owner.task_show(waiting["number"]) == before
         assert events.after(hub.db, fresh.workspace) == emitted
+
+
+@pytest.mark.parametrize("lane", ["todo", "doing"])
+@pytest.mark.parametrize("actor", ["owner", "parent"])
+def test_rejected_child_proposal_cannot_be_released_by_handoff(hub, fresh, lane, actor):
+    proposed = fresh.subagent.service.task_add(title="Rejected proposal", board="work")
+    fresh.creator.service.task_approve(proposed["number"], approve=False)
+    # Old versions could leave a rejected proposal in an active lane. A
+    # transfer is still not an approval, even when requested by its owner.
+    with fresh.owner.store.transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET status=?,assignee=? WHERE id=?",
+            (lane, fresh.creator.service.principal.actor, proposed["number"]),
+        )
+    before = fresh.owner.task_show(proposed["number"])
+    assert before["proposal_status"] == "rejected"
+    emitted = events.after(hub.db, fresh.workspace)
+    args = {"to": "anyone", "note": "Release for another worker"}
+    if actor == "owner":
+        status, _ = api(
+            hub,
+            fresh.cookie,
+            "POST",
+            f"/api/cards/{proposed['number']}/handoff",
+            {"version": before["version"], **args},
+        )
+        assert status == 403
+    else:
+        ok, text = mcp(hub, fresh.creator.token, "task_handoff", task=proposed["number"], **args)
+        assert not ok and "parent approval" in text
+    assert fresh.owner.task_show(proposed["number"]) == before
+    assert events.after(hub.db, fresh.workspace) == emitted
