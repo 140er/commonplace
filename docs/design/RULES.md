@@ -255,8 +255,27 @@ acceptance. Public card shapes keep `pr_repo` internal.
 
 ### Connection injection
 
-The connection-instruction integration is delivered separately and uses the
-shared authorized view and renderer.
+On MCP `initialize`, authorized agent connections receive their complete
+effective rules through `result.instructions`. People and connections that
+cannot call `rules_get` receive the worker's original reply. A workspace with
+no rules file or no effective rules also keeps that reply byte for byte.
+Existing worker instructions follow the rules block unchanged.
+
+The rules block is capped at 3,600 UTF-8 bytes, with whole JSON-quoted rules
+ordered by kind, then global, repo, board and id. Omitted rules are counted per
+kind. Only a complete block, in warn or enforce mode, with a matching served
+record carries a usable `rules_seq`. Other blocks point to
+`rules_get format=md effective=true`; injection itself never records served.
+Off or unknown checking modes show no version.
+
+All rule reads and reconciliation share an 80 ms overall deadline. Each
+SQLite operation uses the remaining time, with long statements interrupted
+at expiry. Failures log once and leave the original worker reply intact;
+an incomplete authorized snapshot never reaches the client. A lost bound
+store produces only a header and the owner-confirmation pointer, without
+rule text. Injection never creates a store, binds its identity or emits an
+event. Only reconciliation may migrate or bump the existing rules store.
+Set `COMMONPLACE_RULES_INJECT=off` and restart to disable injection.
 
 ### Session-start hook
 
