@@ -11,7 +11,7 @@ _USER = re.compile(r"\buser:(usr_[0-9a-f]+)\b")
 
 # What a card needs from the person reading it, strongest first. ``done`` is
 # terminal and wins over everything; the rest apply in this order.
-NEEDS = ("you", "plan", "merge", "checks", "working", "idle", "done")
+NEEDS = ("you", "plan", "merge", "checks", "expired", "working", "idle", "done")
 STALE_MINUTES = 30
 
 
@@ -30,6 +30,8 @@ def need(card, *, me=None, owner=False, now=None) -> str:
     status = card["status"]
     if status == "done":
         return "done"
+    if card.get("proposal_status") == "pending":
+        return "you" if owner or card.get("proposed_to") == me else "plan"
     ask_to = card.get("ask_to")
     if card.get("ask") and (ask_to == me if ask_to else owner):
         return "you"
@@ -39,6 +41,10 @@ def need(card, *, me=None, owner=False, now=None) -> str:
         return "merge"
     if card.get("checks") == "pending":
         return "checks"
+    if status == "doing" and card.get("claim_until"):
+        at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if card["claim_until"] <= at:
+            return "expired"
     if status == "doing" and (card.get("heartbeat_at") or card["updated_at"]) >= stale_before(now):
         return "working"
     return "idle"
@@ -49,7 +55,9 @@ def need_for(card, principal, now=None) -> str:
     person = bool(principal and principal.person)
     return need(
         card,
-        me=principal.actor if person else None,
+        me=principal.actor
+        if principal and (person or card.get("proposal_status") == "pending")
+        else None,
         owner=person and principal.role == "owner",
         now=now,
     )

@@ -12,7 +12,11 @@ from commonplace.boards.service import BoardService, VersionClash
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext
 from commonplace.web import STATIC
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 
 
 @pytest.fixture
@@ -49,10 +53,20 @@ def post(hub, path, body):
 
 def reasked(owner, agent):
     """A answered elsewhere, then the agent asks B: returns the card as it was during A."""
-    first = agent.ask("Ship it?", options=["yes", "no"], board="work")
+    first = agent.ask(
+        "Ship it? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     owner.decide(first["number"], choice="no", version=first["version"])
     agent.task_take_next(task=first["number"])
-    agent.ask("Delete the branch?", options=["yes", "keep"], task=first["number"])
+    agent.ask(
+        "Delete the branch? Which approach should we take?",
+        options=["yes", "keep"],
+        task=first["number"],
+        context=REVIEW_CONTEXT,
+    )
     return first
 
 
@@ -61,15 +75,26 @@ def asks(service, number):
 
 
 def test_ask_options_are_stored_verbatim_and_paired_with_the_decide(owner, agent):
-    created = agent.ask("Ship  it?\nOr wait", options=["Ship  now", "wait ✋"], board="work")
+    created = agent.ask(
+        "Ship  it?\nOr wait Which approach should we take?",
+        options=["Ship  now", "wait ✋"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     owner.decide(created["number"], choice="wait ✋", reply="Not on a Friday.", then="todo")
     taken = agent.task_take_next(task=created["number"])
-    agent.task_handoff(taken["number"], to="owner", note="Which port?", options=["80", "8080"])
+    agent.task_handoff(
+        taken["number"],
+        to="owner",
+        note="Which port? Which approach should we take?",
+        options=["80", "8080"],
+        context=REVIEW_CONTEXT,
+    )
     events = owner.task_show(created["number"])["events"]
     asked = [e for e in events if "options" in e]
     assert [(e["kind"], e["text"], e["options"]) for e in asked] == [
-        ("ask", "Ship  it?\nOr wait", ["Ship  now", "wait ✋"]),
-        ("handoff", "Which port?", ["80", "8080"]),
+        ("ask", "Ship  it?\nOr wait Which approach should we take?", ["Ship  now", "wait ✋"]),
+        ("handoff", "Which port? Which approach should we take?", ["80", "8080"]),
     ]
     decide = next(e for e in events if e["kind"] == "decide")
     assert events.index(asked[0]) < events.index(decide) < events.index(asked[1])
@@ -77,9 +102,14 @@ def test_ask_options_are_stored_verbatim_and_paired_with_the_decide(owner, agent
     assert all(e["target"] == f"user:{owner.principal.user_id}" for e in asked)
 
 
-def test_free_text_asks_carry_an_empty_option_list(owner, agent):
-    created = agent.ask("Anything to add?", board="work")
-    assert asks(owner, created["number"])[0]["options"] == []
+def test_free_text_replies_keep_the_offered_options(owner, agent):
+    created = agent.ask(
+        "Anything to add? Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
+    assert asks(owner, created["number"])[0]["options"] == REVIEW_OPTIONS
 
 
 def test_review_moves_record_the_question_and_choices(owner, agent):
@@ -88,9 +118,10 @@ def test_review_moves_record_the_question_and_choices(owner, agent):
         conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='gated'")
     card = agent.task_add(title="Gated", board="gated")
     agent.task_take_next(task=card["number"])
-    agent.task_update(card["number"], status="done")
+    agent.task_update(card["number"], status="done", context=REVIEW_CONTEXT)
     [ask] = asks(owner, card["number"])
-    assert (ask["kind"], ask["text"], ask["options"]) == ("move", "Done?", ["ship", "redo"])
+    assert ask["kind"] == "move" and "ready to accept?" in ask["text"]
+    assert ask["options"] == ["Accept the completed work", "Return for more work"]
     assert ask["target"] == f"user:{owner.principal.user_id}"
     seeded = owner.seed_card(board="work", title="Seeded", body="Please look", status="review")
     [ask] = asks(owner, seeded["number"])
@@ -130,9 +161,12 @@ def test_a_stale_decide_never_answers_a_newer_ask(owner, agent):
     first = reasked(owner, agent)
     with pytest.raises(VersionClash) as clash:
         owner.decide(first["number"], choice="yes", version=first["version"])
-    assert clash.value.current["ask"] == "Delete the branch?"
+    assert clash.value.current["ask"] == "Delete the branch? Which approach should we take?"
     current = owner.task_show(first["number"])
-    assert current["status"] == "review" and current["ask"] == "Delete the branch?"
+    assert (
+        current["status"] == "review"
+        and current["ask"] == "Delete the branch? Which approach should we take?"
+    )
 
 
 def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
@@ -141,7 +175,10 @@ def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
     assert post(hub, path, {"choice": "yes"}) == (400, {"error": "version is required"})
     assert post(hub, path, {"choice": "yes", "version": None})[0] == 400
     status, body = post(hub, path, {"choice": "yes", "version": first["version"]})
-    assert status == 409 and body["current"]["ask"] == "Delete the branch?"
+    assert (
+        status == 409
+        and body["current"]["ask"] == "Delete the branch? Which approach should we take?"
+    )
     assert owner.task_show(first["number"])["status"] == "review"
     current = owner.task_show(first["number"])
     status, body = post(hub, path, {"choice": "keep", "version": current["version"]})
@@ -151,7 +188,12 @@ def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
 
 
 def test_mcp_decide_without_a_version_still_works(hub, owner, agent):
-    created = agent.ask("Proceed?", options=["yes"], board="work")
+    created = agent.ask(
+        "Proceed? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     token = hub.owner_token("coordinator")
     response = hub.rpc(
         token,
@@ -172,7 +214,12 @@ def test_app_sends_the_rendered_version_and_keeps_one_live_place():
 
 
 def test_a_repeat_decide_with_the_old_version_returns_409(hub, owner, agent):
-    created = agent.ask("Ship it?", options=["yes", "no"], board="work")
+    created = agent.ask(
+        "Ship it? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     path = f"/api/cards/{created['number']}/decide"
     status, body = post(
         hub, path, {"choice": "yes", "version": created["version"], "then": "return"}

@@ -13,6 +13,10 @@ from commonplace.policy import Policy
 from commonplace.workers import Worker, WorkerSupervisor
 from tests._mcp_server_helpers import _patch_mcp_server
 
+REVIEW_QUESTION = "Should this change ship now or wait for the next release?"
+REVIEW_CONTEXT = "The implementation is complete and the affected tests have passed."
+REVIEW_OPTIONS = ["Proceed with the change", "Wait for more information"]
+
 
 class InProcessLauncher:
     """Starts the production MCP HTTP server in this process, on loopback.

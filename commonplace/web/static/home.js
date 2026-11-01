@@ -1,13 +1,13 @@
 // Home: what needs you, one tile per space, then every open task. Data in, HTML out;
 // the task row and its dot come from app.js so all three parts share #19's colours.
-import { escape as e, elapsed, safeLink } from "./api.js";
+import { escape as e, elapsed, pullRequestUrl } from "./api.js";
 import { hasQuestions } from "./decide.js";
 
 const enc = encodeURIComponent;
 const BUCKETS = ["asks", "done_review", "backlog_from_agents", "ready_to_merge", "stale"];
 // The server's need order, with a stale claim slotted in after "ready to merge".
-const ORDER = ["you", "plan", "merge", "stale", "checks", "working", "idle", "done"];
-const LABELS = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", stale: "Stale", checks: "Checks running", working: "Working", idle: "Idle", done: "Done", quiet: "Quiet" };
+const ORDER = ["you", "plan", "merge", "stale", "checks", "expired", "working", "idle", "done"];
+const LABELS = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", stale: "Stale", checks: "Checks running", working: "Working", expired: "Expired", idle: "Idle", done: "Done", quiet: "Quiet" };
 const rank = (state) => (ORDER.includes(state) ? ORDER.indexOf(state) : ORDER.indexOf("idle"));
 const staleSet = (needs) => new Set((needs.stale || []).map((c) => c.number));
 const stateOf = (card, stale) => (stale.has(card.number) && rank(card.need) > rank("stale") ? "stale" : card.need);
@@ -21,7 +21,7 @@ export function needItems(needs) {
     byNumber.get(card.number).buckets.add(key);
   }
   const asked = ({ card, buckets }) => Boolean(card.ask) && (buckets.has("asks") || buckets.has("done_review"));
-  const key = (item) => (asked(item) ? 0 : Math.max(0, ["you", "plan", "merge", "checks", "working", "idle", "done"].indexOf(item.card.need)));
+  const key = (item) => (asked(item) ? 0 : Math.max(0, ["you", "plan", "merge", "checks", "expired", "working", "idle", "done"].indexOf(item.card.need)));
   return [...byNumber.values()]
     .sort((a, b) => key(a) - key(b) || a.card.number - b.card.number)
     .map((item) => ({ card: item.card, reason: reason(item, asked(item)) }));
@@ -41,7 +41,7 @@ function action(card, state) {
   if (state === "you") return open("Answer");
   if (state === "plan") return open("Approve");
   if (state === "merge") {
-    const href = safeLink(card.pr_url);
+    const href = pullRequestUrl(card);
     return href ? `<a class="opt" href="${e(href)}" target="_blank" rel="noopener noreferrer">Merge</a>` : open("Merge");
   }
   if (state === "stale") return `<button class="opt" data-action="move" data-card="${card.number}" data-status="todo">Retake</button>`;

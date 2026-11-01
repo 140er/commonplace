@@ -68,7 +68,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     position      REAL NOT NULL,                    -- float, so a drag rewrites one row
     assignee      TEXT,                             -- actor ref; in todo it reserves the card for that actor
     claim_until   TEXT,                             -- agents only, while status = 'doing'; people's cards never expire
-    claim_from    TEXT CHECK (claim_from IN ('backlog', 'todo')), -- lane restored when an agent's claim expires
+    claim_from    TEXT CHECK (claim_from IN ('backlog', 'todo')), -- original claim lane (history)
+    claim_expired_at TEXT,                          -- expired claims retain their lane and assignee
+    agent_parent  TEXT,                            -- creator's authenticated direct parent, if any
+    proposal_status TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected')),
+    proposed_to   TEXT,                             -- immutable direct parent who may approve
+    approved_by   TEXT,
+    review_kind   TEXT,                             -- decision or completion; NULL on legacy cards
+    review_context TEXT,                           -- original decision context; progress stays separate
     ask           TEXT,                             -- set while status = 'review': the question for the person
     ask_options   TEXT,                             -- JSON array of short choices, or NULL for free text
     ask_to        TEXT,                             -- actor ref of the person asked (default: board owner)
@@ -102,6 +109,7 @@ CREATE TABLE IF NOT EXISTS task_events (
                    'expire', 'handoff', 'ask', 'decide', 'link', 'unlink')),
     text       TEXT,                                -- verbatim comment, handoff note, ask or reply
     reason     TEXT,                                -- optional verbatim reason for withdrawing an ask
+    context    TEXT,                                -- original context of an ask or handoff
     from_status TEXT,
     to_status   TEXT,
     target     TEXT,                                -- actor ref (handoff, assign) or drawer id (link)

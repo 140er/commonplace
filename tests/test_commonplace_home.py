@@ -8,14 +8,23 @@ from pathlib import Path
 
 import pytest
 
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_boards import api, env, service  # noqa: F401
 
 
 def test_open_cards_are_scoped_and_carry_need(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     worker = service(hub, agent)
-    asked = worker.ask('Ship <b>"now"</b>?', board="work")
+    asked = worker.ask(
+        'Ship <b>"now"</b>? Which approach should we take?',
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     todo = owner.task_add(title="Later", board="work")
     owner.task_add(title="Someday", board="work", status="backlog")
     owner.seed_card(board="work", title="Finished", status="done")
@@ -27,7 +36,10 @@ def test_open_cards_are_scoped_and_carry_need(hub, env):  # noqa: F811
     needs = {c["number"]: c["need"] for c in payload["cards"]}
     assert needs == {asked["number"]: "you", todo["number"]: "idle", secret["number"]: "idle"}
     first = payload["cards"][0]
-    assert first["title"] == 'Ship <b>"now"</b>?' and first["ask"] == 'Ship <b>"now"</b>?'
+    assert (
+        first["title"] == 'Ship <b>"now"</b>? Which approach should we take?'
+        and first["ask"] == 'Ship <b>"now"</b>? Which approach should we take?'
+    )
     # Slim: no body, and no share link minted per row.
     assert all("body" not in c and "url" not in c for c in payload["cards"])
 
@@ -47,7 +59,12 @@ def test_open_cards_are_capped_most_urgent_first_and_fast(hub, env):  # noqa: F8
     token, agent, person, cookie, owner = env
     for n in range(300):
         owner.seed_card(board="work", title=f"Card {n}", status="todo")
-    asked = service(hub, agent).ask("Last but urgent?", board="work")
+    asked = service(hub, agent).ask(
+        "Last but urgent? Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     start = time.perf_counter()
     status, payload = api(hub, cookie, "GET", "/api/cards")
     elapsed = time.perf_counter() - start

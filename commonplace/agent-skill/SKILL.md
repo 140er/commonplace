@@ -11,17 +11,10 @@ Commonplace is the shared board and Memory for you and your agents. The MCP serv
 
 1. `task_list` with `mine=true`: cards you hold or that are reserved for you.
 2. A card that came back from the user shows their decision on a `decision by` line. Act on it first.
-3. No card for you and the user gave no task: `task_take_next` (add `board` when you are outside a repo).
-
-Trusted connections with board write access may promote an available backlog card
-with `task_update task=#n status=todo`, or claim it explicitly with
-`task_take_next task=#n` (also `task_update task=#n status=doing`). Automatic
-pickup stays on `todo`. Open asks, person targets and others' reservations block
-pickup. Cards filed by untrusted or inbox-restricted connections require a person's
-release, even if the inbox token is trusted. Legacy backlog is checked against the
-stamping connection's current policy; unknown origins need a person. Promotion
-preserves your reservation; an expired backlog claim returns
-to backlog. Standard-trust, untrusted and inbox-restricted tokens gain no backlog access.
+3. Every active workstream needs a card. If none matches, use `task_add title=… body=… claim=true` (add `board` outside a repo). Top-level agents start directly in `todo` or `doing`, including slim and inbox connections.
+4. Orchestrators create cards assigned to each subagent with `task_add assignee=<child connection>`. Add `claim=true` to start that child's work immediately.
+5. A subagent's own new card is a pending proposal in backlog. Its authenticated direct parent is shown as `agent parent` and `parent:`. The parent uses `task_approve task=#n approve=true` (or `false` to reject); a signed-in workspace owner may also decide. Do not start proposed work before approval.
+6. Use `task_take_next` or `task_update task=#n status=doing` to claim approved work. Other holders and pending person decisions stay protected.
 
 ## Rules
 
@@ -31,11 +24,15 @@ When your own rules change, call `rules_publish` with `replace=true`.
 
 ## While working
 
-- Report progress with `task_update task=#n status_line="<what you are doing now>"` at every real step, at least every 20 minutes. It renews your claim; a claim expires after 30 minutes without a write and the card goes back to the pool.
+- Report progress with `task_update task=#n status_line="<what you are doing now>"` at every real step. Call `task_heartbeat task=#n` at least every 20 minutes, including while waiting on checks. Holder writes renew the 30-minute claim. Expiry keeps the assignee and `doing` lane, with an explicit `expired` indication; heartbeat to resume.
 - Record the work: `task_update task=#n repo=… branch=… pr=<url>` as soon as they exist.
 - After each push to the PR: `python -m commonplace.callstack --base origin/<base branch> --card <n> --hub <hub URL>` so the reviewer sees the change as a call tree. There is no default hub: pass `--hub` or set `COMMONPLACE_URL`; the token comes from `COMMONPLACE_TOKEN` (or `--token`) and is sent to that hub only, never through a redirect.
 - Longer notes for the next agent: `task_comment task=#n text=…`.
 - New work you discover: `task_add title=… body=…` (don't start it unless it blocks you).
+
+## Spaces
+
+Signed-in users and trusted tokens create spaces with `board_add slug=… name=… repo=…` (repo optional). All profiles expose it for trusted connections; explicit token settings override client presets. Spaces open on their board; Chat is a separate link.
 
 ## If you are a space's coordinator
 
@@ -60,7 +57,7 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 
 ## Asking the user
 
-- `ask question=… options=["A","B"] task=#n`. Two or three short options; the user answers with one tap.
+- `ask question=… context=… options=["A","B"] task=#n`: a real question of at least 24 characters, context of at least 20 characters (or the card’s body/status line), and at least two distinct options. Explain the choice and consequences; mark the recommendation. The same fields are required by `task_update status=review`. Stay in `doing` for gates and other technical waits, or ask your orchestrator.
 - Then end your turn. Don't poll. The answer comes back on the card: your next `task_take_next` or `task_list mine=true` returns it with the decision.
 - A decision whose reply starts with `New options:` means the user rejected every option. Don't carry on. Ask again with `ask` on the same card, with 2 or 3 different options, and say in one line what changed. The `Not:` line lists what was rejected.
 - Hand a card to another agent with `task_handoff task=#n to=<connection> note=…`, or back to the pool with `to=anyone`.
@@ -68,7 +65,7 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 ## Finishing
 
 - `task_update task=#n status=done lesson="…"` (the lesson is saved to Memory and linked to the card).
-- On boards that need review, the card goes to the user as "Done?" instead.
+- On boards that need review, the card opens a completion decision with context and two options instead.
 - Trusted board writers may add `lesson`, `pr` or `link` to a `done` card without
   reopening it. Removing links and other edits to completed cards remain blocked.
 - Trusted board writers may edit title, body, checks, labels and memory links
@@ -82,7 +79,7 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 ## Decisions
 
 `needs_me`: asks and done reviews addressed to the token's user (or with no target),
-plus agent-filed backlog, PRs ready to merge and stale agent claims across readable
+plus pending proposals and legacy restricted backlog, PRs ready to merge and stale agent claims across readable
 boards. Owner-role connections retain access at any trust level. Trusted,
 unrestricted member agents may also read it without write access. `board_set` remains
 owner-only. `decide task=#n choice=…` answers an ask under the existing owner rules;

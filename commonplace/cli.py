@@ -147,9 +147,9 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
-    from .bridge import CLIENT_PRESETS
+    from .bridge import CLIENT_PRESETS, DEFAULT_CLIENT_PRESET
 
-    defaults = CLIENT_PRESETS.get(args.client, {})
+    defaults = CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
 
     def value(name, fallback):
         explicit = getattr(args, name)

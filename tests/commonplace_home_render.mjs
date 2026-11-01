@@ -77,3 +77,13 @@ const mergeOnly = homeView({ needs: { ready_to_merge: [merge], count: 1 }, board
 assert.ok(mergeOnly.includes("speak-digest") && !mergeOnly.includes('href="#/decide"'));
 const one = homeView({ needs: { asks: [ask] }, boards, open: [ask] }, rows);
 assert.ok(one.includes("<b class=\"n\">1</b> thing needs you"));
+
+// Legacy or number-only PR metadata still opens the full repository PR URL.
+for (const fields of [
+  { repo: "example/project", pr_number: 42 },
+  { repo: "github.com/example/project", pr_number: 42, pr_url: "https://example/" },
+  { repo: "https://github.com/example/project.git", pr_number: 42 },
+]) {
+  const rendered = homeView({ open: [card(99, { ...fields, need: "merge" })] }, rows);
+  assert.match(rendered, /href="https:\/\/github.com\/example\/project\/pull\/42"[^>]*>Merge<\/a>/);
+}

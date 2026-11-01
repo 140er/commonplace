@@ -930,9 +930,13 @@ def _rest_tool(method, path):
         if len(parts) == 3:
             return {"GET": "task_show", "PATCH": "task_update"}.get(method)
         if len(parts) == 4 and method == "POST":
-            return {"comments": "task_comment", "handoff": "task_handoff", "decide": "decide"}.get(
-                parts[3]
-            )
+            return {
+                "comments": "task_comment",
+                "handoff": "task_handoff",
+                "decide": "decide",
+                "heartbeat": "task_heartbeat",
+                "approve": "task_approve",
+            }.get(parts[3])
     if parts[:2] == ["api", "memory"]:
         if len(parts) == 2 and method == "POST":
             return "memory_save"
