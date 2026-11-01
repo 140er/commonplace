@@ -3,7 +3,7 @@ if __name__ != "mempalace.mcp_server":
     raise ImportError(f"{__name__} is an implementation fragment; import mempalace.mcp_server")
 
 
-from ..stored_text import INDEX_SPANS, IndexSource, public_metadata
+from ..stored_text import INDEX_SPANS, KEYWORD_ONLY, IndexSource, public_metadata
 
 # ==================== WRITE TOOLS ====================
 
@@ -500,6 +500,86 @@ def tool_add_drawer(
     source_seq_start: int = None,
     source_seq_end: int = None,
 ):
+    """File verbatim content; caller input never selects internal write policy."""
+    return _write_drawer(
+        wing,
+        room,
+        content,
+        source_file=source_file,
+        added_by=added_by,
+        source_thread=source_thread,
+        source_seq_start=source_seq_start,
+        source_seq_end=source_seq_end,
+    )
+
+
+def write_mirror_units(thread_id: str, units: list):
+    """Authenticated internal operation; not an MCP tool or client argument."""
+    from ..ids import make_mirror_unit_id
+
+    if not isinstance(units, list) or not 1 <= len(units) <= 64:
+        raise ValueError("Mirror batches must contain between 1 and 64 units")
+    prepared = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            raise ValueError("Invalid mirror unit")
+        start, end, part = (unit.get(key) for key in ("seq_start", "seq_end", "part"))
+        kind, text = unit.get("message_class"), unit.get("text")
+        if (
+            any(type(value) is not int for value in (start, end, part))
+            or not 0 <= start <= end
+            or part < 0
+            or kind not in {"conversation", "tool_call", "tool_output", "system"}
+            or not isinstance(text, str)
+            or not text
+            or len(text) > 4000
+        ):
+            raise ValueError("Invalid mirror unit")
+        source_range(thread_id, start, end)
+        text.encode("utf-8")
+        source = f"handoff:{thread_id}#v2:{start}-{end}:{kind}:{part}"
+        prepared.append(
+            dict(
+                wing="private_threads",
+                room=thread_id,
+                content=text,
+                source_file=source,
+                source_thread=thread_id,
+                source_seq_start=start,
+                source_seq_end=end,
+                added_by=f"handoff:{start}-{end}:{len(text)}",
+                lexical_only=kind in {"tool_output", "system"},
+                _mempalace_index_spans=unit.get("index_spans"),
+                drawer_id=make_mirror_unit_id(thread_id, start, end, kind, text),
+            )
+        )
+    committed = {}
+    for arguments in prepared:
+        if arguments["drawer_id"] in committed:
+            continue
+        result = _write_drawer(**arguments)
+        if not result.get("success"):
+            return result
+        committed[arguments["drawer_id"]] = result["drawer_id"]
+    return {
+        "success": True,
+        "drawer_ids": [committed[arguments["drawer_id"]] for arguments in prepared],
+    }
+
+
+def _write_drawer(
+    wing: str,
+    room: str,
+    content: str,
+    source_file: str = None,
+    added_by: str = "mcp",
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    lexical_only: bool = False,
+    _mempalace_index_spans: str = None,
+    drawer_id: str = None,
+):
     """File verbatim content into a wing/room. Checks for duplicates first.
 
     Content above ``chunk_size`` is split into bounded per-chunk drawers
@@ -514,9 +594,14 @@ def tool_add_drawer(
     ``source_thread`` plus ``source_seq_start``/``source_seq_end`` record the
     chat messages these words came from. A retry of identical content keeps
     the first write's source.
+
+    ``lexical_only`` is a server-side policy: compact stores the drawer without
+    a vector. Other backends retain their normal embedding behavior.
     """
     global _metadata_cache
     try:
+        if not isinstance(lexical_only, bool):
+            raise ValueError("lexical_only must be a boolean")
         source_thread, source_seq_start, source_seq_end = source_range(
             source_thread, source_seq_start, source_seq_end
         )
@@ -533,7 +618,7 @@ def tool_add_drawer(
     if not col:
         return _collection_error_or_no_palace()
 
-    drawer_id = make_drawer_id_from_content(wing, room, content)
+    drawer_id = drawer_id or make_drawer_id_from_content(wing, room, content)
 
     _wal_log(
         "add_drawer",
@@ -551,7 +636,7 @@ def tool_add_drawer(
     )
 
     chunk_size = _config.chunk_size
-    index_source = IndexSource(content)
+    index_source = IndexSource(content, {INDEX_SPANS: _mempalace_index_spans})
     base_meta = {
         "wing": wing,
         "room": room,
@@ -560,6 +645,8 @@ def tool_add_drawer(
         "filed_at": utc_now_iso(),
         "id_recipe": ID_RECIPE,
     }
+    if lexical_only and getattr(col, "supports_keyword_only", False) is True:
+        base_meta[KEYWORD_ONLY] = True
     if source_thread:
         base_meta["source_thread"] = source_thread
         if source_seq_start is not None:

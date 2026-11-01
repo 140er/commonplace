@@ -127,6 +127,20 @@ def test_default_strategy_is_measured_without_overriding_handler(reports):
     assert reports["default"]["checks"] == reports["union"]["checks"]
 
 
+def test_compact_gate_uses_real_writer_and_preserves_default_recall():
+    report = gate.run_gate(backend="compact", noise=4)
+    assert report["backend"] == "compact"
+    assert report["effective_strategy"] == "union"
+    assert report["pass"]
+    assert report["checks"]["needles_top5"]["found"] == 10
+    assert report["today"]["recall_at_10"] == report["policy"]["recall_at_10"] == 1.0
+    assert report["today"]["vector_tool_hits"] > 0
+    assert report["policy"]["vector_tool_hits"] == 0
+    for before, after in zip(report["today"]["needles"], report["policy"]["needles"]):
+        assert before["rank_at_5"] == after["rank_at_5"]
+        assert before["rank_at_10"] == after["rank_at_10"]
+
+
 def test_union_recovers_every_needle_per_format_and_exposes_rank_cost(reports):
     report = reports["union"]
     assert report["pass"] is True

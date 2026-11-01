@@ -133,6 +133,11 @@ class Recall:
         limit: int = 8,
         follow_chain: bool = True,
     ) -> list[RecallHit]:
+        """Return one ranked excerpt per overlapping message range.
+
+        For oversized messages, use ``get`` on that range for every piece;
+        the selected excerpt need not contain every query match.
+        """
         query = query.strip()
         if not query:
             self.thread(principal, stored_thread_id)
@@ -159,22 +164,27 @@ class Recall:
             except Exception:
                 _logger.warning("Memory search unavailable during handoff recall")
 
-        best = {}
-        for hit in hits:
-            key = (hit.stored_thread_id, hit.chunk_index)
-            if key not in best or hit.score > best[key].score:
-                best[key] = hit
         created = {stored.id: _created_at(stored) for stored in threads}
         order = {stored.id: index for index, stored in enumerate(threads)}
-        return sorted(
-            best.values(),
+        ranked = sorted(
+            hits,
             key=lambda hit: (
                 -hit.score,
                 -created[hit.stored_thread_id],
                 order[hit.stored_thread_id],
                 hit.chunk_index,
             ),
-        )[:limit]
+        )
+        unique = []
+        for hit in ranked:
+            if not any(
+                hit.stored_thread_id == previous.stored_thread_id
+                and hit.seq_start <= previous.seq_end
+                and previous.seq_start <= hit.seq_end
+                for previous in unique
+            ):
+                unique.append(hit)
+        return unique[:limit]
 
     def get(
         self, principal, stored_thread_id: str, start: int = 0, end: Optional[int] = None

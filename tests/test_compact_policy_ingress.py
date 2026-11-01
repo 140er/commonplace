@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from mempalace.stored_text import KEYWORD_ONLY, RESERVED_METADATA, user_tool_arguments
+from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -52,6 +53,7 @@ def test_hub_forwarding_strips_metadata_without_mutating_caller(monkeypatch):
     monkeypatch.setattr(client, "post", post)
     arguments = {
         **dict.fromkeys(RESERVED_METADATA, True),
+        "lexical_only": True,
         "metadata": {**dict.fromkeys(RESERVED_METADATA, True), "wing": "w"},
     }
     client.call_tool("mempalace_add_drawer", arguments)
@@ -60,6 +62,36 @@ def test_hub_forwarding_strips_metadata_without_mutating_caller(monkeypatch):
     assert user_tool_arguments(
         {"metadatas": [{**dict.fromkeys(RESERVED_METADATA, True), "wing": "w"}]}
     ) == {"metadatas": [{"wing": "w"}]}
+
+
+@pytest.mark.parametrize("trust", ["untrusted", "trusted"])
+def test_gateway_token_cannot_select_internal_policy(hub, monkeypatch, trust):
+    from mempalace import mcp_server
+
+    seen = []
+    original = mcp_server.TOOLS["mempalace_add_drawer"]["handler"]
+
+    def handler(**kwargs):
+        seen.append(kwargs.copy())
+        return original(**kwargs)
+
+    monkeypatch.setitem(mcp_server.TOOLS["mempalace_add_drawer"], "handler", handler)
+    token = hub.token(
+        "writer", scopes=["memory:write"], profile="slim", write_wing="shared", trust=trust
+    )
+    result, response = hub.call(
+        token,
+        "mempalace_add_drawer",
+        wing="shared",
+        room="logs",
+        content="Exact text",
+        lexical_only=True,
+        **dict.fromkeys(RESERVED_METADATA, True),
+    )
+    assert result["success"], response
+    assert len(seen) == 1
+    assert "lexical_only" not in seen[0]
+    assert not RESERVED_METADATA.intersection(seen[0])
 
 
 def test_external_source_adapter_metadata_strips_reserved_policy(tmp_path):

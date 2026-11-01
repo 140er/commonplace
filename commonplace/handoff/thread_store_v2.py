@@ -20,6 +20,7 @@ import zstandard as zstd
 from . import thread_frames as frames
 from .models import THREADS_WING, RecallHit, ThreadMessage
 from .thread_store import (
+    MIRROR_PROGRESS_SQL,
     Chunk,
     ThreadConflict,
     ThreadStore as V1ThreadStore,
@@ -76,10 +77,12 @@ class ThreadStoreV2(V1ThreadStore):
             raise
 
     def _initialize(self):
+        # Version 3 adds mirror progress in place. Older version-2-only
+        # readers reject this store rather than silently losing its progress.
         app = self._conn.execute("PRAGMA application_id").fetchone()[0]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         tables = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if tables and (app != APPLICATION_ID or version != USER_VERSION):
+        if tables and (app != APPLICATION_ID or version not in (2, USER_VERSION)):
             raise ValueError("Not a supported v2 thread store")
         if not tables and (app not in (0, APPLICATION_ID) or version not in (0, USER_VERSION)):
             raise ValueError("Not a supported v2 thread store")
@@ -103,6 +106,8 @@ class ThreadStoreV2(V1ThreadStore):
                     if sqlite3.complete_statement(statement):
                         self._conn.execute(statement)
                         statement = ""
+            self._conn.execute(MIRROR_PROGRESS_SQL)
+            self._conn.execute(f"PRAGMA user_version={USER_VERSION}")
             for name, sql in BLOCK_TRIGGERS.items():
                 self._conn.execute(f"DROP TRIGGER IF EXISTS {name}")
                 self._conn.execute(sql)

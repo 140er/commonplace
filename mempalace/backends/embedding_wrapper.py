@@ -81,11 +81,11 @@ def _embed_texts(
     if not texts:
         return []
     from ..embedding import configured_embedding_function, embedding_section
-    from ..stored_text import index_text
+    from ..stored_text import embedding_text, index_text
 
     texts = _embeddable(
         [
-            index_text(text, metadatas[i] if metadatas is not None else None, stored_form=False)
+            embedding_text(text, metadatas[i] if metadatas is not None else None)
             for i, text in enumerate(texts)
         ]
     )

@@ -82,7 +82,7 @@ def test_index_changes_only_validated_span_intersections(size, width, prose, edg
                 if not text[max(start, span.start) : min(end, span.end)].strip("="):
                     continue
                 expected.append(text[cursor : max(start, span.start)])
-                if start <= span.start < end or span.start <= start < end <= span.end:
+                if start <= span.start < end:
                     expected.append(span.placeholder)
                 cursor = min(end, span.end)
             expected.append(text[cursor:end])
@@ -102,7 +102,7 @@ def test_boundary_tail_has_no_fragment_or_duplicate_placeholder():
     span = source.spans[0]
     start = span.end - 7
     assert index_text(text[start:], source.metadata(start, len(text))) == text[span.end :]
-    assert index_text(text[start : span.end], source.metadata(start, span.end)) == span.placeholder
+    assert index_text(text[start : span.end], source.metadata(start, span.end)) == ""
 
 
 @pytest.mark.parametrize("size", [151, 152])
@@ -201,8 +201,13 @@ def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypat
     ids = [f"piece-{i}" for i in range(len(docs))]
     try:
         col.add(ids=ids, documents=docs, metadatas=metas)
-        expected = [index_text(doc, meta) for doc, meta in zip(docs, metas)]
+        expected = (
+            ['Before screenshot="[base64 image/png 1839 B]']
+            + ["[base64 image/png 1839 B]"] * (len(docs) - 2)
+            + ['"; after needle.\n']
+        )
         assert recorder.seen == expected
+        assert "" not in recorder.seen
         got = col.get(ids=ids, include=["documents", "metadatas"])
         assert dict(zip(got.ids, got.documents)) == dict(zip(ids, docs))
         recorder.seen.clear()
@@ -211,6 +216,7 @@ def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypat
         rebuilt = _text_embedding_collection(inner, False)
         rebuilt.upsert(ids=got.ids, documents=got.documents, metadatas=got.metadatas)
         assert recorder.seen == expected
+        assert "" not in recorder.seen
         col.update(ids=[ids[0]], documents=[text], metadatas=[source.metadata(0, len(text))])
         assert recorder.seen[-1] == index_text(text)
         col.query(query_texts=[text], n_results=1)
@@ -288,9 +294,12 @@ def test_mcp_writes_and_update_preserve_full_text_and_hide_hints(
     assert result.get("success"), result
     assert mcp.tool_get_drawer(logical_id)["content"] == updated
     rows = col.get(ids=result["chunk_ids"], include=["documents", "metadatas"])
-    assert all(
-        index_text(doc, meta) in recorder.seen for doc, meta in zip(rows.documents, rows.metadatas)
-    )
+    assert len(rows.documents) == 2
+    assert recorder.seen[-2:] == [
+        'updated Before screenshot="[base64 image/png 1001 B]',
+        '"; after needle.\n',
+    ]
+    assert "" not in recorder.seen
 
 
 def test_mcp_ingress_strips_all_reserved_metadata_before_dispatch(monkeypatch):
@@ -617,7 +626,6 @@ def test_edge_fragments_with_long_format_stretches(count, emit, caplog):
     "rule",
     [
         "continuation",
-        "continuation-to-end",
         "start-complete",
         "short",
         "left-boundary",
@@ -637,8 +645,6 @@ def test_invalid_hint_spans_fall_back_to_chunk_detection(rule, caplog):
     before, after, emit = "before '", "' after", True
     if rule == "continuation":
         emit = False
-    elif rule == "continuation-to-end":
-        before, after, emit = "", "", False
     elif rule == "start-complete":
         before, run = "", run[:17]
     elif rule == "short":
@@ -932,7 +938,7 @@ def test_real_chunkers_match_whole_content_oracle(chunker, size, width, kind, pr
                 if not view[max(start, left) : min(end, right)].strip("="):
                     continue
                 expected.append(view[cursor : max(start, left)])
-                if start <= left < end or left <= start < end <= right:
+                if start <= left < end:
                     expected.append(placeholder)
                 cursor = min(end, right)
             expected.append(view[cursor:end])

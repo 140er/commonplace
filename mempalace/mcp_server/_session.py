@@ -217,6 +217,8 @@ def _get_collection(create=False):
     scratch, so the second attempt heals the common stale-handle case
     automatically.
     """
+    from ..backends.base import PalaceNotFoundError
+
     global \
         _client_cache, \
         _collection_cache, \
@@ -230,8 +232,7 @@ def _get_collection(create=False):
     # Operator read-only mode must never bootstrap a collection. In
     # particular, sqlite_exact's normal create/open path initializes WAL,
     # schema, FTS metadata, and commits before the first read.
-    if _READ_ONLY:
-        create = False
+    create = create and not _READ_ONLY
     try:
         backend_name = _selected_backend_name()
     except (BackendMismatchError, KeyError) as exc:
@@ -322,7 +323,13 @@ def _get_collection(create=False):
                 _collection_cache_palace = None
                 _invalidate_overview_caches()
                 return None
-            except Exception:
+            except Exception as exc:
+                if not create and isinstance(exc, PalaceNotFoundError):
+                    # An absent palace/collection is normal before the first
+                    # drawer write. Other open failures must remain errors.
+                    _collection_open_error = None
+                    _invalidate_overview_caches()
+                    return None
                 logger.exception(
                     "_get_collection generic attempt %d/2 failed (palace=%s, create=%s)",
                     attempt + 1,

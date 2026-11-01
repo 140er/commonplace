@@ -349,6 +349,18 @@ def test_scope_local_terms_ids_closets_and_full_responses_are_private(
             for i in range(count)
         ],
     )
+    if backend == "compact":
+        from mempalace.stored_text import KEYWORD_ONLY
+
+        col.add(
+            ids=["keyword-public", "keyword-shared", "keyword-private"],
+            documents=["photon731 lantern exact tool output"] * 3,
+            embeddings=[None] * 3,
+            metadatas=[
+                {"wing": wing, "room": "notes", KEYWORD_ONLY: True}
+                for wing in ("public", "shared", "private")
+            ],
+        )
     closets = get_closets_collection(palace, create=True)
     closets.add(
         ids=["alpha", "beta"],
