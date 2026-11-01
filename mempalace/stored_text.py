@@ -436,6 +436,19 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
     return _BAD.sub(" ", detect_index_text(text))
 
 
+def embedding_text(stored: str, metadata=None) -> str:
+    """Use a covering run's placeholder when its keyword projection is empty."""
+    text = index_text(stored, metadata, stored_form=False)
+    if text != "" or not stored:
+        return text
+    spans = _validated_index_spans(stored, (metadata or {})[INDEX_SPANS])
+    if len(spans) == 1:
+        start, end, placeholder, _ = spans[0]
+        if start == 0 and end == len(stored):
+            return placeholder
+    raise ValueError("Empty embedding projection requires a single full-cover span")
+
+
 _EQUALITY_OPS = ("$eq", "$ne", "$in", "$nin")
 
 

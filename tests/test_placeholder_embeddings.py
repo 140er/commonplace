@@ -201,8 +201,13 @@ def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypat
     ids = [f"piece-{i}" for i in range(len(docs))]
     try:
         col.add(ids=ids, documents=docs, metadatas=metas)
-        expected = [index_text(doc, meta) for doc, meta in zip(docs, metas)]
+        expected = (
+            ['Before screenshot="[base64 image/png 1839 B]']
+            + ["[base64 image/png 1839 B]"] * (len(docs) - 2)
+            + ['"; after needle.\n']
+        )
         assert recorder.seen == expected
+        assert "" not in recorder.seen
         got = col.get(ids=ids, include=["documents", "metadatas"])
         assert dict(zip(got.ids, got.documents)) == dict(zip(ids, docs))
         recorder.seen.clear()
@@ -211,6 +216,7 @@ def test_add_upsert_update_query_and_raw_copy_keep_documents(tmp_path, monkeypat
         rebuilt = _text_embedding_collection(inner, False)
         rebuilt.upsert(ids=got.ids, documents=got.documents, metadatas=got.metadatas)
         assert recorder.seen == expected
+        assert "" not in recorder.seen
         col.update(ids=[ids[0]], documents=[text], metadatas=[source.metadata(0, len(text))])
         assert recorder.seen[-1] == index_text(text)
         col.query(query_texts=[text], n_results=1)
@@ -288,9 +294,12 @@ def test_mcp_writes_and_update_preserve_full_text_and_hide_hints(
     assert result.get("success"), result
     assert mcp.tool_get_drawer(logical_id)["content"] == updated
     rows = col.get(ids=result["chunk_ids"], include=["documents", "metadatas"])
-    assert all(
-        index_text(doc, meta) in recorder.seen for doc, meta in zip(rows.documents, rows.metadatas)
-    )
+    assert len(rows.documents) == 2
+    assert recorder.seen[-2:] == [
+        'updated Before screenshot="[base64 image/png 1001 B]',
+        '"; after needle.\n',
+    ]
+    assert "" not in recorder.seen
 
 
 def test_mcp_ingress_strips_all_reserved_metadata_before_dispatch(monkeypatch):

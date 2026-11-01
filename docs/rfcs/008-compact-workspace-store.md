@@ -45,15 +45,17 @@ C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vecto
 
 ## A0: Placeholder embeddings (all backends)
 
-- Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text; the stored document stays verbatim.
+- Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text, except that a nonempty chunk wholly covered by a continuing run embeds the run's placeholder when its keyword view is empty; the stored document stays verbatim.
 - Chroma accepts explicit embeddings, so this ships on Chroma too. It removes base64 from embedding input; CPU savings depend on the model, and fixed-length padding can retain most inference cost. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
 
 ### A0 indexing policy
 
 New and updated drawers retain their verbatim documents. Core detects validated
 base64 on the whole input before chunking. Each physical chunk indexes its own
-range: a span emits its placeholder where it starts, continuation fragments are
-removed, and a chunk wholly inside a span indexes the placeholder. Padding-only
+range: the keyword view emits one placeholder per whole run, only in the chunk
+where the run starts. Fully covered later chunks add nothing to the keyword view;
+their embedder input is the whole run's placeholder, never an empty string. Other
+continuation fragments are removed from both views. Padding-only
 intersections create no span and stay literal in index text, whether they would
 otherwise emit or continue a placeholder. No vectors are removed in A0; the vector
 count is unchanged. Keyword-only message policy is B1c.
