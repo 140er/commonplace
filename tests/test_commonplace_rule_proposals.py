@@ -205,6 +205,21 @@ def test_owner_moves_keep_authority_and_original_publish_target(fresh):
     assert repeated["pending"] == 1
 
 
+def test_agent_shared_target_survives_owner_move_roundtrip(fresh):
+    shared = fresh.writer.rules_publish([rule()], agent="*")["rules"][0]
+    moved = fresh.owner.set_agent(shared["id"], 1, fresh.writer.principal.actor)
+    back = fresh.owner.set_agent(moved["id"], moved["version"], "*")
+    personal = fresh.writer.rules_publish([rule()])["rules"][0]
+    assert personal["id"] != shared["id"]
+    assert personal["agent"] == fresh.writer.principal.actor
+    repeated = fresh.writer.rules_publish([rule()], agent="*")["rules"][0]
+    assert repeated["id"] == shared["id"] and repeated["agent"] == "*"
+    assert fresh.writer.rules_publish([], replace=True)["rules"][0]["id"] == personal["id"]
+    current = {row["id"]: row for row in fresh.owner.list_rules()["rules"]}
+    assert current[shared["id"]] == back
+    assert current[personal["id"]]["status"] == "retired"
+
+
 def test_shared_board_scope_preserves_private_visibility(hub, fresh):
     boards = BoardService(fresh.owner.ctx)
     boards.board_add(slug="visible", wing="shared")

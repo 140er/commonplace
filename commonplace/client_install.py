@@ -299,7 +299,7 @@ def install_client_config(
     dry_run=False,
 ) -> dict:
     """Configure native clients without reading a token or granting hook trust."""
-    warnings = [
+    notes = [
         "Codex requires native review/trust of new hooks via /hooks. MCP initialize supplies startup guidance before hook trust."
     ]
     try:
@@ -336,4 +336,4 @@ def install_client_config(
             )
     except _Refused as exc:
         return {"files": [], "warnings": [str(exc)], "dry_run": dry_run}
-    return {"files": files, "warnings": warnings, "dry_run": dry_run}
+    return {"files": files, "warnings": [], "notes": notes, "dry_run": dry_run}

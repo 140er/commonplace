@@ -322,10 +322,15 @@ def test_refused_remote_save_preserves_source_and_independent_default_setup(fres
 
 def _hook_command(config, event):
     commands = [
-        hook["command"]
+        # Claude's native exec form passes args directly; Codex uses shell form.
+        [hook["command"], *hook["args"]] if "args" in hook else hook["command"]
         for group in config["hooks"].get(event, [])
         for hook in group["hooks"]
-        if hook.get("type") == "command" and "commonplace.client_hooks" in hook.get("command", "")
+        if hook.get("type") == "command"
+        and (
+            "commonplace.client_hooks" in hook.get("command", "")
+            or "commonplace.client_hooks" in hook.get("args", [])
+        )
     ]
     assert len(commands) == 1, commands
     return commands[0]
@@ -336,7 +341,7 @@ def _run_hook(command, project, *, event="SessionStart"):
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     process = subprocess.run(
         command,
-        shell=True,
+        shell=isinstance(command, str),
         cwd=project,
         env=env,
         input=json.dumps({"cwd": str(project), "prompt": QUERY, "hook_event_name": event}),
@@ -382,6 +387,8 @@ def test_default_cli_onboarding_installs_working_native_startup_and_warns_on_loc
     assert cli.main(args) == 0
     output = capsys.readouterr()
     assert agent.token not in output.out + output.err
+    assert "native review/trust" in output.out and "/hooks" in output.out
+    assert output.err == ""
     for relative in (".claude/CLAUDE.md", ".codex/AGENTS.md", ".agents/AGENTS.md"):
         assert (home / relative).read_text() == onboarding.POINTER
     assert not (project / "CLAUDE.md").exists() and not (project / "AGENTS.md").exists()
@@ -413,4 +420,7 @@ def test_default_cli_onboarding_installs_working_native_startup_and_warns_on_loc
     assert "memory_save" in rendered and "rules_publish" in rendered
     assert "LOCAL_ONLY_EDIT_CANARY" not in rendered
     assert local.read_text() == edit and fresh.owner.list_rules() == before_rules
-    assert not _quoted_memories(agent.client.fetch_context(query="LOCAL_ONLY_EDIT_CANARY"))
+    assert all(
+        "LOCAL_ONLY_EDIT_CANARY" not in memory
+        for memory in _quoted_memories(agent.client.fetch_context(query="LOCAL_ONLY_EDIT_CANARY"))
+    )
