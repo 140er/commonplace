@@ -265,7 +265,7 @@ def test_sensitive_endpoint_ip_limit(surface, method, path):
 def test_authenticated_requests_still_obey_sensitive_ip_limit(surface):
     auth = token(surface)[2]
     for _ in range(10):
-        assert request(surface, "GET", "/app/login", headers=auth)[0] == 400
+        assert request(surface, "GET", "/app/login", headers=auth)[0] == 302
     assert request(surface, "GET", "/app/login", headers=auth)[0] == 429
     assert request(surface, headers=auth)[0] == 200
 

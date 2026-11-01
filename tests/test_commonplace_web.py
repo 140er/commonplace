@@ -3,7 +3,9 @@
 import http.client
 import io
 import json
+import logging
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 import pytest
 
@@ -45,7 +47,10 @@ def test_login_cookie_identity_replay_and_logout(hub):
         "actor": f"user:{hub.admin}",
         "people": {f"user:{hub.admin}": "owner"},
     }
-    assert request(hub, f"/app/login?t={token}")[0] == 400
+    status, headers, _ = request(hub, f"/app/login?t={token}")
+    assert status == 302 and headers["Location"] == "/app/?signin=expired"
+    assert "Set-Cookie" not in headers
+    assert request(hub, "/api/me", headers=cookie)[0] == 200
     status, headers, _ = request(
         hub, "/app/logout", "POST", headers={**cookie, "Content-Type": "application/json"}
     )
@@ -61,11 +66,85 @@ def test_secure_cookie_expired_link_and_disabled_user(hub):
     token = sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
     with hub.db._lock:
         hub.db._conn.execute("UPDATE login_links SET expires_at='2000-01-01T00:00:00Z'")
-    assert request(hub, f"/app/login?t={token}")[0] == 400
-    assert request(hub, "/app/login")[0] == 400
+    status, headers, _ = request(hub, f"/app/login?t={token}")
+    assert status == 302 and headers["Location"] == "/app/?signin=expired"
+    assert "Set-Cookie" not in headers
+    assert request(hub, "/api/me")[0] == 401
     with hub.db._lock:
         hub.db._conn.execute("UPDATE users SET disabled_at='2026-10-30T00:00:00Z'")
     assert request(hub, "/api/me", headers=cookie)[0] == 401
+    token = sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
+    status, headers, _ = request(hub, f"/app/login?t={token}")
+    assert status == 302 and headers["Location"] == "/app/?signin=expired"
+    assert "Set-Cookie" not in headers
+
+
+@pytest.mark.parametrize(
+    "query_string", ["", "?t=", "?next=https://elsewhere.test", "?t=&signin=expired"]
+)
+def test_login_without_token_opens_normal_signin(hub, monkeypatch, query_string):
+    monkeypatch.setattr(
+        hub.gateway.sign_in,
+        "providers",
+        {"github": SimpleNamespace(id="github", name="GitHub", daily_cap=None)},
+    )
+    status, headers, body = request(hub, "/app/login" + query_string)
+    assert status == 302 and headers["Location"] == "/app/"
+    assert "Set-Cookie" not in headers and not body
+    status, _, body = request(hub, headers["Location"])
+    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert b'<script type="module" src="/app/app.js">' in body
+    status, _, body = request(hub, "/app/auth/providers")
+    assert status == 200
+    [provider] = json.loads(body)["providers"]
+    assert provider["id"] == "github" and provider["name"] == "GitHub"
+    assert provider["url"].endswith("/app/auth/github")
+    assert request(hub, "/api/me")[0] == 401
+
+
+@pytest.mark.parametrize(
+    "token", ["unknown-login-token", "x" * 201, '<script>alert("token")</script>']
+)
+def test_invalid_login_redirects_without_reflecting_or_logging_token(hub, caplog, capsys, token):
+    path = "/app/login?" + urlencode({"t": token, "next": "https://elsewhere.test"})
+    with caplog.at_level(logging.DEBUG):
+        status, headers, body = request(hub, path)
+    assert status == 302 and headers["Location"] == "/app/?signin=expired"
+    assert "Set-Cookie" not in headers and not body
+    assert headers["Cache-Control"] == "no-store"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert token not in repr(headers) and token.encode() not in body
+    output = capsys.readouterr()
+    assert token not in caplog.text + output.out + output.err
+    status, _, body = request(hub, headers["Location"])
+    assert status == 200 and b"<h1>Sign in</h1>" in body
+    assert request(hub, "/api/me")[0] == 401
+    with hub.db._lock:
+        assert hub.db._conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_fresh_user_logout_then_direct_login(hub):
+    user = hub.db.create_user("fresh@example.com")
+    workspace = hub.db.create_workspace("fresh-home", user, personal=True)
+    token = sessions.create_login_link(hub.db, "fresh@example.com", workspace)
+    status, headers, _ = request(hub, f"/app/login?t={token}")
+    assert status == 302
+    cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
+    status, _, body = request(hub, "/api/me", headers=cookie)
+    assert status == 200
+    assert json.loads(body)["user"] == user and json.loads(body)["workspace"] == workspace
+    status, headers, _ = request(
+        hub, "/app/logout", "POST", headers={**cookie, "Content-Type": "application/json"}
+    )
+    assert status == 204 and "Max-Age=0" in headers["Set-Cookie"]
+    assert all(value in headers["Set-Cookie"] for value in ("HttpOnly", "SameSite=Lax", "Path=/"))
+    assert request(hub, "/api/me", headers=cookie)[0] == 401
+    for headers in ({}, cookie):
+        status, response_headers, _ = request(hub, "/app/login", headers=headers)
+        assert status == 302 and response_headers["Location"] == "/app/"
+        assert "Set-Cookie" not in response_headers
+        status, _, body = request(hub, response_headers["Location"], headers=headers)
+        assert status == 200 and b"<h1>Sign in</h1>" in body
 
 
 def test_logout_refuses_foreign_origin_and_keeps_session(hub):
