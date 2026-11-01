@@ -63,7 +63,14 @@ def test_snippet_budgets_and_slim_tools():
     assert len(blocks[0].splitlines()) <= 15
     assert len(blocks[1].splitlines()) <= 10
     grok = {w for w in _TOOLISH.findall(blocks[1]) if "_" in w or w == "ask"}
-    assert grok <= {"memory_search", "memory_save", "task_add", "task_comment", "ask"}, grok
+    assert grok <= {
+        "memory_search",
+        "memory_save",
+        "task_add",
+        "task_heartbeat",
+        "task_approve",
+        "ask",
+    }, grok
 
 
 def test_no_user_facing_jargon():

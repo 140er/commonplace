@@ -170,6 +170,8 @@ class Principal:
     role: str
     policy: Policy
     person: bool = False  # a signed-in person (web session), not an agent's token
+    parent_connection_id: Optional[str] = None
+    parent_agent: Optional[str] = None
 
     @property
     def actor(self) -> str:
@@ -188,6 +190,7 @@ class Principal:
             "auth": self.auth,
             "trust": self.policy.trust,
             "workspace": self.workspace_id,
+            "parent_agent": self.parent_agent,
         }
 
 
@@ -569,6 +572,12 @@ class ControlDB:
             auth=row["auth"],
             role=row["role"],
             policy=Policy.from_json(row["policy"]),
+            parent_connection_id=row["parent_id"],
+            parent_agent=(
+                f"conn:{self.connection(row['parent_id'], row['workspace_id'])['name']}"
+                if row["parent_id"]
+                else None
+            ),
         )
 
     def _touch(self, row, now: datetime) -> None:

@@ -754,7 +754,7 @@ def test_rest_profiles_apply_the_same_tool_visibility(surface):
     from commonplace.http_util import send_json
 
     surface.gateway.add_route("PATCH", "/api/cards/1", lambda h: send_json(h, 200, {}))
-    policy = Policy.build(profile="slim", trust="trusted")
+    policy = Policy.build(profile="slim", tools=["task_show"], trust="trusted")
     _cid, value = surface.db.create_token(
         workspace_ref=surface.workspace,
         user_ref=surface.uid,

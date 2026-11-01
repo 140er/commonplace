@@ -476,3 +476,14 @@ assert.match(css, /env\(safe-area-inset-bottom\)/);
 assert.match(css, /100dvh/);
 assert.match(css, /prefers-reduced-motion: reduce/);
 assert.match(css, /animation: none/);
+
+// Decision context is original text, escaped, and body excerpts remain bounded.
+const contextual = renderDecide(load([card(1, { status_line: 'Tests <pass> & ready', body: 'The full release context. ' + 'x'.repeat(700) })]));
+assert.ok(contextual.includes('Tests &lt;pass&gt; &amp; ready'));
+assert.ok(contextual.includes('The full release context.'));
+assert.ok(!contextual.includes('x'.repeat(700)));
+assert.ok(contextual.includes('decide-context'));
+
+const separateContext = renderDecide(load([card(1, { status_line: 'Original progress', body: 'Original work details', review_context: 'Separate <decision> context' })]));
+assert.ok(separateContext.includes('Separate &lt;decision&gt; context'));
+assert.ok(separateContext.includes('Original progress') && separateContext.includes('Original work details'));

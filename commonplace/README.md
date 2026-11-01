@@ -58,7 +58,7 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 | `--scopes` | `memory:read`, `memory:write`, `memory:delete`, `kg:read`, `kg:write`, `events:read`, `events:write`, `private:read`, `private:write`, `admin` |
 | `--read-wings` / `--write-wings` | wing names or patterns (`project_*`, `*`) |
 | `--write-wing` | where an `untrusted` token's writes always land |
-| `--trust` | `untrusted` (inbox writes only, no update, delete or graph writes), `standard` (no delete), `trusted` |
+| `--trust` | `untrusted` (memory inbox writes only, no memory update, delete or graph writes; own board cards remain manageable), `standard` (no delete), `trusted` |
 
 - `mine`, `sync`, `hook_settings` and `reconnect` are never served through the gateway.
 - Wings named `private` or `private_*` also need `private:read` / `private:write`, even under `*`.
@@ -71,3 +71,5 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
 
 Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.
+
+Agents create and claim their own board cards with every client preset. Child-created cards need direct-parent or signed-in-owner approval; orchestrators can create assigned child cards directly. See [the board API](../docs/boards/API.md) for `task_approve`, `task_heartbeat`, expiry, review requirements, and space creation.

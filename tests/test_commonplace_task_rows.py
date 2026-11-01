@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from commonplace.boards.display import NEEDS, need, need_for
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
 
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
@@ -99,7 +103,7 @@ def test_precedence_follows_needs_order():
     assert derive({**doing, "pr_url": None}) == "working"
     assert derive({**doing, "pr_url": None, "heartbeat_at": STALE}) == "idle"
     assert derive({**doing, "status": "done"}) == "done"
-    assert NEEDS == ("you", "plan", "merge", "checks", "working", "idle", "done")
+    assert NEEDS == ("you", "plan", "merge", "checks", "expired", "working", "idle", "done")
 
 
 def test_failing_checks_and_pr_without_passing_checks_stay_quiet():
@@ -112,7 +116,12 @@ def test_failing_checks_and_pr_without_passing_checks_stay_quiet():
 def test_need_in_rest_and_mcp_output(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     worker = service(hub, agent)
-    asked = worker.ask("Ship?", board="work")
+    asked = worker.ask(
+        "Ship? Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     planned = owner.task_add(title="Plan", board="work", labels=["plan"])
     idle = owner.task_add(title="Later", board="work")
     building = worker.task_add(title="Build", board="work")
@@ -128,7 +137,8 @@ def test_need_in_rest_and_mcp_output(hub, env):  # noqa: F811
     finished = owner.seed_card(board="work", title="Finished", status="done")
     with owner.store.transaction() as conn:
         conn.execute(
-            "UPDATE tasks SET updated_at='2000-01-01T00:00:00Z' WHERE id=?", (stale["number"],)
+            "UPDATE tasks SET updated_at='2000-01-01T00:00:00Z',heartbeat_at='2000-01-01T00:00:00Z' WHERE id=?",
+            (stale["number"],),
         )
     expected = {
         asked["number"]: "you",

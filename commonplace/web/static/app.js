@@ -1,4 +1,4 @@
-import { api, escape as e, actor, elapsed, safeLink, setPeople } from "./api.js";
+import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
@@ -49,10 +49,10 @@ function speechView() {
   if (captions) { captions.hidden = !speechState.text; captions.textContent = speechState.text; }
 }
 const prLink = (card) => {
-  const href = safeLink(card.pr_url);
+  const href = pullRequestUrl(card);
   return href ? `<a href="${e(href)}" target="_blank" rel="noopener noreferrer">PR #${e(card.pr_number || "↗")}</a>` : card.pr_number ? `<span>PR #${e(card.pr_number)}</span>` : "";
 };
-const needLabels = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", checks: "Checks running", working: "Working", idle: "Idle", done: "Done" };
+const needLabels = { you: "Needs you", plan: "Plan to approve", merge: "Ready to merge", checks: "Checks running", working: "Working", expired: "Expired", idle: "Idle", done: "Done" };
 function dot(card) {
   const need = needLabels[card.need] ? card.need : "idle";
   return `<i class="status-dot ${need}" data-need="${need}" role="img" aria-label="${needLabels[need]}"></i>`;
@@ -63,6 +63,7 @@ const taskRow = (card, context = "") => `<div class="trow">${dot(card)}<a class=
 const rowFoot = (card) => `${card.claim_until ? `<div class="task-meta">${claim(card)}</div>` : ""}${card.status_line ? `<p class="status-line">${e(card.status_line)}</p>` : ""}`;
 function claim(card) {
   if (!card.claim_until) return "";
+  if (card.claim_expired || Date.parse(card.claim_until) <= Date.now()) return '<span class="claim low">Expired</span>';
   const end = Date.parse(card.claim_until), start = Date.parse(card.heartbeat_at || card.updated_at);
   const ratio = Math.max(0, Math.min(1, (end - Date.now()) / (end - start || 1800000)));
   return `<span class="claim ${ratio < .2 ? "low" : ""}" data-claim-until="${e(card.claim_until)}" data-claim-start="${e(card.heartbeat_at || card.updated_at)}" role="img" aria-label="Claim ${Math.round(ratio * 100)}% remaining">${Array.from({ length: 6 }, (_, i) => `<i class="${i < Math.ceil(ratio * 6) ? "on" : ""}"></i>`).join("")}</span>`;
@@ -180,13 +181,13 @@ async function signin(code = null) {
   root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
 function shell() {
-  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="brand-home" href="#/" aria-label="Commonplace"><img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Boards</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
+  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="brand-home" href="#/" aria-label="Commonplace"><img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Spaces</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
   navigation();
 }
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
-  boardNav.innerHTML = state.boards.map((b) => `<a href="#/space/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("");
+  boardNav.innerHTML = state.boards.map((b) => `<a href="#/board/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("") + '<button class="opt" data-action="new-board">New space</button>';
   root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
   root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
   root.querySelector(".app")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
@@ -364,8 +365,8 @@ function spaceView() {
   syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
-  title("Boards", '<button class="blockbtn" data-action="new-board">New board</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/space/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No boards")}</section>`;
+  title("Spaces", '<button class="blockbtn" data-action="new-board">New space</button>');
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No spaces")}</section>`;
 }
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
@@ -378,7 +379,7 @@ async function cardPanel(number, epoch) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p><div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}${callTree(card)}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p>${card.proposal_status ? `<p>Proposal: ${e(card.proposal_status)} · Parent: ${e(actor(card.proposed_to))}</p>` : ""}${card.can_approve ? '<button class="opt" data-action="approve-proposal">Approve</button><button class="opt" data-action="reject-proposal">Reject</button>' : ""}<div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}${callTree(card)}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
     restore(saved);
     if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
   } catch (error) {
@@ -390,13 +391,17 @@ function newCardForm(edit = null) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
   const slug = edit?.board || decodeURIComponent(state.base.split("/")[2]);
-  panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(statuses, "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
+  panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(["backlog", "todo", "doing"], "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
   panel.querySelector("input").focus();
+}
+function reviewForm() {
+  const panel = root.querySelector("#card-panel"); panel.hidden = false;
+  panel.innerHTML = `<form class="form-tile" data-form="review"><h2>Ask for a decision</h2><label>Question<textarea name="question" minlength="24" required></textarea></label><label>Context<textarea name="context" minlength="20" required>${e(state.card.status_line || state.card.body)}</textarea></label><label>Options (one per line)<textarea name="options" required></textarea></label><button class="blockbtn">Ask</button><button type="button" class="opt" data-action="retry">Cancel</button></form>`;
 }
 function handoffForm() {
   voice.stop();
   const panel = root.querySelector("#card-panel");
-  panel.innerHTML = `<form class="form-tile" data-form="handoff"><h2>Hand off #${state.card.number}</h2><label>To<input name="to" required></label><label>Note<textarea name="note" required></textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="retry">Cancel</button></form>`;
+  panel.innerHTML = `<form class="form-tile" data-form="handoff"><h2>Hand off #${state.card.number}</h2><label>To<input name="to" required></label><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(state.card.status_line || state.card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="retry">Cancel</button></form>`;
 }
 async function settingsView(epoch) {
   title("Settings");
@@ -779,6 +784,11 @@ async function decide(number, payload, from) {
 async function move(number, status, extra = {}) {
   const card = findCard(number);
   if (!card) return;
+  if (status === "review" && !extra.question) {
+    state.card = await api(`/api/cards/${number}`);
+    reviewForm();
+    return;
+  }
   await mutate(`card-${number}`, () => api(`/api/cards/${number}`, { method: "PATCH", body: { version: card.version, status, ...extra } }));
 }
 root.addEventListener("input", (event) => {
@@ -828,7 +838,10 @@ root.addEventListener("click", async (event) => {
       const reply = state.drafts.get(`reply-${number}`);
       await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
     } else if (action === "move") await move(number, b.dataset.status);
-    else if (action === "panel-move") await move(state.card.number, root.querySelector("#card-status").value);
+    else if (action === "panel-move") {
+      const status = root.querySelector("#card-status").value;
+      if (status === "review") reviewForm(); else await move(state.card.number, status);
+    } else if (action === "approve-proposal" || action === "reject-proposal") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}/approve`, { method: "POST", body: { approve: action === "approve-proposal", version: state.card.version } }));
     else if (action === "children-toggle") {
       const card = findCard(number);
       if (!card) return;
@@ -863,7 +876,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "handoff") handoffForm();
     else if (action === "new-board") {
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
-      panel.innerHTML = '<form class="form-tile" data-form="board"><h2>New board</h2><label>Slug<input name="slug" pattern="[a-z0-9_-]+" required></label><label>Name<input name="name"></label><button class="blockbtn">Create</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
+      panel.innerHTML = '<form class="form-tile" data-form="board"><h2>New space</h2><label>Name<input name="name" required maxlength="1000"></label><button class="blockbtn">Create</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
     } else if (action === "memory") await openMemory(b.dataset.id);
     else if (action === "map-node") { const n = state.mapDispose?.graph.nodes.find((n) => n.id === b.dataset.node); if (n) await openMemoryNode(n); }
     else if (action === "new-memory") {
@@ -912,9 +925,12 @@ root.addEventListener("submit", async (event) => {
       location.hash = `#/card/${card.number}`;
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
+    else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
     else if (kind === "handoff") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}/handoff`, { method: "POST", body: { ...payload, options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } }));
     else if (kind === "board") await mutate("new-board", async () => {
-      await api("/api/boards", { method: "POST", body: payload }); location.hash = `#/space/${enc(payload.slug)}`;
+      const slug = payload.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100) || `space-${Date.now().toString(36)}`;
+      await api("/api/boards", { method: "POST", body: { ...payload, slug } }); location.hash = `#/board/${enc(slug)}`;
+      root.querySelector("#card-panel").hidden = true;
     });
     else if (kind === "space-message") await mutate(`chat-${form.dataset.board}`, async () => {
       await api(`/api/boards/${enc(form.dataset.board)}/chat`, { method: "POST", body: payload });

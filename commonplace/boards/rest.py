@@ -132,6 +132,8 @@ def _card_route(service, h, parts, method):
             "comments": service.task_comment,
             "handoff": service.task_handoff,
             "decide": service.decide,
+            "heartbeat": service.task_heartbeat,
+            "approve": service.task_approve,
         }
         if parts[2] in handlers:
             body = read_json(h)

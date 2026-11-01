@@ -24,6 +24,7 @@ from .store import (
     card,
     expire_claims,
     now,
+    owns_card,
     require_visible,
     task_number,
     task_row,
@@ -129,6 +130,32 @@ def choices(value):
     return [validate_text(v, "option", required=True, limit=120) for v in value]
 
 
+def review_request(question, options, context):
+    help_text = (
+        "no: review needs a real question (at least 24 characters), context in body/status_line "
+        "or context (at least 20 characters), and at least 2 distinct options. "
+        "Stay in doing while waiting on a gate or ask your orchestrator."
+    )
+    try:
+        question = validate_text(question, "question", limit=5000)
+        context = validate_text(context, "context")
+        options = choices(options)
+    except ToolError:
+        raise ToolError(help_text) from None
+    if (
+        len(question.strip()) < 24
+        or len(context.strip()) < 20
+        or len(options) < 2
+        or len({v.strip().casefold() for v in options}) != len(options)
+    ):
+        raise ToolError(help_text)
+    return question, options
+
+
+def review_context(row, updates=None):
+    return "\n\n".join((updates or {}).get(key, row[key]) or "" for key in ("status_line", "body"))
+
+
 def flags_for(*values):
     content = "\n".join(v for v in values if isinstance(v, str))
     patterns = {
@@ -152,7 +179,10 @@ def normalize_repo(value):
     elif "://" in value:
         parsed = urlparse(value)
         value = (parsed.hostname or "") + parsed.path
-    return value.rstrip("/").removesuffix(".git").lower()
+    value = value.rstrip("/").removesuffix(".git").lower()
+    if len(value.split("/")) == 2 and "." not in value.split("/", 1)[0]:
+        value = "github.com/" + value
+    return value
 
 
 def _restricted(principal):
@@ -202,8 +232,16 @@ def needs_me(store, principal) -> dict:
             item = card(conn, row, principal)
             addressed = row["ask_to"] in (None, f"user:{principal.user_id}")
             if row["status"] == "review" and addressed:
-                result["done_review" if row["ask"] == "Done?" else "asks"].append(item)
-            if row["status"] == "backlog" and row["created_by"].startswith("conn:"):
+                result[
+                    "done_review"
+                    if row["review_kind"] == "completion" or row["ask"] == "Done?"
+                    else "asks"
+                ].append(item)
+            if (
+                row["status"] == "backlog"
+                and row["created_by"].startswith("conn:")
+                and row["proposal_status"] != "rejected"
+            ):
                 result["backlog_from_agents"].append(item)
             if row["pr_url"] and row["checks"] == "passing" and row["status"] != "done":
                 result["ready_to_merge"].append(item)
@@ -296,10 +334,24 @@ class BoardService:
             **fields,
         )
 
-    def _write(self, board, *, submission=False):
+    def _own_card(self, row):
+        return owns_card(row, self.principal.actor)
+
+    def _available_origin(self, row):
+        return (
+            (self.principal.person and self.principal.role == "owner")
+            or row["restricted_origin"] == 0
+            or self._own_card(row)
+            or bool(row["approved_by"])
+        )
+
+    def _write(self, board, *, submission=False, row=None):
         p = self.principal
-        if not p.policy.has_scope("memory:write"):
+        if not p.policy.has_scope("memory:write") or not p.policy.can_read_wing(board["wing"]):
             raise ToolError("no: this connection cannot change this board")
+        # Board ownership is independent of memory write destinations and trust.
+        if submission or self._own_card(row):
+            return
         if _restricted(p):
             if submission:
                 return
@@ -333,13 +385,17 @@ class BoardService:
             if row["archived"] or not self.principal.policy.can_read_wing(row["wing"]):
                 raise ToolError("no: board not found")
             return row
-        if create and self.principal.policy.trust == "trusted" and not _restricted(self.principal):
-            return self._add_board(conn, slug=ref)
+        if create:
+            bootstrap = (
+                ref == "commonplace" and not conn.execute("SELECT 1 FROM boards LIMIT 1").fetchone()
+            )
+            if bootstrap or self.principal.policy.trust == "trusted":
+                return self._add_board(conn, slug=ref, bootstrap=bootstrap)
         raise ToolError("no: board not found")
 
-    def _add_board(self, conn, *, slug, name=None, wing=None, repo=None):
+    def _add_board(self, conn, *, slug, name=None, wing=None, repo=None, bootstrap=False):
         p = self.principal
-        if _restricted(p) or (not p.person and p.role != "owner" and p.policy.trust != "trusted"):
+        if not bootstrap and not p.person and p.policy.trust != "trusted":
             raise ToolError("no: only an owner or trusted connection can create a board")
         slug = validate_text(slug, "slug", required=True, limit=100)
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", slug):
@@ -348,9 +404,13 @@ class BoardService:
         if existing is not None and not p.policy.can_read_wing(existing["wing"]):
             raise ToolError("no: board not found")
         wing = validate_text(
-            wing if wing is not None else f"project_{slug}", "theme", required=True, limit=200
+            wing if wing is not None else "shared", "theme", required=True, limit=200
         )
-        if not p.policy.can_read_wing(wing) or not p.policy.can_write_wing(wing):
+        if (
+            not p.policy.has_scope("memory:write")
+            or not p.policy.can_read_wing(wing)
+            or (wing != "shared" and not p.policy.can_write_wing(wing))
+        ):
             raise ToolError("no: this connection cannot create this board")
         if existing is not None:
             raise ToolError("no: board already exists")
@@ -390,7 +450,7 @@ class BoardService:
                 row["id"],
                 "card.expired",
                 actor="system",
-                **{"from": "doing", "to": row["return_status"], "target": row["assignee"]},
+                **{"from": "doing", "to": "doing", "target": row["assignee"]},
             )
 
     def _get(self, conn, ref):
@@ -415,6 +475,8 @@ class BoardService:
 
     def _actor(self, value):
         value = validate_text(value, "recipient", required=True, limit=200)
+        if value == "self":
+            return self.principal.actor
         if value == "anyone":
             return None
         if value.casefold() == "owner":
@@ -447,6 +509,13 @@ class BoardService:
         )
 
     def _set(self, conn, row, updates):
+        if (
+            self.principal.person
+            and self.principal.role == "owner"
+            and row["restricted_origin"] == 1
+            and updates.get("status") in ("todo", "doing")
+        ):
+            updates["approved_by"] = self.principal.actor
         updates.update(
             version=row["version"] + 1, updated_at=now(), updated_by=self.principal.actor
         )
@@ -465,12 +534,18 @@ class BoardService:
             and not self.principal.person
         ):
             updates["claim_until"] = self._until(row)
+        if "claim_until" in updates:
+            updates["claim_expired_at"] = None
+            if updates["claim_until"] is not None:
+                updates["heartbeat_at"] = now()
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
-    def _holder(self, row, *, editing=False, reopening=False, annotating=False):
+    def _holder(self, row, *, editing=False, reopening=False, annotating=False, completing=False):
         if self.principal.person:
             return
+        if row["proposal_status"] in ("pending", "rejected") and not self._own_card(row):
+            raise ToolError("no: proposal needs its parent or the workspace owner")
         if row["status"] == "done" and not reopening:
             if annotating and _trusted_agent(self.principal) and not _waiting_on_person(row):
                 return
@@ -489,6 +564,8 @@ class BoardService:
             and not self.principal.person
         ):
             raise ToolError("no: card is reserved for another connection")
+        if completing and row["status"] in ("todo", "doing", "backlog") and not self._own_card(row):
+            raise ToolError("no: take this card before completing it")
         if editing and not (
             (row["status"] == "doing" and row["assignee"] == self.principal.actor)
             or self._review_editor(row)
@@ -529,9 +606,9 @@ class BoardService:
                 )
             return result
 
-    def board_add(self, **args):
+    def board_add(self, slug, name=None, wing=None, repo=None):
         with self.transaction() as conn:
-            board = self._add_board(conn, **args)
+            board = self._add_board(conn, slug=slug, name=name, wing=wing, repo=repo)
             return {
                 "slug": board["slug"],
                 "name": board["name"],
@@ -705,12 +782,14 @@ class BoardService:
                         else STATUSES
                         if all_statuses
                         else ("todo", "doing", "review")
-                    ):
+                    ) and not (mine and status is None and task["proposal_status"] == "pending"):
                         continue
                     if mine and self.principal.actor not in (
                         task["assignee"],
                         task["return_to"],
                         task["ask_to"],
+                        task["proposed_to"] if task["proposal_status"] == "pending" else None,
+                        task["created_by"] if task["proposal_status"] == "pending" else None,
                     ):
                         continue
                     result.append(card(conn, task, self.principal))
@@ -773,7 +852,7 @@ class BoardService:
                     **({"reason": r["reason"]} if r["kind"] == "release" else {}),
                     # Events that opened an ask carry the choices offered, verbatim.
                     **(
-                        {"options": json.loads(r["options"] or "[]")}
+                        {"options": json.loads(r["options"] or "[]"), "context": r["context"]}
                         if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
                         else {}
                     ),
@@ -790,7 +869,7 @@ class BoardService:
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
             return result
 
-    def _parent_card(self, conn, board, parent):
+    def _parent_card(self, conn, board, parent, *, delegating=False):
         p = self.principal
         root = None
         if not p.person:
@@ -800,6 +879,8 @@ class BoardService:
                 raise ParentError(f"no: invalid connection ancestry: {exc}") from None
             if ancestor["id"] != p.connection_id:
                 root = f"conn:{ancestor['name']}"
+            elif delegating:
+                root = p.actor
         if parent is not None:
             if root is None:
                 raise ParentError("no: only a sub-actor can specify a parent card")
@@ -857,9 +938,9 @@ class BoardService:
         target=None,
         message_id=None,
         parent=None,
+        claim=False,
     ):
         p = self.principal
-        parent_number = self._parent_card(conn, board, parent)
         if message_id is not None:
             if (
                 isinstance(message_id, bool)
@@ -873,17 +954,64 @@ class BoardService:
                 raise ToolError("no: message not found in this board")
         title = validate_text(title, "title", required=True, limit=5000)
         body = validate_text(body, "body")
+        if status == "review":
+            ask, options = review_request(ask, options, body)
         if labels is None:
             labels = []
         if not isinstance(labels, list) or len(labels) > 100:
             raise ToolError("no: labels must be a list")
         labels = [validate_text(label, "label", required=True, limit=200) for label in labels]
-        if status not in ("todo", "backlog", "review") or (status == "review" and ask is None):
-            raise ToolError("no: new cards must start in todo or backlog")
-        if _restricted(p):
-            status, assignee = "backlog", None
-        elif assignee is not None:
+        if status not in ("todo", "backlog", "doing", "review") or (
+            status == "review" and ask is None
+        ):
+            raise ToolError("no: new cards must start in todo, backlog or doing")
+        if not isinstance(claim, bool):
+            raise ToolError("no: claim must be a boolean")
+        if assignee is not None:
             assignee = self._actor(assignee)
+        child = None
+        if assignee and assignee.startswith("conn:") and assignee != p.actor:
+            try:
+                candidate = self.ctx.db.connection(assignee[5:], p.workspace_id)
+                if candidate["parent_id"] == p.connection_id:
+                    child = self.ctx.db.authenticate_connection(candidate["id"])
+            except ControlError:
+                pass
+        if not p.person and _restricted(p) and assignee not in (None, p.actor) and child is None:
+            raise ToolError("no: assign cards only to yourself or your direct child")
+        if child is not None and (
+            not child.policy.has_scope("memory:write")
+            or not child.policy.can_read_wing(board["wing"])
+        ):
+            raise ToolError("no: child cannot work on this board")
+        parent_number = self._parent_card(conn, board, parent, delegating=child is not None)
+        if (
+            claim
+            or status == "doing"
+            or (not p.person and assignee == p.actor and status == "todo")
+        ):
+            assignee = assignee or p.actor
+            if not p.person and assignee != p.actor and child is None:
+                raise ToolError("no: claim cards only for yourself or your direct child")
+            status = "doing"
+        if _restricted(p) and not p.person and assignee is None and status in ("todo", "backlog"):
+            assignee = p.actor
+        if child is not None and parent_number is None:
+            parent_card = conn.execute(
+                "SELECT id FROM tasks WHERE board_id=? AND parent_number IS NULL AND status!='done' "
+                "AND (assignee=? OR created_by=?) ORDER BY status='doing' DESC,updated_at DESC,id DESC LIMIT 1",
+                (board["id"], p.actor, p.actor),
+            ).fetchone()
+            parent_number = parent_card[0] if parent_card else None
+        proposal = bool(p.parent_agent and not p.person)
+        if proposal:
+            # A child cannot escape approval by requesting another lane or an owner ask.
+            if ask is not None:
+                raise ToolError(
+                    "no: create a proposal for your orchestrator before asking the owner"
+                )
+            status, assignee = "backlog", p.actor
+        until = self._until(board) if status == "doing" and assignee.startswith("conn:") else None
         position = conn.execute(
             "SELECT coalesce(max(position),0)+1 FROM tasks WHERE board_id=? AND status=?",
             (board["id"], status),
@@ -924,6 +1052,19 @@ class BoardService:
             ),
         )
         number = cur.lastrowid
+        conn.execute(
+            "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
+            "proposed_to=?,review_kind=? WHERE id=?",
+            (
+                until,
+                at if until else None,
+                p.parent_agent,
+                "pending" if proposal else None,
+                p.parent_agent if proposal else None,
+                "decision" if ask is not None else None,
+                number,
+            ),
+        )
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
         if status == "review":
@@ -935,6 +1076,7 @@ class BoardService:
                 target=target,
                 to_status="review",
                 options=options or [],
+                context=body,
             )
             self._emit(conn, number, "card.review_needed", return_to=p.actor)
         return card(conn, task_row(conn, number), self.principal)
@@ -949,6 +1091,7 @@ class BoardService:
         labels=None,
         message_id=None,
         parent=None,
+        claim=False,
     ):
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
@@ -959,12 +1102,67 @@ class BoardService:
                 b,
                 title=title,
                 body=body,
-                status="backlog" if _restricted(self.principal) else status,
+                status=status,
                 assignee=assignee,
                 labels=labels,
                 message_id=message_id,
                 parent=parent,
+                claim=claim,
             )
+
+    def task_approve(self, task, approve=True, version=None):
+        if not isinstance(approve, bool):
+            raise ToolError("no: approve must be a boolean")
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, submission=True)
+            self._version(conn, row, version)
+            p = self.principal
+            owner = p.person and p.role == "owner"
+            parent = False
+            if not p.person and row["proposed_to"] == p.actor:
+                creator = self.ctx.db.connection(
+                    row["created_by"].removeprefix("conn:"), p.workspace_id
+                )
+                parent = creator["parent_id"] == p.connection_id
+            if not (owner or parent):
+                raise ToolError(
+                    "no: only the direct parent or signed-in workspace owner may approve proposals"
+                )
+            if row["proposal_status"] != "pending":
+                raise ToolError("no: card is not a pending proposal")
+            status = "todo" if approve else "backlog"
+            self._set(
+                conn,
+                row,
+                {
+                    "proposal_status": "approved" if approve else "rejected",
+                    "approved_by": p.actor,
+                    "status": status,
+                },
+            )
+            self._log(
+                conn,
+                row["id"],
+                "decide",
+                choice="approve" if approve else "reject",
+                from_status=row["status"],
+                to_status=status,
+                target=row["assignee"],
+            )
+            self._emit(conn, row["id"], "card.moved", **{"from": row["status"], "to": status})
+            return card(conn, task_row(conn, row["id"]), p)
+
+    def task_heartbeat(self, task):
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            if row["status"] != "doing" or row["assignee"] != self.principal.actor:
+                raise ToolError("no: only the holder of a doing card can heartbeat it")
+            self._set(conn, row, {"heartbeat_at": now()})
+            self._log(conn, row["id"], "renew")
+            self._emit(conn, row["id"], "card.updated")
+            return card(conn, task_row(conn, row["id"]), self.principal)
 
     def task_comment(self, task, text, version=None):
         with self.transaction() as conn:
@@ -980,8 +1178,11 @@ class BoardService:
 
     def _backlog_available(self, row):
         return (
-            _trusted_agent(self.principal)
-            and row["restricted_origin"] == 0
+            row["proposal_status"] not in ("pending", "rejected")
+            and (
+                (not self.principal.person and self._own_card(row))
+                or (_trusted_agent(self.principal) and row["restricted_origin"] == 0)
+            )
             and not _waiting_on_person(row)
             and row["assignee"] in (None, self.principal.actor)
         )
@@ -996,27 +1197,43 @@ class BoardService:
                 b = self._board(conn, board)
                 self._expire(conn, b)
                 row = None
-            self._write(b)
             if task is None:
                 found = conn.execute(
                     "SELECT id FROM tasks WHERE board_id=? AND status='todo' "
                     "AND (assignee IS NULL OR assignee=?) "
+                    "AND (? OR coalesce(restricted_origin,1)=0 OR created_by=? OR assignee=? "
+                    "OR coalesce(approved_by,'')!='') "
+                    + ("AND (created_by=? OR assignee=?) " if _restricted(self.principal) else "")
                     + (
                         ""
                         if self.principal.person
                         else "AND coalesce(ask,'')='' AND (ask_to IS NULL OR ask_to NOT LIKE 'user:%') "
                     )
                     + "ORDER BY assignee IS NULL,position,id LIMIT 1",
-                    (b["id"], self.principal.actor),
+                    (
+                        b["id"],
+                        self.principal.actor,
+                        self.principal.person and self.principal.role == "owner",
+                        self.principal.actor,
+                        self.principal.actor,
+                        *(
+                            (self.principal.actor, self.principal.actor)
+                            if _restricted(self.principal)
+                            else ()
+                        ),
+                    ),
                 ).fetchone()
                 if found is None:
                     return None
                 row = task_row(conn, found["id"])
+            self._write(b, row=row)
             available = row["status"] == "todo" or (
                 row["status"] == "backlog" and self._backlog_available(row)
             )
             if (
                 not available
+                or not self._available_origin(row)
+                or row["proposal_status"] in ("pending", "rejected")
                 or row["assignee"] not in (None, self.principal.actor)
                 or (not self.principal.person and _waiting_on_person(row))
             ):
@@ -1079,8 +1296,6 @@ class BoardService:
         return (
             row["status"] == "review"
             and not self.principal.person
-            and self.principal.policy.trust == "trusted"
-            and not _restricted(self.principal)
             and self.principal.actor in (row["assignee"], row["return_to"])
         )
 
@@ -1090,6 +1305,12 @@ class BoardService:
         old = row["status"]
         if status == old:
             return
+        if row["proposal_status"] in ("pending", "rejected"):
+            raise ToolError(
+                "no: proposal needs parent approval with task_approve before work starts"
+            )
+        if status in ("todo", "doing") and not self._available_origin(row):
+            raise ToolError("no: restricted-origin work needs parent or workspace owner release")
         if old == "review" and not (not self.principal.person and status == "done"):
             if self._review_editor(row) and status in ("todo", "doing"):
                 if not (row["ask_to"] or "").startswith("conn:") or any(
@@ -1116,6 +1337,7 @@ class BoardService:
             if old == "backlog" and status in ("todo", "doing") and self._backlog_available(row):
                 return
             if (old, status) in {
+                ("todo", "doing"),
                 ("todo", "review"),
                 ("doing", "review"),
                 ("todo", "done"),
@@ -1170,12 +1392,12 @@ class BoardService:
             updates["pr_number"] = value
             repo = updates.get("repo", row["repo"])
             if repo:
-                updates["pr_url"] = f"https://{repo}/pull/{value}"
+                updates["pr_url"] = f"https://{normalize_repo(repo)}/pull/{value}"
         elif isinstance(value, str) and value.isdigit() and int(value) > 0:
             updates["pr_number"] = int(value)
             repo = updates.get("repo", row["repo"])
             if repo:
-                updates["pr_url"] = f"https://{repo}/pull/{int(value)}"
+                updates["pr_url"] = f"https://{normalize_repo(repo)}/pull/{int(value)}"
         elif isinstance(value, str) and re.fullmatch(
             r"https?://[^\s]+/(?:pull|pulls|merge_requests)/[1-9][0-9]*/?", value
         ):
@@ -1224,6 +1446,34 @@ class BoardService:
             ]
         return json.dumps(previous, ensure_ascii=False) if previous else None
 
+    def _open_review(self, row, args, updates, done_review):
+        question, offered = review_request(
+            args.get(
+                "question",
+                f"Is the completed work on '{row['title']}' ready to accept?"
+                if done_review
+                else "",
+            ),
+            args.get(
+                "options",
+                ["Accept the completed work", "Return for more work"] if done_review else None,
+            ),
+            args.get(
+                "context",
+                review_context(row, updates),
+            ),
+        )
+        updates["review_context"] = args.get("context", review_context(row, updates))
+        updates.update(
+            status="review",
+            ask=question,
+            ask_options=json.dumps(offered),
+            ask_to=self._owner_actor(),
+            return_to=self.principal.actor,
+            done_at=None,
+            review_kind="completion" if done_review else "decision",
+        )
+
     def task_update(self, task, *, version=None, **args):
         permitted = {
             "title",
@@ -1242,10 +1492,13 @@ class BoardService:
             "status_line",
             "callstack",
             "reason",
+            "question",
+            "options",
+            "context",
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
-            self._write(board)
+            self._write(board, row=row)
             self._version(conn, row, version)
             if set(args) - permitted or (
                 "reason" in args
@@ -1254,6 +1507,7 @@ class BoardService:
                 raise ToolError("no: unknown update field")
             self._holder(
                 row,
+                completing=args.get("status") == "done",
                 editing=bool(set(args) & {"title", "body", "labels"}),
                 reopening=set(args) == {"status"} and args["status"] == "todo",
                 annotating=bool(set(args) - {"status"})
@@ -1318,14 +1572,16 @@ class BoardService:
                     status=status, claim_until=None, done_at=now() if status == "done" else None
                 )
                 if row["status"] == "review":
-                    updates.update(ask=None, ask_options=None, ask_to=None, return_to=None)
+                    updates.update(
+                        ask=None, ask_options=None, ask_to=None, return_to=None, review_context=None
+                    )
                 if status == "doing":
                     updates["assignee"] = self.principal.actor
                     updates["claim_until"] = None if self.principal.person else self._until(board)
                 else:
                     updates["assignee"] = (
-                        row["assignee"]
-                        if row["status"] == "backlog"
+                        (self.principal.actor if row["status"] == "review" else row["assignee"])
+                        if row["status"] in ("backlog", "review")
                         and status == "todo"
                         and not self.principal.person
                         else None
@@ -1334,14 +1590,7 @@ class BoardService:
                     status == "done" and board["done_needs_review"] and not self.principal.person
                 ):
                     done_review = status == "done"
-                    updates.update(
-                        status="review",
-                        ask="Done?" if done_review else "Review?",
-                        ask_options=json.dumps(["ship", "redo"] if done_review else []),
-                        ask_to=self._owner_actor(),
-                        return_to=self.principal.actor,
-                        done_at=None,
-                    )
+                    self._open_review(row, args, updates, done_review)
             self._position(conn, row, updates, args.get("before"), args.get("after"))
             review_edit_text = self._review_edit_text(conn, row, args, updates)
             if "lesson" in args:
@@ -1364,6 +1613,8 @@ class BoardService:
             new_flags = flags_for(
                 *(args.get(key) for key in ("title", "body", "lesson", "status_line", "reason")),
                 updates.get("callstack"),
+                updates.get("ask"),
+                updates.get("review_context"),
             )
             if new_flags:
                 updates["flags"] = json.dumps(
@@ -1378,6 +1629,7 @@ class BoardService:
                     "text": updates["ask"],
                     "target": updates["ask_to"],
                     "options": json.loads(updates["ask_options"]),
+                    "context": updates["review_context"],
                 }
                 if updates.get("ask") is not None
                 else {"text": review_edit_text}
@@ -1401,8 +1653,8 @@ class BoardService:
                 self._emit(conn, row["id"], "card.review_needed", return_to=self.principal.actor)
             return card(conn, task_row(conn, row["id"]), self.principal)
 
-    def _handoff(self, conn, row, board, to, note, options=None):
-        self._write(board)
+    def _handoff(self, conn, row, board, to, note, options=None, context=None):
+        self._write(board, row=row)
         target = self._actor(to)
         person = target is not None and target.startswith("user:")
         if row["status"] not in ("todo", "doing"):
@@ -1412,6 +1664,10 @@ class BoardService:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
         options = choices(options)
+        if person:
+            note, options = review_request(
+                note, options, context if context is not None else review_context(row)
+            )
         if options and not person:
             raise ToolError("no: options require a person")
         status = "review" if person else "todo"
@@ -1424,9 +1680,12 @@ class BoardService:
             "ask_to": target if person else None,
             "return_to": self.principal.actor if person else None,
             "flags": json.dumps(
-                sorted(set(json.loads(row["flags"] or "[]")) | set(flags_for(note)))
+                sorted(set(json.loads(row["flags"] or "[]")) | set(flags_for(note, context)))
             ),
         }
+        updates["review_context"] = (
+            (context if context is not None else review_context(row)) if person else None
+        )
         self._set(conn, row, updates)
         self._log(
             conn,
@@ -1436,8 +1695,9 @@ class BoardService:
             target=target,
             from_status=row["status"],
             to_status=status,
-            flags=flags_for(note),
+            flags=flags_for(note, context),
             options=options if person else None,
+            context=updates["review_context"],
         )
         self._emit(
             conn,
@@ -1454,27 +1714,30 @@ class BoardService:
             self._emit(conn, row["id"], "card.review_needed", return_to=updates["return_to"])
         return card(conn, task_row(conn, row["id"]), self.principal)
 
-    def task_handoff(self, task, to, note, options=None, version=None):
+    def task_handoff(self, task, to, note, options=None, version=None, context=None):
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             self._version(conn, row, version)
-            return self._handoff(conn, row, board, to, note, options)
+            return self._handoff(conn, row, board, to, note, options, context)
 
-    def ask(self, question, options=None, board=None, task=None):
+    def ask(self, question, options=None, board=None, task=None, context=""):
         with self.transaction() as conn:
             if task is not None:
                 row, b = self._get(conn, task)
                 if board is not None and self._board(conn, board)["id"] != b["id"]:
                     raise ToolError("no: card not found")
-                return self._handoff(conn, row, b, self._owner_actor(), question, options)
+                return self._handoff(
+                    conn, row, b, self._owner_actor(), question, options, context or None
+                )
             b = self._board(conn, board, create=True)
-            self._write(b)
+            self._write(b, submission=True)
             self._expire(conn, b)
             question = validate_text(question, "question", required=True, limit=5000)
             return self._new_card(
                 conn,
                 b,
                 title=question,
+                body=context,
                 status="review",
                 ask=question,
                 options=choices(options),
@@ -1516,6 +1779,7 @@ class BoardService:
                 "ask": None,
                 "ask_options": None,
                 "ask_to": None,
+                "review_context": None,
                 "return_to": row["return_to"] if then == "return" else None,
                 "done_at": now() if status == "done" else None,
                 "flags": json.dumps(

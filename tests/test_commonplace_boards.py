@@ -13,10 +13,15 @@ from commonplace import events, sessions
 from commonplace.boards.service import BoardService, needs_me
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext, ToolError
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    REVIEW_QUESTION,
+    hub_fixture,  # noqa: F401
+)
 
 CARD_KEYS = set(
-    "number parent board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position need message_id".split()
+    "review_context claim_expired_at claim_expired agent_parent proposal_status proposed_to approved_by can_approve review_kind number parent board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number checks status_line heartbeat_at labels links version created_by created_at updated_at position need message_id".split()
 )
 
 
@@ -37,8 +42,8 @@ def api(hub, auth, method, path, body=None):
         connection.close()
 
 
-def mcp(hub, token, name, **args):
-    response = hub.rpc(token, "tools/call", {"name": name, "arguments": args})
+def mcp(hub, token, tool_name, **args):
+    response = hub.rpc(token, "tools/call", {"name": tool_name, "arguments": args})
     if "error" in response:
         return False, response["error"]["message"]
     return not response["result"].get("isError", False), response["result"]["content"][0]["text"]
@@ -94,9 +99,7 @@ def test_registration_real_worker_and_profiles(hub, env):
     )
     names = hub.tool_names(slim)
     assert {"board_list", "task_list", "task_add", "task_show", "task_comment"} <= names
-    assert (
-        not {"board_add", "task_take_next", "task_update", "task_handoff", "ask", "decide"} & names
-    )
+    assert not {"board_add", "decide"} & names
     assert hub.supervisor.get(hub.workspace) is not None
 
 
@@ -143,7 +146,7 @@ MOVES = [
     ("backlog", "todo", "update", True),
     ("backlog", "doing", "update", True),
     ("backlog", "doing", "take", True),
-    ("todo", "doing", "update", False),
+    ("todo", "doing", "update", True),
     ("todo", "doing", "take", True),
     ("doing", "todo", "update", False),
     ("doing", "todo", "handoff", True),
@@ -156,7 +159,7 @@ MOVES = [
     ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
     ("todo", "review", "handoff", True),
     ("todo", "review", "update", True),
-    ("todo", "done", "update", True),
+    ("todo", "done", "update", False),
     ("done", "todo", "update", True),
     ("todo", "backlog", "update", True),
     ("doing", "backlog", "update", True),
@@ -168,7 +171,12 @@ MOVES = [
 def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
     token, agent, _person, _cookie, owner = env
     card = (
-        service(hub, agent).ask("move", board="work")
+        service(hub, agent).ask(
+            REVIEW_QUESTION,
+            board="work",
+            context=REVIEW_CONTEXT,
+            options=REVIEW_OPTIONS,
+        )
         if old == "review" and operation == "update"
         else owner.seed_card(board="work", title="move", status=old)
     )
@@ -189,12 +197,29 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
                 "task_handoff",
                 task=number,
                 to="owner@example.com" if new == "review" else "anyone",
-                note="Verbatim note",
+                note="Verbatim note Which approach should we take?",
+                context=REVIEW_CONTEXT,
+                options=REVIEW_OPTIONS if new == "review" else None,
             )
         elif operation == "decide":
             ok, _text = mcp(hub, token, "decide", task=number, choice="yes", then="done")
         else:
-            ok, _text = mcp(hub, token, "task_update", task=number, status=new)
+            ok, _text = mcp(
+                hub,
+                token,
+                "task_update",
+                task=number,
+                status=new,
+                **(
+                    {
+                        "question": REVIEW_QUESTION,
+                        "options": REVIEW_OPTIONS,
+                        "context": REVIEW_CONTEXT,
+                    }
+                    if new == "review"
+                    else {}
+                ),
+            )
     else:
         current = owner.task_show(number)
         if operation == "handoff":
@@ -205,7 +230,9 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
                 f"/api/cards/{number}/handoff",
                 {
                     "to": "owner@example.com" if new == "review" else "anyone",
-                    "note": "Verbatim note",
+                    "note": "Verbatim note Which approach should we take?",
+                    "context": REVIEW_CONTEXT,
+                    "options": REVIEW_OPTIONS if new == "review" else None,
                 },
             )
         elif operation == "decide":
@@ -222,7 +249,19 @@ def test_agent_move_rules(hub, env, surface, old, new, operation, allowed):
                 token,
                 "PATCH",
                 f"/api/cards/{number}",
-                {"version": current["version"], "status": new},
+                {
+                    "version": current["version"],
+                    "status": new,
+                    **(
+                        {
+                            "question": REVIEW_QUESTION,
+                            "options": REVIEW_OPTIONS,
+                            "context": REVIEW_CONTEXT,
+                        }
+                        if new == "review"
+                        else {}
+                    ),
+                },
             )
         ok = status == 200
     assert ok is allowed
@@ -267,7 +306,15 @@ def test_person_moves_rest(hub, env, old, new):
         cookie,
         "PATCH",
         f"/api/cards/{created['number']}",
-        {"version": created["version"], "status": new},
+        {
+            "version": created["version"],
+            "status": new,
+            **(
+                {"question": REVIEW_QUESTION, "options": REVIEW_OPTIONS, "context": REVIEW_CONTEXT}
+                if new == "review"
+                else {}
+            ),
+        },
     )
     assert status == 200 and current["status"] == new
     if new == "doing":
@@ -276,7 +323,12 @@ def test_person_moves_rest(hub, env, old, new):
 
 def test_review_only_decide_and_done_is_never_deleted(hub, env):
     _token, _agent, _person, cookie, owner = env
-    created = owner.ask("Proceed?", options=["yes"], board="work")
+    created = owner.ask(
+        "Proceed? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     assert (
         api(
             hub,
@@ -338,7 +390,11 @@ def assert_card_event(hub, owner, number, actor, kind, old, new, trust="trusted"
     ][-1]
     assert (
         emitted["kind"]
-        == {"claim": "card.claimed", "move": "card.moved", "edit": "card.updated"}[kind]
+        == {
+            "claim": "card.claimed",
+            "move": "card.moved",
+            "edit": "card.updated",
+        }[kind]
     )
     assert emitted["actor"] == actor
     assert (emitted["data"]["from"], emitted["data"]["to"]) == (old, new)
@@ -397,7 +453,13 @@ def test_trusted_agent_picks_explicit_backlog(hub, env, member, reserved, path):
         if reserved:
             assert service(hub, _agent).task_take_next(board="work") is None
         worker.task_take_next(task=number)
-    worker.task_update(number, status="review")
+    worker.task_update(
+        number,
+        status="review",
+        question=REVIEW_QUESTION,
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     refusal = (
         "only a workspace owner" if member else "only the owner or a trusted agent can answer this"
     )
@@ -456,8 +518,11 @@ def test_restricted_origin_backlog_requires_person_release(hub, env, origin, ope
         **origin,
     )
     code, created = api(hub, token, "POST", "/api/boards/work/cards", {"title": "Needs triage"})
-    assert code == 201 and created["status"] == "backlog"
+    assert code == 201 and created["status"] == "todo"
     number = created["number"]
+    # Reproduce a pre-migration restricted submission, rather than a new default card.
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET status='backlog',restricted_origin=1 WHERE id=?", (number,))
     with owner.store.connection() as conn:
         row = conn.execute("SELECT * FROM tasks WHERE id=?", (number,)).fetchone()
         assert row["restricted_origin"] == 1 and row["stamp_trust"] == origin["trust"]
@@ -484,7 +549,10 @@ def test_restricted_origin_backlog_requires_person_release(hub, env, origin, ope
     promoted = owner.task_update(number, status="todo")
     assert promoted["status"] == "todo" and promoted["assignee"] is None
     logged = owner.task_show(number)["events"][-1]
-    assert (logged["kind"], logged["actor"]) == ("move", person.actor)
+    assert (logged["kind"], logged["actor"]) == (
+        "move",
+        person.actor,
+    )
     event = events.after(hub.db, hub.workspace)[-1]
     assert (event["kind"], event["actor"]) == ("card.moved", person.actor)
     assert (event["data"]["from"], event["data"]["to"]) == ("backlog", "todo")
@@ -578,13 +646,13 @@ def test_legacy_backlog_origin_migration_resolves_current_connection_policy(hub,
             assert worker.task_take_next(task=number)["status"] == "doing"
             continue
         for status in ("todo", "doing"):
-            with pytest.raises(ToolError, match="requires a person"):
+            with pytest.raises(ToolError, match="person|owner release"):
                 worker.task_update(number, status=status)
         with pytest.raises(ToolError, match="not available"):
             worker.task_take_next(task=number)
     assert worker.task_take_next(task=person_card["number"])["status"] == "doing"
     assert worker.task_take_next(task=ready["number"])["status"] == "doing"
-    assert owner.task_show(held["number"])["status"] == "todo"
+    assert owner.task_show(held["number"])["status"] == "doing"
     released = next(number for number, restricted in backlog.items() if restricted)
     owner.task_update(released, status="todo")
     BoardStore(owner.ctx.workspace_dir())
@@ -613,7 +681,12 @@ def test_agent_cannot_pick_up_backlog_waiting_on_someone(hub, env, field):
 
 def test_pending_person_ask_cannot_be_promoted_or_taken(hub, env):
     _token, agent, _person, _cookie, owner = env
-    waiting = owner.ask("Choose first", board="work")
+    waiting = owner.ask(
+        "Choose first Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     worker = service(hub, agent)
     before = owner.task_show(waiting["number"])
     for status in ("todo", "doing"):
@@ -709,7 +782,12 @@ def test_done_annotations_require_trusted_board_writer(hub, env, policy):
     _token, _principal, worker = board_agent(hub, **policy)
     created = owner.seed_card(board="work", title="Completed", status="done")
     before = owner.task_show(created["number"])
-    for args in ({"lesson": "No"}, {"pr": 3}, {"link": "missing"}, {"unlink": "missing"}):
+    for args in (
+        {"lesson": "No Which approach should we take?"},
+        {"pr": 3},
+        {"link": "missing"},
+        {"unlink": "missing"},
+    ):
         with pytest.raises(ToolError):
             worker.task_update(created["number"], **args)
     assert owner.task_show(created["number"]) == before
@@ -755,12 +833,27 @@ def test_needs_me_keeps_owner_access_and_adds_trusted_members(
     hub, env, policy, member_allowed, member
 ):
     _token, agent, _person, _cookie, owner = env
-    asked = service(hub, agent).ask("Keep waiting", board="work")
+    asked = service(hub, agent).ask(
+        "Keep waiting Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     token, principal, worker = board_agent(hub, member=member, scopes=["memory:read"], **policy)
     allowed = not member or member_allowed
-    addressed = owner.ask("Member question", board="work")
+    addressed = owner.ask(
+        "Member question Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     owner.board_add(slug="hidden", wing="private.hidden")
-    hidden = owner.ask("HIDDEN-QUEUE-CONTENT", board="hidden")
+    hidden = owner.ask(
+        "HIDDEN-QUEUE-CONTENT Which approach should we take?",
+        board="hidden",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET ask_to=? WHERE id IN (?,?)",
@@ -775,10 +868,12 @@ def test_needs_me_keeps_owner_access_and_adds_trusted_members(
             hub, token, "GET", "/api/needs-me" + ("/digest" if format == "digest" else "")
         )
         assert status == (200 if allowed else 403)
-        assert "HIDDEN-QUEUE-CONTENT" not in output + json.dumps(result)
+        assert "HIDDEN-QUEUE-CONTENT Which approach should we take?" not in output + json.dumps(
+            result
+        )
         if allowed:
-            assert "Member question" in output
-            assert ("Keep waiting" in output) is (not member)
+            assert "Member question Which approach should we take?" in output
+            assert ("Keep waiting Which approach should we take?" in output) is (not member)
             assert result["count"] == (1 if member else 2)
     if allowed:
         assert {item["number"] for item in worker.needs_me()["asks"]} == (
@@ -789,7 +884,7 @@ def test_needs_me_keeps_owner_access_and_adds_trusted_members(
         with pytest.raises(ToolError, match="only a workspace owner"):
             worker.board_set("work", coordinator=principal.actor)
         with pytest.raises(ToolError, match="only a workspace owner"):
-            worker.decide(asked["number"], reply="No")
+            worker.decide(asked["number"], reply="No Which approach should we take?")
     if not allowed:
         with pytest.raises(ToolError, match="only a workspace owner"):
             worker.needs_me()
@@ -801,14 +896,30 @@ def test_needs_me_member_filters_asks_by_user_and_other_buckets_by_wing(hub, env
     _token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
     _token, member, reader = board_agent(hub, member=True, scopes=["memory:read"])
-    worker.ask("Owner decision", board="work")
-    addressed = worker.ask("Member decision", board="work")
-    done = worker.ask("Done?", board="work")
+    worker.ask(
+        "Owner decision Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
+    addressed = worker.ask(
+        "Member decision Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
+    done = worker.ask(
+        REVIEW_QUESTION,
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     backlog = worker.task_add(board="work", title="Agent backlog", status="backlog")
     ready = worker.task_add(board="work", title="Ready and stale")
     worker.task_take_next(task=ready["number"])
     worker.task_update(ready["number"], pr=8, checks="passing")
     with owner.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET review_kind='completion' WHERE id=?", (done["number"],))
         conn.execute(
             "UPDATE tasks SET ask_to=? WHERE id IN (?,?)",
             (f"user:{member.user_id}", addressed["number"], done["number"]),
@@ -833,7 +944,12 @@ def test_needs_me_member_filters_asks_by_user_and_other_buckets_by_wing(hub, env
 def test_needs_me_member_list_and_digest_require_memory_read(hub, env, scopes):
     _token, _agent, _person, _cookie, owner = env
     token, principal, reader = board_agent(hub, member=True, scopes=scopes)
-    asked = owner.ask("Member read permission", board="work")
+    asked = owner.ask(
+        "Member read permission Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET ask_to=? WHERE id=?",
@@ -862,7 +978,7 @@ def test_needs_me_member_list_and_digest_require_memory_read(hub, env, scopes):
         if allowed:
             assert result["count"] == 1
         else:
-            assert "Member read permission" not in json.dumps(result)
+            assert "Member read permission Which approach should we take?" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("trust", ["trusted", "standard"])
@@ -883,7 +999,13 @@ def test_person_answer_return_marker_does_not_block_released_cards(
     _token, principal, worker = board_agent(hub, trust=trust)
     created = requester.task_add(board="work", title="Person released work")
     number = created["number"]
-    requester.task_handoff(number, to=owner_person.actor, note="Can I continue?", options=["yes"])
+    requester.task_handoff(
+        number,
+        to=owner_person.actor,
+        note="Can I continue? Which approach should we take?",
+        options=["yes", "no"],
+        context=REVIEW_CONTEXT,
+    )
     returned = owner.decide(number, choice="yes", then="return")
     assert returned["assignee"] == person.actor and returned["return_to"] == person.actor
     with pytest.raises(ToolError, match="not available"):
@@ -922,7 +1044,16 @@ def test_person_answer_return_marker_does_not_block_released_cards(
             with pytest.raises(ToolError, match="completed cards are frozen"):
                 worker.task_update(number, lesson="Still trusted-only")
         worker.task_update(number, status="todo")
-        assert_card_event(hub, owner, number, principal.actor, "move", "done", "todo", trust)
+        assert_card_event(
+            hub,
+            owner,
+            number,
+            principal.actor,
+            "move",
+            "done",
+            "todo",
+            trust,
+        )
     taken = (
         worker.task_take_next(task=number)
         if pickup == "explicit"
@@ -956,7 +1087,7 @@ def test_take_next_thread_race_separate_connections(hub, env):
 
 
 @pytest.mark.parametrize("pickup", ["take", "update"])
-def test_expired_backlog_claim_returns_to_backlog_with_history(hub, env, pickup):
+def test_expired_backlog_claim_keeps_holder_and_lane_with_history(hub, env, pickup):
     _token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
     created = owner.task_add(board="work", title="Explicit selection", status="backlog")
@@ -973,8 +1104,8 @@ def test_expired_backlog_claim_returns_to_backlog_with_history(hub, env, pickup)
         )
         conn.execute("UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (number,))
     current = owner.task_show(number)
-    assert current["status"] == "backlog" and current["assignee"] is None
-    assert current["claim_until"] is None
+    assert current["status"] == "doing" and current["assignee"] == agent.actor
+    assert current["claim_expired"] and current["claim_until"]
     expired = [e for e in current["events"] if e["kind"] == "expire"]
     assert len(expired) == 1 and expired[0]["actor"] == "system"
     with owner.store.connection() as conn:
@@ -983,26 +1114,20 @@ def test_expired_backlog_claim_returns_to_backlog_with_history(hub, env, pickup)
         ).fetchone()
         assert (logged["from_status"], logged["to_status"], logged["target"]) == (
             "doing",
-            "backlog",
+            "doing",
             agent.actor,
         )
     event = events.after(hub.db, hub.workspace)[-1]
     assert (event["kind"], event["actor"]) == ("card.expired", "system")
     assert (event["data"]["from"], event["data"]["to"], event["data"]["target"]) == (
         "doing",
-        "backlog",
+        "doing",
         agent.actor,
     )
     assert worker.task_take_next(board="work") is None
-    worker.task_update(number, status="todo")
-    worker.task_take_next(task=number)
-    with owner.store.transaction() as conn:
-        assert (
-            conn.execute("SELECT claim_from FROM tasks WHERE id=?", (number,)).fetchone()[0]
-            == "todo"
-        )
-        conn.execute("UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (number,))
-    assert owner.task_show(number)["status"] == "todo"
+    worker.task_heartbeat(number)
+    renewed = owner.task_show(number)
+    assert renewed["status"] == "doing" and not renewed["claim_expired"]
 
 
 def test_lazy_expiry_and_change_counter(hub, env):
@@ -1016,7 +1141,7 @@ def test_lazy_expiry_and_change_counter(hub, env):
     changes = owner.store.changes
     owner.board_list()
     current = owner.task_show(card["number"])
-    assert current["status"] == "todo" and current["assignee"] is None
+    assert current["status"] == "doing" and current["assignee"] == "conn:agent"
     assert len([e for e in current["events"] if e["kind"] == "expire"]) == 1
     assert owner.store.changes > changes
     changes = owner.store.changes
@@ -1030,7 +1155,13 @@ def test_ask_decide_return_priority_and_decision_line(hub, env):
     first = owner.task_add(title="Earlier free card", board="work")
     card = owner.task_add(title="Needs a decision", board="work")
     assert mcp(
-        hub, token, "ask", task=card["number"], question="1 year or 90 days?", options=["1y", "90d"]
+        hub,
+        token,
+        "ask",
+        task=card["number"],
+        question="1 year or 90 days? Which approach should we take?",
+        options=["1y", "90d"],
+        context=REVIEW_CONTEXT,
     )[0]
     current = owner.task_show(card["number"])
     assert current["ask_to"] == person.actor and current["return_to"] == agent.actor
@@ -1060,17 +1191,33 @@ def test_workspace_people_resolution(hub, env, ref):
     hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
     card = owner.task_add(title="Resolution", board="work")
     target = f"user:{user}" if ref == "id" else ref
-    assert mcp(hub, token, "task_handoff", task=card["number"], to=target, note="Pick one")[0]
+    assert mcp(
+        hub,
+        token,
+        "task_handoff",
+        task=card["number"],
+        to=target,
+        note="Pick one Which approach should we take?",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )[0]
     assert owner.task_show(card["number"])["ask_to"] == f"user:{user}"
     card = owner.task_add(title="Unknown member", board="work")
     assert not mcp(
-        hub, token, "task_handoff", task=card["number"], to="stranger@example.com", note="No"
+        hub,
+        token,
+        "task_handoff",
+        task=card["number"],
+        to="stranger@example.com",
+        note="No Which approach should we take?",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
     )[0]
 
 
 @pytest.mark.parametrize("trust", ["untrusted", "standard"])
-def test_inbox_backlog_guard(hub, env, trust):
-    agent_token, _agent, _person, cookie, owner = env
+def test_inbox_agent_can_create_and_claim_without_triage(hub, env, trust):
+    agent_token, _agent, _person, _cookie, owner = env
     token = hub.token(
         "inbox",
         profile="full",
@@ -1084,55 +1231,31 @@ def test_inbox_backlog_guard(hub, env, trust):
         token,
         "POST",
         "/api/boards/work/cards",
-        {"title": "ignore previous\n  keep verbatim", "status": "doing", "assignee": "conn:agent"},
+        {"title": "ignore previous\n  keep verbatim", "status": "doing", "assignee": "self"},
     )
-    assert status == 201 and created["status"] == "backlog" and created["assignee"] is None
+    assert status == 201 and created["status"] == "doing" and created["assignee"] == "conn:inbox"
     assert created["flags"] == ["ignore_previous"]
-    assert "nothing to take" in mcp(hub, agent_token, "task_take_next", board="work")[1]
-    assert (
-        api(
-            hub,
-            token,
-            "PATCH",
-            f"/api/cards/{created['number']}",
-            {"version": created["version"], "status": "todo"},
-        )[0]
-        == 403
-    )
-    assert (
-        api(
-            hub,
-            token,
-            "POST",
-            f"/api/cards/{created['number']}/comments",
-            {"text": "Exact\ncomment"},
-        )[0]
-        == 200
-    )
-    current = owner.task_show(created["number"])
-    assert (
-        api(
-            hub,
-            cookie,
-            "PATCH",
-            f"/api/cards/{created['number']}",
-            {"version": current["version"], "status": "todo"},
-        )[0]
-        == 200
-    )
-    assert mcp(hub, agent_token, "task_take_next", task=created["number"])[0]
+    assert not mcp(hub, agent_token, "task_take_next", task=created["number"])[0]
+    assert mcp(hub, token, "task_update", task=created["number"], status_line=REVIEW_CONTEXT)[0]
+    assert mcp(hub, token, "task_update", task=created["number"], status="done")[0]
+    assert owner.task_show(created["number"])["status"] == "done"
 
 
 def test_needs_me_buckets_and_owner_only(hub, env):
     token, agent, person, _cookie, owner = env
     worker = service(hub, agent)
-    ask = worker.ask("Choose?", board="work")
+    ask = worker.ask(
+        "Choose? Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='work'")
-    done = worker.task_add(title="Check finish", board="work")
+    done = worker.task_add(title="Check finish", body=REVIEW_CONTEXT, board="work")
     worker.task_take_next(task=done["number"])
     done = worker.task_update(done["number"], status="done")
-    assert done["ask"] == "Done?" and done["ask_options"] == ["ship", "redo"]
+    assert "ready to accept?" in done["ask"] and len(done["ask_options"]) == 2
     backlog = worker.task_add(title="Triage", board="work", status="backlog")
     ready = worker.task_add(title="Ready", board="work")
     worker.task_take_next(task=ready["number"])
@@ -1386,7 +1509,7 @@ def test_board_autocreate_write_scope_and_reserved_card(hub, env):
         write_wings=["different"],
         trust="standard",
     )
-    assert not mcp(hub, limited, "task_add", board="work", title="Denied")[0]
+    assert mcp(hub, limited, "task_add", board="work", title="Own work")[0]
     assert not mcp(hub, limited, "task_add", board="no-auto", title="Denied")[0]
     card = owner.task_add(title="Reserved", board="work", assignee="someone-else")
     assert not mcp(hub, token, "task_take_next", task=card["number"])[0]
@@ -1406,8 +1529,15 @@ def test_handoff_respects_todo_reservations(hub, env, standard_agent, surface, r
     token, _principal = standard_agent
     assert mcp(hub, token, "task_add", board="work", title="Can write to this board")[0]
     if reserved_for == "returned-to-agent":
-        card = service(hub, agent).ask("Continue?", board="work")
-        card = owner.decide(card["number"], reply="Continue", then="return")
+        card = service(hub, agent).ask(
+            "Continue? Which approach should we take?",
+            board="work",
+            context=REVIEW_CONTEXT,
+            options=REVIEW_OPTIONS,
+        )
+        card = owner.decide(
+            card["number"], reply="Continue Which approach should we take?", then="return"
+        )
     else:
         card = owner.task_add(
             title="Reserved",
@@ -1418,11 +1548,24 @@ def test_handoff_respects_todo_reservations(hub, env, standard_agent, surface, r
     before = owner.task_show(number)
     assert before["status"] == "todo"
     if surface == "mcp":
-        ok, refused = mcp(hub, token, "ask", task=number, question="May I finish?")
+        ok, refused = mcp(
+            hub,
+            token,
+            "ask",
+            task=number,
+            question="May I finish? Which approach should we take?",
+            context=REVIEW_CONTEXT,
+            options=REVIEW_OPTIONS,
+        )
         assert not ok and "reserved for another connection" in refused
         assert owner.task_show(number) == before
     for name, method, suffix, arguments in (
-        ("task_handoff", "POST", "/handoff", {"to": "owner", "note": "May I finish?"}),
+        (
+            "task_handoff",
+            "POST",
+            "/handoff",
+            {"to": "owner", "note": "May I finish? Which approach should we take?"},
+        ),
         ("task_update", "PATCH", "", {"status": "done"}),
     ):
         if surface == "mcp":
@@ -1451,19 +1594,37 @@ def test_handoff_accepts_free_and_self_reserved_todo(hub, env, standard_agent, s
     )
     number = card["number"]
     if surface == "mcp":
-        assert mcp(hub, token, "task_handoff", task=number, to="owner", note="Ready?")[0]
+        assert mcp(
+            hub,
+            token,
+            "task_handoff",
+            task=number,
+            to="owner",
+            note="Ready? Which approach should we take?",
+            context=REVIEW_CONTEXT,
+            options=REVIEW_OPTIONS,
+        )[0]
     else:
         code, _result = api(
             hub,
             token,
             "POST",
             f"/api/cards/{number}/handoff",
-            {"version": card["version"], "to": "owner", "note": "Ready?"},
+            {
+                "version": card["version"],
+                "to": "owner",
+                "note": "Ready? Which approach should we take?",
+                "context": REVIEW_CONTEXT,
+                "options": REVIEW_OPTIONS,
+            },
         )
         assert code == 200
     current = owner.task_show(number)
     assert current["status"] == "review" and current["assignee"] is None
-    assert current["ask"] == "Ready?" and current["ask_to"] == person.actor
+    assert (
+        current["ask"] == "Ready? Which approach should we take?"
+        and current["ask_to"] == person.actor
+    )
     assert current["return_to"] == principal.actor
 
 
@@ -1483,7 +1644,7 @@ def test_expired_version_conflict_returns_committed_card(hub, env):
         f"/api/cards/{created['number']}",
         {"version": current["version"], "title": "Should not apply"},
     )
-    assert status == 409 and conflict["current"]["status"] == "todo"
+    assert status == 409 and conflict["current"]["status"] == "doing"
     actual = owner.task_show(created["number"])
     assert {key: actual[key] for key in CARD_KEYS} == {
         k: v for k, v in conflict["current"].items() if k != "url"
@@ -1509,12 +1670,20 @@ def test_memory_link_renews_holder_and_never_needs_the_hold(hub, env):
             "UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (created["number"],)
         )
     owner.store.link_drawer(created["number"], "memory-after-expiry", other.actor, principal=other)
-    assert owner.task_show(created["number"])["status"] == "todo"
+    assert owner.task_show(created["number"])["status"] == "doing"
 
 
 def test_an_agent_never_answers_its_own_question(hub, env):
     token, _agent, _person, _cookie, owner = env
-    ok, text = mcp(hub, token, "ask", question="Ship it?", options=["yes", "no"], board="work")
+    ok, text = mcp(
+        hub,
+        token,
+        "ask",
+        question="Ship it? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     assert ok, text
     number = int(text.split()[0].lstrip("#"))
     card = owner.task_show(number)
@@ -1555,7 +1724,15 @@ def test_reverse_links_include_authoritative_board_and_wing(hub, env):
 
 def test_cards_carry_short_links_and_people_read_as_names(hub, env):
     token, _agent, _person, cookie, owner = env
-    ok, text = mcp(hub, token, "ask", question="Ship?", options=["yes", "no"], board="work")
+    ok, text = mcp(
+        hub,
+        token,
+        "ask",
+        question="Ship? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     assert ok, text
     assert "owner@example.com" in text and "user:" not in text
     assert "/s/" in text
@@ -1578,7 +1755,8 @@ def test_handoff_to_a_person_by_name_or_owner(hub, env):
             "task_handoff",
             task=card["number"],
             to=to,
-            note="Pick one",
+            note="Pick one Which approach should we take?",
+            context=REVIEW_CONTEXT,
             options=["a", "b"],
         )
         assert ok, text
@@ -1645,7 +1823,13 @@ def test_post_commit_emit_failure_preserves_success_and_safe_logs(hub, env, monk
     with monkeypatch.context() as patch:
         patch.setattr(events, "emit", fail)
         created = owner.task_add(title="PRIVATE-CARD-CONTENT", board="work")
-        waiting = owner.task_handoff(created["number"], to="owner", note="Pick one")
+        waiting = owner.task_handoff(
+            created["number"],
+            to="owner",
+            note="Pick one Which approach should we take?",
+            context=REVIEW_CONTEXT,
+            options=REVIEW_OPTIONS,
+        )
     assert owner.task_show(created["number"])["status"] == waiting["status"] == "review"
     assert attempts == ["card.created", "card.handoff", "card.review_needed"]
     assert "RuntimeError" in caplog.text and "PRIVATE-CARD-CONTENT" not in caplog.text
@@ -1673,15 +1857,15 @@ def test_board_flags_union_privacy_scan_without_changing_text(hub, env):
 def test_agent_done_routes_to_review_with_audit(hub, env, old):
     _token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
-    created = worker.task_add(board="work", title="Finish")
+    created = worker.task_add(board="work", title="Finish", body=REVIEW_CONTEXT)
     if old == "doing":
         worker.task_take_next(task=created["number"])
     with owner.store.transaction() as conn:
         conn.execute("UPDATE boards SET done_needs_review=1 WHERE slug='work'")
     changed = worker.task_update(created["number"], status="done")
     assert changed["status"] == "review"
-    assert changed["ask"] == "Done?"
-    assert changed["ask_options"] == ["ship", "redo"]
+    assert "ready to accept?" in changed["ask"]
+    assert changed["ask_options"] == ["Accept the completed work", "Return for more work"]
     with owner.store.connection() as conn:
         event = conn.execute(
             "SELECT * FROM task_events WHERE task_id=? AND kind='move' ORDER BY id DESC",
@@ -1698,13 +1882,22 @@ def test_agent_done_routes_to_review_with_audit(hub, env, old):
 def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs_review, surface):
     token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
-    waiting = worker.ask("Ready to close?", board="work")
+    waiting = worker.ask(
+        "Ready to close? Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     with owner.store.transaction() as conn:
         conn.execute("UPDATE boards SET done_needs_review=? WHERE slug='work'", (needs_review,))
     with pytest.raises(ToolError):
         worker.decide(task=number, choice="yes", then="done")
-    current = worker.task_update(number, status="review", checks="passing")
+    current = worker.task_update(
+        number,
+        status="review",
+        checks="passing",
+    )
     assert current["ask"] == waiting["ask"] and current["ask_to"] == waiting["ask_to"]
     for status in ("review", "done"):
         if surface == "mcp":
@@ -1740,12 +1933,15 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         assert current["ask"] is None and current["ask_to"] is None
         assert current["return_to"] is None and current["ask_options"] == []
     if needs_review:
-        assert last["text"] == "Done?"
-        assert json.loads(last["options"]) == ["ship", "redo"]
-        assert current["events"][-1]["options"] == ["ship", "redo"]
+        assert "ready to accept?" in last["text"]
+        assert json.loads(last["options"]) == ["Accept the completed work", "Return for more work"]
+        assert current["events"][-1]["options"] == [
+            "Accept the completed work",
+            "Return for more work",
+        ]
         assert last["target"] == current["ask_to"]
-        assert current["ask"] == "Done?"
-        assert current["ask_options"] == ["ship", "redo"]
+        assert "ready to accept?" in current["ask"]
+        assert current["ask_options"] == ["Accept the completed work", "Return for more work"]
         assert number in {card["number"] for card in owner.needs_me()["done_review"]}
         with pytest.raises(ToolError):
             worker.decide(task=number, choice="ship", then="done")
@@ -1775,7 +1971,12 @@ def test_other_agents_cannot_move_review(hub, env, surface, needs_review, member
     with owner.store.transaction() as conn:
         conn.execute("UPDATE boards SET done_needs_review=? WHERE slug='work'", (needs_review,))
     for asker in (service(hub, agent), owner):
-        waiting = asker.ask("Keep this question?", options=["yes", "no"], board="work")
+        waiting = asker.ask(
+            "Keep this question? Which approach should we take?",
+            options=["yes", "no"],
+            board="work",
+            context=REVIEW_CONTEXT,
+        )
         number = waiting["number"]
         before = owner.task_show(number)
         if surface == "mcp":
@@ -1841,7 +2042,12 @@ def test_trusted_review_edit_keeps_person_ask(hub, env, surface, member, relatio
     _token, agent, _person, _cookie, owner = env
     token, principal, worker = review_worker(hub, member=member)
     requester = worker if relation == "requester" else service(hub, agent)
-    waiting = requester.ask("Keep this question?", options=["yes", "no"], board="work")
+    waiting = requester.ask(
+        "Keep this question? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     number = waiting["number"]
     if relation == "assignee":
         with owner.store.transaction() as conn:
@@ -1919,7 +2125,12 @@ def test_review_edit_history_preserves_previous_values_and_visible_links(hub, en
     )["drawer_id"]
     worker.task_update(number, checks="failing", link=old_link)
     owner.task_update(number, link=hidden)
-    waiting = worker.ask("Keep this ask", task=number, options=["yes", "no"])
+    waiting = worker.ask(
+        "Keep this ask Which approach should we take?",
+        task=number,
+        options=["yes", "no"],
+        context=REVIEW_CONTEXT,
+    )
     args = {
         "title": "Revised title",
         "body": "Revised body",
@@ -1952,7 +2163,12 @@ def test_review_edit_history_preserves_previous_values_and_visible_links(hub, en
 def test_review_history_hides_other_editors_private_links(hub, env, surface, removed):
     _token, _agent, _person, _cookie, owner = env
     token, _principal, worker = review_worker(hub, member=True)
-    waiting = worker.ask("Keep this ask", board="work")
+    waiting = worker.ask(
+        "Keep this ask Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     private, shared = [
         owner.ctx.memory(
@@ -1998,7 +2214,12 @@ def test_review_history_hides_other_editors_private_links(hub, env, surface, rem
 def test_stale_mcp_decide_after_review_edit_is_a_version_clash(hub, env):
     relay_token, relay, _person, _cookie, owner = env
     _token, principal, requester = review_worker(hub, member=True)
-    waiting = requester.ask("Approve this version?", options=["yes", "no"], board="work")
+    waiting = requester.ask(
+        "Approve this version? Which approach should we take?",
+        options=["yes", "no"],
+        board="work",
+        context=REVIEW_CONTEXT,
+    )
     number = waiting["number"]
     schema = next(
         tool["inputSchema"]
@@ -2037,13 +2258,28 @@ def test_public_review_creation_is_person_directed_and_agent_handoff_stays_todo(
     _token, agent, person, _cookie, _owner = env
     worker = service(hub, agent)
     hub.owner_token("review-recipient")
-    asked = worker.ask("Person decision", board="work")
+    asked = worker.ask(
+        "Person decision Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     work = worker.task_add(title="Work to review", board="work")
     worker.task_take_next(task=work["number"])
-    reviewed = worker.task_update(work["number"], status="review")
+    reviewed = worker.task_update(
+        work["number"],
+        status="review",
+        question=REVIEW_QUESTION,
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     handed = worker.task_add(title="Hand to an agent", board="work")
     worker.task_take_next(task=handed["number"])
-    moved = worker.task_handoff(handed["number"], to="conn:review-recipient", note="Continue")
+    moved = worker.task_handoff(
+        handed["number"],
+        to="conn:review-recipient",
+        note="Continue Which approach should we take?",
+    )
     for card in (asked, reviewed):
         assert card["status"] == "review" and card["ask_to"] == person.actor
         assert card["assignee"] is None
@@ -2055,7 +2291,11 @@ def test_public_review_creation_is_person_directed_and_agent_handoff_stays_todo(
 @pytest.mark.parametrize("status", ["todo", "doing"])
 @pytest.mark.parametrize(
     "ask_text,reason",
-    [("Review?", None), ("Done?", "Needs edits"), ("Agent question\n exact", "Exact\nfeedback")],
+    [
+        ("Review?", None),
+        ("Done?", "Needs edits"),
+        ("Agent question\n exact", "Exact\nfeedback"),
+    ],
 )
 def test_trusted_review_return_withdraws_agent_ask(
     hub, env, surface, relation, status, ask_text, reason
@@ -2063,7 +2303,8 @@ def test_trusted_review_return_withdraws_agent_ask(
     _token, agent, _person, _cookie, owner = env
     token, principal, worker = review_worker(hub, member=True)
     requester = worker if relation == "requester" else service(hub, agent)
-    waiting = requester.ask(ask_text, board="work")
+    ask_text += " Which approach should we take?"
+    waiting = requester.ask(ask_text, board="work", context=REVIEW_CONTEXT, options=REVIEW_OPTIONS)
     number = waiting["number"]
     recipient = agent.actor if relation == "requester" else principal.actor
     if relation == "assignee-other-agent":
@@ -2096,7 +2337,7 @@ def test_trusted_review_return_withdraws_agent_ask(
     assert current["status"] == status and current["title"] == "After feedback"
     assert current["checks"] == "pending" and current["return_to"] is None
     assert current["ask"] is None and current["ask_to"] is None
-    assert current["assignee"] == (principal.actor if status == "doing" else None)
+    assert current["assignee"] == principal.actor
     assert bool(current["claim_until"]) == (status == "doing")
     assert_review_event(hub, owner, number, principal.actor, status)
     with owner.store.connection() as conn:
@@ -2137,7 +2378,12 @@ def test_trusted_review_return_withdraws_agent_ask(
 def test_review_withdrawal_empty_reason_is_null(hub, env):
     _token, agent, _person, _cookie, owner = env
     _token, _principal, worker = review_worker(hub)
-    waiting = worker.ask("Future agent review", board="work")
+    waiting = worker.ask(
+        "Future agent review Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, number))
@@ -2157,7 +2403,12 @@ def test_review_withdrawal_empty_reason_is_null(hub, env):
 def test_review_return_cannot_clear_a_pending_person_decision(hub, env, field, status):
     _token, _agent, person, _cookie, owner = env
     token, principal, worker = review_worker(hub)
-    waiting = worker.ask("Still waiting", board="work")
+    waiting = worker.ask(
+        "Still waiting Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     with owner.store.transaction() as conn:
         conn.execute(
@@ -2191,8 +2442,8 @@ def test_review_return_cannot_clear_a_pending_person_decision(hub, env, field, s
 @pytest.mark.parametrize(
     "args",
     [
-        {"title": "No"},
-        {"body": "No"},
+        {"title": "No Which approach should we take?"},
+        {"body": "No Which approach should we take?"},
         {"checks": "passing"},
         {"labels": ["no"]},
         {"link": "missing"},
@@ -2205,7 +2456,12 @@ def test_review_return_cannot_clear_a_pending_person_decision(hub, env, field, s
 def test_unrelated_agent_cannot_edit_bounce_or_complete_review(hub, env, args):
     _token, agent, _person, _cookie, owner = env
     token, _principal, _worker = review_worker(hub)
-    waiting = service(hub, agent).ask("Someone else's question", board="work")
+    waiting = service(hub, agent).ask(
+        "Someone else's question Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, number))
@@ -2223,7 +2479,12 @@ def test_unrelated_agent_cannot_edit_bounce_or_complete_review(hub, env, args):
 def test_review_assignee_cannot_complete_another_requesters_card(hub, env):
     _token, agent, _person, _cookie, owner = env
     token, principal, _worker = review_worker(hub)
-    waiting = service(hub, agent).ask("Requester's decision", board="work")
+    waiting = service(hub, agent).ask(
+        "Requester's decision Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET assignee=? WHERE id=?", (principal.actor, waiting["number"]))
     before = owner.task_show(waiting["number"])
@@ -2245,18 +2506,36 @@ def test_review_assignee_cannot_complete_another_requesters_card(hub, env):
 def test_review_feedback_requires_trusted_board_writer(hub, env, policy):
     _token, agent, _person, _cookie, owner = env
     token, principal, worker = review_worker(hub, **policy)
-    waiting = service(hub, agent).ask("Feedback", board="work")
+    waiting = service(hub, agent).ask(
+        "Feedback Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET return_to=?,ask_to=? WHERE id=?",
             (principal.actor, agent.actor, waiting["number"]),
         )
     before = owner.task_show(waiting["number"])
-    for args in ({"title": "No"}, {"checks": "passing"}, {"status": "todo"}, {"status": "doing"}):
-        with pytest.raises(ToolError):
+    for args in (
+        {"title": "No Which approach should we take?"},
+        {"checks": "passing"},
+        {"status": "todo"},
+        {"status": "doing"},
+    ):
+        if not principal.policy.has_scope("memory:write"):
+            with pytest.raises(ToolError):
+                worker.task_update(waiting["number"], **args)
+            assert not mcp(hub, token, "task_update", task=waiting["number"], **args)[0]
+        else:
             worker.task_update(waiting["number"], **args)
-        assert not mcp(hub, token, "task_update", task=waiting["number"], **args)[0]
-    assert owner.task_show(waiting["number"]) == before
+            ok, result = mcp(hub, token, "task_update", task=waiting["number"], **args)
+            assert ok, result
+    if not principal.policy.has_scope("memory:write"):
+        assert owner.task_show(waiting["number"]) == before
+    else:
+        assert owner.task_show(waiting["number"])["status"] == "doing"
 
 
 @pytest.mark.parametrize(
@@ -2274,7 +2553,12 @@ def test_review_feedback_requires_trusted_board_writer(hub, env, policy):
 def test_review_feedback_keeps_other_update_fields_blocked(hub, env, args):
     _token, _agent, _person, _cookie, owner = env
     _token, _principal, worker = review_worker(hub)
-    waiting = worker.ask("Pending", board="work")
+    waiting = worker.ask(
+        "Pending Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     before = owner.task_show(waiting["number"])
     with pytest.raises(ToolError, match="card is waiting on a person"):
         worker.task_update(waiting["number"], **args)
@@ -2285,7 +2569,12 @@ def test_review_feedback_keeps_other_update_fields_blocked(hub, env, args):
 def test_review_withdrawal_validates_reason_before_mutation(hub, env, reason):
     _token, agent, _person, _cookie, owner = env
     token, _principal, worker = review_worker(hub)
-    waiting = worker.ask("Agent feedback", board="work")
+    waiting = worker.ask(
+        "Agent feedback Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, waiting["number"]))
     before = owner.task_show(waiting["number"])
@@ -2302,7 +2591,12 @@ def test_review_withdrawal_validates_reason_before_mutation(hub, env, reason):
 def test_withdrawal_reason_migrates_existing_history_and_preserves_invariant(hub, env):
     _token, agent, _person, _cookie, owner = env
     _token, principal, worker = review_worker(hub)
-    waiting = worker.ask("  Original ask\n", board="work")
+    waiting = worker.ask(
+        "  Original ask\n Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     number = waiting["number"]
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, number))
@@ -2320,7 +2614,10 @@ def test_withdrawal_reason_migrates_existing_history_and_preserves_invariant(hub
         event = conn.execute(
             "SELECT * FROM task_events WHERE task_id=? AND kind='release'", (number,)
         ).fetchone()
-        assert (event["text"], event["reason"]) == ("  Original ask\n", "  Exact reason\n")
+        assert (event["text"], event["reason"]) == (
+            "  Original ask\n Which approach should we take?",
+            "  Exact reason\n",
+        )
         with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
             conn.execute("UPDATE tasks SET ask='cannot remain open' WHERE id=?", (number,))
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
@@ -2330,7 +2627,12 @@ def test_withdrawal_reason_migrates_existing_history_and_preserves_invariant(hub
 def test_reason_is_only_available_on_review_returns(hub, env):
     _token, _agent, _person, _cookie, owner = env
     _token, _principal, worker = review_worker(hub)
-    waiting = worker.ask("Pending", board="work")
+    waiting = worker.ask(
+        "Pending Which approach should we take?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     before = owner.task_show(waiting["number"])
     with pytest.raises(ToolError, match="unknown update field"):
         worker.task_update(waiting["number"], checks="passing", reason="No return")

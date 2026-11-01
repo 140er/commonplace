@@ -26,6 +26,13 @@ TASK_COLUMNS = {
     "status_line": "TEXT",
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
+    "claim_expired_at": "TEXT",
+    "agent_parent": "TEXT",
+    "proposal_status": "TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected'))",
+    "proposed_to": "TEXT",
+    "approved_by": "TEXT",
+    "review_kind": "TEXT",
+    "review_context": "TEXT",
 }
 
 
@@ -103,6 +110,14 @@ def require_visible(row, principal) -> None:
         raise ToolError("no: card not found")
 
 
+def owns_card(row, actor):
+    return row is not None and (
+        row["assignee"] == actor
+        or (row["assignee"] is None and row["created_by"] == actor)
+        or (row["status"] == "review" and row["return_to"] == actor)
+    )
+
+
 def card(conn, row, principal=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     result = {
@@ -133,6 +148,17 @@ def card(conn, row, principal=None) -> dict:
         "position": row["position"],
     }
     result["need"] = need_for(result, principal)
+    result["claim_expired"] = bool(
+        row["status"] == "doing" and row["claim_until"] and row["claim_until"] <= now()
+    )
+    result["can_approve"] = bool(
+        principal
+        and row["proposal_status"] == "pending"
+        and (
+            (principal.person and principal.role == "owner")
+            or row["proposed_to"] == principal.actor
+        )
+    )
     if row["parent_number"] is None:
         children = []
         for child in conn.execute(
@@ -161,8 +187,8 @@ def card(conn, row, principal=None) -> dict:
 def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
     conn.execute(
         "INSERT INTO task_events(task_id,kind,text,reason,from_status,to_status,target,choice,options,"
-        "stamp_user,stamp_connection,stamp_trust,flags,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "stamp_user,stamp_connection,stamp_trust,flags,created_at,context) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             number,
             kind,
@@ -178,21 +204,22 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
             trust,
             json.dumps(fields.get("flags", [])),
             now(),
+            fields.get("context"),
         ),
     )
 
 
 def expire_claims(conn, board_id):
     expired = conn.execute(
-        "SELECT id,assignee,coalesce(claim_from,'todo') AS return_status FROM tasks "
-        "WHERE board_id=? AND status='doing' AND claim_until<=?",
+        "SELECT id,assignee FROM tasks "
+        "WHERE board_id=? AND status='doing' AND claim_until<=? AND claim_expired_at IS NULL",
         (board_id, now()),
     ).fetchall()
     for row in expired:
         conn.execute(
-            "UPDATE tasks SET status=?,assignee=NULL,claim_until=NULL,claim_from=NULL,"
+            "UPDATE tasks SET claim_expired_at=?,"
             "version=version+1,updated_at=?,updated_by='system' WHERE id=?",
-            (row["return_status"], now(), row["id"]),
+            (now(), now(), row["id"]),
         )
         append_event(
             conn,
@@ -201,7 +228,7 @@ def expire_claims(conn, board_id):
             "system",
             target=row["assignee"],
             from_status="doing",
-            to_status=row["return_status"],
+            to_status="doing",
         )
     return expired
 
@@ -264,6 +291,8 @@ class BoardStore:
                     conn.execute("ALTER TABLE task_events ADD COLUMN options TEXT")
                 if "reason" not in event_columns:
                     conn.execute("ALTER TABLE task_events ADD COLUMN reason TEXT")
+                if "context" not in event_columns:
+                    conn.execute("ALTER TABLE task_events ADD COLUMN context TEXT")
                 link_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_links)")}
                 if "title" not in link_columns:
                     conn.execute("ALTER TABLE task_links ADD COLUMN title TEXT NOT NULL DEFAULT ''")
@@ -336,7 +365,13 @@ class BoardStore:
         with self.transaction() as conn:
             row = task_row(conn, task_ref)
             require_visible(row, principal)
-            if principal is not None and not principal.policy.can_write_wing(row["board_wing"]):
+            if principal is not None and not (
+                principal.policy.has_scope("memory:write")
+                and (
+                    principal.policy.can_write_wing(row["board_wing"])
+                    or owns_card(row, principal.actor)
+                )
+            ):
                 raise ToolError("no: this connection cannot change this board")
             expire_claims(conn, row["board_id"])
             row = task_row(conn, row["id"])
@@ -359,7 +394,10 @@ class BoardStore:
                     until = (
                         datetime.now(timezone.utc) + timedelta(minutes=row["claim_minutes"])
                     ).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    conn.execute("UPDATE tasks SET claim_until=? WHERE id=?", (until, row["id"]))
+                    conn.execute(
+                        "UPDATE tasks SET claim_until=?,claim_expired_at=NULL,heartbeat_at=? WHERE id=?",
+                        (until, now(), row["id"]),
+                    )
                 append_event(conn, row["id"], "link", actor, user_id=user, target=drawer_id)
 
     def task_links(self, task_ref, *, principal=None) -> list[dict]:

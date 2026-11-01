@@ -1,6 +1,6 @@
 # Commonplace boards: design
 
-Design, 2026-10-30. Nothing built yet. Milestone B in [PRODUCT-DESIGN.md](../../PRODUCT-DESIGN.md) §15.
+Design, updated 2026-11-01. Current permission and migration contract: [API.md](API.md). Milestone B in [PRODUCT-DESIGN.md](../../PRODUCT-DESIGN.md) §15.
 
 Files:
 
@@ -8,9 +8,9 @@ Files:
 - [schema.sql](schema.sql): the data model (runs as is on SQLite 3.35+)
 - [API.md](API.md): the MCP tools agents call and the HTTP calls the web UI makes
 
-This builds on PRODUCT-DESIGN.md §10 and keeps all of it: kanzo's design and none of its code, `boards.sqlite3` in the workspace palace, the §7 stamp on every write, memory scopes as board scopes, `backlog` as the boards' inbox, the change counter, links to drawers. Where they differ, this doc wins. It adds three things §10 left open:
+This builds on PRODUCT-DESIGN.md §10 and keeps all of it: kanzo's design and none of its code, `boards.sqlite3` in the workspace palace, the §7 stamp on every write, memory scopes as board scopes, `backlog` as the boards' inbox, the change counter, links to drawers. Where they differ, the current API contract wins. It adds three things §10 left open:
 
-1. **Claims that expire.** An agent that crashes mid-task no longer holds its card forever.
+1. **Visible claim expiry.** A stopped agent keeps its assignment and lane, with an expired indicator; its next heartbeat renews the claim.
 2. **Handoffs.** An agent can pass a card to another agent, back to the pool, or to a person, with a note.
 3. **A `review` column and a decide queue.** Anything waiting on Avery sits in one place, and he answers it in one click.
 
@@ -20,7 +20,7 @@ This builds on PRODUCT-DESIGN.md §10 and keeps all of it: kanzo's design and no
 2. Two agents never work on the same card.
 3. Everything waiting on Avery is on one screen, oldest first, and each item takes one decision.
 4. Every card, move and comment shows who did it, stamped by the server.
-5. A task filed by an untrusted bot never reaches an agent with a shell until a person lets it through.
+5. Every agent owns work by default. Self-created child proposals require their direct parent or a signed-in owner; memory trust and private-scope boundaries remain intact.
 
 **Non-goals for v1:** sub-tasks, due dates, labels, estimates, swimlanes, per-board permissions beyond the wing, the sealed tier for boards, starting agents from a card (that is module A).
 
@@ -32,9 +32,9 @@ backlog │ todo │ doing │ review │ done
 
 | Column | Holds | Who puts cards here |
 |---|---|---|
-| `backlog` | Ideas, and anything filed by an `inbox` token. Trusted, unrestricted board writers may promote or explicitly take available cards of unrestricted origin without a pending person decision. | Untrusted tokens and cloud clients (always), anyone (on purpose) |
-| `todo` | Ready work. A card may be reserved for one agent. | People (from backlog or new), trusted and standard agents, decisions |
-| `doing` | Held by exactly one actor. An agent's hold expires. | `task_take_next`, or a person dragging a card |
+| `backlog` | Ideas and child proposals marked pending or rejected. | Any agent on purpose; children automatically pending parent approval |
+| `todo` | Ready work, optionally assigned. | All top-level agents by default, people, parent-approved child proposals |
+| `doing` | Held by exactly one actor. An agent's hold expires. | `task_take_next`, `task_update status=doing`, self-assigned creation or a person dragging a card |
 | `review` | An open ask to a person: a question, or finished work to check. | `ask`, `task_update`, or `task_handoff` to a person |
 | `done` | Closed. Never deleted. | The holder, a person, or a decision |
 
@@ -54,11 +54,11 @@ backlog │ todo │ doing │ review │ done
 
 The full table of who may make each move is in [API.md](API.md#move-rules). Three rules carry the design:
 
-- **People and trusted, unrestricted board writers may move available cards out of `backlog`; restricted-origin submissions and cards waiting on a person require a person.** Origin restrictions are recorded when a card is filed, including trusted inbox submissions. Legacy agent backlog uses its trust stamp and the stamping connection's current policy in the same workspace; untrusted stamps and missing, inactive or ambiguous origins remain person-only. Automatic pickup stays on `todo`, and backlog promotion preserves the caller's reservation. Only the asking agent may close a `review` card via `task_update`; person-directed review returns require `decide`. Withdrawal handling is prepared for future agent-directed asks under the rules below. An agent can never answer its own question. Untrusted and inbox-restricted connections still only submit cards and comments.
+- **Every agent can create, claim and maintain its own cards.** Pending/rejected child proposals require `task_approve` by their direct parent or a signed-in owner. Other holders and person decisions stay protected. Trusted unrestricted writers retain shared backlog pickup; memory inbox routing never forces a top-level card into backlog.
 - **Only the holder changes a `doing` card.** Others can comment.
 - **Cards are never deleted.** Closing one with a reason is a move to `done`. The event log is append-only (enforced by triggers in `schema.sql`).
 
-Trusted, unrestricted board writers may edit title, body, checks, labels and
+All agent profiles may edit title, body, checks, labels and
 memory links on review cards they requested, preserving the open ask. The
 edit event keeps prior changed values as JSON, including visible link IDs.
 MCP decisions may supply the version read to reject a stale answer after an edit.
@@ -76,12 +76,11 @@ own ask.
 Withdrawal preserves the review/open-ask database constraint. A `release`
 event stores the original ask and optional verbatim reason, with actor, time,
 recipient, options and statuses. `card.ask_withdrawn` notifies readers alongside
-the normal move event; it does not record or imply an answer. Standard-trust,
-untrusted and inbox-restricted agents gain no feedback permissions.
+the normal move event; it does not record or imply an answer. All profiles may maintain their own review feedback.
 
 ## How agents claim
 
-`task_take_next` is the only way an agent starts a card. One `BEGIN IMMEDIATE` transaction:
+`task_take_next`, `task_update status=doing`, and `task_add claim=true` start work. One `BEGIN IMMEDIATE` transaction:
 
 1. Expires stale claims on the board, logging an `expire` event that names the agent that lost it.
 2. Claims the caller's reserved card with the lowest position, or else the free card with the lowest position.
@@ -89,7 +88,7 @@ untrusted and inbox-restricted agents gain no feedback permissions.
 
 The race check behind this: four processes claiming from 2,001 cards, interleaved (1 / 11 / 653 / 1,336 claims each), got 2,001 distinct cards and expired the one stale claim. B's done test repeats this with real Claude Code and Codex sessions.
 
-**Claims expire.** A claim lasts `claim_minutes` (30 by default, per board). Any write by the holder renews it: a comment, an update, a handoff. Expiry is lazy: the next board transaction frees stale cards, so no background job is needed. An expired card goes back to the lane it was claimed from (`todo` or `backlog`), free, with an `expire` event naming its former holder. Explicit backlog selection cannot turn into automatic work through expiry. Claims created before lane tracking return to `todo` as before.
+**Claims expire visibly.** Claims last `claim_minutes` (30 by default). Holder writes or `task_heartbeat` renew them; call heartbeat every 20 minutes even while waiting on checks. Lazy expiry records one `expire` event and keeps the doing lane, deadline and assignee, displaying Expired. Readers and other agents cannot renew or seize that card.
 
 People's holds never expire. Avery dragging a card into `doing` means he is on it.
 
@@ -98,7 +97,7 @@ People's holds never expire. Avery dragging a card into `doing` means he is on i
 ## How agents report and hand off
 
 - **Progress:** `task_comment`. Short, verbatim, stamped. It is the log the next agent reads.
-- **Finish:** `task_update status=done`, optionally with `lesson`, which files a drawer through the normal memory write path and links it both ways. On boards with `done_needs_review`, this lands in `review` as "Done?" instead.
+- **Finish:** `task_update status=done`, optionally with `lesson`, which files a drawer through the normal memory write path and links it both ways. On boards with `done_needs_review`, this opens a substantive completion decision with context and two options instead.
 - **Hand off** with `task_handoff to=… note=…`. The note is required.
   - `to=anyone`: back to `todo`, free.
   - `to=codex:vm`: back to `todo`, reserved for that connection. Only it (or a person) can start it.
@@ -164,7 +163,7 @@ Opens over the right side of either screen: title, body, the ask with its button
 All from PRODUCT-DESIGN.md §6–§10, nothing new:
 
 - A board belongs to one wing. A token sees it only with that wing in `read_wings`, writes only with `memory:write`. Private wings need `private:read`.
-- Untrusted tokens and cloud clients (write wing `inbox`) add cards and comments only, and their cards land in `backlog`. They never get `task_take_next`, `task_update` or `task_handoff`.
+- All profiles, including untrusted and inbox clients, can create and manage their own cards. Explicit token tools, scopes and visibility still apply; memory permissions remain separate.
 - The §9 check flags titles, bodies, comments, handoff notes and asks. Flags show; text is never changed.
 - Board tools are tagged in our capability table, so fail-closed and the auto-generated canary suite cover them.
 - Agents can hand off to people who are members of the workspace only. A handoff to anyone else is refused.
@@ -172,10 +171,10 @@ All from PRODUCT-DESIGN.md §6–§10, nothing new:
 ## Tests (in the pre-push hook and nightly on the test host, no GitHub Actions)
 
 - **Race:** N agents call `task_take_next` together; every card is claimed once.
-- **Expiry:** a claim past `claim_until` is freed on the next board call, with one `expire` event.
+- **Expiry:** a claim past `claim_until` keeps its assignee and is shown as expired on the next board call, with one `expire` event.
 - **Move rules:** every row of the API.md table, allowed and refused, over MCP and over HTTP, against the same service code.
 - **Canary:** a board, card, comment and ask in a forbidden wing never appear in any tool reply or HTTP response for a scoped token.
-- **Backlog guard:** a card from an untrusted token is never returned by `task_take_next` until a person triages it.
+- **Backlog guard:** a pending child proposal cannot be taken or promoted before direct-parent or signed-in-owner approval.
 - **B's done test** (PRODUCT-DESIGN.md §15) extended: the winning agent hands the card to Avery with options, he decides on the Decide screen, and the same agent's next `task_take_next` returns it with the decision.
 
 ## Decisions

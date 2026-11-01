@@ -9,7 +9,11 @@ from xml.etree import ElementTree
 import pytest
 
 from commonplace.boards.digest import digest, ssml
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
 from tests.test_commonplace_web import request
 
@@ -93,7 +97,7 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     token, agent, person, cookie, owner = env
     worker = service(hub, agent)
     title = f'Café “ship” 日本語 "now" {person.actor}'
-    asked = worker.ask(title, board="work")
+    asked = worker.ask(title, board="work", context=REVIEW_CONTEXT, options=REVIEW_OPTIONS)
     ready = worker.task_add(title="Ready", board="work")
     worker.task_take_next(task=ready["number"])
     worker.task_update(ready["number"], pr=8, checks="passing")
@@ -105,7 +109,9 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
     # A plan for another person is not in this viewer's queue.
     other = hub.db.create_user("other@example.com")
     hub.db.add_member(hub.workspace, other, "member", actor=hub.admin)
-    theirs = worker.ask("Another person's question", board="work")
+    theirs = worker.ask(
+        "Another person's question", board="work", context=REVIEW_CONTEXT, options=REVIEW_OPTIONS
+    )
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (f"user:{other}", theirs["number"]))
     owner.board_add(slug="secret", wing="private.secret")
@@ -153,7 +159,7 @@ def test_endpoint_and_mcp_scoped_verbatim(hub, env):  # noqa: F811
 def test_ssml_endpoint_does_not_execute_title_markup(hub, env):  # noqa: F811
     token, agent, _person, cookie, _owner = env
     title = 'a</s><break time="10s"/>&'
-    service(hub, agent).ask(title, board="work")
+    service(hub, agent).ask(title, board="work", context=REVIEW_CONTEXT, options=REVIEW_OPTIONS)
     for auth in (cookie, {"Authorization": f"Bearer {token}"}):
         status, _headers, encoded = request(hub, "/api/needs-me/digest?format=ssml", headers=auth)
         root = ElementTree.fromstring(encoded)

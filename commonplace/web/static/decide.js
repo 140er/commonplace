@@ -674,7 +674,7 @@ function bar(session) {
 }
 
 function headHTML(item, extra = "") {
-  return `<div class="decide-body">${metaHTML(item.card)}<a class="decide-title" href="#/card/${item.number}">${e(item.card.title)}</a>${extra}</div>`;
+  return `<div class="decide-body">${metaHTML(item.card)}<a class="decide-title" href="#/card/${item.number}">${e(item.card.title)}</a>${item.card.review_context && ![item.card.status_line, item.card.body, [item.card.status_line, item.card.body].filter(Boolean).join("\n\n")].includes(item.card.review_context) ? `<p class="decide-context">${e(item.card.review_context)}</p>` : ""}${item.card.status_line ? `<p class="decide-context">${e(item.card.status_line)}</p>` : ""}${item.card.body ? `<p class="decide-context">${e(item.card.body.slice(0, 600))}${item.card.body.length > 600 ? "…" : ""}</p>` : ""}${extra}</div>`;
 }
 
 function questionText(item) {

@@ -14,7 +14,11 @@ from commonplace import callstack, sessions
 from commonplace.boards.service import BoardService, callstack_json
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext, ToolError
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 
 BASE = {
     "app.py": """\
@@ -308,7 +312,16 @@ def test_rest_mcp_round_trip_and_upload(hub, repo, monkeypatch):
     assert api(hub, token, "GET", f"/api/cards/{number}")[1]["callstack"]["roots"] == []
 
     # The agent that asked for review may refresh the tree, and nothing else.
-    assert mcp(hub, token, "task_handoff", task=number, to="owner", note="Merge?")[0]
+    assert mcp(
+        hub,
+        token,
+        "task_handoff",
+        task=number,
+        to="owner",
+        note="Merge? Which approach should we take?",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )[0]
     monkeypatch.chdir(repo)
     hub_url = f"http://127.0.0.1:{hub.port}"
     args = ["--base", "main", "--head", "feature", "--card", f"#{number}", "--hub", hub_url]

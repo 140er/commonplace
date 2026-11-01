@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     position      REAL NOT NULL,                    -- float, so a drag rewrites one row
     assignee      TEXT,                             -- actor ref; in todo it reserves the card for that actor
     claim_until   TEXT,                             -- agents only, while status = 'doing'; people's cards never expire
+    claim_expired_at TEXT,
+    agent_parent TEXT,
+    proposal_status TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected')),
+    proposed_to TEXT,
+    approved_by TEXT,
+    review_kind TEXT,
+    review_context TEXT,
     ask           TEXT,                             -- set while status = 'review': the question for the person
     ask_options   TEXT,                             -- JSON array of short choices, or NULL for free text
     ask_to        TEXT,                             -- actor ref of the person asked (default: board owner)
@@ -80,6 +87,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     kind       TEXT NOT NULL CHECK (kind IN (
                    'add', 'edit', 'move', 'comment', 'claim', 'renew', 'release',
                    'expire', 'handoff', 'ask', 'decide', 'link', 'unlink')),
+    context    TEXT,
     text       TEXT,                                -- verbatim comment, handoff note, ask or reply
     from_status TEXT,
     to_status   TEXT,

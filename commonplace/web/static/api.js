@@ -40,3 +40,14 @@ export function safeLink(value) {
     return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
   } catch { return null; }
 }
+
+// A bare owner/repository uses GitHub; fully qualified repositories retain their host.
+export function pullRequestUrl(card) {
+  const direct = safeLink(card.pr_url);
+  if (direct && /^\/.+\/.+\/(?:pull|pulls|merge_requests)\/[1-9]\d*\/?$/.test(new URL(direct).pathname)) return direct;
+  if (!/^[1-9]\d*$/.test(String(card.pr_number || ""))) return null;
+  let repo = String(card.repo || "").replace(/^https?:\/\//, "").replace(/\.git\/?$/, "").replace(/\/$/, "");
+  if (/^[^/.]+\/[^/]+$/.test(repo)) repo = `github.com/${repo}`;
+  if (!/^[a-z0-9.-]+\/[^?#\s/]+\/[^?#\s]+$/i.test(repo)) return null;
+  return safeLink(`https://${repo}/pull/${card.pr_number}`);
+}

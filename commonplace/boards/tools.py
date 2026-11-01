@@ -23,7 +23,9 @@ def line(c):
     if c["assignee"]:
         result += f"  {c['assignee']}"
     if c["claim_until"]:
-        result += f" until {c['claim_until']}"
+        result += " expired" if c.get("claim_expired") else f" until {c['claim_until']}"
+    if c.get("proposal_status"):
+        result += f" proposal:{c['proposal_status']} parent:{c['proposed_to']}"
     if c["ask_to"]:
         result += f" asks {c['ask_to']}"
     return result
@@ -57,6 +59,8 @@ def tree(stack):
 
 def show(c):
     rows = [f"{line(c)}  board {c['board']}", f"body: {quoted(c['body'])}"]
+    if c.get("agent_parent"):
+        rows.append(f"agent parent: {c['agent_parent']}")
     if c["message_id"] is not None:
         rows.append(f"space message: {c['message_id']}")
     if c["ask"]:
@@ -68,6 +72,7 @@ def show(c):
         ("pr_number", "PR #"),
         ("checks", "checks"),
         ("status_line", "status"),
+        ("review_context", "context"),
     ):
         if c[key] not in (None, ""):
             rows.append(f"{label}: {quoted(c[key])}")
@@ -193,11 +198,13 @@ def add(
                 "space_post": "Append your verbatim reply to a space chat.",
                 "task_list": "List visible cards.",
                 "task_show": "Read a card and its history and linked memories.",
-                "task_add": "Add a card; submissions from untrusted connections enter backlog.",
+                "task_add": "Create a todo card. claim=true or assignee=self starts work immediately. Child-created cards are pending until parent approval.",
+                "task_approve": "Approve or reject a direct child's pending proposal; signed-in workspace owners may also decide.",
+                "task_heartbeat": "Renew your doing card's claim. Call every 20 minutes, including while waiting on checks.",
                 "task_comment": "Append a comment and renew your claim.",
-                "task_take_next": "Claim a todo card reserved for you or free for anyone. Trusted agents may also claim a backlog card by task number; restricted submissions and cards awaiting a person are excluded.",
-                "task_update": "Update a card, move todo/held doing to review or done, or close your own review card with done. "
-                "Trusted requesters may edit their review details while preserving the open ask. Assignee edits and ask withdrawal to todo/doing are prepared for future agent-directed reviews; current APIs create person-directed reviews, which cannot be withdrawn. "
+                "task_take_next": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
+                "task_update": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. "
+                "Requesters may edit their own review details while preserving the open ask. Assignee edits and ask withdrawal to todo/doing are prepared for future agent-directed reviews; current APIs create person-directed reviews, which cannot be withdrawn. "
                 "Reopen done to todo (status only). Save a lesson with done. "
                 "Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. "
                 "callstack takes the JSON from python -m commonplace.callstack.",
@@ -257,7 +264,6 @@ def register_tools():
         "board_add",
         {k: STRING for k in ("slug", "name", "wing", "repo")},
         ("slug",),
-        work=True,
         trusted=True,
         write=True,
     )
@@ -269,8 +275,9 @@ def register_tools():
             "title": STRING,
             "body": STRING,
             "board": STRING,
-            "status": {"type": "string", "enum": ["todo", "backlog"]},
+            "status": {"type": "string", "enum": ["todo", "backlog", "doing"]},
             "assignee": STRING,
+            "claim": {"type": "boolean"},
             "message_id": {"type": "integer", "minimum": 1},
             "parent": {
                 **TASK,
@@ -282,7 +289,14 @@ def register_tools():
         write=True,
     )
     add("task_comment", {"task": TASK, "text": STRING}, ("task", "text"), write=True)
-    add("task_take_next", {"board": STRING, "task": TASK}, work=True, trusted=True, write=True)
+    add("task_heartbeat", {"task": TASK}, ("task",), write=True)
+    add(
+        "task_approve",
+        {"task": TASK, "approve": {"type": "boolean"}, "version": {"type": "integer"}},
+        ("task",),
+        write=True,
+    )
+    add("task_take_next", {"board": STRING, "task": TASK}, write=True)
     add(
         "task_update",
         {
@@ -293,6 +307,7 @@ def register_tools():
             "pr": {"type": ["string", "integer"]},
             "labels": ARRAY,
             "callstack": {"type": ["object", "null"]},
+            "options": ARRAY,
             **{
                 k: STRING
                 for k in (
@@ -306,28 +321,24 @@ def register_tools():
                     "checks",
                     "status_line",
                     "reason",
+                    "question",
+                    "context",
                 )
             },
         },
         ("task",),
-        work=True,
-        trusted=True,
         write=True,
     )
     add(
         "task_handoff",
-        {"task": TASK, "to": STRING, "note": STRING, "options": ARRAY},
+        {"task": TASK, "to": STRING, "note": STRING, "options": ARRAY, "context": STRING},
         ("task", "to", "note"),
-        work=True,
-        trusted=True,
         write=True,
     )
     add(
         "ask",
-        {"question": STRING, "options": ARRAY, "board": STRING, "task": TASK},
+        {"question": STRING, "options": ARRAY, "context": STRING, "board": STRING, "task": TASK},
         ("question",),
-        work=True,
-        trusted=True,
         write=True,
     )
     add(
