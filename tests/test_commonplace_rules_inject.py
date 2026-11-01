@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import sqlite3
+import sys
 from contextlib import closing
 from pathlib import Path
 from time import perf_counter
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from commonplace import bridge, events, sessions
+from commonplace import bridge, events, extensions, sessions
 from commonplace.boards import BoardService
 from commonplace.control_db import ControlDB
 from commonplace.extensions import ToolContext
@@ -42,6 +43,19 @@ INCOMPLETE_READ = (
     "to pass on write tools (if it gives one)."
 )
 CURRENT_READ = "Call rules_get format=md effective=true when you need the current set."
+
+
+@pytest.fixture(autouse=True)
+def rules_surface_only(monkeypatch):
+    # These tests isolate the existing whole-rule renderer; the combined
+    # startup surface is covered in test_commonplace_session_initialize.
+    extensions.names()
+    monkeypatch.setattr("commonplace.gateway._startup_pointer", lambda _: "")
+    monkeypatch.setitem(
+        sys.modules,
+        "commonplace.session",
+        SimpleNamespace(initialize_context=lambda *_a, **_k: ""),
+    )
 
 
 @pytest.fixture

@@ -285,7 +285,7 @@ class RuleService:
         stamp = now()
         columns = dict(
             agent=agent,
-            origin_agent=None if agent == "*" else agent,
+            origin_agent=(None if agent == "*" else agent) if owner else self.principal.actor,
             key=key,
             **values,
             agent_text=None if owner else values["text"],
@@ -309,11 +309,15 @@ class RuleService:
             self._affected.add(agent)
         return self._snapshot(conn, cursor.lastrowid)
 
-    def rules_publish(self, rules, replace=False):
+    def rules_publish(self, rules, replace=False, agent="self"):
         if self.principal.person or not self.principal.policy.has_scope("memory:write"):
             raise ToolError("no: an agent with memory:write is required")
+        if agent not in ("self", "*"):
+            raise ToolError("no: agent must be self or *")
         if not isinstance(rules, list) or len(rules) > 200 or type(replace) is not bool:
             raise ToolError("no: publish requires up to 200 rules and a boolean replace")
+        actor = self.principal.actor
+        target = actor if agent == "self" else "*"
         prepared = {}
         for item in rules:
             if not isinstance(item, dict) or set(item) - {
@@ -347,21 +351,33 @@ class RuleService:
         result = []
         with self.transaction() as conn:
             for key, values in prepared.items():
-                actor = self.principal.actor
-                # A rule the owner moved to another agent still answers to its first agent.
+                # Keep following owner moves, without confusing self and shared keys.
+                # Older snapshots have no target; their origin was always the caller.
                 row = conn.execute(
-                    "SELECT * FROM rules WHERE key=? AND (agent=? OR origin_agent=?) "
+                    "SELECT r.*,coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN r.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=r.id "
+                    "ORDER BY v.id LIMIT 1),origin_agent,agent) AS publish_target FROM rules r "
+                    "WHERE key=? AND (agent=? OR (origin_agent=? AND publish_target=?)) "
                     "ORDER BY agent=? DESC, agent='*' DESC, id LIMIT 1",
-                    (key, actor, actor, actor),
+                    (key, target, actor, target, target),
                 ).fetchone()
                 if row is None:
-                    result.append(self._create(conn, actor, key, values))
+                    result.append(self._create(conn, target, key, values))
                     continue
                 if not self._visible(row):
                     # The owner moved it out of this agent's sight: skip it, reveal nothing.
                     continue
+                if target == "*" and row["origin_agent"] != actor:
+                    raise ToolError("no: shared rule key belongs to the owner or another proposer")
                 # A rule moved here from another agent is handled like an owner edit.
-                owned = row["agent"] == actor and row["origin_agent"] in (None, actor)
+                owned = (
+                    row["agent"] == target
+                    and row["publish_target"] == target
+                    and row["origin_agent"] in (None, actor)
+                    and (
+                        target != "*" or row["status"] == "proposed" or row["retired_by"] == "agent"
+                    )
+                )
                 if owned and row["retired_by"] == "agent":
                     updates = dict(
                         values,
@@ -403,8 +419,12 @@ class RuleService:
             if replace:
                 rows = conn.execute(
                     "SELECT * FROM rules WHERE agent=? AND source='agent' AND status!='retired' "
-                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=agent",
-                    (self.principal.actor,),
+                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=? "
+                    "AND coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN rules.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=rules.id "
+                    "ORDER BY v.id LIMIT 1),origin_agent,agent)=? "
+                    "AND (agent!='*' OR status='proposed')",
+                    (target, actor, target),
                 ).fetchall()
                 for row in rows:
                     if row["key"] not in prepared and self._visible(row):
@@ -419,8 +439,9 @@ class RuleService:
                             )
                         )
             total, active = conn.execute(
-                "SELECT count(*),coalesce(sum(status!='retired'),0) FROM rules WHERE agent=?",
-                (self.principal.actor,),
+                "SELECT count(*),coalesce(sum(status!='retired'),0) FROM rules WHERE agent=? "
+                "AND (agent!='*' OR origin_agent=?)",
+                (target, actor),
             ).fetchone()
             if active > 500 or total > 2000:
                 raise ToolError("no: agent rule limit exceeded (500 non-retired, 2000 total)")

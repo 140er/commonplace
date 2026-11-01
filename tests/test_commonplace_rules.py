@@ -1083,8 +1083,10 @@ def test_only_the_owner_session_can_move_rules(hub, env):
         "rules_get",
         "rules_changed",
     }
-    assert not mcp(hub, env.token, "rules_publish", rules=[rule()], agent="*")[0]
-    assert env.owner.list_rules()["rules"] == [current]
+    assert mcp(hub, env.token, "rules_publish", rules=[rule()], agent="*")[0]
+    original, shared = env.owner.list_rules()["rules"]
+    assert original == current  # Publishing a shared proposal does not move the original.
+    assert shared["agent"] == "*" and shared["status"] == "proposed"
 
 
 def test_move_emits_rule_changed_for_both_agents(hub, env, monkeypatch):

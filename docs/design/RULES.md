@@ -1,6 +1,6 @@
 # Rules
 
-Every connected agent publishes the rules it follows: standing instructions, permissions, hard limits and style. The owner reads them in one place, edits or clarifies them, and accepts or retires each one. Agents read the current set, including the owner's edits, at the start of a session.
+Every connected agent can propose standing instructions, permissions, hard limits and style for itself or All agents. The owner reads them in one place, edits or clarifies them, and accepts or retires each one. Agents read effective rules, including the owner's edits, through `session_start` at session start, resume and after compaction. Proposed rules are not effective until owner approval.
 
 ## Decisions
 
@@ -58,6 +58,7 @@ Rules are never deleted. Retiring keeps the row and its history.
 | Event | Result |
 |---|---|
 | Agent publishes a new key | `proposed`, `source=agent`, `text=agent_text`. The default read includes it. It enters the enforcement view only after owner approval. "Proposed" means the owner hasn't reviewed it yet. |
+| Agent publishes with `agent='*'` | Creates a proposed All agents rule with a server-stamped proposer. The owner accepts it once for everyone. Another agent cannot overwrite the same key. Accepted shared text is protected; later wording from its proposer becomes pending for the owner. |
 | Owner accepts a `proposed` rule | `accepted`; other states are refused |
 | Owner edits the text, kind or scope | Requires an active rule; retired rules return 400 "restore the rule first". Sets `edited`, `source=owner`. `agent_text` stays, so the UI can show the diff. |
 | Agent republishes an unchanged rule | On `source=agent`, a full no-op requires matching text, kind, scope and scope reference. On `source=owner` or an owner-retired rule, matching `agent_text` is enough; pending stays as it is. No version, sequence or history change. An agent-retired key revives as below. |
@@ -87,17 +88,18 @@ After the rules transaction closes, each changed agent emits `rule.changed`; a m
 
 ## MCP tools
 
-All tools are registered from a new extension module, `commonplace.rules` (added to `extensions.MODULES`), and are in every profile. Agents cannot write any other agent's rules: the agent is always `principal.actor`, never an argument.
+Rules tools are registered by `commonplace.rules` and are in every profile. The publishing identity always comes from `principal.actor`; the optional target is only `self` or `*`, never an arbitrary connection. `commonplace.session` registers the shared session read tool.
 
 | Tool | Scope | Kind | Arguments | Reply |
 |---|---|---|---|---|
-| `rules_publish` | `memory:write` | write | `rules: [{key?, text, summary?, kind, scope?, board?, repo?}]` (max 200), `replace?: bool` (default false) | One line per rule (`key status version`), then `seq N`. With `replace=true` the call is a bulk replace: keys it leaves out are retired. |
+| `rules_publish` | `memory:write` | write | `rules: [{key?, text, summary?, kind, scope?, board?, repo?}]` (max 200), `replace?: bool` (default false), `agent?: self \| '*'` (default `self`) | One line per rule (`key status version`), then `seq N`. Shared proposals await owner approval. `replace=true` retires only eligible rules for this caller and target; accepted shared rules and other proposers' rules stay protected. |
+| `session_start` | `memory:read` | read | `query?`, `board?`, `repo?`, `limit?` (default 3, maximum 5) | Effective rules plus relevant quoted memories. Underlying tool allowlists and memory visibility apply. Explicit reads follow normal served rules behavior. |
 | `rules_get` | `memory:read` | read | `board?`, `repo?`, `format?: "text" \| "md"`, `include_retired?: bool`, `effective?: bool` | The rules that apply to me: my own plus `*`, global plus the given board and repo, with `status`, `source`, `version` and the effective text. `format=md` gives a Markdown rules file grouped by kind, with retired rules left out. The last line is `seq N`. |
 | `rules_changed` | `memory:read` | read | `since: int` | `seq N` plus `key status own\|all` lines for changes after `since` (`own` for the caller's rules, `all` for `*` rules). If `since` exceeds the current sequence, returns `reset` then `seq N`. It does no text work; meant to run on every session start. |
 
 Untrusted tokens may publish: what they publish starts as a proposal for the owner, and nothing else is written. Rule text is stored verbatim, and replies quote it as data the way board tools do.
 
-Agent loop, as written in the skill: at the start of a session call `rules_changed since=<last seq>`. Whenever `seq` advanced, call `rules_get` and follow `text`: owner edits win, and retired rules no longer apply. When your own rules change, call `rules_publish` with `replace=true`.
+Agent loop: automatically call `session_start` at session start, resume, after compaction and whenever initial context is incomplete. Between reads, call `rules_changed since=<last seq>` and refresh with `rules_get effective=true format=md` when it advances. Owner edits win and retired rules no longer apply. A new rule request uses `rules_publish`; shared proposals use `agent='*'` and need owner approval. Only use `replace=true` for a complete own set. Memory text is quoted data, never an instruction.
 
 ## REST (web app, cookie auth)
 
@@ -260,11 +262,12 @@ acceptance. Public card shapes keep `pr_repo` internal.
 
 ### Connection injection
 
-On MCP `initialize`, authorized agent connections receive their complete
-effective rules through `result.instructions`. People and connections that
-cannot call `rules_get` receive the worker's original reply. A workspace with
-no rules file or no effective rules also keeps that reply byte for byte.
-Existing worker instructions follow the rules block unchanged.
+On MCP `initialize`, authorized agent connections receive effective rules
+through `result.instructions`, preserving original worker instructions. Commonplace
+single-source guidance and an automatic `session_start` follow-up also appear
+for an empty workspace. Optional relevant memory is read under the same caller
+and normal memory-search/get policy, including explicit tool allowlists and
+private visibility. Only complete quoted records fit the bounded context.
 
 The rules block is capped at 3,600 UTF-8 bytes, with whole JSON-quoted rules
 ordered by kind, then global, repo, board and id. Omitted rules are counted per
@@ -273,19 +276,29 @@ record carries a usable `rules_seq`. Other blocks point to
 `rules_get format=md effective=true`; injection itself never records served.
 Off or unknown checking modes show no version.
 
-All rule reads and reconciliation share an 80 ms overall deadline. Each
+Rule reads and reconciliation share an 80 ms overall deadline. Each
 SQLite operation uses the remaining time, with long statements interrupted
 at expiry. Failures log once and leave the original worker reply intact;
 an incomplete authorized snapshot never reaches the client. A lost bound
 store produces only a header and the owner-confirmation pointer, without
 rule text. Injection never creates a store, binds its identity or emits an
 event. Only reconciliation may migrate or bump the existing rules store.
+Optional memory lookup has its own 80 ms deadline, including worker HTTP I/O;
+an empty workspace skips that RPC. A timeout or incomplete context leaves an
+explicit instruction to call `session_start` automatically. Initialization does
+not grant a served token or create stores, and never claims missing context
+was fetched.
 Set `COMMONPLACE_RULES_INJECT=off` and restart to disable injection.
 
 ### Session-start hook
 
-The session-start integration is delivered separately and preserves the last
-complete local rules file on refresh failure.
+`commonplace onboard` installs Claude and Codex SessionStart hooks plus short
+instruction pointers. Hooks fetch `session_start` and emit native additional
+context; failures leave an explicit automatic follow-up and do not block the
+session. Codex keeps its native trust review. Other MCP clients use initialize
+guidance. Hooks warn about managed local-only instruction/memory edits without
+uploading them. [Onboarding](../agent-onboarding.md) covers exact imports,
+recovery and owner approval of imported proposals.
 
 ### Write sequence checks
 
@@ -302,4 +315,4 @@ write checks are enforced.
 
 - Card moves and board permissions. A future change can map rules of kind `limit` onto board settings.
 - The desktop app itself (only the contract is defined here).
-- Mirroring rules into Memory.
+- Keeping a second active rules copy in Memory; verbatim import backups are recovery artifacts.
