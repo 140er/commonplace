@@ -615,6 +615,114 @@ def cmd_connect(args) -> int:
     return run_bridge(args.url, args.token_env)
 
 
+def _client(args):
+    from .client import Client
+
+    return Client(url=args.url, token_env=args.token_env)
+
+
+def _client_paths(args):
+    home = (args.home or Path.home()).expanduser()
+    project = None if args.no_project else (args.project or Path.cwd()).expanduser()
+    return home, project
+
+
+def _print_install_report(report):
+    refused = False
+    for item in report.get("files", []):
+        name = Path(item["path"]).name
+        print(f"{name}: {item['status']}" + (f"; {item['reason']}" if item.get("reason") else ""))
+        refused |= item["status"] == "refused"
+    for warning in report.get("warnings", []):
+        print(f"Warning: {warning}", file=sys.stderr)
+    return refused or bool(report.get("warnings"))
+
+
+def cmd_onboard(args) -> int:
+    from .client_install import install_client_config
+    from .onboarding import onboard
+
+    home, project = _client_paths(args)
+    # Preflight never calls the client, so a dry run needs no credential.
+    client = None if args.dry_run else _client(args)
+    migration = onboard(client, home=home, project=project, dry_run=args.dry_run)
+    warnings = _print_install_report(migration)
+    config = install_client_config(
+        home=home,
+        project=project,
+        url=args.url,
+        token_env=args.token_env,
+        dry_run=args.dry_run,
+    )
+    warnings |= _print_install_report(config)
+    if args.dry_run:
+        print("Dry run: no files or memories changed.")
+    else:
+        print("Onboarding finished with warnings." if warnings else "Onboarding complete.")
+    print("Imported rules await owner approval; Codex hook trust remains under native review.")
+    return 1 if warnings else 0
+
+
+def cmd_remember(args) -> int:
+    print(_client(args).remember(args.text))
+    return 0
+
+
+def cmd_rule(args) -> int:
+    print(_client(args).publish_rule(args.text, agent=args.agent, kind=args.kind))
+    print("Rule proposals require owner approval before taking effect.")
+    return 0
+
+
+def cmd_check(args) -> int:
+    from .onboarding import check_local_only
+
+    home, project = _client_paths(args)
+    findings = check_local_only(home=home, project=project)
+    for finding in findings:
+        print(
+            f"Warning: {Path(finding['path']).name}: local-only instructions or memory; "
+            "save with memory_save (commonplace remember) or propose with "
+            "rules_publish (commonplace rule).",
+            file=sys.stderr,
+        )
+    if not findings:
+        print("No local-only instructions or memory found.")
+    return 1 if findings else 0
+
+
+def _client_parsers(sub):
+    for command, handler in (
+        ("onboard", cmd_onboard),
+        ("remember", cmd_remember),
+        ("rule", cmd_rule),
+    ):
+        parser = sub.add_parser(command)
+        parser.add_argument(
+            "--url", help="Commonplace URL (default $COMMONPLACE_URL or https://app.cmmn.dev)"
+        )
+        parser.add_argument("--token-env", default="COMMONPLACE_TOKEN")
+        if command == "onboard":
+            parser.add_argument("--dry-run", action="store_true")
+        else:
+            parser.add_argument("text")
+        if command == "rule":
+            parser.add_argument("--agent", choices=("self", "*"), default="self")
+            parser.add_argument(
+                "--kind",
+                choices=("instruction", "permission", "limit", "style"),
+                default="instruction",
+            )
+        parser.set_defaults(func=handler)
+    check = sub.add_parser("check", help="warn about instructions or memory saved only locally")
+    check.set_defaults(func=cmd_check)
+    for parser in (sub.choices["onboard"], check):
+        parser.add_argument("--home", type=Path)
+        project = parser.add_mutually_exclusive_group()
+        project.add_argument("--project", type=Path)
+        project.add_argument("--no-project", action="store_true")
+
+
 def cmd_seed(args) -> int:
     from .seed import seed_workspace
 
@@ -707,6 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", help=f"data directory (default ${DATA_ENV} or ~/.commonplace)")
     sub = p.add_subparsers(dest="command", required=True)
     add_webhook_commands(sub)
+    _client_parsers(sub)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
     s.add_argument("--admin-email", required=True)
@@ -825,6 +934,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in {"onboard", "remember", "rule", "check"}:
+        from .client import ClientError
+
+        # Client operations neither open server databases nor take their lock.
+        try:
+            return args.func(args)
+        except (ClientError, OSError, ValueError):
+            print(
+                f"commonplace: {args.command} failed; check the connection, token environment "
+                "variable and local file permissions.",
+                file=sys.stderr,
+            )
+            return 2
     errors = (ControlError, PolicyError, BackupError, ToolError, MailError, OSError, sqlite3.Error)
     if args.command in ("handoff", "thread"):
         from .handoff.db import HandoffDBError
