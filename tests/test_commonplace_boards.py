@@ -154,9 +154,9 @@ MOVES = [
     ("doing", "review", "handoff", True),
     ("doing", "done", "update", True),
     ("review", "todo", "update", False),
-    ("review", "done", "update", True),
+    ("review", "done", "update", False),
     ("review", "backlog", "update", False),
-    ("review", "done", "decide", True),  # a trusted owner agent relays Avery's answer
+    ("review", "done", "decide", False),
     ("todo", "review", "handoff", True),
     ("todo", "review", "update", True),
     ("todo", "done", "update", False),
@@ -461,13 +461,16 @@ def test_trusted_agent_picks_explicit_backlog(hub, env, member, reserved, path):
         options=REVIEW_OPTIONS,
     )
     refusal = (
-        "only a workspace owner" if member else "only the owner or a trusted agent can answer this"
+        "only a workspace owner" if member else "only a signed-in workspace owner can answer this"
     )
     with pytest.raises(ToolError, match=refusal):
         worker.decide(number, reply="Approved", then="done")
-    worker.task_update(number, status="done")
+    with pytest.raises(ToolError, match="waiting on a person"):
+        worker.task_update(number, status="done")
+    owner.decide(number, reply="Approved", then="done")
     assert owner.task_show(number)["status"] == "done"
-    assert_card_event(hub, owner, number, principal.actor, "move", "review", "done")
+    decision = owner.task_show(number)["events"][-1]
+    assert (decision["kind"], decision["actor"]) == ("decide", owner.principal.actor)
 
 
 @pytest.mark.parametrize("member", [False, True])
@@ -1879,7 +1882,7 @@ def test_agent_done_routes_to_review_with_audit(hub, env, old):
 
 @pytest.mark.parametrize("surface", ["mcp", "rest"])
 @pytest.mark.parametrize("needs_review", [False, True])
-def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs_review, surface):
+def test_agent_cannot_complete_review_without_person_decision(hub, env, needs_review, surface):
     token, agent, _person, _cookie, owner = env
     worker = service(hub, agent)
     waiting = worker.ask(
@@ -1899,52 +1902,20 @@ def test_agent_can_complete_review_without_deciding_own_question(hub, env, needs
         checks="passing",
     )
     assert current["ask"] == waiting["ask"] and current["ask_to"] == waiting["ask_to"]
-    for status in ("review", "done"):
-        if surface == "mcp":
-            assert mcp(hub, token, "task_update", task=number, status=status)[0]
-        else:
-            code, current = api(
-                hub,
-                token,
-                "PATCH",
-                f"/api/cards/{number}",
-                {"version": current["version"], "status": status},
-            )
-            assert code == 200
-    current = owner.task_show(number)
-    assert current["status"] == ("review" if needs_review else "done")
-    with owner.store.connection() as conn:
-        assert (
-            conn.execute(
-                "SELECT count(*) FROM task_events WHERE task_id=? AND kind='decide'", (number,)
-            ).fetchone()[0]
-            == 0
+    before = owner.task_show(number)
+    if surface == "mcp":
+        assert not mcp(hub, token, "task_update", task=number, status="done")[0]
+    else:
+        code, _ = api(
+            hub,
+            token,
+            "PATCH",
+            f"/api/cards/{number}",
+            {"version": current["version"], "status": "done"},
         )
-    with owner.store.connection() as conn:
-        last = conn.execute(
-            "SELECT * FROM task_events WHERE task_id=? ORDER BY id DESC", (number,)
-        ).fetchone()
-    assert (last["from_status"], last["to_status"]) == (
-        "review",
-        "review" if needs_review else "done",
-    )
-    assert last["stamp_connection"] == agent.actor.removeprefix("conn:")
-    if not needs_review:
-        assert current["ask"] is None and current["ask_to"] is None
-        assert current["return_to"] is None and current["ask_options"] == []
-    if needs_review:
-        assert "ready to accept?" in last["text"]
-        assert json.loads(last["options"]) == ["Accept the completed work", "Return for more work"]
-        assert current["events"][-1]["options"] == [
-            "Accept the completed work",
-            "Return for more work",
-        ]
-        assert last["target"] == current["ask_to"]
-        assert "ready to accept?" in current["ask"]
-        assert current["ask_options"] == ["Accept the completed work", "Return for more work"]
-        assert number in {card["number"] for card in owner.needs_me()["done_review"]}
-        with pytest.raises(ToolError):
-            worker.decide(task=number, choice="ship", then="done")
+        assert code == 403
+    assert owner.task_show(number) == before
+    assert number in {card["number"] for card in owner.needs_me()["asks"]}
 
 
 @pytest.mark.parametrize("surface", ["mcp", "rest"])
@@ -2211,8 +2182,8 @@ def test_review_history_hides_other_editors_private_links(hub, env, surface, rem
         ]
 
 
-def test_stale_mcp_decide_after_review_edit_is_a_version_clash(hub, env):
-    relay_token, relay, _person, _cookie, owner = env
+def test_stale_person_decide_after_review_edit_is_a_version_clash(hub, env):
+    relay_token, _relay, person, cookie, owner = env
     _token, principal, requester = review_worker(hub, member=True)
     waiting = requester.ask(
         "Approve this version? Which approach should we take?",
@@ -2231,13 +2202,9 @@ def test_stale_mcp_decide_after_review_edit_is_a_version_clash(hub, env):
     requester.task_update(number, body="Feedback after the owner read the card")
     current = owner.task_show(number)
     emitted = events.after(hub.db, hub.workspace)
-    ok, refusal = mcp(
-        hub, relay_token, "decide", task=number, version=waiting["version"], choice="yes"
-    )
-    assert not ok and "card changed" in refusal
     code, conflict = api(
         hub,
-        relay_token,
+        cookie,
         "POST",
         f"/api/cards/{number}/decide",
         {"version": waiting["version"], "choice": "yes"},
@@ -2245,13 +2212,25 @@ def test_stale_mcp_decide_after_review_edit_is_a_version_clash(hub, env):
     assert code == 409 and conflict["current"]["version"] == current["version"]
     assert owner.task_show(number) == current
     assert events.after(hub.db, hub.workspace) == emitted
-    assert mcp(hub, relay_token, "decide", task=number, version=current["version"], choice="yes")[0]
+    assert not mcp(
+        hub, relay_token, "decide", task=number, version=current["version"], choice="yes"
+    )[0]
+    assert (
+        api(
+            hub,
+            cookie,
+            "POST",
+            f"/api/cards/{number}/decide",
+            {"version": current["version"], "choice": "yes"},
+        )[0]
+        == 200
+    )
     answered = owner.task_show(number)
     assert answered["status"] == "todo" and answered["assignee"] == principal.actor
     assert answered["ask"] is None
     assert answered["events"][-1]["kind"] == "decide"
     event = events.after(hub.db, hub.workspace)[-1]
-    assert event["kind"] == "card.decided" and event["actor"] == relay.actor
+    assert event["kind"] == "card.decided" and event["actor"] == person.actor
 
 
 def test_public_review_creation_is_person_directed_and_agent_handoff_stays_todo(hub, env):

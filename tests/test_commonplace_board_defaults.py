@@ -63,6 +63,10 @@ def test_brand_new_workspace_default_client_owns_work(hub, capsys, client, membe
         hub, token, "task_update", task=number, status="review", question=QUESTION, options=OPTIONS
     )[0]
     assert worker.task_show(number)["ask"] == QUESTION
+    assert not mcp(hub, token, "task_update", task=number, status="done")[0]
+    owner = service(hub, sessions.person_principal(hub.db, hub.admin, hub.workspace))
+    owner.decide(number, choice=OPTIONS[0])
+    assert mcp(hub, token, "task_take_next", task=number)[0]
     assert mcp(hub, token, "task_update", task=number, status="done")[0]
     assert worker.task_show(number)["status"] == "done"
     ok, reply = mcp(hub, token, "task_add", title="Next workstream", assignee="self")
