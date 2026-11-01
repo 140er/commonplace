@@ -277,3 +277,36 @@ def test_stalled_worker_read_fails_open_within_startup_budget(local, session_mod
     finally:
         left.close()
         right.close()
+
+
+def test_expired_worker_deadline_refuses_before_opening_connection(local, http_worker, monkeypatch):
+    def unexpected_connection(*args, **kwargs):
+        pytest.fail("Expired request must not open a connection")
+
+    monkeypatch.setattr("commonplace.gateway.http.client.HTTPConnection", unexpected_connection)
+    token = checks._deadline.set(0.0)
+    try:
+        with pytest.raises(WorkerUnavailable):
+            WorkerClient(None)._post(http_worker, local.rules.principal, REQUEST)
+    finally:
+        checks._deadline.reset(token)
+
+
+def test_real_session_composes_on_fresh_workspace_without_creating_stores(local, monkeypatch):
+    import importlib
+
+    module = importlib.import_module("commonplace.session")
+    original = module.initialize_context
+    calls = []
+
+    def observe(ctx, **kwargs):
+        calls.append(ctx.principal)
+        return original(ctx, **kwargs)
+
+    monkeypatch.setattr(module, "initialize_context", observe)
+    text = initialize(local)["result"]["instructions"]
+    assert calls == [local.rules.principal]
+    assert "Commonplace is the single source" in text and "session_start" in text
+    assert render.length(text) <= render.INSTRUCTIONS_BUDGET
+    assert not (local.directory / "rules.sqlite3").exists()
+    assert not (local.directory / "boards.sqlite3").exists()

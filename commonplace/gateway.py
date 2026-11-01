@@ -153,11 +153,12 @@ class WorkerClient:
         from .rules.checks import remaining
 
         body = json.dumps(request).encode("utf-8")
-        conn = http.client.HTTPConnection(
-            worker.host, worker.port, timeout=remaining(WORKER_TIMEOUT_S)
-        )
+        conn = None
         resp = None
         try:
+            conn = http.client.HTTPConnection(
+                worker.host, worker.port, timeout=remaining(WORKER_TIMEOUT_S)
+            )
             conn.request(
                 "POST",
                 "/mcp",
@@ -189,7 +190,8 @@ class WorkerClient:
         finally:
             if resp is not None:
                 resp.close()
-            conn.close()
+            if conn is not None:
+                conn.close()
         if resp.status == 202:
             return None
         if resp.status != 200:
