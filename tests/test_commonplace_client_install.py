@@ -80,7 +80,8 @@ def test_fresh_install_native_formats_env_credentials_and_idempotency(tmp_path, 
     assert _snapshot(home) == before
     assert not project.exists()
     assert all(b"never-persist-this-token" not in raw for raw in before.values())
-    assert "trust" in " ".join(result["warnings"])
+    assert result["warnings"] == []
+    assert "trust" in " ".join(result["notes"])
 
 
 def test_preserves_native_security_other_settings_hooks_and_toml_comments(tmp_path):

@@ -354,7 +354,8 @@ class RuleService:
                 # Keep following owner moves, without confusing self and shared keys.
                 # Older snapshots have no target; their origin was always the caller.
                 row = conn.execute(
-                    "SELECT r.*,coalesce((SELECT v.agent FROM rule_versions v WHERE v.rule_id=r.id "
+                    "SELECT r.*,coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN r.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=r.id "
                     "ORDER BY v.id LIMIT 1),origin_agent,agent) AS publish_target FROM rules r "
                     "WHERE key=? AND (agent=? OR (origin_agent=? AND publish_target=?)) "
                     "ORDER BY agent=? DESC, agent='*' DESC, id LIMIT 1",
@@ -419,7 +420,8 @@ class RuleService:
                 rows = conn.execute(
                     "SELECT * FROM rules WHERE agent=? AND source='agent' AND status!='retired' "
                     "AND retired_by IS NULL AND coalesce(origin_agent,agent)=? "
-                    "AND coalesce((SELECT v.agent FROM rule_versions v WHERE v.rule_id=rules.id "
+                    "AND coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN rules.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=rules.id "
                     "ORDER BY v.id LIMIT 1),origin_agent,agent)=? "
                     "AND (agent!='*' OR status='proposed')",
                     (target, actor, target),

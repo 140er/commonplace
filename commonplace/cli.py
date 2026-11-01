@@ -635,6 +635,8 @@ def _print_install_report(report):
         refused |= item["status"] == "refused"
     for warning in report.get("warnings", []):
         print(f"Warning: {warning}", file=sys.stderr)
+    for note in report.get("notes", []):
+        print(note)
     return refused or bool(report.get("warnings"))
 
 
@@ -659,7 +661,7 @@ def cmd_onboard(args) -> int:
         print("Dry run: no files or memories changed.")
     else:
         print("Onboarding finished with warnings." if warnings else "Onboarding complete.")
-    print("Imported rules await owner approval; Codex hook trust remains under native review.")
+    print("Imported rules await owner approval.")
     return 1 if warnings else 0
 
 
