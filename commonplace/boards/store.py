@@ -37,10 +37,11 @@ def pr_repository(url):
 
     try:
         parsed = urlsplit(url if "://" in url else "https://" + url)
+        hostname = parsed.hostname
     except ValueError:
         return None
     parts = parsed.path.strip("/").split("/")
-    if parsed.scheme not in ("http", "https") or not parsed.netloc or len(parts) < 4:
+    if parsed.scheme not in ("http", "https") or not hostname or len(parts) < 4:
         return None
     if (
         parts[-2] not in ("pull", "pulls", "merge_requests")
@@ -52,7 +53,7 @@ def pr_repository(url):
     if prefix[-1] == "-":
         prefix.pop()
     if len(prefix) >= 2:
-        return normalize_repo(parsed.netloc + "/" + "/".join(prefix))
+        return normalize_repo(hostname + "/" + "/".join(prefix))
     return None
 
 

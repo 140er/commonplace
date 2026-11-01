@@ -73,7 +73,11 @@ def fields(text, kind, scope="global", scope_ref=None):
         scope_ref = validate_text(scope_ref, "scope_ref", required=True, limit=1000)
         if scope == "repo":
             scope_ref = normalize_repo(scope_ref)
-            if len(scope_ref.split("/")) != 3 or not all(scope_ref.split("/")):
+            if (
+                len(scope_ref.split("/")) != 3
+                or not all(scope_ref.split("/"))
+                or "@" in scope_ref.split("/")[0]
+            ):
                 raise ToolError("no: repo must be host/owner/name")
     return dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
 

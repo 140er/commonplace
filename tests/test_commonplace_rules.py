@@ -381,6 +381,7 @@ def test_untrusted_publish_and_append_only_history(hub, env):
         rule(scope="board"),
         rule(scope="repo"),
         rule(scope="repo", repo="invalid"),
+        rule(scope="repo", repo="demo:placeholder@example.test/org/repo"),
         rule(key=""),
         dict(rule(), agent="conn:other"),
     ],

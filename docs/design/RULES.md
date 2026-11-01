@@ -220,7 +220,8 @@ complete view returns no rules or count and ends with `rules_seq unavailable`.
 Clients must keep their last complete copy on either marker.
 Each guarded request while a store is lost emits an ids-only loss event until
 owner acceptance. These repeated alerts are intentional; instruction injection
-emits none. An over-cap event is emitted only when the served state changes.
+emits none. An over-cap event is emitted when the recorded state or `rules_seq`
+changes and the reply is `too_large`.
 
 At serving startup, present unbound stores are migrated and bound together.
 This also retries an unbound slot after an earlier partial failure, even when

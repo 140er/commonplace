@@ -729,7 +729,7 @@ def test_pr_repo_index_migrates_old_column_and_backfills_later_writes(hub, env):
         assert "tasks_pending_pr_repo" in " ".join(str(tuple(row)) for row in plan)
         conn.execute(
             "UPDATE tasks SET pr_repo='',pr_url=? WHERE id=?",
-            ("https://example.test/org/two/pull/2", card["number"]),
+            ("https://demo:placeholder@example.test:8443/org/two/pull/2", card["number"]),
         )
     store = BoardStore(env.worker.ctx.workspace_dir())
     with store.connection() as conn:
@@ -741,6 +741,9 @@ def test_pr_repo_index_migrates_old_column_and_backfills_later_writes(hub, env):
     [
         ("https://example.test/org/pull/pull/1", "example.test/org/pull"),
         ("https://example.test/group/org/repo/-/merge_requests/2", "example.test/group/org/repo"),
+        ("https://demo:placeholder@example.test/org/repo/pull/3", "example.test/org/repo"),
+        ("https://example.test:8443/org/repo/pull/3", "example.test/org/repo"),
+        ("https://demo@/org/repo/pull/3", None),
         ("https://[invalid/pull/1", None),
         ("https://example.test/org/repo/pull/0", None),
         ("https://example.test/org/repo", None),
