@@ -42,8 +42,11 @@ Paid has *unlimited*\*\* storage and transcription and a server-load throttle ho
 ** zolang de server het aankan / as long as the server can handle it
 
 Admins manage plans with `commonplace plan set <user email|id> free|paid|none` and inspect
-usage with `commonplace plan show <user email|id>`. Payment is not built. The transcription
-meter is a hook for a future endpoint. Accounts without a plan have no limits and every feature.
+usage with `commonplace plan show <user email|id>`. Payment is not built. Voice transcription
+charges the signed-in person's account for received audio, rounded up to whole seconds per clip.
+Invalid input and model failures do not consume quota. Each successful POST is a separate clip;
+there is no replay cache or idempotency key. Limit errors return HTTP 429 with
+`limit: "transcription"` and the daily reset time. Accounts without a plan have no limits and every feature.
 Unset, empty or `off` keeps plans off: self-hosted installations have no limits or plan UI.
 
 ## Context handoff
