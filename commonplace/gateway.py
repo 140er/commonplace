@@ -49,6 +49,7 @@ MAX_REQUEST_BYTES = 8 * 1024 * 1024
 # A whole agent transcript (context handoff); the handoff API checks it again.
 HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
+STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
@@ -119,6 +120,21 @@ class WorkerUnavailable(Exception):
     pass
 
 
+def _startup_pointer(principal):
+    """Keep a small canonical follow-up even when optional context is unavailable."""
+    policy = principal.policy
+    if policy.tool_visible("session_start"):
+        followup = "Automatically call session_start for full context."
+    else:
+        tools = [name for name in ("rules_get", "memory_search") if policy.tool_visible(name)]
+        followup = (
+            "Automatically call " + " and ".join(tools) + " for full context."
+            if tools
+            else "This connection has no context read tools."
+        )
+    return "Commonplace is the single source for rules and memory. " + followup
+
+
 class WorkerClient:
     """Posts JSON-RPC to a worker as the gateway, on behalf of a principal."""
 
@@ -134,8 +150,13 @@ class WorkerClient:
         return self._post(worker, principal, request)
 
     def _post(self, worker: Worker, principal: Principal, request: dict) -> Optional[dict]:
+        from .rules.checks import remaining
+
         body = json.dumps(request).encode("utf-8")
-        conn = http.client.HTTPConnection(worker.host, worker.port, timeout=WORKER_TIMEOUT_S)
+        conn = http.client.HTTPConnection(
+            worker.host, worker.port, timeout=remaining(WORKER_TIMEOUT_S)
+        )
+        resp = None
         try:
             conn.request(
                 "POST",
@@ -148,11 +169,26 @@ class WorkerClient:
                     provenance.IDENTITY_HEADER: provenance.encode_identity(principal.identity()),
                 },
             )
+            # Header and body reads share the caller's deadline with connect/send.
+            # Keep the socket: getresponse may detach it for Connection: close.
+            sock = conn.sock
+            if sock is not None:
+                sock.settimeout(remaining(WORKER_TIMEOUT_S))
             resp = conn.getresponse()
-            raw = resp.read()
+            chunks = []
+            while not resp.isclosed():
+                if sock is not None:
+                    sock.settimeout(remaining(WORKER_TIMEOUT_S))
+                chunk = resp.read1(64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            raw = b"".join(chunks)
         except OSError as exc:
             raise WorkerUnavailable() from exc
         finally:
+            if resp is not None:
+                resp.close()
             conn.close()
         if resp.status == 202:
             return None
@@ -206,24 +242,7 @@ class Mediator:
                     and isinstance(response, dict)
                     and isinstance(response.get("result"), dict)
                 ):
-                    from .rules import render
-                    from .rules.service import instructions_for
-
-                    previous = response["result"].get("instructions", "")
-                    if not isinstance(previous, str):
-                        return response
-                    budget = render.INSTRUCTIONS_BUDGET - (
-                        render.length(previous) + 2 if previous else 0
-                    )
-                    instructions = instructions_for(
-                        extensions.ToolContext(principal, self.gateway), budget=budget
-                    )
-                    if instructions:
-                        response = copy.copy(response)
-                        response["result"] = dict(response["result"])
-                        response["result"]["instructions"] = instructions + (
-                            "\n\n" + previous if previous else ""
-                        )
+                    response = self._initialize_context(principal, response)
                 return response
             if method == "tools/list":
                 return self._tools_list(principal, request)
@@ -234,6 +253,46 @@ class Mediator:
         if req_id is None:
             return None
         return _rpc_error(req_id, -32601, f"Unknown method: {method}")
+
+    def _initialize_context(self, principal, response):
+        from .rules import checks, render
+        from .rules.service import instructions_for
+
+        previous = response["result"].get("instructions", "")
+        if principal.person or not isinstance(previous, str):
+            return response
+        budget = render.INSTRUCTIONS_BUDGET - (render.length(previous) + 2 if previous else 0)
+        pointer = _startup_pointer(principal)
+        if budget < render.length(pointer):
+            return response
+        ctx = extensions.ToolContext(principal, self.gateway)
+        rules, context = "", pointer
+        try:
+            with checks.deadline(STARTUP_TIMEOUT_S):
+                # Whole rules have priority; reserve only the mandatory pointer.
+                rules = instructions_for(
+                    ctx, budget=budget - render.length(pointer) - (2 if pointer else 0)
+                )
+                context_budget = budget - render.length(rules) - (2 if rules else 0)
+                checks.remaining(STARTUP_TIMEOUT_S)
+                from .session import initialize_context
+
+                candidate = initialize_context(ctx, budget=context_budget)
+                checks.remaining(STARTUP_TIMEOUT_S)
+                if (
+                    isinstance(candidate, str)
+                    and candidate
+                    and render.length(candidate) <= context_budget
+                ):
+                    context = candidate
+        except Exception as exc:
+            log_failure(logger, "startup context unavailable", exc)
+        instructions = "\n\n".join(part for part in (rules, context, previous) if part)
+        if instructions:
+            response = copy.copy(response)
+            response["result"] = dict(response["result"])
+            response["result"]["instructions"] = instructions
+        return response
 
     # ── tools/list ──
     def _tools_list(self, principal: Principal, request: dict) -> dict:

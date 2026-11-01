@@ -10,7 +10,7 @@ STRING = {"type": "string"}
 
 def run(ctx, name, args):
     allowed = {
-        "rules_publish": ({"rules", "replace"}, {"rules"}),
+        "rules_publish": ({"rules", "replace", "agent"}, {"rules"}),
         "rules_get": ({"board", "repo", "format", "include_retired", "effective"}, set()),
         "rules_changed": ({"since"}, {"since"}),
     }
@@ -69,9 +69,13 @@ def register_tools():
             {
                 "rules": {"type": "array", "items": rule, "maxItems": 200},
                 "replace": {"type": "boolean"},
+                "agent": {"type": "string", "enum": ["self", "*"], "default": "self"},
             },
             ["rules"],
-            "Publish your own verbatim rules; optional summary is display-only (at most two sentences). Replace retires omitted keys. Owner edits win.",
+            "Publish verbatim rules for self (default) or propose for All agents (agent='*'); "
+            "the owner must accept shared proposals. Optional summary is display-only "
+            "(at most two sentences). Replace retires only your omitted keys for that target; "
+            "accepted shared rules and owner edits stay authoritative.",
         ),
         "rules_get": (
             {
