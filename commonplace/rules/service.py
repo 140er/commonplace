@@ -24,6 +24,7 @@ RULE_FIELDS = (
 WAITING = "(status='proposed' OR pending=1) AND (status!='retired' OR retired_by='owner')"
 logger = logging.getLogger(__name__)
 _UNSET = object()
+INSTRUCTIONS_TIMEOUT = 0.08
 
 
 def open_store(workspace_dir):
@@ -733,6 +734,41 @@ class RuleService:
         return result
 
 
+def instructions_for(ctx, *, budget=render.INSTRUCTIONS_BUDGET):
+    """Fail open without binding, serving, creating stores or emitting events."""
+    try:
+        if (
+            ctx.principal.person
+            or budget <= 0
+            or getattr(ctx.gateway, "rules_inject_off", False)
+            or not ctx.principal.policy.tool_visible("rules_get")
+        ):
+            return ""
+        with checks.deadline(INSTRUCTIONS_TIMEOUT):
+            try:
+                snapshot = effective_rules(
+                    ctx, bind=False, emit=False, timeout=checks.remaining(INSTRUCTIONS_TIMEOUT)
+                )
+            except checks.StoreLost:
+                text = render.instructions([], ctx.principal.actor, store_lost=True)
+                return text if render.length(text) <= budget else ""
+            if not snapshot["rules"]:
+                return ""
+            text = render.instructions(
+                snapshot["rules"],
+                ctx.principal.actor,
+                snapshot["rules_seq"],
+                served=snapshot["served"],
+                mode=checks.mode(ctx.gateway, ctx.principal),
+                budget=budget,
+                check_deadline=lambda: checks.remaining(INSTRUCTIONS_TIMEOUT),
+            )
+            return text if render.length(text) <= budget else ""
+    except Exception as exc:
+        log_failure(logger, "rules instruction injection failed", exc)
+        return ""
+
+
 def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
     """Read an agent's complete authorized set on independent read-only snapshots.
 
@@ -752,11 +788,13 @@ def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
         with checks.connection(directory / "boards.sqlite3", timeout=timeout) as conn:
             conn.execute("BEGIN")
             for board in conn.execute("SELECT slug,wing,archived FROM boards"):
+                checks.remaining(timeout)
                 if not board["archived"] and ctx.principal.policy.can_read_wing(board["wing"]):
                     visible_boards.add(board["slug"])
             for repo in conn.execute(
                 "SELECT r.repo,b.slug FROM board_repos r JOIN boards b ON b.id=r.board_id"
             ):
+                checks.remaining(timeout)
                 linked_repos.add(repo["repo"])
                 if repo["slug"] in visible_boards:
                     visible_repos.add(repo["repo"])
@@ -768,6 +806,7 @@ def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
         ).fetchall()
         selected = []
         for row in rows:
+            checks.remaining(timeout)
             visible = row["scope"] == "global" or (
                 row["scope"] == "board" and row["scope_ref"] in visible_boards
             )
