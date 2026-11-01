@@ -43,17 +43,22 @@ def pr_repository(url):
     parts = parsed.path.strip("/").split("/")
     if parsed.scheme not in ("http", "https") or not hostname or len(parts) < 4:
         return None
-    if (
-        parts[-2] not in ("pull", "pulls", "merge_requests")
-        or not parts[-1].isdigit()
-        or int(parts[-1]) < 1
-    ):
+    if parts[-2] not in ("pull", "pulls", "merge_requests") or not parts[-1].isdigit():
+        return None
+    try:
+        number = int(parts[-1])
+    except ValueError:
+        return None
+    if number < 1:
         return None
     prefix = parts[:-2]
     if prefix[-1] == "-":
         prefix.pop()
     if len(prefix) >= 2:
-        return normalize_repo(hostname + "/" + "/".join(prefix))
+        try:
+            return normalize_repo(hostname + "/" + "/".join(prefix))
+        except ToolError:
+            return None
     return None
 
 

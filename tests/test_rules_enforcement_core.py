@@ -736,6 +736,40 @@ def test_pr_repo_index_migrates_old_column_and_backfills_later_writes(hub, env):
         assert conn.execute("SELECT pr_repo FROM tasks").fetchone()[0] == "example.test/org/two"
 
 
+def test_pr_repo_backfill_survives_unindexable_urls(hub, env):
+    boards = BoardService(env.owner.ctx)
+    boards.board_add(slug="backfill", wing="shared")
+    urls = [
+        "https://example.test/" + "a/" * 600 + "pull/1",
+        "https://example.test/org/repo/pull/²?x/pull/1",
+        "https://example.test/org/repo/pull/7",
+    ]
+    numbers = []
+    for i, url in enumerate(urls):
+        created = boards.task_add(board="backfill", title=f"PR {i}")
+        updated = boards.task_update(created["number"], pr=url)
+        assert updated["pr_url"] == url
+        numbers.append(created["number"])
+    for _ in range(2):
+        store = BoardStore(env.worker.ctx.workspace_dir())
+        with store.connection() as conn:
+            for i, (number, url) in enumerate(zip(numbers, urls)):
+                row = conn.execute(
+                    "SELECT pr_url,pr_repo FROM tasks WHERE id=?", (number,)
+                ).fetchone()
+                assert row is not None
+                assert row["pr_url"].encode("utf-8") == url.encode("utf-8")
+                assert row["pr_repo"] == (None if i < 2 else "example.test/org/repo")
+
+
+@pytest.mark.parametrize("key_length", [1000, 1001])
+def test_pr_repository_key_length_boundary(key_length):
+    suffix = "/org/repo"
+    key = "h" * (key_length - len(suffix)) + suffix
+    assert len(key) == key_length
+    assert pr_repository("https://" + key + "/pull/1") == (key if key_length == 1000 else None)
+
+
 @pytest.mark.parametrize(
     "url,repo",
     [
@@ -744,6 +778,32 @@ def test_pr_repo_index_migrates_old_column_and_backfills_later_writes(hub, env):
         ("https://demo:placeholder@example.test/org/repo/pull/3", "example.test/org/repo"),
         ("https://example.test:8443/org/repo/pull/3", "example.test/org/repo"),
         ("https://demo@/org/repo/pull/3", None),
+        pytest.param(
+            "https://example.test/" + "a/" * 600 + "pull/1",
+            None,
+            id="unindexable-long-path",
+        ),
+        pytest.param(
+            "https://" + "h" * 1005 + "/org/repo/pull/1",
+            None,
+            id="unindexable-long-host",
+        ),
+        pytest.param(
+            "https://example.test/org/repo/pull/²?x/pull/1",
+            None,
+            id="unindexable-superscript-query",
+        ),
+        pytest.param(
+            "https://example.test/org/repo/pull/²#/pull/1",
+            None,
+            id="unindexable-superscript-fragment",
+        ),
+        # This case exercises the default integer conversion digit limit.
+        pytest.param(
+            "https://example.test/org/repo/pull/" + "9" * 5000 + "?x/pull/1",
+            None,
+            id="unindexable-digit-limit",
+        ),
         ("https://[invalid/pull/1", None),
         ("https://example.test/org/repo/pull/0", None),
         ("https://example.test/org/repo", None),
