@@ -750,11 +750,16 @@ def test_rest_requires_the_matching_visible_tool(surface, method, path, tool):
     )
 
 
-def test_rest_profiles_apply_the_same_tool_visibility(surface):
+@pytest.mark.parametrize("profile", ["slim", "standard", "full"])
+@pytest.mark.parametrize("restricted", [False, True])
+def test_rest_profiles_apply_the_same_tool_visibility(surface, profile, restricted):
     from commonplace.http_util import send_json
 
     surface.gateway.add_route("PATCH", "/api/cards/1", lambda h: send_json(h, 200, {}))
-    policy = Policy.build(profile="slim", tools=["task_show"], trust="trusted")
+    policy = Policy.build(
+        profile=profile, tools=["task_show"] if restricted else None, trust="trusted"
+    )
+    assert policy.tools == (("task_show",) if restricted else profile)
     _cid, value = surface.db.create_token(
         workspace_ref=surface.workspace,
         user_ref=surface.uid,
@@ -763,17 +768,14 @@ def test_rest_profiles_apply_the_same_tool_visibility(surface):
         policy=policy,
         actor=surface.uid,
     )
-    assert not policy.tool_visible("task_update")
-    assert (
-        request(
-            surface,
-            "PATCH",
-            "/api/cards/1",
-            headers={"Authorization": "Bearer " + value},
-            body=b"{}",
-        )[0]
-        == 403
-    )
+    assert policy.tool_visible("task_update") is (not restricted)
+    assert request(
+        surface,
+        "PATCH",
+        "/api/cards/1",
+        headers={"Authorization": "Bearer " + value},
+        body=b"{}",
+    )[0] == (403 if restricted else 200)
 
 
 @pytest.mark.parametrize(
