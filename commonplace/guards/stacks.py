@@ -282,13 +282,14 @@ def _strip_dot(path: str) -> str:
 
 
 def _parse_locations(files: tuple[str, ...], output: str) -> list[str]:
-    """``path:line`` for each output line that names one of the command's files."""
+    """``path:line`` for each output line location that names one of the command's files."""
     if not files:
         return []
     alternatives = "|".join(re.escape(f) for f in sorted(set(files), key=len, reverse=True))
-    pattern = re.compile(rf"(?:^|(?<=\s))(?:\./)?({alternatives}):(\d+)")
+    # ``path:line`` (most linters) or ``path(line,col)`` (tsc).
+    pattern = re.compile(rf"(?:^|(?<=\s))(?:\./)?({alternatives})(?::(\d+)|\((\d+),\d+\))")
     found = [
-        f"{match.group(1)}:{match.group(2)}"
+        f"{match.group(1)}:{match.group(2) or match.group(3)}"
         for line in output.splitlines()
         for match in pattern.finditer(line)
     ]

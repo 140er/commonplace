@@ -229,6 +229,13 @@ def test_failure_prints_fix_and_listed_locations_only(tmp_path):
     assert "other.py" not in text
 
 
+def test_tsc_style_locations_are_parsed(tmp_path):
+    code = "print('src/bad.ts(4,7): error TS2322: nope'); raise SystemExit(2)"
+    cmd = _cmd(code, name="tsc", files=("src/bad.ts",))
+    report = run_checks([cmd], tmp_path, out=io.StringIO())
+    assert report.results[0].locations == ["src/bad.ts:4"]
+
+
 def test_missing_tool_is_printed_and_does_not_fail(tmp_path):
     cmd = PlannedCommand(name="ruff", argv=("definitely-not-installed-xyz", "check"))
     out = io.StringIO()
