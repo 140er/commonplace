@@ -21,6 +21,7 @@ import os
 import secrets
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,10 @@ CREATE TABLE IF NOT EXISTS mirror_progress (
 
 class ThreadConflict(ValueError):
     """Same source thread id, different content."""
+
+
+class ThreadStorageLimit(ValueError):
+    """The thread cannot fit within its allocated storage budget."""
 
 
 @dataclass(frozen=True)
@@ -301,6 +306,17 @@ class ThreadStore:
                 (stored_id, version, next_seq),
             )
 
+    @contextmanager
+    def _transaction(self):
+        """Compose ingest operations under one writer transaction and lock."""
+        with self._lock:
+            if self._conn.in_transaction:
+                yield
+            else:
+                with self._conn:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    yield
+
     def store(
         self,
         workspace_id: str,
@@ -309,6 +325,8 @@ class ThreadStore:
         *,
         actor: str,
         parent_stored_id: str = "",
+        max_storage_bytes: Optional[int] = None,
+        wing: str = THREADS_WING,
     ) -> StoredThread:
         messages = list(messages)
         if not messages:
@@ -317,8 +335,7 @@ class ThreadStore:
             raise ValueError("Message sequence must start at zero and be contiguous")
         digest = canonical_sha256(messages)
 
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             existing = _stored_thread(
                 self._conn.execute(
                     "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id=?",
@@ -330,6 +347,7 @@ class ThreadStore:
                     raise ThreadConflict("Source thread already has different stored content")
                 return existing
 
+            self._check_storage_budget(max_storage_bytes, messages)
             chunks = chunk_messages(messages)
             stored = StoredThread(
                 id="thr_" + secrets.token_hex(8),
@@ -338,7 +356,7 @@ class ThreadStore:
                 message_count=len(messages),
                 chunk_count=len(chunks),
                 sha256=digest,
-                wing=THREADS_WING,
+                wing=wing,
                 created_at=datetime.now(timezone.utc).isoformat(),
                 created_by=actor,
             )
@@ -390,9 +408,57 @@ class ThreadStore:
                     "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
                     [(stored.id, c.index) for c in chunks],
                 )
+            self._check_storage_budget(max_storage_bytes)
             return stored
 
-    def append(self, stored_id: str, messages: list[ThreadMessage]) -> StoredThread:
+    def _check_storage_budget(self, maximum, messages=()):
+        if callable(maximum):
+            maximum = maximum()
+        if maximum is None:
+            return
+        path = self._conn.execute("PRAGMA database_list").fetchone()[2]
+        page_size = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
+
+        def size(suffix):
+            if not path or path == ":memory:":
+                return 0
+            candidate = Path(path + suffix)
+            return candidate.stat().st_size if candidate.exists() else 0
+
+        # Allow for a checkpoint growing the main file and a commit writing
+        # every page to WAL. Already spilled frames are included in WAL size.
+        bound = (
+            max(size(""), pages * page_size)
+            + size("-wal")
+            + max(size("-shm"), 32768)
+            + 32
+            + pages * (page_size + 24)
+        )
+        if messages:
+            lengths = {}
+
+            def utf8_size(value):
+                # Content blocks share raw objects; avoid encoding the same
+                # large line once per block while still budgeting every row.
+                key = id(value)
+                if key not in lengths:
+                    lengths[key] = len(value.encode("utf-8"))
+                return lengths[key]
+
+            # Reject before a large transaction can spill. Include raw source,
+            # readable text, chunks, FTS and SQLite allocation overhead.
+            bound += 256 * 1024 + 8 * sum(
+                utf8_size(value)
+                for m in messages
+                for value in (m.raw, m.text, m.role, m.kind, m.name, m.call_id, m.at)
+            )
+        if bound > maximum:
+            raise ThreadStorageLimit("Insufficient storage for this thread")
+
+    def append(
+        self, stored_id: str, messages: list[ThreadMessage], *, max_storage_bytes=None
+    ) -> StoredThread:
         """Append the suffix of a full transcript, retaining every existing row.
 
         Canonical fields must match the saved prefix. An identical transcript,
@@ -403,8 +469,7 @@ class ThreadStore:
         messages = list(messages)
         if any(message.seq != seq for seq, message in enumerate(messages)):
             raise ValueError("Message sequence must start at zero and be contiguous")
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             stored = self.get(stored_id)
             if stored is None:
                 raise ValueError("Thread not found")
@@ -415,6 +480,7 @@ class ThreadStore:
             if len(messages) <= len(previous):
                 return stored
             added = messages[len(previous) :]
+            self._check_storage_budget(max_storage_bytes, added)
             chunks = chunk_messages(added)
             self._conn.executemany(
                 "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
@@ -446,6 +512,7 @@ class ThreadStore:
                     stored_id,
                 ),
             )
+            self._check_storage_budget(max_storage_bytes)
             return self.get(stored_id)
 
     def put_doc(self, handoff_id: str, markdown: str) -> None:
