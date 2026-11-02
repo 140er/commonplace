@@ -915,7 +915,11 @@ root.addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   state.pending.add(formKey);
   try {
-    if (kind === "agent") await createAgent(form);
+    if (kind === "login") {
+      let token = payload.token.trim();
+      try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
+      location.assign(`/app/login?t=${enc(token)}`);
+    } else if (kind === "agent") await createAgent(form);
     else if (kind === "email-login") {
       const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
       let status = root.querySelector(".signin [role=status]");
