@@ -54,6 +54,28 @@ written into those records.
 
 ## Backups and limits
 
+Migration records every discovered SQLite file, including unusual filenames and
+nested paths, in the mandatory `encryption.database_paths` list in
+`workspace.json`. The sorted paths are captured relative to the staging
+generation root before in-place exports and published only after all exports
+succeed. Missing or malformed inventories stop access; this experimental
+format has no legacy metadata upgrade. An empty list is valid for a fresh
+workspace. Entries must be unique, canonical relative POSIX paths contained in
+the generation, without symlink escapes. `workspace.json` and names ending in
+`-wal`, `-shm` or `-journal` are reserved and cannot be inventoried.
+
+Inside an encrypted workspace, `.sqlite3`, `.sqlite` and `.db` are reserved
+database extensions. New stores with these extensions work without updating
+metadata and receive the same backup handling as migrated files. Other names
+must match an inventory entry relative to the exact workspace generation.
+The connection factory refuses unlisted names before loading the driver,
+unwrapping a key or opening a database. Backups apply this same classification;
+unexpected plaintext or corruption at a reserved or inventoried database path
+fails the snapshot instead of being copied as an auxiliary file. Outside an
+encrypted workspace, SQLite header detection and plaintext snapshots are
+unchanged; an opaque auxiliary `.db` file can be byte-copied. Ordinary JSONL,
+JSON, log and binary auxiliary files remain byte copies.
+
 Offline backups checkpoint SQLite, acquire its writer lock, reject a remaining
 WAL, and byte-copy the database. They do not use SQLite's backup API to
 re-encrypt pages. Unchanged encrypted pages therefore retain their exact
@@ -61,6 +83,11 @@ ciphertext. Backup manifests verify byte counts and hashes. Encrypted files
 can be verified and restored without keys; that checks their bytes, not their
 decrypted integrity. SQLCipher page authentication and SQLite integrity are
 checked while making the backup and again on keyed use where applicable.
+
+Workspace settings, including this inventory, are trusted operator-controlled
+metadata. The inventory is not authenticated by keyslot AAD. Malicious host
+operator edits are outside this opt-in, server-decryptable model; it does not
+provide operator-blind encryption.
 
 Keyslots must be backed up separately with short retention. The application
 does not yet implement that retention policy, host-key unlocking, credential

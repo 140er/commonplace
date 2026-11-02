@@ -10,7 +10,7 @@ import json
 import os
 import sqlite3
 import stat
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 
@@ -39,6 +39,30 @@ def database_path(database, *, uri=False):
             raise EncryptionError("Remote SQLite file URIs are unsupported")
         value = unquote(parsed.path)
     return Path(value).absolute()
+
+
+def validate_database_paths(directory, paths):
+    """Validate the operator-owned inventory relative to a workspace generation."""
+    if not isinstance(paths, list):
+        raise EncryptionError("Invalid workspace encryption database paths")
+    root = Path(directory).resolve()
+    seen = set()
+    for name in paths:
+        if (
+            not isinstance(name, str)
+            or not name
+            or "\\" in name
+            or "\x00" in name
+            or Path(name).is_absolute()
+            or PureWindowsPath(name).drive
+            or any(part in ("", ".", "..") for part in name.split("/"))
+            or Path(name).name == "workspace.json"
+            or name.endswith(("-wal", "-shm", "-journal"))
+            or name in seen
+            or not (root / name).resolve().is_relative_to(root)
+        ):
+            raise EncryptionError("Invalid workspace encryption database paths")
+        seen.add(name)
 
 
 def encryption_settings(path):
@@ -71,10 +95,24 @@ def encryption_settings(path):
                 or not Path(path).resolve().is_relative_to(directory.resolve())
             ):
                 raise ValueError
+            validate_database_paths(directory, info.get("database_paths"))
             return directory, info
         except (OSError, ValueError, TypeError, KeyError):
             raise EncryptionError("Invalid workspace encryption settings") from None
     return None
+
+
+def is_workspace_database(path, directory, info):
+    """Classify a path using validated settings, without opening keys or databases.
+
+    Known SQLite extensions are reserved inside encrypted workspaces, including
+    future stores. Other names must be listed relative to this exact generation.
+    """
+    relative = Path(path).resolve().relative_to(Path(directory).resolve()).as_posix()
+    return (
+        Path(relative).suffix in (".sqlite3", ".sqlite", ".db")
+        or relative in info["database_paths"]
+    )
 
 
 def protected_key(path):
@@ -192,6 +230,8 @@ def connect(database, **kwargs):
     if settings is None:
         return sqlite3.connect(database, **kwargs)
     directory, info = settings
+    if not is_workspace_database(path, directory, info):
+        raise EncryptionError("Unlisted database path in encrypted workspace")
     # Resolve dependencies and unwrap before opening/creating any database file.
     driver()
     return cipher_connect(database, workspace_key(directory, info), **kwargs)

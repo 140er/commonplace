@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shlex
 import sqlite3
 import stat
@@ -107,7 +108,13 @@ def test_maintenance_metadata_preflight_refuses_without_mutation(
     (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": staging.name}))
     config = directories[location] / SETTINGS
     if damage in ("encrypted", "null_encryption", "empty_encryption"):
-        info = {"version": 1, "cipher": "sqlcipher", "workspace_id": WORKSPACE, "key_id": "a" * 32}
+        info = {
+            "version": 1,
+            "cipher": "sqlcipher",
+            "workspace_id": WORKSPACE,
+            "key_id": "a" * 32,
+            "database_paths": [],
+        }
         value = info if damage == "encrypted" else None if damage == "null_encryption" else {}
         config.write_text(json.dumps({"store": "compact", "encryption": value}))
     elif damage in ("invalid_json", "invalid_object"):

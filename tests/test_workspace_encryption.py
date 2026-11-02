@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import sys
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 
 import pytest
@@ -35,6 +35,22 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("COMMONPLACE_WRAPPING_KEY_FILE", str(server))
     monkeypatch.delenv("COMMONPLACE_KEY_SLOT", raising=False)
     return data, owner, wid, server, recovery, slots
+
+
+@pytest.fixture
+def encryption_metadata(tmp_path):
+    directory = tmp_path / "workspaces" / ("ws_synthetic.generation-" + "a" * 24)
+    directory.mkdir(parents=True)
+    info = {
+        "version": 1,
+        "cipher": "sqlcipher",
+        "workspace_id": "ws_synthetic",
+        "key_id": "a" * 32,
+        "database_paths": [],
+    }
+    config = directory / "workspace.json"
+    config.write_text(json.dumps({"encryption": info}))
+    return directory, config, info
 
 
 def enable(workspace, *, checkpoint=lambda step: None):
@@ -94,6 +110,7 @@ def test_fresh_non_admin_owner_cli_encrypted_reopen(workspace):
         == 0
     )
     active = workspace_path(data, wid)
+    assert crypto.encryption_settings(active / "threads.v2.sqlite3")[1]["database_paths"] == []
     thread = store_message(active, wid)
     with closing(open_threads(active)) as store:
         assert store.messages(thread)[0].text == "verbatim snowman ☃\x00"
@@ -199,30 +216,102 @@ def test_wrong_raw_data_key_fails_closed(workspace):
 
 
 def test_ciphertext_backup_restore_without_keys_then_recovery_reopen(workspace, monkeypatch):
-    data, _, wid, _, recovery, slots = workspace
+    from commonplace import backup as backups
+
+    data, _, wid, server, recovery, slots = workspace
+    root = workspace_root(data, wid)
+    root.mkdir(parents=True)
+    (root / "workspace.json").write_text('{"store":"compact"}')
+    migrated = ("ciphertext.unusual", "nested/archive.memory", "control.sqlite3")
+    for name in migrated:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path)) as conn, conn:
+            conn.execute("CREATE TABLE fixture(content TEXT)")
+    auxiliaries = {
+        "aux/revisions.jsonl": b'{"text":"verbatim"}\n',
+        "aux/registry.json": b'{"person":"Synthetic"}\n',
+        "aux/service.log": b"verbatim log\n",
+        "aux/opaque.bin": b"\x00\xffopaque bytes\n",
+    }
+    for name, content in auxiliaries.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    opaque_db = data / "opaque-aux.db"
+    opaque_db.write_bytes(b"opaque non-SQLite auxiliary\x00\xff")
     enable(workspace)
     active = workspace_path(data, wid)
+    directory, info = crypto.encryption_settings(active / migrated[1])
+    assert directory == active != root
+    assert info["database_paths"] == sorted(migrated)
+    settings_before = (active / "workspace.json").read_bytes()
     thread = store_message(active, wid)
-    # Leave committed rows in a live WAL to prove the checkpoint includes them.
-    writer = crypto.connect(active / "wal-fixture.sqlite3", isolation_level=None)
-    try:
-        writer.execute("PRAGMA journal_mode=WAL")
-        writer.execute("CREATE TABLE fixture(content TEXT)")
-        writer.execute("INSERT INTO fixture VALUES ('committed synthetic WAL row')")
+    # Future known-suffix stores need no inventory write, but must be backed up.
+    future = ("future.sqlite3", "future.sqlite", "nested/future.db")
+    databases = (*migrated, *future)
+    text = "committed verbatim WAL row ☃\x00\n"
+    with ExitStack() as stack:
+        writers = []
+        for name in databases:
+            path = active / name
+            writer = stack.enter_context(closing(crypto.connect(path, isolation_level=None)))
+            writers.append(writer)
+            assert type(writer).__module__.startswith("sqlcipher3")
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            if name in future:
+                writer.execute("CREATE TABLE fixture(content TEXT)")
+            main_before = path.read_bytes()
+            writer.execute("INSERT INTO fixture VALUES (?)", (text,))
+            assert Path(str(path) + "-wal").stat().st_size > 32
+            assert path.read_bytes() == main_before
         snapshot = data.parent / "encrypted-backup"
         manifest = backup(data, snapshot)
-        relative = active.relative_to(data) / "wal-fixture.sqlite3"
-        assert (snapshot / relative).read_bytes() == (data / relative).read_bytes()
-        assert not any(entry["path"].endswith(("-wal", "-shm")) for entry in manifest["files"])
-    finally:
-        writer.close()
+        assert verify_backup(snapshot) == manifest
+        for name, writer in zip(databases, writers):
+            relative = active.relative_to(data) / name
+            assert (snapshot / relative).read_bytes() == (data / relative).read_bytes()
+            assert not (snapshot / relative).read_bytes().startswith(b"SQLite format 3\x00")
+            assert writer.execute("SELECT content FROM fixture").fetchall() == [(text,)]
+        assert not any(
+            path.name.endswith(("-wal", "-shm", "-journal")) for path in snapshot.rglob("*")
+        )
+    assert (active / "workspace.json").read_bytes() == settings_before
     monkeypatch.delenv("COMMONPLACE_WRAPPING_KEY_FILE")
     monkeypatch.delenv("COMMONPLACE_KEY_STORE")
     restored = data.parent / "restored"
-    verify_backup(snapshot)
-    restore(snapshot, restored)
+    with monkeypatch.context() as no_keys:
+        no_keys.setattr(crypto, "driver", lambda: pytest.fail("driver during keyless restore"))
+        no_keys.setattr(
+            crypto, "workspace_key", lambda *a: pytest.fail("key during keyless restore")
+        )
+        assert verify_backup(snapshot) == manifest
+        # Matching hashes must not let unusual-name sidecars pass verification.
+        manifest_path = snapshot / "manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+        for name in migrated[:2]:
+            for suffix in ("-wal", "-shm", "-journal"):
+                sidecar = snapshot / active.relative_to(data) / (name + suffix)
+                sidecar.write_bytes(b"unexpected SQLite sidecar")
+                manifest_path.write_text(
+                    json.dumps(
+                        {
+                            **manifest,
+                            "files": [*manifest["files"], backups._file_entry(sidecar, snapshot)],
+                        }
+                    )
+                )
+                with pytest.raises(BackupError, match="SQLite sidecars"):
+                    verify_backup(snapshot)
+                sidecar.unlink()
+        manifest_path.write_bytes(manifest_bytes)
+        restore(snapshot, restored)
     recovered = workspace_path(restored, wid)
-    for path in ("threads.v2.sqlite3", "wal-fixture.sqlite3"):
+    for name, content in auxiliaries.items():
+        assert (active / name).read_bytes() == (recovered / name).read_bytes() == content
+    assert (restored / opaque_db.name).read_bytes() == opaque_db.read_bytes()
+    for path in ("threads.v2.sqlite3", *databases):
         assert (recovered / path).read_bytes() == (
             snapshot / recovered.relative_to(restored) / path
         ).read_bytes()
@@ -233,16 +322,15 @@ def test_ciphertext_backup_restore_without_keys_then_recovery_reopen(workspace, 
     record = json.loads(record_path.read_text())
     del record["slots"]["server"]
     record_path.write_text(json.dumps(record))
+    server.unlink()
     monkeypatch.setenv("COMMONPLACE_KEY_STORE", str(slots))
     monkeypatch.setenv("COMMONPLACE_WRAPPING_KEY_FILE", str(recovery))
     monkeypatch.setenv("COMMONPLACE_KEY_SLOT", "recovery")
     with closing(open_threads(recovered)) as store:
         assert store.messages(thread)[0].text == "verbatim snowman ☃\x00"
-    with closing(crypto.connect(recovered / "wal-fixture.sqlite3")) as conn:
-        assert (
-            conn.execute("SELECT content FROM fixture").fetchone()[0]
-            == "committed synthetic WAL row"
-        )
+    for name in databases:
+        with closing(crypto.connect(recovered / name)) as conn:
+            assert conn.execute("SELECT content FROM fixture").fetchall() == [(text,)]
 
 
 def test_byte_copy_retains_unchanged_cipher_pages(workspace):
@@ -399,6 +487,7 @@ def test_metadata_io_failure_never_opens_a_database(tmp_path, monkeypatch, failu
                     "cipher": "sqlcipher",
                     "workspace_id": directory.name,
                     "key_id": "a" * 32,
+                    "database_paths": [],
                 }
             }
         )
@@ -419,16 +508,144 @@ def test_metadata_io_failure_never_opens_a_database(tmp_path, monkeypatch, failu
     assert not target.exists()
 
 
+@pytest.mark.parametrize(
+    "paths",
+    [
+        pytest.param("missing", id="missing-key"),
+        pytest.param(None, id="null"),
+        pytest.param({}, id="object"),
+        pytest.param("database.unusual", id="string"),
+        pytest.param([None], id="null-entry"),
+        pytest.param([123], id="number-entry"),
+        pytest.param([""], id="empty"),
+        pytest.param(["/absolute.unusual"], id="absolute"),
+        pytest.param(["C:/absolute.unusual"], id="windows-absolute"),
+        pytest.param(["C:relative.unusual"], id="windows-drive"),
+        pytest.param(["nested\\database.unusual"], id="backslash"),
+        pytest.param(["nul\x00.unusual"], id="nul"),
+        pytest.param(["."], id="dot"),
+        pytest.param([".."], id="dotdot"),
+        pytest.param(["../escape.unusual"], id="escape"),
+        pytest.param(["nested/../database.unusual"], id="nested-dotdot"),
+        pytest.param(["nested/./database.unusual"], id="nested-dot"),
+        pytest.param(["nested//database.unusual"], id="empty-segment"),
+        pytest.param(["nested/database.unusual/"], id="trailing-slash"),
+        pytest.param(["same.unusual", "same.unusual"], id="duplicate"),
+        pytest.param(["workspace.json"], id="settings"),
+        pytest.param(["nested/workspace.json"], id="nested-settings"),
+        pytest.param(["database-wal"], id="wal"),
+        pytest.param(["nested/database-shm"], id="shm"),
+        pytest.param(["database-journal"], id="journal"),
+    ],
+)
+def test_invalid_database_inventory_fails_before_database_access(
+    encryption_metadata, monkeypatch, paths
+):
+    from commonplace import backup as backups
+
+    directory, config, info = encryption_metadata
+    if paths == "missing":
+        del info["database_paths"]
+    else:
+        info["database_paths"] = paths
+    config.write_text(json.dumps({"encryption": info}))
+    target = directory / "not-created.unusual"
+    monkeypatch.setattr(crypto, "driver", lambda: pytest.fail("driver before inventory validation"))
+    monkeypatch.setattr(crypto, "workspace_key", lambda *a: pytest.fail("key before validation"))
+    monkeypatch.setattr(crypto.sqlite3, "connect", lambda *a, **k: pytest.fail("SQLite fallback"))
+    for operation in (crypto.encryption_settings, crypto.connect, backups._encrypted_database):
+        with pytest.raises(crypto.EncryptionError, match="settings"):
+            operation(target)
+    assert not target.exists()
+
+
+def test_inventory_symlink_escape_fails_closed(encryption_metadata, tmp_path, monkeypatch):
+    directory, config, info = encryption_metadata
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (directory / "escaped").symlink_to(outside, target_is_directory=True)
+    info["database_paths"] = ["escaped/database.unusual"]
+    config.write_text(json.dumps({"encryption": info}))
+    monkeypatch.setattr(crypto, "driver", lambda: pytest.fail("driver before inventory validation"))
+    target = directory / "not-created.sqlite3"
+    with pytest.raises(crypto.EncryptionError, match="settings"):
+        crypto.connect(target)
+    assert not target.exists()
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize("uri", [False, True])
+def test_unlisted_unknown_suffix_refused_before_key_driver_or_open(
+    encryption_metadata, monkeypatch, uri
+):
+    from commonplace import backup as backups
+
+    directory, config, info = encryption_metadata
+    info["database_paths"] = ["nested/inventoried.unusual"]
+    config.write_text(json.dumps({"encryption": info}))
+    listed = directory / info["database_paths"][0]
+    assert backups._encrypted_database(listed)
+    monkeypatch.setattr(crypto, "driver", lambda: pytest.fail("driver before path refusal"))
+    monkeypatch.setattr(crypto, "workspace_key", lambda *a: pytest.fail("key before path refusal"))
+    monkeypatch.setattr(crypto, "cipher_connect", lambda *a, **k: pytest.fail("database open"))
+    monkeypatch.setattr(crypto.sqlite3, "connect", lambda *a, **k: pytest.fail("SQLite fallback"))
+    # A matching basename in another directory is not an inventory match.
+    for name in ("future.unusual", "inventoried.unusual", "other/inventoried.unusual"):
+        target = directory / name
+        assert not backups._encrypted_database(target)
+        with pytest.raises(crypto.EncryptionError, match="Unlisted"):
+            crypto.connect(target.as_uri() if uri else target, uri=uri)
+        assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "name,plaintext",
+    [
+        ("future.sqlite3", True),
+        ("future.sqlite", False),
+        ("future.db", True),
+        ("nested/inventoried.unusual", False),
+    ],
+)
+def test_backup_refuses_plaintext_or_corrupt_encrypted_database_paths(workspace, name, plaintext):
+    data, _, wid, *_ = workspace
+    root = workspace_root(data, wid)
+    root.mkdir(parents=True)
+    unusual = root / "nested/inventoried.unusual"
+    unusual.parent.mkdir()
+    with closing(sqlite3.connect(unusual)) as conn, conn:
+        conn.execute("CREATE TABLE fixture(content TEXT)")
+    enable(workspace)
+    path = workspace_path(data, wid) / name
+    path.unlink(missing_ok=True)
+    if plaintext:
+        with closing(sqlite3.connect(path)) as conn, conn:
+            conn.execute("CREATE TABLE fixture(content TEXT)")
+    else:
+        path.write_bytes(b"opaque corruption, not a database")
+    before = path.read_bytes()
+    snapshot = data.parent / "refused-backup"
+    with pytest.raises(crypto.EncryptionError):
+        backup(data, snapshot)
+    assert path.read_bytes() == before
+    assert not snapshot.exists()
+    assert not list(data.parent.glob(".refused-backup.partial-*"))
+
+
 def test_unknown_suffix_encrypted_snapshot_never_uses_plaintext_api(workspace, monkeypatch):
     from commonplace import backup as backups
 
     data, _, wid, *_ = workspace
+    root = workspace_root(data, wid)
+    root.mkdir(parents=True)
+    source = root / "ciphertext.unusual"
+    with closing(sqlite3.connect(source)) as conn, conn:
+        conn.execute("CREATE TABLE fixture(content TEXT)")
+        conn.execute("INSERT INTO fixture VALUES ('verbatim ciphertext')")
     enable(workspace)
     active = workspace_path(data, wid)
     source = active / "ciphertext.unusual"
-    with closing(crypto.connect(source)) as conn, conn:
-        conn.execute("CREATE TABLE fixture(content TEXT)")
-        conn.execute("INSERT INTO fixture VALUES ('verbatim ciphertext')")
+    assert crypto.encryption_settings(source)[1]["database_paths"] == [source.name]
     before = source.read_bytes()
     monkeypatch.setattr(backups.sqlite3, "connect", lambda *a, **k: pytest.fail("plaintext API"))
     target = data.parent / "snapshot.unusual"

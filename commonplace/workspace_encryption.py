@@ -21,6 +21,7 @@ from mempalace.sqlite_crypto import (
     driver,
     protected_key,
     unwrap_key,
+    validate_database_paths,
     wrap_key,
 )
 
@@ -173,6 +174,11 @@ def encrypt_workspace(
             databases = [path for path in staged_files if _is_sqlite(path)]
             if any(path.name == "chroma.sqlite3" for path in databases):
                 raise EncryptionError("Chroma files cannot be encrypted by the compact store")
+            # Capture names before in-place exports; publish only after all succeed.
+            info["database_paths"] = sorted(
+                path.relative_to(staging).as_posix() for path in databases
+            )
+            validate_database_paths(staging, info["database_paths"])
             for path in databases:
                 _export(path, key)
             checkpoint("encrypted")

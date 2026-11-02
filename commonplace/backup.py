@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mempalace.sqlite_crypto import connect, encryption_settings
+from mempalace.sqlite_crypto import connect, encryption_settings, is_workspace_database
 
 LOCK_NAME = ".commonplace.lock"
 _SQLITE_HEADER = b"SQLite format 3\x00"
@@ -192,7 +192,8 @@ def _is_sqlite(path: Path) -> bool:
 
 
 def _encrypted_database(path: Path) -> bool:
-    return path.suffix in (".sqlite3", ".sqlite", ".db") and encryption_settings(path) is not None
+    settings = encryption_settings(path)
+    return settings is not None and is_workspace_database(path, *settings)
 
 
 def _snapshot(source: Path, target: Path) -> None:
