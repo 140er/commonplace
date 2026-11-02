@@ -812,7 +812,7 @@ def main():
             "cost_usd": round(cost, 6),
             "cumulative_usd": round(spent + cost, 6),
             "cwd": os.getcwd(),
-            "caller": os.environ.get("T3_THREAD_ID") or os.environ.get("USER", ""),
+            "caller": os.environ.get("USER", ""),
             "verdict_file": out,
         }
         with open(USAGE_LOG, "a") as f:

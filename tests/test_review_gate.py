@@ -385,6 +385,26 @@ def test_actual_api_request_has_no_pr_builder_metadata(gate, tmp_path, monkeypat
     assert next(Path(gate.VERDICT_DIR).glob("*.json")).stat().st_mode & 0o777 == 0o600
 
 
+def test_usage_caller_uses_generic_user_label(gate, tmp_path, monkeypatch):
+    api_fixture(gate, tmp_path, monkeypatch)
+    real_get = gate.os.environ.get
+
+    def environment_get(key, default=None):
+        if key == "USER":
+            return "synthetic-user"
+        if key.endswith("_THREAD_ID"):
+            return "private-run-must-not-be-caller"
+        return real_get(key, default)
+
+    monkeypatch.setattr(gate.os.environ, "get", environment_get)
+    monkeypatch.setattr(gate, "load_key", lambda: "synthetic-not-a-real-key")
+    monkeypatch.setattr(gate, "api_call", lambda *_: response())
+
+    assert gate.main() == 0
+    record = json.loads(Path(gate.USAGE_LOG).read_text())
+    assert record["caller"] == "synthetic-user"
+
+
 @pytest.mark.parametrize("scope", ["global", "session", "window"])
 def test_credit_refusal_precedes_credential_load(gate, tmp_path, monkeypatch, scope):
     session = None
