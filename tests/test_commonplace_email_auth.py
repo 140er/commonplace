@@ -227,12 +227,17 @@ def test_prefetch_does_not_consume_link_or_create_account(fresh):
     assert client.request("/app/brand/logo-small-dark.svg")[0] == 200
     before = challenge_rows()
     assert len(before) == 1
-    for origin in ("https://another.example", "null", "not-an-origin"):
+    for origin_headers in (
+        {"Origin": "https://another.example"},
+        {"Origin": "null"},
+        {"Origin": "not-an-origin"},
+        {"Origin": "null", "Sec-Fetch-Site": "same-origin"},
+    ):
         denied = client.request(
             path,
             "POST",
             raw="confirm=1",
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": origin},
+            headers={"Content-Type": "application/x-www-form-urlencoded", **origin_headers},
         )
         assert denied[0] == 403 and "Set-Cookie" not in denied[1]
         assert counts(client) == (0, 0)
