@@ -58,7 +58,7 @@ class Client:
 
     def verify(self, link):
         parts = urlsplit(link)
-        return self.request(parts.path + "?" + parts.query)
+        return self.request(parts.path, "POST", data={"t": parse_qs(parts.query)["t"][0]})
 
     def signin(self, mailbox, email="fresh@example.test", **kwargs):
         assert self.ask(email, **kwargs)[0] == 202
@@ -197,6 +197,65 @@ def test_real_smtp_capture_verifies_a_fresh_account(fresh, smtp_env, smtp_server
     assert client.me(headers["Set-Cookie"].split(";", 1)[0])["email"] == "smtp-user@example.test"
 
 
+def test_prefetch_does_not_consume_link_or_create_account(fresh):
+    client, mailbox = fresh()
+    assert client.ask()[0] == 202
+    link = urlsplit(mailbox.link())
+    path = link.path + "?" + link.query
+    token = parse_qs(link.query)["t"][0]
+    for _ in range(2):
+        status, headers, page = client.request(path)
+        assert status == 200 and "Set-Cookie" not in headers
+        assert headers["Cache-Control"] == "no-store"
+        assert headers["Referrer-Policy"] == "no-referrer"
+        assert b'<form method="post">' in page and b'value="1">Sign in</button>' in page
+        assert token.encode() not in page
+        assert counts(client) == (0, 0)
+
+    def challenge_rows():
+        with client.db._lock:
+            return [tuple(row) for row in client.db._conn.execute("SELECT * FROM email_challenges")]
+
+    before = challenge_rows()
+    assert len(before) == 1
+    for origin in ("https://another.example", "null", "not-an-origin"):
+        denied = client.request(
+            path,
+            "POST",
+            raw="confirm=1",
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": origin},
+        )
+        assert denied[0] == 403 and "Set-Cookie" not in denied[1]
+        assert counts(client) == (0, 0)
+        assert challenge_rows() == before
+    conn = http.client.HTTPConnection("127.0.0.1", client.port, timeout=3)
+    try:
+        conn.putrequest("POST", path)
+        conn.putheader("Content-Type", "application/x-www-form-urlencoded")
+        conn.putheader("Content-Length", "9")
+        conn.putheader("Origin", urls.APP_URL)
+        conn.putheader("Origin", urls.APP_URL)
+        conn.endheaders(b"confirm=1")
+        response = conn.getresponse()
+        assert response.status == 403 and response.getheader("Set-Cookie") is None
+        response.read()
+    finally:
+        conn.close()
+    assert counts(client) == (0, 0) and challenge_rows() == before
+    status, headers, _ = client.request(
+        path,
+        "POST",
+        raw="confirm=1",
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": urls.APP_URL},
+    )
+    assert status == 303
+    assert client.me(headers["Set-Cookie"].split(";", 1)[0])["email"] == "fresh@example.test"
+    refused(client.request(path))
+    refused(client.verify(mailbox.link()))
+    assert client.ask("no-origin@example.test")[0] == 202
+    assert client.verify(mailbox.link())[0] == 303
+
+
 @pytest.mark.parametrize("signup", [None, "", "closed", " CLOSED ", "invalid"])
 def test_closed_signup_is_neutral_and_creates_nothing(fresh, monkeypatch, signup):
     client, mailbox = fresh()
@@ -248,7 +307,7 @@ def test_concurrent_challenge_redemption_has_one_winner(fresh):
     path = urlsplit(mailbox.link())
     path = path.path + "?" + path.query
     with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = list(pool.map(lambda _: client.request(path), range(2)))
+        responses = list(pool.map(lambda _: client.request(path, "POST", data={}), range(2)))
     assert sorted(response[0] for response in responses) == [303, 400]
     assert counts(client) == (1, 1)
 
