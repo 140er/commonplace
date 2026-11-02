@@ -1311,12 +1311,17 @@ class BoardService:
             )
         if status in ("todo", "doing") and not self._available_origin(row):
             raise ToolError("no: restricted-origin work needs parent or workspace owner release")
+        if (
+            old == "review"
+            and not self.principal.person
+            and (
+                not (row["ask_to"] or "").startswith("conn:")
+                or any((row[key] or "").startswith("user:") for key in ("assignee", "return_to"))
+            )
+        ):
+            raise ToolError("no: waiting on a person, they must answer via decide")
         if old == "review" and not (not self.principal.person and status == "done"):
             if self._review_editor(row) and status in ("todo", "doing"):
-                if not (row["ask_to"] or "").startswith("conn:") or any(
-                    (row[key] or "").startswith("user:") for key in ("assignee", "return_to")
-                ):
-                    raise ToolError("no: waiting on a person, they must answer via decide")
                 return
             raise ToolError("no: use decide to move a card from review")
         if self.principal.person:
@@ -1660,6 +1665,12 @@ class BoardService:
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
         self._holder(row)
+        if row["proposal_status"] in ("pending", "rejected"):
+            raise ToolError(
+                "no: proposal needs parent approval with task_approve before work starts"
+            )
+        if not self.principal.person and _waiting_on_person(row):
+            raise ToolError("no: waiting on a person, they must answer via decide")
         if row["status"] == "todo" and not person and not self.principal.person:
             raise ToolError("no: take this card before handing it off")
         note = validate_text(note, "note", required=True)
@@ -1748,13 +1759,8 @@ class BoardService:
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             _owner(self.principal)
-            # The owner decides in the app, or through a trusted
-            # agent relaying the answer. An agent never
-            # answers a question it asked itself.
-            if not self.principal.person and (
-                self.principal.policy.trust != "trusted" or row["return_to"] == self.principal.actor
-            ):
-                raise ToolError("no: only the owner or a trusted agent can answer this")
+            if not self.principal.person:
+                raise ToolError("no: only a signed-in workspace owner can answer this")
             self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":
