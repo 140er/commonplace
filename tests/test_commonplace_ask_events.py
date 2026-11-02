@@ -187,7 +187,7 @@ def test_rest_decide_requires_the_version_the_person_saw(hub, owner, agent):
     assert [d["choice"] for d in decides] == ["no", "keep"]
 
 
-def test_mcp_decide_without_a_version_still_works(hub, owner, agent):
+def test_mcp_agent_cannot_relay_a_person_decision(hub, owner, agent):
     created = agent.ask(
         "Proceed? Which approach should we take?",
         options=["yes", "no"],
@@ -200,8 +200,9 @@ def test_mcp_decide_without_a_version_still_works(hub, owner, agent):
         "tools/call",
         {"name": "decide", "arguments": {"task": created["number"], "choice": "yes"}},
     )
-    assert not response["result"].get("isError"), response
-    assert owner.task_show(created["number"])["status"] == "todo"
+    assert response["result"].get("isError"), response
+    assert "only a signed-in workspace owner" in response["result"]["content"][0]["text"]
+    assert owner.task_show(created["number"])["status"] == "review"
 
 
 def test_app_sends_the_rendered_version_and_keeps_one_live_place():

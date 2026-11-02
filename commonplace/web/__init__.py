@@ -64,9 +64,13 @@ def _static(h):
 
 def install(gateway):
     def login(h):
-        session = sessions.redeem_login_link(gateway.db, query(h).get("t", ""))
+        token = query(h).get("t", "")
+        if not token:
+            _response(h, 302, headers={"Location": "/app/"})
+            return
+        session = sessions.redeem_login_link(gateway.db, token)
         if not session or sessions.session_principal(gateway.db, session) is None:
-            _response(h, 400, b"Sign in link is invalid or expired")
+            _response(h, 302, headers={"Location": "/app/?signin=expired"})
             return
         _response(
             h,
