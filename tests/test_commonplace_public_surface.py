@@ -40,6 +40,11 @@ EXACT = {
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills", "/api/skill-decks")
+    },
     ("POST", "/api/import"): "authenticated",
     ("GET", "/api/capture"): "authenticated",
     ("POST", "/api/capture"): "authenticated",
@@ -57,6 +62,12 @@ EXACT = {
 PREFIX = {
     ("POST", "/api/connections/"): "authenticated",
     ("DELETE", "/api/connections/"): "authenticated",
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills/", "/api/skill-decks/")
+    },
+    ("GET", "/skills/decks/"): "public",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
