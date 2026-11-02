@@ -2,6 +2,12 @@
 
 A pure library: no I/O, no installers. A PreToolUse hook calls
 ``match_hook_bypass`` on a shell command and blocks (or warns on) the first hit.
+
+Command-local hook-disabling environment assignments count on recognized git
+writes. Persistent disabling exports of HUSKY, LEFTHOOK, HUSKY_SKIP_HOOKS and
+SKIP_SIMPLE_GIT_HOOKS count independently; SKIP, LEFTHOOK_EXCLUDE and
+PRE_COMMIT_ALLOW_NO_CONFIG exports require a git write. Thus ``HUSKY=0 npm ci``
+is allowed, while ``export HUSKY=0`` is reported.
 """
 
 from __future__ import annotations
@@ -65,7 +71,7 @@ _HOOK_OFF_VALUES = {
     "PRE_COMMIT_ALLOW_NO_CONFIG": frozenset({"1"}),
 }
 _HOOK_OFF_NONEMPTY = frozenset({"SKIP", "LEFTHOOK_EXCLUDE"})
-# Names that only disable hooks when the same command also commits or pushes.
+# These exports count only when a git write is also present in the command.
 _HOOK_OFF_CONDITIONAL = frozenset({"SKIP", "LEFTHOOK_EXCLUDE", "PRE_COMMIT_ALLOW_NO_CONFIG"})
 
 _GUIDANCE = "Fix the failing check, or report the broken hook on your task; do not bypass hooks."
