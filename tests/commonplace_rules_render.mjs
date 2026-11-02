@@ -12,6 +12,7 @@ const deferred = () => {
 };
 const rule = (id, fields = {}) => ({ id, agent: "conn:writer", key: `rule-${id}`, text: "Always preserve exact words.", agent_text: null, kind: "instruction", scope: "global", scope_ref: null, status: "proposed", source: "agent", pending: 0, version: 3, ...fields });
 const first = rule(1);
+let conflictMarkup = "";
 assert.equal(clarifyPrompt(first), `Rewrite this rule for an AI agent so it has exactly one reading.
 Keep its meaning and its strength (must / may / never). Don't add new obligations.
 Name the trigger, the action and any exception. One to three sentences.
@@ -293,7 +294,8 @@ console.log("Rules delayed clarify snapshot checks passed");
       assert.equal(edit.row.dataset.version, "4");
       assert.deepEqual(Object.fromEntries(Object.entries(edit.controls).map(([key, control]) => [key, control.value])), values);
       assert.equal(edit.writes.length, 1, "Conflict must not automatically retry or accept");
-      assert.match(edit.errors.at(-1), /Your draft is kept.*Save again/);
+      assert.match(edit.comparison.innerHTML, /Your draft is kept.*Save again/);
+      conflictMarkup = edit.comparison.innerHTML;
       for (const label of ["&lt;current&gt; &quot;&amp; 日本語\n  ", "&lt;target&gt;", "edited", "&lt;kind&gt;", "repo &lt;scope&gt; &quot;&amp;", "Summary: &lt;summary&gt; &quot;&amp;\n "]) assert.ok(edit.comparison.innerHTML.includes(label), label);
       assert.ok(!edit.comparison.innerHTML.includes("<current>") && !edit.comparison.innerHTML.includes("<target>"));
       const retry = edit.submit();
@@ -350,7 +352,7 @@ console.log("Rules delayed clarify snapshot checks passed");
     await submitting;
     assert.equal(edit.row.dataset.version, "6");
     assert.equal(edit.controls.text.value, draft.text);
-    assert.match(edit.errors.at(-1), /Restore it before saving/);
+    assert.match(edit.comparison.innerHTML, /Restore it before saving/);
     assert.ok(edit.comparison.innerHTML.includes("All agents") && edit.comparison.innerHTML.includes("retired"));
     assert.equal(edit.writes.length, 1, "Never restore or approve a retired snapshot automatically");
     assert.equal(edit.refreshes, 0);
@@ -385,7 +387,7 @@ assert.equal(errors.at(-1), "Rule changed. Review it and try again.");
 const shellSource = await read("app.js");
 const refreshSource = shellSource.slice(shellSource.indexOf("async function refresh("), shellSource.indexOf("async function route()"));
 const shellState = { me: {}, screen: 1, refreshRequest: 0, base: "#/rules", route: "#/rules" };
-const shellCalls = [], updates = [], badgeCounts = [], shellErrors = [];
+const shellCalls = [], updates = [], badgeCounts = [], shellErrors = [], shellErrorCalls = [];
 const content = { innerHTML: "", children: [{}] };
 let shellPayload = { ...payload, can_edit: false };
 const noWork = () => {};
@@ -420,7 +422,7 @@ const shellDeps = {
   rulesView,
   navigation: () => badgeCounts.push(shellState.rulesWaiting),
   title: (_text, actions = "") => { headerActions = actions; }, remember: noWork, capture: () => noWork, restore: noWork,
-  boardsView: noWork, showError: (error) => { if (error) shellErrors.push(error); },
+  boardsView: noWork, showError: (error) => { shellErrorCalls.push(error); if (error) shellErrors.push(error); },
 };
 shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
 assert.equal(await shellRefresh(), true);
@@ -486,11 +488,16 @@ shellState.base = shellState.route = "#/rules";
 for (const busy of ['form[data-rule-form="edit"]', '.rule-new:not([hidden])']) {
   shellUI.update(shellPayload, { owner: true });
   shellBusy = busy;
+  content.innerHTML = `<form><div data-rule-current role="status">${conflictMarkup}</div></form>`;
   const before = updates.length, reads = shellCalls.length, html = content.innerHTML;
   await clickRetry();
   assert.ok(shellCalls.length > reads, "Retry must fetch current state");
   assert.equal(updates.length, before, "Retry must preserve a busy rule form");
   assert.equal(content.innerHTML, html);
+  assert.match(content.innerHTML, /Your draft is kept.*Save again/);
+  assert.equal(shellErrorCalls.at(-1), "", "Clearing the shell banner must not clear inline status");
+  await shellRefresh({ background: true, events: [{ kind: "rule.changed" }] });
+  assert.match(content.innerHTML, /Your draft is kept.*Save again/);
   assert.equal(shellUI.stale, true);
   shellBusy = false;
   await clickRetry();
@@ -532,6 +539,55 @@ for (const writeConflict of [false, true]) {
     assert.equal(shellUI.stale, false);
   }
 }
+
+// An acknowledged Save updates the retained editor's version even if its GET
+// fails. Late typing stays intact and another explicit Save uses that version.
+{
+  const NativeFormData = globalThis.FormData;
+  globalThis.FormData = class {
+    constructor(form) { return Object.entries(form.controls).map(([name, control]) => [name, control.value]); }
+  };
+  try {
+    shellUI.update(shellPayload, { owner: true });
+    shellBusy = 'form[data-rule-form="edit"]';
+    const row = { dataset: { ruleId: "1", version: "3" } }, comparison = { innerHTML: conflictMarkup };
+    const controls = { text: { value: "Submitted exact text" }, summary: { value: "Exact summary" }, scope: { value: "global" } };
+    const form = { dataset: { ruleForm: "edit" }, controls, querySelectorAll: () => [], querySelector: () => comparison,
+      closest: (selector) => selector === "[data-rule-id]" ? row : form };
+    const writes = [], firstWrite = deferred(), saved = rule(1, { version: 4, text: controls.text.value });
+    shellWrite = (path, options) => { writes.push([path, options]); return writes.length === 1 ? firstWrite.promise : Promise.resolve({ ...saved, version: 5 }); };
+    const read = queueShellRead();
+    const submit = () => shellHandlers.submit({ target: { closest: () => form }, preventDefault() {} });
+    const writing = submit();
+    controls.text.value += " with late café  typing";
+    firstWrite.resolve(saved);
+    await read.requested.promise;
+    assert.equal(row.dataset.version, "4");
+    assert.equal(comparison.innerHTML, "", "Acknowledged Save clears the old conflict explanation");
+    read.reject(new Error("Refresh unavailable after Save"));
+    await writing;
+    assert.equal(shellUI.force, false);
+    assert.equal(row.dataset.version, "4");
+    assert.equal(controls.text.value, "Submitted exact text with late café  typing");
+    await clickRetry();
+    assert.equal(writes.length, 1, "Read retry must not repeat the write");
+    await submit();
+    assert.equal(writes[1][1].body.version, 4);
+    assert.equal(writes[1][1].body.text, controls.text.value);
+    assert.equal(row.dataset.version, "5");
+    for (const invalid of [{}, { ...saved, id: 999 }, { ...saved, version: "8" }]) {
+      shellUI.update(shellPayload, { owner: true });
+      row.dataset.version = "3";
+      shellWrite = async () => invalid;
+      const read = queueShellRead(), writing = submit();
+      await read.requested.promise;
+      read.reject(new Error("Retain malformed-response form"));
+      await writing;
+      assert.equal(row.dataset.version, "3", "Never adopt a malformed or mismatched response version");
+    }
+  } finally { globalThis.FormData = NativeFormData; }
+}
+console.log("Rules acknowledged versions survive failed refresh without losing late typing");
 
 // Mutate's obsolete own refresh can finish or fail before the winning one.
 // Its finally must leave force intact until that winning request consumes it.

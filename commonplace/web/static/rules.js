@@ -124,15 +124,27 @@ export function rulesHandlers(root, api, refresh, showError) {
     const buttons = [...element.querySelectorAll("button")];
     buttons.forEach((button) => { button.disabled = true; });
     // A finished write renders once even if a background refresh overtakes this one.
-    try { if (await work() !== false) { ui.force = true; await refresh(); } }
+    try {
+      const saved = await work();
+      if (saved !== false) {
+        const row = element.dataset?.ruleForm === "edit" ? element.closest("[data-rule-id]") : null;
+        if (row && String(saved?.id) === row.dataset.ruleId && Number.isInteger(saved?.version)) {
+          payload = { ...payload, rules: payload.rules.map((rule) => String(rule.id) === row.dataset.ruleId ? saved : rule) };
+          row.dataset.version = String(saved.version);
+          element.querySelector("[data-rule-current]").innerHTML = "";
+        }
+        ui.force = true; await refresh();
+      }
+    }
     catch (error) {
       if (element.dataset?.ruleForm === "edit") {
         const row = element.closest("[data-rule-id]"), current = error.payload?.current;
-        if (error.status === 409 && !error.payload?.store_lost && current && String(current.id) === row.dataset.ruleId && Number.isInteger(current.version)) {
+        if (error.status === 409 && !error.payload?.store_lost && row && current && String(current.id) === row.dataset.ruleId && Number.isInteger(current.version)) {
           payload = { ...payload, rules: payload.rules.map((rule) => String(rule.id) === row.dataset.ruleId ? current : rule) };
           row.dataset.version = String(current.version);
-          element.querySelector("[data-rule-current]").innerHTML = `<section class="rule-proposal"><h4>Current rule</h4><div class="rule-chips"><span class="pill">${e(agentName(current.agent))}</span><span class="pill">${e(current.status)}</span><span class="pill">${e(current.kind)}</span><span class="pill">${e(current.scope)}${current.scope_ref == null ? "" : ` ${e(current.scope_ref)}`}</span></div><p class="rule-text">${e(current.text)}</p><p class="rule-text quiet">Summary: ${e(current.summary ?? "None")}</p></section>`;
-          showError(current.status === "retired" ? "Rule retired. Restore it before saving. Your draft is kept." : "Rule changed. Your draft is kept. Review the current rule and Save again.");
+          const explanation = current.status === "retired" ? "Rule retired. Restore it before saving. Your draft is kept." : "Rule changed. Your draft is kept. Review the current rule and Save again.";
+          element.querySelector("[data-rule-current]").innerHTML = `<section class="rule-proposal"><p class="rule-text">${e(explanation)}</p><h4>Current rule</h4><div class="rule-chips"><span class="pill">${e(agentName(current.agent))}</span><span class="pill">${e(current.status)}</span><span class="pill">${e(current.kind)}</span><span class="pill">${e(current.scope)}${current.scope_ref == null ? "" : ` ${e(current.scope_ref)}`}</span></div><p class="rule-text">${e(current.text)}</p><p class="rule-text quiet">Summary: ${e(current.summary ?? "None")}</p></section>`;
+          showError("");
         } else showError(error.message);
       } else if (element.dataset?.ruleForm === "new" || error.payload?.store_lost) showError(error.message);
       else if (error.status === 409) { ui.force = true; await refresh(); showError("Rule changed. Review it and try again."); }
