@@ -72,6 +72,12 @@ _HEADER_PRAGMAS = (
 _lock = threading.Lock()
 _positive: dict[tuple[int, int], bool] = {}
 _retained_conns: dict[tuple[int, int], sqlite3.Connection] = {}
+# Key by inode, just like the cache, so aliases cannot create competing probes.
+# Never wait for a probe lock while holding the dictionary lock.
+_probe_locks: dict[tuple[int, int], threading.Lock] = {}
+_generation = 0
+# Do not use or close inherited SQLite connections in a forked child.
+_inherited_conns: list[sqlite3.Connection] = []
 
 
 def _stat_regular_file(db_path: str) -> Optional[os.stat_result]:
@@ -141,24 +147,36 @@ def has_sqlite_magic(db_path: str) -> bool:
     with _lock:
         if _positive.get(key):
             return True
-        if key in _retained_conns:
+        probe_lock = _probe_locks.setdefault(key, threading.Lock())
+
+    with probe_lock:
+        with _lock:
+            if _positive.get(key):
+                return True
+            retained = _retained_conns.get(key)
+            generation = _generation
+
+        if retained is not None:
             try:
-                _retained_conns[key].execute("PRAGMA schema_version").fetchone()
-                _positive[key] = True
+                retained.execute("PRAGMA schema_version").fetchone()
+                with _lock:
+                    if generation == _generation:
+                        _positive[key] = True
                 return True
             except sqlite3.Error:
-                _retained_conns.pop(key, None)
+                with _lock:
+                    _retained_conns.pop(key, None)
 
         if st.st_size == 0:
             return False
 
-        # Check, create and retain under one lock. A competing cold probe must
+        # Check, create and retain under this inode's lock. A cold probe must
         # reuse this connection: replacing it would leave an orphan whose GC
         # close can drop a native writer's process-wide POSIX locks.
         uri = sqlite_read_uri(db_path) + "&immutable=1"
         try:
             # Retained probes may be closed by teardown after their creating
-            # thread has finished. Cached reads are serialized by _lock.
+            # thread has finished. Reads are serialized by the probe lock.
             conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         except sqlite3.Error:
             conn = None
@@ -167,26 +185,28 @@ def has_sqlite_magic(db_path: str) -> bool:
             try:
                 conn.execute("PRAGMA schema_version").fetchone()
                 if os.name == "posix":
-                    _retained_conns[key] = conn
+                    with _lock:
+                        _retained_conns[key] = conn
                 else:
                     conn.close()
-                _positive[key] = True
+                with _lock:
+                    if generation == _generation:
+                        _positive[key] = True
                 return True
             except sqlite3.Error:
                 conn.close()
 
-    # SQLite refused the file (empty, truncated, garbage). Nothing SQLite
-    # cannot open can be held open by a SQLite connection in this process, so
-    # a plain read of the prefix cannot drop anybody's locks here. This keeps
-    # the documented 16-byte-prefix semantics for marker files that carry the
-    # magic but no valid page 1.
-    if st.st_size < len(SQLITE_MAGIC):
-        return False
-    try:
-        with open(db_path, "rb") as f:
-            return f.read(len(SQLITE_MAGIC)) == SQLITE_MAGIC
-    except OSError:
-        return False
+        # SQLite refused the file (empty, truncated, garbage). Nothing SQLite
+        # cannot open can be held open by a SQLite connection in this process,
+        # so a plain prefix read cannot drop anybody's locks here. Preserve
+        # the 16-byte-prefix semantics for markers without a valid page 1.
+        if st.st_size < len(SQLITE_MAGIC):
+            return False
+        try:
+            with open(db_path, "rb") as f:
+                return f.read(len(SQLITE_MAGIC)) == SQLITE_MAGIC
+        except OSError:
+            return False
 
 
 def forget(db_path: Optional[str] = None) -> None:
@@ -194,11 +214,12 @@ def forget(db_path: Optional[str] = None) -> None:
 
     Test/maintenance hook; the inode key makes it unnecessary in normal use.
     """
+    global _generation
+    st = None if db_path is None else _stat_regular_file(db_path)
     with _lock:
-        if db_path is None:
-            _positive.clear()
-            return
-        st = _stat_regular_file(db_path)
+        # A probe already in flight may retain its connection but must not
+        # publish a detection from before this invalidation.
+        _generation += 1
         if st is None:
             _positive.clear()
             return
@@ -208,9 +229,32 @@ def forget(db_path: Optional[str] = None) -> None:
 def close_retained() -> None:
     """Close all retained probe connections. Test/maintenance hook only."""
     with _lock:
-        for conn in _retained_conns.values():
-            try:
-                conn.close()
-            except OSError:
-                pass
-        _retained_conns.clear()
+        keys = _probe_locks.keys() | _retained_conns.keys()
+        probes = [(key, _probe_locks.setdefault(key, threading.Lock())) for key in keys]
+    for key, probe_lock in probes:
+        with probe_lock:
+            with _lock:
+                conn = _retained_conns.get(key)
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                with _lock:
+                    _retained_conns.pop(key, None)
+
+
+def _reset_after_fork_in_child() -> None:
+    global _lock, _probe_locks, _positive, _retained_conns, _generation
+    # A parent thread may have held either kind of lock or used a connection
+    # at fork. Start fresh without acquiring those locks or closing SQLite.
+    _inherited_conns.extend(_retained_conns.values())
+    _lock = threading.Lock()
+    _probe_locks = {}
+    _positive = {}
+    _retained_conns = {}
+    _generation = 0
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork_in_child)
