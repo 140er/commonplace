@@ -392,11 +392,12 @@ def test_next_rejects_other_and_unsafe_paths(make_signin, remote, next_path):
     refused(finish(surface, flow, error="access_denied"), "cancelled")
 
 
-@pytest.mark.parametrize("signup", ["closed", " CLOSED ", "maybe"])
+@pytest.mark.parametrize("signup", [None, "", "closed", " CLOSED ", "maybe"])
 def test_closed_signup_refuses_unknown_email_without_creating_anything(
     make_signin, remote, monkeypatch, caplog, signup
 ):
-    monkeypatch.setenv("COMMONPLACE_SIGNUP", signup)
+    if signup is not None:
+        monkeypatch.setenv("COMMONPLACE_SIGNUP", signup)
     surface = make_signin()
     social.install(surface.gateway)
     remote.claims["email"] = "new@example.com"
@@ -419,7 +420,7 @@ def test_closed_signup_refuses_unknown_email_without_creating_anything(
         assert not caplog.records
 
 
-@pytest.mark.parametrize("signup", [None, "", " OPEN "])
+@pytest.mark.parametrize("signup", ["open", " OPEN "])
 def test_open_signup_creates_user_personal_workspace_identity_and_session(
     make_signin, remote, monkeypatch, signup
 ):
@@ -438,7 +439,7 @@ def test_open_signup_creates_user_personal_workspace_identity_and_session(
     response = finish(surface, start(surface, remote))
     user = surface.db.user("new@example.com")
     assert user["name"] == ("Test Person " + "x" * 120)[:100]
-    me = signed_in(surface, response, user["id"])
+    me = signed_in(surface, response, user["id"], landing="/app/#/board/commonplace")
     workspace = surface.db.workspace(me["workspace"])
     assert workspace["name"] == "new@example.com" and workspace["personal_of"] == user["id"]
     assert calls == [(surface.db, user["id"], workspace["id"], "google")]
@@ -695,7 +696,12 @@ def test_github_primary_verified_email_is_first_for_signup(make_signin, remote):
         {"email": "primary@example.com", "verified": True, "primary": True},
     ]
     response = finish(surface, start(surface, remote, "github"))
-    signed_in(surface, response, surface.db.user("primary@example.com")["id"])
+    signed_in(
+        surface,
+        response,
+        surface.db.user("primary@example.com")["id"],
+        landing="/app/#/board/commonplace",
+    )
 
 
 @pytest.mark.parametrize("provider_id", ["github", "x", "discord"])
@@ -789,7 +795,7 @@ def test_apple_form_post_name_and_string_verified_email(make_signin, remote):
         ),
     )
     user = surface.db.user("new@example.com")
-    signed_in(surface, response, user["id"])
+    signed_in(surface, response, user["id"], landing="/app/#/board/commonplace")
     assert user["name"] == "Test Person"
     assert "Secure" in response[1]["Set-Cookie"]
 
