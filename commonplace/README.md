@@ -36,7 +36,8 @@ Claude Code: [local setup and repeatable fresh-install check](../docs/commonplac
 
 Set `COMMONPLACE_PLANS=on` to enable hosted plans. New social sign-ups receive Free:
 250 MB storage per account and 10 minutes of server voice transcription per UTC day.
-The chat-sync interval hook is every 15 minutes for Free and live for Paid; sync is not built here.
+Opt-in native chat capture accepts updates every 15 minutes for Free and at
+configured hook events for Paid; see [transcript capture](../docs/transcript-capture.md).
 Paid has *unlimited*\*\* storage and transcription and a server-load throttle hook.
 
 ** zolang de server het aankan / as long as the server can handle it
@@ -75,3 +76,9 @@ The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and 
 Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.
 
 Agents create and claim their own board cards with every client preset. Child-created cards need direct-parent or signed-in-owner approval; orchestrators can create assigned child cards directly. See [the board API](../docs/boards/API.md) for `task_approve`, `task_heartbeat`, expiry, review requirements, and space creation.
+
+## Native transcript capture
+
+Workspace owners can opt in to private, append-only Claude Code and Codex capture.
+See [transcript capture](../docs/transcript-capture.md) for local selection,
+hook and scheduler setup, storage limits and supported source formats.
