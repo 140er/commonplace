@@ -83,9 +83,18 @@ async def email_login(page, instance, email, *, signup=False):
     link = instance.mail.login_link(email, instance.origin)
     async with page.expect_response(lambda r: r.url == link) as verified:
         await page.goto(link)
+    require((await verified.value).status == 200, "Email link must open a read-only confirmation")
     require(
-        (await verified.value).status == 303, "Email challenge must verify through its public route"
+        (await page.context.request.get(instance.origin + "/api/me")).status == 401,
+        "Opening an email link must not sign in before confirmation",
     )
+    async with page.expect_response(
+        lambda r: (
+            r.request.method == "POST" and r.url.split("?", 1)[0].endswith("/app/auth/email/verify")
+        )
+    ) as confirmed:
+        await page.get_by_role("button", name="Sign in", exact=True).click()
+    require((await confirmed.value).status == 303, "Explicit email confirmation must sign in")
     await page.wait_for_url(instance.origin + "/app/**")
     me = await api(page, "/api/me")
     require(me["email"] == email, "Email link signed in the wrong person")
@@ -199,7 +208,11 @@ class Journey:
     async def create_space(self):
         self.need("signup")
         await self.page.goto(self.instance.origin + "/app/#/boards")
-        await self.page.get_by_role("button", name="New space", exact=True).click()
+        await (
+            self.page.get_by_role("main")
+            .get_by_role("button", name="New space", exact=True)
+            .click()
+        )
         await self.page.get_by_label("Name", exact=True).fill("Release journey")
         async with self.page.expect_response(
             lambda r: r.request.method == "POST" and r.url.endswith("/api/boards")
@@ -227,7 +240,15 @@ class Journey:
         listed = await api(self.page, "/api/connections")
         require(token not in json.dumps(listed), "Connection listing leaked the one-time secret")
         await self.page.goto(self.instance.origin + "/app/#/settings")
-        await self.page.get_by_text("release-agent", exact=True).first.wait_for()
+        control = self.page.locator(
+            "[data-agent-id=" + json.dumps(result["connection"]["id"]) + "]"
+        ).first
+        await control.wait_for()
+        row = control.locator("xpath=ancestor::div[contains(@class, 'setting-row')]")
+        require(
+            (await row.locator("span").inner_text()).splitlines()[0] == "release-agent",
+            "Settings omitted the created agent name",
+        )
         return "Ordinary person session created a named agent token; listing hides the secret"
 
     async def mcp_startup(self):

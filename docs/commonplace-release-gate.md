@@ -24,7 +24,9 @@ The memory worker runs unchanged; prepare its configured local embedding model
 before the timed gate. A model startup/download failure does not count as a pass.
 
 The browser uses the normal email sign-in form (`POST /app/auth/email`, HTTP 202)
-and follows the captured `/app/auth/email/verify?t=…` message link (HTTP 303). It creates
+and opens the captured `/app/auth/email/verify?t=…` message link (HTTP 200).
+The user confirms with **Sign in** (`POST` to that URL, HTTP 303). Opening the link
+alone must not create a session. It creates
 a space, uses the signed-in person's connection route, connects the unmodified
 Python MCP SDK, checks initialize and the prescribed startup reads, and performs
 card, memory and rule operations through normal HTTP/MCP routes. It checks an
