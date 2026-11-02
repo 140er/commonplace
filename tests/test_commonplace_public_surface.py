@@ -37,6 +37,11 @@ EXACT = {
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills", "/api/skill-decks")
+    },
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
@@ -47,6 +52,12 @@ EXACT = {
     ("POST", "/app/settings/memory"): "authenticated",
 }
 PREFIX = {
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills/", "/api/skill-decks/")
+    },
+    ("GET", "/skills/decks/"): "public",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
