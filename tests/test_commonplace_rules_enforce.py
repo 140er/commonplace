@@ -311,6 +311,32 @@ def test_warn_old_clients_keep_json_and_notice_separate(env):
     assert last_audit(env)["reason"] == "rules_seq missing (warn); transport=mcp"
 
 
+@pytest.mark.parametrize("mode", ["off", "enforce"])
+def test_local_denial_keeps_exception_reason_with_reentrant_audit_lock(env, mode):
+    setup(env, mode)
+    args = {"rules_seq": refresh(env)} if mode == "enforce" else {}
+    with env.db._lock:
+        response = call(env, "task_update", task=999999, title="Missing card", **args)
+        entry = last_audit(env)
+    assert response["result"]["isError"]
+    assert entry["decision"] == "deny"
+    assert entry["reason"] == text(response)[:200]
+    assert "rules_seq" not in entry["reason"]
+
+
+def test_rest_notice_is_cleared_after_failure_before_headers(env):
+    setup(env, "warn")
+    handler = SimpleNamespace(headers={})
+    with pytest.raises(RuntimeError, match="before headers"):
+        with enforce.rest_write(env.ctx, handler, "task_comment", {}):
+            assert "needs rules_seq" in handler._rules_notice
+            raise RuntimeError("Response failed before headers")
+    assert not handler._rules_notice
+    env.owner.set_check("*", "off")
+    with enforce.rest_write(env.ctx, handler, "task_comment", {}):
+        assert not handler._rules_notice
+
+
 def test_people_internal_calls_and_heartbeat_exempt_owner_tokens_checked(env):
     setup(env)
     assert call(env, "task_update", task=1, title="Agent denied")["result"]["isError"]
@@ -401,7 +427,10 @@ def test_overcap_ask_recovery_after_trim(env):
 @pytest.mark.parametrize("mode", ["off", "warn", "enforce"])
 def test_lost_store_guard_in_every_mode_without_recreation(env, mode):
     setup(env, mode)
-    refresh(env) if mode != "off" else call(env, "rules_get", effective=True)
+    if mode != "off":
+        refresh(env)
+    else:
+        call(env, "rules_get", effective=True)
     path = env.directory / "rules.sqlite3"
     path.unlink()
     assert not call(env, "task_comment", task=1, text="Fail open")["result"].get("isError")

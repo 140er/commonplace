@@ -287,6 +287,7 @@ def rest_write(ctx, handler, tool, body):
         raise RulesRefresh(outcome.notice)
     if outcome.notice:
         handler._rules_notice = outcome.notice
+    completed = False
     try:
         yield
     except Exception:
@@ -294,3 +295,7 @@ def rest_write(ctx, handler, tool, body):
         raise
     else:
         audit(ctx.db, ctx.principal, tool, "ok", outcome.reason, transport="rest")
+        completed = True
+    finally:
+        if not completed:
+            handler._rules_notice = ""
