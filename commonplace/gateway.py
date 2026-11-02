@@ -957,7 +957,7 @@ def _host_name(authority: str) -> str:
 def _public_route(method: str, path: str) -> bool:
     if method == "GET":
         return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
-            ("/app/", "/s/", "/.well-known/")
+            ("/app/", "/s/", "/.well-known/", "/skills/decks/")
         )
     return method == "POST" and (
         path.startswith("/app/auth/")
