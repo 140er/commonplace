@@ -14,7 +14,10 @@ from commonplace.boards import BoardService
 from commonplace.extensions import ToolContext
 from commonplace.policy import Policy
 from commonplace.rules import RuleService, render
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    functional_worker_transport,  # noqa: F401
+    hub_fixture,  # noqa: F401
+)
 
 QUERY = "workspace decisions preferences current work"
 MEMORY = '  Workspace decisions: prefer exact words. Ω\r\n"Keep this spacing."\n  '
@@ -167,9 +170,15 @@ def test_fresh_connections_get_canonical_startup_without_creating_stores(
     assert "effective rules: 0" in context and not _quoted_memories(context)
 
 
+@pytest.mark.usefixtures("functional_worker_transport")
 def test_warm_initialize_and_session_share_authorized_data_but_only_explicit_read_serves_rules(
-    hub, fresh
+    hub, fresh, monkeypatch
 ):
+    from commonplace.rules import checks
+
+    # This is functional coverage. Shared deadline/late-result behavior has
+    # separate deterministic tests; suite load must not turn this into timing CI.
+    monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
     _seed(hub, fresh)
     reader = fresh.connect("new-reader")
     before = _served(fresh)
@@ -196,6 +205,45 @@ def test_warm_initialize_and_session_share_authorized_data_but_only_explicit_rea
     )
     assert not _quoted_memories(denied)
     assert PRIVATE_MEMORY not in denied and PRIVATE_RULE not in denied
+
+
+@pytest.mark.usefixtures("functional_worker_transport")
+def test_late_initialize_keeps_rules_and_explicit_read_recovers_exact_memory(
+    hub, fresh, monkeypatch, caplog
+):
+    from commonplace import session
+    from commonplace.rules import checks
+
+    now = [0.0]
+    monkeypatch.setattr(checks, "monotonic", lambda: now[0])
+    _seed(hub, fresh)
+    reader = fresh.connect("late-reader")
+    before = _served(fresh)
+    original = session.initialize_context
+    candidates = []
+
+    def late_context(*args, **kwargs):
+        candidate = original(*args, **kwargs)
+        candidates.append(candidate)
+        now[0] += 0.081
+        return candidate
+
+    monkeypatch.setattr(session, "initialize_context", late_context)
+    instructions = _initialize(hub, reader)
+    assert MEMORY in _quoted_memories(candidates[0])
+    assert render.quote(RULE) in instructions
+    assert not _quoted_memories(instructions)
+    assert "Automatically call session_start for full context." in instructions
+    assert PRIVATE_MEMORY not in instructions and PRIVATE_RULE not in instructions
+    assert PROPOSED_RULE not in instructions
+    assert "startup context unavailable" in caplog.text
+    assert _served(fresh) == before
+
+    context = reader.client.fetch_context(query=QUERY, board="work", repo="example.test/team/work")
+    assert render.quote(RULE) in context and _quoted_memories(context) == [MEMORY]
+    assert PRIVATE_MEMORY not in context and PRIVATE_RULE not in context
+    assert PROPOSED_RULE not in context
+    assert any(row[0] == reader.principal.actor and row[1] == "served" for row in _served(fresh))
 
 
 @pytest.mark.parametrize(

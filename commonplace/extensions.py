@@ -39,6 +39,7 @@ MODULES = (
     "commonplace.web",
     "commonplace.voice",
     "commonplace.social",
+    "commonplace.email_auth",
     "commonplace.handoff.extension",
 )
 
