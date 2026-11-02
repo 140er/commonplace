@@ -42,19 +42,38 @@ def complete_signin(gateway, provider: str, profile: Profile, *, signup: bool) -
     """Provision a new person's space before issuing their first session."""
     db = gateway.db
     with db._lock:
-        uid, created_workspace = _resolve(db, provider, profile, signup=signup)
+        uid, _ = _resolve(db, provider, profile, signup=signup)
         workspace = sessions.home_workspace(db, uid)
         if workspace is None:
             raise SignInError("disabled")
+        pending = db.workspace(workspace)["initial_space_pending"]
         landing = "/app/"
-        if created_workspace is not None:
-            principal = sessions.person_principal(db, uid, created_workspace)
-            if principal is None or principal.role != "owner":
-                raise SignInError("failed")
-            service = BoardService(ToolContext(principal=principal, gateway=gateway))
-            service.board_add(slug="commonplace", name="Commonplace")
-            landing = "/app/#/board/commonplace"
-        return sessions.start_session(db, uid, workspace, via=provider), landing
+        try:
+            if pending:
+                principal = sessions.person_principal(db, uid, workspace)
+                if (
+                    principal is None
+                    or not principal.person
+                    or principal.role != "owner"
+                    or principal.user_id != uid
+                    or principal.workspace_id != workspace
+                ):
+                    raise SignInError("failed")
+                service = BoardService(ToolContext(principal=principal, gateway=gateway))
+                if not any(board["slug"] == "commonplace" for board in service.board_list()):
+                    service.board_add(slug="commonplace", name="Commonplace")
+                landing = "/app/#/board/commonplace"
+            # The board has its own database. Keep the retry marker until both
+            # session issuance and this control-database transition commit.
+            with db._tx() as conn:
+                session = sessions.start_session(db, uid, workspace, via=provider)
+                if pending:
+                    conn.execute(
+                        "UPDATE workspaces SET initial_space_pending = 0 WHERE id = ?", (workspace,)
+                    )
+        except Exception:
+            raise SignInError("failed") from None
+        return session, landing
 
 
 def _resolve(db, provider: str, profile: Profile, *, signup: bool) -> tuple[str, str | None]:
@@ -91,7 +110,9 @@ def _resolve(db, provider: str, profile: Profile, *, signup: bool) -> tuple[str,
                 raise SignInError("account")
             try:
                 uid = db.create_user(profile.emails[0], profile.name)
-                workspace_id = db.create_workspace(profile.emails[0], uid, personal=True)
+                workspace_id = db.create_workspace(
+                    profile.emails[0], uid, personal=True, initial_space_pending=True
+                )
                 plans.assign_signup_plan(db, uid, workspace_id, via=provider)
                 created_workspace = workspace_id
             except ControlError:
