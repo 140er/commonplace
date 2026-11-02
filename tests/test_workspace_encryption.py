@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -380,3 +381,100 @@ def test_publish_fsync_failure_preserves_selected_ciphertext_and_slots(workspace
     thread = store_message(active, wid)
     with closing(open_threads(active)) as store:
         assert store.messages(thread)[0].text == "verbatim snowman ☃\x00"
+
+
+@pytest.mark.parametrize("failure", ["stat", "read_text", "resolve"])
+@pytest.mark.parametrize("reader", [False, True])
+def test_metadata_io_failure_never_opens_a_database(tmp_path, monkeypatch, failure, reader):
+    from mempalace.config import connect_sqlite_read
+
+    directory = tmp_path / "workspaces" / "ws_synthetic"
+    directory.mkdir(parents=True)
+    config = directory / "workspace.json"
+    config.write_text(
+        json.dumps(
+            {
+                "encryption": {
+                    "version": 1,
+                    "cipher": "sqlcipher",
+                    "workspace_id": directory.name,
+                    "key_id": "a" * 32,
+                }
+            }
+        )
+    )
+    target = directory / "not-created.sqlite3"
+    original = getattr(Path, failure)
+
+    def denied(path, *args, **kwargs):
+        if path == (target if failure == "resolve" else config):
+            raise PermissionError("synthetic metadata access denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, failure, denied)
+    monkeypatch.setattr(crypto.sqlite3, "connect", lambda *a, **k: pytest.fail("SQLite fallback"))
+    monkeypatch.setattr(crypto, "driver", lambda: pytest.fail("driver before metadata validation"))
+    with pytest.raises(crypto.EncryptionError, match="settings"):
+        (connect_sqlite_read if reader else crypto.connect)(target)
+    assert not target.exists()
+
+
+def test_unknown_suffix_encrypted_snapshot_never_uses_plaintext_api(workspace, monkeypatch):
+    from commonplace import backup as backups
+
+    data, _, wid, *_ = workspace
+    enable(workspace)
+    active = workspace_path(data, wid)
+    source = active / "ciphertext.unusual"
+    with closing(crypto.connect(source)) as conn, conn:
+        conn.execute("CREATE TABLE fixture(content TEXT)")
+        conn.execute("INSERT INTO fixture VALUES ('verbatim ciphertext')")
+    before = source.read_bytes()
+    monkeypatch.setattr(backups.sqlite3, "connect", lambda *a, **k: pytest.fail("plaintext API"))
+    target = data.parent / "snapshot.unusual"
+    backups._snapshot(source, target)
+    assert target.read_bytes() == source.read_bytes() == before
+    assert not before.startswith(b"SQLite format 3\x00")
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_encrypted_snapshot_refuses_wal_written_after_checkpoint(workspace, monkeypatch):
+    from commonplace import backup as backups
+
+    data, _, wid, *_ = workspace
+    enable(workspace)
+    active = workspace_path(data, wid)
+    source = active / "race.sqlite3"
+    with closing(crypto.connect(source)) as conn, conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE fixture(content TEXT)")
+    connect = backups.connect
+    opened = []
+
+    class Connection:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql):
+            if sql == "BEGIN IMMEDIATE":
+                # Inject a committed writer in the checkpoint/lock gap.
+                with closing(crypto.connect(source)) as writer, writer:
+                    writer.execute("INSERT INTO fixture VALUES ('late committed WAL row')")
+            return self.conn.execute(sql)
+
+        def close(self):
+            self.conn.close()
+
+    def racing_connect(*args, **kwargs):
+        conn = Connection(connect(*args, **kwargs))
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(backups, "connect", racing_connect)
+    target = data.parent / "refused.sqlite3"
+    with pytest.raises(BackupError, match="changed after checkpoint"):
+        backups._snapshot(source, target)
+    assert len(opened) == 1
+    assert not target.exists()
+    with closing(crypto.connect(source)) as conn:
+        assert conn.execute("SELECT content FROM fixture").fetchone() == ("late committed WAL row",)

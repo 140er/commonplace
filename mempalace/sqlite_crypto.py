@@ -47,9 +47,9 @@ def encryption_settings(path):
         return None
     for directory in Path(path).absolute().parents:
         config = directory / "workspace.json"
-        if not config.exists():
-            continue
         try:
+            if not config.exists():
+                continue
             settings = json.loads(config.read_text(encoding="utf-8"))
             if not isinstance(settings, dict):
                 raise ValueError
@@ -72,7 +72,7 @@ def encryption_settings(path):
             ):
                 raise ValueError
             return directory, info
-        except (ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError):
             raise EncryptionError("Invalid workspace encryption settings") from None
     return None
 

@@ -196,12 +196,38 @@ def _encrypted_database(path: Path) -> bool:
 
 
 def _snapshot(source: Path, target: Path) -> None:
-    """Checkpoint and copy unchanged file bytes while holding the writer lock.
+    """Snapshot plaintext read-only; checkpoint and byte-copy encrypted files.
 
     data_lock and offline process checks protect the whole tree. This SQLite
-    lock also excludes uncoordinated writers during the copy. A write between
-    checkpoint and lock acquisition leaves a nonempty WAL and fails closed.
+    writer lock also excludes uncoordinated writers during an encrypted copy.
+    A write between checkpoint and lock acquisition leaves a nonempty WAL and
+    fails closed. Plaintext backup includes committed WAL rows without changing
+    the source main file or WAL.
     """
+    if encryption_settings(source) is None:
+        deadline = time.monotonic() + 30
+
+        def progress(_status, _remaining, _total):
+            if time.monotonic() > deadline:
+                raise BackupError(f"database backup timed out: {source.name}")
+
+        src = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=1)
+        try:
+            dst = sqlite3.connect(target)
+            try:
+                src.backup(dst, pages=256, progress=progress, sleep=0.01)
+                dst.execute("PRAGMA journal_mode = DELETE")
+                if dst.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                    raise BackupError(f"database integrity check failed: {source.name}")
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        target.chmod(0o600)
+        with target.open("rb") as stream:
+            os.fsync(stream.fileno())
+        return
+
     src = connect(source.as_uri() + "?mode=rw", uri=True, timeout=1)
     try:
         result = src.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
@@ -213,7 +239,7 @@ def _snapshot(source: Path, target: Path) -> None:
             raise BackupError(f"database changed after checkpoint: {source.name}")
         if src.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise BackupError(f"database integrity check failed: {source.name}")
-        if _encrypted_database(source) and src.execute("PRAGMA cipher_integrity_check").fetchall():
+        if src.execute("PRAGMA cipher_integrity_check").fetchall():
             raise BackupError(f"encrypted page integrity check failed: {source.name}")
         shutil.copyfile(source, target)
         target.chmod(0o600)
@@ -355,8 +381,9 @@ def backup(data_dir, dest_dir) -> dict:
 def _backup_locked(data_dir, dest_dir) -> dict:
     """Publish a complete backup at a new destination and return its manifest.
 
-    Caller holds the exclusive data_lock. Every SQLite file is checkpointed
-    and byte-copied, preserving SQLCipher ciphertext for backup deduplication.
+    Caller holds the exclusive data_lock. Plaintext SQLite files use read-only
+    backup snapshots. Encrypted files are checkpointed and byte-copied,
+    preserving SQLCipher ciphertext for backup deduplication.
     WAL/SHM/journal sidecars are omitted from the published snapshot. The
     entire remaining tree is copied verbatim, excluding the shared model cache.
     ``manifest.json`` inventories every other output file with size and SHA256.
