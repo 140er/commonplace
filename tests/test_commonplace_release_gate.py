@@ -1,6 +1,8 @@
 """Fast release-gate helper checks; full browser/MCP evidence is a separate run."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -80,7 +82,7 @@ def test_mailbox_requires_recipient_same_origin_and_real_login_token():
     box.send("new@example.test", "link", "http://127.0.0.1:1234/app/auth/email/verify")
     box.send("new@example.test", "link", "http://127.0.0.1:1234/app/login?t=pre-created-link")
     with pytest.raises(Blocked, match="did not deliver"):
-        box.login_link("new@example.test", "http://127.0.0.1:1234")
+        box.login_link("new@example.test", "http://127.0.0.1:1234", timeout=0)
     expected = "http://127.0.0.1:1234/app/auth/email/verify?t=fresh-link"
     box.send("new@example.test", "link", f"Sign in: {expected}\nExpires soon.")
     assert box.login_link("new@example.test", "http://127.0.0.1:1234") == expected
@@ -130,3 +132,43 @@ def test_runner_cannot_report_success_after_only_one_finished_check(tmp_path, mo
     output = tmp_path / "report"
     assert main(["--output", str(output)]) == 1
     assert not json.loads((output / "report.json").read_text())["passed"]
+
+
+def test_report_distinguishes_protocol_assertions_and_multiple_visual_captures():
+    report = Report(["protocol", "deck"])
+    row = report.results["protocol"]
+    row.status = "PASS"
+    row.evidence_kind = "protocol assertions"
+    deck = report.results["deck"]
+    deck.status = "PASS"
+    deck.screenshots = ["deck-wide.png", "deck-phone.png"]
+    payload = report.payload()
+    assert payload["checks"][0]["screenshot"] == ""
+    assert payload["checks"][0]["evidence_kind"] == "protocol assertions"
+    assert payload["checks"][1]["screenshots"] == ["deck-wide.png", "deck-phone.png"]
+    assert report.passed
+    text = report.markdown()
+    assert "No screenshot; see the recorded assertions." in text
+    assert "deck-wide.png" in text and "deck-phone.png" in text
+    row.status = "BLOCKED"
+    assert not report.passed  # Typed evidence never promotes an unrun check.
+
+
+def test_mailbox_waits_for_matching_delayed_capture_without_sleep(monkeypatch):
+    box = Mailbox()
+    entered = threading.Event()
+    original = box.changed.wait_for
+
+    def waiting(predicate, timeout):
+        entered.set()
+        return original(predicate, timeout)
+
+    monkeypatch.setattr(box.changed, "wait_for", waiting)
+    origin = "http://127.0.0.1:1234"
+    expected = origin + "/app/auth/email/verify?t=delayed-link"
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(box.login_link, "later@example.test", origin)
+        assert entered.wait(3)
+        box.send("other@example.test", "link", expected)
+        box.send("later@example.test", "link", expected)
+        assert result.result(timeout=3) == expected

@@ -44,6 +44,7 @@ CHECKS = (
     "storage_limit",
     "voice_limit",
 )
+PROTOCOL_CHECKS = {"agent_connection", "mcp_startup", "wing_scope", "storage_limit", "voice_limit"}
 BASELINE_RULE = "Keep the release journey's exact words intact."
 BASELINE_MEMORY = "Workspace decisions preferences current work: release recall canary."
 PROPOSED_RULE = "Keep every release memory verbatim. Ask the owner before changing this rule."
@@ -80,7 +81,8 @@ async def email_login(page, instance, email, *, signup=False):
         (await page.context.request.get(instance.origin + "/api/me")).status == 401,
         "Requesting an email link must not create a session before verification",
     )
-    link = instance.mail.login_link(email, instance.origin)
+    # Captured mail is immediate transport; allow a bounded asynchronous FIFO wait.
+    link = await asyncio.to_thread(instance.mail.login_link, email, instance.origin, timeout=15)
     async with page.expect_response(lambda r: r.url == link) as verified:
         await page.goto(link)
     require((await verified.value).status == 200, "Email link must open a read-only confirmation")
@@ -174,6 +176,8 @@ class Journey:
 
     async def check(self, name, action):
         row = self.report.results[name]
+        if name in PROTOCOL_CHECKS:
+            row.evidence_kind = "protocol assertions"
         try:
             detail = await asyncio.wait_for(action(), timeout=45)
             row.status, row.detail = "PASS", detail or "Verified"
@@ -184,7 +188,11 @@ class Journey:
         except Exception as exc:
             # SDK/browser exceptions can contain bearer headers and login URLs.
             row.status, row.detail = "FAIL", f"{type(exc).__name__}; inspect screenshot"
-        if self.page is not None and not row.screenshot:
+        if (
+            self.page is not None
+            and not row.screenshot
+            and (name not in PROTOCOL_CHECKS or row.status != "PASS")
+        ):
             try:
                 row.screenshot = await self.screenshot(name)
             except Exception:
@@ -222,6 +230,7 @@ class Journey:
         checked_json(response.status, None, "POST", "/api/boards", 201)
         self.values["space"] = await response.json()
         await self.page.wait_for_url("**/#/board/**")
+        await self.page.locator('.col[data-status="todo"]').wait_for()
         return "Created a space using the browser form"
 
     async def agent_connection(self):
@@ -338,12 +347,19 @@ class Journey:
                     "lesson": "Owner decision is required before continuing.",
                 },
             )
+        completed = await api(self.page, f"/api/cards/{number}")
         require(
-            (await api(self.page, f"/api/cards/{number}"))["status"] == "done",
-            "Completed card did not reach done",
+            completed["status"] == "done" and not completed["ask"],
+            "Completed card must be done with no pending owner decision",
         )
         self.values["card"] = number
         await self.page.reload()
+        panel = self.page.get_by_role("dialog", name="Card", exact=True)
+        await panel.locator(".state.done").first.wait_for()
+        require(
+            await panel.locator('[data-action="decide"]').count() == 0,
+            "Completed card still offers a live owner decision",
+        )
         return "Agent created/claimed/reviewed; self-approval refused; browser owner choice unlocked completion"
 
     async def memory_save_search(self):
@@ -558,6 +574,7 @@ class Journey:
         async with await self.browser.new_context() as context:
             page = await context.new_page()
             await social_login(page, self.instance, "social-" + self.email)
+            await page.locator('.col[data-status="todo"]').wait_for()
             name = "synthetic_social_signup.png"
             await page.screenshot(path=str(self.output / name), full_page=True)
             self.report.results["synthetic_social_signup"].screenshot = name
