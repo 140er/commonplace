@@ -522,6 +522,37 @@ class ControlDB:
             auth=row["auth"],
         )
 
+    def rotate_token(
+        self, ref: str, *, actor: str, workspace_ref: str, expires_days: int = DEFAULT_TOKEN_DAYS
+    ) -> str:
+        """Replace a live PAT's secret, preserving its identity and permissions."""
+        with self._lock:
+            row = self.connection(ref, workspace_ref)
+            actor_id = self.user(actor)["id"]
+            self.require_owner(row["workspace_id"], actor_id)
+            if row["auth"] != "pat" or row["revoked_at"]:
+                raise ControlError("only active personal access tokens can be rotated")
+            token = tokens.new_token()
+            self._conn.execute(
+                "UPDATE connections SET token_hash=?, token_hint=?, expires_at=?, "
+                "last_used_at=NULL WHERE id=?",
+                (
+                    tokens.token_hash(token),
+                    tokens.token_hint(token),
+                    _iso(_now() + timedelta(days=expires_days)),
+                    row["id"],
+                ),
+            )
+            self.audit(
+                action="token.rotate",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor_id,
+                connection_id=row["id"],
+                auth="pat",
+            )
+        return token
+
     def authenticate_token(self, token: str) -> Optional[Principal]:
         """The principal for a bearer token, or ``None``. Checked on every request."""
         if not tokens.looks_like_token(token):

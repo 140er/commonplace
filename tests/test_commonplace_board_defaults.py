@@ -63,6 +63,10 @@ def test_brand_new_workspace_default_client_owns_work(hub, capsys, client, membe
         hub, token, "task_update", task=number, status="review", question=QUESTION, options=OPTIONS
     )[0]
     assert worker.task_show(number)["ask"] == QUESTION
+    assert not mcp(hub, token, "task_update", task=number, status="done")[0]
+    owner = service(hub, sessions.person_principal(hub.db, hub.admin, hub.workspace))
+    owner.decide(number, choice=OPTIONS[0])
+    assert mcp(hub, token, "task_take_next", task=number)[0]
     assert mcp(hub, token, "task_update", task=number, status="done")[0]
     assert worker.task_show(number)["status"] == "done"
     ok, reply = mcp(hub, token, "task_add", title="Next workstream", assignee="self")
@@ -413,9 +417,15 @@ def test_decision_context_preserves_progress_body_and_history(hub):
     assert reviewed["review_context"] == CONTEXT
     event = worker.task_show(created["number"])["events"][-1]
     assert event["context"] == CONTEXT
-    worker.task_update(created["number"], status="done")
-    assert worker.task_show(created["number"])["review_context"] is None
-    assert worker.task_show(created["number"])["events"][-2]["context"] == CONTEXT
+    owner = service(hub, sessions.person_principal(hub.db, hub.admin, hub.workspace))
+    owner.decide(created["number"], choice=OPTIONS[0], then="done")
+    completed = worker.task_show(created["number"])
+    assert completed["status"] == "done"
+    assert completed["body"] == reviewed["body"]
+    assert completed["status_line"] == reviewed["status_line"]
+    assert completed["review_context"] is None
+    assert any(event.get("context") == CONTEXT for event in completed["events"])
+    assert completed["events"][-1]["kind"] == "decide"
 
 
 def test_restricted_child_can_claim_after_direct_parent_approval(hub):

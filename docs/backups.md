@@ -9,11 +9,12 @@ The supported snapshot path is offline and requires Linux `/proc`. The
 gateway and all workers must be stopped. `backup-hook.sh` does this through
 the operator's Compose configuration, then runs `commonplace backup` in a
 one-off container. An exclusive data-directory lock and orphan-worker check
-refuse cooperating writers. Every detected SQLite database, including the
-control DB, historical generations and nested workspace files, is checkpointed
-and byte-copied under its writer lock. Committed WAL rows are included and
-WAL/SHM/journal sidecars are omitted. A busy checkpoint or a write between
-checkpoint and lock acquisition aborts the backup.
+refuse cooperating writers. Plaintext SQLite databases, including the control
+DB, historical generations and nested workspace files, use SQLite's read-only
+backup API. Encrypted databases are checkpointed and byte-copied under their
+writer lock. Both paths include committed WAL rows and omit WAL/SHM/journal
+sidecars. A busy encrypted checkpoint or a write between checkpoint and lock
+acquisition aborts the backup.
 Other files are copied verbatim; only the disposable shared model cache is
 excluded. Do not run writers outside the managed service during this window.
 
