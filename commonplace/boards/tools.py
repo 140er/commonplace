@@ -204,13 +204,13 @@ def add(
                 "task_comment": "Append a comment and renew your claim.",
                 "task_take_next": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
                 "task_update": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. "
-                "Requesters may edit their own review details while preserving the open ask. Assignee edits and ask withdrawal to todo/doing are prepared for future agent-directed reviews; current APIs create person-directed reviews, which cannot be withdrawn. "
+                "Requesters may edit their own review details while preserving the open ask. Assignee edits and ask withdrawal to todo/doing are prepared for future agent-directed reviews; current APIs create person-directed reviews, which agents cannot withdraw or complete. "
                 "Reopen done to todo (status only). Save a lesson with done. "
                 "Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. "
                 "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
                 "ask": "Ask the workspace owner and end the turn.",
-                "decide": "Answer a review and return, release, close or park the card. Pass the version you read to reject decisions on an edited card.",
+                "decide": "Only a signed-in workspace owner may answer a review and return, release, close or park the card. An agent cannot relay approval. Pass the version you read to reject decisions on an edited card.",
                 "needs_me": "Read the visible decision queue (owners or trusted, unrestricted member connections; read only).",
             }[name],
             input_schema={
