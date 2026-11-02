@@ -30,6 +30,7 @@ def test_scoped_and_vector_reads_do_not_share_decompressors(tmp_path, monkeypatc
         entered = threading.Event()
         release = threading.Event()
         caller = threading.get_ident()
+        overlaps = []
 
         class CheckedDecompressor:
             def __init__(self, *args, **kwargs):
@@ -37,7 +38,9 @@ def test_scoped_and_vector_reads_do_not_share_decompressors(tmp_path, monkeypatc
                 self.active = threading.Lock()
 
             def decompress(self, blob):
-                assert self.active.acquire(blocking=False), "overlapping Zstandard context reuse"
+                if not self.active.acquire(blocking=False):
+                    overlaps.append(threading.get_ident())
+                    raise AssertionError("overlapping Zstandard context reuse")
                 try:
                     if threading.get_ident() != caller:
                         entered.set()
@@ -56,6 +59,7 @@ def test_scoped_and_vector_reads_do_not_share_decompressors(tmp_path, monkeypatc
             finally:
                 release.set()
             assert vector.result(timeout=5).documents == [[text]]
+            assert not overlaps
     finally:
         backend.close()
 
@@ -64,6 +68,7 @@ def test_scoped_dictionary_reads_stay_in_their_workspace(tmp_path):
     backend = compact.CompactBackend()
     try:
         collections = []
+        # Distinct palace paths own distinct handles, even with the same dictionary ID.
         for workspace in ("first", "second"):
             col = backend.create_collection(str(tmp_path / workspace), "drawers")
             samples = [f"{workspace} sample {i} " * 100 for i in range(200)]
