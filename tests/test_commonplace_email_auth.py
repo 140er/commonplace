@@ -49,7 +49,8 @@ class Client:
         try:
             conn.request(method, path, body=raw, headers=hdrs)
             response = conn.getresponse()
-            return response.status, dict(response.getheaders()), response.read()
+            self.response_headers = response.getheaders()
+            return response.status, dict(self.response_headers), response.read()
         finally:
             conn.close()
 
@@ -207,7 +208,10 @@ def test_prefetch_does_not_consume_link_or_create_account(fresh):
         status, headers, page = client.request(path)
         assert status == 200 and "Set-Cookie" not in headers
         assert headers["Cache-Control"] == "no-store"
-        assert headers["Referrer-Policy"] == "no-referrer"
+        assert headers["Referrer-Policy"] == "strict-origin"
+        assert [
+            value for name, value in client.response_headers if name.lower() == "referrer-policy"
+        ] == ["strict-origin"]
         assert b'<form method="post">' in page and b'value="1">Sign in</button>' in page
         assert token.encode() not in page
         assert counts(client) == (0, 0)
@@ -216,6 +220,11 @@ def test_prefetch_does_not_consume_link_or_create_account(fresh):
         with client.db._lock:
             return [tuple(row) for row in client.db._conn.execute("SELECT * FROM email_challenges")]
 
+    for stylesheet in ("/app/app.css", "/app/ui.css"):
+        assert stylesheet.encode() in page
+        status, headers, _ = client.request(stylesheet)
+        assert status == 200 and "text/css" in headers["Content-Type"]
+    assert client.request("/app/brand/logo-small-dark.svg")[0] == 200
     before = challenge_rows()
     assert len(before) == 1
     for origin in ("https://another.example", "null", "not-an-origin"):

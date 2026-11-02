@@ -30,7 +30,8 @@ _EMAIL = re.compile(
 )
 _CONFIRMATION = b"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in - Commonplace</title><link rel="stylesheet" href="/app/static/ui.css">
+<title>Sign in - Commonplace</title><link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="/app/ui.css">
 </head><body><main class="signin"><a class="brand-home" href="/app/" aria-label="Commonplace">
 <img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a>
 <h1>Sign in</h1><form method="post"><button class="blockbtn email-confirm" name="confirm"
@@ -163,6 +164,8 @@ class EmailAuth:
             200,
             _CONFIRMATION,
             media="text/html; charset=utf-8",
+            # Keep the token out of Referer while preserving a normal form Origin.
+            referrer_policy="strict-origin",
             headers=(
                 (
                     "Content-Security-Policy",
