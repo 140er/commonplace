@@ -1,0 +1,30 @@
+/* Public document preview: one content column and a 304px action column, 24px apart. */
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #171717; background: #fff; }
+* { box-sizing: border-box; }
+body { margin: 0; font-size: 16px; line-height: 1.5; }
+header, main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+header { display: flex; justify-content: space-between; gap: 24px; }
+header a:first-child { font-weight: 650; }
+a { color: inherit; text-underline-offset: 4px; }
+h1 { font-size: 24px; line-height: 1.2; margin: 0 0 24px; overflow-wrap: anywhere; }
+h2 { font-size: 18px; line-height: 1.4; margin: 0 0 12px; overflow-wrap: anywhere; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 304px; gap: 24px; align-items: start; }
+section, article { min-width: 0; }
+article, aside section + section { margin-top: 32px; }
+pre { margin: 12px 0 0; padding: 20px; background: #f2f3f3; white-space: pre-wrap; overflow-wrap: anywhere; }
+code { font-family: ui-monospace, monospace; font-size: 14px; }
+p { margin: 0 0 16px; overflow-wrap: anywhere; }
+label { display: block; margin: 16px 0 12px; }
+input { width: 18px; height: 18px; vertical-align: middle; }
+textarea { display: block; width: 100%; font: inherit; resize: vertical; padding: 10px; border: 1px solid #777; }
+button { font: inherit; font-weight: 600; min-height: 44px; padding: 8px 16px; border: 0; background: #171717; color: #fff; cursor: pointer; }
+button:disabled { background: #e5e5e5; color: #484848; cursor: default; }
+button:hover:enabled { background: #3b3b3b; }
+button:active:enabled { transform: translateY(1px); }
+:focus-visible { outline: 3px solid #1d5fbf; outline-offset: 3px; }
+[role="status"] { margin-top: 12px; }
+@media (max-width: 760px) {
+  header, main { padding: 20px; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  pre { padding: 16px; }
+}
