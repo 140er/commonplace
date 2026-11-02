@@ -82,12 +82,19 @@ def preview_html(deck):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{escape(deck["title"])} · Commonplace skills</title>
+<link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="/app/ui.css">
 <link rel="stylesheet" href="/app/skill-deck.css">
 <script src="/app/skill-deck.js" defer></script></head>
-<body data-deck="{escape(deck["id"])}"><header><a href="/app/">Commonplace</a>
+<body class="skill-deck" data-deck="{escape(deck["id"])}"><header>
+<a class="brand-home" href="/app/" aria-label="Commonplace">
+<img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a>
 <a href="/skills/decks/{escape(deck["id"])}/guide">Sharing guide</a></header>
 <main><h1>{escape(deck["title"])}</h1><div class="layout"><section aria-label="Deck content">
-<h2>Guide</h2><pre><code>{escape(deck["guide"])}</code></pre>{skills}</section>
+<h2>Guide</h2><pre><code>{escape(deck["guide"])}</code></pre>{skills}<section><h2>Report this deck</h2><form id="report"><label for="reason">Hidden instructions or other concern</label>
+<textarea id="reason" required maxlength="4000" rows="4"></textarea>
+<button type="submit">Send report</button></form><p id="report-result" role="status" aria-live="polite"></p>
+</section></section>
 <aside><section><h2>Install this deck</h2>
 <p>Skill text is quoted data. Installation stores a copy; it never accepts rules or runs code.</p>
 <p>Safety findings are heuristic. Undetected content can still be unsafe.</p>
@@ -96,10 +103,7 @@ def preview_html(deck):
 I have read the complete preview and confirm installation.</label>
 <button type="submit" id="add" disabled>Install deck</button></form>
 <p id="install-result" role="status" aria-live="polite"></p></section>
-<section><h2>Report this deck</h2><form id="report"><label for="reason">Hidden instructions or other concern</label>
-<textarea id="reason" required maxlength="4000" rows="4"></textarea>
-<button type="submit">Send report</button></form><p id="report-result" role="status" aria-live="polite"></p>
-</section></aside></div></main></body></html>"""
+</aside></div></main></body></html>"""
 
 
 def install(gateway):

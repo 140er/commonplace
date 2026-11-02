@@ -10,7 +10,7 @@ import re
 import secrets
 import threading
 from contextlib import ExitStack, contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,23 +33,33 @@ class Mailbox:
 
     def __init__(self):
         self.messages = []
+        self.changed = threading.Condition()
 
     def send(self, to, subject, text, html=None):
-        self.messages.append((to, text))
+        with self.changed:
+            self.messages.append((to, text))
+            self.changed.notify_all()
 
-    def login_link(self, email, origin):
-        for recipient, text in reversed(self.messages):
-            if recipient != email:
-                continue
-            for link in re.findall(r'https?://[^\s<>"\']+', text):
-                parsed = urlsplit(link)
-                if (
-                    parsed.netloc == urlsplit(origin).netloc
-                    and parsed.scheme == urlsplit(origin).scheme
-                    and parsed.path == "/app/auth/email/verify"
-                    and parse_qs(parsed.query).get("t")
-                ):
-                    return link
+    def login_link(self, email, origin, *, timeout=3, after=0):
+        def matching_link():
+            for recipient, text in reversed(self.messages[after:]):
+                if recipient != email:
+                    continue
+                for link in re.findall(r'https?://[^\s<>"\']+', text):
+                    parsed = urlsplit(link)
+                    if (
+                        parsed.netloc == urlsplit(origin).netloc
+                        and parsed.scheme == urlsplit(origin).scheme
+                        and parsed.path == "/app/auth/email/verify"
+                        and parse_qs(parsed.query).get("t")
+                    ):
+                        return link
+            return None
+
+        with self.changed:
+            link = self.changed.wait_for(matching_link, timeout=timeout)
+        if link:
+            return link
         raise Blocked(
             "Email request did not deliver a same-instance /app/auth/email/verify?t= link"
         )
@@ -211,6 +221,8 @@ class Result:
     status: str = "BLOCKED"
     detail: str = "Prerequisite did not complete"
     screenshot: str = ""
+    evidence_kind: str = "browser and protocol assertions"
+    screenshots: list[str] = field(default_factory=list)
 
 
 class Report:
@@ -245,8 +257,14 @@ class Report:
             lines.extend([self.runner_error, ""])
         for row in self.results.values():
             lines.append(f"- **{row.status}** {row.name}: {row.detail}")
-            if row.screenshot:
-                lines.append(f"  [Screenshot]({row.screenshot})")
+            lines.append(f"  Evidence: {row.evidence_kind}")
+            images = list(
+                dict.fromkeys(([row.screenshot] if row.screenshot else []) + row.screenshots)
+            )
+            for index, screenshot in enumerate(images, 1):
+                lines.append(f"  [Screenshot {index}]({screenshot})")
+            if not images:
+                lines.append("  No screenshot; see the recorded assertions.")
         lines.extend(
             [
                 "",
