@@ -285,10 +285,16 @@ def test_schema_modes_copy_registry_and_do_not_change_people_or_read_tools(env):
         )["result"]["tools"]
 
     off = listing()
+    person_off = listing(env.person)
+    off_by_name = {tool["name"]: tool for tool in off}
     for mode in ("warn", "enforce"):
         env.owner.set_check("*", mode)
-        for tool in listing():
+        agent_tools = listing()
+        assert {tool["name"] for tool in agent_tools} == off_by_name.keys()
+        for tool in agent_tools:
             name, schema = tool["name"], tool["inputSchema"]
+            if name not in enforce.CHECKED_WRITES:
+                assert tool == off_by_name[name]
             assert ("rules_seq" in schema.get("properties", {})) == (name in enforce.CHECKED_WRITES)
             assert ("rules_seq" in schema.get("required", [])) == (
                 mode == "enforce" and name in enforce.CHECKED_WRITES and name != "ask"
@@ -296,7 +302,7 @@ def test_schema_modes_copy_registry_and_do_not_change_people_or_read_tools(env):
             if name in enforce.CHECKED_WRITES:
                 schema["properties"]["rules_seq"]["oneOf"][0]["type"] = "changed"
         assert {name: tool.input_schema for name, tool in extensions.REGISTRY.items()} == originals
-        assert listing(env.person) == off
+        assert listing(env.person) == person_off
     env.owner.set_check(env.principal.actor, "off")
     assert listing() == off
 
@@ -531,6 +537,8 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
         .replace("<id>", "hof_local")
     )
     seq = refresh(env)
+    owner_board = BoardService(env.owner.ctx)
+    original_card = owner_board.task_show(card["number"])
     before = events.latest_seq(env.db, env.workspace)
     body = {**bodies[route.tool], "rules_seq": seq}
     status, response, _ = http(route.method, path, body)
@@ -538,9 +546,33 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
         "error": enforce.MESSAGES["missing"],
         "rules_refresh": True,
     }
+    assert owner_board.task_show(card["number"]) == original_card
     assert events.latest_seq(env.db, env.workspace) == before
     assert last_audit(env)["reason"] == "rules_seq missing; transport=rest"
     status, response, headers = http(route.method, path, body, seq)
+    if route.tool == "decide":
+        assert status == 403 and response == {
+            "error": "only a signed-in workspace owner can answer this"
+        }
+        assert owner_board.task_show(card["number"]) == original_card
+        assert events.latest_seq(env.db, env.workspace) == before
+        denied = last_audit(env)
+        assert denied["decision"] == "deny" and denied["tool"] == "decide"
+        assert denied["reason"] == "transport=rest"
+        assert denied["connection_id"] == env.principal.connection_id
+        assert denied["auth"] == env.principal.auth
+
+        status, response, headers = http(route.method, path, bodies["decide"], person=True)
+        assert status == 200 and response["status"] == "todo"
+        assert response["ask"] is None and response["ask_to"] is None
+        decision = owner_board.task_show(card["number"])["events"][-1]
+        assert decision["kind"] == "decide" and decision["actor"] == env.person.actor
+        accepted = last_audit(env)
+        assert accepted["tool"] == "decide" and accepted["reason"] == "transport=rest"
+        assert accepted["workspace_id"] == env.person.workspace_id
+        assert accepted["user_id"] == env.person.user_id
+        assert accepted["connection_id"] == env.person.connection_id
+        assert accepted["auth"] == env.person.auth
     assert status in (200, 201), response
     assert "Commonplace-Rules-Notice" not in headers
     assert last_audit(env)["decision"] == "ok"
