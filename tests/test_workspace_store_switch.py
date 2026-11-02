@@ -2,10 +2,13 @@
 
 import json
 import logging
+import os
 import shlex
 import sqlite3
+import stat
 import sys
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +33,139 @@ from mempalace.backends import ChromaBackend, CompactBackend
 
 WORKSPACE = "ws_fixture"
 REAL_EMBEDDER = switch._embedder
+
+
+def _maintenance_tree_snapshot(root):
+    result = {}
+    for path in [root, *root.rglob("*")]:
+        mode = path.lstat().st_mode
+        content = (
+            os.readlink(path)
+            if stat.S_ISLNK(mode)
+            else path.read_bytes()
+            if stat.S_ISREG(mode)
+            else None
+        )
+        result[path.relative_to(root).as_posix()] = (mode, content)
+    return result
+
+
+@pytest.mark.parametrize("operation", ["switch", "prune", "report"])
+@pytest.mark.parametrize("pointer_state", ["valid", "missing", "invalid"])
+@pytest.mark.parametrize(
+    "location,damage",
+    [
+        *[
+            (name, "encrypted")
+            for name in (
+                "root",
+                "active",
+                "retained",
+                "staging",
+                "source-palace",
+                "probe",
+                "rollback-probe",
+                "probe.source-palace",
+                "rollback-probe.source-palace",
+            )
+        ],
+        ("root", "null_encryption"),
+        ("staging", "empty_encryption"),
+        ("retained", "invalid_json"),
+        ("probe", "invalid_object"),
+        ("staging", "stat_denied"),
+        ("source-palace", "read_denied"),
+        ("root", "settings_symlink"),
+        ("rollback-probe", "dangling_settings_symlink"),
+        ("active", "directory_symlink"),
+        ("probe.source-palace", "directory_symlink"),
+    ],
+)
+def test_maintenance_metadata_preflight_refuses_without_mutation(
+    tmp_path, monkeypatch, operation, pointer_state, location, damage
+):
+    data = tmp_path / "data"
+    root = workspace_root(data, WORKSPACE)
+    active, retained, staging = [
+        root.with_name(root.name + ".generation-" + char * 24) for char in "abc"
+    ]
+    directories = {"root": root, "active": active, "retained": retained, "staging": staging}
+    directories.update(
+        {path.name[len(staging.name) + 1 :]: path for path in switch._staging_paths(staging)[1:]}
+    )
+    for directory in directories.values():
+        directory.mkdir(parents=True, mode=0o750)
+        (directory / SETTINGS).write_text('{"store":"compact"}')
+        (directory / "payload").write_bytes(b"verbatim untouched\x00")
+        (directory / "payload").chmod(0o640)
+    pointer = {
+        "active": active.name,
+        "retained": [{"name": retained.name, "retired_at": 0}],
+    }
+    (root / POINTER_PREVIOUS).write_text(json.dumps(pointer))
+    if pointer_state != "missing":
+        (root / POINTER).write_text(json.dumps(pointer) if pointer_state == "valid" else "{}")
+    (root / switch.STATE).write_text(json.dumps({"state": "copying", "staging": staging.name}))
+    config = directories[location] / SETTINGS
+    if damage in ("encrypted", "null_encryption", "empty_encryption"):
+        info = {
+            "version": 1,
+            "cipher": "sqlcipher",
+            "workspace_id": WORKSPACE,
+            "key_id": "a" * 32,
+            "database_paths": [],
+        }
+        value = info if damage == "encrypted" else None if damage == "null_encryption" else {}
+        config.write_text(json.dumps({"store": "compact", "encryption": value}))
+    elif damage in ("invalid_json", "invalid_object"):
+        config.write_text("{" if damage == "invalid_json" else "[]")
+    elif damage in ("settings_symlink", "dangling_settings_symlink"):
+        external = tmp_path / "external-settings.json"
+        config.rename(external)
+        config.symlink_to(external if damage == "settings_symlink" else tmp_path / "missing")
+    elif damage == "directory_symlink":
+        directory = directories[location]
+        external = tmp_path / "external-directory"
+        directory.rename(external)
+        directory.symlink_to(external, target_is_directory=True)
+    # The existing lock file is outside generation maintenance and stays intact.
+    with data_lock(data, exclusive=True):
+        pass
+    before = _maintenance_tree_snapshot(tmp_path)
+    monkeypatch.setattr(switch, "_verify_offline", lambda directory: None)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("maintenance ran before metadata validation")
+
+    for name in (
+        "_prepare_generations",
+        "_recover_publication",
+        "_cleanup_recorded_staging",
+        "_cleanup_unpublished",
+        "_remove_staging",
+        "_seal_retired",
+        "_finish_deletion",
+        "_write_state",
+        "_write_pointer",
+    ):
+        monkeypatch.setattr(switch, name, forbidden)
+    with monkeypatch.context() as denied:
+        if damage in ("stat_denied", "read_denied"):
+            method = "lstat" if damage == "stat_denied" else "read_text"
+            original = getattr(Path, method)
+
+            def unavailable(path, *args, **kwargs):
+                if path == config:
+                    raise PermissionError("synthetic metadata access denied")
+                return original(path, *args, **kwargs)
+
+            denied.setattr(Path, method, unavailable)
+        with pytest.raises(ValueError, match="Encrypted|metadata|settings|symlink|Expecting"):
+            if operation == "switch":
+                switch.switch_workspace(data, WORKSPACE, "v1")
+            else:
+                switch.prune_generations(data, WORKSPACE, report_only=operation == "report")
+    assert _maintenance_tree_snapshot(tmp_path) == before
 
 
 @pytest.fixture

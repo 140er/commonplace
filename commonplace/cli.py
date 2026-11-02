@@ -757,6 +757,35 @@ def cmd_workspace_store(args) -> int:
     return 0
 
 
+def cmd_workspace_encrypt(args) -> int:
+    from .workspace_encryption import encrypt_workspace
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            workspace = db.workspace(ref)
+            db.require_owner(workspace["id"], db.user(args.by)["id"])
+            return workspace["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            encrypt_workspace(
+                _data_dir(args),
+                args.workspace,
+                backup_dir=args.backup_dir,
+                key_store=args.key_store,
+                server_key_file=args.server_key_file,
+                recovery_key_file=args.recovery_key_file,
+                authorize=authorize,
+            ),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_doctor(args) -> int:
     from .store_switch import doctor_workspace
 
@@ -812,6 +841,13 @@ def cmd_backup(args) -> int:
     return 0
 
 
+def cmd_restore(args) -> int:
+    from .backup import restore
+
+    print(json.dumps(restore(args.backup_dir, args.dest_dir), sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="commonplace")
     p.add_argument("--data", help=f"data directory (default ${DATA_ENV} or ~/.commonplace)")
@@ -848,6 +884,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--owner", required=True)
     s.set_defaults(func=cmd_workspace_add)
     ws.add_parser("list").set_defaults(func=cmd_workspace_list)
+    s = ws.add_parser("encrypt")
+    s.add_argument("workspace")
+    s.add_argument("--by", required=True)
+    s.add_argument("--backup-dir", required=True)
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--server-key-file", required=True)
+    s.add_argument("--recovery-key-file", required=True)
+    s.set_defaults(func=cmd_workspace_encrypt)
     s = ws.add_parser("store")
     s.add_argument("workspace")
     s.add_argument("store", choices=("v1", "compact"))
@@ -931,6 +975,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("backup")
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_backup)
+    s = sub.add_parser("restore", help="verify and restore a backup into a new directory")
+    s.add_argument("backup_dir")
+    s.add_argument("dest_dir")
+    s.set_defaults(func=cmd_restore)
     return p
 
 
@@ -959,8 +1007,8 @@ def main(argv=None) -> int:
 
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
-        if args.command in {"connect", "backup"} or (
-            args.command == "workspace" and args.action in {"store", "prune-stores"}
+        if args.command in {"connect", "backup", "restore"} or (
+            args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
         ):
             return args.func(args)
         with data_lock(_data_dir(args)):

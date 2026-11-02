@@ -28,6 +28,9 @@ EXACT = {
     ("POST", "/oauth/token"): "public",
     ("POST", "/oauth/revoke"): "public",
     ("GET", "/app/login"): "public",
+    ("POST", "/app/auth/email"): "public",
+    ("GET", "/app/auth/email/verify"): "public",
+    ("POST", "/app/auth/email/verify"): "public",
     ("POST", "/app/logout"): "authenticated",
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/plan"): "authenticated",
@@ -37,6 +40,7 @@ EXACT = {
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    ("POST", "/api/import"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
@@ -47,6 +51,8 @@ EXACT = {
     ("POST", "/app/settings/memory"): "authenticated",
 }
 PREFIX = {
+    ("POST", "/api/connections/"): "authenticated",
+    ("DELETE", "/api/connections/"): "authenticated",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")

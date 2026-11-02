@@ -17,6 +17,8 @@ from pathlib import Path
 
 import zstandard as zstd
 
+from mempalace.sqlite_crypto import connect, row_factory
+
 from . import thread_frames as frames
 from .models import THREADS_WING, RecallHit, ThreadMessage
 from .thread_store import (
@@ -66,10 +68,8 @@ class ThreadStoreV2(V1ThreadStore):
                 os.chmod(file_path, 0o600)
             finally:
                 os.close(descriptor)
-        self._conn = sqlite3.connect(
-            path, check_same_thread=False, isolation_level=None, timeout=30
-        )
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect(path, check_same_thread=False, isolation_level=None, timeout=30)
+        self._conn.row_factory = row_factory
         try:
             self._initialize()
         except BaseException:
@@ -244,7 +244,16 @@ class ThreadStoreV2(V1ThreadStore):
                 for value in trained
             ]
 
-    def store(self, workspace_id, source_thread_id, messages, *, actor, parent_stored_id=""):
+    def store(
+        self,
+        workspace_id,
+        source_thread_id,
+        messages,
+        *,
+        actor,
+        parent_stored_id="",
+        max_storage_bytes=None,
+    ):
         messages = list(messages)
         self._validate(messages)
         if not messages:
@@ -257,6 +266,7 @@ class ThreadStoreV2(V1ThreadStore):
                 if existing.sha256 != digest:
                     raise ThreadConflict("Source thread already has different stored content")
                 return existing
+            self._check_storage_budget(max_storage_bytes, messages)
             stored_id = "thr_" + secrets.token_hex(8)
             chunks = chunk_messages(messages)
             self._conn.execute(
@@ -276,6 +286,7 @@ class ThreadStoreV2(V1ThreadStore):
             )
             cache = self._write_messages(stored_id, messages)
             self._write_chunks(stored_id, chunks, messages, cache=cache)
+            self._check_storage_budget(max_storage_bytes)
             return self.get(stored_id)
 
     @staticmethod

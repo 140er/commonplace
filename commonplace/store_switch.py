@@ -16,6 +16,7 @@ import secrets
 import shlex
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -302,6 +303,43 @@ def _staging_paths(staging):
             ".rollback-probe.source-palace",
         )
     ]
+
+
+def _preflight_maintenance_metadata(root):
+    """Inspect every maintenance target without resolving or repairing pointers."""
+    try:
+        generation_path(root, root.name)
+        directories = {root}
+        pattern = re.compile(re.escape(root.name) + r"\.generation-[0-9a-f]{24}")
+        for path in root.parent.iterdir():
+            match = pattern.match(path.name)
+            if match:
+                staging = generation_path(root, match.group())
+                if path in _staging_paths(staging):
+                    directories.add(path)
+        for directory in sorted(directories):
+            try:
+                mode = directory.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(mode):
+                raise ValueError("Workspace maintenance requires directories without symlinks")
+            config = directory / SETTINGS
+            try:
+                mode = config.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(mode):
+                raise ValueError("Workspace settings must be regular files without symlinks")
+            settings = json.loads(config.read_text(encoding="utf-8"))
+            if not isinstance(settings, dict):
+                raise ValueError("Invalid workspace maintenance settings")
+            if "encryption" in settings:
+                raise ValueError(
+                    "Encrypted workspace maintenance requires a verified recovery plan"
+                )
+    except OSError:
+        raise ValueError("Workspace maintenance metadata is unavailable") from None
 
 
 def _remove_staging(staging):
@@ -1205,6 +1243,7 @@ def switch_workspace(
         root = workspace_root(data_dir, workspace_id)
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         _verify_offline(data_dir)
+        _preflight_maintenance_metadata(root)
         state = _backfill_state(root)
         if state.get("state") == "deleting":
             raise ValueError(_deletion_repair(state["deletion"]["entry"]["name"], recorded=True))
@@ -1293,6 +1332,7 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None, repor
             workspace_id = authorize(workspace_id)
         root = workspace_root(data_dir, workspace_id)
         _verify_offline(Path(data_dir).resolve())
+        _preflight_maintenance_metadata(root)
         if report_only:
             return _prune_report(root, now=now)
         try:

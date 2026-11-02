@@ -69,9 +69,10 @@ review asks once a creation path exists. For such asks, the assignee or
 requester may return an agent-directed review
 to `todo` or `doing` by withdrawing its ask in the same transaction. Person
 recipients (including the default owner), person assignees and person return
-targets block withdrawal and keep their decision queue intact. Only the
-requester may complete a review card, and `decide` still refuses an agent's
-own ask.
+targets block withdrawal and keep their decision queue intact. Agents cannot
+complete person-directed reviews or relay a person's approval through `decide`.
+Only a signed-in workspace owner may answer those decisions. Direct parents
+may still approve child proposals with `task_approve`.
 
 Withdrawal preserves the review/open-ask database constraint. A `release`
 event stores the original ask and optional verbatim reason, with actor, time,

@@ -58,7 +58,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 | `task_update` | `task`, `title?`, `body?`, `status?`, `before?`, `after?`, `link?`, `unlink?`, `lesson?`, `repo?`, `branch?`, `pr?` (URL or number), `checks?`, `status_line?` | `status_line` also renews the claim and sets `heartbeat_at`; review requires `question`, `context` and at least two `options` |
 | `task_handoff` | `task`, `to`, `note`, `options?` | `to` = `anyone`, `conn:<name>` / `<name>`, or a person (`avery`, an email, `user:<id>`). To a person = card goes to `review` = the inline decision card |
 | `ask` | `question`, `options?`, `board?`, `task?` | Shortcut: without `task` it creates a card in `review` asking the board owner; with `task` it is `task_handoff` to the owner. Returns `#n waiting on <person>` |
-| `decide` | `task`, `choice?`, `reply?`, `then?` (`return`/`todo`/`done`/`backlog`) | owner_only. Answers the ask; default `then=return` |
+| `decide` | `task`, `choice?`, `reply?`, `then?` (`return`/`todo`/`done`/`backlog`) | signed-in workspace owner only, including legacy agent-directed rows; all agent connections are refused. Answers the ask; default `then=return` |
 | `needs_me` | — | owner_only. Text digest of `needs_me()` |
 
 `needs_me()` returns:
@@ -70,9 +70,9 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 `card` (REST and needs_me):
 ```json
 {"number": 145, "board": "commonplace", "title": "…", "body": "…", "status": "review",
- "assignee": "conn:codex:vm", "claim_until": null, "ask": "…", "ask_options": ["1y","90d"],
- "ask_to": "user:usr_x", "return_to": "conn:claude-code:vm", "flags": [],
- "repo": "github.com/140er/mempalace", "branch": "feat/x", "pr_url": "…", "pr_number": 12,
+ "assignee": "conn:codex:example", "claim_until": null, "ask": "…", "ask_options": ["1y","90d"],
+ "ask_to": "user:usr_x", "return_to": "conn:claude-code:example", "flags": [],
+ "repo": "github.com/example/project", "branch": "feat/x", "pr_url": "…", "pr_number": 12,
  "checks": "passing", "status_line": "Fixing the two failing tests", "heartbeat_at": "…",
  "labels": [], "links": 2, "version": 3, "created_by": "conn:…", "created_at": "…", "updated_at": "…",
  "position": 1.0, "message_id": null}
