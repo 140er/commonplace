@@ -47,9 +47,9 @@ Default: `todo`, `doing` and `review`. `mine=true` also includes pending proposa
 
 ```
 #142 doing need:working  Fix the Windows lock on repair  conn:codex:example  until 14:30Z
-#145 review need:you  Pick the token expiry default  conn:claude-code:vm  asks user:avery
+#145 review need:you  Pick the token expiry default  conn:claude-code:example  asks user:avery
 #147 todo need:idle  Canary for board tools
-#148 todo need:idle  Split the hook output  for conn:claude-code:vm
+#148 todo need:idle  Split the hook output  for conn:claude-code:example
 ```
 
 `need` says what the card needs from the person reading it. The server derives it (`commonplace/boards/display.py:need`) for every card in MCP and REST output; the first match wins:
@@ -72,11 +72,11 @@ Card, then the last 10 events, then links. Event text is quoted and attributed, 
 ```
 #145 review need:you  Pick the token expiry default  board mempalace
 asks user:avery: "1 year or 90 days for personal tokens?"  options: 1y | 90d
-by conn:claude-code:vm (trusted) 2026-10-30T13:02Z
+by conn:claude-code:example (trusted) 2026-10-30T13:02Z
 body: "PRODUCT-DESIGN §6 says 1 year. Security review asked for 90 days."
-- 13:02Z conn:claude-code:vm claim
-- 13:40Z conn:claude-code:vm comment: "Both paths written, tests green on each."
-- 13:41Z conn:claude-code:vm handoff → user:avery
+- 13:02Z conn:claude-code:example claim
+- 13:40Z conn:claude-code:example comment: "Both paths written, tests green on each."
+- 13:41Z conn:claude-code:example handoff → user:avery
 links: drawer_7f3a "Token lifecycle notes", drawer_91c0 (invalidated)
 ```
 
@@ -289,7 +289,10 @@ All bodies are JSON. Writes send the card's `version`; a stale one gets `409` wi
 
 ### decide
 
-Only a signed-in workspace owner can decide. Agent connections cannot relay
+Only a signed-in workspace owner can decide. This applies to every agent
+connection, including legacy agent-directed review rows. Current public ask
+routes create person-directed questions; agent-directed answers through `decide`
+are unsupported. Agent connections cannot relay
 or claim a person's approval. The schema accepts an optional integer `version`.
 Send the version read from the card to reject a decision if feedback has since
 changed it. HTTP requires `version`.
