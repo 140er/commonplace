@@ -40,9 +40,9 @@ class Mailbox:
             self.messages.append((to, text))
             self.changed.notify_all()
 
-    def login_link(self, email, origin, *, timeout=3):
+    def login_link(self, email, origin, *, timeout=3, after=0):
         def matching_link():
-            for recipient, text in reversed(self.messages):
+            for recipient, text in reversed(self.messages[after:]):
                 if recipient != email:
                     continue
                 for link in re.findall(r'https?://[^\s<>"\']+', text):

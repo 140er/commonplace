@@ -71,6 +71,7 @@ async def email_login(page, instance, email, *, signup=False):
     if not await field.count():
         raise Blocked("/app/ has no email request/signup form")
     await field.fill(email)
+    mail_position = len(instance.mail.messages)
     async with page.expect_response(
         lambda r: r.request.method == "POST" and r.url.endswith("/app/auth/email")
     ) as sent:
@@ -82,7 +83,9 @@ async def email_login(page, instance, email, *, signup=False):
         "Requesting an email link must not create a session before verification",
     )
     # Captured mail is immediate transport; allow a bounded asynchronous FIFO wait.
-    link = await asyncio.to_thread(instance.mail.login_link, email, instance.origin, timeout=15)
+    link = await asyncio.to_thread(
+        instance.mail.login_link, email, instance.origin, timeout=15, after=mail_position
+    )
     async with page.expect_response(lambda r: r.url == link) as verified:
         await page.goto(link)
     require((await verified.value).status == 200, "Email link must open a read-only confirmation")

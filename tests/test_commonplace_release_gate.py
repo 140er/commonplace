@@ -154,7 +154,8 @@ def test_report_distinguishes_protocol_assertions_and_multiple_visual_captures()
     assert not report.passed  # Typed evidence never promotes an unrun check.
 
 
-def test_mailbox_waits_for_matching_delayed_capture_without_sleep(monkeypatch):
+@pytest.mark.parametrize("preload", [False, True])
+def test_mailbox_waits_for_matching_delayed_capture_without_sleep(monkeypatch, preload):
     box = Mailbox()
     entered = threading.Event()
     original = box.changed.wait_for
@@ -166,8 +167,11 @@ def test_mailbox_waits_for_matching_delayed_capture_without_sleep(monkeypatch):
     monkeypatch.setattr(box.changed, "wait_for", waiting)
     origin = "http://127.0.0.1:1234"
     expected = origin + "/app/auth/email/verify?t=delayed-link"
+    if preload:
+        box.send("later@example.test", "link", origin + "/app/auth/email/verify?t=old-link")
+    position = len(box.messages)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        result = pool.submit(box.login_link, "later@example.test", origin)
+        result = pool.submit(box.login_link, "later@example.test", origin, after=position)
         assert entered.wait(3)
         box.send("other@example.test", "link", expected)
         box.send("later@example.test", "link", expected)
