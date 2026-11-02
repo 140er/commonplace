@@ -726,6 +726,22 @@ def _uninstalls_hooks(argv: tuple[str, ...]) -> bool:
     )
 
 
+def _find_deletes(args: list[str]) -> list[str]:
+    """Start paths of a ``find`` that deletes what it finds (-delete or -exec rm)."""
+    deletes = "-delete" in args or any(
+        flag in ("-exec", "-execdir", "-ok", "-okdir") and _base(cmd) in _DELETE_CMDS
+        for flag, cmd in zip(args, args[1:])
+    )
+    if not deletes:
+        return []
+    paths: list[str] = []
+    for arg in args:
+        if arg.startswith("-") or arg in ("(", "!"):
+            break
+        paths.append(arg)
+    return paths
+
+
 def _removes_hook_files(simple: _Simple) -> bool:
     argv = simple.argv
     if _uninstalls_hooks(argv):
@@ -736,6 +752,8 @@ def _removes_hook_files(simple: _Simple) -> bool:
     targets: list[str] = []
     if name in _DELETE_CMDS:
         targets = _operands(list(argv[1:]))
+    elif name == "find":
+        targets = _find_deletes(list(argv[1:]))
     elif name == "chmod":
         mode, paths = _chmod_parts(list(argv[1:]))
         if mode is not None and _mode_drops_exec(mode):

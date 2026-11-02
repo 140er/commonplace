@@ -71,6 +71,8 @@ POSITIVES: list[tuple[str, str]] = [
     # hook-files: delete, move, truncate, chmod, redirect, git rm, uninstall
     ("rm -rf .git/hooks/pre-commit", "hook-files"),
     ("rm .husky/pre-commit", "hook-files"),
+    ("find .git/hooks -type f -delete", "hook-files"),
+    ("find .husky -name 'pre-*' -exec rm {} +", "hook-files"),
     ("rm -rf .husky", "hook-files"),
     ("rm .git/hooks/*", "hook-files"),
     ("unlink lefthook.yml", "hook-files"),
@@ -95,6 +97,8 @@ POSITIVES: list[tuple[str, str]] = [
 ]
 
 NEGATIVES: list[str] = [
+    "find .git/hooks -type f",
+    "find . -name '*.pyc' -delete",
     # commit messages, echo, grep and log mention the flags as data
     'git commit -m "docs: never use --no-verify"',
     'echo "git commit --no-verify"',
