@@ -38,6 +38,10 @@ EXACT = {
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
     ("POST", "/api/import"): "authenticated",
+    ("GET", "/api/capture"): "authenticated",
+    ("POST", "/api/capture"): "authenticated",
+    ("GET", "/api/settings/capture"): "authenticated",
+    ("POST", "/api/settings/capture"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
