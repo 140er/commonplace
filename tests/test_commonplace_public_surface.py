@@ -28,6 +28,8 @@ EXACT = {
     ("POST", "/oauth/token"): "public",
     ("POST", "/oauth/revoke"): "public",
     ("GET", "/app/login"): "public",
+    ("POST", "/app/auth/email"): "public",
+    ("GET", "/app/auth/email/verify"): "public",
     ("POST", "/app/logout"): "authenticated",
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/plan"): "authenticated",
@@ -47,6 +49,8 @@ EXACT = {
     ("POST", "/app/settings/memory"): "authenticated",
 }
 PREFIX = {
+    ("POST", "/api/connections/"): "authenticated",
+    ("DELETE", "/api/connections/"): "authenticated",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
