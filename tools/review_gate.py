@@ -163,7 +163,7 @@ def pinned_diff(repo_path, target_base, head):
         die("blind commit review requires --repo-path")
 
     def git(*args):
-        result = run(["git", "-C", str(repo_path), *args])
+        result = run(["git", "--no-replace-objects", "-C", str(repo_path), *args])
         if result.returncode:
             die("cannot resolve the pinned review commits in --repo-path")
         return result.stdout
@@ -172,7 +172,9 @@ def pinned_diff(repo_path, target_base, head):
         if git("rev-parse", "--verify", f"{sha}^{{commit}}").strip() != sha:
             die("pinned commit identity mismatch")
     base = require_sha(git("merge-base", target_base, head).strip(), "merge-base")
-    return git("diff", "--binary", "--full-index", base, head, "--"), base
+    return git(
+        "diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", base, head, "--"
+    ), base
 
 
 def build_review_prompt(mode, checklist, diff, *, problem="", pr_text="", commits="", context=""):

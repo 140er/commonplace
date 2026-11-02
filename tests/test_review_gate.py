@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,7 +75,7 @@ def commits(tmp_path):
     repo.mkdir()
     git(repo, "init", "-q")
     git(repo, "config", "user.name", "Synthetic contributor")
-    git(repo, "config", "user.email", "contributor@users.noreply.github.com")
+    git(repo, "config", "user.email", "contributor@example.test")
     (repo / "code.py").write_text("value = 1\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "initial")
@@ -108,7 +109,21 @@ def test_review_diff_comes_from_the_same_pinned_head(gate, commits, monkeypatch)
     monkeypatch.setattr(gate, "run", fake_run)
     meta, diff, public, messages = gate.gather_pr("owner/project", 1, head, repo_path=repo)
     expected = subprocess.check_output(
-        ["git", "-C", str(repo), "diff", "--binary", "--full-index", base, head, "--"], text=True
+        [
+            "git",
+            "--no-replace-objects",
+            "-C",
+            str(repo),
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--binary",
+            "--full-index",
+            base,
+            head,
+            "--",
+        ],
+        text=True,
     )
     assert diff == expected and public and messages == ""
     assert meta["regressionBaseOid"] == base
@@ -116,6 +131,50 @@ def test_review_diff_comes_from_the_same_pinned_head(gate, commits, monkeypatch)
     for wrong in [head[:8], "a" * 40, None]:
         with pytest.raises(SystemExit):
             gate.gather_pr("owner/project", 1, wrong, repo_path=repo)
+
+
+def test_pinned_diff_does_not_execute_external_diff(gate, commits, tmp_path):
+    repo, base, head = commits
+    marker = tmp_path / "external-ran"
+    external = tmp_path / "external-diff"
+    external.write_text(
+        f"#!{Path(sys.executable).resolve()}\n"
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('invoked')\n"
+        "print('unrelated external diff output')\n"
+    )
+    external.chmod(0o700)
+    git(repo, "config", "diff.external", str(external))
+
+    diff, actual_base = gate.pinned_diff(repo, base, head)
+
+    assert not marker.exists(), "review must not execute a configured external diff"
+    assert actual_base == base
+    assert "+value = 2\n" in diff and "-value = 1\n" in diff
+
+
+def test_pinned_diff_ignores_replacement_objects(gate, commits, monkeypatch):
+    repo, base, head = commits
+    (repo / "code.py").write_text("value = 9\n")
+    git(repo, "add", "code.py")
+    tree = git(repo, "write-tree")
+    replacement = git(repo, "commit-tree", tree, "-p", base, "-m", "synthetic replacement")
+    git(repo, "replace", head, replacement)
+    calls = []
+    original_run = gate.run
+
+    def traced_run(argv):
+        calls.append(argv)
+        return original_run(argv)
+
+    monkeypatch.setattr(gate, "run", traced_run)
+    diff, actual_base = gate.pinned_diff(repo, base, head)
+
+    assert actual_base == base
+    assert "+value = 2\n" in diff and "+value = 9\n" not in diff
+    assert all(argv[:2] == ["git", "--no-replace-objects"] for argv in calls)
+    diff_call = next(argv for argv in calls if "diff" in argv)
+    assert "--no-ext-diff" in diff_call and "--no-textconv" in diff_call
 
 
 @pytest.mark.parametrize(

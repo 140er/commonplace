@@ -8,7 +8,7 @@ Code review defaults to `--mode blind`. Supply the original problem in a separat
 
 For a PR, pass `--repo`, `--pr`, `--repo-path` and a full forty-character `--head`. The local clone must contain the pinned head and target-base commit objects. The tool derives its review diff and regression baseline from their immutable merge-base. It never uses a separately fetched, mutable PR diff in blind mode. The verdict names the full reviewed head. Integration checks against the current target branch remain separate requirements.
 
-For a local code gate, pass `--diff`, `--repo-path`, `--base` and `--head`. The supplied diff must exactly match the Git-derived diff, including full object identifiers. Generate it with `git diff --binary --full-index BASE...HEAD`.
+For a local code gate, pass `--diff`, `--repo-path`, `--base` and `--head`. The supplied diff must exactly match the Git-derived diff, including full object identifiers. Generate it with `git --no-replace-objects diff --no-ext-diff --no-textconv --binary --full-index BASE...HEAD`. Object resolution ignores replacement refs, and review diff generation never invokes external diff or text conversion commands.
 
 Plan reviews keep the contextual workflow with explicit `--mode plan --purpose review`. Plan mode accepts `--context` (at most 8000 bytes) and a plan-specific checklist. It cannot be used as a merge gate.
 

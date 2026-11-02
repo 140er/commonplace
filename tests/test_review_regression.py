@@ -16,9 +16,9 @@ from tools.review_support import regression
 
 IDENTITY = {
     "GIT_AUTHOR_NAME": "Synthetic contributor",
-    "GIT_AUTHOR_EMAIL": "contributor@users.noreply.github.com",
+    "GIT_AUTHOR_EMAIL": "contributor@example.test",
     "GIT_COMMITTER_NAME": "Synthetic contributor",
-    "GIT_COMMITTER_EMAIL": "contributor@users.noreply.github.com",
+    "GIT_COMMITTER_EMAIL": "contributor@example.test",
 }
 
 ADAPTER = r"""
