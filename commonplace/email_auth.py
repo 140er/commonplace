@@ -28,6 +28,23 @@ _EMAIL = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
 )
+_CONFIRMATION = b"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - Commonplace</title><link rel="stylesheet" href="/app/static/ui.css">
+</head><body><main class="signin"><a class="brand-home" href="/app/" aria-label="Commonplace">
+<img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a>
+<h1>Sign in</h1><form method="post"><button class="blockbtn email-confirm" name="confirm"
+value="1">Sign in</button></form></main></body></html>"""
+
+
+def _token(h):
+    token = query(h.path).get("t", "")
+    if h.command == "POST":
+        media = (h.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        token = body(h, as_json=media == "application/json").get("t", token)
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        raise SignInError("expired")
+    return token
 
 
 def _email(value) -> str:
@@ -128,11 +145,40 @@ class EmailAuth:
                         (sessions._hash(token),),
                     )
 
-    def verify(self, h):
+    def confirmation(self, h):
         try:
-            token = query(h.path).get("t", "")
-            if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+            token = _token(h)
+            with self.db._lock:
+                row = self.db._conn.execute(
+                    "SELECT expires_at FROM email_challenges WHERE token_hash = ?",
+                    (sessions._hash(token),),
+                ).fetchone()
+            if row is None or row["expires_at"] <= sessions._now().isoformat():
                 raise SignInError("expired")
+        except (OAuthError, SignInError):
+            send(h, 400, b"Sign in link is invalid or expired", media="text/plain; charset=utf-8")
+            return
+        send(
+            h,
+            200,
+            _CONFIRMATION,
+            media="text/html; charset=utf-8",
+            headers=(
+                (
+                    "Content-Security-Policy",
+                    "default-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                ),
+            ),
+        )
+
+    def verify(self, h):
+        from .gateway import _same_origin_allowed
+
+        if not _same_origin_allowed(self.gateway, h):
+            send_json(h, 403, {"error": "same-origin request required"})
+            return
+        try:
+            token = _token(h)
             with self.db._lock:
                 # Consume before provisioning, so simultaneous requests cannot replay it.
                 with self.db._tx() as conn:
@@ -182,4 +228,5 @@ def install(gateway):
         return
     gateway.email_auth = EmailAuth(gateway)
     gateway.add_route("POST", "/app/auth/email", gateway.email_auth.request)
-    gateway.add_route("GET", "/app/auth/email/verify", gateway.email_auth.verify)
+    gateway.add_route("GET", "/app/auth/email/verify", gateway.email_auth.confirmation)
+    gateway.add_route("POST", "/app/auth/email/verify", gateway.email_auth.verify)
