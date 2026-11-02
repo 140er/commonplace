@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import threading
 from datetime import timedelta
+from queue import Empty, Full, Queue
 
 from . import mailer, ratelimit, sessions, urls
 from .oauth.http import OAuthError, body, query, redirect, send, send_json
@@ -15,6 +17,8 @@ from .social.providers import Profile, SignInError
 logger = logging.getLogger(__name__)
 MESSAGE = "If this email can sign in, a link is on its way."
 EMAIL_LIMIT = ratelimit.Limit("email-signin", 3, 15 * 60)
+QUEUE_CAPACITY = 16
+SHUTDOWN_WAIT = 1.0
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS email_challenges (
     token_hash TEXT PRIMARY KEY,
@@ -77,6 +81,22 @@ class EmailAuth:
         with self.db._lock:
             self.db._conn.executescript(SCHEMA)
         accounts.ensure_schema(self.db)
+        self._admission_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._stopped = threading.Event()
+        self._pending = Queue(maxsize=QUEUE_CAPACITY)
+        self._active_hash = None  # Owned and cleared only under the SQL lock.
+        self._worker = threading.Thread(target=self._run, name="email-signin", daemon=True)
+        self._started = False
+        try:
+            self.db.add_pre_close_callback(self.close)
+            with self._admission_lock:
+                if not self._stopped.is_set():
+                    self._worker.start()
+                    self._started = True
+        except Exception:
+            self._stopped.set()
+            logger.warning("Email sign-in delivery is unavailable")
 
     def request(self, h):
         try:
@@ -100,51 +120,102 @@ class EmailAuth:
                     headers=(("Retry-After", str(retry)),),
                 )
                 return
+        with self._admission_lock:
+            if not self._stopped.is_set():
+                try:
+                    self._pending.put_nowait((email, next_path, accounts.signup_enabled()))
+                except Full:
+                    pass
+        send_json(h, 202, {"message": MESSAGE})
+
+    def _run(self):
+        while True:
+            job = self._pending.get()
+            try:
+                if job is None or self._stopped.is_set():
+                    return
+                sent = False
+                try:
+                    self._send(*job)
+                    sent = True
+                except Exception:
+                    # Transport errors can include recipients and secrets.
+                    logger.warning("Email sign-in mail could not be sent")
+                with self.db._lock:
+                    if self._stopped.is_set():
+                        return
+                    if self._active_hash is not None:
+                        if not sent:
+                            self.db._conn.execute(
+                                "DELETE FROM email_challenges WHERE token_hash = ?",
+                                (self._active_hash,),
+                            )
+                        self._active_hash = None
+            finally:
+                self._pending.task_done()
+
+    def _send(self, email, next_path, signup_was_open):
+        token = secrets.token_urlsafe(32)
+        token_hash = sessions._hash(token)
         with self.db._lock:
+            if self._stopped.is_set():
+                return
             user = self.db._conn.execute(
                 "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)
             ).fetchone()
-        allowed = not user["disabled_at"] if user else accounts.signup_enabled()
-        if allowed and self.mailer.configured:
-            self._send(email, next_path)
-        send_json(h, 202, {"message": MESSAGE})
+            allowed = (
+                not user["disabled_at"] if user else signup_was_open and accounts.signup_enabled()
+            )
+            if not allowed or not self.mailer.configured:
+                return
+            now = sessions._now()
+            with self.db._tx() as conn:
+                conn.execute(
+                    "DELETE FROM email_challenges WHERE expires_at <= ?", (now.isoformat(),)
+                )
+                conn.execute(
+                    "INSERT INTO email_challenges(token_hash, email, next, expires_at) VALUES (?,?,?,?)",
+                    (
+                        token_hash,
+                        email,
+                        next_path,
+                        (now + timedelta(minutes=sessions.LINK_MINUTES)).isoformat(),
+                    ),
+                )
+            self._active_hash = token_hash
+        link = urls.app_link("/app/auth/email/verify?t=" + token)
+        self.mailer.send(
+            email,
+            "Sign in to Commonplace",
+            f"Sign in to Commonplace:\n\n{link}\n\n"
+            f"This link works once and expires in {sessions.LINK_MINUTES} minutes.\n"
+            "If you did not request it, you can ignore this email.",
+            None,
+        )
 
-    def _send(self, email, next_path):
-        token = secrets.token_urlsafe(32)
-        now = sessions._now()
-        with self.db._lock, self.db._tx() as conn:
-            conn.execute("DELETE FROM email_challenges WHERE expires_at <= ?", (now.isoformat(),))
-            conn.execute(
-                "INSERT INTO email_challenges(token_hash, email, next, expires_at) VALUES (?,?,?,?)",
-                (
-                    sessions._hash(token),
-                    email,
-                    next_path,
-                    (now + timedelta(minutes=sessions.LINK_MINUTES)).isoformat(),
-                ),
-            )
-        sent = False
-        try:
-            link = urls.app_link("/app/auth/email/verify?t=" + token)
-            self.mailer.send(
-                email,
-                "Sign in to Commonplace",
-                f"Sign in to Commonplace:\n\n{link}\n\n"
-                f"This link works once and expires in {sessions.LINK_MINUTES} minutes.\n"
-                "If you did not request it, you can ignore this email.",
-                None,
-            )
-            sent = True
-        except mailer.MailError:
-            # Delivery errors may contain the message or recipient. Never log them.
-            logger.warning("Email sign-in mail could not be sent")
-        finally:
-            if not sent:
-                with self.db._lock:
+    def close(self):
+        # Serialize complete closes: a concurrent DB close must wait for revocation.
+        with self._close_lock:
+            with self._admission_lock:
+                if self._stopped.is_set():
+                    return
+                self._stopped.set()
+                while True:
+                    try:
+                        self._pending.get_nowait()
+                        self._pending.task_done()
+                    except Empty:
+                        break
+                self._pending.put_nowait(None)
+            with self.db._lock:
+                if self._active_hash is not None:
                     self.db._conn.execute(
-                        "DELETE FROM email_challenges WHERE token_hash = ?",
-                        (sessions._hash(token),),
+                        "DELETE FROM email_challenges WHERE token_hash = ?", (self._active_hash,)
                     )
+                    self._active_hash = None
+            if self._started:
+                # A residual transport owns no valid challenge and cannot use SQL.
+                self._worker.join(timeout=SHUTDOWN_WAIT)
 
     def confirmation(self, h):
         try:
