@@ -698,7 +698,12 @@ def test_held_delivery_failure_cleans_up_and_same_worker_recovers(
         delivered(auth)
     assert not challenges(client) and auth._active_hash is None
     refused(client.verify(failed_link))
-    assert "Email sign-in mail could not be sent" in caplog.text
+    warning = (
+        "Email sign-in mail could not be sent"
+        if error is mailer.MailError
+        else "Email sign-in delivery could not be completed"
+    )
+    assert warning in caplog.text
     assert "fresh@example.test" not in caplog.text
     assert failed_link not in caplog.text
     assert parse_qs(urlsplit(failed_link).query)["t"][0] not in caplog.text
@@ -981,3 +986,101 @@ def test_worker_start_failure_is_uniformly_unavailable_without_replacement(
     assert "Email sign-in delivery is unavailable" in caplog.text
     client.server.server_close()
     client.db.close()
+
+
+@pytest.mark.parametrize("failures", [1, 3])
+@pytest.mark.parametrize("error", [sqlite3.OperationalError, RuntimeError])
+def test_revocation_sql_errors_retain_failed_link_and_same_worker_recovers(
+    fresh, monkeypatch, caplog, failures, error
+):
+    client, mailbox = fresh()
+    known_user(client, mailbox)
+    monkeypatch.setenv("COMMONPLACE_SIGNUP", "closed")
+    auth = client.gateway.email_auth
+    worker = auth._worker
+    boundary = observe_sql(client)
+    remaining = failures
+
+    def fail_cleanup(sql):
+        nonlocal remaining
+        if sql.startswith("DELETE FROM email_challenges WHERE token_hash") and remaining:
+            remaining -= 1
+            raise error("synthetic cleanup failure")
+
+    boundary.before_execute = fail_cleanup
+    with held_mail(mailbox, mailer.MailError) as hold:
+        assert client.ask()[0] == 202
+        assert hold.entered.wait(3)
+        failed_link = mailbox.link(wait=False)
+        failed_hash = sessions._hash(parse_qs(urlsplit(failed_link).query)["t"][0])
+        hold.release.set()
+        delivered(auth)
+    assert worker.is_alive() and auth._worker is worker
+    assert auth._active_hash == failed_hash and auth._revocation_pending
+    assert [row["token_hash"] for row in challenges(client)] == [failed_hash]
+    parts = urlsplit(failed_link)
+    assert client.request(parts.path + "?" + parts.query)[0] == 400
+    refused(client.verify(failed_link))
+    for number in range(failures - 1):
+        assert client.ask(f"cleanup{number}@example.test")[0] == 202
+        delivered(auth)
+        assert auth._active_hash == failed_hash and auth._revocation_pending
+        assert len(mailbox.messages) == 2 and worker.is_alive()
+        assert [row["token_hash"] for row in challenges(client)] == [failed_hash]
+    assert remaining == 0
+    assert client.ask()[0] == 202
+    recovered_link = mailbox.link()
+    assert auth._active_hash is None and not auth._revocation_pending
+    assert failed_hash not in [row["token_hash"] for row in challenges(client)]
+    assert client.verify(recovered_link)[0] == 303
+    refused(client.verify(recovered_link))
+    assert auth._worker is worker and worker.is_alive()
+    assert len(mailbox.messages) == 3 and counts(client) == (1, 1)
+    assert client.ask()[0] == 429
+    assert "Email sign-in challenge cleanup is unavailable" in caplog.text
+    assert "fresh@example.test" not in caplog.text and failed_link not in caplog.text
+    assert parse_qs(urlsplit(failed_link).query)["t"][0] not in caplog.text
+
+
+@pytest.mark.parametrize("error", [None, mailer.MailError])
+def test_close_with_revocation_sql_failure_reports_error_and_never_uses_late_sql(
+    fresh, monkeypatch, error
+):
+    client, mailbox = fresh()
+    known_user(client, mailbox)
+    auth = client.gateway.email_auth
+    boundary = observe_sql(client)
+
+    def fail_cleanup(sql):
+        if sql.startswith("DELETE FROM email_challenges WHERE token_hash"):
+            raise sqlite3.OperationalError("synthetic cleanup failure")
+
+    with held_mail(mailbox, error) as hold:
+        assert client.ask()[0] == 202
+        assert hold.entered.wait(3)
+        active = auth._active_hash
+        boundary.before_execute = fail_cleanup
+        joins = []
+        original_join = auth._worker.join
+
+        def join(*, timeout):
+            assert not client.db._lock._is_owned()
+            joins.append(timeout)
+            original_join(timeout=timeout)
+            assert auth._worker.is_alive() and not hold.release.is_set()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(auth._worker, "join", join)
+            with pytest.raises(RuntimeError, match="challenge cleanup is unavailable"):
+                client.db.close()
+            assert joins == [email_auth.SHUTDOWN_WAIT]
+        assert boundary.forbidden and auth._stopped.is_set()
+        assert auth._active_hash == active and auth._revocation_pending
+        client.server.server_close()
+        client.db.close()
+        hold.release.set()
+        auth._worker.join(timeout=3)
+        assert not auth._worker.is_alive() and not boundary.late
+        with closing(sqlite3.connect(client.db.path)) as conn:
+            # Failed cleanup is reported, never described as successful revocation.
+            assert conn.execute("SELECT token_hash FROM email_challenges").fetchone()[0] == active

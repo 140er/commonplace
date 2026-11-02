@@ -86,6 +86,7 @@ class EmailAuth:
         self._stopped = threading.Event()
         self._pending = Queue(maxsize=QUEUE_CAPACITY)
         self._active_hash = None  # Owned and cleared only under the SQL lock.
+        self._revocation_pending = False
         self._worker = threading.Thread(target=self._run, name="email-signin", daemon=True)
         self._started = False
         try:
@@ -134,25 +135,45 @@ class EmailAuth:
             try:
                 if job is None or self._stopped.is_set():
                     return
+                with self.db._lock:
+                    if self._stopped.is_set():
+                        return
+                    if self._revocation_pending and not self._revoke_active():
+                        continue
                 sent = False
                 try:
                     self._send(*job)
                     sent = True
-                except Exception:
+                except mailer.MailError:
                     # Transport errors can include recipients and secrets.
                     logger.warning("Email sign-in mail could not be sent")
+                except Exception:
+                    logger.warning("Email sign-in delivery could not be completed")
                 with self.db._lock:
                     if self._stopped.is_set():
                         return
                     if self._active_hash is not None:
-                        if not sent:
-                            self.db._conn.execute(
-                                "DELETE FROM email_challenges WHERE token_hash = ?",
-                                (self._active_hash,),
-                            )
-                        self._active_hash = None
+                        if sent:
+                            self._active_hash = None
+                        else:
+                            self._revocation_pending = True
+                            self._revoke_active()
             finally:
                 self._pending.task_done()
+
+    def _revoke_active(self):
+        """Called under the SQL lock; failed cleanup retains its sole owned hash."""
+        if self._active_hash is not None:
+            try:
+                self.db._conn.execute(
+                    "DELETE FROM email_challenges WHERE token_hash = ?", (self._active_hash,)
+                )
+            except Exception:
+                logger.warning("Email sign-in challenge cleanup is unavailable")
+                return False
+        self._active_hash = None
+        self._revocation_pending = False
+        return True
 
     def _send(self, email, next_path, signup_was_open):
         token = secrets.token_urlsafe(32)
@@ -207,20 +228,23 @@ class EmailAuth:
                     except Empty:
                         break
                 self._pending.put_nowait(None)
-            with self.db._lock:
-                if self._active_hash is not None:
-                    self.db._conn.execute(
-                        "DELETE FROM email_challenges WHERE token_hash = ?", (self._active_hash,)
-                    )
-                    self._active_hash = None
-            if self._started:
-                # A residual transport owns no valid challenge and cannot use SQL.
-                self._worker.join(timeout=SHUTDOWN_WAIT)
+            try:
+                with self.db._lock:
+                    if self._active_hash is not None:
+                        self._revocation_pending = True
+                        if not self._revoke_active():
+                            raise RuntimeError("Email sign-in challenge cleanup is unavailable")
+            finally:
+                if self._started:
+                    # No completion SQL is allowed, even if revocation failed.
+                    self._worker.join(timeout=SHUTDOWN_WAIT)
 
     def confirmation(self, h):
         try:
             token = _token(h)
             with self.db._lock:
+                if self._revocation_pending and self._active_hash == sessions._hash(token):
+                    raise SignInError("expired")
                 row = self.db._conn.execute(
                     "SELECT expires_at FROM email_challenges WHERE token_hash = ?",
                     (sessions._hash(token),),
@@ -254,6 +278,8 @@ class EmailAuth:
         try:
             token = _token(h)
             with self.db._lock:
+                if self._revocation_pending and self._active_hash == sessions._hash(token):
+                    raise SignInError("expired")
                 # Consume before provisioning, so simultaneous requests cannot replay it.
                 with self.db._tx() as conn:
                     row = conn.execute(
