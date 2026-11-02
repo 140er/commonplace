@@ -9,6 +9,7 @@ import { planView } from "./plan.js";
 import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
 import { childProgress } from "./children.js";
+import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 
 const signinParams = new URLSearchParams(location.search);
 const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
@@ -410,7 +411,7 @@ async function settingsView(epoch) {
   const [connections, hooks, plan] = await Promise.allSettled([api("/api/connections"), api("/api/webhooks"), api("/api/plan")]);
   if (epoch !== state.screen) return;
   const saved = remember();
-  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : ""}${voice.settings()}<section class="settings-section"><h2>Connections</h2>${connections.status === "fulfilled" ? (connections.value.connections || []).map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.last_used_at ? `Used ${elapsed(c.last_used_at)} ago` : "Unused"}</small></span></div>`).join("") || message("No connections") : message(connections.reason.message, true)}</section><section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : ""}${voice.settings()}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${message(connections.reason.message, true)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : message(hooks.reason.message, true)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   restore(saved);
 }
 
@@ -724,6 +725,7 @@ async function route() {
   if (!state.me) return;
   remember();
   const hash = location.hash || "#/";
+  if (hash !== state.route) clearAgentSecret(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   state.screen++; state.route = hash;
@@ -798,6 +800,7 @@ root.addEventListener("input", (event) => {
     root.querySelectorAll(`[data-draft="${CSS.escape(key)}"]`).forEach((input) => { if (input !== event.target) input.value = event.target.value; });
   }
 });
+root.addEventListener("change", (event) => { if (event.target.matches("[data-agent-client]")) changeAgentClient(event.target); });
 root.addEventListener("focusin", (event) => {
   const row = event.target.closest("[data-row]");
   if (row && Number(row.dataset.row) !== state.selected) {
@@ -833,7 +836,8 @@ root.addEventListener("click", async (event) => {
     return;
   }
   try {
-    if (action === "speak-digest") await speech.toggle();
+    if (action.startsWith("agent-")) await agentAction(b);
+    else if (action === "speak-digest") await speech.toggle();
     else if (action === "decide") {
       const reply = state.drafts.get(`reply-${number}`);
       await decide(number, { choice: b.dataset.choice, ...(reply ? { reply } : {}), then: state.drafts.get(`then-${number}`) || "return" }, b);
@@ -915,7 +919,8 @@ root.addEventListener("submit", async (event) => {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
-    } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
+    } else if (kind === "agent") await createAgent(form);
+    else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
       state.drafts.delete(`comment-${state.card.number}`); form.reset();
@@ -1062,7 +1067,7 @@ async function poll() {
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
 document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {

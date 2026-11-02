@@ -90,6 +90,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .setting-row span { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
 .setting-row small { color: var(--muted); font-size: 12px; }
 .setting-row button { padding: 4px 10px; background: none; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.agent-form { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 16px 0; }
+.agent-form label, .agent-secret label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.agent-form > label { flex: 1 1 180px; }
+.agent-form details { flex-basis: 100%; }
+.agent-form details label { margin-top: 16px; }
+.agent-form input, .agent-form select, .agent-secret input, .agent-secret select { width: 100%; min-height: 40px; }
+.agent-secret { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 16px; padding: 16px; margin: 16px 0; background: var(--side); }
+.agent-secret h3, .agent-secret p, .agent-secret pre, .agent-secret > label:has(select), .agent-secret strong, .agent-secret [role="status"] { grid-column: 1 / -1; }
+.agent-secret h3 { font-size: 16px; overflow-wrap: anywhere; }
+.agent-secret pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.agent-secret button, .agents-settings .setting-row button { min-height: 44px; }
+@media (max-width: 640px) {
+  .agent-secret { grid-template-columns: minmax(0, 1fr); }
+  .agent-form > label, .agent-form > button { flex-basis: 100%; }
+}
 .webhook-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
 .webhook-form input { flex: 1; min-width: 160px; }
 .webhook-form button { align-self: stretch; height: auto; }

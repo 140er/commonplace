@@ -6,7 +6,7 @@ import mimetypes
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from commonplace import events, plans, sessions
+from commonplace import events, plans, sessions, urls
 from commonplace.http_util import query, require_principal, send_json
 
 STATIC = Path(__file__).parent / "static"
@@ -170,21 +170,21 @@ def install(gateway):
         if principal.role != "owner":
             send_json(h, 403, {"error": "Owner access required"})
             return
-        fields = (
-            "id",
-            "name",
-            "client",
-            "auth",
-            "user_id",
-            "created_at",
-            "expires_at",
-            "revoked_at",
-            "last_used_at",
-            "parent_id",
-            "started_by",
-        )
+        from .agents import connection_view
+
         rows = gateway.db.connections(principal.workspace_id)
-        send_json(h, 200, {"connections": [{key: row[key] for key in fields} for row in rows]})
+        send_json(
+            h,
+            200,
+            {
+                "connections": [connection_view(row) for row in rows],
+                "mcp_url": urls.AGENT_URL + "/mcp",
+            },
+        )
+
+    from . import agents
+
+    agents.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)
