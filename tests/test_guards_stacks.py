@@ -2,6 +2,9 @@
 
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -305,3 +308,120 @@ def test_unparsed_failure_prints_last_twenty_output_lines(tmp_path):
     text = out.getvalue()
     assert text.count("  line ") == 20
     assert "  line 10\n" in text and "  line 9\n" not in text
+
+
+# ── real-tool smoke: one clean file passes, one bad file fails ──────────
+
+
+def _require_tool(monkeypatch, name: str) -> None:
+    """Skip unless the tool is on PATH; the interpreter's bin dir (venv) goes first."""
+    bin_dir = str(Path(sys.executable).parent)
+    if shutil.which(name, path=bin_dir) is None and shutil.which(name) is None:
+        pytest.skip(f"{name} is not installed (not on PATH), real-tool smoke test skipped")
+    monkeypatch.setenv("PATH", bin_dir + os.pathsep + os.environ.get("PATH", ""))
+
+
+def _run_stack(root: Path, stack_name: str, changed: list[str]):
+    commands = plan_commands(root, detect_stacks(root), changed)
+    selected = [command for command in commands if command.name == stack_name]
+    assert len(selected) == 1, [command.name for command in commands]
+    return run_checks(selected, root, out=io.StringIO())
+
+
+def _smoke(root: Path, stack_name: str, clean: tuple[str, str], bad: tuple[str, str]) -> None:
+    """The clean file passes alone; with the bad file added the stack fails on it."""
+    clean_name, clean_text = clean
+    bad_name, bad_text = bad
+    _write(root, clean_name, clean_text)
+    passed = _run_stack(root, stack_name, [clean_name]).results[0]
+    assert passed.status == "passed", passed.output
+
+    _write(root, bad_name, bad_text)
+    report = _run_stack(root, stack_name, [clean_name, bad_name])
+    failed = report.results[0]
+    assert failed.status == "failed", failed.output
+    named = any(loc.split(":")[0] == bad_name for loc in failed.locations)
+    assert named or bad_name in failed.output, failed.output
+    assert not report.ok
+
+
+def test_smoke_ruff(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "ruff")
+    _write(tmp_path, "ruff.toml", "line-length = 100\n")
+    _smoke(
+        tmp_path, "ruff", ("clean.py", "import os\n\nprint(os.sep)\n"), ("bad.py", "import sys\n")
+    )
+
+
+def test_smoke_gofmt(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "gofmt")
+    _write(tmp_path, "go.mod", "module example.com/smoke\n\ngo 1.21\n")
+    _smoke(
+        tmp_path,
+        "gofmt",
+        ("clean.go", "package main\n\nfunc main() {}\n"),
+        ("bad.go", "package main\nfunc main(){}\n"),
+    )
+
+
+def test_smoke_cargo_fmt(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "cargo")
+    probe = subprocess.run(["cargo", "fmt", "--version"], capture_output=True, check=False)
+    if probe.returncode != 0:
+        pytest.skip("rustfmt is not installed (cargo fmt --version failed), smoke test skipped")
+    _write(
+        tmp_path, "Cargo.toml", '[package]\nname = "smoke"\nversion = "0.1.0"\nedition = "2021"\n'
+    )
+    _write(tmp_path, "src/main.rs", "fn main() {}\n")
+    _smoke(
+        tmp_path,
+        "cargo-fmt",
+        ("src/clean.rs", "fn clean() {}\n"),
+        ("src/bad.rs", "fn bad( ) {}\n"),
+    )
+
+
+def test_smoke_prettier(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "prettier")
+    _write(tmp_path, ".prettierrc", "{}\n")
+    _smoke(
+        tmp_path, "prettier", ("clean.js", "const a = 1;\n"), ("bad.js", "const a   =   {b:1}\n")
+    )
+
+
+def test_smoke_eslint(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "eslint")
+    _write(tmp_path, "eslint.config.mjs", 'export default [{ rules: { "no-var": "error" } }];\n')
+    _smoke(tmp_path, "eslint", ("clean.js", "const a = 1;\n"), ("bad.js", "var b = 2;\n"))
+
+
+def test_smoke_biome(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "biome")
+    _write(tmp_path, "biome.json", "{}\n")
+    _smoke(tmp_path, "biome", ("clean.js", "const a = 1;\n"), ("bad.js", "const a   =   {b:1}\n"))
+
+
+def test_smoke_oxlint(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "oxlint")
+    _write(tmp_path, ".oxlintrc.json", "{}\n")
+    _smoke(
+        tmp_path,
+        "oxlint",
+        ("clean.js", "const a = 1;\nconsole.log(a);\n"),
+        ("bad.js", "debugger;\n"),
+    )
+
+
+def test_smoke_tsc(tmp_path, monkeypatch):
+    _require_tool(monkeypatch, "tsc")
+    _write(
+        tmp_path,
+        "tsconfig.json",
+        '{"compilerOptions": {"strict": true, "noEmit": true}, "include": ["*.ts"]}\n',
+    )
+    _smoke(
+        tmp_path,
+        "tsc",
+        ("clean.ts", "export const a: number = 1;\n"),
+        ("bad.ts", 'export const b: number = "x";\n'),
+    )
