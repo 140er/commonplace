@@ -97,7 +97,7 @@ def test_fresh_non_admin_owner_cli_encrypted_reopen(workspace):
     with closing(open_threads(active)) as store:
         assert store.messages(thread)[0].text == "verbatim snowman ☃\x00"
         assert store.messages(thread)[0].raw == "raw:verbatim snowman ☃\x00"
-        assert store.search([thread], "snowman")[0].thread_id == thread
+        assert store.search([thread], "snowman")[0].stored_thread_id == thread
         for pragma, value in (
             ("cipher_page_size", "16384"),
             ("cipher_hmac_algorithm", "HMAC_SHA256"),
