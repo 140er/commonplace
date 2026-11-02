@@ -407,6 +407,8 @@ class ThreadStore:
         pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
 
         def size(suffix):
+            if not path or path == ":memory:":
+                return 0
             candidate = Path(path + suffix)
             return candidate.stat().st_size if candidate.exists() else 0
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from collections import Counter
 
@@ -30,7 +31,8 @@ def register(ctx):
                 raise _RequestError(401, "Sign in")
             policy = principal.policy
             if not (
-                policy.has_scope("memory:write")
+                policy.has_scope("memory:read")
+                and policy.has_scope("memory:write")
                 and policy.has_scope("threads:read")
                 and policy.can_write_wing(THREADS_WING)
                 and policy.can_read_wing(THREADS_WING)
@@ -52,8 +54,6 @@ def register(ctx):
         except _RequestError as error:
             status, result = error.status, {"error": error.message}
         except Exception as error:
-            import logging
-
             log_failure(logging.getLogger(__name__), "Import failed", error)
             status, result = 500, {"error": "Import unavailable; retry this batch"}
         # Batches are independently retryable. Close even after errors so an
@@ -136,6 +136,11 @@ def _batch(ctx, principal, source, threads):
             row.update(
                 error="Invalid or unsupported transcript; check the source and format",
                 code="invalid_transcript",
+            )
+        except Exception as error:
+            log_failure(logging.getLogger(__name__), "Thread import failed", error)
+            row.update(
+                error="Thread import unavailable; retry this thread", code="import_unavailable"
             )
         results.append(row)
     errors = sum(row["status"] == "error" for row in results)

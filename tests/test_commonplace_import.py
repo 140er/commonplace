@@ -12,7 +12,7 @@ import pytest
 from commonplace import plans, sessions
 from commonplace.control_db import ControlDB
 from commonplace.gateway import Gateway
-from commonplace.handoff.thread_store import ThreadStorageLimit
+from commonplace.handoff.thread_store import ThreadStorageLimit, ThreadStore
 from commonplace.import_sources import SOURCES
 from commonplace.policy import Policy
 from commonplace.workers import WorkerSupervisor
@@ -246,6 +246,7 @@ def test_scoped_bearer_import_and_read(surface):
     [
         {"scopes": ["threads:read"]},
         {"scopes": ["memory:write"]},
+        {"scopes": ["memory:write", "threads:read"]},
         {"read_wings": ["inbox"]},
         {"write_wings": ["inbox"]},
         {"trust": "untrusted", "write_wing": "threads"},
@@ -267,6 +268,74 @@ def test_no_auth_cross_origin_and_invalid_envelopes(surface):
     ):
         assert api(surface, "POST", "/api/import", body)[0] == 400
     assert not surface.gateway.handoff.has_threads(surface.workspace)
+
+
+def test_session_thread_access_keeps_origin_isolation_and_revocation(surface):
+    _, report = upload(surface)
+    stored_id = report["results"][0]["stored_thread_id"]
+    assert api(surface, "GET", f"/api/threads/{stored_id}")[0] == 200
+    assert (
+        api(
+            surface,
+            "POST",
+            f"/api/threads/{stored_id}/recall",
+            {"query": "every"},
+            headers={"Origin": "https://another.example"},
+        )[0]
+        == 403
+    )
+    other = surface.db.create_user("isolated-person@example.com")
+    workspace = surface.db.create_workspace("isolated", other, personal=True)
+    cookie = sessions.start_session(surface.db, other, workspace)
+    assert (
+        api(
+            surface,
+            "GET",
+            f"/api/threads/{stored_id}",
+            headers={"Cookie": f"{sessions.COOKIE}={cookie}"},
+        )[0]
+        == 404
+    )
+    sessions.end_session(surface.db, surface.cookie)
+    assert api(surface, "GET", f"/api/threads/{stored_id}")[0] == 401
+
+
+def test_unexpected_thread_failure_keeps_progress_and_retry_safe(surface, monkeypatch, caplog):
+    store_type = type(surface.gateway.handoff.store_for(surface.workspace))
+    original = store_type.store
+    failing = True
+
+    def store(self, workspace, source_id, *args, **kwargs):
+        if failing and source_id.endswith(":temporary"):
+            raise RuntimeError("private transcript and storage details")
+        return original(self, workspace, source_id, *args, **kwargs)
+
+    monkeypatch.setattr(store_type, "store", store)
+    threads = [item(identity=name) for name in ("before", "temporary", "after")]
+    status, report = upload(surface, threads=threads)
+    assert status == 200
+    assert (report["processed"], report["imported"], report["errors"]) == (3, 2, 1)
+    assert report["status"] == "completed_with_errors"
+    assert [row["status"] for row in report["results"]] == ["imported", "error", "imported"]
+    assert report["results"][1]["code"] == "import_unavailable"
+    assert "private transcript" not in json.dumps(report) + caplog.text
+    failing = False
+    _, retried = upload(surface, threads=threads)
+    assert (retried["imported"], retried["duplicates"], retried["errors"]) == (1, 2, 0)
+    assert retried["results"][0]["stored_thread_id"] == report["results"][0]["stored_thread_id"]
+    assert retried["results"][2]["stored_thread_id"] == report["results"][2]["stored_thread_id"]
+
+
+def test_in_memory_budget_does_not_stat_current_directory(monkeypatch):
+    def no_stat(*_args, **_kwargs):
+        raise AssertionError("In-memory storage must not stat filesystem paths")
+
+    store = ThreadStore(":memory:")
+    try:
+        monkeypatch.setattr(Path, "stat", no_stat)
+        store._check_storage_budget(1024 * 1024)
+    finally:
+        store.close()
 
 
 def test_partial_progress_conflict_and_retry(surface):

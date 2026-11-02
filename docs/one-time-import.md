@@ -86,10 +86,12 @@ already completed conversations are deduplicated. Do not put tokens in exports.
 Each request accepts 1–50 threads and at most 64 MiB of JSON, including escaping.
 Each result has `status` (`imported`, `duplicate`, `error`), an input index,
 and a thread ID when valid. Errors include `invalid_thread`,
-`invalid_transcript`, `conflict`, or `storage_limit`; batches with individual
+`invalid_transcript`, `conflict`, `storage_limit`, or `import_unavailable`; batches with individual
 errors return HTTP 200 and `status: "completed_with_errors"`. Authentication,
 policy and malformed request-envelope errors use HTTP error status codes.
 Every thread commits atomically, so retry failed threads without losing successes.
+Unexpected storage failures are reported per thread without exposing private
+exception details; the remaining threads continue.
 
 When plans are enabled, Free's 250 MB budget includes workspace files, thread
 storage and indexes. Import uses an uncached meter and reserves room for SQLite
@@ -105,6 +107,9 @@ or the `thread_get`/`thread_recall` tools. Message 0 contains the exact archive 
 Thread records carry `import:<source>:<source_thread_id>` provenance and the
 authenticated filing actor. Other workspaces and tokens without thread access
 cannot read them.
+The thread and handoff HTTP routes also accept ordinary signed-in sessions.
+Session requests retain origin checks and workspace isolation, and signing out
+revokes access to imported threads.
 
 Live hooks, watchers, Free's 15-minute sync, Paid's live sync and private-data
 dogfooding are outside this one-time import implementation.
