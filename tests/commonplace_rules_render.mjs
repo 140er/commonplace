@@ -471,6 +471,37 @@ assert.equal(badgeCounts.at(-1), 7);
 assert.deepEqual(shellErrors, []);
 console.log("Rules permissions, retirement, counts and shell refresh checks passed");
 
+// Retry reads current rules without replacing a mounted edit or new-rule form.
+// Run the actual shell click listener, including its call to the real refresh.
+const shellClickSource = shellSource.slice(shellSource.indexOf('root.addEventListener("click",'), shellSource.indexOf('root.addEventListener("submit",'));
+let retryClick;
+const retryOptions = [];
+new Function("root", "state", "rulesUI", "refresh", "showError", shellClickSource)(
+  { addEventListener: (_name, listener) => { retryClick = listener; } }, shellState, shellUI,
+  (options) => { retryOptions.push(options); return shellRefresh(options); },
+  (error) => { throw new Error(error); },
+);
+const clickRetry = () => retryClick({ target: { closest: () => ({ dataset: { action: "retry" } }) } });
+shellState.base = shellState.route = "#/rules";
+for (const busy of ['form[data-rule-form="edit"]', '.rule-new:not([hidden])']) {
+  shellUI.update(shellPayload, { owner: true });
+  shellBusy = busy;
+  const before = updates.length, reads = shellCalls.length, html = content.innerHTML;
+  await clickRetry();
+  assert.ok(shellCalls.length > reads, "Retry must fetch current state");
+  assert.equal(updates.length, before, "Retry must preserve a busy rule form");
+  assert.equal(content.innerHTML, html);
+  assert.equal(shellUI.stale, true);
+  shellBusy = false;
+  await clickRetry();
+  assert.equal(updates.length, before + 1, "A second Retry on idle Rules must render current state");
+  assert.equal(shellUI.stale, false);
+}
+shellState.base = shellState.route = "#/boards";
+await clickRetry();
+assert.equal(retryOptions.at(-1)?.background, false, "Other screens keep foreground Retry");
+console.log("Rules shell Retry preserves busy forms and refreshes idle screens");
+
 // A successful write or generic action conflict can outlive a failed refresh.
 // Once that CURRENT refresh fails, later background reads must respect forms.
 shellState.base = shellState.route = "#/rules";
