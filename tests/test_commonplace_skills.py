@@ -322,7 +322,9 @@ def test_preview_receipts_do_not_cross_users_workspaces_or_expiry(hub, fresh):
     )
     with hub.db._lock:
         hub.db._conn.execute("UPDATE skill_previews SET expires=0")
-    assert api(hub, bob.cookie, "POST", base + "/install", args)[0] == 400
+    status, result = api(hub, bob.cookie, "POST", base + "/install", args)
+    assert status == 400
+    assert result["error"] == "preview this deck in this workspace before installing"
 
 
 def test_reports_are_persisted_for_publisher_and_withdrawal_blocks_new_installs(hub, fresh):
