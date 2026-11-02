@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from commonplace.guards.stacks import Stack, detect_stacks
+from commonplace.guards.stacks import (
+    PlannedCommand,
+    Stack,
+    detect_stacks,
+    plan_commands,
+    resolve_executable,
+)
 
 
 def _names(stacks):
@@ -109,3 +115,71 @@ def test_stack_order_is_stable_as_listed(tmp_path):
 
 def test_empty_repo_has_no_stacks(tmp_path):
     assert detect_stacks(tmp_path) == []
+
+
+# ── planning ───────────────────────────────────────────────────────────
+
+
+def test_plan_limits_each_stack_to_its_changed_files(tmp_path):
+    _write(tmp_path, "ruff.toml", "")
+    _write(tmp_path, "biome.json", "{}")
+    stacks = detect_stacks(tmp_path)
+    changed = ["a.py", "sub/d.pyi", "web/x.jsx", "README.md", "notes.txt"]
+    commands = plan_commands(tmp_path, stacks, changed)
+    assert [c.name for c in commands] == ["ruff", "biome"]
+    ruff, biome = commands
+    assert ruff.argv == ("ruff", "check", "--force-exclude", "a.py", "sub/d.pyi")
+    assert ruff.files == ("a.py", "sub/d.pyi")
+    assert ruff.fix == "ruff check --fix a.py sub/d.pyi"
+    assert biome.argv == ("biome", "check", "--no-errors-on-unmatched", "web/x.jsx")
+    assert biome.fix == "biome check --write web/x.jsx"
+
+
+def test_no_command_when_no_changed_file_matches(tmp_path):
+    _write(tmp_path, "ruff.toml", "")
+    assert plan_commands(tmp_path, detect_stacks(tmp_path), ["README.md"]) == []
+
+
+def test_tsc_is_one_project_command_without_fix(tmp_path):
+    _write(tmp_path, "tsconfig.json", "{}")
+    commands = plan_commands(tmp_path, detect_stacks(tmp_path), ["a.ts", "b/c.tsx", "d.ts"])
+    assert commands == [
+        PlannedCommand(
+            name="tsc",
+            argv=("tsc", "--noEmit", "-p", "tsconfig.json"),
+            files=("a.ts", "b/c.tsx", "d.ts"),
+            fix=None,
+        )
+    ]
+
+
+def test_fix_strings_quote_files_with_spaces(tmp_path):
+    _write(tmp_path, "go.mod", "module x\n")
+    commands = plan_commands(tmp_path, detect_stacks(tmp_path), ["my dir/it's.go"])
+    assert commands[0].argv == ("gofmt", "-l", "my dir/it's.go")
+    assert commands[0].fail_on_output is True
+    assert commands[0].fix == "gofmt -w 'my dir/it'\"'\"'s.go'"
+
+
+def test_cargo_fmt_and_gofmt_argv(tmp_path):
+    _write(tmp_path, "Cargo.toml", "[package]\n")
+    _write(tmp_path, "go.mod", "module x\n")
+    cargo, gofmt = plan_commands(tmp_path, detect_stacks(tmp_path), ["src/lib.rs", "m.go"])
+    assert cargo.argv == ("cargo", "fmt", "--check", "--", "src/lib.rs")
+    assert cargo.fix == "cargo fmt -- src/lib.rs"
+    assert gofmt.argv == ("gofmt", "-l", "m.go")
+    assert gofmt.fix == "gofmt -w m.go"
+
+
+def test_changed_paths_are_repo_relative(tmp_path):
+    _write(tmp_path, "ruff.toml", "")
+    changed = [str(tmp_path / "a.py"), "./b.py", "./b.py"]
+    commands = plan_commands(tmp_path, detect_stacks(tmp_path), changed)
+    assert commands[0].files == ("a.py", "b.py")
+
+
+def test_resolve_prefers_node_modules_bin_for_js_tools(tmp_path):
+    local = tmp_path / "node_modules" / ".bin" / "prettier"
+    _write(tmp_path, "node_modules/.bin/prettier", "#!/bin/sh\n")
+    assert resolve_executable(tmp_path, "prettier") == str(local)
+    assert resolve_executable(tmp_path, "definitely-not-a-tool-xyz") is None
