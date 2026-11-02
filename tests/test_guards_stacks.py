@@ -1,6 +1,8 @@
 """Tests for commonplace.guards.stacks: detection, planning, budgeted runs, real tools."""
 
+import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from commonplace.guards.stacks import (
     detect_stacks,
     plan_commands,
     resolve_executable,
+    run_checks,
 )
 
 
@@ -183,3 +186,122 @@ def test_resolve_prefers_node_modules_bin_for_js_tools(tmp_path):
     _write(tmp_path, "node_modules/.bin/prettier", "#!/bin/sh\n")
     assert resolve_executable(tmp_path, "prettier") == str(local)
     assert resolve_executable(tmp_path, "definitely-not-a-tool-xyz") is None
+
+
+# ── running ────────────────────────────────────────────────────────────
+
+
+def _cmd(code: str, **kwargs) -> PlannedCommand:
+    return PlannedCommand(
+        name=kwargs.pop("name", "fake"), argv=(sys.executable, "-c", code), **kwargs
+    )
+
+
+def test_passing_command_prints_header_and_one_line_summary(tmp_path):
+    out = io.StringIO()
+    commands = [_cmd("pass", files=("a.py",)), _cmd("pass", files=("b.py", "c.py"))]
+    report = run_checks(commands, tmp_path, out=out)
+    assert report.ok and not report.over_budget
+    assert [r.status for r in report.results] == ["passed", "passed"]
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "commonplace checks: 2 commands on 3 files, budget 10s"
+    assert lines[-1].startswith("commonplace checks: done in ") and lines[-1].endswith(
+        ", budget 10s"
+    )
+    assert "over budget" not in out.getvalue()
+
+
+def test_failure_prints_fix_and_listed_locations_only(tmp_path):
+    code = "print('a.py:3:1: E999 msg'); print('other.py:9:1: E1'); raise SystemExit(1)"
+    cmd = _cmd(code, name="ruff", files=("a.py",), fix="ruff check --fix a.py")
+    out = io.StringIO()
+    report = run_checks([cmd], tmp_path, out=out)
+    result = report.results[0]
+    assert result.status == "failed" and not report.ok
+    assert result.locations == ["a.py:3"]
+    text = out.getvalue()
+    assert "ruff: failed in" in text
+    assert "  fix: ruff check --fix a.py" in text
+    assert "\n  a.py:3\n" in text
+    assert "other.py" not in text
+
+
+def test_missing_tool_is_printed_and_does_not_fail(tmp_path):
+    cmd = PlannedCommand(name="ruff", argv=("definitely-not-installed-xyz", "check"))
+    out = io.StringIO()
+    report = run_checks([cmd], tmp_path, out=out)
+    assert report.results[0].status == "missing"
+    assert report.ok
+    assert "ruff: not installed, not checked (install it or remove the stack)" in out.getvalue()
+
+
+def test_hard_timeout_is_a_failure(tmp_path):
+    cmd = _cmd("import time; time.sleep(30)", name="slow")
+    out = io.StringIO()
+    report = run_checks([cmd], tmp_path, out=out, hard_timeout_seconds=0.5)
+    assert report.results[0].status == "timeout"
+    assert not report.ok
+    assert "slow: timed out after 0.5s (hard limit)" in out.getvalue()
+
+
+def test_fail_on_output_reports_listed_files_even_on_exit_zero(tmp_path):
+    listing = _cmd(
+        "print('x.go'); print('./y.go')",
+        name="gofmt",
+        files=("x.go", "y.go"),
+        fix="gofmt -w x.go y.go",
+        fail_on_output=True,
+    )
+    clean = _cmd("pass", name="gofmt", files=("x.go",), fail_on_output=True)
+    report = run_checks([listing, clean], tmp_path, out=io.StringIO())
+    assert report.results[0].status == "failed"
+    assert report.results[0].locations == ["x.go", "y.go"]
+    assert report.results[1].status == "passed"
+
+
+def test_shell_command_runs_through_the_shell(tmp_path):
+    passing = PlannedCommand(name="cfg-ok", shell=f'"{sys.executable}" -c "pass"')
+    failing = PlannedCommand(name="cfg-bad", shell=f'"{sys.executable}" -c "raise SystemExit(2)"')
+    report = run_checks([passing, failing], tmp_path, out=io.StringIO())
+    assert [r.status for r in report.results] == ["passed", "failed"]
+
+
+def test_over_budget_prints_timings_slowest_first(tmp_path):
+    ticks = iter([0.0, 2.0, 2.0, 9.0])  # first command takes 2s, second 7s
+    out = io.StringIO()
+    commands = [_cmd("pass", name="first"), _cmd("pass", name="second")]
+    report = run_checks(commands, tmp_path, budget_seconds=5, out=out, clock=lambda: next(ticks))
+    assert report.over_budget and report.total_seconds == 9.0
+    text = out.getvalue()
+    assert "over budget: 9.0s of 5s" in text
+    assert text.index("  second: 7.0s") < text.index("  first: 2.0s")
+
+
+def test_under_budget_prints_only_the_total(tmp_path):
+    ticks = iter([0.0, 1.5])
+    out = io.StringIO()
+    report = run_checks([_cmd("pass")], tmp_path, out=out, clock=lambda: next(ticks))
+    assert not report.over_budget
+    assert out.getvalue().splitlines()[-1] == "commonplace checks: done in 1.5s, budget 10s"
+
+
+def test_locations_are_capped_at_twenty(tmp_path):
+    code = "\n".join(
+        ["for i in range(1, 26):", "    print(f'a.py:{i}:1: E1')", "raise SystemExit(1)"]
+    )
+    out = io.StringIO()
+    report = run_checks([_cmd(code, files=("a.py",))], tmp_path, out=out)
+    assert len(report.results[0].locations) == 25
+    text = out.getvalue()
+    assert text.count("  a.py:") == 20
+    assert "  ... and 5 more" in text
+
+
+def test_unparsed_failure_prints_last_twenty_output_lines(tmp_path):
+    code = "\n".join(["for i in range(30):", "    print(f'line {i}')", "raise SystemExit(1)"])
+    out = io.StringIO()
+    report = run_checks([_cmd(code, files=("a.py",))], tmp_path, out=out)
+    assert report.results[0].locations == []
+    text = out.getvalue()
+    assert text.count("  line ") == 20
+    assert "  line 10\n" in text and "  line 9\n" not in text
