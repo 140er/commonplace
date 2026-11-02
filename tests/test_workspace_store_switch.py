@@ -1437,6 +1437,32 @@ def test_legacy_compact_threads_with_empty_palace_are_unverified(
         assert compact.exists()
 
 
+@pytest.mark.parametrize("digest_state", ["missing", None, ""])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_prune_refuses_retired_generation_without_fingerprint(workspace, digest_state, legacy):
+    data, root, _ = workspace
+    switch.switch_workspace(data, WORKSPACE, "compact")
+    active = workspace_path(data, WORKSPACE)
+    pointer = read_json(root / POINTER)
+    item = pointer["retained"][-1]
+    retained = switch.generation_path(root, item["name"])
+    before = switch._retirement_digest(retained)
+    if digest_state == "missing":
+        item.pop("digest")
+    else:
+        item["digest"] = digest_state
+    if legacy:
+        item.pop("inventory")
+    switch._write_pointer(root, pointer)
+    assert read_json(root / switch.STATE)["sealing"] == "complete"
+    with pytest.raises(ValueError, match="changed since retirement"):
+        switch.prune_generations(data, WORKSPACE, now=item["retired_at"] + 40 * 86400)
+    assert retained.is_dir() and active.is_dir()
+    assert switch._retirement_digest(retained) == before
+    assert read_json(root / POINTER)["retained"] == pointer["retained"]
+    assert read_json(root / switch.STATE)["state"] != "deleting"
+
+
 def test_expiring_prune_hashes_each_generation_once(workspace, monkeypatch):
     data, root, _ = workspace
     switch.switch_workspace(data, WORKSPACE, "compact")
