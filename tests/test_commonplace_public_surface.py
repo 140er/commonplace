@@ -49,6 +49,8 @@ EXACT = {
     ("POST", "/app/settings/memory"): "authenticated",
 }
 PREFIX = {
+    ("POST", "/api/connections/"): "authenticated",
+    ("DELETE", "/api/connections/"): "authenticated",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
