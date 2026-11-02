@@ -44,7 +44,13 @@ CHECKS = (
     "storage_limit",
     "voice_limit",
 )
-PROTOCOL_CHECKS = {"agent_connection", "mcp_startup", "wing_scope", "storage_limit", "voice_limit"}
+NO_SCREENSHOT_CHECKS = {
+    "agent_connection",
+    "mcp_startup",
+    "wing_scope",
+    "storage_limit",
+    "voice_limit",
+}
 BASELINE_RULE = "Keep the release journey's exact words intact."
 BASELINE_MEMORY = "Workspace decisions preferences current work: release recall canary."
 PROPOSED_RULE = "Keep every release memory verbatim. Ask the owner before changing this rule."
@@ -179,7 +185,7 @@ class Journey:
 
     async def check(self, name, action):
         row = self.report.results[name]
-        if name in PROTOCOL_CHECKS:
+        if name in {"mcp_startup", "wing_scope", "import_capture_raw_readback"}:
             row.evidence_kind = "protocol assertions"
         try:
             detail = await asyncio.wait_for(action(), timeout=45)
@@ -194,7 +200,7 @@ class Journey:
         if (
             self.page is not None
             and not row.screenshot
-            and (name not in PROTOCOL_CHECKS or row.status != "PASS")
+            and (name not in NO_SCREENSHOT_CHECKS or row.status != "PASS")
         ):
             try:
                 row.screenshot = await self.screenshot(name)
@@ -347,7 +353,7 @@ class Journey:
                 {
                     "task": number,
                     "status": "done",
-                    "lesson": "Owner decision is required before continuing.",
+                    "lesson": "Completed after the owner's recorded approval.",
                 },
             )
         completed = await api(self.page, f"/api/cards/{number}")
@@ -363,7 +369,11 @@ class Journey:
             await panel.locator('[data-action="decide"]').count() == 0,
             "Completed card still offers a live owner decision",
         )
-        return "Agent created/claimed/reviewed; self-approval refused; browser owner choice unlocked completion"
+        return (
+            "Completed after owner approval; self-approval was refused. "
+            "The earlier question and options remain as history; choices are disabled in the DOM, "
+            "with the existing full-opacity styling unchanged."
+        )
 
     async def memory_save_search(self):
         (token,) = self.need("token")
