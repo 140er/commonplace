@@ -22,6 +22,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mempalace.sqlite_crypto import connect, encryption_settings
+
 LOCK_NAME = ".commonplace.lock"
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _PROC_ROOT = Path("/proc")
@@ -189,26 +191,36 @@ def _is_sqlite(path: Path) -> bool:
         return stream.read(16) == _SQLITE_HEADER
 
 
+def _encrypted_database(path: Path) -> bool:
+    return path.suffix in (".sqlite3", ".sqlite", ".db") and encryption_settings(path) is not None
+
+
 def _snapshot(source: Path, target: Path) -> None:
-    deadline = time.monotonic() + 30
+    """Checkpoint and copy unchanged file bytes while holding the writer lock.
 
-    def progress(_status, _remaining, _total):
-        if time.monotonic() > deadline:
-            raise BackupError(f"database backup timed out: {source.name}")
-
-    src = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=1)
+    data_lock and offline process checks protect the whole tree. This SQLite
+    lock also excludes uncoordinated writers during the copy. A write between
+    checkpoint and lock acquisition leaves a nonempty WAL and fails closed.
+    """
+    src = connect(source.as_uri() + "?mode=rw", uri=True, timeout=1)
     try:
-        dst = sqlite3.connect(target)
-        try:
-            src.backup(dst, pages=256, progress=progress, sleep=0.01)
-            dst.execute("PRAGMA journal_mode = DELETE")
-            if dst.execute("PRAGMA quick_check").fetchone() != ("ok",):
-                raise BackupError(f"database integrity check failed: {source.name}")
-        finally:
-            dst.close()
+        result = src.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if result[0] != 0 or result[1] != result[2]:
+            raise BackupError(f"database checkpoint is busy: {source.name}")
+        src.execute("BEGIN IMMEDIATE")
+        wal = Path(str(source) + "-wal")
+        if wal.exists() and wal.stat().st_size:
+            raise BackupError(f"database changed after checkpoint: {source.name}")
+        if src.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            raise BackupError(f"database integrity check failed: {source.name}")
+        if _encrypted_database(source) and src.execute("PRAGMA cipher_integrity_check").fetchall():
+            raise BackupError(f"encrypted page integrity check failed: {source.name}")
+        shutil.copyfile(source, target)
+        target.chmod(0o600)
+        with target.open("rb") as stream:
+            os.fsync(stream.fileno())
     finally:
         src.close()
-    target.chmod(0o600)
 
 
 def _file_entry(path: Path, root: Path) -> dict:
@@ -270,9 +282,14 @@ def verify_backup(backup_dir) -> dict:
     for name, path in actual.items():
         if _file_entry(path, root) != expected[name]:
             raise BackupError(f"backup size or hash mismatch: {name}")
-        if _is_sqlite(path):
+        encrypted = _encrypted_database(path)
+        if encrypted or _is_sqlite(path):
             if any(name + suffix in actual for suffix in ("-wal", "-shm", "-journal")):
                 raise BackupError(f"backup contains SQLite sidecars: {name}")
+            if encrypted:
+                # Ciphertext hashes can be verified/restored without key access.
+                # Decrypted integrity is checked when making the snapshot.
+                continue
             # Published snapshots have no WAL; immutable avoids creating SHM
             # files or otherwise modifying a snapshot being checked.
             conn = sqlite3.connect(path.as_uri() + "?immutable=1", uri=True)
@@ -328,11 +345,19 @@ def restore(backup_dir, dest_dir) -> dict:
 
 
 def backup(data_dir, dest_dir) -> dict:
+    source = Path(data_dir).expanduser().absolute()
+    if source.is_symlink() or not source.is_dir():
+        raise BackupError("data directory must be an existing directory, without a symlink")
+    with data_lock(source, exclusive=True):
+        return _backup_locked(source, dest_dir)
+
+
+def _backup_locked(data_dir, dest_dir) -> dict:
     """Publish a complete backup at a new destination and return its manifest.
 
-    Every SQLite file (including Chroma and historical workspace state) uses
-    SQLite's backup API, which includes committed WAL rows. WAL/SHM/journal
-    sidecars are omitted so they cannot overwrite a restored snapshot. The
+    Caller holds the exclusive data_lock. Every SQLite file is checkpointed
+    and byte-copied, preserving SQLCipher ciphertext for backup deduplication.
+    WAL/SHM/journal sidecars are omitted from the published snapshot. The
     entire remaining tree is copied verbatim, excluding the shared model cache.
     ``manifest.json`` inventories every other output file with size and SHA256.
     """
@@ -349,54 +374,53 @@ def backup(data_dir, dest_dir) -> dict:
     if not destination.parent.is_dir():
         raise BackupError("backup destination parent must exist")
     partial = None
-    with data_lock(source, exclusive=True):
-        try:
-            _verify_offline(source)
-            files, directories = _inventory(source)
-            control = source / "control.sqlite3"
-            databases = {path for path in files if _is_sqlite(path)}
-            if control not in databases:
-                raise BackupError("data directory has no valid control.sqlite3")
-            sidecars = {
-                Path(str(path) + suffix)
-                for path in databases
-                for suffix in ("-wal", "-shm", "-journal")
-            }
-            partial = Path(
-                tempfile.mkdtemp(prefix=f".{destination.name}.partial-", dir=destination.parent)
-            )
-            partial.chmod(0o700)
-            for directory in directories:
-                (partial / directory.relative_to(source)).mkdir(mode=0o700)
-            entries = []
-            for path in files:
-                if path in sidecars:
-                    continue
-                relative = path.relative_to(source)
-                target = partial / relative
-                if path in databases:
-                    _snapshot(path, target)
-                else:
-                    shutil.copyfile(path, target)
-                    target.chmod(0o600)
-                entries.append(_file_entry(target, partial))
-            _verify_offline(source)
-            manifest = {
-                "version": 1,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "files": entries,
-            }
-            manifest_path = partial / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-            manifest_path.chmod(0o600)
-            if destination.exists():
-                raise BackupError("backup destination already exists")
-            partial.rename(destination)
-            partial = None
-            return manifest
-        finally:
-            if partial is not None:
-                shutil.rmtree(partial)
+    try:
+        _verify_offline(source)
+        files, directories = _inventory(source)
+        control = source / "control.sqlite3"
+        databases = {path for path in files if _encrypted_database(path) or _is_sqlite(path)}
+        if control not in databases:
+            raise BackupError("data directory has no valid control.sqlite3")
+        sidecars = {
+            Path(str(path) + suffix)
+            for path in databases
+            for suffix in ("-wal", "-shm", "-journal")
+        }
+        partial = Path(
+            tempfile.mkdtemp(prefix=f".{destination.name}.partial-", dir=destination.parent)
+        )
+        partial.chmod(0o700)
+        for directory in directories:
+            (partial / directory.relative_to(source)).mkdir(mode=0o700)
+        entries = []
+        for path in files:
+            if path in sidecars:
+                continue
+            relative = path.relative_to(source)
+            target = partial / relative
+            if path in databases:
+                _snapshot(path, target)
+            else:
+                shutil.copyfile(path, target)
+                target.chmod(0o600)
+            entries.append(_file_entry(target, partial))
+        _verify_offline(source)
+        manifest = {
+            "version": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "files": entries,
+        }
+        manifest_path = partial / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        manifest_path.chmod(0o600)
+        if destination.exists():
+            raise BackupError("backup destination already exists")
+        partial.rename(destination)
+        partial = None
+        return manifest
+    finally:
+        if partial is not None:
+            shutil.rmtree(partial)
 
 
 def _ancestors(proc_root) -> set:

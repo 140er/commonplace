@@ -1212,6 +1212,8 @@ def switch_workspace(
         if _backfill_state(root).get("sealing") != "complete":
             _seal_retired(root, pointer)
         source = resolve_workspace(root)
+        if settings_for(source).get("encryption"):
+            raise ValueError("Encrypted workspace format changes require a verified recovery plan")
         source_store = settings_for(source).get("store", "v1")
         if source_store == target_store:
             return {"store": source_store, "state": "unchanged"}
@@ -1293,6 +1295,8 @@ def prune_generations(data_dir, workspace_id, *, now=None, authorize=None, repor
             workspace_id = authorize(workspace_id)
         root = workspace_root(data_dir, workspace_id)
         _verify_offline(Path(data_dir).resolve())
+        if settings_for(resolve_workspace(root)).get("encryption"):
+            raise ValueError("Encrypted workspace retention requires a verified recovery plan")
         if report_only:
             return _prune_report(root, now=now)
         try:

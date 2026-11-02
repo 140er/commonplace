@@ -16,7 +16,7 @@ covered. A WAL-mode connection keeps a SHARED lock on the main database for
 its whole life, and that lock is the only thing stopping another process's
 clean ``close()`` from checkpointing and unlinking the ``-wal`` / ``-shm``
 sidecars underneath it. After one plain open+close the server was
-lock-naked: any external ``sqlite3.connect()`` + ``close()`` orphaned the
+lock-naked: any external ``connect()`` + ``close()`` orphaned the
 sidecars while the server kept writing (successfully, as far as it could
 tell) into the unlinked inodes.
 
@@ -42,7 +42,7 @@ so the cheap checks around the probe are lock-safe everywhere.
 ``has_sqlite_magic`` caches POSITIVE results by ``(st_dev, st_ino)``: once a
 file is known to be a SQLite database it stays one until it is replaced
 (new inode). Negative results are never cached, because a 0-byte file left
-behind by a bare ``sqlite3.connect()`` becomes a real database as soon as the
+behind by a bare ``connect()`` becomes a real database as soon as the
 header is written.
 """
 
@@ -53,6 +53,8 @@ import sqlite3
 import stat
 import threading
 from typing import Optional
+
+from mempalace.sqlite_crypto import connect
 
 from ..config import sqlite_read_uri
 
@@ -106,7 +108,7 @@ def read_header_fields(db_path: str, *, extra: Optional[tuple] = None) -> Option
         return None
     uri = sqlite_read_uri(db_path) + "&immutable=1"
     try:
-        conn = sqlite3.connect(uri, uri=True)
+        conn = connect(uri, uri=True)
     except sqlite3.Error:
         return None
     try:
@@ -159,7 +161,7 @@ def has_sqlite_magic(db_path: str) -> bool:
         try:
             # Retained probes may be closed by teardown after their creating
             # thread has finished. Cached reads are serialized by _lock.
-            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            conn = connect(uri, uri=True, check_same_thread=False)
         except sqlite3.Error:
             conn = None
 

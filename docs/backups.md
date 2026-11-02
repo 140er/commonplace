@@ -10,17 +10,19 @@ gateway and all workers must be stopped. `backup-hook.sh` does this through
 the operator's Compose configuration, then runs `commonplace backup` in a
 one-off container. An exclusive data-directory lock and orphan-worker check
 refuse cooperating writers. Every detected SQLite database, including the
-control DB, historical generations and nested workspace files, is copied
-through SQLite's backup API. Committed WAL rows are included, standalone
-snapshots use DELETE journal mode, and WAL/SHM/journal sidecars are omitted.
+control DB, historical generations and nested workspace files, is checkpointed
+and byte-copied under its writer lock. Committed WAL rows are included and
+WAL/SHM/journal sidecars are omitted. A busy checkpoint or a write between
+checkpoint and lock acquisition aborts the backup.
 Other files are copied verbatim; only the disposable shared model cache is
 excluded. Do not run writers outside the managed service during this window.
 
 A manifest records each file's relative path, size and SHA256. Snapshot
-publication is atomic. These snapshots support the current plaintext SQLite
-stores. They do not establish a SQLCipher backup format: an encrypted store
-requires its own checkpoint/byte-copy and key-recovery design before rollout.
-Do not treat an opaque copied file as a verified encrypted database restore.
+publication is atomic. SQLCipher snapshots preserve encrypted bytes and can be
+restored without keys; hashes verify those bytes, not decrypted integrity.
+Keyslots and wrapping credentials are separate recovery inputs, outside this
+backup tree. See [experimental workspace encryption](workspace-encryption.md)
+for its limits and remaining rollout requirements.
 
 ## Configure the nightly job
 
