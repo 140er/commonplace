@@ -7,8 +7,9 @@ credential independently.
 ## Create the connection
 
 1. Enter a **Name** and choose the **Client** you use.
-2. Leave **Parent** at **Top-level agent** for an independent agent. Choose an
-   existing active parent when creating a child agent.
+2. Under **Restrict access or set a parent**, leave **Parent** at **Top-level
+   agent** for an independent agent. Choose an existing active parent when
+   creating a child agent.
 3. Click **Create token**.
 4. Copy the **MCP URL** and **Authorization**, or use **Copy config** for the
    selected client. Keep the configuration in that client's private settings:
