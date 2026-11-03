@@ -81,6 +81,7 @@ async def assert_touch_drag_fits(page, *, width=768, decide_css=None, screenshot
     x, y = box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.45
     client = await page.context.new_cdp_session(page)
     started = False
+    original_error = None
     try:
         await client.send(
             "Input.dispatchTouchEvent",
@@ -116,18 +117,26 @@ async def assert_touch_drag_fits(page, *, width=768, decide_css=None, screenshot
             await page.screenshot(path=str(screenshot), full_page=True)
         assert_document_fits(observed)
         return observed
+    except Exception as exc:
+        original_error = exc
+        raise
     finally:
         try:
-            if started:
-                await client.send(
-                    "Input.dispatchTouchEvent", {"type": "touchCancel", "touchPoints": []}
-                )
-                await page.wait_for_function(
-                    "e => !e.classList.contains('dragging') && !e.dataset.drag", arg=original
-                )
-                assert await page.evaluate("window.dragCommits") == [], "Cancel must not decide"
-        finally:
-            await client.detach()
+            try:
+                if started:
+                    await client.send(
+                        "Input.dispatchTouchEvent", {"type": "touchCancel", "touchPoints": []}
+                    )
+                    await page.wait_for_function(
+                        "e => !e.classList.contains('dragging') && !e.dataset.drag", arg=original
+                    )
+                    assert await page.evaluate("window.dragCommits") == [], "Cancel must not decide"
+            finally:
+                await client.detach()
+        except Exception as cleanup_error:
+            if original_error is not None:
+                raise original_error from cleanup_error
+            raise
 
 
 async def computed_drag():
