@@ -234,12 +234,18 @@ def test_logged_out_legal_routes_serve_documents_without_redirects(public_server
 
 def test_short_links_fallback_and_caddy_agent_routes_are_preserved(public_server):
     kind, port = public_server
+    github_redirect = re.search(
+        r"^\s*~\^/gh/\?\$\s+(https://github\.com/[^\s;]+);",
+        (ROOT / "landing/nginx.conf").read_text(),
+        re.MULTILINE,
+    )
+    assert github_redirect, "The configured /gh project redirect must remain explicit"
     assert _get(port, "commonplace.run", "/")[0] == 200
     assert _get(port, "commonplace.run", "/not-a-page")[0] == 404
     for path, destination in (
         ("/unknown", "https://commonplace.run/"),
         ("/", "https://commonplace.run/"),
-        ("/gh", "https://github.com/140er/mempalace"),
+        ("/gh", github_redirect.group(1)),
         ("/connect", "https://commonplace.run/connect/"),
         ("/codex", "https://commonplace.run/connect/#codex"),
     ):
