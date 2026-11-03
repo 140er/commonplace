@@ -1,8 +1,13 @@
 """A primary-touch decision drag must stay inside the document viewport."""
 
+import asyncio
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
+
+pytest.importorskip("playwright")
 
 STATIC = Path(__file__).parents[1] / "commonplace" / "web" / "static"
 
@@ -134,3 +139,20 @@ async def assert_touch_drag_fits(page, *, width=768, decide_css=None, screenshot
             if original_error is not None:
                 raise original_error from cleanup_error
             raise
+
+
+async def computed_drag():
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            page = await browser.new_page(has_touch=True)
+            for width in (1440, 768, 390):
+                await assert_touch_drag_fits(page, width=width)
+        finally:
+            await browser.close()
+
+
+def test_primary_touch_decision_drag_does_not_widen_document():
+    asyncio.run(computed_drag())
