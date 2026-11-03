@@ -485,7 +485,7 @@ class BoardService:
         # Board ownership is independent of memory write destinations and trust.
         if submission or self._own_card(row):
             return
-        if claiming and self._top_level_taker():
+        if claiming and self._top_level_taker() and row["status"] == "todo":
             # Work-claim authority is coordination, not memory-write trust
             # (owner decision 3 Nov 14:17).
             return
