@@ -1,4 +1,7 @@
-"""Computed browser policy at the decision card's inner scroll boundary."""
+"""Computed browser policy at the decision card's inner scroll boundary.
+
+Set PLAYWRIGHT_BROWSERS_PATH to an installed browser cache when HOME is isolated.
+"""
 
 import asyncio
 from pathlib import Path
