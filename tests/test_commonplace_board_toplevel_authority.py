@@ -28,7 +28,7 @@ def allowed(fn):
     try:
         return fn()
     except ToolError as exc:
-        pytest.fail(f"refused: {exc}")
+        raise AssertionError(f"refused: {exc}") from exc
 
 
 def agent(fresh, name, shape=("untrusted", "inbox"), **kwargs):
