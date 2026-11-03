@@ -10,11 +10,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from commonplace import import_grant, imports, ingest_cadence, plans
+from commonplace import import_grant, imports, ingest_cadence, plans, sessions
 from commonplace.control_db import ControlDB, Principal
 from commonplace.handoff import recall
 from commonplace.handoff.thread_store import ThreadStore, canonical_sha256
@@ -523,7 +524,7 @@ def test_no_plan_grant_at_real_quota_returns_item_error(journey, monkeypatch):
     # A real regular synthetic file is counted by the account meter; no
     # always-refuse budget stub and no fake storage exception.
     directory = journey.client.gateway.workspace_dir(owner.workspace)
-    (directory / "synthetic-quota-padding.bin").write_bytes(b"x" * small.storage_bytes)
+    (Path(directory) / "synthetic-quota-padding.bin").write_bytes(b"x" * small.storage_bytes)
     report = journey.upload(body("quota"), token=token)
     assert report["errors"] == 1 and report["accepted"] == 0
     row = report["results"][0]
@@ -554,7 +555,7 @@ def test_cadence_waits_for_other_thread_control_transaction(account):
         assert held.wait(2)
         requester.start()
         assert started.wait(2)
-        requester.join(0.1)
+        requester.join(1)
         assert requester.is_alive(), f"admission finished while locked: {errors}"
     finally:
         release.set()
@@ -569,8 +570,6 @@ def test_cadence_waits_for_other_thread_control_transaction(account):
 def test_ineligible_owner_cannot_create_import_connection(journey):
     # Direct session setup is intentional: exercise a shared-workspace owner
     # through the real HTTP handler without changing the personal journey.
-    from commonplace import sessions
-
     db = journey.client.db
     workspace = db.create_workspace("synthetic shared", journey.owner.user)
     cookie = sessions.start_session(db, journey.owner.user, workspace)
