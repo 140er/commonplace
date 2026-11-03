@@ -60,7 +60,8 @@ def test_legal_pages_are_complete_static_documents(path):
     assert not re.search(r"\b\d{4}\s?[A-Z]{2}\b", text)
     assert "privacy@cmmn.dev" in text
     assert "2026-11-03" in html
-    assert "/privacy" in doc.links() and "/terms" in doc.links()
+    language_suffix = "/nl" if path.endswith("/nl") else ""
+    assert {"/privacy" + language_suffix, "/terms" + language_suffix} <= doc.links()
     translation = path.removesuffix("/nl") if path.endswith("/nl") else path + "/nl"
     assert translation in doc.links()
     assert not any(tag in {"script", "iframe", "object", "embed"} for tag, _ in doc.tags)
@@ -80,6 +81,24 @@ def test_legal_pages_are_complete_static_documents(path):
     else:
         assert "16" in text and "EUR 100" in text and "14" in text and "30" in text
         assert "250" in text
+
+
+@pytest.mark.parametrize("path", ("/privacy/nl", "/terms/nl"))
+def test_dutch_legal_footer_preserves_language(path):
+    file = PUBLIC / path.strip("/") / "index.html"
+    assert file.is_file(), f"Public legal page missing: {path}"
+    footer = Document(file.read_text().split("<footer", 1)[1])
+    assert {"/privacy/nl", "/terms/nl"} <= footer.links()
+    assert "Voorwaarden" in footer.text
+    assert "/privacy" not in footer.links() and "/terms" not in footer.links()
+
+
+def test_dutch_terms_allow_voluntary_end_of_service_use():
+    file = PUBLIC / "terms/nl/index.html"
+    assert file.is_file(), "Dutch terms must be available"
+    text = " ".join(Document(file.read_text()).text)
+    assert "Je kunt op elk moment stoppen met het gebruik van de dienst." in text
+    assert "Je kunt de dienst op elk moment niet meer gebruiken." not in text
 
 
 def test_landing_does_not_advertise_unimplemented_encryption():
