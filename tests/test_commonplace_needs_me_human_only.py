@@ -602,6 +602,15 @@ def test_guard_csrf_logout_and_version(hub, fresh):
         == 409
     )
     assert shown(hub, fresh, number) == before
+    for extra in ({"Content-Type": "text/plain"}, {"Origin": "https://evil.example"}):
+        code, _, _ = request(
+            hub,
+            "/app/logout",
+            method="POST",
+            headers={**fresh.cookie, "Content-Type": "application/json", **extra},
+        )
+        assert code == 403
+        assert shown(hub, fresh, number) == before
     code, _headers, _body = request(
         hub,
         "/app/logout",
@@ -641,12 +650,21 @@ def test_guard_supervisor_cannot_take_over(hub, fresh, monkeypatch):
         assert shown(hub, fresh, card["number"]) == before
 
 
-def test_claim_requires_new_holder_pr_report(hub, fresh):
+@pytest.mark.parametrize("path", ["take_next", "update", "handoff"])
+def test_claim_requires_new_holder_pr_report(hub, fresh, path):
     reporter = fresh.connect("reporter")
     holder = fresh.connect("holder")
     number = fresh.owner.task_add(board="work", title="Unclaimed work", status="todo")["number"]
+    if path == "handoff":
+        reporter.work.task_take_next(task=number)
     report(reporter, number)
-    claimed = holder.work.task_take_next(task=number)
+    if path == "handoff":
+        reporter.work.task_handoff(number, to=holder.principal.actor, note="Continue work")
+    claimed = (
+        holder.work.task_update(number, status="doing")
+        if path == "update"
+        else holder.work.task_take_next(task=number)
+    )
     assert claimed["need"] != "merge"
     assert claimed["pr_url"] == PR
     assert all(claimed[k] is None for k in ("pr_state", "pr_head", "pr_reported_at"))
@@ -659,10 +677,26 @@ def test_claim_requires_new_holder_pr_report(hub, fresh):
     listed(owner_items(hub, fresh), "ready_to_merge", number)
 
 
-@pytest.mark.parametrize("kind", ["ask", "merge", "done"])
+@pytest.mark.parametrize("kind", ["ask", "merge", "done", "proposal"])
 def test_ask_wording_matches_caller_role(hub, fresh, kind):
     worker = fresh.connect("worker")
     observer = fresh.connect("observer")
+    if kind == "proposal":
+        parent = fresh.connect("parent")
+        worker = fresh.connect("proposer", parent=parent.id)
+        number = worker.work.task_add(board="work", title="Proposed work")["number"]
+        # Synthetic user-addressed proposal: no public route creates this legacy shape.
+        with worker.work.store.connection() as conn:
+            conn.execute(
+                "UPDATE tasks SET proposed_to=? WHERE id=?", (f"user:{fresh.user}", number)
+            )
+        person = listed(owner_items(hub, fresh), "backlog_from_agents", number)
+        agent = listed(observer.work.needs_me(), "backlog_from_agents", number)
+        assert person.get("why", "") == "proposer proposed this to you. Approve or reject it."
+        assert "proposed this to the owner" in agent.get("why", "")
+        assert "to you" not in agent.get("why", "")
+        assert agent["actions"] == []
+        return
     number = holding(fresh, worker)["number"]
     if kind == "merge":
         report(worker, number)
@@ -675,6 +709,25 @@ def test_ask_wording_matches_caller_role(hub, fresh, kind):
     bucket = "done_review" if kind == "done" else "asks"
     person = listed(owner_items(hub, fresh), bucket, number)
     agent = listed(observer.work.needs_me(), bucket, number)
-    assert "asks you" in person["why"]
-    assert "asks the owner" in agent["why"]
+    # .get keeps a missing reason an assertion failure, not a KeyError.
+    assert "asks you" in person.get("why", "")
+    assert "asks the owner" in agent.get("why", "")
+    assert "asks you" not in agent.get("why", "")
     assert agent["actions"] == []
+
+
+def test_pending_external_wait_backlog_is_not_an_ask(hub, fresh):
+    parent = fresh.connect("parent")
+    agent = fresh.connect("worker", parent=parent.id)
+    card = agent.work.task_add(board="work", title="Proposed work")
+    revoke(hub, fresh, parent)
+    assert card["proposal_status"] == "pending"
+    listed(owner_items(hub, fresh), "backlog_from_agents", card["number"])
+    agent.work.task_update(card["number"], status_line="waiting on an upstream release")
+    absent(owner_items(hub, fresh), card["number"])
+
+
+def test_claim_with_same_call_pr_report(hub, fresh):
+    holder = fresh.connect("holder")
+    number = fresh.owner.task_add(board="work", title="Unclaimed work", status="todo")["number"]
+    assert report(holder, number, status="doing")["need"] == "merge"

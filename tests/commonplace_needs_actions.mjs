@@ -64,6 +64,7 @@ function fixture() {
       context.remember();
     },
     askedRead: () => ({}), askedWrite() {}, RELOAD_ERRORS: new Set(),
+    queueDraft: (number) => state.drafts.get(`reply-${number}`) || "",
     queueApply: () => { beforeRefresh(); context.remember(); },
   };
   runInNewContext(source, context);
@@ -290,10 +291,13 @@ for (const activeQueue of [false, true]) {
 }
 
 // Whitespace-only input must explain why no request was sent.
-for (const kind of ["reply", "note", "to"]) {
+for (const kind of ["reply", "note", "to", "queue-reply"]) {
   const f = fixture();
   let form;
-  if (kind === "reply") {
+  if (kind === "queue-reply") {
+    f.state.drafts.set("reply-5", "   ");
+    form = { dataset: { form: "queue-reply", card: "5" } };
+  } else if (kind === "reply") {
     const decision = f.decision(); form = decision.form; decision.reply.value = "   ";
   } else {
     await f.click("need-reassign"); form = f.handoff();
@@ -303,5 +307,5 @@ for (const kind of ["reply", "note", "to"]) {
   await f.submit(form);
   assert.deepEqual(f.requests, []);
   assert.equal(f.errors.length, 1, `${kind} must show a validation error`);
-  assert.match(f.errors[0], /reply|note|recipient/i);
+  assert.equal(f.errors[0], kind.endsWith("reply") ? "Enter a reply." : "Enter a recipient and a note.");
 }

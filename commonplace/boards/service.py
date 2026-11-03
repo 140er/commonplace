@@ -301,7 +301,7 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
             elif kind == "backlog_from_agents":
                 creator = actor(row["created_by"])
                 why = (
-                    f"{creator} proposed this to you. Approve or reject it."
+                    f"{creator} proposed this to {recipient}. Approve or reject it."
                     if (row["proposed_to"] or "").startswith("user:")
                     else f"{creator} proposed this, and no agent can approve it any more. Approve or reject it."
                 )
@@ -393,8 +393,18 @@ class BoardService:
         cache[key] = tuple(self._live_connection(ref) for ref in dict.fromkeys(refs))
         return cache[key]
 
+    @staticmethod
+    def _holder_pr_reset(row, target):
+        """A different worker must report its own PR; owner asks keep the report."""
+        if target is None or row["assignee"] == target:
+            return {}
+        return dict(pr_state=None, pr_head=None, pr_reported_at=None, checks="")
+
     def _needs_person_release(self, row):
         if row["status"] != "backlog" or row["proposal_status"] != "pending":
+            return False
+        # The plan names this exact external wait; no broader text classifier.
+        if row["status_line"] == "waiting on an upstream release":
             return False
         to = row["proposed_to"] or ""
         if to.startswith("user:"):
@@ -1621,11 +1631,7 @@ class BoardService:
                     "status": "doing",
                     "assignee": self.principal.actor,
                     "claim_until": None if self.principal.person else self._until(b),
-                    **(
-                        dict(pr_state=None, pr_head=None, pr_reported_at=None, checks="")
-                        if row["assignee"] != self.principal.actor
-                        else {}
-                    ),
+                    **self._holder_pr_reset(row, self.principal.actor),
                 },
             )
             self._log(conn, row["id"], "claim", from_status=row["status"], to_status="doing")
@@ -1974,6 +1980,12 @@ class BoardService:
                     )
             if "repo" in args:
                 updates["repo"] = normalize_repo(args["repo"])
+            updates.update(
+                self._holder_pr_reset(
+                    row,
+                    self.principal.actor if args.get("status") == "doing" else row["assignee"],
+                )
+            )
             if "checks" in args:
                 if args["checks"] not in ("", "pending", "passing", "failing"):
                     raise ToolError("no: checks must be pending, passing or failing")
@@ -2110,6 +2122,8 @@ class BoardService:
                 sorted(set(json.loads(row["flags"] or "[]")) | set(flags_for(note, context)))
             ),
         }
+        if not person:
+            updates.update(self._holder_pr_reset(row, target))
         updates["review_context"] = (
             (context if context is not None else review_context(row)) if person else None
         )

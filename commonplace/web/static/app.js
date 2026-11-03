@@ -942,6 +942,7 @@ root.addEventListener("submit", async (event) => {
   if (form.dataset.form === "queue-reply") {
     const cardNumber = Number(form.dataset.card);
     const reply = queueDraft(cardNumber);
+    if (!reply.trim()) { showError("Enter a reply."); return; }
     state.drafts.set(`reply-${cardNumber}`, reply);
     queueApply({ type: "reply", reply });
     return;
