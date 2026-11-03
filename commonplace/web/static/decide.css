@@ -35,7 +35,7 @@
 .decide-dot.ring { width: 10px; height: 10px; background: none; box-shadow: inset 0 0 0 2px var(--person); }
 
 /* The card, with the next question peeking out under it. */
-.decide-stage { flex: 1; min-height: 0; position: relative; margin: 16px 16px 0; }
+.decide-stage { flex: 1; min-height: 0; position: relative; margin: 16px 16px 0; overflow-x: clip; }
 .decide-card {
   position: absolute; inset: 0 0 8px; z-index: 1; display: flex; flex-direction: column; gap: 16px;
   padding: 18px; background: var(--surface); border: 1px solid var(--line-2); overflow: hidden;
