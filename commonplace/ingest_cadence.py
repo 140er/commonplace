@@ -44,34 +44,35 @@ def admit(
     """
     if interval <= 0:
         return 0
-    if db._conn.in_transaction:
-        raise RuntimeError("ingest admission inside a control transaction")
-    with db._lock, db._tx() as conn:
-        conn.execute(
-            "DELETE FROM ingest_requests WHERE admitted_at < ?",
-            ((now - timedelta(seconds=RETRY_WINDOW_SECONDS)).isoformat(),),
-        )
-        if conn.execute(
-            "SELECT 1 FROM ingest_requests WHERE connection_id=? AND request_sha256=? "
-            "AND account_id=?",
-            (connection_id, request_sha256, account_id),
-        ).fetchone():
+    with db._lock:
+        if db._conn.in_transaction:
+            raise RuntimeError("ingest admission inside a control transaction")
+        with db._tx() as conn:
+            conn.execute(
+                "DELETE FROM ingest_requests WHERE admitted_at < ?",
+                ((now - timedelta(seconds=RETRY_WINDOW_SECONDS)).isoformat(),),
+            )
+            if conn.execute(
+                "SELECT 1 FROM ingest_requests WHERE connection_id=? AND request_sha256=? "
+                "AND account_id=?",
+                (connection_id, request_sha256, account_id),
+            ).fetchone():
+                return 0
+            row = conn.execute(
+                "SELECT last_admitted_at FROM ingest_cadence WHERE account_id=?", (account_id,)
+            ).fetchone()
+            if row:
+                elapsed = (now - datetime.fromisoformat(row[0])).total_seconds()
+                if elapsed < interval:
+                    return min(interval, int(interval - elapsed) + 1)
+            conn.execute(
+                "INSERT INTO ingest_cadence(account_id, last_admitted_at) VALUES (?,?) "
+                "ON CONFLICT(account_id) DO UPDATE SET last_admitted_at=excluded.last_admitted_at",
+                (account_id, now.isoformat()),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO ingest_requests(connection_id, request_sha256, account_id, "
+                "admitted_at) VALUES (?,?,?,?)",
+                (connection_id, request_sha256, account_id, now.isoformat()),
+            )
             return 0
-        row = conn.execute(
-            "SELECT last_admitted_at FROM ingest_cadence WHERE account_id=?", (account_id,)
-        ).fetchone()
-        if row:
-            elapsed = (now - datetime.fromisoformat(row[0])).total_seconds()
-            if elapsed < interval:
-                return min(interval, int(interval - elapsed) + 1)
-        conn.execute(
-            "INSERT INTO ingest_cadence(account_id, last_admitted_at) VALUES (?,?) "
-            "ON CONFLICT(account_id) DO UPDATE SET last_admitted_at=excluded.last_admitted_at",
-            (account_id, now.isoformat()),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO ingest_requests(connection_id, request_sha256, account_id, "
-            "admitted_at) VALUES (?,?,?,?)",
-            (connection_id, request_sha256, account_id, now.isoformat()),
-        )
-        return 0

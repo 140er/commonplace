@@ -106,7 +106,7 @@ escaping, with 1–50 items per request. Each item commits atomically. A typical
 grant response is:
 
 ```json
-{"source":"cursor","status":"completed","processed":1,"total":1,"accepted":1,"errors":0,"facts":0,"results":[{"index":0,"thread_id":"conversation-1","status":"accepted","messages":2,"source_bytes":45}]}
+{"source":"cursor","status":"completed","processed":1,"total":1,"accepted":1,"errors":0,"facts":0,"results":[{"index":0,"thread_id":"conversation-1","status":"accepted","messages":1,"source_bytes":45}]}
 ```
 
 Grant batch keys are exactly `source`, `status`, `processed`, `total`, `accepted`,

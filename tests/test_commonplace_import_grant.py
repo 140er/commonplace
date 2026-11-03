@@ -82,6 +82,8 @@ class Journey:
 
     def request(self, path, method="GET", *, owner=None, token=None, data=None):
         headers = {"Origin": urls.APP_URL}
+        if method in {"POST", "PATCH", "DELETE"}:
+            headers["Content-Type"] = "application/json"
         if token is not None:
             headers["Authorization"] = "Bearer " + token
         return self.client.request(
@@ -773,3 +775,36 @@ def test_revoked_grant_connection_refused(journey):
     assert journey.stored("pat-after-revoke") is None
     assert journey.store().messages(pat_stored.id) == pat_before
     assert journey.row_counts() == counts
+
+
+def test_grant_surrogate_matches_invalid_transcript(journey):
+    token = journey.pat()["token"]
+    invalid = body()
+    invalid["threads"][0]["transcript"] = ""
+    expected = journey.upload(invalid, token=token)
+    assert expected["results"][0]["code"] == "invalid_thread"
+    status, _, _ = journey.request("/api/import", "POST", token=token, data=body("next"))
+    assert status == 429
+    journey.advance()
+    surrogate = body()
+    surrogate["threads"][0]["transcript"] = "\ud800"
+    actual = journey.upload(surrogate, token=token)
+    assert actual == expected
+    status, _, _ = journey.request("/api/import", "POST", token=token, data=body("next"))
+    assert status == 429
+    assert journey.row_counts()[0] == 0
+
+
+def test_grant_multipart_noncontinuation_conflict(journey):
+    token = journey.pat()["token"]
+    parts = multipart_items([native("first"), native("second")])
+    report = journey.upload({"source": "claude-code", "threads": [parts[1]]}, token=token)
+    assert report["results"] == [
+        {
+            "index": 0,
+            "thread_id": parts[1]["thread_id"],
+            "status": "error",
+            "code": "conflict",
+            "error": "Part does not continue this import; resend from the start or the last accepted part",
+        }
+    ]

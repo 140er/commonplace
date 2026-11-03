@@ -52,5 +52,7 @@ def grant_id(user_id, source, thread_id) -> str:
 
 def request_digest(route: str, data) -> str:
     """Hash the route and canonical request JSON without altering any string content."""
-    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8", errors="surrogatepass"
+    )
     return hashlib.sha256(route.encode() + b"\n" + encoded).hexdigest()

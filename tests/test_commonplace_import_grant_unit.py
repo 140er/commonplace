@@ -529,3 +529,59 @@ def test_no_plan_grant_at_real_quota_returns_item_error(journey, monkeypatch):
     row = report["results"][0]
     assert row["code"] == "storage_limit"
     assert row["error"] == plans.storage_message(small)
+
+
+def test_cadence_waits_for_other_thread_control_transaction(account):
+    held, release, started = threading.Event(), threading.Event(), threading.Event()
+    results, errors = [], []
+
+    def hold():
+        with account.db._lock, account.db._tx():
+            held.set()
+            assert release.wait(5)
+
+    def request():
+        started.set()
+        try:
+            results.append(admit(account))
+        except Exception as error:
+            errors.append(error)
+
+    holder = threading.Thread(target=hold)
+    requester = threading.Thread(target=request)
+    holder.start()
+    try:
+        assert held.wait(2)
+        requester.start()
+        assert started.wait(2)
+        requester.join(0.1)
+        assert requester.is_alive(), f"admission finished while locked: {errors}"
+    finally:
+        release.set()
+        holder.join(2)
+        if requester.ident is not None:
+            requester.join(2)
+    assert not holder.is_alive() and not requester.is_alive()
+    assert errors == []
+    assert results == [0]
+
+
+def test_ineligible_owner_cannot_create_import_connection(journey):
+    # Direct session setup is intentional: exercise a shared-workspace owner
+    # through the real HTTP handler without changing the personal journey.
+    from commonplace import sessions
+
+    db = journey.client.db
+    workspace = db.create_workspace("synthetic shared", journey.owner.user)
+    cookie = sessions.start_session(db, journey.owner.user, workspace)
+    owner = SimpleNamespace(cookie=f"{sessions.COOKIE}={cookie}")
+    before = db.connections(workspace)
+    status, _, raw = journey.request(
+        "/api/connections",
+        "POST",
+        owner=owner,
+        data={"name": "synthetic denied", "import": True},
+    )
+    assert status == 403
+    assert json.loads(raw) == {"error": import_grant.OWNER_ONLY_TEXT}
+    assert db.connections(workspace) == before
