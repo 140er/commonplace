@@ -324,6 +324,9 @@ def test_unsupervised_stuck_card_reason_and_each_action_resolves(hub, fresh, mon
             )
         )
         assert claimed["number"] == number
+    if action != "park":
+        # The previous cutoff is beyond even a newly issued real-time lease.
+        clock(monkeypatch, shifted(claimed["claim_until"], -1))
     absent(owner_items(hub, fresh), number)
 
 
@@ -410,13 +413,18 @@ def test_done_review_accepts_to_done_owner_only(hub, fresh):
 
 
 def test_mcp_needs_me_lines_carry_reason(hub, fresh, monkeypatch):
-    agent = fresh.connect("worker")
+    parent = fresh.connect("parent")
+    agent = fresh.connect("worker", parent=parent.id)
     card = holding(fresh, agent)
     clock(monkeypatch, card["claim_until"])
-    ok, text = mcp(hub, agent.token, "needs_me")
+    ok, text = mcp(hub, parent.token, "needs_me")
     assert ok, text
     assert "Stuck:" in text
-    assert f'#{card["number"]} "{card["title"]}" — {owner_reason(agent, card)}' in text
+    assert (
+        f'#{card["number"]} "{card["title"]}" — {supervisor_reason(agent, card, "parent")}' in text
+    )
+    ok, text = mcp(hub, agent.token, "needs_me")
+    assert ok and text == "nothing waiting"
 
 
 @pytest.mark.parametrize("trust", ["trusted", "standard"])

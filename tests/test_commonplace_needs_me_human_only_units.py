@@ -166,6 +166,11 @@ def test_inactive_supervisor_is_dropped_synthetic(hub, fresh, monkeypatch, condi
         if condition == "disabled":
             hub.db._conn.execute("UPDATE users SET disabled_at=? WHERE id=?", (CUTOFF, user))
         else:
+            # Remove dependent connections before deleting their membership.
+            hub.db._conn.execute(
+                "UPDATE connections SET parent_id=NULL WHERE parent_id=?", (parent.id,)
+            )
+            hub.db._conn.execute("DELETE FROM connections WHERE id=?", (parent.id,))
             hub.db._conn.execute(
                 "DELETE FROM memberships WHERE workspace_id=? AND user_id=?",
                 (fresh.workspace, user),

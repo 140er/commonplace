@@ -923,7 +923,7 @@ def test_needs_me_member_filters_asks_by_user_and_other_buckets_by_wing(hub, env
     worker.task_add(board="work", title="Agent backlog", status="backlog")
     ready = worker.task_add(board="work", title="Ready and stale")
     worker.task_take_next(task=ready["number"])
-    worker.task_update(ready["number"], pr=8, checks="passing")
+    ready = worker.task_update(ready["number"], pr=8, checks="passing")
     with owner.store.transaction() as conn:
         conn.execute("UPDATE tasks SET review_kind='completion' WHERE id=?", (done["number"],))
         conn.execute(
