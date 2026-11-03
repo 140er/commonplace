@@ -184,6 +184,8 @@ for (const [action, approve] of [["approve-proposal", true], ["reject-proposal",
   assert.equal(then.value, "done");
   await f.submit(form);
   assert.deepEqual(f.requests, []);
+  assert.deepEqual(f.errors, ["Enter a reply."]);
+  f.errors.length = 0;
   reply.value = "I checked the result and accept it.";
   let observed = false;
   f.onRefresh(() => {
@@ -285,4 +287,21 @@ for (const activeQueue of [false, true]) {
   assert.equal(String(f.state.drafts.get("then-version-5")), "3");
   await f.click("decide");
   assert.equal(f.requests[0].body.then, "done");
+}
+
+// Whitespace-only input must explain why no request was sent.
+for (const kind of ["reply", "note", "to"]) {
+  const f = fixture();
+  let form;
+  if (kind === "reply") {
+    const decision = f.decision(); form = decision.form; decision.reply.value = "   ";
+  } else {
+    await f.click("need-reassign"); form = f.handoff();
+    form.values.to = "conn:replacement"; form.values.note = "Continue work";
+    form.values[kind] = "   ";
+  }
+  await f.submit(form);
+  assert.deepEqual(f.requests, []);
+  assert.equal(f.errors.length, 1, `${kind} must show a validation error`);
+  assert.match(f.errors[0], /reply|note|recipient/i);
 }

@@ -281,21 +281,22 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
                 continue
             item = card(conn, row, principal, release=release)
             actions = []
+            recipient = "you" if principal.person else "the owner"
             if kind in ("asks", "done_review"):
                 asker = actor(row["return_to"] or row["created_by"])
                 ask_line = (row["ask"] or "").split("\n", 1)[0]
                 if kind == "done_review":
-                    why = f"{asker} finished this and asks you to accept it."
+                    why = f"{asker} finished this and asks {recipient} to accept it."
                     actions = ["accept", "answer"]
                 elif merge_ready(item, cutoff):
                     why = (
-                        f"{asker} asks you to merge PR #{row['pr_number']} "
+                        f"{asker} asks {recipient} to merge PR #{row['pr_number']} "
                         f"(checks passed on {row['pr_head'][:7]}): {ask_line}"
                     )
                     actions = ["answer", "open_pr"]
                     result["ready_to_merge"].append(item)
                 else:
-                    why = f"{asker} asks you: {ask_line}"
+                    why = f"{asker} asks {recipient}: {ask_line}"
                     actions = ["answer"]
             elif kind == "backlog_from_agents":
                 creator = actor(row["created_by"])
@@ -1620,6 +1621,11 @@ class BoardService:
                     "status": "doing",
                     "assignee": self.principal.actor,
                     "claim_until": None if self.principal.person else self._until(b),
+                    **(
+                        dict(pr_state=None, pr_head=None, pr_reported_at=None, checks="")
+                        if row["assignee"] != self.principal.actor
+                        else {}
+                    ),
                 },
             )
             self._log(conn, row["id"], "claim", from_status=row["status"], to_status="doing")

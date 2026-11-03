@@ -602,7 +602,12 @@ def test_guard_csrf_logout_and_version(hub, fresh):
         == 409
     )
     assert shown(hub, fresh, number) == before
-    code, _headers, _body = request(hub, "/app/logout", method="POST", headers=fresh.cookie)
+    code, _headers, _body = request(
+        hub,
+        "/app/logout",
+        method="POST",
+        headers={**fresh.cookie, "Content-Type": "application/json"},
+    )
     assert code == 204
     assert api(hub, fresh.cookie, "POST", f"/api/cards/{number}/handoff", body)[0] == 401
 
@@ -634,3 +639,42 @@ def test_guard_supervisor_cannot_take_over(hub, fresh, monkeypatch):
         with pytest.raises(ToolError):
             fn()
         assert shown(hub, fresh, card["number"]) == before
+
+
+def test_claim_requires_new_holder_pr_report(hub, fresh):
+    reporter = fresh.connect("reporter")
+    holder = fresh.connect("holder")
+    number = fresh.owner.task_add(board="work", title="Unclaimed work", status="todo")["number"]
+    report(reporter, number)
+    claimed = holder.work.task_take_next(task=number)
+    assert claimed["need"] != "merge"
+    assert claimed["pr_url"] == PR
+    assert all(claimed[k] is None for k in ("pr_state", "pr_head", "pr_reported_at"))
+    assert claimed["checks"] == ""
+    ask_owner(holder, number)
+    assert not owner_items(hub, fresh)["ready_to_merge"]
+    fresh.owner.decide(number, reply="Continue work", then="return")
+    report(holder, number)
+    ask_owner(holder, number)
+    listed(owner_items(hub, fresh), "ready_to_merge", number)
+
+
+@pytest.mark.parametrize("kind", ["ask", "merge", "done"])
+def test_ask_wording_matches_caller_role(hub, fresh, kind):
+    worker = fresh.connect("worker")
+    observer = fresh.connect("observer")
+    number = holding(fresh, worker)["number"]
+    if kind == "merge":
+        report(worker, number)
+    if kind == "done":
+        number = fresh.owner.seed_card(
+            board="work", title="Finished work", body="Done?", status="review"
+        )["number"]
+    else:
+        ask_owner(worker, number)
+    bucket = "done_review" if kind == "done" else "asks"
+    person = listed(owner_items(hub, fresh), bucket, number)
+    agent = listed(observer.work.needs_me(), bucket, number)
+    assert "asks you" in person["why"]
+    assert "asks the owner" in agent["why"]
+    assert agent["actions"] == []

@@ -947,8 +947,8 @@ root.addEventListener("submit", async (event) => {
     return;
   }
   const payload = data(form), kind = form.dataset.form;
-  if (kind === "reply" && !payload.reply?.trim()) return;
-  if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) return;
+  if (kind === "reply" && !payload.reply?.trim()) { showError("Enter a reply."); return; }
+  if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) { showError("Enter a recipient and a note."); return; }
   if (kind === "handoff" && form.dataset.connectionsOnly === "true" && !/^conn:\S+$/.test(payload.to)) {
     showError("Choose an agent using conn: followed by its name.");
     return;
