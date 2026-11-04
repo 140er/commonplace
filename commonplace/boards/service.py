@@ -300,10 +300,15 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
                     actions = ["answer"]
             elif kind == "backlog_from_agents":
                 creator = actor(row["created_by"])
+                decision = (
+                    "Approve or reject it."
+                    if principal.person
+                    else "The owner must approve or reject it."
+                )
                 why = (
-                    f"{creator} proposed this to {recipient}. Approve or reject it."
+                    f"{creator} proposed this to {recipient}. {decision}"
                     if (row["proposed_to"] or "").startswith("user:")
-                    else f"{creator} proposed this, and no agent can approve it any more. Approve or reject it."
+                    else f"{creator} proposed this, and no agent can approve it any more. {decision}"
                 )
                 actions = ["approve", "reject"]
             else:
@@ -402,9 +407,6 @@ class BoardService:
 
     def _needs_person_release(self, row):
         if row["status"] != "backlog" or row["proposal_status"] != "pending":
-            return False
-        # The plan names this exact external wait; no broader text classifier.
-        if row["status_line"] == "waiting on an upstream release":
             return False
         to = row["proposed_to"] or ""
         if to.startswith("user:"):
@@ -1983,7 +1985,9 @@ class BoardService:
             updates.update(
                 self._holder_pr_reset(
                     row,
-                    self.principal.actor if args.get("status") == "doing" else row["assignee"],
+                    self.principal.actor
+                    if args.get("status") == "doing" and row["status"] != "doing"
+                    else row["assignee"],
                 )
             )
             if "checks" in args:

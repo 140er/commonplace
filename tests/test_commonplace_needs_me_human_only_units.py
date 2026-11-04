@@ -166,15 +166,17 @@ def test_inactive_supervisor_is_dropped_synthetic(hub, fresh, monkeypatch, condi
         if condition == "disabled":
             hub.db._conn.execute("UPDATE users SET disabled_at=? WHERE id=?", (CUTOFF, user))
         else:
-            # Remove dependent connections before deleting their membership.
-            hub.db._conn.execute(
-                "UPDATE connections SET parent_id=NULL WHERE parent_id=?", (parent.id,)
-            )
-            hub.db._conn.execute("DELETE FROM connections WHERE id=?", (parent.id,))
-            hub.db._conn.execute(
-                "DELETE FROM memberships WHERE workspace_id=? AND user_id=?",
-                (fresh.workspace, user),
-            )
+            # Synthetic orphan membership; preserve the connection and parent link.
+            hub.db._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                hub.db._conn.execute(
+                    "DELETE FROM memberships WHERE workspace_id=? AND user_id=?",
+                    (fresh.workspace, user),
+                )
+            finally:
+                hub.db._conn.execute("PRAGMA foreign_keys=ON")
+            assert hub.db.connection(parent.id, fresh.workspace) is not None
+            assert hub.db.authenticate_connection(parent.id) is None
     assert fresh.owner._supervisors(row) == ()
     listed(owner_items(hub, fresh), "stale", card["number"])
 
@@ -214,3 +216,51 @@ def test_same_call_new_pr_report_wins_over_resets(hub, fresh):
     changed = report(agent, number, pr="https://example.test/o/r/pull/8", pr_head=SHA2)
     assert changed["pr_state"] == "open" and changed["pr_head"] == SHA2
     assert changed["checks"] == "passing" and changed["pr_reported_at"]
+
+
+@pytest.mark.parametrize("writer", ["owner", "holder"])
+def test_noop_doing_preserves_holder_report(hub, fresh, writer):
+    holder = fresh.connect("holder")
+    number = holding(fresh, holder)["number"]
+    original = report(holder, number)
+    service = fresh.owner if writer == "owner" else holder.work
+    changed = service.task_update(number, status="doing")
+    for key in ("assignee", "pr_state", "pr_head", "pr_reported_at", "checks"):
+        assert changed[key] == original[key]
+
+
+@pytest.mark.parametrize("person", [True, False])
+def test_user_addressed_proposal_wording_unit(monkeypatch, person):
+    """Pure synthetic row: public creation cannot address a proposal to a user."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from commonplace.boards import service
+
+    row = dict(
+        status="backlog",
+        proposal_status="pending",
+        proposed_to="user:owner",
+        ask_to=None,
+        created_by="conn:proposer",
+        board_wing="work",
+    )
+    conn = Mock()
+    conn.execute.return_value.fetchall.return_value = [row]
+    store = SimpleNamespace(connection=lambda: nullcontext(conn))
+    principal = SimpleNamespace(person=person, user_id="owner", actor="conn:viewer", policy=Mock())
+    monkeypatch.setattr(service, "_owner", lambda *a, **kw: None)
+    monkeypatch.setattr(service, "_stuck", lambda *a: False)
+    monkeypatch.setattr(service, "card", lambda *a, **kw: {"number": 1})
+    item = service.needs_me(store, principal)["backlog_from_agents"][0]
+    if person:
+        assert item["why"] == "proposer proposed this to you. Approve or reject it."
+    else:
+        assert (
+            item["why"]
+            == "proposer proposed this to the owner. The owner must approve or reject it."
+        )
+        assert "to you" not in item["why"]
+        assert "Approve or reject it." not in item["why"]
+        assert item["actions"] == []

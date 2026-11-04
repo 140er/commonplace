@@ -685,26 +685,10 @@ def test_claim_requires_new_holder_pr_report(hub, fresh, path):
     listed(owner_items(hub, fresh), "ready_to_merge", number)
 
 
-@pytest.mark.parametrize("kind", ["ask", "merge", "done", "proposal"])
+@pytest.mark.parametrize("kind", ["ask", "merge", "done"])
 def test_ask_wording_matches_caller_role(hub, fresh, kind):
     worker = fresh.connect("worker")
     observer = fresh.connect("observer")
-    if kind == "proposal":
-        parent = fresh.connect("parent")
-        worker = fresh.connect("proposer", parent=parent.id)
-        number = worker.work.task_add(board="work", title="Proposed work")["number"]
-        # Synthetic user-addressed proposal: no public route creates this legacy shape.
-        with worker.work.store.connection() as conn:
-            conn.execute(
-                "UPDATE tasks SET proposed_to=? WHERE id=?", (f"user:{fresh.user}", number)
-            )
-        person = listed(owner_items(hub, fresh), "backlog_from_agents", number)
-        agent = listed(observer.work.needs_me(), "backlog_from_agents", number)
-        assert person.get("why", "") == "proposer proposed this to you. Approve or reject it."
-        assert "proposed this to the owner" in agent.get("why", "")
-        assert "to you" not in agent.get("why", "")
-        assert agent["actions"] == []
-        return
     number = holding(fresh, worker)["number"]
     if kind == "merge":
         report(worker, number)
@@ -724,7 +708,7 @@ def test_ask_wording_matches_caller_role(hub, fresh, kind):
     assert agent["actions"] == []
 
 
-def test_pending_external_wait_backlog_is_not_an_ask(hub, fresh):
+def test_status_line_cannot_hide_person_release(hub, fresh):
     parent = fresh.connect("parent")
     agent = fresh.connect("worker", parent=parent.id)
     card = agent.work.task_add(board="work", title="Proposed work")
@@ -732,7 +716,7 @@ def test_pending_external_wait_backlog_is_not_an_ask(hub, fresh):
     assert card["proposal_status"] == "pending"
     listed(owner_items(hub, fresh), "backlog_from_agents", card["number"])
     agent.work.task_update(card["number"], status_line="waiting on an upstream release")
-    absent(owner_items(hub, fresh), card["number"])
+    listed(owner_items(hub, fresh), "backlog_from_agents", card["number"])
 
 
 def test_claim_with_same_call_pr_report(hub, fresh):
