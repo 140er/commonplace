@@ -486,7 +486,8 @@ def _push_result(row, raw, parsed, part, duplicate=False, source_bytes=0, *, con
         if not duplicate:
             result["added_messages"] = len(parsed)
     else:
-        _mark_part_submission(conn, row["workspace_id"], row["stream_id"])
+        if not duplicate:
+            _mark_part_submission(conn, row["workspace_id"], row["stream_id"])
         result.update(
             status="accepted",
             unit="part",
@@ -664,7 +665,7 @@ def _adopt_orphan(conn, store, ws, user, stored, source, kind, connection):
 
 
 def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
-    """Search one bounded page of the filer's archives before creating a holder."""
+    """Page the filer's archives, bounding only uncontrolled archive reads."""
     if group is not None:
         return group
     connections = conn.execute(
@@ -676,22 +677,27 @@ def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
     remaining, read_bytes = BACKFILL_PAGE, 0
     cache = {}
     for prefix, kind, connection in prefixes:
-        for stored in store.list_source_range(ws, prefix, limit=remaining):
-            remaining -= 1
-            # Only recover archives with no surviving continuity control rows.
-            controlled = conn.execute(
-                "SELECT 1 FROM sync_streams WHERE workspace_id=? "
-                "AND (own_stored_id=? OR fork_stored_id=?) UNION ALL "
-                "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1",
-                (ws, stored.id, stored.id, ws, stored.id),
-            ).fetchone()
-            if not controlled:
+        after = None
+        while True:
+            listed = store.list_source_range(ws, prefix, after=after, limit=BACKFILL_PAGE)
+            for stored in listed:
+                after = (stored.source_thread_id, stored.id)
+                # Controlled archives need only metadata checks, not archive reads.
+                controlled = conn.execute(
+                    "SELECT 1 FROM sync_streams WHERE workspace_id=? "
+                    "AND (own_stored_id=? OR fork_stored_id=?) UNION ALL "
+                    "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1",
+                    (ws, stored.id, stored.id, ws, stored.id),
+                ).fetchone()
+                if controlled:
+                    continue
 
                 def read(thread):
-                    nonlocal read_bytes
+                    nonlocal remaining, read_bytes
                     messages = store.messages(thread.id)
                     segments = archive_segments(messages)
                     raw = b"".join(s.raw for s in segments)
+                    remaining -= 1
                     read_bytes += len(raw)
                     cache[thread.id] = (thread, raw, segments[-1].at if segments else "", messages)
                     return cache[thread.id]
@@ -704,9 +710,11 @@ def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
                     ):
                         _join_adopted(conn, ws, user, candidate, cache)
                         return _group(conn, ws, user, source, native)
-            cache.clear()
-            if remaining == 0 or read_bytes >= BACKFILL_PAGE_BYTES:
-                return None
+                cache.clear()
+                if remaining == 0 or read_bytes >= BACKFILL_PAGE_BYTES:
+                    return None
+            if len(listed) < BACKFILL_PAGE:
+                break
     return None
 
 

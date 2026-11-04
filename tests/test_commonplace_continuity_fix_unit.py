@@ -193,8 +193,8 @@ def test_fix2_other_identity_adopts_orphan_before_original_retry(
     assert all_archives(e) == first
 
 
-@pytest.mark.parametrize("submission", ["next-part", "replay"])
-def test_fix2_preupgrade_legacy_count_changes_only_after_submission(env, submission):
+@pytest.mark.parametrize("marker_table", ["missing", "unmarked"])
+def test_fix3_preupgrade_legacy_replay_keeps_count_until_new_bytes(env, marker_table):
     e = env
     first, second, third, extra = (native(word=w) for w in ("first", "second", "third", "extra"))
     whole = first + second + third
@@ -224,7 +224,10 @@ def test_fix2_preupgrade_legacy_count_changes_only_after_submission(env, submiss
     )
     # Simulate the exact pre-upgrade control/store state: a part accepted after demotion.
     with e.db._lock:
-        e.conn.execute("DROP TABLE IF EXISTS sync_import_submissions")
+        if marker_table == "missing":
+            e.conn.execute("DROP TABLE sync_import_submissions")
+        else:
+            e.conn.execute("DELETE FROM sync_import_submissions WHERE stream_id=?", (sid,))
     assert streams(e)[sid]["legacy"] == 1
     assert streams(e)[sid]["listed_messages"] == 5
 
@@ -251,22 +254,90 @@ def test_fix2_preupgrade_legacy_count_changes_only_after_submission(env, submiss
         return replies[0][1]["imports"][0]["stored_messages"]
 
     assert count() == len(original) - 1 == 2
-    if submission == "replay":
-        push(
-            e,
-            second,
-            before=first,
-            stream=sid,
-            part=descriptor(whole, second, offset=len(first), index=1),
-        )
-        assert count() == 2 * 2 + 2 - 1
+    push(
+        e,
+        second,
+        before=first,
+        stream=sid,
+        part=descriptor(whole, second, offset=len(first), index=1),
+    )
+    assert count() == 2
+    table_exists = e.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_import_submissions'"
+    ).fetchone()
+    if marker_table == "missing":
+        assert table_exists is None
     else:
+        assert (
+            e.conn.execute(
+                "SELECT 1 FROM sync_import_submissions WHERE workspace_id=? AND stream_id=?",
+                (e.ws, sid),
+            ).fetchone()
+            is None
+        )
+    push(
+        e,
+        third,
+        before=first + second,
+        stream=sid,
+        part=descriptor(whole, third, offset=len(first + second), index=2),
+    )
+    assert count() == 2 * 3 + 3 - 1
+    assert e.conn.execute(
+        "SELECT 1 FROM sync_import_submissions WHERE workspace_id=? AND stream_id=?",
+        (e.ws, sid),
+    ).fetchone()
+    assert e.store.messages(result["stored_thread_id"]) == original
+
+
+@pytest.mark.parametrize("second_kind", ["capture", "t3"])
+def test_fix3_orphan_search_pages_past_controlled_archives(env, monkeypatch, second_kind):
+    e = env
+    monkeypatch.setattr(core, "BACKFILL_PAGE", 2)
+    connections = [
+        e.db.create_token(
+            workspace_ref=e.ws,
+            user_ref=e.user,
+            name=name,
+            client="claude-code",
+            policy=person_policy(),
+            actor=e.user,
+        )[0]
+        for name in ("first", "second")
+    ]
+    connection, other = connections
+    core.backfill(e.db, e.store, e.ws, e.user)
+    for index in range(2):
+        snapshot(e, native(sid=f"import-{index}"), name=f"controlled-{index}")
         push(
             e,
-            third,
-            before=first + second,
-            stream=sid,
-            part=descriptor(whole, third, offset=len(first + second), index=2),
+            native(sid=f"capture-{index}"),
+            stream=f"capture:{connection}:claude-code:a-controlled-{index}",
         )
-        assert count() == 2 * 3 + 3 - 1
-    assert e.store.messages(result["stored_thread_id"]) == original
+    first = native(word="orphan-after-controlled-pages")
+    sid = f"capture:{connection}:claude-code:z-orphan"
+    original = e.db._tx
+
+    @contextmanager
+    def crash():
+        with original() as conn:
+            yield conn
+            raise RuntimeError("injected control rollback")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(e.db, "_tx", crash)
+        with pytest.raises(RuntimeError, match="control rollback"):
+            push(e, first, stream=sid)
+    orphan = e.store.by_source(e.ws, sid)
+    previous = e.store.messages(orphan.id)
+    assert sid not in streams(e)
+    if second_kind == "t3":
+        snapshot(e, first, name="t3-copy", source="t3")
+    else:
+        push(e, first, stream=f"capture:{other}:claude-code:second")
+    assert all_archives(e).count(first) == 1
+    group = e.conn.execute(
+        "SELECT holder_stored_id FROM sync_groups WHERE native_id=?", ("S",)
+    ).fetchall()
+    assert [row[0] for row in group] == [orphan.id]
+    assert e.store.messages(orphan.id) == previous
