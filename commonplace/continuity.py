@@ -664,6 +664,15 @@ def _adopt_orphan(conn, store, ws, user, stored, source, kind, connection):
         _join_adopted(conn, ws, user, candidate, cache)
 
 
+# One equality term per branch so each uses its own index (an OR here scans the
+# workspace's streams, which made every orphan search quadratic in palace size).
+_CONTROLLED_PROBE = (
+    "SELECT 1 FROM sync_streams WHERE workspace_id=? AND own_stored_id=? UNION ALL "
+    "SELECT 1 FROM sync_streams WHERE workspace_id=? AND fork_stored_id=? UNION ALL "
+    "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1"
+)
+
+
 def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
     """Page the filer's archives, bounding only uncontrolled archive reads."""
     if group is not None:
@@ -684,10 +693,7 @@ def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
                 after = (stored.source_thread_id, stored.id)
                 # Controlled archives need only metadata checks, not archive reads.
                 controlled = conn.execute(
-                    "SELECT 1 FROM sync_streams WHERE workspace_id=? "
-                    "AND (own_stored_id=? OR fork_stored_id=?) UNION ALL "
-                    "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1",
-                    (ws, stored.id, stored.id, ws, stored.id),
+                    _CONTROLLED_PROBE, (ws, stored.id, ws, stored.id, ws, stored.id)
                 ).fetchone()
                 if controlled:
                     continue

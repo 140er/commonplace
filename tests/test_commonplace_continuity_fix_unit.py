@@ -341,3 +341,17 @@ def test_fix3_orphan_search_pages_past_controlled_archives(env, monkeypatch, sec
     ).fetchall()
     assert [row[0] for row in group] == [orphan.id]
     assert e.store.messages(orphan.id) == previous
+
+
+def test_fix3_controlled_probe_uses_stream_indexes(env):
+    e = env
+    core.backfill(e.db, e.store, e.ws, e.user)
+    probe = getattr(core, "_CONTROLLED_PROBE", None)
+    assert probe is not None, "the controlled-archive probe is not a single indexed query"
+    plan = " | ".join(
+        row[-1]
+        for row in e.db._conn.execute(
+            "EXPLAIN QUERY PLAN " + probe, (e.ws, "x", e.ws, "x", e.ws, "x")
+        ).fetchall()
+    )
+    assert "sync_streams_own" in plan and "sync_streams_fork" in plan, plan
