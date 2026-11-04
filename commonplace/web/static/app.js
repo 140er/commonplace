@@ -423,8 +423,8 @@ function phonePushView(data) {
   else if (!data.subscription && !data.eligible) body = `<p>${e(home)}</p>`;
   else if (!data.subscription) body = `<button data-action="phone-push-on">Turn on</button><p>${e(home)}</p><p>${e(pause)}</p>`;
   else {
-    const status = data.test?.status === "accepted" ? "Accepted by your ntfy server" : data.test?.status === "pending" ? "Waiting" : "Not accepted";
-    body = `<p>Server: ${e(data.subscription.server)}</p><p>Topic: <span data-phone-push-topic>${e(data.subscription.topic)}</span> <button data-action="phone-push-copy">Copy</button></p><button data-action="phone-push-test">Test</button><p role="status">${e(status)}</p>${off}<p>${e(home)}</p><p>${e(pause)}</p>`;
+    const status = data.test == null ? "" : data.test?.status === "accepted" ? "Accepted by your ntfy server" : data.test?.status === "pending" ? "Waiting" : "Not accepted";
+    body = `<p>Server: ${e(data.subscription.server)}</p><p>Topic: <span data-phone-push-topic>${e(data.subscription.topic)}</span> <button data-action="phone-push-copy">Copy</button></p><button data-action="phone-push-test">Test</button>${status ? `<p role="status">${e(status)}</p>` : ""}${off}<p>${e(home)}</p><p>${e(pause)}</p>`;
   }
   return `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${body}</section>`;
 }

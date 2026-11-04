@@ -265,3 +265,13 @@ def test_t19_non_home_owner_does_not_change_home_subscription(hub, signup, monke
     request = hub.ntfy.requests[0]
     assert request.path == "/" + subscription["topic"]
     assert request.body == f"#{number} needs you".encode()
+
+
+def test_configuration_repr_hides_token(hub, signup, monkeypatch):
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    sentinel = "synthetic_secret_for_repr"
+    enable(monkeypatch, hub, token=sentinel)
+    config = importlib.import_module("commonplace.phone_push.config").load()
+    assert config is not None and config.token == sentinel
+    assert sentinel not in repr(config)

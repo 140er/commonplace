@@ -1,5 +1,6 @@
-"""Head-only eligibility units using synthetic principals and mocked lookups."""
+"""Head-only eligibility units with synthetic authority and real session queries."""
 
+import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import RLock
@@ -68,30 +69,33 @@ def test_signed_in_matches_session_principal(owner, monkeypatch, case):
     _, principal = owner
     now = datetime(2030, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(sessions, "_now", lambda: now)
-    ensure = Mock()
-    monkeypatch.setattr(sessions, "ensure_schema", ensure)
-    row = {
-        "user_id": "u1",
-        "workspace_id": "w2" if case == "other_workspace" else "w1",
-        "revoked_at": "2029-12-01T00:00:00Z" if case == "revoked" else None,
-        "expires_at": "2030-01-01T00:00:00Z" if case == "expired" else "2030-02-01T00:00:00Z",
-    }
-    db = SimpleNamespace(_lock=RLock(), _conn=Mock())
-    db._conn.execute.return_value.fetchone.return_value = (1,) if case == "live" else None
-    assert eligibility.signed_in(db, "u1", "w1") == (case == "live")
-    ensure.assert_called_once_with(db)
-    sql, params = db._conn.execute.call_args.args
-    assert "user_id = ? AND workspace_id = ?" in sql
-    assert "revoked_at IS NULL AND expires_at > ?" in sql
-    assert params == ("u1", "w1", "2030-01-01T00:00:00Z")
-    db._conn.execute.return_value.fetchone.return_value = None if case == "missing" else row
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    db = SimpleNamespace(_lock=RLock(), _conn=conn)
+    conn.executescript(sessions.SCHEMA)
+    if case != "missing":
+        conn.execute(
+            "INSERT INTO sessions VALUES (?,?,?,?,?,?)",
+            (
+                sessions._hash("synthetic-session"),
+                "u1",
+                "w2" if case == "other_workspace" else "w1",
+                "2029-12-01T00:00:00Z",
+                "2030-01-01T00:00:00Z" if case == "expired" else "2030-02-01T00:00:00Z",
+                "2029-12-01T00:00:00Z" if case == "revoked" else None,
+            ),
+        )
+        conn.commit()
+    # Both paths execute their real predicates against the same sessions table.
     monkeypatch.setattr(
-        sessions,
-        "person_principal",
-        lambda db, user, ws: replace(principal, workspace_id=ws),
+        sessions, "person_principal", lambda db, user, ws: replace(principal, workspace_id=ws)
     )
-    actual = sessions.session_principal(db, "synthetic-session")
-    assert (actual is not None and actual.workspace_id == "w1") == (case == "live")
+    try:
+        assert eligibility.signed_in(db, "u1", "w1") == (case == "live")
+        actual = sessions.session_principal(db, "synthetic-session")
+        assert (actual is not None and actual.workspace_id == "w1") == (case == "live")
+    finally:
+        conn.close()
 
 
 def test_pause_constant_off_ignores_sessions(monkeypatch):

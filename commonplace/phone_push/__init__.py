@@ -20,7 +20,7 @@ def install(gateway):
             max_attempts=webhooks.MAX_ATTEMPTS,
             sweep_seconds=300,
         )
-        sender.recover(gateway.db)
+        sender.recover(gateway.db, dispatcher.max_attempts)
         gateway.phone_push = dispatcher
         try:
             dispatcher.start()

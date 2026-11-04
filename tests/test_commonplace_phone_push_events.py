@@ -475,21 +475,51 @@ def test_t11b_one_wake_drains_fifteen_hundred_stopped_events(hub, signup, monkey
     start = module.PushDispatcher.start
     dispatcher = enable(monkeypatch, hub)
     on(hub, owner)
+    # This synthetic gateway has no webhooks to dispatch during backlog setup.
+    hub.gateway.webhooks.stop()
     agent = worker(hub, owner)
     number = create(hub, owner, actor=agent)["number"]
     ask(hub, owner, number, actor=agent)
-    # Keep each public-route agent within its normal rate limits while filling
-    # more than five dispatcher batches. All events still use real HTTP writes.
-    commenters = [worker(hub, owner, f"commenter-{index}") for index in range(30)]
+    # Review entry emits two events and a decision emits one. Two real sessions
+    # can fill the same 1,500-event backlog with fewer HTTP round trips, while
+    # every write still passes normal auth, version, policy and rate guards.
+    second, _ = signup[2]()
+    assert second != owner
+    assert hub.me(second)["user"] == hub.me(owner)["user"]
+    cards = [create(hub, cookie) for cookie in (owner, second)]
+    comment(hub, owner, number, actor=agent)
 
-    def comments(index):
-        for _ in range(min(50, 1497 - index * 50)):
-            comment(hub, owner, number, actor=commenters[index])
+    def reviews(item):
+        cookie, card = item
+        for _ in range(249):
+            card = call(
+                hub,
+                cookie,
+                "PATCH",
+                f"/api/cards/{card['number']}",
+                {
+                    "version": card["version"],
+                    "status": "review",
+                    "question": QUESTION,
+                    "options": OPTIONS,
+                    "context": CONTEXT,
+                },
+            )
+            assert card["status"] == "review"
+            card = call(
+                hub,
+                cookie,
+                "POST",
+                f"/api/cards/{card['number']}/decide",
+                {"version": card["version"], "choice": OPTIONS[0], "then": "todo"},
+            )
+            assert card["status"] == "todo"
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(comments, range(30)))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(reviews, zip((owner, second), cards)))
     target = latest(hub)
     assert target - cursor(hub) >= 1500
+    assert target - cursor(hub) == 1500
     wake_once(monkeypatch, dispatcher, start)
     assert cursor(hub) == target
     assert bodies(hub) == [f"#{number} needs you"]
@@ -652,7 +682,7 @@ def test_t20_multi_owner_done_and_nonentering_edits(hub, signup, monkeypatch):
         token=agent.token,
     )
     assert code == 403, body
-    update(hub, owner, old, title="Changed title")
+    update(hub, second, old, title="Changed title")
     dispatcher.reconcile()
     dispatcher.drain()
     assert bodies(hub) == [f"#{number} is done"]
@@ -808,3 +838,42 @@ def test_head_only_ineligible_subscription_does_not_abort_others(hub, signup, mo
     assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
         "phone push subscription is ineligible"
     ]
+
+
+def test_real_thread_sweeps_and_stops(hub, signup, monkeypatch):
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    module = importlib.import_module("commonplace.phone_push.dispatcher")
+    start = module.PushDispatcher.start
+    dispatcher = enable(monkeypatch, hub)
+    on(hub, owner)
+    dispatcher.sweep_seconds = 0.02
+    swept, drained = threading.Event(), threading.Event()
+    sweep, drain = dispatcher.sweep, dispatcher.drain
+    calls = []
+
+    def observed_sweep():
+        sweep()
+        calls.append(1)
+        swept.set()
+
+    def observed_drain():
+        result = drain()
+        if swept.is_set():
+            drained.set()
+            # Park after exactly one sweep until stop wakes this real worker.
+            dispatcher._stop.wait(2)
+        return result
+
+    monkeypatch.setattr(dispatcher, "sweep", observed_sweep)
+    monkeypatch.setattr(dispatcher, "drain", observed_drain)
+    start(dispatcher)
+    try:
+        assert drained.wait(1), "periodic sweep did not run"
+        assert dispatcher.thread.is_alive()
+        assert dispatcher.on_event in events._listeners
+    finally:
+        dispatcher.stop()
+    assert calls == [1]
+    assert not dispatcher.thread.is_alive()
+    assert dispatcher.on_event not in events._listeners

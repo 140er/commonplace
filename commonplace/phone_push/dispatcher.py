@@ -6,7 +6,8 @@ import threading
 import time
 import uuid
 
-from commonplace import events
+from commonplace import events, webhooks
+from commonplace.http_util import log_failure
 
 from . import eligibility, evaluate, schema, sender
 
@@ -110,28 +111,44 @@ class PushDispatcher:
         self._stop.set()
         self._wake.set()
         if self.thread.ident is not None:
-            self.thread.join()
+            self.thread.join(timeout=webhooks.HTTP_TIMEOUT + 2)
 
     def wake(self):
         self._wake.set()
 
     def _run(self):
         last_sweep = time.monotonic()
+        backoff = 5
+        recover_claims = False
         while not self._stop.is_set():
             self._wake.wait(timeout=max(0, self.sweep_seconds - (time.monotonic() - last_sweep)))
             self._wake.clear()
             if self._stop.is_set():
                 break
-            # A failed batch is retried at the next wake, never skipped or spun on.
-            while not self._stop.is_set():
-                if self.reconcile() or self._evaluation_failed:
+            try:
+                if recover_claims:
+                    with self.work:
+                        sender.recover(self.db, self.max_attempts)
+                    recover_claims = False
+                # A failed batch is retried at the next wake, never skipped or spun on.
+                while not self._stop.is_set():
+                    if self.reconcile() or self._evaluation_failed:
+                        break
+                if self._stop.is_set():
                     break
-            if self._stop.is_set():
-                break
-            if time.monotonic() - last_sweep >= self.sweep_seconds:
-                self.sweep()
-                last_sweep = time.monotonic()
-            self.drain()
+                if time.monotonic() - last_sweep >= self.sweep_seconds:
+                    self.sweep()
+                    last_sweep = time.monotonic()
+                self.drain()
+            except Exception as exc:
+                log_failure(logger, "phone push worker failed", exc)
+                recover_claims = True
+                if self._stop.wait(backoff):
+                    break
+                backoff = min(backoff * 2, 300)
+                self._wake.set()
+                continue
+            backoff = 5
 
     def on_event(self, e):
         with self.db._lock:

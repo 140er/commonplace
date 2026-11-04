@@ -4,7 +4,7 @@ import ipaddress
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from commonplace import urls, webhooks
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class Config:
     url: str
-    token: str | None
+    token: str | None = field(default=None, repr=False)
 
 
 def load() -> Config | None:

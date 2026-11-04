@@ -104,17 +104,19 @@ def drain(dispatcher) -> int:
     cache = {}
     attempted = 0
     for delivery in due:
+        if dispatcher._stop.is_set():
+            break
         with dispatcher.work:
+            if dispatcher._stop.is_set():
+                break
             row = _claim(db, delivery["id"])
             if row is None:
                 continue
             attempted += 1
             try:
                 subscription = _recipient(dispatcher, row, cache)
-                if subscription is None:
-                    result = ("cancelled", None, None)
-                else:
-                    click = None
+                click = None
+                if subscription is not None:
                     if row["category"] == "test":
                         body = "Test from Commonplace"
                     else:
@@ -126,6 +128,20 @@ def drain(dispatcher) -> int:
                         body = f"#{row['number']} {suffix}"
                         ws = row["workspace_id"]
                         click = urls.share_link(db, ws, f"/app/?w={ws}#/card/{row['number']}")
+            except Exception:
+                # Rechecking failed before HTTP: release without spending an attempt.
+                with db._lock, db._tx() as conn:
+                    conn.execute(
+                        "UPDATE phone_push_deliveries SET status='pending',attempt=attempt-1,"
+                        "next_at=?,http_status=NULL,error=NULL WHERE id=? "
+                        "AND status='sending' AND attempt=?",
+                        (time.time() + 5, row["id"], row["attempt"]),
+                    )
+                continue
+            if subscription is None:
+                result = ("cancelled", None, None)
+            else:
+                try:
                     result = post(
                         settings,
                         subscription["topic"],
@@ -133,25 +149,25 @@ def drain(dispatcher) -> int:
                         priority="high" if row["category"] == "needs_you" else "default",
                         click=click,
                     )
-            except Exception:
-                # Exceptions can contain credentials, links or private card text.
-                result = ("retry", None, "delivery connection failed")
+                except Exception:
+                    # Transport exceptions can contain credentials or private text.
+                    result = ("retry", None, "delivery connection failed")
             _outcome(dispatcher, row, *result)
     return attempted
 
 
-def recover(db):
+def recover(db, max_attempts):
     """Recover counted claims interrupted before their outcome was committed."""
     with db._lock, db._tx() as conn:
         conn.execute(
             "UPDATE phone_push_deliveries SET status='retry',next_at=? "
             "WHERE status='sending' AND attempt<?",
-            (time.time(), webhooks.MAX_ATTEMPTS),
+            (time.time(), max_attempts),
         )
         conn.execute(
             "UPDATE phone_push_deliveries SET status='dead',error='delivery interrupted' "
             "WHERE status='sending' AND attempt>=?",
-            (webhooks.MAX_ATTEMPTS,),
+            (max_attempts,),
         )
 
 

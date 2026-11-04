@@ -321,10 +321,11 @@ test("R4: phone notifications render the four states with escaped values and acc
   assert.ok(off.includes(">Turn on<"));
   assert.ok(off.includes(pause));
   assert.doesNotMatch(off, />Turn off</);
-  for (const [status, label] of [["accepted", "Accepted by your ntfy server"], ["pending", "Waiting"], ["not_accepted", "Not accepted"], [null, "Not accepted"]]) {
+  for (const [status, label] of [["accepted", "Accepted by your ntfy server"], ["pending", "Waiting"], ["not_accepted", "Not accepted"], [null, ""]]) {
     const on = view({ ...base, subscription, test: status ? { status } : null });
     for (const text of [escape(subscription.server), escape(subscription.topic), ">Test<", ">Turn off<", home, pause, label]) assert.ok(on.includes(text));
     assert.equal((on.match(/>Copy</g) || []).length, 1);
     assert.doesNotMatch(on, /<script>|>Turn on</);
+    if (status === null) assert.doesNotMatch(on, /role="status"|Not accepted|Waiting|Accepted by your ntfy server/);
   }
 });

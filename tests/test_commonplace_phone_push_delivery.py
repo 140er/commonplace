@@ -501,3 +501,175 @@ def test_drain_scans_needs_me_once_for_three_pending_cards(hub, signup, monkeypa
         f"#{card['number']} needs you".encode() for card in cards
     }
     assert all(row["status"] == "accepted" for row in rows(hub, "phone_push_deliveries"))
+
+
+@pytest.mark.parametrize("phase", ["reconcile", "sweep", "outcome"])
+def test_worker_survives_phase_exception(hub, signup, monkeypatch, caplog, phase):
+    import threading
+
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    module = importlib.import_module("commonplace.phone_push.dispatcher")
+    sender = importlib.import_module("commonplace.phone_push.sender")
+    start = module.PushDispatcher.start
+    dispatcher = enable(monkeypatch, hub)
+    on(hub, owner)
+    queue_test(hub, owner)
+    dispatcher.sweep_seconds = 0.01
+    failed, accepted = threading.Event(), threading.Event()
+    target = sender if phase == "outcome" else dispatcher
+    name = "_outcome" if phase == "outcome" else phase
+    original = getattr(target, name)
+    outcome = sender._outcome
+    delays = []
+    wait = dispatcher._stop.wait
+
+    def backoff(delay):
+        delays.append(delay)
+        return wait(0.01)
+
+    def fail_once(*args, **kwargs):
+        if not failed.is_set():
+            failed.set()
+            raise RuntimeError("synthetic private exception text")
+        return original(*args, **kwargs)
+
+    def observed(*args):
+        result = outcome(*args)
+        if args[2] == "accepted":
+            accepted.set()
+        return result
+
+    drain = dispatcher.drain
+
+    def after_sweep():
+        return drain() if failed.is_set() else 0
+
+    if phase == "sweep":
+        monkeypatch.setattr(dispatcher, "drain", after_sweep)
+    monkeypatch.setattr(sender, "_outcome", observed)
+    if phase == "outcome":
+        original = observed
+    monkeypatch.setattr(target, name, fail_once)
+    monkeypatch.setattr(dispatcher._stop, "wait", backoff)
+    start(dispatcher)
+    try:
+        dispatcher.wake()
+        assert failed.wait(1), "failure phase was not reached"
+        dispatcher.wake()
+        assert accepted.wait(2), "worker did not recover after the next wake"
+        assert dispatcher.thread.is_alive()
+        assert delivery(hub, category="test")["status"] == "accepted"
+        assert delays == [5]
+        assert "phone push worker failed" in caplog.text
+        assert "synthetic private exception text" not in caplog.text
+    finally:
+        dispatcher.stop()
+    assert not dispatcher.thread.is_alive()
+
+
+def test_stop_during_drain_bounds_join_and_leaves_remaining_pending(hub, signup, monkeypatch):
+    import threading
+    import time
+
+    from commonplace import webhooks
+
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    module = importlib.import_module("commonplace.phone_push.dispatcher")
+    start = module.PushDispatcher.start
+    dispatcher = enable(monkeypatch, hub)
+    on(hub, owner)
+    for _ in range(3):
+        queue_test(hub, owner)
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    def stalled(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        release.wait(5)
+        return "accepted", 200, None
+
+    sender = importlib.import_module("commonplace.phone_push.sender")
+    monkeypatch.setattr(sender, "post", stalled)
+    monkeypatch.setattr(webhooks, "HTTP_TIMEOUT", 0.05)
+    start(dispatcher)
+    stopper = threading.Thread(target=lambda: (dispatcher.stop(), stopped.set()))
+    try:
+        assert entered.wait(1), "transport was not reached"
+        began = time.monotonic()
+        stopper.start()
+        assert stopped.wait(webhooks.HTTP_TIMEOUT + 2.5), "stop exceeded its bounded join"
+        assert time.monotonic() - began < webhooks.HTTP_TIMEOUT + 2.5
+    finally:
+        release.set()
+        stopper.join(timeout=2)
+        dispatcher.stop()
+    assert not dispatcher.thread.is_alive() and not stopper.is_alive()
+    assert len(calls) == 1
+    found = rows(hub, "phone_push_deliveries")
+    assert [row["status"] for row in found] == ["accepted", "pending", "pending"]
+    assert [row["attempt"] for row in found] == [1, 0, 0]
+
+
+def test_recovery_uses_dispatcher_attempt_limit(hub, signup, monkeypatch):
+    from commonplace import webhooks
+
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    enable(monkeypatch, hub)
+    on(hub, owner)
+    queue_test(hub, owner)
+    with hub.db._lock, hub.db._tx() as conn:
+        conn.execute("UPDATE phone_push_deliveries SET status='sending',attempt=2")
+    module = importlib.import_module("commonplace.phone_push")
+    module.stop(hub.gateway)
+    constructor = module.PushDispatcher
+
+    def limited(*args, **kwargs):
+        return constructor(*args, **(kwargs | {"max_attempts": 2}))
+
+    monkeypatch.setattr(module, "PushDispatcher", limited)
+    assert webhooks.MAX_ATTEMPTS == 3
+    module.install(hub.gateway)
+    assert hub.gateway.phone_push.max_attempts == 2
+    found = delivery(hub, category="test")
+    assert found["status"] == "dead", found
+    assert found["attempt"] == 2 and found["error"] == "delivery interrupted"
+    assert hub.gateway.phone_push.drain() == 0 and not hub.ntfy.requests
+
+
+def test_recheck_failure_releases_claim_without_spending_attempt(hub, signup, monkeypatch):
+    import time
+
+    owner, _ = signup[2]()
+    positive_get(hub, owner)
+    dispatcher = enable(monkeypatch, hub)
+    on(hub, owner)
+    queue_test(hub, owner)
+    eligibility = importlib.import_module("commonplace.phone_push.eligibility")
+    original = eligibility.owner_principal
+    calls = []
+
+    def fail_once(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic recheck failure")
+        return original(*args)
+
+    monkeypatch.setattr(eligibility, "owner_principal", fail_once)
+    began = time.time()
+    assert dispatcher.drain() == 1
+    found = delivery(hub, category="test")
+    assert found["status"] == "pending", found
+    assert found["attempt"] == 0 and found["error"] is None and found["http_status"] is None
+    assert began < found["next_at"] <= time.time() + 5
+    assert not hub.ntfy.requests
+    now = time.time()
+    with monkeypatch.context() as clock_patch:
+        clock_patch.setattr(time, "time", lambda: now + 6)
+        assert dispatcher.drain() == 1
+    found = delivery(hub, category="test")
+    assert found["status"] == "accepted" and found["attempt"] == 1, found
+    assert len(hub.ntfy.requests) == 1
