@@ -1,6 +1,13 @@
-"""Frozen S0 interface; implementation belongs to its owning unit."""
+"""Workspace front settings and operator-controlled key access."""
 
+import os
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+from commonplace import webhooks
+from commonplace.chat import types
 from commonplace.chat.types import FrontSettings
+from commonplace.extensions import ToolError
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_model_settings (
@@ -27,16 +34,172 @@ def ensure_schema(db) -> None:
 
 
 def front(db, workspace_id: str) -> FrontSettings:
-    raise NotImplementedError
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM chat_model_settings WHERE workspace_id=? AND scope='*' AND role='front'",
+            (workspace_id,),
+        ).fetchone()
+    if row is None:
+        return FrontSettings(
+            workspace_id,
+            True,
+            "none",
+            "",
+            None,
+            None,
+            types.DAILY_LIMIT_DEFAULT,
+            types.USER_DAILY_LIMIT_DEFAULT,
+            None,
+            None,
+        )
+    return FrontSettings(
+        workspace_id,
+        bool(row["enabled"]),
+        row["provider"],
+        row["model"],
+        row["base_url"],
+        row["key_ref"],
+        row["daily_limit"],
+        row["user_daily_limit"],
+        row["updated_by"],
+        row["updated_at"],
+    )
 
 
 def set_front(db, principal, body: dict) -> FrontSettings:
-    raise NotImplementedError
+    if not principal.person or principal.role != "owner":
+        raise types.ChatDenied("Only a signed-in workspace owner can change chat settings")
+    allowed = {
+        "enabled",
+        "provider",
+        "model",
+        "base_url",
+        "key_ref",
+        "daily_limit",
+        "user_daily_limit",
+    }
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"front"}
+        or not isinstance(body["front"], dict)
+        or set(body["front"]) - allowed
+    ):
+        raise ValueError("Invalid chat settings")
+    data = body["front"]
+    enabled = data.get("enabled", True)
+    provider = data.get("provider", "none")
+    if (
+        type(enabled) is not bool
+        or not isinstance(provider, str)
+        or provider not in types.PROVIDERS
+    ):
+        raise ValueError("Invalid chat provider or enabled flag")
+    model = data.get("model", types.DEFAULT_MODELS.get(provider, ""))
+    base_url = data.get("base_url")
+    key_ref = data.get("key_ref")
+    if not isinstance(model, str) or (provider != "none" and not model.strip()):
+        raise ValueError("Invalid chat model")
+    if key_ref is not None and (
+        not isinstance(key_ref, str) or types.KEY_REF.fullmatch(key_ref) is None
+    ):
+        raise ValueError("Invalid chat key reference")
+    if provider == "openai_compatible":
+        try:
+            webhooks.validate_url(base_url)
+            parts = urlsplit(base_url)
+            if (
+                "?" in base_url
+                or "#" in base_url
+                or parts.username is not None
+                or parts.password is not None
+                or parts.path.rstrip("/").endswith("/v1")
+            ):
+                raise ValueError()
+        except (ToolError, ValueError, TypeError):
+            raise ValueError("Invalid chat base URL") from None
+    elif base_url is not None:
+        raise ValueError("Chat base URL is only allowed for openai_compatible")
+    if provider == "anthropic" and key_ref is None:
+        raise ValueError("Anthropic requires a chat key reference")
+    daily_limit = data.get("daily_limit", types.DAILY_LIMIT_DEFAULT)
+    user_daily_limit = data.get("user_daily_limit", types.USER_DAILY_LIMIT_DEFAULT)
+    if (
+        type(daily_limit) is not int
+        or type(user_daily_limit) is not int
+        or not 0 <= user_daily_limit <= daily_limit <= types.DAILY_LIMIT_MAX
+    ):
+        raise ValueError("Invalid chat daily limits")
+    settings = FrontSettings(
+        principal.workspace_id,
+        enabled,
+        provider,
+        model,
+        base_url,
+        key_ref,
+        daily_limit,
+        user_daily_limit,
+        principal.user_id,
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    if key_ref is not None and not key_allowed(settings):
+        raise types.ChatDenied("key references need operator approval")
+    with db._lock, db._tx() as conn:
+        conn.execute(
+            "INSERT INTO chat_model_settings "
+            "(workspace_id, scope, role, enabled, provider, model, base_url, key_ref, "
+            "daily_limit, user_daily_limit, updated_by, updated_at) "
+            "VALUES (?, '*', 'front', ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(workspace_id, scope, role) DO UPDATE SET "
+            "enabled=excluded.enabled, provider=excluded.provider, model=excluded.model, "
+            "base_url=excluded.base_url, key_ref=excluded.key_ref, "
+            "daily_limit=excluded.daily_limit, user_daily_limit=excluded.user_daily_limit, "
+            "updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            (
+                settings.workspace_id,
+                int(enabled),
+                provider,
+                model,
+                base_url,
+                key_ref,
+                daily_limit,
+                user_daily_limit,
+                settings.updated_by,
+                settings.updated_at,
+            ),
+        )
+        db.audit(
+            action="chat.settings",
+            decision="ok",
+            workspace_id=principal.workspace_id,
+            user_id=principal.user_id,
+        )
+    return settings
 
 
 def resolve_key(settings: FrontSettings) -> str | None:
-    raise NotImplementedError
+    if not key_allowed(settings):
+        return None
+    return os.environ.get(settings.key_ref.removeprefix("env:")) or None
 
 
 def key_allowed(settings: FrontSettings) -> bool:
-    raise NotImplementedError
+    if (
+        not isinstance(settings.key_ref, str)
+        or types.KEY_REF.fullmatch(settings.key_ref) is None
+        or settings.workspace_id not in _allowlist(types.KEY_WORKSPACES_ENV)
+    ):
+        return False
+    if settings.provider == "anthropic":
+        return settings.base_url is None
+    if settings.provider != "openai_compatible" or not settings.base_url:
+        return False
+    try:
+        host = urlsplit(settings.base_url).hostname
+    except ValueError:
+        return False
+    return host is not None and host.lower() in _allowlist(types.KEY_HOSTS_ENV, lower=True)
+
+
+def _allowlist(name: str, *, lower: bool = False) -> set[str]:
+    entries = {entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()}
+    return {entry.lower() for entry in entries} if lower else entries
