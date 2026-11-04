@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -293,7 +294,7 @@ def run_deploy(tmp_path, **fakes):
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in "jq date flock cat cut tr grep sed head env bash".split():
+    for name in "jq date flock timeout bash".split():
         executable = shutil.which(name)
         assert executable, f"required test dependency: {name}"
         (bin_dir / name).symlink_to(executable)
@@ -302,6 +303,11 @@ def run_deploy(tmp_path, **fakes):
     bodies = {
         "id": f"echo {fakes.get('uid', 0)}",
         "systemctl": """case "$*" in
+"show -p LoadState --value test-backup.service") echo loaded ;;
+"show -p Type --value test-backup.service") echo oneshot ;;
+"show -p RemainAfterExit --value test-backup.service") echo REMAIN ;;
+"show -p ExecMainStartTimestamp --value test-backup.service") date -u +%Y-%m-%dT%H:%M:%S.%NZ ;;
+"is-active --quiet test-backup.service") exit ACTIVE ;;
 "show -p InvocationID --value test-backup.service")
     if [[ -f "$HOME/started" ]]; then echo AFTER; else echo BEFORE; fi ;;
 "start --wait test-backup.service") : > "$HOME/started"; exit START_RC ;;
@@ -310,14 +316,16 @@ def run_deploy(tmp_path, **fakes):
 esac""".replace("AFTER", fakes.get("after", "new"))
         .replace("BEFORE", "old")
         .replace("START_RC", str(fakes.get("start_rc", 0)))
-        .replace("RESULT", fakes.get("result", "success")),
+        .replace("RESULT", fakes.get("result", "success"))
+        .replace("REMAIN", fakes.get("remain", "no"))
+        .replace("ACTIVE", str(fakes.get("active", 1))),
         "docker": """if [[ "$*" == *"config --format json" ]]; then
- echo '{"services":{"commonplace":{"ports":[{"host_ip":"127.0.0.1","published":"8765"}]}}}'
-fi""",
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"8765"}]}}}'
+fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")),
         "curl": "echo 200",
         "latest": fakes.get(
             "latest",
-            'jq -cn --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \'{id:("a" * 64),time:$time}\'',
+            'jq -cn --arg time "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" \'{id:("a" * 64),time:$time}\'',
         ),
         "check": f"exit {fakes.get('check_rc', 0)}",
         "--check": ': > "$HOME/shell-executed"',
@@ -336,6 +344,9 @@ fi""",
         "LANG": "C",
         "PATH": str(bin_dir),
         "COMMONPLACE_ROOT": str(tmp_path),
+        "COMMONPLACE_SOURCE_DIR": str(ROOT),
+        "COMMONPLACE_ENV_FILE": str(tmp_path / ".env"),
+        "COMMONPLACE_DATA_DIR": str(tmp_path / "data"),
         "COMMONPLACE_DEPLOY_ENV": str(config),
         "DEPLOY_BACKUP_UNIT": "test-backup.service",
         "DEPLOY_BACKUP_CHECK_CMD": str(bin_dir / "check"),
@@ -343,8 +354,11 @@ fi""",
     }
     if fakes.get("missing_unit"):
         env.pop("DEPLOY_BACKUP_UNIT")
+    env.update(fakes.get("env", {}))
+    for key in fakes.get("unset", []):
+        env.pop(key, None)
     result = subprocess.run(
-        [str(bin_dir / "bash"), str(DEPLOY_SH)],
+        [str(bin_dir / "bash"), str(DEPLOY_SH), *fakes.get("args", [])],
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -370,50 +384,55 @@ def assert_deploy_failure(result, calls, step, prefix):
 @pytest.mark.parametrize(
     "fakes,step,prefix",
     [
-        ({"result": "failed"}, "backup", ["id"] + ["systemctl"] * 4),
-        ({"check_rc": 1}, "check", ["id"] + ["systemctl"] * 4 + ["latest", "check"]),
+        ({"result": "exit-code"}, "backup", ["id"] + ["systemctl"] * 7),
+        ({"check_rc": 1}, "check", ["id"] + ["systemctl"] * 8 + ["latest", "check"]),
         ({"missing_unit": True}, "config", ["id"]),
-        ({"latest": "echo null"}, "latest", ["id"] + ["systemctl"] * 4 + ["latest"]),
-        ({"latest": "exit 2"}, "latest", ["id"] + ["systemctl"] * 4 + ["latest"]),
+        ({"latest": "echo null"}, "latest", ["id"] + ["systemctl"] * 8 + ["latest"]),
+        ({"latest": "exit 2"}, "latest", ["id"] + ["systemctl"] * 8 + ["latest"]),
         ({"uid": 1000}, "preflight", ["id"]),
-        ({"start_rc": 1}, "backup", ["id"] + ["systemctl"] * 2),
+        ({"start_rc": 1}, "backup", ["id"] + ["systemctl"] * 5),
     ],
 )
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_fails_closed(tmp_path, fakes, step, prefix):
     assert DEPLOY_SH.is_file()
     result, calls = run_deploy(tmp_path, **fakes)
     assert_deploy_failure(result, calls, step, prefix)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_snapshot_before_start(tmp_path):
     assert DEPLOY_SH.is_file()
     import time
 
     snapshot = int(time.time()) - 5
-    latest = f'jq -cn --arg time "$(date -u -d @{snapshot} +%Y-%m-%dT%H:%M:%SZ)" \'{{id:("a" * 64),time:$time}}\''
+    latest = f'jq -cn --arg time "$(date -u -d @{snapshot} +%Y-%m-%dT%H:%M:%S.%NZ)" \'{{id:("a" * 64),time:$time}}\''
     result, calls = run_deploy(tmp_path, latest=latest)
-    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 4 + ["latest"])
+    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 8 + ["latest"])
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_unchanged_invocation(tmp_path):
     assert DEPLOY_SH.is_file()
     result, calls = run_deploy(tmp_path, after="old")
-    assert_deploy_failure(result, calls, "backup", ["id"] + ["systemctl"] * 3)
+    assert_deploy_failure(result, calls, "backup", ["id"] + ["systemctl"] * 6)
 
 
 @pytest.mark.parametrize("timestamp", ["now", "+1 hour", "", "future"])
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_invalid_timestamp(tmp_path, timestamp):
     assert DEPLOY_SH.is_file()
     value = (
-        "\"$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)\""
+        "\"$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%S.%NZ)\""
         if timestamp == "future"
         else shlex.quote(timestamp)
     )
     latest = f"jq -cn --arg time {value} '{{id:(\"a\" * 64),time:$time}}'"
     result, calls = run_deploy(tmp_path, latest=latest)
-    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 4 + ["latest"])
+    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 8 + ["latest"])
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_success_order(tmp_path):
     assert DEPLOY_SH.is_file()
     result, calls = run_deploy(tmp_path)
@@ -426,25 +445,28 @@ def test_deploy_sh_success_order(tmp_path):
         "--env-file",
         str(tmp_path / ".env"),
     ]
-    assert calls == [
-        ["id", "-u"],
-        ["systemctl", "show", "-p", "InvocationID", "--value", "test-backup.service"],
-        ["systemctl", "start", "--wait", "test-backup.service"],
-        ["systemctl", "show", "-p", "InvocationID", "--value", "test-backup.service"],
-        ["systemctl", "show", "-p", "Result", "--value", "test-backup.service"],
-        ["latest"],
-        ["check"],
+    assert [call[0] for call in calls] == ["id"] + ["systemctl"] * 8 + [
+        "latest",
+        "check",
+        "systemctl",
+        "docker",
+        "docker",
+        "docker",
+        "curl",
+    ]
+    assert calls[-4:-1] == [
         compose + ["config", "--format", "json"],
-        compose + ["up", "-d", "--build", "--remove-orphans"],
+        compose + ["up", "-d", "--build"],
         compose + ["ps"],
-        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:8765/healthz"],
     ]
 
 
-def test_deploy_sh_has_no_skip():
+@pytest.mark.parametrize("fakes", [{"args": ["--skip-backup"]}, {"env": {"SKIP_BACKUP": "1"}}])
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_has_no_skip(tmp_path, fakes):
     assert DEPLOY_SH.is_file()
-    text = DEPLOY_SH.read_text()
-    assert not any(word in text for word in ("SKIP", "no-backup", "--force"))
+    result, calls = run_deploy(tmp_path, **fakes)
+    assert_deploy_failure(result, calls, "usage", ["id"])
 
 
 @pytest.mark.parametrize(
@@ -452,10 +474,12 @@ def test_deploy_sh_has_no_skip():
     [
         (100, 99, 105, 900, 1),
         (100, 100, 1001, 900, 1),
-        (100, 170, 100, 900, 1),
+        (100, 161, 100, 900, 1),
+        (100, 160, 100, 900, 0),
         (100, 100, 105, 900, 0),
     ],
 )
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_fresh_enough(start, snap, now, age, expected):
     assert DEPLOY_SH.is_file()
     result = subprocess.run(
@@ -465,9 +489,9 @@ def test_deploy_sh_fresh_enough(start, snap, now, age, expected):
             'source "$1"; fresh_enough "$2" "$3" "$4" "$5"',
             "bash",
             str(DEPLOY_SH),
-            str(start),
-            str(snap),
-            str(now),
+            str(start * 1000000000),
+            str(snap * 1000000000),
+            str(now * 1000000000),
             str(age),
         ],
         stdin=subprocess.DEVNULL,
@@ -478,6 +502,7 @@ def test_deploy_sh_fresh_enough(start, snap, now, age, expected):
     assert result.returncode == expected, result.stderr
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 def test_deploy_sh_env_file_is_data_and_environment_wins(tmp_path):
     assert DEPLOY_SH.is_file()
     result, calls = run_deploy(
@@ -486,3 +511,53 @@ def test_deploy_sh_env_file_is_data_and_environment_wins(tmp_path):
     assert result.returncode == 0, result.stderr
     assert ["check"] in calls
     assert not (tmp_path / "shell-executed").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_rejects_remain_after_exit(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, remain="yes")
+    assert_deploy_failure(result, calls, "config", ["id"] + ["systemctl"] * 3)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+@pytest.mark.parametrize("mode", ["split", "payload", "missing", "active", "public", "multiline"])
+def test_deploy_sh_additional_contracts(tmp_path, mode):
+    assert DEPLOY_SH.is_file()
+    fakes = {}
+    if mode == "split":
+        fakes = {
+            "unset": ["DEPLOY_BACKUP_CHECK_CMD"],
+            "config": f"DEPLOY_BACKUP_CHECK_CMD={tmp_path}/bin/check --check\n",
+        }
+    elif mode == "payload":
+        fakes = {
+            "unset": ["DEPLOY_BACKUP_CHECK_CMD"],
+            "config": f'DEPLOY_BACKUP_CHECK_CMD=$(touch "{tmp_path}/marker")\n',
+        }
+    elif mode == "missing":
+        fakes = {"unset": ["COMMONPLACE_DATA_DIR"]}
+    elif mode == "active":
+        fakes = {"active": 0}
+    elif mode == "public":
+        fakes = {"host_ip": "0.0.0.0"}
+    else:
+        fakes = {"latest": "echo null; echo null"}
+    result, calls = run_deploy(tmp_path, **fakes)
+    if mode == "split":
+        assert result.returncode == 0, result.stderr
+        assert ["check", "--check"] in calls
+    else:
+        step = {
+            "payload": "check",
+            "missing": "config",
+            "active": "backup",
+            "public": "deploy",
+            "multiline": "latest",
+        }[mode]
+        assert result.returncode == 1
+        assert result.stderr.startswith(f"[deploy] ERROR: {step}:")
+        assert not any("up" in call for call in calls)
+        if mode != "public":
+            assert not any(call[0] == "docker" for call in calls)
+    assert not (tmp_path / "marker").exists()
