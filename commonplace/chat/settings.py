@@ -145,15 +145,10 @@ def set_front(db, principal, body: dict) -> FrontSettings:
         raise types.ChatDenied("key references need operator approval")
     with db._lock, db._tx() as conn:
         conn.execute(
-            "INSERT INTO chat_model_settings "
+            "INSERT OR REPLACE INTO chat_model_settings "
             "(workspace_id, scope, role, enabled, provider, model, base_url, key_ref, "
             "daily_limit, user_daily_limit, updated_by, updated_at) "
-            "VALUES (?, '*', 'front', ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(workspace_id, scope, role) DO UPDATE SET "
-            "enabled=excluded.enabled, provider=excluded.provider, model=excluded.model, "
-            "base_url=excluded.base_url, key_ref=excluded.key_ref, "
-            "daily_limit=excluded.daily_limit, user_daily_limit=excluded.user_daily_limit, "
-            "updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+            "VALUES (?, '*', 'front', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 settings.workspace_id,
                 int(enabled),

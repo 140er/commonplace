@@ -123,7 +123,7 @@ def install(gateway) -> None:
                 send_json(h, 400, {"error": "Invalid chat settings"})
                 return
             try:
-                config = settings.set_front(gateway.db, principal, body["front"])
+                config = settings.set_front(gateway.db, principal, body)
             except ChatDenied:
                 send_json(h, 403, {"error": "Chat settings not allowed"})
                 return
