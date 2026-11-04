@@ -206,6 +206,11 @@ def _snapshot(source: Path, target: Path) -> None:
     the source main file or WAL.
     """
     if encryption_settings(source) is None:
+        # Stall deadline: fail only when the copy makes no new progress for 30 s.
+        # Compare with the lowest remaining count seen so far, not the previous
+        # one: a source change restarts the copy from the top, and resetting on
+        # every drop would let a restarting copy run forever. A late restart
+        # must re-copy below the old low before the timer resets (fails closed).
         deadline = time.monotonic() + 30
         remaining = None
 
