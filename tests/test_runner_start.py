@@ -175,7 +175,7 @@ def test_B1_unbound_is_inert(signup_hub, owners, tmp_path):
     machine = _enroll(hub, owner, requesters=[cid])  # positive control: enroll 201
     task = card(hub, owner)
     for auth in ({"owner": owner}, {"token": token}):
-        assert _start(hub, machine, task, **auth) == (403, {"error": "binding_not_attested"})
+        assert _start(hub, machine, task, **auth) == (403, {"error": "no: binding_not_attested"})
     assert not START_TOOLS & {tool["name"] for tool in _tools(hub, token)}
     _denied(
         _tool(
@@ -255,6 +255,7 @@ def test_A2_owner_cannot_bypass_worker_origin(signup_hub, owners):
     "case,reason",
     [
         ("ask", "waiting_on_person"),
+        ("review_ask", "waiting_on_person"),
         ("ask_to", "waiting_on_person"),
         ("review", "not_todo"),
         ("done", "not_todo"),
@@ -273,7 +274,8 @@ def test_A3_only_unassigned_ready_todo(signup_hub, owners, case, reason):
     from commonplace.boards.store import BoardStore
 
     changes = {
-        "ask": {"status": "review", "ask": "Choose"},
+        "ask": {"status": "todo", "ask": "Choose"},
+        "review_ask": {"status": "review", "ask": "Choose"},
         "review": {"status": "review", "ask": ""},
         "ask_to": {"ask_to": "user:" + owner["user_id"]},
         "assigned": {"assignee": "conn:" + cid},
@@ -281,12 +283,15 @@ def test_A3_only_unassigned_ready_todo(signup_hub, owners, case, reason):
     }
     values = changes.get(case, {"status": case})
     with BoardStore(directory).transaction() as conn:
+        if case == "ask":
+            # Exercise defensive handling of legacy todo+ask rows despite the current CHECK.
+            conn.execute("PRAGMA ignore_check_constraints=ON")
         conn.execute(
             "UPDATE tasks SET " + ",".join(key + "=?" for key in values) + " WHERE id=?",
             (*values.values(), task["number"]),
         )
     code, body = _start(hub, machine, task, owner=owner)
-    assert code == 403 and body["error"].endswith(reason), (code, body)
+    assert (code, body) == (403, {"error": "no: card is not startable: " + reason})
 
 
 def test_A4_closed_schema_and_minimal_job(signup_hub, owners):
@@ -343,7 +348,7 @@ def test_A6_machine_resolution_is_canonical(signup_hub, owners):
     for ref in ("missing", "foreign-machine", "mach_0123456789abcdef", foreign["machine_id"]):
         assert _start(hub, machine, task, token=token, machine=ref) == (
             404,
-            {"error": "machine not found"},
+            {"error": "no: machine not found"},
         )
 
 
@@ -478,11 +483,11 @@ def test_S4_idempotency_precedes_active_limit(signup_hub, owners):
     assert _accepted(_start(hub, machine, task, token=token, request_key="k"), 200) == first
     assert _start(hub, machine, task, token=token, project="other", request_key="k") == (
         409,
-        {"error": "request_key reused with different arguments"},
+        {"error": "no: request_key reused with different arguments"},
     )
     assert _start(hub, machine, task, token=token) == (
         409,
-        {"error": "card already has an active start"},
+        {"error": "no: card already has an active start"},
     )
 
 
@@ -491,7 +496,7 @@ def test_S5_queue_limit(signup_hub, owners):
     _cid, token, machine = _ready(hub, owner)
     for _ in range(8):
         _accepted(_start(hub, machine, card(hub, owner), token=token))
-    assert _start(hub, machine, card(hub, owner), token=token) == (409, {"error": "busy"})
+    assert _start(hub, machine, card(hub, owner), token=token) == (409, {"error": "no: busy"})
 
 
 def test_S5_recent_card_and_hourly_cap(signup_hub, owners, monkeypatch):
@@ -506,15 +511,21 @@ def test_S5_recent_card_and_hourly_cap(signup_hub, owners, monkeypatch):
     leased = _lease(hub, machine)
     _starting(hub, machine, leased)
     _result(hub, machine, leased, "started", thread_id="thread-demo")
-    assert _start(hub, machine, task, token=token) == (409, {"error": "card was started recently"})
-    assert _start(hub, machine, card(hub, owner), owner=owner) == (409, {"error": "busy"})
+    assert _start(hub, machine, task, token=token) == (
+        409,
+        {"error": "no: card was started recently"},
+    )
+    assert _start(hub, machine, card(hub, owner), owner=owner) == (409, {"error": "no: busy"})
     from datetime import datetime, timedelta, timezone
 
     later = datetime.strptime(clock, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) + timedelta(
         hours=2
     )
     monkeypatch.setattr(jobs, "_now", lambda: later.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    assert _start(hub, machine, task, token=token) == (409, {"error": "card was started recently"})
+    assert _start(hub, machine, task, token=token) == (
+        409,
+        {"error": "no: card was started recently"},
+    )
     _accepted(_start(hub, machine, task, owner=owner))
 
 
@@ -635,7 +646,7 @@ def test_I1_workspace_isolation(signup_hub, owners):
     job = _accepted(_start(hub, machine, task, token=token))
     _cid, stranger, other_machine = _ready(hub, foreign_owner)
     for auth in ({"owner": foreign_owner}, {"token": stranger}):
-        assert _start(hub, machine, task, **auth) == (404, {"error": "machine not found"})
+        assert _start(hub, machine, task, **auth) == (404, {"error": "no: machine not found"})
         kwargs = {"cookie": foreign_owner["cookie"]} if "owner" in auth else {"token": stranger}
         assert (
             http(hub.port, "POST", f"/api/card-starts/{job['job_id']}/cancel", body={}, **kwargs)[0]
@@ -686,20 +697,23 @@ def test_V1_cancel_state_rules(signup_hub, owners, state):
         assert response[0] == 200, response
     if state == "uncertain":
         before = _status(hub, task, owner=owner)
-        expected = (409, {"error": "start outcome is uncertain; a workspace owner must resolve it"})
+        expected = (
+            409,
+            {"error": "no: start outcome is uncertain; a workspace owner must resolve it"},
+        )
         assert http(hub.port, "POST", path, token=token, body={}) == expected
         assert http(hub.port, "POST", path, cookie=owner["cookie"], body={}) == expected
         _denied(_tool(hub, token, "card_start_cancel", job=job["job_id"]))
         assert _status(hub, task, owner=owner) == before
         assert _start(hub, machine, task, token=token) == (
             409,
-            {"error": "card already has an active start"},
+            {"error": "no: card already has an active start"},
         )
     elif state in ("started", "failed", "cancelled"):
         before = _status(hub, task, owner=owner)
         assert http(hub.port, "POST", path, token=token, body={}) == (
             409,
-            {"error": "start is already finished"},
+            {"error": "no: start is already finished"},
         )
         assert _status(hub, task, owner=owner) == before
     else:
@@ -707,3 +721,88 @@ def test_V1_cancel_state_rules(signup_hub, owners, state):
         assert code == 200, (code, body)
         assert body["state"] == ("starting" if state == "starting" else "cancelled")
         assert body["cancel_requested_at"]
+
+
+@pytest.mark.parametrize("surface", ["rest", "mcp"])
+def test_requester_replay_never_returns_lease_token(signup_hub, owners, surface):
+    import json
+
+    hub, owner = signup_hub, owners["A"]
+    _cid, token, machine = _ready(hub, owner)
+    task = card(hub, owner)
+    first = _accepted(_start(hub, machine, task, token=token, request_key="replay"))
+    leased = _lease(hub, machine)
+    stored_token = leased["lease_token"]
+    assert isinstance(stored_token, str) and stored_token
+    from commonplace.runner import jobs
+
+    store = jobs.open_store(hub.gateway, owner["workspace"])
+    with store.transaction() as conn:
+        row = dict(
+            conn.execute("SELECT * FROM runner_jobs WHERE id=?", (first["job_id"],)).fetchone()
+        )
+    assert row["lease_token"] == stored_token
+    if surface == "rest":
+        replay = _accepted(_start(hub, machine, task, token=token, request_key="replay"), 200)
+        serialized = json.dumps(replay)
+    else:
+        response = _tool(
+            hub,
+            token,
+            "card_start",
+            task=task["number"],
+            machine=machine["machine_id"],
+            project="demo",
+            topic="worker",
+            request_key="replay",
+        )
+        result = _ok(response)
+        replay = json.loads(result["content"][0]["text"])
+        serialized = json.dumps(response)
+    assert replay["job_id"] == first["job_id"]
+    assert replay["lease_token"] is None
+    assert stored_token not in serialized
+    assert jobs.job_object(row)["lease_token"] is None
+    assert stored_token not in json.dumps(jobs.job_object(row))
+
+
+@pytest.mark.parametrize("surface", ["rest", "mcp"])
+def test_request_key_has_explicit_128_character_limit(signup_hub, owners, surface):
+    hub, owner = signup_hub, owners["A"]
+    _cid, token, machine = _ready(hub, owner)
+    _accepted(_start(hub, machine, card(hub, owner), token=token, request_key="k" * 128))
+    task = card(hub, owner)
+    if surface == "rest":
+        assert _start(hub, machine, task, token=token, request_key="k" * 129) == (
+            403,
+            {"error": "no: invalid request_key"},
+        )
+    else:
+        response = _tool(
+            hub,
+            token,
+            "card_start",
+            task=task["number"],
+            machine=machine["machine_id"],
+            project="demo",
+            topic="worker",
+            request_key="k" * 129,
+        )
+        _denied(response)
+        import json
+
+        assert "no: invalid request_key" in json.dumps(response)
+    schema = next(tool for tool in _tools(hub, token) if tool["name"] == "card_start")[
+        "inputSchema"
+    ]
+    assert schema["properties"]["request_key"].get("maxLength") == 128
+    assert _status(hub, task, owner=owner) == []
+
+
+def test_worker_scope_documentation_states_card_guidance(signup_hub, owners):
+    from pathlib import Path
+
+    _ready(signup_hub, owners["A"])
+    text = (Path(__file__).resolve().parents[1] / "docs" / "runner.md").read_text()
+    assert "Card scope from the spawn message is guidance only." in text
+    assert "A worker can claim any startable todo card in its write wing." in text

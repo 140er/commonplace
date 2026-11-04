@@ -295,7 +295,7 @@ def test_AU1_owner_acts_have_one_audit_row_and_job_grant_version(signup_hub, own
             "SELECT grant_version FROM runner_jobs WHERE machine_id=?", (machine["machine_id"],)
         ).fetchall()
     assert versions == [(machine_row(hub, owner, machine)["grant_version"],)]
-    status, body = edit(hub, owner, machine, "POST", "/rotate", {})
+    status, body = edit(hub, owner, machine, "POST", "/rotate", {"credential": "worker"})
     assert status == 200, "rotation failed"
     status, body = edit(hub, owner, machine, "DELETE")
     assert status == 200, (status, body)
@@ -355,7 +355,7 @@ def test_B4_binding_changes_reset_attestation(signup_hub, owners, change):
     machine = enroll(hub, owner)
     attest(hub, owner, machine)
     if change == "worker-rotate":
-        status, body = edit(hub, owner, machine, "POST", "/rotate", {"kind": "worker"})
+        status, body = edit(hub, owner, machine, "POST", "/rotate", {"credential": "worker"})
         assert status == 200, "rotation failed"
         assert hub.db.authenticate_token(machine["worker_token"]) is None
         assert hub.db.authenticate_token(body["worker_token"]) is not None

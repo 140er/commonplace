@@ -570,3 +570,61 @@ def test_s6_lost_starting_reply_retries_before_one_spawn(signup_hub, owners, tmp
     row = _state(signup_hub, owners["A"], number, job_id)
     assert row["state"] == "started" and row["thread_id"] == "demo-thread"
     assert list((tmp_path / "journal").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("body", [{}, {"lease_token": None}, {"lease_token": ""}])
+def test_malformed_lease_is_transient_without_spawn(signup_hub, owners, tmp_path, body):  # noqa: F811
+    _machine, path, env = _run_control(signup_hub, owners["A"], tmp_path)
+    signup_hub.gateway.add_route(
+        "POST", "/api/runner/lease", lambda handler: handler._send_json(200, body)
+    )
+    result = _invoke(path, env)
+    assert result.returncode == 5
+    assert result.stderr == "runner: hub unavailable (200)\n"
+    assert launches(tmp_path) == []
+    assert list((tmp_path / "journal").glob("*.json")) == []
+    # The same protocol failure must advance the ordinary continuous-mode back-off.
+    from commonplace.runner import agent
+
+    hub = agent._Hub(json.loads(path.read_text()), env["COMMONPLACE_RUNNER_TOKEN"])
+    delays = []
+    for _ in range(2):
+        with pytest.raises(agent._HubError) as error:
+            hub.post("lease", {})
+        assert error.value.kind == "transient"
+        delays.append(hub.delay())
+    assert delays == [30, 60]
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", '{"outcome":"spawning"}'])
+def test_corrupt_journal_is_quarantined_and_leasing_continues(
+    signup_hub,  # noqa: F811
+    owners,  # noqa: F811
+    tmp_path,
+    content,
+):
+    _machine, path, env = _run_control(signup_hub, owners["A"], tmp_path)
+    journal = tmp_path / "journal"
+    damaged = journal / "damaged.json"
+    damaged.write_text(content)
+    calls = []
+    original = signup_hub.gateway.find_route("POST", "/api/runner/lease")
+
+    def lease(handler):
+        calls.append(True)
+        original(handler)
+
+    signup_hub.gateway.add_route("POST", "/api/runner/lease", lease)
+    result = _invoke(path, env)
+    assert result.returncode == 0
+    assert result.stderr == "runner: invalid journal quarantined\n"
+    assert calls == [True]
+    assert not damaged.exists()
+    quarantined = list(journal.glob("damaged.json.quarantine-*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text() == content
+    assert launches(tmp_path) == []
+    result = _invoke(path, env)
+    assert result.returncode == 0 and result.stderr == ""
+    assert calls == [True, True]
+    assert launches(tmp_path) == []

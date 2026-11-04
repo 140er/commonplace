@@ -99,15 +99,14 @@ def open_store(gateway, ws):
     return JobStore(gateway, ws)
 
 
-def job_object(row, *, tokens=True):
+def job_object(row, *, tokens=False):
     """The launch contract contains identifiers and grant arguments only."""
     data = {
         key: row[key]
         for key in ("lease_until", "task_number", "board_slug", "project", "topic", "runtime_mode")
     }
     data.update(job_id=row["id"], title_marker="commonplace-job:" + row["id"])
-    if tokens:
-        data["lease_token"] = row["lease_token"]
+    data["lease_token"] = row["lease_token"] if tokens else None
     return data
 
 

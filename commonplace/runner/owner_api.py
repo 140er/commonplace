@@ -97,9 +97,9 @@ def register(gateway):
                 result = registry.attest(gateway.db, owner, parts[0], data)
                 status = 200
             else:
-                if set(data) - {"kind"}:
-                    raise ValueError("rotation accepts only kind")
-                result = registry.rotate(gateway.db, owner, parts[0], data.get("kind", "worker"))
+                if set(data) != {"credential"} or data["credential"] not in ("machine", "worker"):
+                    raise ValueError("credential must be machine or worker")
+                result = registry.rotate(gateway.db, owner, parts[0], data["credential"])
                 status = 200
         except registry.NotFound as exc:
             send_json(h, 404, {"error": str(exc)})

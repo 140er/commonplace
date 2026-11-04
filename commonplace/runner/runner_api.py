@@ -174,7 +174,7 @@ def register(gateway):
                         )
                     else:
                         row = jobs.result(store, machine, **body)
-                    payload = jobs.job_object(row)
+                    payload = jobs.job_object(row, tokens=action == "lease")
             send_json(h, 200, payload)
         except HTTPError as exc:
             send_json(h, exc.status, {"error": str(exc)})

@@ -161,7 +161,7 @@ def test_t1_rotated_and_expired_machine_credentials_are_rejected(
         "POST",
         f"/api/runners/{machine['machine_id']}/rotate",
         cookie=owner["cookie"],
-        body={"kind": "machine"},
+        body={"credential": "machine"},
     )
     assert status == 200
     status, body = http(
@@ -200,3 +200,21 @@ def test_t1_rotated_and_expired_machine_credentials_are_rejected(
     )
     assert result.returncode == 3
     assert launches(tmp_path / "expired") == []
+
+
+@pytest.mark.parametrize("body", [{}, {"credential": "bogus"}], ids=["absent", "unknown"])
+def test_rotate_requires_valid_credential(signup_hub, identity_owner, body):  # noqa: F811
+    hub, owner = signup_hub, identity_owner
+    machine = enroll(hub, owner)
+    before = _machines(hub, owner)
+    status, response = http(
+        hub.port,
+        "POST",
+        f"/api/runners/{machine['machine_id']}/rotate",
+        cookie=owner["cookie"],
+        body=body,
+    )
+    assert (status, response) == (400, {"error": "credential must be machine or worker"})
+    assert _machines(hub, owner) == before
+    for kind in ("machine", "worker"):
+        assert hub.db.authenticate_token(machine[f"{kind}_token"]) is not None

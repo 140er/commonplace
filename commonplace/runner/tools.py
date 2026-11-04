@@ -88,7 +88,9 @@ def card_start(
         machine["max_runtime_mode"]
     ):
         raise ToolError("no: runtime mode not allowed")
-    if request_key is not None and (not isinstance(request_key, str) or not request_key):
+    if request_key is not None and (
+        not isinstance(request_key, str) or not 1 <= len(request_key) <= 128
+    ):
         raise ToolError("no: invalid request_key")
     status, row = jobs.create(
         store,
@@ -106,7 +108,7 @@ def card_start(
         runtime_mode=runtime_mode,
         request_key=request_key,
     )
-    return status, jobs.job_object(row)
+    return status, jobs.job_object(row, tokens=False)
 
 
 def card_start_cancel(ctx, job):
@@ -152,7 +154,7 @@ OPERATIONS = {
             "project": STRING,
             "topic": STRING,
             "runtime_mode": {"type": "string", "enum": list(MODES), "default": "approval-required"},
-            "request_key": STRING,
+            "request_key": {**STRING, "maxLength": 128},
         },
         ("task", "machine", "project", "topic"),
         "Request an attested machine to start a worker for a claimable card.",

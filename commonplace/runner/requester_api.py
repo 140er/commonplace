@@ -63,7 +63,7 @@ def register(gateway):
         except ToolError as exc:
             message = str(exc).removeprefix("no: ")
             status = 404 if message in NOT_FOUND else 409 if message in CONFLICTS else 403
-            send_json(handler, status, {"error": message})
+            send_json(handler, status, {"error": str(exc)})
 
     gateway.add_route("POST", "/api/card-starts", route)
     gateway.add_route("GET", "/api/card-starts", route)

@@ -167,7 +167,15 @@ def test_l1_stale_and_foreign_fences(signup_hub, owners):  # noqa: F811
             assert status in (404, 409), (status, body)
     status, body = _machine_call(hub, machine, "renew", {"lease_token": job["lease_token"]})
     assert status == 200, (status, body)
-    assert body["lease_token"] == job["lease_token"]
+    assert body["lease_token"] is None
+    from commonplace.runner import jobs
+
+    store = jobs.open_store(hub.gateway, owner["workspace"])
+    with store.transaction() as conn:
+        stored = conn.execute(
+            "SELECT lease_token FROM runner_jobs WHERE id=?", (job["job_id"],)
+        ).fetchone()
+    assert stored["lease_token"] == job["lease_token"]
 
 
 def test_l2_expired_lease_is_fenced(signup_hub, owners, monkeypatch):  # noqa: F811
@@ -374,7 +382,7 @@ def test_c5_uncertain_cannot_be_cancelled(signup_hub, owners, monkeypatch):  # n
     for caller in (token, None):
         status, body = _cancel(hub, owner, job["job_id"], token=caller)
         assert status == 409, (status, body)
-        assert body["error"] == message
+        assert body["error"] == "no: " + message
         assert _status(hub, owner, task)["state"] == "uncertain"
     response = hub.rpc(
         token, "tools/call", {"name": "card_start_cancel", "arguments": {"job": job["job_id"]}}
@@ -395,7 +403,7 @@ def test_c5_uncertain_cannot_be_cancelled(signup_hub, owners, monkeypatch):  # n
         },
     )
     assert status == 409, (status, body)
-    assert body["error"] == "card already has an active start"
+    assert body["error"] == "no: card already has an active start"
     status, body = http(
         hub.port,
         "POST",
@@ -407,7 +415,7 @@ def test_c5_uncertain_cannot_be_cancelled(signup_hub, owners, monkeypatch):  # n
     _start(hub, owner, machine, task=task, request_key="after-resolve")
     status, body = _cancel(hub, owner, job["job_id"])
     assert status == 409, (status, body)
-    assert body["error"] == "start is already finished"
+    assert body["error"] == "no: start is already finished"
 
 
 def test_b6_binding_reset_cancels_queue(signup_hub, owners):  # noqa: F811

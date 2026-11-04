@@ -247,6 +247,10 @@ class _Hub:
                     result = json.loads(raw)
                     if not isinstance(result, dict):
                         raise ValueError
+                    if route == "lease" and (
+                        not isinstance(result.get("lease_token"), str) or not result["lease_token"]
+                    ):
+                        raise ValueError
         except HTTPError as exc:
             status = exc.code
             exc.close()
@@ -345,10 +349,10 @@ def _deliver(hub, path, entry, replay=False):
 
 
 def _start(hub, config, job, journal, env, secrets):
-    _require(
-        isinstance(job, dict) and isinstance(job.get("lease_token"), str) and job["lease_token"],
-        "invalid lease response",
-    )
+    if not (
+        isinstance(job, dict) and isinstance(job.get("lease_token"), str) and job["lease_token"]
+    ):
+        raise _HubError("transient")
     code = _job_code(config, job)
     if code:
         # Invalid ids must never become local paths. The fence identifies the job.
@@ -388,7 +392,20 @@ def _run(config, once):
     while True:
         try:
             for path in sorted(journal.glob("*.json")):
-                entry = json.loads(path.read_text(encoding="utf-8"))
+                try:
+                    entry = json.loads(path.read_text(encoding="utf-8"))
+                    if (
+                        not isinstance(entry, dict)
+                        or not isinstance(entry.get("lease_token"), str)
+                        or not entry["lease_token"]
+                        or entry.get("outcome")
+                        not in ("spawning", "started", "uncertain", "failed")
+                    ):
+                        raise ValueError
+                except (ValueError, UnicodeError, RecursionError):
+                    path.rename(path.with_name(path.name + f".quarantine-{time.time_ns()}"))
+                    print("runner: invalid journal quarantined", file=sys.stderr)
+                    continue
                 _deliver(hub, path, entry, replay=True)
             job = hub.post("lease", {})
             if job is not None:
