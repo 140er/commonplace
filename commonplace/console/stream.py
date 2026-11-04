@@ -143,9 +143,13 @@ def _read_output(gateway, agent, r, c, forward):
         return [], 0, 0
     try:
         head = output.latest_ids(gateway, agent)
+        if head is None:
+            return None, r, c
         if forward and head == (r, c):
             return None, r, c
         recent = output.recent(gateway, agent)
+        if recent is None:
+            return None, r, c
         return _bounded(recent[:20]), *head
     except ValueError:
         # Broken generation pointer: keep the panel and retry on the next poll.

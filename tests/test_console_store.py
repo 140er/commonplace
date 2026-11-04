@@ -579,6 +579,32 @@ class FixedDatetime(datetime):
         return cls(2026, 11, 4, 12, 0, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("reader", ["after", "tail", "latest_at"])
+def test_idle_activity_reads_exclude_rows_older_than_seven_days(gateway, monkeypatch, reader):
+    monkeypatch.setattr(store, "datetime", FixedDatetime)
+    activity = store.open_activity(gateway, "ws_one")
+    activity.append("a1", "task_list", "ok", 1)
+    conn = activity._conn
+    conn.execute("DELETE FROM console_activity")
+    conn.executemany(
+        "INSERT INTO console_activity(seq,at,connection_id,name,outcome,ms) "
+        "VALUES (?,?,?,'task_list','ok',1)",
+        [
+            (1, "2026-10-28T11:59:59Z", "a1"),
+            (2, "2026-10-28T12:00:00Z", "a1"),
+            (3, "2026-11-04T12:00:00Z", "a1"),
+            (4, "2026-10-28T11:59:59Z", "a2"),
+        ],
+    )
+    # No append/prune happens after time advances in an idle workspace.
+    if reader == "latest_at":
+        assert activity.latest_at(["a1", "a2"]) == {"a1": "2026-11-04T12:00:00Z"}
+    else:
+        rows = activity.after("a1", 0, 100) if reader == "after" else activity.tail("a1", 100)
+        assert [row["seq"] for row in rows] == ([2, 3] if reader == "after" else [3, 2])
+    assert conn.execute("SELECT COUNT(*) FROM console_activity").fetchone()[0] == 4
+
+
 def seed(conn, start, end, at):
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -662,12 +688,12 @@ def test_busy_prune_keeps_appended_row_and_retries_at_next_multiple(gateway, mon
             assert activity.append("a1", "task_list", "ok", 1) == 500
         assert timeouts == [0]
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 50
-        assert len(activity.after("a1", 0, 1000)) == 500
+        assert len(activity.after("a1", 0, 1000)) == 1
         assert activity.dropped == 0
         seed(conn, 501, 1000, "2026-10-01T00:00:00Z")
         assert activity.append("a1", "task_list", "ok", 1) == 1000
         assert conn.execute("SELECT COUNT(*) FROM console_activity").fetchone()[0] == 500
-        assert [r["seq"] for r in activity.after("a1", 0, 2)] == [500, 502]
+        assert [r["seq"] for r in activity.after("a1", 0, 2)] == [500, 1000]
         assert activity.dropped == 0
     finally:
         writer.close()

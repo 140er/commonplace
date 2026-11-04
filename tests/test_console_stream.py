@@ -11,6 +11,7 @@ import pytest
 
 from commonplace import events
 from commonplace.console import stream, types
+from tests._console_helpers import console_hub_fixture  # noqa: F401
 
 BUDGET = 128 * 1024
 MAX_POSITION = (1 << 63) - 1
@@ -420,31 +421,40 @@ def test_foreign_positions_can_only_move_within_authorized_sources(console):
 
 
 @pytest.mark.parametrize("which", ["latest_ids", "recent"])
-@pytest.mark.parametrize(
-    "error",
-    [
-        sqlite3.OperationalError("database is locked"),
-        sqlite3.OperationalError("database is busy"),
-        ValueError("broken workspace pointer"),
-    ],
-)
 @pytest.mark.parametrize("forward", [False, True])
 def test_output_contention_or_broken_pointer_returns_null_and_retries(
-    console, monkeypatch, which, error, forward
+    console_hub, monkeypatch, which, forward
 ):
-    original = getattr(stream.output, which)
-    console.state.head = (9, 10)
+    h = console_hub
+    activity = stream.store.open_activity(h.gateway, h.workspace)
+    tool_seq = activity.append(h.a1, "task_list", "ok", 1)
+    with h.db._lock:
+        event_seq = h.db._conn.execute(
+            "INSERT INTO events(at, workspace_id, kind, subject, actor, data) "
+            "VALUES (?, ?, 'card.updated', '#184', 'conn:a1', '{}')",
+            (AT, h.workspace),
+        ).lastrowid
 
-    def fail(*args):
-        raise error
+    def latest(*args):
+        return 9, 10
 
-    monkeypatch.setattr(stream.output, which, fail)
-    result = console.page(stream.encode_cursor(0, 0, 5, 6) if forward else None)
+    def recent(*args):
+        return [{"id": "r9"}]
+
+    monkeypatch.setattr(stream.output, "latest_ids", latest)
+    monkeypatch.setattr(stream.output, "recent", recent)
+    # Boards busy/locked, a broken pointer and EncryptionError all have this
+    # real upstream contract. They do not raise out of latest_ids/recent.
+    monkeypatch.setattr(stream.output, which, lambda *args: None)
+    suffix = "&after=" + stream.encode_cursor(0, 0, 5, 6) if forward else ""
+    code, result, _ = h.stream(suffix=suffix)
+    assert code == 200
     assert result["output"] is None
+    assert {item["id"] for item in result["items"]} == {f"t{tool_seq}", f"e{event_seq}"}
     assert stream.decode_cursor(result["cursor"])[2:] == ((5, 6) if forward else (0, 0))
-    monkeypatch.setattr(stream.output, which, original)
-    console.state.recent = [{"id": "r9"}]
-    retry = console.page(result["cursor"])
+    monkeypatch.setattr(stream.output, which, latest if which == "latest_ids" else recent)
+    code, retry, _ = h.stream(suffix="&after=" + result["cursor"])
+    assert code == 200
     assert retry["output"] == [{"id": "r9"}]
     assert stream.decode_cursor(retry["cursor"])[2:] == (9, 10)
 

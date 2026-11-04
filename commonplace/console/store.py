@@ -35,6 +35,10 @@ _logger = logging.getLogger(__name__)
 _NAME = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 
 
+def _cutoff():
+    return (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _operational_error(conn):
     if type(conn).__module__.startswith("sqlcipher3"):
         return driver().OperationalError
@@ -150,9 +154,9 @@ class ActivityStore:
             return [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT * FROM console_activity WHERE connection_id=? AND seq>? "
+                    "SELECT * FROM console_activity WHERE connection_id=? AND seq>? AND at>=? "
                     "ORDER BY seq LIMIT ?",
-                    (cid, seq, limit),
+                    (cid, seq, _cutoff(), limit),
                 )
             ]
 
@@ -164,8 +168,9 @@ class ActivityStore:
             return [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT * FROM console_activity WHERE connection_id=? ORDER BY seq DESC LIMIT ?",
-                    (cid, limit),
+                    "SELECT * FROM console_activity WHERE connection_id=? AND at>=? "
+                    "ORDER BY seq DESC LIMIT ?",
+                    (cid, _cutoff(), limit),
                 )
             ]
 
@@ -181,8 +186,8 @@ class ActivityStore:
             return dict(
                 conn.execute(
                     "SELECT connection_id, MAX(at) FROM console_activity "
-                    f"WHERE connection_id IN ({placeholders}) GROUP BY connection_id",
-                    cids,
+                    f"WHERE connection_id IN ({placeholders}) AND at>=? GROUP BY connection_id",
+                    [*cids, _cutoff()],
                 )
             )
 

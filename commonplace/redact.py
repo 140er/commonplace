@@ -145,8 +145,6 @@ def redact(text) -> tuple[str, list[str]]:
         return text, []
     if len(text) > MAX_CHARS:
         return "[omitted:too_long]", ["too_long"]
-    if text.startswith("[redacted:"):
-        return text, []
 
     text, private = _private_keys(text)
     kinds = ["private_key"] if private else []
@@ -180,7 +178,7 @@ def redact_value(obj) -> tuple[object, list[str]]:
         clean, kinds = {}, set()
         for key, value in obj.items():
             if isinstance(key, str) and _SECRET_KEY.fullmatch(key):
-                if isinstance(value, str) and value.startswith("[redacted:"):
+                if isinstance(value, str) and _MARKER.fullmatch(value):
                     clean[key] = value
                 else:
                     clean[key] = "[redacted:json_secret_key]"

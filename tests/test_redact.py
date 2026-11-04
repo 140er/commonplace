@@ -144,10 +144,32 @@ def test_markers_are_never_rematched(kind):
     assert redactor.redact_value({"password": marker}) == ({"password": marker}, [])
 
 
-def test_value_starting_with_marker_is_left_unchanged():
+@pytest.mark.parametrize("container", [False, True])
+def test_value_starting_with_marker_redacts_suffix(container):
     text = "[redacted:assignment] suffix password=synthetic"
-    assert redactor.redact(text) == (text, [])
-    assert redactor.redact_value({"password": text}) == ({"password": text}, [])
+    if container:
+        assert redactor.redact_value({"password": text}) == (
+            {"password": "[redacted:json_secret_key]"},
+            ["json_secret_key"],
+        )
+    else:
+        assert redactor.redact(text) == (
+            "[redacted:assignment] suffix password=[redacted:assignment]",
+            ["assignment"],
+        )
+
+
+@pytest.mark.parametrize(
+    "prefix, size, kind", [("cmmn_", 43, "cmmn_token"), ("ghp_", 36, "github_token")]
+)
+@pytest.mark.parametrize("container", [False, True])
+def test_leading_marker_does_not_exempt_token_suffix(prefix, size, kind, container):
+    text = "[redacted:assignment] " + prefix + "Z" * size
+    expected = "[redacted:assignment] [redacted:" + kind + "]"
+    if container:
+        assert redactor.redact_value({"text": text}) == ({"text": expected}, [kind])
+    else:
+        assert redactor.redact(text) == (expected, [kind])
 
 
 def test_embedded_markers_do_not_hide_other_secrets():

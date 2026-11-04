@@ -292,9 +292,10 @@ def test_invalid_limits(console_hub, upstream, limit):
 
 def test_stream_delegates_cursor_defaults_and_current_authority(console_hub, upstream):
     h = console_hub
+    valid = stream.encode_cursor(0, 0, 0, 0)
     for suffix, cursor, limit in [
         ("", None, None),
-        ("&after=abc&limit=100", "abc", 100),
+        ("&after=" + valid + "&limit=100", valid, 100),
         ("&limit=1", None, 1),
     ]:
         assert h.stream(suffix=suffix)[0] == 200
@@ -309,6 +310,28 @@ def test_stream_delegates_cursor_defaults_and_current_authority(console_hub, ups
     assert upstream.page.call_args.args[2].own and upstream.page.call_args.args[2].recording
     upstream.page.side_effect = ValueError("untrusted cursor text")
     assert h.stream(suffix="&after=bad")[:2] == (400, {"error": "Invalid console cursor"})
+    # A valid cursor cannot turn an unrelated page failure into a client error.
+    assert h.stream(suffix="&after=" + valid)[:2] == (500, {"error": "internal error"})
+
+
+@pytest.mark.parametrize("limit", ["1_0", "%2B5", "%205", "5%20", "%D9%A5", "%EF%BC%95"])
+def test_limit_requires_ascii_digits(console_hub, upstream, limit):
+    assert console_hub.stream(suffix="&limit=" + limit)[:2] == (400, {"error": "Invalid limit"})
+    upstream.page.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["name", "client"])
+def test_agent_display_fields_are_redacted(console_hub, upstream, field):
+    h = console_hub
+    with h.db._lock:
+        h.db._conn.execute(
+            f"UPDATE connections SET {field}=? WHERE id=?", ("password=synthetic", h.a1)
+        )
+    code, result, _ = h.get(h.owner, "/api/console")
+    assert code == 200
+    view = next(row for row in result["agents"] if row["id"] == h.a1)
+    assert view[field] == "password=[redacted:assignment]"
+    assert h.toggle()[1][field] == "password=[redacted:assignment]"
 
 
 @pytest.mark.parametrize("record", [True, False])

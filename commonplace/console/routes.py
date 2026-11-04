@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from commonplace import redact
 from commonplace.console import authority, settings, store, stream, types
 from commonplace.http_util import path_parts, query, read_json, require_principal, send_json
 
@@ -28,8 +29,8 @@ def _views(gateway, principal, agents):
         result.append(
             {
                 "id": view.id,
-                "name": view.name,
-                "client": view.client,
+                "name": redact.redact(view.name)[0],
+                "client": redact.redact(view.client)[0],
                 "parent_id": view.parent_id,
                 "own": view.own,
                 "recording": view.recording if view.own else None,
@@ -62,17 +63,21 @@ def install(gateway) -> None:
         limit = None
         if "limit" in params:
             try:
+                if not params["limit"].isascii() or not params["limit"].isdigit():
+                    raise ValueError
                 limit = int(params["limit"])
                 if not 1 <= limit <= 100:
                     raise ValueError
             except ValueError:
                 send_json(h, 400, {"error": "Invalid limit"})
                 return
-        try:
-            payload = stream.page(gateway, principal, view, params.get("after"), limit)
-        except ValueError:
-            send_json(h, 400, {"error": "Invalid console cursor"})
-            return
+        if "after" in params:
+            try:
+                stream.decode_cursor(params["after"])
+            except ValueError:
+                send_json(h, 400, {"error": "Invalid console cursor"})
+                return
+        payload = stream.page(gateway, principal, view, params.get("after"), limit)
         send_json(h, 200, payload)
 
     def toggle(h):
