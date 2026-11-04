@@ -50,6 +50,42 @@ def _bounded_response(remaining):
     return BoundedResponse
 
 
+def _shutdown_sockets(sockets):
+    for sock in sockets:
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except (OSError, ValueError):
+                pass
+
+
+def _connect_socket(address, remaining, sockets, source_address=None):
+    last_error = None
+    for family, kind, proto, _, target in socket.getaddrinfo(
+        address[0], address[1], 0, socket.SOCK_STREAM
+    ):
+        remaining()
+        candidate = socket.socket(family, kind, proto)
+        try:
+            candidate.settimeout(remaining())
+            if source_address:
+                candidate.bind(source_address)
+            candidate.connect(target)
+            remaining()
+        except OSError as exc:
+            candidate.close()
+            last_error = exc
+            remaining()
+            continue
+        except BaseException:
+            candidate.close()
+            raise
+        sockets.append(candidate)
+        return candidate
+    remaining()
+    raise last_error or OSError("No model addresses")
+
+
 def complete(
     settings: FrontSettings,
     key: str | None,
@@ -113,20 +149,10 @@ def complete(
 
     def expire():
         expired.set()
-        for sock in [conn.sock, *sockets]:
-            if sock is not None:
-                try:
-                    sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
+        _shutdown_sockets([conn.sock, *sockets])
 
-    create = conn._create_connection
-
-    def connect_socket(*args, **kwargs):
-        sock = create(*args, **kwargs)
-        sockets.append(sock)
-        remaining()
-        return sock
+    def connect_socket(address, timeout=None, source_address=None):
+        return _connect_socket(address, remaining, sockets, source_address)
 
     conn._create_connection = connect_socket
     timer = threading.Timer(remaining(), expire)
@@ -135,7 +161,8 @@ def complete(
     try:
         conn.connect()
         sock = conn.sock
-        sockets.append(sock)
+        if sock not in sockets:
+            sockets.append(sock)
         sock.settimeout(remaining())
         path = origin.path.rstrip("/") + ("/v1/messages" if anthropic else "/v1/chat/completions")
         conn.request("POST", path, payload, headers)
@@ -162,6 +189,10 @@ def complete(
         return _answer(chunks, anthropic)
     except TimeoutError:
         raise ModelError("timeout") from None
+    except ValueError:
+        if expired.is_set():
+            raise ModelError("timeout") from None
+        raise
     except (OSError, http.client.HTTPException):
         raise ModelError("timeout" if expired.is_set() else "http_error") from None
     finally:

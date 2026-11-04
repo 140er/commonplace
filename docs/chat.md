@@ -130,4 +130,6 @@ guarantee that every sensitive detail will be detected.
 
 ## Limits
 
+- DNS resolution can exceed the model deadline; connection attempts share the remaining deadline.
+
 Claim detection examines only the first 100 messages after a request; a later coordinator reply may be missed.

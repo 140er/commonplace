@@ -3,7 +3,7 @@
 from commonplace import redact
 from commonplace.boards.service import BoardService
 from commonplace.chat import front, settings, status, store
-from commonplace.chat.types import ChatDenied
+from commonplace.chat.types import LINKED_CARDS_MAX, ChatDenied
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, require_principal, send_json
 
@@ -97,11 +97,19 @@ def install(gateway) -> None:
                     message_ids=[message["id"] for message in payload["messages"]],
                     after_id=replies_after,
                 )
-                ids = {message["id"] for message in payload["messages"]}
+                cards = service.task_list(board=parts[0], all_statuses=True)
                 payload["linked"] = [
-                    {**card, "title": redact.redact(card["title"])[0]}
-                    for card in service.task_list(board=parts[0], all_statuses=True)
-                    if card.get("message_id") in ids
+                    {
+                        "number": card["number"],
+                        "message_id": card["message_id"],
+                        "status": card["status"],
+                        "title": redact.redact(card["title"])[0],
+                    }
+                    for card in sorted(
+                        (c for c in cards if c.get("message_id") is not None),
+                        key=lambda c: c["number"],
+                        reverse=True,
+                    )[:LINKED_CARDS_MAX]
                 ]
                 payload["me"] = {"user": principal.user_id, "role": principal.role}
                 payload["replies"] = [reply.public() for reply in replies]

@@ -1,9 +1,10 @@
 """Deadline-based filing of unclaimed chat requests."""
 
+import logging
 import re
 from datetime import datetime, timezone
 
-from commonplace import redact, sessions
+from commonplace import http_util, redact, sessions
 from commonplace.boards.service import BoardService
 from commonplace.chat import store
 from commonplace.chat.types import (
@@ -17,6 +18,8 @@ from commonplace.chat.types import (
 )
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_handoffs (              -- M1: one row per work-request message
@@ -153,22 +156,22 @@ def _notice(gateway, h, code, task=None, coordinator=None):
 def settle(gateway, handoff: Handoff, now: float) -> str:
     h = handoff
     db = gateway.db
-    with db._lock:
-        claimed = db._conn.execute(
-            "UPDATE chat_handoffs SET state='filing',updated_at=? "
-            "WHERE workspace_id=? AND board=? AND message_id=? AND state='waiting'",
-            (_stamp(now), *_key(h)),
-        ).rowcount
-        if not claimed:
-            row = db._conn.execute(
-                "SELECT state FROM chat_handoffs WHERE workspace_id=? AND board=? AND message_id=?",
-                _key(h),
-            ).fetchone()
-            return row["state"] if row else h.state
     try:
+        with db._lock:
+            claimed = db._conn.execute(
+                "UPDATE chat_handoffs SET state='filing',updated_at=? "
+                "WHERE workspace_id=? AND board=? AND message_id=? AND state='waiting'",
+                (_stamp(now), *_key(h)),
+            ).rowcount
+            if not claimed:
+                row = db._conn.execute(
+                    "SELECT state FROM chat_handoffs WHERE workspace_id=? AND board=? AND message_id=?",
+                    _key(h),
+                ).fetchone()
+                return row["state"] if row else h.state
         service = _service(gateway, h)
         if service is None:
-            return _finish(db, h, now, "failed", "no_access")
+            raise ToolError("Poster unavailable")
         task = _linked(service, h)
         if task is not None:
             return _finish(db, h, now, "claimed", "claimed", task)
@@ -193,11 +196,16 @@ def settle(gateway, handoff: Handoff, now: float) -> str:
             labels=["from-chat"],
             message_id=h.message_id,
         )
-    except Exception:
+    except ToolError:
+        _finish(db, h, now, "failed", "no_access")
+        _notice(gateway, h, "file_failed")
+        return "failed"
+    except Exception as exc:
+        http_util.log_failure(logger, "Chat filing failed", exc)
         with db._lock:
             db._conn.execute(
                 "UPDATE chat_handoffs SET state='waiting',due_at=?,updated_at=? "
-                "WHERE workspace_id=? AND board=? AND message_id=? AND state='filing'",
+                "WHERE workspace_id=? AND board=? AND message_id=? AND state IN ('waiting','filing')",
                 (_stamp(now + 60), _stamp(now), *_key(h)),
             )
         return "waiting"
@@ -216,8 +224,8 @@ def recover(db, gateway, now: float) -> None:
     for row in rows:
         try:
             _recover_row(db, gateway, now, cutoff, row)
-        except Exception:
-            continue
+        except Exception as exc:
+            http_util.log_failure(logger, "Chat recovery failed", exc)
 
 
 def _recover_row(db, gateway, now, cutoff, row):
@@ -234,11 +242,13 @@ def _recover_row(db, gateway, now, cutoff, row):
         service = _service(gateway, h)
         if service is None:
             _finish(db, h, now, "failed", "no_access")
+            _notice(gateway, h, "file_failed")
             return
         try:
             task = _linked(service, h)
         except ToolError:
             _finish(db, h, now, "failed", "no_access")
+            _notice(gateway, h, "file_failed")
             return
         if task is None:
             _finish(db, h, now, "waiting")

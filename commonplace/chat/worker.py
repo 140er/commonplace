@@ -82,10 +82,7 @@ class FrontWorker:
         gateway, db = self.gateway, self.gateway.db
         due = handoff.due(db, now, limit=1)
         if due:
-            try:
-                handoff.settle(gateway, due[0], now)
-            except Exception as exc:
-                http_util.log_failure(logger, "Chat handoff failed", exc)
+            handoff.settle(gateway, due[0], now)
             return True
         job = store.claim(db)
         if job is None:
@@ -168,7 +165,13 @@ class FrontWorker:
 
     def drain(self, max_jobs: int = 50, *, now: float | None = None) -> int:
         count = 0
-        while count < max_jobs and self.run_once(now if now is not None else time.time()):
+        while count < max_jobs:
+            try:
+                if not self.run_once(now if now is not None else time.time()):
+                    break
+            except Exception as exc:
+                http_util.log_failure(logger, "Chat drain failed", exc)
+                break
             count += 1
         return count
 
