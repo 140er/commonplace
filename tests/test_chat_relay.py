@@ -197,7 +197,9 @@ def test_minimal_context_by_default_full_by_opt_in(relay_hub):
     h.post(h.owner, "What is open?")
     status, body = h.poll(m, context="full")
     assert status == 200
-    assert "member note 7Q" in body["prompt"] and "untrusted card 5K" in body["prompt"]
+    # Full context is chat.worker.build_context unchanged (plan §2.3.1): other people's chat
+    # lines appear; an untrusted proposal is not in the poster's task list in either mode.
+    assert "member note 7Q" in body["prompt"]
 
 
 def test_daily_cap_is_enforced_and_visible(relay_hub):
