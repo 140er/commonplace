@@ -178,11 +178,6 @@ def enqueue(db, workspace_id, board, message_id, user_id) -> bool:
             "SELECT 1 FROM chat_front_jobs WHERE workspace_id=? AND board=? AND message_id=?", key
         ).fetchone():
             return False
-        conn.execute(
-            "UPDATE chat_front_jobs SET state='superseded',code='superseded',updated_at=? "
-            "WHERE workspace_id=? AND board=? AND user_id=? AND state='pending' AND message_id<?",
-            (now, workspace_id, board, user_id, message_id),
-        )
         busy = (
             conn.execute(
                 "SELECT COUNT(*) FROM chat_front_jobs WHERE workspace_id=? AND state IN ('pending','running')",
