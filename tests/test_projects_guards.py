@@ -7,6 +7,7 @@ from commonplace.gateway import _public_route
 from commonplace.social.accounts import signup_enabled
 from tests._chat_helpers import no_outbound
 from tests._projects_helpers import projects_hub_fixture  # noqa: F401
+from tests.test_chat_guards import _host_specific
 from tests.test_console_guards import PIN_PUBLIC
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,7 @@ def test_project_sources_generic_and_secret_safe():
     forbidden_imports = {"http.client", "urllib.request", "commonplace.chat.model"}
     for path in (ROOT / "commonplace/projects").glob("*.py"):
         source = path.read_text()
-        assert not any(s in source.lower() for s in ("edge1", "t3code", "/home/", "cmmn.dev")), path
+        assert not _host_specific(source), path
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

@@ -96,11 +96,15 @@ def connect(
                 expires_days=TOKEN_DAYS,
                 policy=policy,
             )
-            claimed = db._conn.execute(
-                "UPDATE project_orchestrators SET connection_id=?, name=?, updated_at=? "
-                "WHERE workspace_id=? AND board=? AND role='main' AND connection_id IS ?",
-                (cid, name, control_db._iso(control_db._now()), ws, board, seat.connection_id),
-            ).rowcount
+            try:
+                claimed = db._conn.execute(
+                    "UPDATE project_orchestrators SET connection_id=?, name=?, updated_at=? "
+                    "WHERE workspace_id=? AND board=? AND role='main' AND connection_id IS ?",
+                    (cid, name, control_db._iso(control_db._now()), ws, board, seat.connection_id),
+                ).rowcount
+            except Exception:
+                db.revoke(cid, actor=principal.user_id, workspace_ref=ws)
+                raise
             if claimed:
                 minted = True
             else:

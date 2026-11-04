@@ -58,8 +58,10 @@ def install(gateway) -> None:
                 except ValueError:
                     return
             if connecting:
-                if set(body) - {"replace", "allow_shared"} or any(
-                    type(value) is not bool for value in body.values()
+                if (
+                    not isinstance(body, dict)
+                    or set(body) - {"replace", "allow_shared"}
+                    or any(type(value) is not bool for value in body.values())
                 ):
                     send_json(h, 400, {"error": "Invalid project connection settings"})
                     return

@@ -54,7 +54,7 @@ function showConnectResult(result, e) {
   dialog.querySelector("[data-project-token]").focus();
 }
 
-// Both app.js entry points keep their handlers here, within U5's file ownership.
+// Both app.js entry points keep their handlers here.
 export async function mountProject(host, { slug, api, e, settings = false, current = () => true, notice = "" }) {
   const path = `/api/projects/${encodeURIComponent(slug)}`;
   const active = () => current() && host.isConnected && !host.closest("[hidden]");

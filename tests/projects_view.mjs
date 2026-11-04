@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-// Import lazily: S0 intentionally ships an empty module, and the pin has none.
+// Import lazily: the module may be empty or absent in older revisions.
 async function load(name) {
   const source = await readFile(new URL(`../commonplace/web/static/${name}.js`, import.meta.url), "utf8");
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
