@@ -91,7 +91,7 @@ def register(ctx):
                 raise _RequestError(401, "Sign in")
             data, path = _import_envelope(ctx, principal, handler)
             source = _text(data, "source", required=True)
-            if source not in SOURCES or (
+            if source not in (*SOURCES, sync_protocol.MEMORY_IMPORT_SOURCE) or (
                 source == sync_protocol.MEMORY_IMPORT_SOURCE and path != "grant"
             ):
                 raise _RequestError(400, "Unsupported source")
