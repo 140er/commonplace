@@ -68,6 +68,8 @@ EXACT = {
     ("POST", "/api/phone-push"): "authenticated",
     ("DELETE", "/api/phone-push"): "authenticated",
     ("POST", "/api/phone-push/test"): "authenticated",
+    ("GET", "/api/console"): "authenticated",
+    ("GET", "/api/console/stream"): "authenticated",
 }
 PREFIX = {
     ("POST", "/api/connections/"): "authenticated",
@@ -106,6 +108,7 @@ PREFIX = {
     ("GET", "/app/cards/"): "public",
     ("GET", "/app/threads/"): "public",
     ("GET", "/app/static/"): "public",
+    ("POST", "/api/console/agents/"): "authenticated",
 }
 BUILTIN = {
     ("GET", "/health"): "public",
