@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from commonplace import capture, continuity as core, imports
+from commonplace.handoff.thread_store import ThreadConflict
 from commonplace.import_grant import grant_id
 from commonplace.import_parts import append_part
 from commonplace.sessions import person_policy
@@ -55,7 +56,10 @@ def test_fix5_retry_adopts_orphan_between_store_and_control_commits(env, monkeyp
         for prefix in ("capture:", "import-private:")
         for thread in e.store.list_source_range(e.ws, prefix, limit=10)
     }
-    submit()  # Exact replay from offset zero after process restart.
+    try:
+        submit()  # Exact replay from offset zero after process restart.
+    except ThreadConflict as exc:
+        raise AssertionError("retry refused the orphaned holder") from exc
     push(e, first + suffix, stream="capture:conn-second:claude-code:second")
     raw = all_archives(e)
     assert (raw.count(first), raw.count(suffix)) == (1, 1)
