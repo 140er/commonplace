@@ -66,8 +66,8 @@ provision or activate this service.
 | `COMMONPLACE_AGENT_URL` | Phone-reachable short-link base, e.g. `https://cp.example` |
 
 The app and agent hosts must not be localhost, loopback or unspecified
-addresses. HTTPS is recommended; ntfy HTTP is limited to localhost, loopback
-and tailnet endpoints. Invalid configuration disables phone push and logs one
+addresses. Use HTTPS for the ntfy server; plain HTTP is accepted only for the
+local and private addresses the webhook URL rule allows. Invalid configuration disables phone push and logs one
 fixed warning naming only the variable. Apply configuration in the hub's
 operator-owned environment and restart only after the activation approval.
 

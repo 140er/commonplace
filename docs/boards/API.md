@@ -303,8 +303,9 @@ delivery rows or events.
 
 On iOS without an upstream, “delivery can take hours, depending on the state of the phone. If you are using your phone, it shouldn't take more than 20-30 minutes though.” Setting `upstream-base-url` would disclose the message ID and a topic hash to a third party (e.g. ntfy.sh); this feature never enables it.
 
-Plain HTTP is allowed for localhost, loopback addresses, `*.ts.net` and
-`100.64.0.0/10`. HTTPS is recommended.
+Use HTTPS for the ntfy server. Plain HTTP is accepted only for the local and
+private addresses the webhook URL rule allows, because the publisher token is
+sent with every message.
 
 #### Limits
 
