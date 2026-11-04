@@ -10,8 +10,18 @@ from io import StringIO
 
 from .handoff.models import ThreadMessage
 from .handoff.transcripts import parse
+from .sync_protocol import MEMORY_FORMAT, MEMORY_IMPORT_SOURCE
 
-SOURCES = ("claude-code", "codex", "cursor", "t3", "grok-bot", "chatgpt", "claude-ai")
+SOURCES = (
+    "claude-code",
+    "codex",
+    "cursor",
+    "t3",
+    "grok-bot",
+    "chatgpt",
+    "claude-ai",
+    MEMORY_IMPORT_SOURCE,
+)
 
 
 def _timestamp(value):
@@ -31,7 +41,11 @@ def parse_import(source: str, transcript: str, fmt: str = "auto") -> list[Thread
     """
     if source not in SOURCES:
         raise ValueError("Unsupported source")
-    if fmt == "messages":
+    if source == MEMORY_IMPORT_SOURCE:
+        if fmt != MEMORY_FORMAT:
+            raise ValueError("Memory imports require format=file")
+        messages = [ThreadMessage(0, "system", "message", transcript, transcript)]
+    elif fmt == "messages":
         messages = parse(transcript, fmt)
     elif source == "grok-bot" and fmt in ("auto", "grok-facts"):
         messages = _grok_facts(transcript)
