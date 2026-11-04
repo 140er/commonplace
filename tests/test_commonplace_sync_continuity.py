@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from commonplace import plans
+from commonplace import capture, plans
 from tests.commonplace_sync_fixtures import (
     PART_KEYS,
     accepted,
@@ -17,6 +17,7 @@ from tests.commonplace_sync_fixtures import (
     reached,
     records,
     reset_reached as reset_reached,
+    sha,
 )
 
 
@@ -124,6 +125,8 @@ def test_non_observer_capture_and_quota_uniform(hub, monkeypatch):
     assert set(covered) == set(new)
     assert covered["offset"] == len(raw(F))
     assert new["offset"] == len(raw(novel))
+    assert covered["prefix_sha256"] == sha(raw(F))
+    assert new["prefix_sha256"] == sha(raw(novel))
     assert covered["added_messages"] == new["added_messages"] == 3
     x2, _ = h.pat(p, client="claude-code")
     y2, _ = h.pat(p, client="claude-code")
@@ -132,7 +135,55 @@ def test_non_observer_capture_and_quota_uniform(hub, monkeypatch):
     monkeypatch.setitem(plans.PLANS, "free", tiny)
     assert h.push(x2, "claude-code", "S", raw(F)).status == 507
     assert h.push(y2, "claude-code", "novel", raw(records("novel"))).status == 507
-    monkeypatch.setattr(plans, "FREE", zero)
-    monkeypatch.setitem(plans.PLANS, "free", zero)
-    assert h.push(x2, "claude-code", "S", raw(F)).status == 200
-    assert h.push(y2, "claude-code", "novel", raw(records("novel"))).status == 200
+    for token, sid, data in ((x2, "S", raw(F)), (y2, "novel", raw(records("novel")))):
+        # Set the limit one byte above the base-compatible admission bound.
+        # Recompute after each write, since SQLite and WAL sizes can grow.
+        directory = capture.workspace_path(h.root, p.workspace)
+        path = capture.thread_path(directory)
+        sizes = [
+            candidate.stat().st_size if candidate.exists() else 0
+            for candidate in (
+                path,
+                path.with_name(path.name + "-wal"),
+                path.with_name(path.name + "-shm"),
+            )
+        ]
+        store = h.store(p)
+        with store._lock:
+            pages = store._conn.execute("PRAGMA page_count").fetchone()[0]
+            page_size = store._conn.execute("PRAGMA page_size").fetchone()[0]
+        text = data.decode()
+        messages = [
+            capture.ThreadMessage(
+                0, "system", "other", "", text, name="capture.raw", at=h.now.isoformat()
+            ),
+            *capture.parse(text, "claude-code", require_recognized=True),
+        ]
+        admission = (
+            plans.StorageMeter._walk(directory)
+            - sum(sizes)
+            + max(sizes[0], pages * page_size)
+            + sizes[1]
+            + max(sizes[2], 32768)
+            + 32
+            + pages * (page_size + 24)
+            + 256 * 1024
+            + 8
+            * sum(
+                len(value.encode())
+                for message in messages
+                for value in (
+                    message.raw,
+                    message.text,
+                    message.role,
+                    message.kind,
+                    message.name,
+                    message.call_id,
+                    message.at,
+                )
+            )
+        )
+        above = replace(zero, storage_bytes=admission + 1)
+        monkeypatch.setattr(plans, "FREE", above)
+        monkeypatch.setitem(plans.PLANS, "free", above)
+        assert h.push(token, "claude-code", sid, data).status == 200
