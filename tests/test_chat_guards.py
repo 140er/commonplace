@@ -18,6 +18,16 @@ from tests.test_console_guards import PIN_PUBLIC
 
 CHAT_PATHS = ("/api/chat", "/api/chat/work", "/api/chat/work/status", "/api/chat-settings")
 ROOT = Path(__file__).resolve().parents[1]
+# Chat sources stay generic: no user home paths, and the only fixed host is the
+# documented provider origin (everything else comes from per-workspace settings).
+ALLOWED_HOSTS = {"api.anthropic.com", "127.0.0.1", "localhost"}
+
+
+def _host_specific(text):
+    if re.search(r"(?:^|[\s\"'(=])(?:/home/|/Users/|~/)[^\s\"']+", text):
+        return True
+    hosts = re.findall(r"\b[a-z][a-z0-9+.-]*://([^/\s\"':?#]+)", text, re.I)
+    return any(host.lower() not in ALLOWED_HOSTS for host in hosts)
 
 
 def test_chat_paths_never_public(chat_hub):
@@ -167,7 +177,7 @@ def test_chat_sources_generic_and_actionless():
             ):
                 # Inspect executable literals, not comments or documentation.
                 value = re.sub(r"--[^\n]*", "", node.value)
-                assert not any(s in value for s in ("edge1", "t3code", "/home/", "cmmn.dev")), path
+                assert not _host_specific(value), path
                 assert all(table.lower() in tables for _, table in sql.findall(value)), (
                     path,
                     value,
@@ -195,7 +205,7 @@ def test_chat_sources_generic_and_actionless():
     if js.exists():
         # Python calls use AST; the ES module is checked as code after removing comments.
         code = re.sub(r"/\*.*?\*/|^\s*//[^\n]*", "", js.read_text(), flags=re.S | re.M)
-        assert not any(s in code for s in ("edge1", "t3code", "/home/", "cmmn.dev"))
+        assert not _host_specific(code)
         assert not re.search(
             r"\b(?:card_start|decide|task_update|task_handoff|task_claim|task_approve|task_add|ask)\s*\(",
             code,
