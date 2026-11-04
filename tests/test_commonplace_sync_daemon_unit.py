@@ -826,3 +826,28 @@ def test_backfill_budget_survives_real_state_reopen(tmp_path):
         now[0] += 2
         assert active._budget(TOKEN_ENV["claude-code"])
         assert state.next_due(bkey) == 2
+
+
+def test_once_rate_limited_cursor_still_checks_other_streams(backfill_setup):
+    b = backfill_setup
+    b.sources.sizes = {"s0": 1, "s1": 1, "s2": 1}
+    b.refused["s0"] = (429, {"error": "Capture not due; retry in 5 seconds"})
+    b.refused["s1"] = (401, {"error": "revoked"})
+    assert b.session().cycle(once=True) == 1  # RED
+    assert b.state.status["claude-code", "s1", "s1"] == "revoked"
+
+
+def test_all_streams_refused_keeps_run_backoff(backfill_setup):
+    b = backfill_setup
+    for native_id in b.sources.sizes:
+        b.refused[native_id] = (401, {"error": "revoked"})
+    assert b.session().cycle() == 1  # RED
+    assert b.posts == []
+
+
+def test_capture_off_cursor_marks_stream_paused(backfill_setup):
+    b = backfill_setup
+    b.sources.sizes = {"s0": 1}
+    b.refused["s0"] = (409, {"error": "Workspace capture is off"})
+    b.session().cycle(once=True)
+    assert b.state.status.get(("claude-code", "s0", "s0")) == "paused"  # RED

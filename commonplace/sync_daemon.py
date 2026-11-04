@@ -172,8 +172,10 @@ class _Session:
                 continue
             if status == 429:
                 self._defer(payload, self.key)
-                return int(failed)
+                continue
             if status != 200:
+                if status == 409:
+                    self.state.set_status(source.source, source.path, source.native_id, "paused")
                 if 400 <= status < 500 and status not in (408, 409, 425, 429):
                     self.state.set_status(
                         source.source,
@@ -257,7 +259,17 @@ class _Session:
             ops = self.sources.scan(config, self.state, now=self.now())
             self.backfill = not once and self._backfill(config["_discovered"], ops)
 
-            if initializing and self.backfill and not self.initialize_transient:
+            # Refused streams do not slow backfill while others can progress;
+            # with nothing to make progress on, keep run()'s backoff.
+            if (
+                initializing
+                and self.backfill
+                and not self.initialize_transient
+                and any(
+                    self.state.cursor(s.source, s.path, s.native_id) is not None
+                    for s in config["_discovered"]
+                )
+            ):
                 failed = 0
             initializing = False
             if not ops or not self.enabled:
