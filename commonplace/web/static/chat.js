@@ -27,7 +27,7 @@ export function chatHTML(page, me, e) {
         const login = reply.model.slice("runner:".length), separator = login.indexOf("/");
         const cli = separator < 0 ? login : login.slice(0, separator);
         const model = separator < 0 ? "" : login.slice(separator + 1);
-        stamp = e(`${CHAT_COPY.runnerAnswer.replace("{cli}", () => cli)} · ${model}`);
+        stamp = e(`${CHAT_COPY.runnerAnswer.replace("{cli}", () => cli)}${model ? ` · ${model}` : ""}`);
       }
       return `<article class="chat-reply"><div class="chat-stamp">${stamp}</div><p>${marked(reply.text, e)}</p>${cardLink(reply.task, e)}</article>`;
     }).join("")}

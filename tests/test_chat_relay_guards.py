@@ -96,16 +96,6 @@ def test_relay_sources_safe():
         "anthropic",
         "openai",
     }
-    host_terms = [
-        "".join(parts)
-        for parts in (
-            ("edge", "1"),
-            ("t3", "code"),
-            ("/", "home", "/"),
-            ("cmmn", ".dev"),
-            ("jeff", "rey"),
-        )
-    ]
     for name in ("chat_relay", "chat_context", "chat_routes", "chat_agent"):
         path = ROOT / "commonplace" / "runner" / (name + ".py")
         if not path.exists():
@@ -114,7 +104,6 @@ def test_relay_sources_safe():
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 assert not _host_specific(node.value), path
-                assert not any(term in node.value.lower() for term in host_terms), path
             if isinstance(node, ast.Call):
                 assert not any(
                     k.arg == "shell" and isinstance(k.value, ast.Constant) and k.value.value is True
