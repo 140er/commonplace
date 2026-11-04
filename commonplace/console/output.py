@@ -10,7 +10,7 @@ from pathlib import Path
 
 from commonplace import redact
 from commonplace.console import types
-from mempalace.sqlite_crypto import connect, row_factory
+from mempalace.sqlite_crypto import connect, operational_error_type, row_factory
 
 _REPLIES = """
 SELECT id, board_id FROM (
@@ -68,7 +68,7 @@ def _read(gateway, agent, *, text=False):
             replies = _texts(conn, replies, reply=True)
             comments = _texts(conn, comments, reply=False)
         return replies, comments
-    except (sqlite3.OperationalError, ValueError):
+    except (sqlite3.OperationalError, operational_error_type(conn), ValueError):
         return None
     finally:
         if conn is not None:

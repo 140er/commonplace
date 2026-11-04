@@ -418,3 +418,18 @@ def test_last_seen_never_regresses_to_older_activity(console_hub, upstream):
     view = routes._views(h.gateway, h.person(h.admin), [private])[0]
     assert view["recording"] is None and view["last_seen"] == private.last_used_at
     upstream.peek.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["list", "toggle"])
+def test_broken_pointer_list_and_toggle_degrade(console_hub, upstream, method):
+    h = console_hub
+    upstream.peek.side_effect = ValueError("broken generation pointer")
+    code, result, _ = h.get(h.owner, "/api/console") if method == "list" else h.toggle()
+    assert code == 200
+    agent = (
+        next(row for row in result["agents"] if row["id"] == h.a1) if method == "list" else result
+    )
+    assert agent["id"] == h.a1
+    assert agent["last_seen"] == h.db.connection(h.a1, h.workspace)["last_used_at"]
+    if method == "toggle":
+        assert agent["recording"] is True

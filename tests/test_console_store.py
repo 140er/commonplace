@@ -697,3 +697,33 @@ def test_busy_prune_keeps_appended_row_and_retries_at_next_multiple(gateway, mon
         assert activity.dropped == 0
     finally:
         writer.close()
+
+
+@pytest.mark.parametrize("reader", ["after", "tail", "latest_at"])
+@pytest.mark.parametrize("backend", ["sqlite", "sqlcipher"])
+def test_busy_activity_queries_return_empty_and_recover(gateway, monkeypatch, reader, backend):
+    from mempalace.sqlite_crypto import driver
+
+    module = driver() if backend == "sqlcipher" else sqlite3
+    activity = store.open_activity(gateway, "ws_one")
+    activity.append("a1", "task_list", "ok", 1)
+
+    class BusyConnection(module.Connection):
+        __module__ = "sqlcipher3" if backend == "sqlcipher" else "sqlite3"
+
+        def execute(self, sql, *args):
+            raise module.OperationalError("database is locked")
+
+    busy = module.connect(":memory:", factory=BusyConnection)
+    args = {"after": ("a1", 0, 10), "tail": ("a1", 10), "latest_at": (["a1"],)}[reader]
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(activity, "_conn", busy)
+            try:
+                result = getattr(activity, reader)(*args)
+            except module.OperationalError as exc:
+                result = exc
+            assert result == ({} if reader == "latest_at" else [])
+        assert getattr(activity, reader)(*args)
+    finally:
+        busy.close()

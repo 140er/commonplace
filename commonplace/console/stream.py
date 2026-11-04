@@ -8,6 +8,7 @@ import sqlite3
 
 from commonplace import redact
 from commonplace.console import output, store, types
+from mempalace.sqlite_crypto import operational_error_type
 
 _MAX_POSITION = (1 << 63) - 1
 _BUDGET = 128 * 1024
@@ -154,7 +155,7 @@ def _read_output(gateway, agent, r, c, forward):
     except ValueError:
         # Broken generation pointer: keep the panel and retry on the next poll.
         return None, r, c
-    except sqlite3.OperationalError as exc:
+    except (sqlite3.OperationalError, operational_error_type(None)) as exc:
         if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
             raise
         return None, r, c

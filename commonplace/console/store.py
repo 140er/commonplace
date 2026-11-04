@@ -12,7 +12,7 @@ from time import monotonic
 
 from commonplace import redact
 from commonplace.http_util import log_failure
-from mempalace.sqlite_crypto import connect, driver, row_factory
+from mempalace.sqlite_crypto import connect, operational_error_type, row_factory
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS console_activity (
@@ -37,12 +37,6 @@ _NAME = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 
 def _cutoff():
     return (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _operational_error(conn):
-    if type(conn).__module__.startswith("sqlcipher3"):
-        return driver().OperationalError
-    return sqlite3.OperationalError
 
 
 class ActivityStore:
@@ -135,7 +129,7 @@ class ActivityStore:
                             "seq": seq,
                         },
                     )
-                except _operational_error(conn):
+                except operational_error_type(conn):
                     pass
                 finally:
                     conn.execute("PRAGMA busy_timeout=50")
@@ -146,50 +140,48 @@ class ActivityStore:
         finally:
             self._lock.release()
 
-    def after(self, cid, seq, limit) -> list[dict]:
+    def _read(self, sql, params):
         with self._lock:
-            conn = self._connection()
-            if conn is None:
+            try:
+                conn = self._connection()
+                return conn.execute(sql, params).fetchall() if conn is not None else []
+            except (sqlite3.OperationalError, operational_error_type(self._conn)) as exc:
+                if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                    raise
                 return []
-            return [
-                dict(row)
-                for row in conn.execute(
-                    "SELECT * FROM console_activity WHERE connection_id=? AND seq>? AND at>=? "
-                    "ORDER BY seq LIMIT ?",
-                    (cid, seq, _cutoff(), limit),
-                )
-            ]
+
+    def after(self, cid, seq, limit) -> list[dict]:
+        return [
+            dict(row)
+            for row in self._read(
+                "SELECT * FROM console_activity WHERE connection_id=? AND seq>? AND at>=? "
+                "ORDER BY seq LIMIT ?",
+                (cid, seq, _cutoff(), limit),
+            )
+        ]
 
     def tail(self, cid, limit) -> list[dict]:
-        with self._lock:
-            conn = self._connection()
-            if conn is None:
-                return []
-            return [
-                dict(row)
-                for row in conn.execute(
-                    "SELECT * FROM console_activity WHERE connection_id=? AND at>=? "
-                    "ORDER BY seq DESC LIMIT ?",
-                    (cid, _cutoff(), limit),
-                )
-            ]
+        return [
+            dict(row)
+            for row in self._read(
+                "SELECT * FROM console_activity WHERE connection_id=? AND at>=? "
+                "ORDER BY seq DESC LIMIT ?",
+                (cid, _cutoff(), limit),
+            )
+        ]
 
     def latest_at(self, cids) -> dict[str, str]:
         cids = list(cids)
         if not cids:
             return {}
-        with self._lock:
-            conn = self._connection()
-            if conn is None:
-                return {}
-            placeholders = ",".join("?" for _ in cids)
-            return dict(
-                conn.execute(
-                    "SELECT connection_id, MAX(at) FROM console_activity "
-                    f"WHERE connection_id IN ({placeholders}) AND at>=? GROUP BY connection_id",
-                    [*cids, _cutoff()],
-                )
+        placeholders = ",".join("?" for _ in cids)
+        return dict(
+            self._read(
+                "SELECT connection_id, MAX(at) FROM console_activity "
+                f"WHERE connection_id IN ({placeholders}) AND at>=? GROUP BY connection_id",
+                [*cids, _cutoff()],
             )
+        )
 
 
 def exists(gateway, ws) -> bool:
@@ -199,7 +191,12 @@ def exists(gateway, ws) -> bool:
 def peek(gateway, ws) -> ActivityStore | None:
     activity = open_activity(gateway, ws)
     with activity._lock:
-        return activity if activity._connection() is not None else None
+        try:
+            return activity if activity._connection() is not None else None
+        except (sqlite3.OperationalError, operational_error_type(activity._conn)) as exc:
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
+            return None
 
 
 def open_activity(gateway, ws) -> ActivityStore:

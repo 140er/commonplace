@@ -505,3 +505,17 @@ def test_regex_quantifiers_are_bounded_at_4096():
             bounds = quantifier.split(",")
             assert all(bound.isdigit() for bound in bounds)
             assert max(map(int, bounds)) <= 4096
+
+
+def test_unrecognized_marker_does_not_exempt_assignment():
+    assert redactor.redact("password=[redacted:hunterhunter]") == (
+        "password=[redacted:assignment]",
+        ["assignment"],
+    )
+
+
+def test_unrecognized_marker_does_not_exempt_secret_value():
+    assert redactor.redact_value({"password": "[redacted:hunterhunter]"}) == (
+        {"password": "[redacted:json_secret_key]"},
+        ["json_secret_key"],
+    )

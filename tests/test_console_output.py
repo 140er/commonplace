@@ -11,6 +11,8 @@ import pytest
 
 from commonplace.console import output, types
 from commonplace.policy import Policy
+from mempalace.sqlite_crypto import driver
+from tests._console_helpers import console_hub_fixture  # noqa: F401
 
 AT = "2026-11-04T09:00:00Z"
 SCHEMA = Path(__file__).parents[1] / "commonplace" / "boards" / "schema.sql"
@@ -285,11 +287,86 @@ def test_busy_boards_read_returns_null_and_recovers(case):
     assert output.recent(case.gateway, case.agent)
 
 
+@pytest.mark.parametrize("backend", ["sqlite", "sqlcipher"])
 @pytest.mark.parametrize("message", ["database is locked", "database table is locked"])
-def test_locked_open_returns_null(case, monkeypatch, message):
-    monkeypatch.setattr(output, "connect", Mock(side_effect=sqlite3.OperationalError(message)))
-    assert output.latest_ids(case.gateway, case.agent) is None
-    assert output.recent(case.gateway, case.agent) is None
+def test_locked_open_returns_null(case, monkeypatch, message, backend):
+    module = driver() if backend == "sqlcipher" else sqlite3
+    monkeypatch.setattr(output, "connect", Mock(side_effect=module.OperationalError(message)))
+    for reader in (output.latest_ids, output.recent):
+        try:
+            result = reader(case.gateway, case.agent)
+        except module.OperationalError as exc:
+            result = exc
+        assert result is None
+
+
+def test_sqlcipher_execute_locked_returns_null_and_closes(case, monkeypatch):
+    module = driver()  # Missing sqlcipher3 is a failure, never a skip.
+    opened = []
+
+    class BusyConnection(module.Connection):
+        __module__ = "sqlcipher3"
+
+        def execute(self, sql, *args):
+            if sql.startswith("SELECT"):
+                raise module.OperationalError("database is locked")
+            return super().execute(sql, *args)
+
+    def connect(*args, **kwargs):
+        conn = module.connect(":memory:", factory=BusyConnection)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(output, "connect", connect)
+    for reader in (output.latest_ids, output.recent):
+        try:
+            result = reader(case.gateway, case.agent)
+        except module.OperationalError as exc:
+            result = exc
+        assert result is None
+        with pytest.raises(module.ProgrammingError, match="closed"):
+            opened[-1].execute("PRAGMA query_only=ON")
+
+
+@pytest.mark.parametrize("forward", [False, True])
+@pytest.mark.parametrize("phase", ["open", "execute", "stream"])
+def test_sqlcipher_locked_output_http_keeps_activity_and_retries(
+    console_hub, monkeypatch, forward, phase
+):
+    h = console_hub
+    from commonplace.console import store, stream
+
+    module = driver()
+    activity = store.open_activity(h.gateway, h.workspace)
+    seq = activity.append(h.a1, "task_list", "ok", 1)
+    original = output.connect
+
+    class BusyConnection(module.Connection):
+        __module__ = "sqlcipher3"
+
+        def execute(self, sql, *args):
+            if sql.startswith("SELECT"):
+                raise module.OperationalError("database is locked")
+            return super().execute(sql, *args)
+
+    def busy(*args, **kwargs):
+        if phase != "execute":
+            raise module.OperationalError("database is locked")
+        return module.connect(":memory:", factory=BusyConnection)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(output, "latest_ids" if phase == "stream" else "connect", busy)
+        suffix = "&after=" + stream.encode_cursor(0, 0, 5, 6) if forward else ""
+        code, result, _ = h.stream(suffix=suffix)
+        assert code == 200
+        assert result["output"] is None
+        assert [item["id"] for item in result["items"]] == [f"t{seq}"]
+        assert stream.decode_cursor(result["cursor"])[2:] == ((5, 6) if forward else (0, 0))
+    assert output.connect is original
+    code, retry, _ = h.stream(suffix="&after=" + result["cursor"])
+    # After the lock clears the output is read again: a tail cursor already holds the
+    # current (empty) head, so it is unchanged (null); a stale forward head gets [].
+    assert code == 200 and retry["output"] == ([] if forward else None)
 
 
 def test_broken_workspace_pointer_returns_null(case):

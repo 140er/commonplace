@@ -523,3 +523,46 @@ def test_items_and_output_have_separate_budgets_with_small_envelope(console):
     result = console.page(limit=100)
     assert json_size(result["items"]) <= BUDGET and json_size(result["output"]) <= BUDGET
     assert json_size(result) <= 2 * BUDGET + 1024
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "sqlcipher"])
+@pytest.mark.parametrize("phase", ["open", "execute"])
+@pytest.mark.parametrize("forward", [False, True])
+def test_busy_activity_http_reads_degrade_and_retry(
+    console_hub, monkeypatch, backend, phase, forward
+):
+    from mempalace.sqlite_crypto import driver
+
+    h = console_hub
+    module = driver() if backend == "sqlcipher" else sqlite3
+    activity = stream.store.open_activity(h.gateway, h.workspace)
+    seq = activity.append(h.a1, "task_list", "ok", 1)
+    suffix = "&after=" + stream.encode_cursor(0, 0, 0, 0) if forward else ""
+    actual = activity._conn
+
+    class BusyConnection(module.Connection):
+        __module__ = "sqlcipher3" if backend == "sqlcipher" else "sqlite3"
+
+        def execute(self, sql, *args):
+            raise module.OperationalError("database is busy")
+
+    busy = module.connect(":memory:", factory=BusyConnection, check_same_thread=False)
+    try:
+        with monkeypatch.context() as patch:
+            if phase == "open":
+                patch.setattr(activity, "_conn", None)
+                patch.setattr(stream.store, "connect", lambda *a, **kw: busy)
+            else:
+                patch.setattr(activity, "_conn", busy)
+            code, result, _ = h.stream(suffix=suffix)
+            assert code == 200
+            assert result["items"] == []
+            assert stream.decode_cursor(result["cursor"])[0] == 0
+            code, listing, _ = h.get(h.owner, "/api/console")
+            assert code == 200 and any(row["id"] == h.a1 for row in listing["agents"])
+        code, retry, _ = h.stream(suffix="&after=" + result["cursor"])
+        assert code == 200
+        assert [item["id"] for item in retry["items"]] == [f"t{seq}"]
+        assert activity._conn is actual
+    finally:
+        busy.close()

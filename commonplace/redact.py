@@ -43,7 +43,7 @@ KEY = (
 )
 _SECRET_KEY = re.compile(KEY, re.IGNORECASE)
 _BEGIN_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----")
-_MARKER = re.compile(r"(\[(?:redacted|omitted):[a-z_]{1,64}\])")
+_MARKER = re.compile(r"(\[(?:redacted|omitted):(?:" + "|".join(KINDS) + r")\])")
 _VALUE = r"""(?:"[^"\n]{1,512}"|'[^'\n]{1,512}'|[^\s"',;]{4,512})"""
 
 

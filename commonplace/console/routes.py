@@ -18,7 +18,10 @@ def _person(gateway, h):
 
 def _views(gateway, principal, agents):
     own_ids = [view.id for view in agents if view.own]
-    activity = store.peek(gateway, principal.workspace_id) if own_ids else None
+    try:
+        activity = store.peek(gateway, principal.workspace_id) if own_ids else None
+    except ValueError:
+        activity = None
     latest = activity.latest_at(own_ids) if activity is not None else {}
     now = datetime.now(timezone.utc)
     result = []
