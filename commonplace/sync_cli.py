@@ -111,8 +111,8 @@ def _selections(args, home):
 
         memory_thread_id(label, "file.md", "0" * 64)
         path = Path(root).expanduser().absolute()
-        if not path.is_dir() or any(p.is_symlink() for p in (path, *path.parents)):
-            raise ValueError("Select a regular memory directory")
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError("Symlinked memory directory refused")
         memories.append(
             {
                 "label": label,
