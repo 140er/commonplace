@@ -786,6 +786,7 @@ class BoardService:
                 "INSERT INTO board_repos(repo,board_id) VALUES (?,?)",
                 (normalized_repo, cur.lastrowid),
             )
+        self.pending.append(("space_created", f"space:{slug}", {"board": slug}, p.actor))
         return conn.execute("SELECT * FROM boards WHERE id=?", (cur.lastrowid,)).fetchone()
 
     def _expire(self, conn, board):
