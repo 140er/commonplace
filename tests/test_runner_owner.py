@@ -10,7 +10,7 @@ from tests.runner_harness import (
     attest,
     card,
     cli_token,
-    enroll,
+    enroll as harness_enroll,
     http,
     member,
     owners,  # noqa: F401
@@ -23,6 +23,20 @@ GRANT = {
     "topics": ["worker"],
     "wings": ["shared"],
 }
+
+
+def enroll(hub, owner, **grant):
+    # Create the required existing wings through the ordinary public write path.
+    for wing in grant.get("wings", ["shared"]):
+        status, body = http(
+            hub.port,
+            "POST",
+            "/api/memory",
+            cookie=owner["cookie"],
+            body={"text": "Synthetic workspace example.", "theme": wing, "topic": "demo"},
+        )
+        assert status == 201, (status, body)
+    return harness_enroll(hub, owner, **grant)
 
 
 def listing(hub, owner):
@@ -70,7 +84,7 @@ def test_E2_management_requires_a_person_owner(signup_hub, owners, caller):
     elif caller == "worker":
         auth = {"token": machine["worker_token"]}
     else:
-        _, token = cli_token(owner, "requester", trust=caller)
+        _, token = cli_token(owner, "requester", profile="standard", trust=caller)
         auth = {"token": token}
     status, body = http(hub.port, "POST", "/api/runners", body=GRANT, **auth)
     assert status == 403, (status, body)
@@ -329,7 +343,7 @@ def test_B3_attestation_is_owner_asserted_and_unverified(signup_hub, owners, bad
     elif bad == "worker":
         data["worker_connection_id"] = "conn_0000000000000000"
     else:
-        _, token = cli_token(owner, "requester")
+        _, token = cli_token(owner, "requester", profile="standard")
         auth = {"token": token}
     status, body = edit(hub, owner, machine, "POST", "/attest", data, **auth)
     assert status == (403 if bad == "bearer" else 400), (status, body)
@@ -348,12 +362,18 @@ def test_B4_binding_changes_reset_attestation(signup_hub, owners, change):
     else:
         if change == "wings":
             # Create a known public wing through the ordinary memory tool.
-            token_id, token = cli_token(owner, "requester", read_wings="*", write_wing="notes")
-            assert token_id
-            result, text = hub.call(
-                token, "memory_save", text="Synthetic workspace note", theme="notes"
+            token_id, token = cli_token(
+                owner, "requester", profile="standard", read_wings="*", write_wing="notes"
             )
-            assert result is not None, "memory save failed"
+            assert token_id
+            status, result = http(
+                hub.port,
+                "POST",
+                "/api/memory",
+                token=token,
+                body={"text": "Synthetic workspace note", "theme": "notes"},
+            )
+            assert status == 201 and result is not None, "memory save failed"
         status, body = edit(
             hub, owner, machine, body={change: ["notes"] if change == "wings" else ["other"]}
         )
@@ -377,7 +397,7 @@ def test_B7_other_grant_edits_keep_binding_and_increment_version(signup_hub, own
     hub, owner = signup_hub, owners["A"]
     machine = enroll(hub, owner)
     attest(hub, owner, machine)
-    cid, _ = cli_token(owner, "requester")
+    cid, _ = cli_token(owner, "requester", profile="standard")
     before = machine_row(hub, owner, machine)
     for key, value in (
         ("max_in_flight", 2),

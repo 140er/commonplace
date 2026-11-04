@@ -128,6 +128,10 @@ def _fenced(conn, machine_id, lease_token):
         (machine_id, lease_token),
     ).fetchone()
     if row is None:
+        if not conn.execute(
+            "SELECT 1 FROM runner_jobs WHERE machine_id=? LIMIT 1", (machine_id,)
+        ).fetchone():
+            raise ToolError("no: start not found")
         raise Conflict("lease is no longer current")
     return row
 

@@ -50,14 +50,14 @@ def startable(gateway, machine, row, board) -> None:
     if worker is None or worker.workspace_id != machine["workspace_id"]:
         raise Refused("worker unavailable")
     service = BoardService(ToolContext(worker, gateway))
+    if _waiting_on_person(row):
+        raise Refused("waiting_on_person")
     if row["status"] != "todo":
         raise Refused("not_todo")
     if row["assignee"] is not None:
         raise Refused("assigned")
     if row["proposal_status"] in ("pending", "rejected"):
         raise Refused("proposal_open")
-    if _waiting_on_person(row):
-        raise Refused("waiting_on_person")
     if not service._claimable_origin(row):
         raise Refused("origin_not_released")
     try:

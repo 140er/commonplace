@@ -1423,6 +1423,15 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "JSON and same-origin request required"})
             return
         handler = self.server.gateway.find_route(self.command, path)
+        if (
+            principal is not None
+            and principal.runner == "worker"
+            and path.startswith("/api/threads/")
+            and not principal.policy.has_scope("threads:read")
+        ):
+            self.close_connection = True
+            self._send_json(403, {"error": "needs scope threads:read"})
+            return
         request, parse_error = None, None
         if path == "/mcp" and self.command == "POST" and principal is not None:
             media = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()

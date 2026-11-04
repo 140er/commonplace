@@ -161,7 +161,7 @@ def test_t1_rotated_and_expired_machine_credentials_are_rejected(
         "POST",
         f"/api/runners/{machine['machine_id']}/rotate",
         cookie=owner["cookie"],
-        body={"credential": "machine"},
+        body={"kind": "machine"},
     )
     assert status == 200
     status, body = http(

@@ -8,7 +8,7 @@ from tests.runner_harness import (
     attest,
     card,
     cli_token,
-    enroll,
+    enroll as harness_enroll,
     http,
     launches,
     owners,  # noqa: F401
@@ -16,6 +16,20 @@ from tests.runner_harness import (
     runner_config,
     signup_hub,  # noqa: F401
 )
+
+
+def enroll(hub, owner, **grant):
+    # Create the required existing wings through the ordinary public write path.
+    for wing in grant.get("wings", ["shared"]):
+        status, body = http(
+            hub.port,
+            "POST",
+            "/api/memory",
+            cookie=owner["cookie"],
+            body={"text": "Synthetic workspace example.", "theme": wing, "topic": "demo"},
+        )
+        assert status == 201, (status, body)
+    return harness_enroll(hub, owner, **grant)
 
 
 def _setup(hub, owner, **grant):
@@ -346,7 +360,7 @@ def test_c3_revoke_cancels_queue_and_preserves_ambiguity(signup_hub, owners, tmp
 
 def test_c5_uncertain_cannot_be_cancelled(signup_hub, owners, monkeypatch):  # noqa: F811
     hub, owner = signup_hub, owners["A"]
-    connection, token = cli_token(owner, "coordinator")
+    connection, token = cli_token(owner, "coordinator", profile="standard")
     machine = _setup(hub, owner, requesters=[connection])
     task, _ = _start(hub, owner, machine, token=token)
     job = _lease(hub, machine)

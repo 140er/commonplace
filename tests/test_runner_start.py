@@ -55,7 +55,7 @@ def _untrusted(hub, owner, name):
 
 
 def _ready(hub, owner, **grant):
-    cid, token = cli_token(owner, "requester")
+    cid, token = cli_token(owner, "requester", profile="standard")
     machine = _enroll(hub, owner, requesters=[cid], **grant)
     attest(hub, owner, machine)
     return cid, token, machine
@@ -171,7 +171,7 @@ def _machine_row(hub, owner, machine):
 
 def test_B1_unbound_is_inert(signup_hub, owners, tmp_path):
     hub, owner = signup_hub, owners["A"]
-    cid, token = cli_token(owner, "requester")
+    cid, token = cli_token(owner, "requester", profile="standard")
     machine = _enroll(hub, owner, requesters=[cid])  # positive control: enroll 201
     task = card(hub, owner)
     for auth in ({"owner": owner}, {"token": token}):
@@ -224,7 +224,7 @@ def test_A1_only_granted_trusted_requesters(signup_hub, owners, trust):
     if trust == "untrusted":
         _cid, stranger = _untrusted(hub, owner, "stranger")
     else:
-        _cid, stranger = cli_token(owner, "stranger", trust=trust)
+        _cid, stranger = cli_token(owner, "stranger", profile="standard", trust=trust)
     assert _start(hub, machine, card(hub, owner), token=stranger)[0] == 403
     assert not START_TOOLS & {tool["name"] for tool in _tools(hub, stranger)}
 
@@ -273,7 +273,8 @@ def test_A3_only_unassigned_ready_todo(signup_hub, owners, case, reason):
     from commonplace.boards.store import BoardStore
 
     changes = {
-        "ask": {"ask": "Choose"},
+        "ask": {"status": "review", "ask": "Choose"},
+        "review": {"status": "review", "ask": ""},
         "ask_to": {"ask_to": "user:" + owner["user_id"]},
         "assigned": {"assignee": "conn:" + cid},
         "proposal": {"proposal_status": "pending"},
@@ -386,7 +387,7 @@ def test_G2_starting_rechecks_authority(signup_hub, owners, tmp_path, change):
 
 def test_R1_revocation_restores_inert_surface(signup_hub, owners):
     hub, owner = signup_hub, owners["A"]
-    cid, token = cli_token(owner, "requester")
+    cid, token = cli_token(owner, "requester", profile="standard")
     task = card(hub, owner)
     tools_before = _tools(hub, token)
     card_before = http(hub.port, "GET", f"/api/cards/{task['number']}", token=token)
@@ -426,7 +427,7 @@ def test_RT1_routes_and_tool_gate(signup_hub, owners):
     assert http(hub.port, "POST", "/api/runner/x", cookie=owner["cookie"], body={})[0] == 404
     attest(hub, owner, machine)
     _accepted(_start(hub, machine, card(hub, owner), owner=owner))
-    _cid, token = cli_token(owner, "limited", tools=["task_show"])
+    _cid, token = cli_token(owner, "limited", profile="standard", tools=["task_show"])
     assert _start(hub, machine, card(hub, owner), token=token) == (
         403,
         {"error": "tool not allowed for this connection"},
@@ -519,8 +520,8 @@ def test_S5_recent_card_and_hourly_cap(signup_hub, owners, monkeypatch):
 
 def test_V1_status_is_requester_scoped(signup_hub, owners):
     hub, owner = signup_hub, owners["A"]
-    cid, token = cli_token(owner, "requester")
-    other_id, other_token = cli_token(owner, "other")
+    cid, token = cli_token(owner, "requester", profile="standard")
+    other_id, other_token = cli_token(owner, "other", profile="standard")
     machine = _enroll(hub, owner, requesters=[cid, other_id])
     attest(hub, owner, machine)
     task = card(hub, owner)
@@ -558,7 +559,7 @@ def test_U1_resolve_requires_person_owner_and_audit(signup_hub, owners):
         row for row in hub.db.audit_entries(owner["workspace"]) if row["action"] == "runner.resolve"
     ]
     assert len(rows) == 1, rows
-    _cid, owner_pat = cli_token(owner, "owner-role")
+    _cid, owner_pat = cli_token(owner, "owner-role", profile="standard")
     for forbidden in (owner_pat, token, machine["worker_token"]):
         assert http(hub.port, "POST", path, token=forbidden, body={"outcome": "failed"})[0] == 403
 

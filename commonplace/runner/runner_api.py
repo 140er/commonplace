@@ -180,6 +180,9 @@ def register(gateway):
             send_json(h, exc.status, {"error": str(exc)})
         except jobs.Conflict as exc:
             send_json(h, 409, {"error": str(exc)})
+        except ToolError as exc:
+            message = str(exc).removeprefix("no: ")
+            send_json(h, 404 if message == "start not found" else 403, {"error": message})
         except ValueError as exc:
             send_json(h, 400, {"error": str(exc)})
 

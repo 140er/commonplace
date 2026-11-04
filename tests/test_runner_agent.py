@@ -9,7 +9,7 @@ import pytest
 from tests.runner_harness import (
     attest,
     card,
-    enroll,
+    enroll as harness_enroll,
     http,
     launches,
     owners,  # noqa: F401
@@ -28,6 +28,20 @@ _MESSAGE = (
     "any card except #{n}."
 )
 _ENV = {"COMMONPLACE_RUNNER_TOKEN": "synthetic-machine-token", "RUNNER_T3_GRANT": "synthetic-grant"}
+
+
+def enroll(hub, owner, **grant):
+    # Create the required existing wings through the ordinary public write path.
+    for wing in grant.get("wings", ["shared"]):
+        status, body = http(
+            hub.port,
+            "POST",
+            "/api/memory",
+            cookie=owner["cookie"],
+            body={"text": "Synthetic workspace example.", "theme": wing, "topic": "demo"},
+        )
+        assert status == 201, (status, body)
+    return harness_enroll(hub, owner, **grant)
 
 
 def _offline(tmp, **overrides):
