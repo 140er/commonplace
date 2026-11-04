@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 
 from commonplace.boards._http import HTTPError, send_json
 from commonplace.http_util import log_failure
-from commonplace.projects.types import MODEL
 
 from . import chat_relay, registry, runner_api
+from .registry import CHAT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def _body(h, action):
                 raise HTTPError(400, "invalid text")
             if not registry.PROVIDER.fullmatch(value["cli"]):
                 raise HTTPError(400, "invalid cli")
-            if not MODEL.fullmatch(value["model"]):
+            if not CHAT_MODEL.fullmatch(value["model"]):
                 raise HTTPError(400, "invalid model")
         elif value["code"] not in chat_relay.RUNNER_FAIL_CODES:
             raise HTTPError(400, "invalid code")

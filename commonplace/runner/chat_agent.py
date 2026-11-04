@@ -22,7 +22,7 @@ from .agent import (
     _require,
     _url,
 )
-from .registry import PROVIDER
+from .registry import CHAT_MODEL, PROVIDER
 
 CONFIG_KEYS = frozenset({"hub_url", "token_env", "chat"})
 CHAT_KEYS = frozenset({"default_cli", "context", "relay_always", "clis"})
@@ -83,7 +83,7 @@ def validate_chat(chat: dict) -> dict:
         )
         model = entry.get("default_model")
         _require(
-            isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model),
+            isinstance(model, str) and CHAT_MODEL.fullmatch(model),
             "invalid default_model",
         )
         tools = entry.get("tools", False)
@@ -228,11 +228,7 @@ def _reply(hub, config, job):
         isinstance(job.get("system"), str)
         and isinstance(job.get("prompt"), str)
         and (cli is None or isinstance(cli, str))
-        and (
-            model is None
-            or isinstance(model, str)
-            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model)
-        )
+        and (model is None or isinstance(model, str) and CHAT_MODEL.fullmatch(model))
     ):
         code = "bad_output"
     elif cli is not None and cli not in chat["clis"]:
@@ -280,50 +276,52 @@ def _ask_cli(chat: dict, cli: str, model: str | None, system: str, prompt: str) 
     try:
         with TemporaryDirectory() as cwd:
             data = (system + "\n\n" + prompt).encode("utf-8")
-            with subprocess.Popen(
+            child = subprocess.Popen(
                 argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 cwd=cwd,
                 env=env,
-            ) as child:
-                output = bytearray()
+            )
+            output = bytearray()
 
-                def read_output():
+            def read_output():
+                # This thread owns the pipe: closing it from another thread can
+                # block while a descendant still holds the other end open.
+                with child.stdout:
                     output.extend(child.stdout.read(65_537))
                     if len(output) > 65_536:
                         child.kill()
+                        child.wait()
 
-                def write_input():
-                    try:
-                        child.stdin.write(data)
-                        child.stdin.close()
-                    except (BrokenPipeError, OSError):
-                        pass
-
-                reader = Thread(target=read_output, daemon=True)
-                writer = Thread(target=write_input, daemon=True)
-                deadline = time.monotonic() + CLI_TIMEOUT_S
-                reader.start()
-                writer.start()
+            def write_input():
                 try:
-                    child.wait(timeout=CLI_TIMEOUT_S)
-                    reader.join(max(0, deadline - time.monotonic()))
-                    writer.join(max(0, deadline - time.monotonic()))
-                    if reader.is_alive() or writer.is_alive():
-                        raise subprocess.TimeoutExpired(argv, CLI_TIMEOUT_S)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait()
-                    reader.join()
-                    writer.join()
-                    raise
-                if len(output) > 65_536:
-                    return "fail", "bad_output"
-                returncode = child.returncode
-    except subprocess.TimeoutExpired:
-        return "fail", "cli_timeout"
+                    with child.stdin:
+                        child.stdin.write(data)
+                except (BrokenPipeError, OSError):
+                    pass
+
+            reader = Thread(target=read_output, daemon=True)
+            writer = Thread(target=write_input, daemon=True)
+            deadline = time.monotonic() + CLI_TIMEOUT_S
+            reader.start()
+            writer.start()
+            try:
+                child.wait(timeout=CLI_TIMEOUT_S)
+                reader.join(max(0, deadline - time.monotonic()))
+                writer.join(max(0, deadline - time.monotonic()))
+                if reader.is_alive() or writer.is_alive():
+                    raise subprocess.TimeoutExpired(argv, CLI_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+                reader.join(0.1)
+                writer.join(0.1)
+                return "fail", "cli_timeout"
+            if len(output) > 65_536:
+                return "fail", "bad_output"
+            returncode = child.returncode
     except OSError:
         return "fail", "cli_failed"
     except UnicodeError:

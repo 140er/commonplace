@@ -115,9 +115,7 @@ def test_answer_storage_error_preserves_lease_and_retry_is_unique(
 
 
 @pytest.mark.parametrize("busy_count", [1, 2, 3])
-def test_client_retries_answer_503_at_most_three_times(
-    relay_hub, tmp_path, monkeypatch, busy_count
-):
+def test_client_answer_503_uses_at_most_three_posts(relay_hub, tmp_path, monkeypatch, busy_count):
     h = relay_hub
     config = fake_config(h, tmp_path)
     m = h.machine()
@@ -229,7 +227,8 @@ def test_no_access_fails_at_answer(relay_hub):
 def test_client_cli_failures_are_recorded(relay_hub, tmp_path, monkeypatch, flags, code):
     h = relay_hub
     config = fake_config(h, tmp_path, *flags)
-    monkeypatch.setattr(chat_agent, "CLI_TIMEOUT_S", 0.5)
+    if code == "cli_timeout":
+        monkeypatch.setattr(chat_agent, "CLI_TIMEOUT_S", 0.5)
     m = h.machine()
     assert h.poll(m, ("example-cli",))[0] == 204
     h.post(h.owner, "Report CLI failure.")
@@ -318,7 +317,7 @@ def test_full_context_egress_describes_title_limit():
 
 
 @pytest.mark.parametrize("size", [65_537, 131_072])
-def test_cli_stdout_overrun_is_bad_output(monkeypatch, size):
+def test_cli_stdout_overrun_is_bad_output(size):
     chat = {
         "clis": {
             "example-cli": {
@@ -331,7 +330,6 @@ def test_cli_stdout_overrun_is_bad_output(monkeypatch, size):
             }
         }
     }
-    monkeypatch.setattr(chat_agent, "CLI_TIMEOUT_S", 0.5)
     result = chat_agent._ask_cli(chat, "example-cli", None, "System", "Question")
     assert result == ("fail", "bad_output")  # RED
 

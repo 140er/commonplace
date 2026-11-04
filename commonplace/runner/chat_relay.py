@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -11,10 +12,13 @@ from commonplace.boards.service import BoardService
 from commonplace.chat import front, store
 from commonplace.chat.types import MAX_REPLY_CHARS
 from commonplace.extensions import ToolContext, ToolError
+from commonplace.http_util import log_failure
 from commonplace.projects import models
-from commonplace.projects.types import MODEL
 
 from . import chat_context
+from .registry import CHAT_MODEL
+
+logger = logging.getLogger(__name__)
 
 CHAT_ONLINE_S = 90
 CHAT_WAIT_S = 120
@@ -273,8 +277,11 @@ def lease(
             gateway, poster, claimed["board"], claimed["message_id"], context
         )
     except Exception:
-        with db._lock:
-            _finish(db._conn, claimed, "failed", "bad_output", now)
+        try:
+            with db._lock:
+                _finish(db._conn, claimed, "failed", "bad_output", now)
+        except Exception as exc:
+            log_failure(logger, "chat relay finish failed", exc)
         return None
     return {
         "job": claimed["id"],
@@ -307,9 +314,15 @@ def answer(
     db = gateway.db
     with db._lock:
         row = _fenced(db._conn, machine, job, lease_token, now)
-    if not 1 <= len(text.encode("utf-8")) <= MAX_ANSWER_BYTES or MODEL.fullmatch(model) is None:
+    if (
+        not 1 <= len(text.encode("utf-8")) <= MAX_ANSWER_BYTES
+        or CHAT_MODEL.fullmatch(model) is None
+    ):
         raise InvalidReply("Invalid answer")
-    poster = _poster(gateway, row)
+    try:
+        poster = _poster(gateway, row)
+    except (OSError, sqlite3.Error):
+        raise ReplyBusy() from None
     with db._lock, db._tx() as conn:
         row = _fenced(conn, machine, job, lease_token, now)
         seen = conn.execute(
@@ -335,7 +348,7 @@ def answer(
                     redacted=tuple(sorted(kinds)),
                     model=f"runner:{cli}/{model}",
                 )
-            except (TimeoutError, sqlite3.Error):
+            except (OSError, sqlite3.Error):
                 raise ReplyBusy() from None
             _finish(conn, row, "done", "ok", now)
     if poster is None:
