@@ -105,7 +105,7 @@ def test_list_source_range_boundaries(tmp_path):
             seen.extend(r.id for r in page)
             after = (page[-1].source_thread_id, page[-1].id)
         assert seen == [r.id for r in rows]
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="colon"):
             store.list_source_range("A", "import-private:usr_a", limit=1)
         assert (
             store.list_source_range("A", "import-private:usr_a:", after=("z", "z"), limit=2) == []
@@ -144,6 +144,7 @@ def test_import_list_rejects_invalid_paging(journey):
         "!",
         base64.urlsafe_b64encode(json.dumps([{}, []]).encode()).decode(),
         base64.urlsafe_b64encode(b'["one"]').decode(),
+        base64.urlsafe_b64encode(b'["\\ud800", "x"]').decode(),
     ]
     for query in ["limit=0", "limit=101", "limit=abc"] + ["cursor=" + quote(c) for c in malformed]:
         status, _, raw = journey.request("/api/imports?" + query, owner=journey.owner)

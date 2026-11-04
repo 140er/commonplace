@@ -645,7 +645,8 @@ class ThreadStore:
 
     def list_source_range(self, workspace_id, prefix, *, after=None, limit):
         """Page a literal source namespace in binary identity order."""
-        assert prefix.endswith(":")
+        if not prefix.endswith(":"):
+            raise ValueError("source prefix must end with a colon")
         sql = "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id>=? AND source_thread_id<?"
         parameters = [workspace_id, prefix, prefix[:-1] + ";"]
         if after is not None:

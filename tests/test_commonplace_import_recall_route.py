@@ -12,7 +12,7 @@ def test_public_owner_reads_imported_native_archive_via_history_route(fresh, mon
     monkeypatch.setenv("COMMONPLACE_APP_URL", "http://127.0.0.1")
     client, mailbox = fresh()
     monkeypatch.setattr(urls, "AGENT_URL", urls.APP_URL)
-    identity = "card166-native-" + uuid4().hex
+    identity = "native-" + uuid4().hex
     cookie = client.signin(mailbox, identity + "@example.test")
     owner = client.me(cookie)
     # Read-only identity checks; signup and all data writes use public HTTP.

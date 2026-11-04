@@ -133,6 +133,8 @@ def _decode_cursor(cursor):
             and all(isinstance(value, str) for value in after)
         ):
             raise ValueError()
+        for value in after:
+            value.encode("utf-8")  # A lone surrogate is invalid input, not a 500.
     except (ValueError, binascii.Error, UnicodeError):
         raise _RequestError(400, "invalid cursor") from None
     return after
