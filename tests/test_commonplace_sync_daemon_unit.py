@@ -677,7 +677,7 @@ def test_backfill_fresh_setup_catches_up_within_backfill_budget(backfill_setup):
     b.drive(b.session(), 900)
     assert len(b.posts) == 300  # RED
     assert b.state.next_due(b.bkey + "-done") > 0
-    assert b.state.next_due(b.bkey) == 300
+    assert b.state.next_due(b.bkey) == 180
 
 
 def test_backfill_progress_survives_daemon_restart(backfill_setup):
@@ -685,7 +685,7 @@ def test_backfill_progress_survives_daemon_restart(backfill_setup):
     b.drive(b.session(), 100)
     b.drive(b.session(), 800)
     assert len(b.posts) == 300  # RED
-    assert b.state.next_due(b.bkey) == 300
+    assert b.state.next_due(b.bkey) == 180
 
 
 def test_backfill_cap_returns_to_normal_limit(backfill_setup, monkeypatch):
@@ -757,3 +757,72 @@ def test_backfill_legacy_retry_lands_without_spacing_delay(backfill_setup):
     assert len(calls) == 2
     assert "client_op_id" not in calls[1]
     assert not b.state.outbox_pending()
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_run_backfill_refusal_does_not_back_off(backfill_setup, monkeypatch, status):
+    b = backfill_setup
+    b.refused["s0"] = (status, {})
+    times = []
+
+    def transport(*args):
+        if args[3].startswith("/api/events"):
+            return 403, {}
+        if args[3] == "/api/settings/capture":
+            return 200, {"enabled": True, "interval_seconds": 0}
+        if args[2] == "POST":
+            times.append(b.now[0])
+        return b.transport(*args)
+
+    def sleep(seconds):
+        b.now[0] += seconds
+
+    monkeypatch.setattr(
+        sync_daemon._Session, "_apply_cached", lambda self: setattr(self, "interval", 0)
+    )
+    result = sync_daemon.run(
+        b.config,
+        b.state,
+        clock=lambda: b.now[0],
+        sleep=sleep,
+        transport=transport,
+        stop=lambda: b.now[0] >= 10600,
+    )
+    assert result == 0
+    assert len(b.posts) == 299
+    assert times[-1] - times[120] <= 2 * 179
+    assert b.state.next_due(b.bkey + "-done") > 0
+
+
+def test_capture_off_does_not_end_backfill(backfill_setup):
+    b = backfill_setup
+    b.refused.update(dict.fromkeys(b.sources.sizes, (409, {})))
+    active = b.session()
+    b.drive(active, 1)
+    assert not b.state.next_due(b.bkey + "-done")
+    b.refused.clear()
+    b.drive(active, 200)
+    assert len(b.posts) == 300
+    assert b.state.next_due(b.bkey + "-done") > 0
+
+
+def test_backfill_budget_survives_real_state_reopen(tmp_path):
+    from commonplace import sync_state
+
+    config = {"hub": "https://sync.example", "tokens": {TOKEN_ENV["claude-code"]: TOKEN}}
+    path = tmp_path / "durable.db"
+    now = [10000.0]
+    with sync_state.open_state(path) as state:
+        active = sync_daemon._Session(config, state, lambda: now[0], None)
+        active.backfill = True
+        for _ in range(121):
+            assert active._budget(TOKEN_ENV["claude-code"])
+        bkey = active.bkey
+        assert state.next_due(bkey) == 1
+    with sync_state.open_state(path) as state:
+        active = sync_daemon._Session(config, state, lambda: now[0], None)
+        active.backfill = True
+        assert not active._budget(TOKEN_ENV["claude-code"])
+        now[0] += 2
+        assert active._budget(TOKEN_ENV["claude-code"])
+        assert state.next_due(bkey) == 2
