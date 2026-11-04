@@ -851,3 +851,34 @@ def test_capture_off_cursor_marks_stream_paused(backfill_setup):
     b.refused["s0"] = (409, {"error": "Workspace capture is off"})
     b.session().cycle(once=True)
     assert b.state.status.get(("claude-code", "s0", "s0")) == "paused"  # RED
+
+
+def test_continuous_rate_limited_cursor_stops_the_pass(backfill_setup):
+    b = backfill_setup
+    gets = []
+
+    def transport(target, token, method, route, body=None):
+        if method == "GET":
+            gets.append(route)
+            return 429, {"error": "slow down; retry in 5 seconds"}
+        return b.transport(target, token, method, route, body)
+
+    sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport).cycle()
+    assert len(gets) == 1  # RED
+
+
+def test_deferred_feed_keeps_backoff_with_a_refused_stream(backfill_setup):
+    b = backfill_setup
+    b.sources.sizes = {"s0": 2, "s1": 1}
+    b.starts["s0"] = 1
+    b.refused["s1"] = (401, {"error": "revoked"})
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST":
+            return 429, {"error": "Capture not due; retry in 60 seconds"}
+        return b.transport(target, token, method, route, body)
+
+    active = sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport)
+    active.cycle()
+    b.now[0] += 2
+    assert active.cycle() == 1  # RED

@@ -147,7 +147,7 @@ class _Session:
         match = re.search(RETRY_RE, str(payload.get("error", "")), re.IGNORECASE)
         self.state.defer(key, self.now() + (max(1, int(match[1])) if match else 60))
 
-    def initialize(self, sources=None):
+    def initialize(self, sources=None, *, once=False):
         """Adopt each server cursor before scanning a stream for the first time."""
         failed = False
         self.unavailable = set()
@@ -172,7 +172,9 @@ class _Session:
                 continue
             if status == 429:
                 self._defer(payload, self.key)
-                continue
+                if once:
+                    continue  # --once still reports every other stream's state
+                return int(failed)  # the feed is deferred; stop asking this pass
             if status != 200:
                 if status == 409:
                     self.state.set_status(source.source, source.path, source.native_id, "paused")
@@ -252,7 +254,7 @@ class _Session:
         config = dict(self.config, _state=self.state)
         config["_discovered"] = self.sources.discover(config)
         config["targets"] = self.sources.snapshot_targets(config)
-        failed = self.initialize(config["_discovered"])
+        failed = self.initialize(config["_discovered"], once=once)
         initializing = True
         # scan commits immutable ops even if the feed or network is unavailable.
         while True:
@@ -260,11 +262,12 @@ class _Session:
             self.backfill = not once and self._backfill(config["_discovered"], ops)
 
             # Refused streams do not slow backfill while others can progress;
-            # with nothing to make progress on, keep run()'s backoff.
+            # with nothing to make progress on, or a deferred feed, keep run()'s backoff.
             if (
                 initializing
                 and self.backfill
                 and not self.initialize_transient
+                and self.state.next_due(self.key) <= self.now()
                 and any(
                     self.state.cursor(s.source, s.path, s.native_id) is not None
                     for s in config["_discovered"]
