@@ -283,3 +283,206 @@ def test_backup_shell_syntax():
     result = subprocess.run(["bash", "-n", str(HOOK)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert shlex.split(HOOK.read_text().splitlines()[0][2:]) == ["/usr/bin/env", "bash"]
+
+
+DEPLOY_SH = DEPLOY / "commonplace" / "deploy.sh"
+
+
+def run_deploy(tmp_path, **fakes):
+    import shutil
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in "jq date flock cat cut tr grep sed head env bash".split():
+        executable = shutil.which(name)
+        assert executable, f"required test dependency: {name}"
+        (bin_dir / name).symlink_to(executable)
+    calls_file = tmp_path / "calls.jsonl"
+    log = f'jq -cn --arg cmd "$0" --args \'[$cmd | split("/")[-1]] + $ARGS.positional\' -- "$@" >> {shlex.quote(str(calls_file))}\n'
+    bodies = {
+        "id": f"echo {fakes.get('uid', 0)}",
+        "systemctl": """case "$*" in
+"show -p InvocationID --value test-backup.service")
+    if [[ -f "$HOME/started" ]]; then echo AFTER; else echo BEFORE; fi ;;
+"start --wait test-backup.service") : > "$HOME/started"; exit START_RC ;;
+"show -p Result --value test-backup.service") echo RESULT ;;
+*) exit 97 ;;
+esac""".replace("AFTER", fakes.get("after", "new"))
+        .replace("BEFORE", "old")
+        .replace("START_RC", str(fakes.get("start_rc", 0)))
+        .replace("RESULT", fakes.get("result", "success")),
+        "docker": """if [[ "$*" == *"config --format json" ]]; then
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"127.0.0.1","published":"8765"}]}}}'
+fi""",
+        "curl": "echo 200",
+        "latest": fakes.get(
+            "latest",
+            'jq -cn --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \'{id:("a" * 64),time:$time}\'',
+        ),
+        "check": f"exit {fakes.get('check_rc', 0)}",
+        "--check": ': > "$HOME/shell-executed"',
+    }
+    for name, body in bodies.items():
+        script = bin_dir / name
+        script.write_text("#!/usr/bin/env bash\nset -eu\n" + log + body + "\n")
+        script.chmod(0o755)
+    (tmp_path / "compose.yml").touch()
+    (tmp_path / ".env").touch()
+    config = tmp_path / "deploy.env"
+    config.write_text(fakes.get("config", ""))
+    # Construct from scratch: no inherited deploy settings or real command PATH.
+    env = {
+        "HOME": str(tmp_path),
+        "LANG": "C",
+        "PATH": str(bin_dir),
+        "COMMONPLACE_ROOT": str(tmp_path),
+        "COMMONPLACE_DEPLOY_ENV": str(config),
+        "DEPLOY_BACKUP_UNIT": "test-backup.service",
+        "DEPLOY_BACKUP_CHECK_CMD": str(bin_dir / "check"),
+        "DEPLOY_BACKUP_LATEST_CMD": str(bin_dir / "latest"),
+    }
+    if fakes.get("missing_unit"):
+        env.pop("DEPLOY_BACKUP_UNIT")
+    result = subprocess.run(
+        [str(bin_dir / "bash"), str(DEPLOY_SH)],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    calls = (
+        [json.loads(line) for line in calls_file.read_text().splitlines()]
+        if calls_file.exists()
+        else []
+    )
+    return result, calls
+
+
+def assert_deploy_failure(result, calls, step, prefix):
+    assert result.returncode == 1, result.stderr
+    assert result.stderr.startswith(f"[deploy] ERROR: {step}:")
+    assert result.stderr.count("\n") == 1
+    assert [call[0] for call in calls] == prefix
+    assert not any(call[0] == "docker" for call in calls)
+
+
+@pytest.mark.parametrize(
+    "fakes,step,prefix",
+    [
+        ({"result": "failed"}, "backup", ["id"] + ["systemctl"] * 4),
+        ({"check_rc": 1}, "check", ["id"] + ["systemctl"] * 4 + ["latest", "check"]),
+        ({"missing_unit": True}, "config", ["id"]),
+        ({"latest": "echo null"}, "latest", ["id"] + ["systemctl"] * 4 + ["latest"]),
+        ({"latest": "exit 2"}, "latest", ["id"] + ["systemctl"] * 4 + ["latest"]),
+        ({"uid": 1000}, "preflight", ["id"]),
+        ({"start_rc": 1}, "backup", ["id"] + ["systemctl"] * 2),
+    ],
+)
+def test_deploy_sh_fails_closed(tmp_path, fakes, step, prefix):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, **fakes)
+    assert_deploy_failure(result, calls, step, prefix)
+
+
+def test_deploy_sh_snapshot_before_start(tmp_path):
+    assert DEPLOY_SH.is_file()
+    import time
+
+    snapshot = int(time.time()) - 5
+    latest = f'jq -cn --arg time "$(date -u -d @{snapshot} +%Y-%m-%dT%H:%M:%SZ)" \'{{id:("a" * 64),time:$time}}\''
+    result, calls = run_deploy(tmp_path, latest=latest)
+    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 4 + ["latest"])
+
+
+def test_deploy_sh_unchanged_invocation(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, after="old")
+    assert_deploy_failure(result, calls, "backup", ["id"] + ["systemctl"] * 3)
+
+
+@pytest.mark.parametrize("timestamp", ["now", "+1 hour", "", "future"])
+def test_deploy_sh_invalid_timestamp(tmp_path, timestamp):
+    assert DEPLOY_SH.is_file()
+    value = (
+        "\"$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:%SZ)\""
+        if timestamp == "future"
+        else shlex.quote(timestamp)
+    )
+    latest = f"jq -cn --arg time {value} '{{id:(\"a\" * 64),time:$time}}'"
+    result, calls = run_deploy(tmp_path, latest=latest)
+    assert_deploy_failure(result, calls, "latest", ["id"] + ["systemctl"] * 4 + ["latest"])
+
+
+def test_deploy_sh_success_order(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path)
+    assert result.returncode == 0, result.stderr
+    compose = [
+        "docker",
+        "compose",
+        "-f",
+        str(tmp_path / "compose.yml"),
+        "--env-file",
+        str(tmp_path / ".env"),
+    ]
+    assert calls == [
+        ["id", "-u"],
+        ["systemctl", "show", "-p", "InvocationID", "--value", "test-backup.service"],
+        ["systemctl", "start", "--wait", "test-backup.service"],
+        ["systemctl", "show", "-p", "InvocationID", "--value", "test-backup.service"],
+        ["systemctl", "show", "-p", "Result", "--value", "test-backup.service"],
+        ["latest"],
+        ["check"],
+        compose + ["config", "--format", "json"],
+        compose + ["up", "-d", "--build", "--remove-orphans"],
+        compose + ["ps"],
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:8765/healthz"],
+    ]
+
+
+def test_deploy_sh_has_no_skip():
+    assert DEPLOY_SH.is_file()
+    text = DEPLOY_SH.read_text()
+    assert not any(word in text for word in ("SKIP", "no-backup", "--force"))
+
+
+@pytest.mark.parametrize(
+    "start,snap,now,age,expected",
+    [
+        (100, 99, 105, 900, 1),
+        (100, 100, 1001, 900, 1),
+        (100, 170, 100, 900, 1),
+        (100, 100, 105, 900, 0),
+    ],
+)
+def test_deploy_sh_fresh_enough(start, snap, now, age, expected):
+    assert DEPLOY_SH.is_file()
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; fresh_enough "$2" "$3" "$4" "$5"',
+            "bash",
+            str(DEPLOY_SH),
+            str(start),
+            str(snap),
+            str(now),
+            str(age),
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stderr
+
+
+def test_deploy_sh_env_file_is_data_and_environment_wins(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(
+        tmp_path, config="DEPLOY_BACKUP_CHECK_CMD=/x --check\nDEPLOY_BACKUP_UNIT=wrong.service\n"
+    )
+    assert result.returncode == 0, result.stderr
+    assert ["check"] in calls
+    assert not (tmp_path / "shell-executed").exists()
