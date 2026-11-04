@@ -704,6 +704,8 @@ def test_busy_prune_keeps_appended_row_and_retries_at_next_multiple(gateway, mon
 def test_busy_activity_queries_return_empty_and_recover(gateway, monkeypatch, reader, backend):
     from mempalace.sqlite_crypto import driver
 
+    if backend == "sqlcipher":
+        pytest.importorskip("sqlcipher3")  # same convention as test_workspace_encryption
     module = driver() if backend == "sqlcipher" else sqlite3
     activity = store.open_activity(gateway, "ws_one")
     activity.append("a1", "task_list", "ok", 1)

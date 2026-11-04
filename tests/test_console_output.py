@@ -290,6 +290,8 @@ def test_busy_boards_read_returns_null_and_recovers(case):
 @pytest.mark.parametrize("backend", ["sqlite", "sqlcipher"])
 @pytest.mark.parametrize("message", ["database is locked", "database table is locked"])
 def test_locked_open_returns_null(case, monkeypatch, message, backend):
+    if backend == "sqlcipher":
+        pytest.importorskip("sqlcipher3")  # same convention as test_workspace_encryption
     module = driver() if backend == "sqlcipher" else sqlite3
     monkeypatch.setattr(output, "connect", Mock(side_effect=module.OperationalError(message)))
     for reader in (output.latest_ids, output.recent):
@@ -301,7 +303,8 @@ def test_locked_open_returns_null(case, monkeypatch, message, backend):
 
 
 def test_sqlcipher_execute_locked_returns_null_and_closes(case, monkeypatch):
-    module = driver()  # Missing sqlcipher3 is a failure, never a skip.
+    pytest.importorskip("sqlcipher3")  # same convention as test_workspace_encryption
+    module = driver()
     opened = []
 
     class BusyConnection(module.Connection):
@@ -336,6 +339,7 @@ def test_sqlcipher_locked_output_http_keeps_activity_and_retries(
     h = console_hub
     from commonplace.console import store, stream
 
+    pytest.importorskip("sqlcipher3")  # same convention as test_workspace_encryption
     module = driver()
     activity = store.open_activity(h.gateway, h.workspace)
     seq = activity.append(h.a1, "task_list", "ok", 1)

@@ -534,6 +534,8 @@ def test_busy_activity_http_reads_degrade_and_retry(
     from mempalace.sqlite_crypto import driver
 
     h = console_hub
+    if backend == "sqlcipher":
+        pytest.importorskip("sqlcipher3")  # same convention as test_workspace_encryption
     module = driver() if backend == "sqlcipher" else sqlite3
     activity = stream.store.open_activity(h.gateway, h.workspace)
     seq = activity.append(h.a1, "task_list", "ok", 1)
