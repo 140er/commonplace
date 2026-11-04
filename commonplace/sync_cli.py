@@ -8,6 +8,7 @@ import os
 import shlex
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -92,9 +93,13 @@ def _selections(args, home):
         if source not in ("claude-code", "codex", "t3") or (source == "t3" and not root):
             raise ValueError("Select a native transcript source")
         default = home / (".claude/projects" if source == "claude-code" else ".codex/sessions")
-        sources.append(
-            {"source": source, "root": str(Path(root).expanduser().absolute() if root else default)}
-        )
+        path = Path(root).expanduser().absolute() if root else default
+        regular = path.is_dir() and not any(p.is_symlink() for p in (path, *path.parents))
+        if root and not regular:
+            raise ValueError("Select a regular transcript directory")
+        if not args.source and not regular:
+            continue
+        sources.append({"source": source, "root": str(path)})
     for value in args.memory:
         label, sep, selection = value.partition("=")
         if not sep or not selection:
@@ -266,7 +271,15 @@ def main(args) -> int:
         return _run(args, home, directory)
     except KeyboardInterrupt:
         return 0
-    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, CaptureError):
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        sqlite3.Error,
+        CaptureError,
+        subprocess.CalledProcessError,
+    ):
         print(
             "Sync failed; check configuration, credentials and private file permissions.",
             file=sys.stderr,

@@ -62,6 +62,9 @@ class State:
     def set_status(self, source, path, native_id, status):
         self.status[source, str(path), native_id] = status
 
+    def retry_rejected(self):
+        self.marked = {op: status for op, status in self.marked.items() if status != "revoked"}
+
     def outbox_pending(self):
         return [op for op in self.pending if op.op_id not in self.marked]
 

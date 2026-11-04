@@ -104,6 +104,9 @@ class State:
                 native_id TEXT, offset INTEGER, length INTEGER,
                 slice_sha256 TEXT, body_sha256 TEXT, state TEXT, attempts INTEGER);
             CREATE UNIQUE INDEX IF NOT EXISTS outbox_stream ON outbox(source,native_id);
+            CREATE TABLE IF NOT EXISTS file_cache (
+                kind TEXT, path TEXT, size INTEGER, mtime_ns INTEGER, value TEXT,
+                PRIMARY KEY(kind,path));
             CREATE TABLE IF NOT EXISTS cadence (key TEXT PRIMARY KEY, next_due REAL);
             CREATE TABLE IF NOT EXISTS memory_seen (
                 label TEXT, relpath TEXT, sha256 TEXT, PRIMARY KEY(label,relpath,sha256));
@@ -116,6 +119,22 @@ class State:
                 feed_key TEXT, seq INTEGER, at TEXT, kind TEXT, data_json TEXT,
                 PRIMARY KEY(feed_key,seq));
         """)
+
+    def cached_file(self, kind, path, info):
+        row = self.conn.execute(
+            "SELECT value FROM file_cache WHERE kind=? AND path=? AND size=? AND mtime_ns=?",
+            (kind, str(path), info.st_size, info.st_mtime_ns),
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def cache_file(self, kind, path, info, value):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO file_cache VALUES (?,?,?,?,?)",
+            (kind, str(path), info.st_size, info.st_mtime_ns, json.dumps(value)),
+        )
+
+    def retry_rejected(self):
+        self.conn.execute("UPDATE outbox SET state='pending' WHERE state='revoked'")
 
     def close(self):
         self.conn.close()
@@ -246,7 +265,15 @@ class State:
         )
 
     def set_status(self, source, path, native_id, status):
-        if status not in ("ready", "pending", "paused", "revoked", "conflict"):
+        if status not in (
+            "ready",
+            "pending",
+            "paused",
+            "revoked",
+            "conflict",
+            "too_large",
+            "unreadable",
+        ):
             raise StateError("Invalid source status")
         self.conn.execute(
             "INSERT OR REPLACE INTO source_status VALUES (?,?,?,?)",

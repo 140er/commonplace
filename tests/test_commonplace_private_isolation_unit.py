@@ -270,7 +270,7 @@ def test_alias_cache_observes_holder_growth_and_range_clamp(account):
     "kind,legacy,listed,expected",
     [
         ("import", 0, 7, 7),
-        ("import", 1, 7, None),
+        ("import", 1, 7, 7),
         ("capture", 0, 7, None),
         ("import", 0, None, None),
     ],

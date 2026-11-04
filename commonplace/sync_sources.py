@@ -71,18 +71,33 @@ def discover(config) -> list[Source]:
         root = Path(selected.get("root") or defaults.get(source, "")).expanduser().absolute()
         if source == "t3" and not selected.get("root"):
             raise SourceError("Select an explicit native transcript directory")
+        state = config.get("_state")
         try:
-            for path in files(root):
-                with _open(path) as stream:
-                    raw = stream.read(MAX_RECORD_BYTES)
-                    size = os.fstat(stream.fileno()).st_size
-                underlying = native_source(source, "auto", raw.decode("utf-8", errors="ignore"))
-                identity = native_identity(raw, underlying)
+            paths = list(files(root))
+        except (CaptureError, OSError):
+            if state:
+                state.set_status(source, root, "", "unreadable")
+            continue
+        for path in paths:
+            try:
+                info = path.stat()
+                cached = state.cached_file(source, path, info) if state else None
+                if cached is None:
+                    with _open(path) as stream:
+                        raw = stream.read(MAX_RECORD_BYTES)
+                        info = os.fstat(stream.fileno())
+                    underlying = native_source(source, "auto", raw.decode("utf-8", errors="ignore"))
+                    identity = native_identity(raw, underlying)
+                    if state:
+                        state.cache_file(source, path, info, [underlying, identity])
+                else:
+                    underlying, identity = cached
                 if identity is not None and (underlying, identity) not in seen:
                     seen.add((underlying, identity))
-                    result.append(Source(underlying, str(path), identity, size))
-        except CaptureError:
-            raise SourceError("Select a regular transcript directory") from None
+                    result.append(Source(underlying, str(path), identity, info.st_size))
+            except (OSError, SourceError):
+                if state:
+                    state.set_status(source, path, "", "unreadable")
     return result
 
 
@@ -168,6 +183,8 @@ def _capture_op(selected, state, target):
         offset = cursor["offset"]
         if offset > target or before.st_size < target:
             raise SliceConflict("Source shrank; saved cursor kept")
+        if target == offset:
+            return None
         prefix = _hash_prefix(stream, offset)
         if prefix != cursor["prefix_sha256"]:
             raise SliceConflict("Source prefix changed; saved cursor kept")
@@ -181,6 +198,8 @@ def _capture_op(selected, state, target):
         if len(raw) > MAX_RECORD_BYTES:
             raise SourceError("Native record too large; use an explicit import")
         return None
+    if any(len(line) > MAX_RECORD_BYTES for line in raw[:end].splitlines(keepends=True)):
+        raise SourceError("Native record too large; use an explicit import")
     # Bound ordinary chunks, extending through at most one whole record.
     if len(raw) > CHUNK_BYTES:
         boundary = raw.find(b"\n", CHUNK_BYTES)
@@ -191,17 +210,29 @@ def _capture_op(selected, state, target):
     )
 
 
-def _manifest_hashes(home):
+def _manifest_hashes(home, state=None):
     manifest = home / ".commonplace/onboarding.json"
     if not manifest.exists():
         return set()
     try:
+        if any(p.is_symlink() for p in (manifest, *manifest.parents)):
+            raise ValueError
+        info = manifest.stat()
+        cached = state.cached_file("manifest", manifest, info) if state else None
+        if cached is not None:
+            return set(cached)
         with _open(manifest) as stream:
             raw = stream.read(2 * 1024 * 1024 + 1)
+            after = os.fstat(stream.fileno())
+        if (info.st_size, info.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise ValueError
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError
         entries = json.loads(raw)["files"]
-        return {row["original_sha256"] for row in entries.values() if "original_sha256" in row}
+        hashes = {row["original_sha256"] for row in entries.values() if "original_sha256" in row}
+        if state:
+            state.cache_file("manifest", manifest, info, sorted(hashes))
+        return hashes
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         raise SourceError("Onboarding manifest unavailable; memory scan refused") from None
 
@@ -211,34 +242,59 @@ def _memory_ops(config, state, now, targets):
         return
     home = Path(config.get("home", Path.home())).absolute()
     private = home / ".commonplace"
-    originals = _manifest_hashes(home)
+    try:
+        originals = _manifest_hashes(home, state)
+    except SourceError:
+        state.set_status(MEMORY_IMPORT_SOURCE, home, "", "unreadable")
+        return
     for selected in config.get("memories", []):
         root = Path(selected["root"]).expanduser().absolute()
         if any(p.is_symlink() for p in (root, *root.parents)) or not root.is_dir():
-            raise SourceError("Select a regular memory directory")
+            state.set_status(MEMORY_IMPORT_SOURCE, root, "", "unreadable")
+            continue
         for path in sorted(root.glob(selected.get("glob", "**/*.md"))):
-            if path == private or private in path.parents:
-                continue
-            if any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file():
-                continue
-            with _open(path) as stream:
-                before = os.fstat(stream.fileno())
-                if before.st_size > MEMORY_BYTES or now - before.st_mtime < 60:
+            try:
+                if path == private or private in path.parents:
+                    continue
+                if any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file():
+                    continue
+                before = path.stat()
+                if before.st_size > MEMORY_BYTES:
+                    state.set_status(MEMORY_IMPORT_SOURCE, path, "", "too_large")
+                    continue
+                if now - before.st_mtime < 60:
                     continue
                 if targets is not None and targets.get(str(path)) != before.st_size:
                     continue
-                raw = stream.read(MEMORY_BYTES + 1)
-                after = os.fstat(stream.fileno())
-            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                continue
-            digest = hashlib.sha256(raw).hexdigest()
-            if not raw or raw == POINTER.encode() or digest in originals:
-                continue
-            label, relpath = selected["label"], path.relative_to(root).as_posix()
-            native_id = memory_thread_id(label, relpath, digest)
-            if state.memory_seen(label, relpath, digest):
-                continue
-            yield _op("import", MEMORY_IMPORT_SOURCE, path, native_id, 0, raw)
+                digest = state.cached_file("memory", path, before)
+                label, relpath = selected["label"], path.relative_to(root).as_posix()
+                if digest and (
+                    digest in originals
+                    or digest
+                    in (
+                        hashlib.sha256(POINTER.encode()).hexdigest(),
+                        hashlib.sha256(b"").hexdigest(),
+                    )
+                    or state.memory_seen(label, relpath, digest)
+                ):
+                    continue
+                with _open(path) as stream:
+                    raw = stream.read(MEMORY_BYTES + 1)
+                    after = os.fstat(stream.fileno())
+                if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    continue
+                digest = hashlib.sha256(raw).hexdigest()
+                if raw:
+                    raw.decode("utf-8")
+                state.cache_file("memory", path, before, digest)
+                if not raw or raw == POINTER.encode() or digest in originals:
+                    continue
+                native_id = memory_thread_id(label, relpath, digest)
+                op = _op("import", MEMORY_IMPORT_SOURCE, path, native_id, 0, raw)
+                if not state.memory_seen(label, relpath, digest):
+                    yield op
+            except (OSError, UnicodeError, SourceError):
+                state.set_status(MEMORY_IMPORT_SOURCE, path, "", "unreadable")
 
 
 def scan(config, state, *, now, targets=None) -> list[Op]:
@@ -250,7 +306,7 @@ def scan(config, state, *, now, targets=None) -> list[Op]:
     """
     targets = targets if targets is not None else config.get("targets")
     occupied = {(op.source, op.native_id) for op in state.outbox_all()}
-    for selected in discover(config):
+    for selected in _discovered(config):
         if (selected.source, selected.native_id) in occupied:
             continue
         target = selected.size if targets is None else targets.get(selected.path)
@@ -258,9 +314,14 @@ def scan(config, state, *, now, targets=None) -> list[Op]:
             continue
         try:
             op = _capture_op(selected, state, target)
-        except SliceConflict:
-            state.set_status(selected.source, selected.path, selected.native_id, "conflict")
-            raise
+        except (OSError, UnicodeError, SourceError) as error:
+            status = (
+                "conflict"
+                if isinstance(error, SliceConflict)
+                else ("too_large" if isinstance(error, SourceError) else "unreadable")
+            )
+            state.set_status(selected.source, selected.path, selected.native_id, status)
+            continue
         if op:
             state.outbox_add(op)
             occupied.add((op.source, op.native_id))
@@ -271,16 +332,23 @@ def scan(config, state, *, now, targets=None) -> list[Op]:
     return state.outbox_pending()
 
 
+def _discovered(config):
+    return config["_discovered"] if "_discovered" in config else discover(config)
+
+
 def snapshot_targets(config):
     """Freeze byte ends at cycle start for captures and selected memory files."""
-    targets = {source.path: source.size for source in discover(config)}
+    targets = {source.path: source.size for source in _discovered(config)}
     for selected in config.get("memories", []):
         root = Path(selected["root"]).expanduser().absolute()
         if any(p.is_symlink() for p in (root, *root.parents)):
-            raise SourceError("Symlinked source refused")
+            continue
         for path in root.glob(selected.get("glob", "**/*.md")):
-            if not any(p.is_symlink() for p in (path, *path.parents)) and path.is_file():
-                targets[str(path)] = path.stat().st_size
+            try:
+                if not any(p.is_symlink() for p in (path, *path.parents)) and path.is_file():
+                    targets[str(path)] = path.stat().st_size
+            except OSError:
+                continue
     return targets
 
 

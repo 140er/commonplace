@@ -205,8 +205,7 @@ def test_changed_saved_prefix_marks_conflict(client):
     path = root / "session.jsonl"
     path.write_bytes(record())
     initialize(config, state, offset=1, prefix=sha(b"different"))
-    with pytest.raises(SliceConflict):
-        scan(config, state, now=NOW)
+    assert scan(config, state, now=NOW) == []
     assert state.statuses()[0]["status"] == "conflict"
     assert state.outbox_pending() == []
 

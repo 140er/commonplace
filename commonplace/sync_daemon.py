@@ -80,6 +80,7 @@ class _Session:
         self.interval, self.enabled = 900, True
         self.signals = True
         self.refresh = False
+        self.next_poll = 0.0
         self._apply_cached()
 
     def now(self):
@@ -115,11 +116,16 @@ class _Session:
                 return 1, False
             self.enabled = bool(settings["enabled"])
             self.interval = int(settings.get("interval_seconds", 900))
+            self.next_poll = self.now() + self.interval
             return 0, False
         if status != 200:
+            self.next_poll = self.now() + 60
             return (0 if status == 429 else 1), False
         self.state.store_feed(self.key, payload, fetched_at=self.now())
         self._apply_cached()
+        window = payload["state"].get("next_window_at")
+        window = datetime.fromisoformat(window.replace("Z", "+00:00")).timestamp() if window else 0
+        self.next_poll = window if window > self.now() else self.now() + self.interval
         return 0, bool(payload.get("more"))
 
     def feed(self):
@@ -129,7 +135,7 @@ class _Session:
                 return code
 
     def _status(self, op, status):
-        if status == "conflict":
+        if status in ("conflict", "revoked"):
             self.state.outbox_mark(op.op_id, status)
         self.state.set_status(op.source, op.path, op.native_id, status)
 
@@ -137,10 +143,10 @@ class _Session:
         match = re.search(RETRY_RE, str(payload.get("error", "")), re.IGNORECASE)
         self.state.defer(key, self.now() + (max(1, int(match[1])) if match else 60))
 
-    def initialize(self):
+    def initialize(self, sources=None):
         """Adopt each server cursor before scanning a stream for the first time."""
         failed = False
-        for source in self.sources.discover(self.config):
+        for source in self.sources.discover(self.config) if sources is None else sources:
             if self.state.cursor(source.source, source.path, source.native_id) is not None:
                 continue
             token = self.tokens.get(TOKEN_ENV[source.source])
@@ -196,9 +202,10 @@ class _Session:
 
     def cycle(self, *, once=False):
         # Freeze targets before cursor requests, which may take time on reconnect.
-        config = dict(self.config)
+        config = dict(self.config, _state=self.state)
+        config["_discovered"] = self.sources.discover(config)
         config["targets"] = self.sources.snapshot_targets(config)
-        failed = self.initialize()
+        failed = self.initialize(config["_discovered"])
         # scan commits immutable ops even if the feed or network is unavailable.
         while True:
             ops = self.sources.scan(config, self.state, now=self.now())
@@ -211,7 +218,8 @@ class _Session:
                 body = self.sources.body(op)
             except self.sources.SliceConflict:
                 self._status(op, "conflict")
-                return 1
+                failed = 1
+                continue
             env_name = TOKEN_ENV[op.source]
             token = self.tokens.get(env_name)
             if not token:
@@ -240,11 +248,15 @@ class _Session:
                 self._status(op, "paused" if off else "conflict")
                 if off:
                     self.enabled = False
-                return 0 if off else 1
-            if status == 401:
-                self.refresh = True
+                if off:
+                    return failed
+                failed = 1
+                continue
+            if 400 <= status < 500:
+                self.refresh |= status == 401
                 self._status(op, "revoked")
-                return 1
+                failed = 1
+                continue
             if status != 200:
                 return 1
             if op.kind == "capture" and payload.get("offset") != op.offset + op.length:
@@ -257,6 +269,7 @@ class _Session:
 
 def run(config, state, *, clock, sleep, transport, once=False, stop=None) -> int:
     """Run one bounded cycle or watch until stop(), using injected I/O and time."""
+    state.retry_rejected()
     session = _Session(config, state, clock, transport)
     stop = stop or (lambda: False)
     backoff = 1
@@ -266,9 +279,11 @@ def run(config, state, *, clock, sleep, transport, once=False, stop=None) -> int
         while not stop():
             feed_error = 0
             try:
-                if future is None:
+                if future is None and (
+                    once or session.interval == 0 or session.now() >= session.next_poll
+                ):
                     feed_error = session.feed()
-                elif future.done():
+                elif future is not None and future.done():
                     feed_error, more = session.feed_result(future.result())
                     future = None
                     if more:
@@ -304,7 +319,15 @@ def run(config, state, *, clock, sleep, transport, once=False, stop=None) -> int
             sleep(
                 LIVE_TICK_SECONDS
                 if session.interval == 0
-                else max(LIVE_TICK_SECONDS, min(60, state.next_due(session.key) - session.now()))
+                else max(
+                    LIVE_TICK_SECONDS,
+                    min(
+                        due
+                        for due in (session.next_poll, state.next_due(session.key))
+                        if due > session.now()
+                    )
+                    - session.now(),
+                )
             )
         return 0
     finally:

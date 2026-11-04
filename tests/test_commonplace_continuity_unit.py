@@ -339,13 +339,16 @@ def test_live_tail_at_base_identity_uses_digest_for_complete_snapshot(env):
     assert list(streams(e)) == [f"{sid}#sha256:{digest}"]
 
 
-def test_identical_ungrouped_snapshot_is_not_new_holder(env):
+def test_identical_snapshot_adopts_existing_holder_without_rewriting(env):
     e = env
     f = native()
-    seed(e, f)
+    stored = seed(e, f)
+    original = e.store.messages(stored.id)
     assert snapshot(e, f)["status"] == "accepted"
-    assert not rows(e)
-    assert not e.conn.execute("SELECT * FROM sync_groups").fetchall()
+    assert len(rows(e)) == 1
+    assert rows(e)[0]["own_stored_id"] == stored.id
+    assert e.conn.execute("SELECT holder_stored_id FROM sync_groups").fetchone()[0] == stored.id
+    assert e.store.messages(stored.id) == original
 
 
 def test_parts_extend_shared_bytes_and_keep_submission_count(env):

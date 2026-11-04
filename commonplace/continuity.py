@@ -291,6 +291,9 @@ def stream_push(
         own = store.by_source(ws, stream_id)
         _private(own)
         marker = bool(own and store.messages(own.id, 0, 0)[0].name == MARKER)
+        if row is None and own is not None and not marker:
+            _adopt_orphan(conn, store, ws, user_id, own, source, kind, connection_id)
+            row = _stream(conn, ws, stream_id)
         if row is None and not marker and (own is not None or offset > 0):
             if part is None:
                 return _fallback_capture(
@@ -500,6 +503,9 @@ def import_item(
         existing = store.by_source(ws, identity)
         _private(existing)
         row = _stream(conn, ws, identity)
+        if row is None and existing is not None:
+            _adopt_orphan(conn, store, ws, user_id, existing, source, "import", "")
+            row = _stream(conn, ws, identity)
         result = dict(status="accepted", messages=len(messages) - 1, source_bytes=len(data))
         if (
             row
@@ -618,6 +624,27 @@ def _adoption_candidate(stored, prefix, kind, connection, read):
         return stored, raw, last, (native_source, native), kind, connection, state, parts
     except (ValueError, TypeError, KeyError, IndexError, ThreadConflict):
         return None
+
+
+def _adopt_orphan(conn, store, ws, user, stored, source, kind, connection):
+    """Recover a store commit whose corresponding control transaction rolled back."""
+    cache = {}
+
+    def read(thread):
+        messages = store.messages(thread.id)
+        segments = archive_segments(messages)
+        raw = b"".join(segment.raw for segment in segments)
+        value = (thread, raw, segments[-1].at if segments else "", messages)
+        cache[thread.id] = value
+        return value
+
+    prefix = stored.source_thread_id.split(f":{source}:", 1)[0] + ":"
+    candidate = _adoption_candidate(stored, prefix, kind, connection, read)
+    if candidate is not None:
+        group = _group(conn, ws, user, *candidate[3])
+        if group:
+            read(store.get(group["holder_stored_id"]))
+        _join_adopted(conn, ws, user, candidate, cache)
 
 
 def _backfill_page(db, store, ws, user, prefixes):

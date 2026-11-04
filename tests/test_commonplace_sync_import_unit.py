@@ -181,7 +181,7 @@ def test_private_person_member_token_and_acl(unit):
     assert (status, report) == (403, {"error": import_grant.OWNER_ONLY_TEXT})
     assert unit.request(body, principal=grant(unit))[0] == 400
     limited = replace(grant(unit), policy=Policy.build(scopes=["memory:read"]))
-    assert unit.request(body, principal=limited)[0] == 400
+    assert unit.request(body, principal=limited)[0] == 403
     assert unit.request({"source": "claude-code", "threads": [item()]}, principal=limited)[0] == 403
     assert unit.request(dict(body, private=False), principal=unit.principal)[0] == 400
     status, report = unit.request(

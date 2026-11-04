@@ -139,7 +139,7 @@ def listed_messages(db, row) -> int | None:
     with db._lock:
         stream = db._conn.execute(
             "SELECT listed_messages FROM sync_streams "
-            "WHERE workspace_id=? AND own_stored_id=? AND kind='import' AND legacy=0",
+            "WHERE workspace_id=? AND own_stored_id=? AND kind='import'",
             (row.workspace_id, row.id),
         ).fetchone()
     return stream["listed_messages"] if stream else None
