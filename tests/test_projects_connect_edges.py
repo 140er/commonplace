@@ -49,7 +49,7 @@ def test_connect_rejects_non_object_body(projects_hub):
     h = projects_hub
     created = h.create_board(h.owner, "alpha")
     status, _ = h.connect(h.owner, "alpha", ["replace"])
-    assert status == 400  # RED
+    assert status == 400
     assert created[0] == 201
 
 
