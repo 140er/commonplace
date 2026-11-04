@@ -209,6 +209,19 @@ def _run(config, once):
         time.sleep(hub.delay())
 
 
+def _post_result(hub, action, body, deadline):
+    for attempt in range(3):
+        try:
+            return hub.post(action, body, prefix="/api/runner/chat/")
+        except _HubError as exc:
+            remaining = deadline - time.monotonic()
+            if exc.status is None or exc.status < 500 or attempt == 2 or remaining <= POLL_S:
+                raise
+            time.sleep(POLL_S)
+            if time.monotonic() >= deadline:
+                raise
+
+
 def _reply(hub, config, job):
     deadline = time.monotonic() + job.get("expires_in", 0) if isinstance(job, dict) else 0
     if not (
@@ -234,7 +247,7 @@ def _reply(hub, config, job):
     elif cli is not None and cli not in chat["clis"]:
         code = "cli_not_configured"
     if code:
-        hub.post("fail", {**body, "code": code}, prefix="/api/runner/chat/")
+        _post_result(hub, "fail", {**body, "code": code}, deadline)
         return
     cli = cli if cli is not None else chat["default_cli"]
     model = model if model is not None else chat["clis"][cli]["default_model"]
@@ -243,23 +256,14 @@ def _reply(hub, config, job):
     local_chat = {**chat, "_token_env": config["token_env"]}
     outcome, value = _ask_cli(local_chat, cli, model, job["system"], job["prompt"])
     if outcome == "ok":
-        for attempt in range(3):
-            try:
-                hub.post(
-                    "answer",
-                    {**body, "text": value, "cli": cli, "model": model},
-                    prefix="/api/runner/chat/",
-                )
-                return
-            except _HubError as exc:
-                remaining = deadline - time.monotonic()
-                if exc.status != 503 or attempt == 2 or remaining <= POLL_S:
-                    raise
-                time.sleep(POLL_S)
-                if time.monotonic() >= deadline:
-                    raise
+        _post_result(
+            hub,
+            "answer",
+            {**body, "text": value, "cli": cli, "model": model},
+            deadline,
+        )
     else:
-        hub.post("fail", {**body, "code": value}, prefix="/api/runner/chat/")
+        _post_result(hub, "fail", {**body, "code": value}, deadline)
 
 
 def _ask_cli(chat: dict, cli: str, model: str | None, system: str, prompt: str) -> tuple[str, str]:

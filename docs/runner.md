@@ -101,7 +101,8 @@ makes one lease request, marks the machine online, answers at most one job and
 exits: 0 after a job or none (a fenced job is dropped), 3 when the hub is unreachable or the
 machine credential is missing, revoked or expired, and 5 when the hub answers with another
 HTTP failure. An answer uses at most three POSTs total (the initial POST plus two retries)
-on HTTP 503 while the lease is valid. The project's `main` model choice selects the CLI label and model; without
+on HTTP status 500 or higher while the lease is valid. Failure reports use the
+same bounded retry. The project's `main` model choice selects the CLI label and model; without
 one, `default_cli` and its `default_model` apply. An unavailable CLI receives no
 job; there is no silent provider fallback.
 
