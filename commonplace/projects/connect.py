@@ -39,7 +39,15 @@ def connect(
     with service.store.connection() as conn:
         project = service._board(conn, board)
     board, wing = project["slug"], project["wing"]
-    if wing == "shared" and not allow_shared:
+    policy = Policy.build(
+        profile="standard",
+        scopes=("memory:read", "memory:write"),
+        read_wings=[wing],
+        write_wing=wing,
+        trust="standard",
+    )
+    # Decide consent on the effective grant: every spelling of "shared" counts.
+    if not allow_shared and (policy.can_read_wing("shared") or policy.can_write_wing("shared")):
         return 409, {
             "error": "shared_wing",
             "message": (
@@ -50,10 +58,11 @@ def connect(
 
     seat = ensure_main(db, ws, board)
     coordinator = project["coordinator"]
+    own = _active_connection(db, ws, seat.connection_id)
     if (
         not replace
         and coordinator
-        and coordinator != "conn:" + seat.name
+        and (own is None or coordinator != "conn:" + own["name"])
         and coordinator.startswith("conn:")
         and _active_connection(db, ws, coordinator.removeprefix("conn:")) is not None
     ):
@@ -85,13 +94,7 @@ def connect(
                 name=name,
                 client=SEAT_CLIENT,
                 expires_days=TOKEN_DAYS,
-                policy=Policy.build(
-                    profile="standard",
-                    scopes=("memory:read", "memory:write"),
-                    read_wings=[wing],
-                    write_wing=wing,
-                    trust="standard",
-                ),
+                policy=policy,
             )
             claimed = db._conn.execute(
                 "UPDATE project_orchestrators SET connection_id=?, name=?, updated_at=? "
@@ -121,7 +124,8 @@ def connect(
     # the control database lock while entering this path.
     try:
         configured = service.board_set(board, "conn:" + name)
-    except (ToolError, ControlError):
+    except Exception as exc:
+        # Never leave a freshly minted credential that nobody holds.
         if minted:
             with db._lock:
                 db.revoke(cid, actor=principal.user_id, workspace_ref=ws)
@@ -130,6 +134,8 @@ def connect(
                     "WHERE workspace_id=? AND board=? AND role='main' AND connection_id IS ?",
                     (seat.connection_id, seat.name, seat.updated_at, ws, board, cid),
                 )
+        if not isinstance(exc, (ToolError, ControlError)):
+            raise
         return 409, {"error": "Could not connect the project's orchestrator"}
 
     db.audit(
