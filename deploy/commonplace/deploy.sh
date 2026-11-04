@@ -11,6 +11,10 @@ fresh_enough() {
     (( snap >= start && snap <= now + 60 && now - snap <= max_age ))
 }
 
+validate_literal_path() {
+    [[ $2 != *[[:space:]\"\'\$\`\\#]* ]] || die config "$1 must be a literal path without whitespace, quotes, expansions or comments"
+}
+
 run_command() {
     local -a command
     read -r -a command <<< "$1"
@@ -20,12 +24,16 @@ run_command() {
 }
 
 main() {
+    local owner mode
     local key value line config start before after result latest timestamp snap now rendered health execution
     [[ $(id -u) == 0 ]] || die preflight 'must run as root'
     [[ $# == 0 && ! -v SKIP_BACKUP ]] || die usage 'deploy.sh accepts no arguments'
     COMMONPLACE_ROOT=${COMMONPLACE_ROOT:-/srv/commonplace}
     config=${COMMONPLACE_DEPLOY_ENV:-$COMMONPLACE_ROOT/deploy.env}
     if [[ -f $config ]]; then
+        read -r owner mode < <(stat -c '%u %a' -- "$config") || die config 'cannot inspect deploy.env permissions'
+        [[ $owner == 0 && $mode =~ ^[0-7]{3,4}$ ]] || die config 'deploy.env must be owned by root and not group/world-writable'
+        (( (8#$mode & 8#022) == 0 )) || die config 'deploy.env must be owned by root and not group/world-writable'
         while IFS= read -r line || [[ -n $line ]]; do
             [[ $line =~ ^[A-Z_][A-Z0-9_]*= ]] || continue
             key=${line%%=*}
@@ -35,6 +43,9 @@ main() {
             esac
             value=${line#*=}
             if [[ ! -v $key ]]; then
+                case $key in
+                    COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) validate_literal_path "$key" "$value" ;;
+                esac
                 export "$key=$value"
             fi
         done < "$config"
@@ -65,7 +76,7 @@ main() {
         key=${line%%=*}
         value=${line#*=}
         if [[ ! -v $key ]]; then
-            [[ $value != *[[:space:]\"\'\$\`\\#]* ]] || die config "$key must be a literal path without whitespace, quotes, expansions or comments"
+            validate_literal_path "$key" "$value"
             export "$key=$value"
         fi
     done < "$COMPOSE_ENV_FILE"
@@ -86,6 +97,7 @@ main() {
     [[ $result == success ]] || die backup 'unit did not succeed'
 
     execution=$(systemctl show -p ExecMainStartTimestamp --value "$DEPLOY_BACKUP_UNIT") || die backup 'cannot read execution time'
+    [[ -n $execution ]] || die backup 'missing execution time'
     execution=$(date -d "$execution" +%s) || die backup 'invalid execution time'
     (( execution >= start )) || die backup 'unit execution predates deploy'
 

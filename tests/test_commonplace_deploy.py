@@ -298,6 +298,11 @@ def run_deploy(tmp_path, **fakes):
         executable = shutil.which(name)
         assert executable, f"required test dependency: {name}"
         (bin_dir / name).symlink_to(executable)
+    stat = bin_dir / "stat"
+    stat.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' " + shlex.quote(fakes.get("stat", "0 600")) + "\n"
+    )
+    stat.chmod(0o755)
     calls_file = tmp_path / "calls.jsonl"
     log = f'jq -cn --arg cmd "$0" --args \'[$cmd | split("/")[-1]] + $ARGS.positional\' -- "$@" >> {shlex.quote(str(calls_file))}\n'
     bodies = {
@@ -653,3 +658,43 @@ def test_deploy_sh_rejects_compose_path_grammar(tmp_path, value):
         compose_env=f"COMMONPLACE_DATA_DIR={value}\n",
     )
     assert_deploy_failure(result, calls, "config", ["id"])
+
+
+@pytest.mark.parametrize(
+    "key", ["COMMONPLACE_SOURCE_DIR", "COMMONPLACE_ENV_FILE", "COMMONPLACE_DATA_DIR"]
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"/data"',
+        "/data # comment",
+        "/data/$HOME",
+        "/data/with space",
+        "/data/`id`",
+        "/data/\\escape",
+        "/data/'quoted'",
+    ],
+)
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_rejects_deploy_path_grammar(tmp_path, key, value):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, unset=[key], config=f"{key}={value}\n")
+    assert_deploy_failure(result, calls, "config", ["id"])
+    assert "must be a literal path" in result.stderr
+
+
+@pytest.mark.parametrize("ownership", ["1000 600", "0 620", "0 602", "0 666", "0 6770"])
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_rejects_unsafe_config_permissions(tmp_path, ownership):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, stat=ownership)
+    assert_deploy_failure(result, calls, "config", ["id"])
+    assert "owned by root and not group/world-writable" in result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_missing_execution_time(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, execution="printf ''")
+    assert_deploy_failure(result, calls, "backup", ["id"] + ["systemctl"] * 8)
+    assert "missing execution time" in result.stderr
