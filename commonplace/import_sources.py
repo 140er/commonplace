@@ -12,16 +12,9 @@ from .handoff.models import ThreadMessage
 from .handoff.transcripts import parse
 from .sync_protocol import MEMORY_FORMAT, MEMORY_IMPORT_SOURCE
 
-SOURCES = (
-    "claude-code",
-    "codex",
-    "cursor",
-    "t3",
-    "grok-bot",
-    "chatgpt",
-    "claude-ai",
-    MEMORY_IMPORT_SOURCE,
-)
+# Conversation sources retain the existing ACL import contract. Memory files
+# use a separate private grant and are never offered as conversation exports.
+SOURCES = ("claude-code", "codex", "cursor", "t3", "grok-bot", "chatgpt", "claude-ai")
 
 
 def _timestamp(value):
@@ -39,7 +32,7 @@ def parse_import(source: str, transcript: str, fmt: str = "auto") -> list[Thread
     accepts its underlying provider's native transcript, not a truncated view.
     Web exports are one conversation per call; clients split export arrays.
     """
-    if source not in SOURCES:
+    if source not in (*SOURCES, MEMORY_IMPORT_SOURCE):
         raise ValueError("Unsupported source")
     if source == MEMORY_IMPORT_SOURCE:
         if fmt != MEMORY_FORMAT:
