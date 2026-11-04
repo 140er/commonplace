@@ -1004,6 +1004,10 @@ def _write_request(method: str, path: str, request) -> bool:
 def _rest_tool(method, path):
     """REST aliases share MCP's tool visibility gate, before route execution."""
     parts = [unquote(part) for part in path.split("/") if part]
+    if parts == ["api", "card-starts"]:
+        return {"POST": "card_start", "GET": "card_start_status"}.get(method)
+    if len(parts) == 4 and parts[:2] == ["api", "card-starts"] and method == "POST":
+        return {"cancel": "card_start_cancel", "resolve": "card_start_resolve"}.get(parts[3])
     if parts == ["api", "boards"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":
@@ -1400,6 +1404,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
+        if (
+            principal is not None
+            and getattr(principal, "runner", None) == "machine"
+            and not path.startswith("/api/runner/")
+        ):
+            self.close_connection = True
+            self._send_json(404, {"error": "not found"})
+            return
         if (
             principal is not None
             and principal.person
