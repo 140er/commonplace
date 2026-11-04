@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from .capture_client import endpoint
 from .sync_protocol import (
+    BACKFILL_WRITES,
     LIVE_TICK_SECONDS,
     MAX_WAIT_SECONDS,
     RETRY_RE,
@@ -81,6 +82,9 @@ class _Session:
         self.signals = True
         self.refresh = False
         self.next_poll = 0.0
+        self.bkey = _feed_key(config["hub"], "backfill")
+        self.backfill = False
+        self.unavailable = set()
         self._apply_cached()
 
     def now(self):
@@ -146,6 +150,7 @@ class _Session:
     def initialize(self, sources=None):
         """Adopt each server cursor before scanning a stream for the first time."""
         failed = False
+        self.unavailable = set()
         for source in self.sources.discover(self.config) if sources is None else sources:
             if self.state.cursor(source.source, source.path, source.native_id) is not None:
                 continue
@@ -165,7 +170,7 @@ class _Session:
                 continue
             if status == 429:
                 self._defer(payload, self.key)
-                continue
+                return int(failed)
             if status != 200:
                 if status in (401, 409):
                     self.state.set_status(
@@ -174,6 +179,7 @@ class _Session:
                         source.native_id,
                         "revoked" if status == 401 else "paused",
                     )
+                    self.unavailable.add((source.source, source.path, source.native_id))
                 failed |= status != 409
                 continue
             offset, prefix = payload.get("offset"), payload.get("prefix_sha256")
@@ -188,10 +194,41 @@ class _Session:
             self.state.store_cursor(source.source, source.path, source.native_id, offset, prefix)
         return int(failed)
 
-    def _budget(self, env_name):
-        """A durable sliding-hour client budget, independent of server cadence."""
+    def _backfill(self, discovered, ops):
+        """Faster first catch-up, once per feed: ends when caught up or capped, never re-enters."""
+        # Cadence rows also hold durable counters; no separate schema is needed.
+        done = self.bkey + "-done"
+        if self.state.next_due(done):
+            return False
+        if self.state.next_due(self.bkey) >= BACKFILL_WRITES or (
+            not ops
+            and all(
+                self.state.cursor(s.source, s.path, s.native_id) is not None
+                or (s.source, s.path, s.native_id) in self.unavailable
+                for s in discovered
+            )
+        ):
+            self.state.defer(done, self.now())
+            return False
+        return True
+
+    def _budget(self, env_name, retry=False):
+        """Durable client budget: bounded first-sync backfill, then sliding-hour slots."""
         key = self.key + ":writes:" + env_name
         now = self.now()
+        if self.backfill:
+            used = self.state.next_due(self.bkey)
+            if used < BACKFILL_WRITES:
+                due = self.state.next_due(self.bkey + "-next")
+                if due > now and not retry:
+                    self.state.defer(self.key, due)
+                    return False
+                self.state.defer(self.bkey, used + 1)
+                if not retry:
+                    self.state.defer(self.bkey + "-next", now + LIVE_TICK_SECONDS)
+                return True
+            # Once capped, the usual 120 hourly slots are available immediately.
+            self.backfill = False
         slots = [(self.state.next_due(f"{key}:{i}"), i) for i in range(WRITE_BUDGET[0])]
         due, slot = min(slots)
         if due > now:
@@ -209,6 +246,7 @@ class _Session:
         # scan commits immutable ops even if the feed or network is unavailable.
         while True:
             ops = self.sources.scan(config, self.state, now=self.now())
+            self.backfill = not once and self._backfill(config["_discovered"], ops)
             if not ops or not self.enabled:
                 return failed
             if not once and self.state.next_due(self.key) > self.now():
@@ -231,7 +269,7 @@ class _Session:
             try:
                 status, payload = self.transport(self.target, token, "POST", route, body)
                 if status == 400 and op.kind == "capture" and "client_op_id" in body:
-                    if not self._budget(env_name):
+                    if not self._budget(env_name, retry=True):
                         return failed
                     legacy = {k: v for k, v in body.items() if k != "client_op_id"}
                     status, payload = self.transport(self.target, token, "POST", route, legacy)

@@ -574,3 +574,186 @@ def test_memory_only_install_does_not_select_unrequested_transcripts(tmp_path, m
     config = json.loads((tmp_path / ".commonplace/sync/config.json").read_text())
     assert config["sources"] == []
     assert config["memories"][0]["label"] == "notes"
+
+
+class ManySources:
+    SliceConflict = Sources.SliceConflict
+
+    def __init__(self, n):
+        self.sizes = {f"s{i}": 1 for i in range(n)}
+
+    def discover(self, config):
+        return [
+            SimpleNamespace(source="claude-code", path=k, native_id=k, size=size)
+            for k, size in self.sizes.items()
+        ]
+
+    def snapshot_targets(self, config):
+        return self.sizes.copy()
+
+    def scan(self, config, state, *, now):
+        pending = {op.native_id for op in state.pending}
+        for source in config["_discovered"]:
+            cursor = state.cursor(source.source, source.path, source.native_id)
+            target = config["targets"][source.path]
+            if cursor and cursor["offset"] < target and source.native_id not in pending:
+                state.pending.append(
+                    Op(
+                        f"{source.native_id}-{cursor['offset']}",
+                        "capture",
+                        source.source,
+                        source.path,
+                        source.native_id,
+                        cursor["offset"],
+                        target - cursor["offset"],
+                    )
+                )
+        return state.outbox_pending()
+
+    def body(self, op):
+        return {
+            "source": op.source,
+            "thread_id": op.native_id,
+            "offset": op.offset,
+            "prefix_sha256": EMPTY,
+            "transcript": "x" * op.length,
+            "client_op_id": op.op_id,
+        }
+
+
+@pytest.fixture
+def backfill_setup(tmp_path, monkeypatch):
+    import commonplace
+
+    sources = ManySources(300)
+    monkeypatch.setitem(sys.modules, "commonplace.sync_sources", sources)
+    monkeypatch.setattr(commonplace, "sync_sources", sources, raising=False)
+    state = State(tmp_path / "state.db")
+    config = {
+        "hub": "https://sync.example",
+        "tokens": {TOKEN_ENV["claude-code"]: TOKEN},
+    }
+    now = [10000.0]
+    posts, starts, refused = [], {}, {}
+
+    def transport(target, token, method, route, body=None):
+        if method == "GET":
+            native_id = parse_qs(urlsplit(route).query)["thread_id"][0]
+            return refused.get(
+                native_id, (200, {"offset": starts.get(native_id, 0), "prefix_sha256": EMPTY})
+            )
+        posts.append(body)
+        return 200, {
+            "offset": body["offset"] + len(body["transcript"]),
+            "prefix_sha256": EMPTY,
+        }
+
+    def session():
+        return sync_daemon._Session(config, state, lambda: now[0], transport)
+
+    def drive(active, ticks):
+        for _ in range(ticks):
+            active.cycle()
+            now[0] += 2
+
+    yield SimpleNamespace(
+        sources=sources,
+        state=state,
+        config=config,
+        now=now,
+        posts=posts,
+        starts=starts,
+        refused=refused,
+        session=session,
+        drive=drive,
+        bkey=sync_daemon._feed_key(config["hub"], "backfill"),
+        transport=transport,
+    )
+    state.conn.close()
+
+
+def test_backfill_fresh_setup_catches_up_within_backfill_budget(backfill_setup):
+    b = backfill_setup
+    b.drive(b.session(), 900)
+    assert len(b.posts) == 300  # RED
+    assert b.state.next_due(b.bkey + "-done") > 0
+    assert b.state.next_due(b.bkey) == 300
+
+
+def test_backfill_progress_survives_daemon_restart(backfill_setup):
+    b = backfill_setup
+    b.drive(b.session(), 100)
+    b.drive(b.session(), 800)
+    assert len(b.posts) == 300  # RED
+    assert b.state.next_due(b.bkey) == 300
+
+
+def test_backfill_cap_returns_to_normal_limit(backfill_setup, monkeypatch):
+    b = backfill_setup
+    monkeypatch.setattr(sync_daemon, "BACKFILL_WRITES", 150, raising=False)
+    active = b.session()
+    b.drive(active, 900)
+    assert len(b.posts) == 270  # RED
+    assert b.state.next_due(b.bkey + "-done") > 0
+    b.drive(active, 1800)
+    assert len(b.posts) == 300
+
+
+def test_status_reports_backfill_progress(tmp_path, monkeypatch, capsys):
+    from commonplace import sync_cli, sync_state
+
+    config = {"hub": "https://sync.example"}
+    monkeypatch.setattr(sync_cli, "_load", lambda *_: config)
+    bkey = sync_daemon._feed_key(config["hub"], "backfill")
+    with sync_state.open_state(tmp_path / "state.db") as state:
+        state.defer(bkey, 812)
+    sync_cli._status(tmp_path, tmp_path)
+    assert "Backfill: active, 812 of 5000 attempts" in capsys.readouterr().out  # RED
+    with sync_state.open_state(tmp_path / "state.db") as state:
+        state.defer(bkey + "-done", 10000)
+    sync_cli._status(tmp_path, tmp_path)
+    assert "Backfill: done, 812 of 5000 attempts" in capsys.readouterr().out
+
+
+def test_steady_state_burst_after_catch_up_hits_normal_limit(backfill_setup):
+    b = backfill_setup
+    b.starts.update(b.sources.sizes)
+    active = b.session()
+    b.drive(active, 5)
+    b.sources.sizes = dict.fromkeys(b.sources.sizes, 2)
+    b.drive(active, 900)
+    assert len(b.posts) == 120
+    b.now[0] += 3600
+    b.drive(active, 1)
+    assert len(b.posts) == 240
+
+
+def test_backfill_revoked_source_returns_to_normal_limit(backfill_setup):
+    b = backfill_setup
+    b.starts.update(b.sources.sizes)
+    b.refused["s0"] = (401, {})
+    active = b.session()
+    b.drive(active, 5)
+    b.sources.sizes = dict.fromkeys(b.sources.sizes, 2)
+    b.drive(active, 900)
+    assert len(b.posts) == 120
+
+
+def test_backfill_legacy_retry_lands_without_spacing_delay(backfill_setup):
+    b = backfill_setup
+    b.sources.sizes = {"s0": 1}
+    calls = []
+
+    def transport(*args):
+        if args[2] == "POST":
+            calls.append(args[4])
+            if "client_op_id" in args[4]:
+                return 400, {}
+        return b.transport(*args)
+
+    active = sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport)
+    b.drive(active, 10)
+    assert len(b.posts) == 1
+    assert len(calls) == 2
+    assert "client_op_id" not in calls[1]
+    assert not b.state.outbox_pending()
