@@ -4,6 +4,7 @@ import importlib
 import os
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -477,8 +478,16 @@ def test_t11b_one_wake_drains_fifteen_hundred_stopped_events(hub, signup, monkey
     agent = worker(hub, owner)
     number = create(hub, owner, actor=agent)["number"]
     ask(hub, owner, number, actor=agent)
-    for _ in range(1497):
-        comment(hub, owner, number, actor=agent)
+    # Keep each public-route agent within its normal rate limits while filling
+    # more than five dispatcher batches. All events still use real HTTP writes.
+    commenters = [worker(hub, owner, f"commenter-{index}") for index in range(30)]
+
+    def comments(index):
+        for _ in range(min(50, 1497 - index * 50)):
+            comment(hub, owner, number, actor=commenters[index])
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(comments, range(30)))
     target = latest(hub)
     assert target - cursor(hub) >= 1500
     wake_once(monkeypatch, dispatcher, start)
