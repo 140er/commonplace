@@ -313,15 +313,21 @@ def run_deploy(tmp_path, **fakes):
 "start --wait test-backup.service") : > "$HOME/started"; exit START_RC ;;
 "show -p Result --value test-backup.service") echo RESULT ;;
 *) exit 97 ;;
-esac""".replace("AFTER", fakes.get("after", "new"))
+esac""".replace(
+            "date -u +%Y-%m-%dT%H:%M:%S.%NZ",
+            fakes.get("execution", "date -u +'%a %Y-%m-%d %H:%M:%S UTC'"),
+        )
+        .replace("AFTER", fakes.get("after", "new"))
         .replace("BEFORE", "old")
         .replace("START_RC", str(fakes.get("start_rc", 0)))
         .replace("RESULT", fakes.get("result", "success"))
         .replace("REMAIN", fakes.get("remain", "no"))
         .replace("ACTIVE", str(fakes.get("active", 1))),
         "docker": """if [[ "$*" == *"config --format json" ]]; then
- echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"8765"}]}}}'
-fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")),
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED"}]}}}'
+fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
+            "PUBLISHED", fakes.get("published", "8765")
+        ),
         "curl": "echo 200",
         "latest": fakes.get(
             "latest",
@@ -335,7 +341,7 @@ fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")),
         script.write_text("#!/usr/bin/env bash\nset -eu\n" + log + body + "\n")
         script.chmod(0o755)
     (tmp_path / "compose.yml").touch()
-    (tmp_path / ".env").touch()
+    (tmp_path / ".env").write_text(fakes.get("compose_env", ""))
     config = tmp_path / "deploy.env"
     config.write_text(fakes.get("config", ""))
     # Construct from scratch: no inherited deploy settings or real command PATH.
@@ -489,9 +495,9 @@ def test_deploy_sh_fresh_enough(start, snap, now, age, expected):
             'source "$1"; fresh_enough "$2" "$3" "$4" "$5"',
             "bash",
             str(DEPLOY_SH),
-            str(start * 1000000000),
-            str(snap * 1000000000),
-            str(now * 1000000000),
+            str(start),
+            str(snap),
+            str(now),
             str(age),
         ],
         stdin=subprocess.DEVNULL,
@@ -561,3 +567,89 @@ def test_deploy_sh_additional_contracts(tmp_path, mode):
         if mode != "public":
             assert not any(call[0] == "docker" for call in calls)
     assert not (tmp_path / "marker").exists()
+
+
+@pytest.mark.parametrize("precision", ["%SZ", "%S.001Z"])
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_real_clock_precision(tmp_path, precision):
+    assert DEPLOY_SH.is_file()
+    latest = f'jq -cn --arg time "$(date -u +%Y-%m-%dT%H:%M:{precision})" \'{{id:("a" * 64),time:$time}}\''
+    result, calls = run_deploy(
+        tmp_path, latest=latest, execution="date -u +'%a %Y-%m-%d %H:%M:%S UTC'"
+    )
+    assert result.returncode == 0, result.stderr
+    assert any("up" in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("DEPLOY_BACKUP_UNIT", "bad unit.service"),
+        ("DEPLOY_BACKUP_UNIT", "backup.timer"),
+        ("DEPLOY_BACKUP_TIMEOUT", "0"),
+        ("DEPLOY_BACKUP_TIMEOUT", "1000000"),
+        ("DEPLOY_BACKUP_TIMEOUT", "abc"),
+        ("DEPLOY_BACKUP_MAX_AGE", "59"),
+        ("DEPLOY_BACKUP_MAX_AGE", "86401"),
+        ("DEPLOY_BACKUP_MAX_AGE", "abc"),
+        ("APP_PORT", "0"),
+        ("APP_PORT", "65536"),
+        ("APP_PORT", "abc"),
+    ],
+)
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_invalid_config(tmp_path, key, value):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, env={key: value})
+    assert_deploy_failure(result, calls, "config", ["id"])
+
+
+@pytest.mark.parametrize(
+    "key,step", [("DEPLOY_BACKUP_CHECK_CMD", "check"), ("DEPLOY_BACKUP_LATEST_CMD", "latest")]
+)
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_whitespace_command(tmp_path, key, step):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, env={key: "   "})
+    assert_deploy_failure(
+        result, calls, step, ["id"] + ["systemctl"] * 8 + (["latest"] if step == "check" else [])
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_env_file_ignores_bash_env(tmp_path):
+    assert DEPLOY_SH.is_file()
+    payload = tmp_path / "payload"
+    payload.write_text(': > "$HOME/injected"\n')
+    result, calls = run_deploy(tmp_path, config=f"BASH_ENV={payload}\n")
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "injected").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_wrong_published_port(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, published="8766")
+    assert result.returncode == 1
+    assert result.stderr.startswith("[deploy] ERROR: deploy:")
+    assert not any("up" in call for call in calls)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_unloaded_unit(tmp_path):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(tmp_path, after="")
+    assert_deploy_failure(result, calls, "backup", ["id"] + ["systemctl"] * 6)
+    assert "backup unit was unloaded; keep it referenced" in result.stderr
+
+
+@pytest.mark.parametrize("value", ['"/data"', "/data # comment", "/data/$HOME"])
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_sh_rejects_compose_path_grammar(tmp_path, value):
+    assert DEPLOY_SH.is_file()
+    result, calls = run_deploy(
+        tmp_path,
+        unset=["COMMONPLACE_DATA_DIR"],
+        compose_env=f"COMMONPLACE_DATA_DIR={value}\n",
+    )
+    assert_deploy_failure(result, calls, "config", ["id"])

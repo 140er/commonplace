@@ -8,12 +8,13 @@ die() {
 
 fresh_enough() {
     local start=$1 snap=$2 now=$3 max_age=$4
-    (( snap >= start && snap <= now + 60000000000 && now - snap <= max_age * 1000000000 ))
+    (( snap >= start && snap <= now + 60 && now - snap <= max_age ))
 }
 
 run_command() {
     local -a command
     read -r -a command <<< "$1"
+    (( ${#command[@]} > 0 )) || return 2
     set -f
     "${command[@]}"
 }
@@ -28,6 +29,10 @@ main() {
         while IFS= read -r line || [[ -n $line ]]; do
             [[ $line =~ ^[A-Z_][A-Z0-9_]*= ]] || continue
             key=${line%%=*}
+            case $key in
+                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
+                *) continue ;;
+            esac
             value=${line#*=}
             if [[ ! -v $key ]]; then
                 export "$key=$value"
@@ -39,7 +44,7 @@ main() {
     [[ $DEPLOY_BACKUP_TIMEOUT =~ ^[1-9][0-9]{0,5}$ ]] || die config 'invalid DEPLOY_BACKUP_TIMEOUT'
     [[ -n ${DEPLOY_BACKUP_CHECK_CMD:-} ]] || die config 'DEPLOY_BACKUP_CHECK_CMD is required'
     [[ -n ${DEPLOY_BACKUP_LATEST_CMD:-} ]] || die config 'DEPLOY_BACKUP_LATEST_CMD is required'
-    DEPLOY_BACKUP_MAX_AGE=${DEPLOY_BACKUP_MAX_AGE:-900}
+    DEPLOY_BACKUP_MAX_AGE=${DEPLOY_BACKUP_MAX_AGE:-7200}
     APP_PORT=${APP_PORT:-8765}
     [[ $DEPLOY_BACKUP_MAX_AGE =~ ^[0-9]{1,5}$ ]] || die config 'invalid DEPLOY_BACKUP_MAX_AGE'
     (( 10#$DEPLOY_BACKUP_MAX_AGE >= 60 && 10#$DEPLOY_BACKUP_MAX_AGE <= 86400 )) || die config 'invalid DEPLOY_BACKUP_MAX_AGE'
@@ -59,7 +64,10 @@ main() {
         [[ $line =~ ^COMMONPLACE_(SOURCE_DIR|ENV_FILE|DATA_DIR)= ]] || continue
         key=${line%%=*}
         value=${line#*=}
-        [[ -v $key ]] || export "$key=$value"
+        if [[ ! -v $key ]]; then
+            [[ $value != *[[:space:]\"\'\$\`\\#]* ]] || die config "$key must be a literal path without whitespace, quotes, expansions or comments"
+            export "$key=$value"
+        fi
     done < "$COMPOSE_ENV_FILE"
     for key in COMMONPLACE_ROOT COMPOSE_FILE COMPOSE_ENV_FILE COMMONPLACE_SOURCE_DIR COMMONPLACE_ENV_FILE COMMONPLACE_DATA_DIR; do
         [[ ${!key:-} == /* ]] || die config "$key must be an absolute path"
@@ -67,25 +75,26 @@ main() {
     [[ $(systemctl show -p LoadState --value "$DEPLOY_BACKUP_UNIT") == loaded ]] || die config 'unit is not loaded'
     [[ $(systemctl show -p Type --value "$DEPLOY_BACKUP_UNIT") == oneshot ]] || die config 'unit must be oneshot'
     [[ $(systemctl show -p RemainAfterExit --value "$DEPLOY_BACKUP_UNIT") == no ]] || die config 'unit must have RemainAfterExit=no'
-    start=$(date -u +%s%N) || die preflight 'cannot read clock'
+    start=$(date -u +%s) || die preflight 'cannot read clock'
 
     before=$(systemctl show -p InvocationID --value "$DEPLOY_BACKUP_UNIT" 2>/dev/null) || die backup 'cannot read invocation'
     timeout "$DEPLOY_BACKUP_TIMEOUT" systemctl start --wait "$DEPLOY_BACKUP_UNIT" 2>/dev/null || die backup 'unit start failed'
     after=$(systemctl show -p InvocationID --value "$DEPLOY_BACKUP_UNIT" 2>/dev/null) || die backup 'cannot read invocation'
-    [[ -n $after && $after != "$before" ]] || die backup 'unit did not run a new invocation'
+    [[ -n $after ]] || die backup 'backup unit was unloaded; keep it referenced'
+    [[ $after != "$before" ]] || die backup 'unit did not run a new invocation'
     result=$(systemctl show -p Result --value "$DEPLOY_BACKUP_UNIT" 2>/dev/null) || die backup 'cannot read result'
     [[ $result == success ]] || die backup 'unit did not succeed'
 
     execution=$(systemctl show -p ExecMainStartTimestamp --value "$DEPLOY_BACKUP_UNIT") || die backup 'cannot read execution time'
-    execution=$(date -d "$execution" +%s%N) || die backup 'invalid execution time'
+    execution=$(date -d "$execution" +%s) || die backup 'invalid execution time'
     (( execution >= start )) || die backup 'unit execution predates deploy'
 
     latest=$(run_command "$DEPLOY_BACKUP_LATEST_CMD" 2>/dev/null) || die latest 'command failed'
     [[ $latest != *$'\n'* ]] || die latest 'more than one line'
     timestamp=$(jq -er 'select(type == "object") | select(.id | type == "string" and test("^[0-9a-f]{64}$")) | .time | select(type == "string")' <<< "$latest" 2>/dev/null) || die latest 'invalid snapshot JSON'
     [[ $timestamp =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]] || die latest 'invalid snapshot time'
-    snap=$(date -d "$timestamp" +%s%N 2>/dev/null) || die latest 'invalid snapshot time'
-    now=$(date -u +%s%N) || die latest 'cannot read clock'
+    snap=$(date -d "$timestamp" +%s 2>/dev/null) || die latest 'invalid snapshot time'
+    now=$(date -u +%s) || die latest 'cannot read clock'
     fresh_enough "$start" "$snap" "$now" "$((10#$DEPLOY_BACKUP_MAX_AGE))" || die latest 'snapshot is not fresh'
     run_command "$DEPLOY_BACKUP_CHECK_CMD" >/dev/null 2>&1 || die check 'backup verification failed'
 
