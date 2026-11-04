@@ -789,7 +789,7 @@ def test_run_backfill_refusal_does_not_back_off(backfill_setup, monkeypatch, sta
         stop=lambda: b.now[0] >= 10600,
     )
     assert result == 0
-    assert len(b.posts) == 299
+    assert len(b.posts) == 299  # RED
     assert times[-1] - times[120] <= 2 * 179
     assert b.state.next_due(b.bkey + "-done") > 0
 
@@ -802,7 +802,7 @@ def test_capture_off_does_not_end_backfill(backfill_setup):
     assert not b.state.next_due(b.bkey + "-done")
     b.refused.clear()
     b.drive(active, 200)
-    assert len(b.posts) == 300
+    assert len(b.posts) == 300  # RED
     assert b.state.next_due(b.bkey + "-done") > 0
 
 
@@ -816,7 +816,7 @@ def test_backfill_budget_survives_real_state_reopen(tmp_path):
         active = sync_daemon._Session(config, state, lambda: now[0], None)
         active.backfill = True
         for _ in range(121):
-            assert active._budget(TOKEN_ENV["claude-code"])
+            assert active._budget(TOKEN_ENV["claude-code"])  # RED
         bkey = active.bkey
         assert state.next_due(bkey) == 1
     with sync_state.open_state(path) as state:
