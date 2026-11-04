@@ -99,7 +99,7 @@ def _projects(config):
             _require(f"{label}:{topic}" in config["binding_acks"], "binding_ack required")
 
 
-def _load(config_path):
+def _read(config_path) -> dict:
     path = Path(config_path).expanduser()
     info = path.stat()
     if os.name == "posix":
@@ -107,7 +107,11 @@ def _load(config_path):
             stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.getuid(),
             "config must be owner-written with mode 0600",
         )
-    config = json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load(config_path):
+    config = _read(config_path)
     _require(isinstance(config, dict) and config.keys() == _CONFIG_KEYS)
     _url(config["hub_url"])
     _url(config["t3_mcp_endpoint"])
@@ -225,12 +229,12 @@ class _Hub:
     def delay(self):
         return min(self.poll * 2 ** min(self.failures, 5), 300)
 
-    def post(self, route, body):
+    def post(self, route, body, *, prefix="/api/runner/"):
         status = None
         try:
             request = Request(
-                self.url + "/api/runner/" + route,
-                data=json.dumps(body).encode("utf-8"),
+                self.url + prefix + route,
+                data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
                 headers={
                     "Authorization": "Bearer " + self.token,
                     "Content-Type": "application/json",
@@ -260,7 +264,7 @@ class _Hub:
                 else "refused"
                 if status == 404
                 else "fenced"
-                if status == 409 and route in {"starting", "result"}
+                if status == 409 and route in {"starting", "result", "answer", "fail"}
                 else "transient"
             )
         except (
