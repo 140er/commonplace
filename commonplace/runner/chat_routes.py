@@ -3,13 +3,17 @@ poster's own runner and answer text back. The card-runner actions in runner_api.
 """
 
 import json
+import logging
 import time
 from urllib.parse import urlsplit
 
 from commonplace.boards._http import HTTPError, send_json
+from commonplace.http_util import log_failure
 from commonplace.projects.types import MODEL
 
 from . import chat_relay, registry, runner_api
+
+logger = logging.getLogger(__name__)
 
 PREFIX = "/api/runner/chat/"
 _BODY_KEYS = {
@@ -110,7 +114,12 @@ def register(gateway) -> None:
             send_json(h, exc.status, {"error": str(exc)})
         except chat_relay.Fenced:
             send_json(h, 409, {"error": "job fenced"})
-        except ValueError:
+        except chat_relay.InvalidReply:
             send_json(h, 400, {"error": "invalid request body"})
+        except chat_relay.ReplyBusy:
+            send_json(h, 503, {"error": "reply storage unavailable"})
+        except Exception as exc:
+            log_failure(logger, "chat relay request failed", exc)
+            send_json(h, 500, {"error": "internal error"})
 
     gateway.add_prefix_route("POST", PREFIX, route)

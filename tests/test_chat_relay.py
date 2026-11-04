@@ -99,23 +99,45 @@ def test_relay_lifecycle(relay_hub, case):
     assert replies and all(r["kind"] == "receipt" for r in replies)
 
 
-def test_relay_routes_need_the_machine_credential(relay_hub):
+@pytest.mark.parametrize("action", ["lease", "answer", "fail"])
+def test_relay_routes_need_the_machine_credential(relay_hub, action):
     h = relay_hub
     m = h.machine()
     assert h.poll(m)[0] == 204  # RED
-    path = "/api/runner/chat/lease"
+    body = {"clis": ["claude"]}
+    if action != "lease":
+        h.post(h.owner, "Only my own machine may answer.")
+        status, lease = h.poll(m)
+        assert status == 200
+        body = {key: lease[key] for key in ("job", "lease_token")}
+        body.update(
+            {"text": "Answer", "cli": "claude", "model": "example-model"}
+            if action == "answer"
+            else {"code": "bad_output"}
+        )
+    path = "/api/runner/chat/" + action
     for auth in (m["worker_token"], h.a1):
-        assert h.request(auth, "POST", path, {"clis": ["claude"]})[0] == 404
-    assert h.request(h.owner, "POST", path, {"clis": ["claude"]})[0] in (403, 404)
-    assert h.request(None, "POST", path, {"clis": ["claude"]})[0] == 401
-    assert h.raw(m, b"{}", "text/plain")[0] == 415
-    assert h.raw(m, b" " * 20_481, "application/json")[0] == 413
-    for body in ({"clis": ["claude"], "unknown": True}, {"clis": []}, {"clis": ["bad label"]}):
-        assert h.raw(m, json.dumps(body).encode(), "application/json")[0] == 400
-    h.post(h.owner, "Only my own machine may answer.")
+        assert h.request(auth, "POST", path, body)[0] == 404
+    assert h.request(h.owner, "POST", path, body)[0] in (403, 404)
+    assert h.request(None, "POST", path, body)[0] == 401
+
+    def raw(payload, media="application/json"):
+        return h._request_bytes(m["machine_token"], "POST", path, payload, media)[0]
+
+    assert raw(b"{}", "text/plain") == 415
+    assert raw(b" " * 20_481) == 413
+    malformed = [{**body, "unknown": True}, {}, {**body, next(iter(body)): []}]
+    if action == "lease":
+        malformed.append({"clis": ["bad label"]})
+    for value in malformed:
+        assert raw(json.dumps(value).encode()) == 400
+    if action != "lease":
+        assert h.jobs()[0]["state"] == "leased"
+        assert h.fail(m, lease["job"], lease["lease_token"], "bad_output")[0] == 200
+    h.post(h.owner, "A question for this machine.")
     other = h.machine(auth=h.other)
     assert h.poll(other)[0] == 204
-    assert len(h.jobs()) == 1 and h.jobs()[0]["state"] == "queued"
+    assert h.jobs()[-1]["state"] == "queued"
     assert h.request(h.owner, "DELETE", "/api/runners/" + m["machine_id"])[0] == 200
     assert h.poll(m)[0] in (401, 404)
 
@@ -197,9 +219,10 @@ def test_minimal_context_by_default_full_by_opt_in(relay_hub):
     h.post(h.owner, "What is open?")
     status, body = h.poll(m, context="full")
     assert status == 200
-    # Full context is chat.worker.build_context unchanged (plan §2.3.1): other people's chat
+    # Full context is chat.worker.build_context unchanged: other people's chat
     # lines appear; an untrusted proposal is not in the poster's task list in either mode.
     assert "member note 7Q" in body["prompt"]
+    assert "untrusted card 5K" not in body["prompt"]
 
 
 def test_daily_cap_is_enforced_and_visible(relay_hub):

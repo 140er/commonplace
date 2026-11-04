@@ -62,7 +62,7 @@ def snapshot(gateway, principal, board: str) -> dict:
             time.time(),
             choice.provider if choice else None,
         )
-        if runner["online"]:
+        if runner["online"] and not chat_relay.main_active(gateway, principal, board, time.time()):
             mode = "runner"
             model = f"{choice.provider}/{choice.model}" if choice else None
     return {

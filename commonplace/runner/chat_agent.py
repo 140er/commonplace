@@ -7,10 +7,10 @@ import sys
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Thread
 
 from ..chat.types import MAX_REPLY_CHARS
 from ..client import ClientError
-from ..projects.types import MODEL
 from .agent import (
     _CHILD_KEYS,
     _config_failure,
@@ -51,7 +51,7 @@ SAFE_ARGV = {
     }
 }
 EGRESS_LINE = "chat: answers run your configured CLI under your own login; each prompt (your message, the project name and up to 15 trusted card titles) goes to that CLI's provider"
-EGRESS_FULL_LINE = "chat: context full: prompts also carry recent chat lines from everyone in the project and all visible card titles"
+EGRESS_FULL_LINE = "chat: context full: prompts also carry recent chat lines from everyone in the project and up to 15 visible card titles"
 TOOLS_LINE = "chat: {label} runs with its tools on (tools: true); chat text can steer those tools, including reading local files and sending them to the CLI's provider"
 
 
@@ -82,7 +82,10 @@ def validate_chat(chat: dict) -> dict:
             "model placeholder must be a whole argument",
         )
         model = entry.get("default_model")
-        _require(isinstance(model, str) and MODEL.fullmatch(model), "invalid default_model")
+        _require(
+            isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model),
+            "invalid default_model",
+        )
         tools = entry.get("tools", False)
         _require(isinstance(tools, bool), "invalid tools acknowledgement")
         if not tools:
@@ -200,13 +203,14 @@ def _run(config, once):
             if exc.kind == "credential":
                 return 3
             if once and exc.kind != "fenced":
-                return 5
+                return 3 if exc.status is None else 5
         if once:
             return 0
         time.sleep(hub.delay())
 
 
 def _reply(hub, config, job):
+    deadline = time.monotonic() + job.get("expires_in", 0) if isinstance(job, dict) else 0
     if not (
         isinstance(job, dict)
         and isinstance(job.get("job"), str)
@@ -224,7 +228,11 @@ def _reply(hub, config, job):
         isinstance(job.get("system"), str)
         and isinstance(job.get("prompt"), str)
         and (cli is None or isinstance(cli, str))
-        and (model is None or isinstance(model, str) and MODEL.fullmatch(model))
+        and (
+            model is None
+            or isinstance(model, str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model)
+        )
     ):
         code = "bad_output"
     elif cli is not None and cli not in chat["clis"]:
@@ -239,11 +247,21 @@ def _reply(hub, config, job):
     local_chat = {**chat, "_token_env": config["token_env"]}
     outcome, value = _ask_cli(local_chat, cli, model, job["system"], job["prompt"])
     if outcome == "ok":
-        hub.post(
-            "answer",
-            {**body, "text": value, "cli": cli, "model": model},
-            prefix="/api/runner/chat/",
-        )
+        for attempt in range(3):
+            try:
+                hub.post(
+                    "answer",
+                    {**body, "text": value, "cli": cli, "model": model},
+                    prefix="/api/runner/chat/",
+                )
+                return
+            except _HubError as exc:
+                remaining = deadline - time.monotonic()
+                if exc.status != 503 or attempt == 2 or remaining <= POLL_S:
+                    raise
+                time.sleep(POLL_S)
+                if time.monotonic() >= deadline:
+                    raise
     else:
         hub.post("fail", {**body, "code": value}, prefix="/api/runner/chat/")
 
@@ -261,26 +279,59 @@ def _ask_cli(chat: dict, cli: str, model: str | None, system: str, prompt: str) 
         return "fail", "cli_failed"
     try:
         with TemporaryDirectory() as cwd:
-            result = subprocess.run(
+            data = (system + "\n\n" + prompt).encode("utf-8")
+            with subprocess.Popen(
                 argv,
-                input=(system + "\n\n" + prompt).encode("utf-8"),
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 cwd=cwd,
                 env=env,
-                timeout=CLI_TIMEOUT_S,
-                check=False,
-            )
+            ) as child:
+                output = bytearray()
+
+                def read_output():
+                    output.extend(child.stdout.read(65_537))
+                    if len(output) > 65_536:
+                        child.kill()
+
+                def write_input():
+                    try:
+                        child.stdin.write(data)
+                        child.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
+
+                reader = Thread(target=read_output, daemon=True)
+                writer = Thread(target=write_input, daemon=True)
+                deadline = time.monotonic() + CLI_TIMEOUT_S
+                reader.start()
+                writer.start()
+                try:
+                    child.wait(timeout=CLI_TIMEOUT_S)
+                    reader.join(max(0, deadline - time.monotonic()))
+                    writer.join(max(0, deadline - time.monotonic()))
+                    if reader.is_alive() or writer.is_alive():
+                        raise subprocess.TimeoutExpired(argv, CLI_TIMEOUT_S)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+                    reader.join()
+                    writer.join()
+                    raise
+                if len(output) > 65_536:
+                    return "fail", "bad_output"
+                returncode = child.returncode
     except subprocess.TimeoutExpired:
         return "fail", "cli_timeout"
     except OSError:
         return "fail", "cli_failed"
     except UnicodeError:
         return "fail", "bad_output"
-    if result.returncode != 0:
+    if returncode != 0:
         return "fail", "cli_failed"
     try:
-        text = result.stdout.decode("utf-8").strip()
+        text = output.decode("utf-8").strip()
     except UnicodeError:
         return "fail", "bad_output"
     if not text:

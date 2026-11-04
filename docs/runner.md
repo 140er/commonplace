@@ -61,7 +61,7 @@ Both config shapes must be owner-written with mode 0600 on POSIX:
   `runner chat` runs chat answers. Run the loops separately if both are wanted.
 
 Replace the hub placeholder and absolute executable paths with your own values;
-use models offered by your own CLI login. The Codex example uses `gpt-6.1-sol`.
+use models offered by your own CLI login. The Codex example uses `your-codex-model`.
 `hub_url` requires HTTPS, except that loopback HTTP is allowed.
 
 ```json
@@ -79,7 +79,7 @@ use models offered by your own CLI login. The Codex example uses `gpt-6.1-sol`.
       },
       "codex": {
         "argv": ["/absolute/path/codex", "exec", "--sandbox", "read-only", "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "-m", "{model}", "-"],
-        "default_model": "gpt-6.1-sol",
+        "default_model": "your-codex-model",
         "tools": true
       }
     }
@@ -145,7 +145,7 @@ redacted, bounded and built only when your own machine leases a job; it is not
 stored in the relay queue.
 
 An enrolling owner's local `"context": "full"` opt-in adds the last 10 chat
-lines from all participants, all visible card titles and assignees, start jobs
+lines from all participants, up to 15 visible card titles and assignees, start jobs
 and the decisions count. These settings have no hub-side web controls.
 
 `runner check` and chat startup print this egress statement:
@@ -157,7 +157,7 @@ chat: answers run your configured CLI under your own login; each prompt (your me
 With full context they also print:
 
 ```text
-chat: context full: prompts also carry recent chat lines from everyone in the project and all visible card titles
+chat: context full: prompts also carry recent chat lines from everyone in the project and up to 15 visible card titles
 ```
 
 For each acknowledged CLI they print the following, replacing `{label}`:
@@ -190,6 +190,7 @@ private runner answer.
 |---|---|
 | Poll interval | 3 seconds (`POLL_S`). |
 | CLI timeout | 60 seconds (`CLI_TIMEOUT_S`). |
+| CLI stdout | At most 64 KiB; an overrun kills the CLI and records `bad_output`. |
 | Online window since last lease request | 90 seconds (`CHAT_ONLINE_S`). |
 | Queue wait | 120 seconds (`CHAT_WAIT_S`), then `expired/no_runner`. |
 | Lease duration | 120 seconds (`CHAT_LEASE_S`), then `failed/lease_expired`. |
@@ -199,7 +200,7 @@ private runner answer.
 | Context JSON | 49,152 UTF-8 bytes (`MAX_CONTEXT_JSON_BYTES`). |
 | Answer request text | At most 16,384 UTF-8 bytes (`MAX_ANSWER_BYTES`). |
 | Route request body | At most 20,480 bytes (`MAX_BODY_BYTES`). |
-| Returned answer | Cut to 2,000 characters before redaction; CLI output is at most 8,000 UTF-8 bytes. |
+| Returned answer | Cut to 2,000 characters before redaction; returned answer at most 8,000 bytes. |
 
 Latency is roughly one poll interval plus CLI runtime. Failed or expired jobs
 are never re-queued. The receipt remains on failure, and chat status shows

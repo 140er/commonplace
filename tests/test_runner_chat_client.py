@@ -162,6 +162,13 @@ def test_chat_config_validation(relay_hub, tmp_path):
         assert result.returncode == 4, case
         assert "config_invalid" in result.stderr, case
 
+    flag_model = copy.deepcopy(config)
+    flag_model["chat"]["clis"]["claude"]["default_model"] = "--tools"
+    _private_json(path, flag_model)
+    result = runner(["check", "--config", str(path)], {})
+    assert result.returncode == 4  # RED: a model cannot be an option
+    assert "config_invalid" in result.stderr
+
     for value, label in ((missing_tools, "claude"), (codex, "codex")):
         acknowledged = copy.deepcopy(value)
         acknowledged["chat"]["clis"][label]["tools"] = True

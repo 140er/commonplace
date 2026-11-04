@@ -3,6 +3,7 @@
 import hashlib
 import json
 import secrets
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from commonplace import control_db, redact, sessions
@@ -36,6 +37,14 @@ RELAY_CODES = (
     "daily_limit",
 )
 RUNNER_FAIL_CODES = ("cli_failed", "cli_timeout", "cli_not_configured", "bad_output")
+
+
+class InvalidReply(ValueError):
+    """The submitted reply or failure code is invalid (HTTP 400)."""
+
+
+class ReplyBusy(Exception):
+    """Reply storage is temporarily unavailable; keep the lease (HTTP 503)."""
 
 
 class Fenced(Exception):
@@ -254,12 +263,12 @@ def lease(
                 break
     if claimed is None:
         return None
-    poster = _poster(gateway, claimed)
-    if poster is None:
-        with db._lock:
-            _finish(db._conn, claimed, "skipped", "no_access", now)
-        return None
     try:
+        poster = _poster(gateway, claimed)
+        if poster is None:
+            with db._lock:
+                _finish(db._conn, claimed, "skipped", "no_access", now)
+            return None
         system, prompt = chat_context.build(
             gateway, poster, claimed["board"], claimed["message_id"], context
         )
@@ -299,7 +308,7 @@ def answer(
     with db._lock:
         row = _fenced(db._conn, machine, job, lease_token, now)
     if not 1 <= len(text.encode("utf-8")) <= MAX_ANSWER_BYTES or MODEL.fullmatch(model) is None:
-        raise ValueError("Invalid answer")
+        raise InvalidReply("Invalid answer")
     poster = _poster(gateway, row)
     with db._lock, db._tx() as conn:
         row = _fenced(conn, machine, job, lease_token, now)
@@ -309,22 +318,25 @@ def answer(
         if (row["cli"] is not None and cli != row["cli"]) or (
             row["cli"] is None and (seen is None or cli not in json.loads(seen["clis"]))
         ):
-            raise ValueError("Invalid answer CLI")
+            raise InvalidReply("Invalid answer CLI")
         if poster is None:
             _finish(conn, row, "failed", "no_access", now)
         else:
             text, kinds = redact.redact(text[:MAX_REPLY_CHARS])
             kinds = set(kinds) | {kind for kind in redact.KINDS if f"[redacted:{kind}]" in text}
-            store.open_replies(gateway, row["workspace_id"]).add(
-                board=row["board"],
-                message_id=row["message_id"],
-                for_user=row["user_id"],
-                kind="answer",
-                code="ok",
-                text=text,
-                redacted=tuple(sorted(kinds)),
-                model=f"runner:{cli}/{model}",
-            )
+            try:
+                store.open_replies(gateway, row["workspace_id"]).add(
+                    board=row["board"],
+                    message_id=row["message_id"],
+                    for_user=row["user_id"],
+                    kind="answer",
+                    code="ok",
+                    text=text,
+                    redacted=tuple(sorted(kinds)),
+                    model=f"runner:{cli}/{model}",
+                )
+            except (TimeoutError, sqlite3.Error):
+                raise ReplyBusy() from None
             _finish(conn, row, "done", "ok", now)
     if poster is None:
         raise Fenced()
@@ -337,7 +349,7 @@ def fail(gateway, machine: dict, job: str, lease_token: str, code: str, now: flo
     with db._lock, db._tx() as conn:
         row = _fenced(conn, machine, job, lease_token, now)
         if code not in RUNNER_FAIL_CODES:
-            raise ValueError("Invalid runner failure code")
+            raise InvalidReply("Invalid runner failure code")
         _finish(conn, row, "failed", code, now)
     return {"job": job, "state": "failed", "code": code}
 
@@ -354,12 +366,6 @@ def caller_state(db, workspace_id: str, user_id: str, now: float, cli: str | Non
             "ORDER BY updated_at DESC,created_at DESC,rowid DESC LIMIT 1",
             (workspace_id, user_id, start, end),
         ).fetchone()
-        if cli is None and eligible:
-            seen = db._conn.execute(
-                "SELECT clis FROM chat_runners_seen WHERE machine_id=?",
-                (eligible[0]["machine_id"],),
-            ).fetchone()
-            cli = sorted(json.loads(seen["clis"]))[0]
     return {
         "online": bool(eligible),
         "cli": cli,

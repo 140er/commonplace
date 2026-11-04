@@ -151,7 +151,7 @@ In runner mode the hub relays redacted context only to the poster's own runner;
 that runner sends it to the configured CLI's provider under the poster's login.
 Default `context: "minimal"` includes the new message, project name and up to 15
 trusted card titles with status. Local `context: "full"` also includes recent
-chat from everyone, all visible card titles and assignees, start jobs and the
+chat from everyone, up to 15 visible card titles and assignees, start jobs and the
 decisions count. The hub never calls a model for these answers. The relay has a
 separate cap of 200 jobs per user per workspace per UTC day; CLI subscription
 limits apply too.
