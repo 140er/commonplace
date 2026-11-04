@@ -104,7 +104,10 @@ export function createChat({ mount, api, e }) {
         const query = state.page.cursor ? `after=${state.page.cursor}&replies_after=${state.page.reply_cursor || 0}` : "last=50";
         const [page, status] = await Promise.all([api(`${path}?${query}`), api(`${path}/status`)]);
         if (!current(token)) return;
-        state.page = { ...page, messages: merge(state.page.messages, page.messages), replies: merge(state.page.replies, page.replies) };
+        const linked = new Map((state.page.linked || []).map((card) => [card.number, card]));
+        for (const card of page.linked || []) linked.set(card.number, card);
+        state.page = { ...page, linked: [...linked.values()], messages: merge(state.page.messages, page.messages), replies: merge(state.page.replies, page.replies) };
+        state.me = page.me;
         state.status = status;
         lastProject = state.slug;
       }

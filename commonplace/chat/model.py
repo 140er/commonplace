@@ -3,6 +3,8 @@
 import http.client
 import json
 import os
+import socket
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -21,6 +23,33 @@ from commonplace.chat.types import (
 ANTHROPIC_ORIGIN = "https://api.anthropic.com"
 
 
+def _bounded_response(remaining):
+    class BoundedResponse(http.client.HTTPResponse):
+        def begin(self):
+            original = self.fp
+
+            class Headers:
+                size = 0
+
+                def readline(self, limit=-1):
+                    remaining()
+                    line = original.readline(min(limit if limit >= 0 else 65537, 65537))
+                    self.size += len(line)
+                    remaining()
+                    if self.size > 65536:
+                        raise ModelError("bad_response")
+                    return line
+
+                def __getattr__(self, name):
+                    return getattr(original, name)
+
+            self.fp = Headers()
+            super().begin()
+            self.fp = original
+
+    return BoundedResponse
+
+
 def complete(
     settings: FrontSettings,
     key: str | None,
@@ -29,6 +58,7 @@ def complete(
     *,
     timeout: float = MODEL_TIMEOUT_S,
     max_tokens: int = MAX_OUTPUT_TOKENS,
+    on_sent=None,
 ) -> str:
     if len(system) + sum(len(turn["content"]) for turn in turns) > MAX_INPUT_CHARS:
         raise ValueError("model input too long")
@@ -66,17 +96,56 @@ def complete(
             raise ModelError("timeout")
         return seconds
 
-    cls = http.client.HTTPSConnection if origin.scheme == "https" else http.client.HTTPConnection
+    class DeadlineHTTPSConnection(http.client.HTTPSConnection):
+        def connect(self):
+            http.client.HTTPConnection.connect(self)
+            self.sock.settimeout(remaining())
+            self.sock = self._context.wrap_socket(
+                self.sock, server_hostname=self.host, do_handshake_on_connect=False
+            )
+            self.sock.do_handshake()
+
+    cls = DeadlineHTTPSConnection if origin.scheme == "https" else http.client.HTTPConnection
     conn = cls(origin.hostname, origin.port, timeout=remaining())
     response = None
+    expired = threading.Event()
+    sockets = []
+
+    def expire():
+        expired.set()
+        for sock in [conn.sock, *sockets]:
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    create = conn._create_connection
+
+    def connect_socket(*args, **kwargs):
+        sock = create(*args, **kwargs)
+        sockets.append(sock)
+        remaining()
+        return sock
+
+    conn._create_connection = connect_socket
+    timer = threading.Timer(remaining(), expire)
+    timer.daemon = True
+    timer.start()
     try:
         conn.connect()
         sock = conn.sock
+        sockets.append(sock)
         sock.settimeout(remaining())
         path = origin.path.rstrip("/") + ("/v1/messages" if anthropic else "/v1/chat/completions")
         conn.request("POST", path, payload, headers)
+        if on_sent is not None:
+            on_sent()
         sock.settimeout(remaining())
+
+        conn.response_class = _bounded_response(remaining)
         response = conn.getresponse()
+        remaining()
         if response.status != 200:
             raise ModelError("http_error")
         chunks = bytearray()
@@ -90,25 +159,30 @@ def complete(
             chunks.extend(chunk)
             if len(chunks) > MAX_RESPONSE_BYTES:
                 raise ModelError("bad_response")
-        try:
-            data = json.loads(chunks)
-            if anthropic:
-                first = data["content"][0]
-                if first["type"] != "text":
-                    raise ValueError
-                answer = first["text"]
-            else:
-                answer = data["choices"][0]["message"]["content"]
-            if not isinstance(answer, str):
-                raise ValueError
-        except (ValueError, KeyError, IndexError, TypeError):
-            raise ModelError("bad_response") from None
-        return answer
+        return _answer(chunks, anthropic)
     except TimeoutError:
         raise ModelError("timeout") from None
     except (OSError, http.client.HTTPException):
-        raise ModelError("http_error") from None
+        raise ModelError("timeout" if expired.is_set() else "http_error") from None
     finally:
+        timer.cancel()
         if response is not None:
             response.close()
         conn.close()
+
+
+def _answer(chunks, anthropic):
+    try:
+        data = json.loads(chunks)
+        if anthropic:
+            first = data["content"][0]
+            if first["type"] != "text":
+                raise ValueError
+            answer = first["text"]
+        else:
+            answer = data["choices"][0]["message"]["content"]
+        if not isinstance(answer, str):
+            raise ValueError
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise ModelError("bad_response") from None
+    return answer

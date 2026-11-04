@@ -97,6 +97,13 @@ def install(gateway) -> None:
                     message_ids=[message["id"] for message in payload["messages"]],
                     after_id=replies_after,
                 )
+                ids = {message["id"] for message in payload["messages"]}
+                payload["linked"] = [
+                    {**card, "title": redact.redact(card["title"])[0]}
+                    for card in service.task_list(board=parts[0], all_statuses=True)
+                    if card.get("message_id") in ids
+                ]
+                payload["me"] = {"user": principal.user_id, "role": principal.role}
                 payload["replies"] = [reply.public() for reply in replies]
                 payload["reply_cursor"] = max([replies_after, *(reply.id for reply in replies)])
         except ToolError as exc:

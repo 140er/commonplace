@@ -509,7 +509,7 @@ async function search(form) {
 }
 async function chatScreen(epoch) {
   chatUI ??= createChat({ mount: () => root.querySelector("#content"), api, e });
-  let slug = state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(8)) : null;
+  let slug = state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : null;
   title("Chat");
   await chatUI.show(slug);
   if (epoch !== state.screen) return;

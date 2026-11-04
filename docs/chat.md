@@ -127,3 +127,7 @@ display. It does not rewrite the person's stored message: space storage,
 contains the original message verbatim, including any secrets it contains;
 the ordinary card view is unchanged. Display redaction is not deletion or a
 guarantee that every sensitive detail will be detected.
+
+## Limits
+
+Claim detection examines only the first 100 messages after a request; a later coordinator reply may be missed.

@@ -61,7 +61,7 @@ def orchestrator(gateway, principal, board: str) -> OrchestratorView | None:
     )
 
 
-def receipt(gateway, principal, board: str, *, work: bool) -> tuple[str, str]:
+def receipt(gateway, principal, board: str, *, work: bool) -> tuple[str, str, tuple[str, ...]]:
     view = orchestrator(gateway, principal, board)
     if view is None:
         code = "no_orchestrator"
@@ -79,7 +79,9 @@ def receipt(gateway, principal, board: str, *, work: bool) -> tuple[str, str]:
     text = RECEIPT_COPY[code][role].format(**values)
     if work:
         text += " " + RECEIPT_COPY["_handoff"][role].format(**values)
-    return code, redact.redact(text)[0]
+    text, kinds = redact.redact(text)
+    kinds = set(kinds) | {kind for kind in redact.KINDS if f"[redacted:{kind}]" in text}
+    return code, text, tuple(sorted(kinds))
 
 
 def on_event(gateway, event: dict) -> None:
@@ -109,18 +111,7 @@ def on_event(gateway, event: dict) -> None:
         if message is None:
             return
         work = handoff.is_work_request(message["text"])
-        code, text = receipt(gateway, principal, board, work=work)
-        text, kinds = redact.redact(text)
-        store.open_replies(gateway, workspace_id).add(
-            board=board,
-            message_id=message_id,
-            for_user=user_id,
-            kind="receipt",
-            code=code,
-            text=text,
-            redacted=tuple(kinds),
-            model=None,
-        )
+        code, text, kinds = receipt(gateway, principal, board, work=work)
         wake = False
         if work:
             wake = handoff.open(
@@ -131,6 +122,17 @@ def on_event(gateway, event: dict) -> None:
             wake = store.enqueue(db, workspace_id, board, message_id, user_id) or wake
         if wake:
             gateway.chat_worker.wake()
+        store.open_replies(gateway, workspace_id).add(
+            board=board,
+            message_id=message_id,
+            for_user=user_id,
+            kind="receipt",
+            code=code,
+            text=text,
+            redacted=tuple(kinds),
+            model=None,
+        )
+
     except Exception as exc:
         log_failure(logger, "chat front event failed", exc)
 

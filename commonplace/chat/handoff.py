@@ -165,10 +165,10 @@ def settle(gateway, handoff: Handoff, now: float) -> str:
                 _key(h),
             ).fetchone()
             return row["state"] if row else h.state
-    service = _service(gateway, h)
-    if service is None:
-        return _finish(db, h, now, "failed", "no_access")
     try:
+        service = _service(gateway, h)
+        if service is None:
+            return _finish(db, h, now, "failed", "no_access")
         task = _linked(service, h)
         if task is not None:
             return _finish(db, h, now, "claimed", "claimed", task)
@@ -193,10 +193,14 @@ def settle(gateway, handoff: Handoff, now: float) -> str:
             labels=["from-chat"],
             message_id=h.message_id,
         )
-    except ToolError:
-        _finish(db, h, now, "failed", "no_access")
-        _notice(gateway, h, "file_failed")
-        return "failed"
+    except Exception:
+        with db._lock:
+            db._conn.execute(
+                "UPDATE chat_handoffs SET state='waiting',due_at=?,updated_at=? "
+                "WHERE workspace_id=? AND board=? AND message_id=? AND state='filing'",
+                (_stamp(now + 60), _stamp(now), *_key(h)),
+            )
+        return "waiting"
     task = card["number"]
     _finish(db, h, now, "filed", "filed", task)
     _notice(gateway, h, "filed", task, current or h.coordinator)
@@ -210,26 +214,34 @@ def recover(db, gateway, now: float) -> None:
             "SELECT * FROM chat_handoffs WHERE state='filing' AND updated_at<?", (cutoff,)
         ).fetchall()
     for row in rows:
-        h = Handoff(**dict(row))
-        # Serialize recovery with claims and reject obsolete snapshots.
-        with db._lock:
-            fresh = db._conn.execute(
-                "SELECT updated_at,state FROM chat_handoffs "
-                "WHERE workspace_id=? AND board=? AND message_id=?",
-                _key(h),
-            ).fetchone()
-            if fresh["state"] != "filing" or fresh["updated_at"] >= cutoff:
-                continue
-            service = _service(gateway, h)
-            if service is None:
-                _finish(db, h, now, "failed", "no_access")
-                continue
-            try:
-                task = _linked(service, h)
-            except ToolError:
-                _finish(db, h, now, "failed", "no_access")
-                continue
-            if task is None:
-                _finish(db, h, now, "waiting")
-            else:
-                _finish(db, h, now, "filed", "filed", task)
+        try:
+            _recover_row(db, gateway, now, cutoff, row)
+        except Exception:
+            continue
+
+
+def _recover_row(db, gateway, now, cutoff, row):
+    h = Handoff(**dict(row))
+    # Serialize recovery with claims and reject obsolete snapshots.
+    with db._lock:
+        fresh = db._conn.execute(
+            "SELECT updated_at,state FROM chat_handoffs "
+            "WHERE workspace_id=? AND board=? AND message_id=?",
+            _key(h),
+        ).fetchone()
+        if fresh["state"] != "filing" or fresh["updated_at"] >= cutoff:
+            return
+        service = _service(gateway, h)
+        if service is None:
+            _finish(db, h, now, "failed", "no_access")
+            return
+        try:
+            task = _linked(service, h)
+        except ToolError:
+            _finish(db, h, now, "failed", "no_access")
+            return
+        if task is None:
+            _finish(db, h, now, "waiting")
+        else:
+            _finish(db, h, now, "filed", "filed", task)
+            _notice(gateway, h, "filed", task, h.coordinator)

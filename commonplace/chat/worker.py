@@ -82,7 +82,10 @@ class FrontWorker:
         gateway, db = self.gateway, self.gateway.db
         due = handoff.due(db, now, limit=1)
         if due:
-            handoff.settle(gateway, due[0], now)
+            try:
+                handoff.settle(gateway, due[0], now)
+            except Exception as exc:
+                http_util.log_failure(logger, "Chat handoff failed", exc)
             return True
         job = store.claim(db)
         if job is None:
@@ -130,9 +133,15 @@ class FrontWorker:
             if gateway.limiter.check([(USER_RATE, f"{job.workspace_id}:{job.user_id}")]):
                 return finish("skipped", "rate_limit")
             system, turns = build_context(gateway, principal, job)
-            called = True
-            store.finish(db, job, "running", "", called=True)
-            reply = model.complete(config, key, system, turns)
+
+            def sent():
+                nonlocal called
+                called = True
+                store.finish(db, job, "running", "", called=True)
+
+            reply = model.complete(config, key, system, turns, on_sent=sent)
+            if not called:
+                sent()
             text, kinds = redact.redact(reply[:MAX_REPLY_CHARS])
             # Preserve provenance when the model repeats already-redacted input.
             kinds = set(kinds) | {kind for kind in redact.KINDS if f"[redacted:{kind}]" in text}
@@ -143,7 +152,7 @@ class FrontWorker:
                 kind="answer",
                 code="ok",
                 text=text,
-                redacted=json.dumps(sorted(set(kinds))),
+                redacted=tuple(sorted(set(kinds))),
                 model=f"{config.provider}/{config.model}",
             )
             return finish("done", "ok")

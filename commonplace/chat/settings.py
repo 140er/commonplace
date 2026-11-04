@@ -1,6 +1,7 @@
 """Workspace front settings and operator-controlled key access."""
 
 import os
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -97,7 +98,12 @@ def set_front(db, principal, body: dict) -> FrontSettings:
     model = data.get("model", types.DEFAULT_MODELS.get(provider, ""))
     base_url = data.get("base_url")
     key_ref = data.get("key_ref")
-    if not isinstance(model, str) or (provider != "none" and not model.strip()):
+    if (
+        not isinstance(model, str)
+        or len(model) > 120
+        or re.fullmatch(r"[A-Za-z0-9._:/-]*", model) is None
+        or (provider != "none" and not model)
+    ):
         raise ValueError("Invalid chat model")
     if key_ref is not None and (
         not isinstance(key_ref, str) or types.KEY_REF.fullmatch(key_ref) is None
