@@ -98,7 +98,9 @@ python -m commonplace runner chat --config F
 `check` contacts neither the hub nor a model. Both commands accept either shape;
 `runner run` refuses a chat-only file with exit 4. `runner chat --config F --once`
 makes one lease request, marks the machine online, answers at most one job and
-exits. An answer uses at most three POSTs total (the initial POST plus two retries)
+exits: 0 after a job or none (a fenced job is dropped), 3 when the hub is unreachable or the
+machine credential is missing, revoked or expired, and 5 when the hub answers with another
+HTTP failure. An answer uses at most three POSTs total (the initial POST plus two retries)
 on HTTP 503 while the lease is valid. The project's `main` model choice selects the CLI label and model; without
 one, `default_cli` and its `default_model` apply. An unavailable CLI receives no
 job; there is no silent provider fallback.
