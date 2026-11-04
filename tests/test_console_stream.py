@@ -566,3 +566,20 @@ def test_busy_activity_http_reads_degrade_and_retry(
         assert activity._conn is actual
     finally:
         busy.close()
+
+
+def test_board_actor_name_identifies_one_connection(console_hub):
+    h = console_hub
+    conn = h.hub.db._conn
+    with h.hub.db._lock:
+        row = dict(conn.execute("SELECT * FROM connections WHERE id=?", (h.a1,)).fetchone())
+        clone = {**row, "id": row["id"] + "-clone", "token_hash": None}
+        insert = "INSERT INTO connections ({}) VALUES ({})".format(
+            ", ".join(clone), ", ".join("?" for _ in clone)
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(insert, tuple(clone.values()))
+        conn.execute("UPDATE connections SET revoked_at='2026-01-01T00:00:00Z' WHERE id=?", (h.a1,))
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(insert, tuple(clone.values()))
+        assert conn.execute("SELECT 1 FROM connections WHERE id=?", (h.a1,)).fetchone()

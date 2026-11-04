@@ -116,6 +116,10 @@ def _board_item(row):
 
 
 def _events(db, ws, name, seq, count, forward):
+    # Board events carry the hub's actor convention "conn:<name>". Connection names are
+    # UNIQUE per workspace and connections are only revoked, never deleted, so a name
+    # identifies exactly one connection here (pinned by
+    # test_board_actor_name_identifies_one_connection).
     order = "ASC" if forward else "DESC"
     with db._lock:
         return db._conn.execute(
