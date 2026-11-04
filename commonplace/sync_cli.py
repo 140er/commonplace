@@ -94,7 +94,9 @@ def _selections(args, home):
             raise ValueError("Select a native transcript source")
         default = home / (".claude/projects" if source == "claude-code" else ".codex/sessions")
         path = Path(root).expanduser().absolute() if root else default
-        regular = path.is_dir() and not any(p.is_symlink() for p in (path, *path.parents))
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError("Symlinked transcript directory refused")
+        regular = path.is_dir()
         if root and not regular:
             raise ValueError("Select a regular transcript directory")
         if not args.source and not regular:
@@ -108,13 +110,18 @@ def _selections(args, home):
         from .sync_protocol import memory_thread_id
 
         memory_thread_id(label, "file.md", "0" * 64)
+        path = Path(root).expanduser().absolute()
+        if not path.is_dir() or any(p.is_symlink() for p in (path, *path.parents)):
+            raise ValueError("Select a regular memory directory")
         memories.append(
             {
                 "label": label,
-                "root": str(Path(root).expanduser().absolute()),
+                "root": str(path),
                 "glob": glob if sep else "**/*.md",
             }
         )
+    if not sources and not memories:
+        raise ValueError("Select at least one source")
     return sources, memories
 
 

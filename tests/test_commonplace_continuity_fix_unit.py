@@ -115,3 +115,158 @@ def test_fix6_legacy_multipart_listing_grows_by_own_submission_formula(env):
     assert replies[0][0] == 200
     assert replies[0][1]["imports"][0]["stored_messages"] == 2 * 2 + 2 - 1
     assert e.store.messages(result["stored_thread_id"]) == original
+
+
+@pytest.mark.parametrize("orphan_kind", ["capture", "snapshot", "part"])
+@pytest.mark.parametrize("second_kind", ["capture", "t3"])
+def test_fix2_other_identity_adopts_orphan_before_original_retry(
+    env, monkeypatch, orphan_kind, second_kind
+):
+    e = env
+    first, suffix = native(word="orphan-first"), native(word="later-suffix")
+    connection, _ = e.db.create_token(
+        workspace_ref=e.ws,
+        user_ref=e.user,
+        name="first",
+        client="claude-code",
+        policy=person_policy(),
+        actor=e.user,
+    )
+    other, _ = e.db.create_token(
+        workspace_ref=e.ws,
+        user_ref=e.user,
+        name="second",
+        client="claude-code",
+        policy=person_policy(),
+        actor=e.user,
+    )
+    core.backfill(e.db, e.store, e.ws, e.user)
+    sid = f"capture:{connection}:claude-code:first"
+    if orphan_kind == "part":
+        sid = grant_id(e.user, "claude-code", "multipart-orphan")
+
+    def submit():
+        if orphan_kind == "snapshot":
+            return snapshot(e, first, name="snapshot-orphan")
+        return push(
+            e,
+            first,
+            stream=sid,
+            part=descriptor(first + suffix, first) if orphan_kind == "part" else None,
+        )
+
+    original = e.db._tx
+
+    @contextmanager
+    def crash():
+        with original() as conn:
+            yield conn
+            raise RuntimeError("injected control rollback")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(e.db, "_tx", crash)
+        with pytest.raises(RuntimeError, match="control rollback"):
+            submit()
+    assert not streams(e) and all_archives(e) == first
+    stored = {
+        thread.id: e.store.messages(thread.id)
+        for prefix in ("capture:", "import-private:")
+        for thread in e.store.list_source_range(e.ws, prefix, limit=10)
+    }
+    try:
+        if second_kind == "t3":
+            snapshot(e, first, name="t3-copy", source="t3")
+        else:
+            push(e, first, stream=f"capture:{other}:claude-code:second")
+        submit()
+    except ThreadConflict as exc:
+        raise AssertionError("compatible orphan recovery must accept both identities") from exc
+    assert all_archives(e).count(first) == 1
+    assert len(streams(e)) == 2
+    assert e.conn.execute("SELECT count(*) FROM sync_groups").fetchone()[0] == 1
+    for thread_id, previous in stored.items():
+        assert e.store.messages(thread_id) == previous
+    # Divergent bytes stay in their own archive; adopting the orphan never rewrites it.
+    divergent = native(word="different-content")
+    result = snapshot(e, divergent, name="divergent", source="t3")
+    assert result is None
+    assert all_archives(e) == first
+
+
+@pytest.mark.parametrize("submission", ["next-part", "replay"])
+def test_fix2_preupgrade_legacy_count_changes_only_after_submission(env, submission):
+    e = env
+    first, second, third, extra = (native(word=w) for w in ("first", "second", "third", "extra"))
+    whole = first + second + third
+    sid = grant_id(e.user, "claude-code", "old-multipart")
+    result = append_part(
+        e.store,
+        e.ws,
+        "claude-code",
+        "old-multipart",
+        "claude-code",
+        first.decode(),
+        descriptor(whole, first),
+        actor="synthetic",
+        maximum=None,
+        source_id=sid,
+        wing=capture.PRIVATE_WING,
+    )
+    original = e.store.messages(result["stored_thread_id"])
+    seed(e, whole + extra, name="longer", capture_=True)
+    core.backfill(e.db, e.store, e.ws, e.user)
+    push(
+        e,
+        second,
+        before=first,
+        stream=sid,
+        part=descriptor(whole, second, offset=len(first), index=1),
+    )
+    # Simulate the exact pre-upgrade control/store state: a part accepted after demotion.
+    with e.db._lock:
+        e.conn.execute("DROP TABLE IF EXISTS sync_import_submissions")
+    assert streams(e)[sid]["legacy"] == 1
+    assert streams(e)[sid]["listed_messages"] == 5
+
+    routes, replies = {}, []
+    principal = SimpleNamespace(
+        person=True, user_id=e.user, workspace_id=e.ws, policy=person_policy()
+    )
+    ctx = SimpleNamespace(
+        control_db=e.db,
+        store_for=lambda ws: e.store,
+        gateway=SimpleNamespace(
+            principal_for=lambda h: principal,
+            add_route=lambda method, path, handler: routes.__setitem__((method, path), handler),
+        ),
+    )
+    imports.register(ctx)
+
+    def count():
+        replies.clear()
+        routes["GET", "/api/imports"](
+            SimpleNamespace(path="/api/imports", _send_json=lambda *args: replies.append(args))
+        )
+        assert replies[0][0] == 200
+        return replies[0][1]["imports"][0]["stored_messages"]
+
+    assert count() == len(original) - 1 == 2
+    if submission == "replay":
+        push(
+            e,
+            second,
+            before=first,
+            stream=sid,
+            part=descriptor(whole, second, offset=len(first), index=1),
+        )
+        assert count() == 2 * 2 + 2 - 1
+    else:
+        push(
+            e,
+            third,
+            before=first + second,
+            stream=sid,
+            part=descriptor(whole, third, offset=len(first + second), index=2),
+        )
+        assert count() == 2 * 3 + 3 - 1
+    assert e.store.messages(result["stored_thread_id"]) == original

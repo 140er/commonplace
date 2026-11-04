@@ -138,10 +138,22 @@ def listed_messages(db, row) -> int | None:
     """Read the import's submission count without opening its holder."""
     with db._lock:
         stream = db._conn.execute(
-            "SELECT listed_messages FROM sync_streams "
+            "SELECT listed_messages, legacy, stream_id FROM sync_streams "
             "WHERE workspace_id=? AND own_stored_id=? AND kind='import'",
             (row.workspace_id, row.id),
         ).fetchone()
+        if stream and stream["legacy"]:
+            marked = db._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_import_submissions'"
+            ).fetchone()
+            if (
+                not marked
+                or not db._conn.execute(
+                    "SELECT 1 FROM sync_import_submissions WHERE workspace_id=? AND stream_id=?",
+                    (row.workspace_id, stream["stream_id"]),
+                ).fetchone()
+            ):
+                return None
     return stream["listed_messages"] if stream else None
 
 

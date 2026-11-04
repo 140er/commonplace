@@ -31,6 +31,10 @@ class SourceError(ValueError):
     """Source diagnostics never include paths or user content."""
 
 
+class SourceTooLarge(SourceError):
+    """A record exceeds the bounded upload size."""
+
+
 class SliceConflict(SourceError):
     """An immutable pending operation no longer matches its source bytes."""
 
@@ -196,10 +200,10 @@ def _capture_op(selected, state, target):
     end = raw.rfind(b"\n", 0, CHUNK_BYTES + MAX_RECORD_BYTES + 1) + 1
     if end == 0:
         if len(raw) > MAX_RECORD_BYTES:
-            raise SourceError("Native record too large; use an explicit import")
+            raise SourceTooLarge("Native record too large; use an explicit import")
         return None
     if any(len(line) > MAX_RECORD_BYTES for line in raw[:end].splitlines(keepends=True)):
-        raise SourceError("Native record too large; use an explicit import")
+        raise SourceTooLarge("Native record too large; use an explicit import")
     # Bound ordinary chunks, extending through at most one whole record.
     if len(raw) > CHUNK_BYTES:
         boundary = raw.find(b"\n", CHUNK_BYTES)
@@ -318,7 +322,7 @@ def scan(config, state, *, now, targets=None) -> list[Op]:
             status = (
                 "conflict"
                 if isinstance(error, SliceConflict)
-                else ("too_large" if isinstance(error, SourceError) else "unreadable")
+                else ("too_large" if isinstance(error, SourceTooLarge) else "unreadable")
             )
             state.set_status(selected.source, selected.path, selected.native_id, status)
             continue

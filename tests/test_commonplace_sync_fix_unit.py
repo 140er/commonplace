@@ -308,3 +308,107 @@ def test_fix8_service_failure_is_generic_exit_two(tmp_path, monkeypatch, capsys)
         capsys.readouterr().err
         == "Sync failed; check configuration, credentials and private file permissions.\n"
     )
+
+
+@pytest.mark.parametrize(
+    "selection", ["default-parent", "default-root", "memory-parent", "memory-root", "empty"]
+)
+def test_fix2_install_refuses_symlinked_or_empty_selections(tmp_path, selection):
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    args = ["sync", "install", "--enable", "--no-service", "--home", str(home)]
+    if selection.startswith("default"):
+        if selection == "default-parent":
+            (target / "projects").mkdir()
+            (home / ".claude").symlink_to(target, target_is_directory=True)
+        else:
+            (home / ".claude").mkdir()
+            (home / ".claude/projects").symlink_to(target, target_is_directory=True)
+    elif selection.startswith("memory"):
+        link = home / "notes"
+        link.symlink_to(target, target_is_directory=True)
+        root = link
+        if selection == "memory-parent":
+            (target / "nested").mkdir()
+            root = link / "nested"
+        args += ["--memory", "notes=" + str(root)]
+    assert cli.main(args) == 2
+    assert not (home / ".commonplace/sync/config.json").exists()
+
+
+def test_fix2_free_sleep_handles_expired_deadlines(local, monkeypatch):
+    now, slept = [NOW], []
+    config, state, _ = local
+    hub = Hub(interval=900, window="2033-05-18T03:33:21Z")  # NOW + 1
+
+    def cycle(session, **kwargs):
+        state.defer(session.key, NOW + 1)
+        now[0] = NOW + 2  # Work finishes after both previously future deadlines.
+        return 0
+
+    monkeypatch.setattr(sync_daemon._Session, "cycle", cycle)
+    try:
+        result = sync_daemon.run(
+            config,
+            state,
+            clock=lambda: now[0],
+            sleep=slept.append,
+            transport=hub,
+            stop=lambda: bool(slept),
+        )
+    except ValueError as exc:
+        raise AssertionError("expired deadlines must still produce a bounded sleep") from exc
+    assert result == 0 and slept == [2]
+
+
+@pytest.mark.parametrize("earlier", ["rejected", "conflict", "initialize"])
+def test_fix2_pause_exits_successfully_after_prior_failure(local, earlier):
+    _, _, root = local
+    (root / "a.jsonl").write_bytes(record("bad"))
+    (root / "b.jsonl").write_bytes(record("good"))
+    hub = Hub()
+
+    def transport(target, token, method, route, body=None):
+        if method == "GET" and "thread_id=bad" in route and earlier == "initialize":
+            return 500, {}
+        if method == "POST":
+            if body["thread_id"] == "bad":
+                return (403, {}) if earlier == "rejected" else (409, {"code": "prefix_conflict"})
+            return 409, {"error": "Workspace capture is off"}
+        return hub(target, token, method, route, body)
+
+    assert run(local, transport) == 0
+
+
+@pytest.mark.parametrize("status", [408, 425])
+def test_fix2_temporary_rejection_remains_pending(local, status):
+    config, state, root = local
+    (root / "bad.jsonl").write_bytes(record("bad"))
+    assert run(local, Hub(reject=status)) == 1
+    pending = state.outbox_pending()
+    assert len(pending) == 1 and pending[0].native_id == "bad"
+    # Retry in the same daemon session does not require restart/requeue.
+    session = sync_daemon._Session(config, state, lambda: NOW, Hub())
+    assert session.cycle(once=True) == 0
+    assert not state.outbox_pending()
+
+
+@pytest.mark.parametrize("failure", ["symlink", "regular-file"])
+def test_fix2_source_error_status_matches_actual_kind(local, monkeypatch, failure):
+    config, state, root = local
+    path = root / "bad.jsonl"
+    path.write_bytes(record("bad"))
+    source = sync_sources.Source("claude-code", str(path), "bad", path.stat().st_size)
+    state.store_cursor("claude-code", path, "bad", 0, sha(b""))
+    config["_discovered"] = [source]
+
+    def refused(path):
+        raise sync_sources.SourceError(
+            "Symlinked source refused" if failure == "symlink" else "Source must be a regular file"
+        )
+
+    monkeypatch.setattr(sync_sources, "_open", refused)
+    assert sync_sources.scan(config, state, now=NOW) == []
+    assert state.statuses()[0]["status"] == "unreadable"

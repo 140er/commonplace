@@ -49,7 +49,7 @@ def _import_envelope(ctx, principal, handler):
         if not import_grant.grant_path(ctx.control_db, principal):
             raise _RequestError(403, import_grant.INELIGIBLE_TEXT)
         path = "grant"
-    if path == "acl" and not acl_allowed:
+    if path == "acl" and not acl_allowed and not principal.person:
         raise acl_error
     data = _read_json(handler, MAX_IMPORT_BYTES)
     if isinstance(data, dict) and "private" in data:

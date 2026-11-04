@@ -249,9 +249,11 @@ class _Session:
                 if off:
                     self.enabled = False
                 if off:
-                    return failed
+                    return 0
                 failed = 1
                 continue
+            if status in (408, 425):
+                return 1
             if 400 <= status < 500:
                 self.refresh |= status == 401
                 self._status(op, "revoked")
@@ -322,9 +324,12 @@ def run(config, state, *, clock, sleep, transport, once=False, stop=None) -> int
                 else max(
                     LIVE_TICK_SECONDS,
                     min(
-                        due
-                        for due in (session.next_poll, state.next_due(session.key))
-                        if due > session.now()
+                        (
+                            due
+                            for due in (session.next_poll, state.next_due(session.key))
+                            if due > session.now()
+                        ),
+                        default=session.now() + LIVE_TICK_SECONDS,
                     )
                     - session.now(),
                 )

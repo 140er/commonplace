@@ -338,7 +338,9 @@ def stream_push(
             conn, ws, stream_id, row, previous, data, offset, prefix, native_source, part
         )
         if duplicate:
-            return _push_result(row, previous, parsed, part, duplicate=True, source_bytes=len(data))
+            return _push_result(
+                row, previous, parsed, part, duplicate=True, source_bytes=len(data), conn=conn
+            )
         recognized = True
         if part is not None:
             recognized = import_parts.native_records(
@@ -373,6 +375,7 @@ def stream_push(
             (row["fork_stored_id"], row["fork_offset"]) if row else (None, None)
         )
         candidate = previous + data
+        group = _find_orphan(conn, store, ws, user_id, native_source, native, candidate, group)
         if group is None:
             if marker:
                 raise ThreadConflict()
@@ -457,11 +460,21 @@ def stream_push(
             )
         _save_stream(conn, **values)
         return _push_result(
-            _stream(conn, ws, stream_id), candidate, parsed, part, source_bytes=len(data)
+            _stream(conn, ws, stream_id), candidate, parsed, part, source_bytes=len(data), conn=conn
         )
 
 
-def _push_result(row, raw, parsed, part, duplicate=False, source_bytes=0):
+def _mark_part_submission(conn, ws, stream_id):
+    # Kept outside the frozen base schema: absence preserves pre-upgrade listings.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sync_import_submissions ("
+        "workspace_id TEXT NOT NULL, stream_id TEXT NOT NULL, "
+        "PRIMARY KEY(workspace_id,stream_id))"
+    )
+    conn.execute("INSERT OR IGNORE INTO sync_import_submissions VALUES (?,?)", (ws, stream_id))
+
+
+def _push_result(row, raw, parsed, part, duplicate=False, source_bytes=0, *, conn):
     result = dict(
         status="duplicate" if duplicate else "appended",
         offset=row["offset"],
@@ -473,6 +486,7 @@ def _push_result(row, raw, parsed, part, duplicate=False, source_bytes=0):
         if not duplicate:
             result["added_messages"] = len(parsed)
     else:
+        _mark_part_submission(conn, row["workspace_id"], row["stream_id"])
         result.update(
             status="accepted",
             unit="part",
@@ -522,6 +536,8 @@ def import_item(
             if row or existing and existing.sha256 == canonical:
                 return result
         group = _group(conn, ws, user_id, native_source, native)
+        if group is None:
+            group = _find_orphan(conn, store, ws, user_id, native_source, native, data)
         body = _archive(store, store.get(group["holder_stored_id"]))[0] if group else b""
         if group and not (body.startswith(data) or data.startswith(body)):
             return None
@@ -645,6 +661,53 @@ def _adopt_orphan(conn, store, ws, user, stored, source, kind, connection):
         if group:
             read(store.get(group["holder_stored_id"]))
         _join_adopted(conn, ws, user, candidate, cache)
+
+
+def _find_orphan(conn, store, ws, user, source, native, incoming, group=None):
+    """Search one bounded page of the filer's archives before creating a holder."""
+    if group is not None:
+        return group
+    connections = conn.execute(
+        "SELECT id FROM connections WHERE workspace_id=? AND user_id=? ORDER BY id LIMIT ?",
+        (ws, user, BACKFILL_PAGE),
+    ).fetchall()
+    prefixes = [(f"capture:{user}:", "capture", ""), (f"import-private:{user}:", "import", "")]
+    prefixes.extend((f"capture:{r[0]}:", "capture", r[0]) for r in connections)
+    remaining, read_bytes = BACKFILL_PAGE, 0
+    cache = {}
+    for prefix, kind, connection in prefixes:
+        for stored in store.list_source_range(ws, prefix, limit=remaining):
+            remaining -= 1
+            # Only recover archives with no surviving continuity control rows.
+            controlled = conn.execute(
+                "SELECT 1 FROM sync_streams WHERE workspace_id=? "
+                "AND (own_stored_id=? OR fork_stored_id=?) UNION ALL "
+                "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1",
+                (ws, stored.id, stored.id, ws, stored.id),
+            ).fetchone()
+            if not controlled:
+
+                def read(thread):
+                    nonlocal read_bytes
+                    messages = store.messages(thread.id)
+                    segments = archive_segments(messages)
+                    raw = b"".join(s.raw for s in segments)
+                    read_bytes += len(raw)
+                    cache[thread.id] = (thread, raw, segments[-1].at if segments else "", messages)
+                    return cache[thread.id]
+
+                candidate = _adoption_candidate(stored, prefix, kind, connection, read)
+                if candidate is not None:
+                    raw = candidate[1]
+                    if candidate[3] == (source, native) and (
+                        raw.startswith(incoming) or incoming.startswith(raw)
+                    ):
+                        _join_adopted(conn, ws, user, candidate, cache)
+                        return _group(conn, ws, user, source, native)
+            cache.clear()
+            if remaining == 0 or read_bytes >= BACKFILL_PAGE_BYTES:
+                return None
+    return None
 
 
 def _backfill_page(db, store, ws, user, prefixes):
