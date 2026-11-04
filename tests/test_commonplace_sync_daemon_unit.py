@@ -280,10 +280,9 @@ def test_exit_table_and_pending_cursor(setup, reply, code, status):
         assert state.status["claude-code", str(sources.path), "session"] == status
     if reply and not isinstance(reply, Exception) and reply[0] == 429:
         delay = 840 if "840" in reply[1]["error"] else 900 if "900" in reply[1]["error"] else 60
-        assert (
-            state.next_due(sync_daemon._feed_key(config["hub"], TOKEN_ENV["claude-code"]))
-            == now[0] + delay
-        )
+        active = sync_daemon._Session(config, state, lambda: now[0], hub)
+        assert state.next_due(active._stream_key("claude-code", "session")) == now[0] + delay
+        assert state.next_due(active.key) == 0
 
 
 def test_fresh_state_database_adopts_grown_server_cursor_before_push(setup):
@@ -854,7 +853,7 @@ def test_capture_off_cursor_marks_stream_paused(backfill_setup):
     assert b.state.status.get(("claude-code", "s0", "s0")) == "paused"  # RED
 
 
-def test_continuous_rate_limited_cursor_stops_the_pass(backfill_setup):
+def test_continuous_rate_limited_cursors_each_wait_for_their_deadline(backfill_setup):
     b = backfill_setup
     gets = []
 
@@ -864,11 +863,16 @@ def test_continuous_rate_limited_cursor_stops_the_pass(backfill_setup):
             return 429, {"error": "slow down; retry in 5 seconds"}
         return b.transport(target, token, method, route, body)
 
-    sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport).cycle()
-    assert len(gets) == 1  # RED
+    active = sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport)
+    active.cycle()
+    assert len(gets) == len(b.sources.sizes)
+    active.cycle()
+    assert len(gets) == len(b.sources.sizes)
+    assert active.retry_due == b.now[0] + 5
+    assert b.state.next_due(active.key) == 0
 
 
-def test_deferred_feed_keeps_backoff_with_a_refused_stream(backfill_setup):
+def test_deferred_stream_keeps_backoff_with_a_refused_stream(backfill_setup):
     b = backfill_setup
     b.sources.sizes = {"s0": 2, "s1": 1}
     b.starts["s0"] = 1

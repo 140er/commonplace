@@ -434,8 +434,8 @@ def test_fix2_temporary_rejection_remains_pending(local, status):
     assert run(local, Hub(reject=status)) == 1
     pending = state.outbox_pending()
     assert len(pending) == 1 and pending[0].native_id == "bad"
-    # Retry in the same daemon session does not require restart/requeue.
-    session = sync_daemon._Session(config, state, lambda: NOW, Hub())
+    # Retry after the durable backoff does not require restart/requeue.
+    session = sync_daemon._Session(config, state, lambda: NOW + 60, Hub())
     assert session.cycle(once=True) == 0
     assert not state.outbox_pending()
 
@@ -457,3 +457,146 @@ def test_fix2_source_error_status_matches_actual_kind(local, monkeypatch, failur
     monkeypatch.setattr(sync_sources, "_open", refused)
     assert sync_sources.scan(config, state, now=NOW) == []
     assert state.statuses()[0]["status"] == "unreadable"
+
+
+def parking_sources(local):
+    config, _, root = local
+    (root / "a-bad.jsonl").write_bytes(record("bad"))
+    (root / "b-good.jsonl").write_bytes(record("good"))
+    codex = root.parent / "codex"
+    codex.mkdir()
+    (codex / "session.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "codex-session"}}) + "\n"
+    )
+    config["sources"].append({"source": "codex", "root": str(codex)})
+    notes = root.parent / "notes"
+    notes.mkdir()
+    note = notes / "memory.md"
+    note.write_text("Synthetic verbatim memory.\n")
+    os.utime(note, (NOW - 120, NOW - 120))
+    config["memories"] = [{"label": "notes", "root": str(notes)}]
+    config["tokens"] = {env: "synthetic-" + source for source, env in TOKEN_ENV.items()}
+
+
+@pytest.mark.parametrize(
+    "stage,once",
+    [("get", False), ("get", True), ("post", False), ("post", True), ("legacy", False)],
+)
+def test_card223_f1_capture_cadence_is_stream_local(local, stage, once):
+    parking_sources(local)
+    config, state, root = local
+    hub, now, attempts = Hub(), [NOW], []
+
+    def transport(target, token, method, route, body=None):
+        limited = (stage == "get" and method == "GET" and "thread_id=bad" in route) or (
+            stage == "post" and method == "POST" and body.get("thread_id") == "bad"
+        )
+        if limited:
+            attempts.append(now[0])
+            if now[0] < NOW + 7:
+                return 429, {"error": "Capture not due; retry in 7 seconds"}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    if stage == "legacy":
+        state.defer(active.key, NOW + 900)
+    assert active.cycle(once=once) == 0
+    assert hub.stored.get("good") == record("good")  # RED
+    assert {body["source"] for body in hub.posts} == {"claude-code", "codex", "native-memory"}
+    if stage != "legacy":
+        assert state.next_due(active.key) == 0  # RED
+        assert active.retry_due == NOW + 7
+        assert "bad" not in hub.stored
+        if stage == "get":
+            assert state.cursor("claude-code", root / "a-bad.jsonl", "bad") is None
+        else:
+            assert len(state.outbox_pending()) == 1
+        # A fresh session honors the durable deadline even in --once mode.
+        active = sync_daemon._Session(config, state, lambda: now[0], transport)
+        assert active.cycle(once=once) == 0
+        assert attempts == [NOW]
+        now[0] += 7
+        assert active.cycle(once=once) == 0
+        assert hub.stored["bad"] == record("bad")
+        assert attempts == [NOW, NOW + 7]
+    assert not state.outbox_pending()
+
+
+@pytest.mark.parametrize("fault", ["open", "read"])
+def test_card223_f2_transient_slice_read_remains_retryable(local, monkeypatch, fault):
+    parking_sources(local)
+    config, state, root = local
+    hub, now = Hub(), [NOW]
+    active = sync_daemon._Session(config, state, lambda: now[0], hub)
+    assert active.initialize() == 0
+    sync_sources.scan(config, state, now=NOW)
+    original_op = next(op for op in state.outbox_pending() if op.native_id == "bad")
+    original_open = sync_sources._open
+
+    @contextmanager
+    def unavailable(path):
+        if Path(path) == root / "a-bad.jsonl":
+            if fault == "open":
+                raise OSError("Synthetic transient failure")
+
+            class Unreadable:
+                def read(self, length):
+                    raise OSError("Synthetic transient failure")
+
+            yield Unreadable()
+        else:
+            with original_open(path) as stream:
+                yield stream
+
+    monkeypatch.setattr(sync_sources, "_open", unavailable)
+    assert active.cycle() == 1
+    pending = state.outbox_pending()
+    assert [op.op_id for op in pending] == [original_op.op_id]  # RED
+    assert pending[0].attempts == 0
+    assert hub.stored.get("good") == record("good")
+    assert {body["source"] for body in hub.posts} == {"claude-code", "codex", "native-memory"}
+    assert active.retry_due == NOW + 60
+    monkeypatch.setattr(sync_sources, "_open", original_open)
+    active = sync_daemon._Session(config, state, lambda: now[0], hub)
+    assert active.cycle(once=True) == 0
+    assert "bad" not in hub.stored
+    now[0] += 60
+    assert active.cycle(once=True) == 0
+    assert hub.stored["bad"] == record("bad")
+    assert hub.posts[-1]["client_op_id"] == original_op.op_id
+    assert not state.outbox_pending()
+
+
+@pytest.mark.parametrize("status", [302, 408, 425, 500, 503, 200])
+def test_card223_f3_failed_head_yields_then_retries_same_op(local, status):
+    parking_sources(local)
+    config, state, _ = local
+    hub, now, attempts = Hub(), [NOW], []
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST" and body.get("thread_id") == "bad":
+            attempts.append(body.copy())
+            if now[0] < NOW + 120:
+                return status, {}  # A 200 without an offset is not an acknowledgement.
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    assert active.cycle() == 1
+    assert hub.stored.get("good") == record("good")  # RED
+    assert {body["source"] for body in hub.posts} == {"claude-code", "codex", "native-memory"}
+    pending = state.outbox_pending()
+    assert len(pending) == 1 and pending[0].native_id == "bad" and pending[0].attempts == 1
+    assert active.retry_due == NOW + 60
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    assert active.cycle(once=True) == 0
+    assert len(attempts) == 1
+    now[0] += 60
+    assert active.cycle() == 1
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    assert active.cycle() == 0
+    assert len(attempts) == 2
+    now[0] += 60
+    assert active.cycle() == 0
+    assert attempts == [attempts[0]] * 3
+    assert hub.stored["bad"] == record("bad")
+    assert not state.outbox_pending()

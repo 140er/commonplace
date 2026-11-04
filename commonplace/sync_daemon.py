@@ -82,6 +82,7 @@ class _Session:
         self.signals = True
         self.refresh = False
         self.next_poll = 0.0
+        self.retry_due = 0.0
         self.bkey = _feed_key(config["hub"], "backfill")
         self.backfill = False
         self.unavailable = set()
@@ -148,6 +149,23 @@ class _Session:
         match = re.search(RETRY_RE, str(payload.get("error", "")), re.IGNORECASE)
         self.state.defer(key, self.now() + (max(1, int(match[1])) if match else 60))
 
+    def _stream_key(self, source, native_id):
+        identity = hashlib.sha256((source + "\n" + native_id).encode()).hexdigest()
+        return self.key + ":stream:" + identity
+
+    def _waiting(self, key):
+        due = self.state.next_due(key)
+        if due <= self.now():
+            return False
+        self.retry_due = min(self.retry_due or due, due)
+        return True
+
+    def _retry(self, op):
+        # Keep transient failures pending without repeatedly reading or sending them.
+        key = self.key + ":op:" + op.op_id
+        self.state.defer(key, self.now() + 60)
+        self._waiting(key)
+
     def initialize(self, sources=None, *, once=False):
         """Adopt each server cursor before scanning a stream for the first time."""
         failed = False
@@ -155,6 +173,9 @@ class _Session:
         self.initialize_transient = False
         for source in self.sources.discover(self.config) if sources is None else sources:
             if self.state.cursor(source.source, source.path, source.native_id) is not None:
+                continue
+            key = self._stream_key(source.source, source.native_id)
+            if self._waiting(key):
                 continue
             token = self.tokens.get(TOKEN_ENV[source.source])
             if not token:
@@ -172,10 +193,9 @@ class _Session:
                 self.initialize_transient = True
                 continue
             if status == 429:
-                self._defer(payload, self.key)
-                if once:
-                    continue  # --once still reports every other stream's state
-                return int(failed)  # the feed is deferred; stop asking this pass
+                self._defer(payload, key)
+                self._waiting(key)
+                continue
             if status != 200:
                 if status == 409:
                     self.state.set_status(source.source, source.path, source.native_id, "paused")
@@ -255,6 +275,7 @@ class _Session:
         config = dict(self.config, _state=self.state)
         config["_discovered"] = self.sources.discover(config)
         config["targets"] = self.sources.snapshot_targets(config)
+        self.retry_due = 0.0
         failed = self.initialize(config["_discovered"], once=once)
         initializing = True
         # scan commits immutable ops even if the feed or network is unavailable.
@@ -263,33 +284,40 @@ class _Session:
             self.backfill = not once and self._backfill(config["_discovered"], ops)
 
             # Refused streams do not slow backfill while others can progress;
-            # with nothing to make progress on, or a deferred feed, keep run()'s backoff.
+            # with nothing to make progress on, or a deferred stream, keep run()'s backoff.
             if (
                 initializing
                 and self.backfill
                 and not self.initialize_transient
-                and self.state.next_due(self.key) <= self.now()
+                and self.retry_due <= self.now()
                 and any(
-                    self.state.cursor(s.source, s.path, s.native_id) is not None
-                    for s in config["_discovered"]
+                    self.state.next_due(self._stream_key(op.source, op.native_id)) <= self.now()
+                    and self.state.next_due(self.key + ":op:" + op.op_id) <= self.now()
+                    for op in ops
                 )
             ):
                 failed = 0
             initializing = False
             if not ops or not self.enabled:
                 return failed
-            if not once and self.state.next_due(self.key) > self.now():
-                return failed
             blocked = set()
             for op in ops:
                 env_name = TOKEN_ENV[op.source]
                 if env_name in blocked:
+                    continue
+                if self._waiting(self._stream_key(op.source, op.native_id)) or self._waiting(
+                    self.key + ":op:" + op.op_id
+                ):
                     continue
                 token = self.tokens.get(env_name)
                 if not token:
                     raise ConfigError("Missing sync token environment variable")
                 try:
                     body = self.sources.body(op)
+                except OSError:
+                    self._retry(op)
+                    failed = 1
+                    continue
                 except self.sources.SliceConflict:
                     self._status(op, "conflict")
                     failed = 1
@@ -311,9 +339,11 @@ class _Session:
             except (OSError, http.client.HTTPException, ValueError):
                 return 1
             if status == 429:
-                self._defer(payload, self.key)
-                # A refused stream keeps run()'s backoff while the feed waits.
-                return max(failed, int(bool(self.unavailable)))
+                key = self._stream_key(op.source, op.native_id)
+                self._defer(payload, key)
+                self._waiting(key)
+                failed = max(failed, int(bool(self.unavailable)))
+                continue
             if status == 409:
                 self.refresh = True
                 off = "off" in str(payload.get("error", "")).lower() and payload.get(
@@ -327,18 +357,24 @@ class _Session:
                 failed = 1
                 continue
             if status in (408, 425):
-                return 1
+                self._retry(op)
+                failed = 1
+                continue
             if 400 <= status < 500:
                 self.refresh |= status == 401
                 self._status(op, "revoked")
                 failed = 1
                 continue
-            if status != 200:
-                return 1
-            if op.kind == "capture" and payload.get("offset") != op.offset + op.length:
-                return 1
-            if op.kind == "import" and (payload.get("refused") or payload.get("accepted") != 1):
-                return 1
+            if (
+                status != 200
+                or (op.kind == "capture" and payload.get("offset") != op.offset + op.length)
+                or (
+                    op.kind == "import" and (payload.get("refused") or payload.get("accepted") != 1)
+                )
+            ):
+                self._retry(op)
+                failed = 1
+                continue
             self.state.outbox_ack(op.op_id, payload)
             # Re-scan up to the original cycle targets, including post-replay growth.
 
@@ -402,7 +438,7 @@ def run(config, state, *, clock, sleep, transport, once=False, stop=None) -> int
                             due
                             for due in (
                                 session.next_poll,
-                                state.next_due(session.key),
+                                session.retry_due,
                                 *(
                                     state.next_due(session.key + ":writes:" + env_name)
                                     for env_name in session.tokens
