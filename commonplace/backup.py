@@ -207,16 +207,22 @@ def _snapshot(source: Path, target: Path) -> None:
     """
     if encryption_settings(source) is None:
         deadline = time.monotonic() + 30
+        remaining = None
 
         def progress(_status, _remaining, _total):
-            if time.monotonic() > deadline:
+            nonlocal deadline, remaining
+            now = time.monotonic()
+            if remaining is None or _remaining < remaining:
+                deadline = now + 30
+                remaining = _remaining
+            if now > deadline:
                 raise BackupError(f"database backup timed out: {source.name}")
 
         src = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=1)
         try:
             dst = sqlite3.connect(target)
             try:
-                src.backup(dst, pages=256, progress=progress, sleep=0.01)
+                src.backup(dst, pages=4096, progress=progress, sleep=0.01)
                 dst.execute("PRAGMA journal_mode = DELETE")
                 if dst.execute("PRAGMA quick_check").fetchone() != ("ok",):
                     raise BackupError(f"database integrity check failed: {source.name}")
