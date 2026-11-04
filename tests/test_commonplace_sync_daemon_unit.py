@@ -882,3 +882,5 @@ def test_deferred_feed_keeps_backoff_with_a_refused_stream(backfill_setup):
     active.cycle()
     b.now[0] += 2
     assert active.cycle() == 1  # RED
+    b.now[0] += 60
+    assert active.cycle() == 1  # RED

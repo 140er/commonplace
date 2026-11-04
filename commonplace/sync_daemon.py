@@ -85,6 +85,7 @@ class _Session:
         self.bkey = _feed_key(config["hub"], "backfill")
         self.backfill = False
         self.unavailable = set()
+        self.initialize_transient = False
         self._apply_cached()
 
     def now(self):
@@ -305,7 +306,8 @@ class _Session:
                 return 1
             if status == 429:
                 self._defer(payload, self.key)
-                return failed
+                # A refused stream keeps run()'s backoff while the feed waits.
+                return max(failed, int(bool(self.unavailable)))
             if status == 409:
                 self.refresh = True
                 off = "off" in str(payload.get("error", "")).lower() and payload.get(
