@@ -1,6 +1,7 @@
 """Bounded, redacted context for the poster's own runner."""
 
 import json
+import re
 
 from commonplace import redact
 from commonplace.boards.service import BoardService
@@ -11,15 +12,16 @@ from commonplace.extensions import ToolContext
 MAX_CONTEXT_JSON_BYTES = 49_152
 
 
-def _clean(value):
+def _clean(value, *, quoted=True):
     text = str(value) if value is not None else ""
     if len(text) > redact.MAX_CHARS:
         return "[omitted:too_long]"
-    return redact.redact(text)[0]
+    text = redact.redact(text)[0]
+    return re.sub(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]+", " ", text) if quoted else text
 
 
 def build(gateway, poster, board: str, message_id: int, context: str) -> tuple[str, str]:
-    system = _clean(worker.FRONT_SYSTEM)
+    system = _clean(worker.FRONT_SYSTEM, quoted=False)
     if context == "full":
         job = Job(
             poster.workspace_id, board, message_id, poster.user_id, "running", "", False, "", ""
@@ -40,14 +42,14 @@ def build(gateway, poster, board: str, message_id: int, context: str) -> tuple[s
                 if origin is None or origin[0] != 0:
                     continue
                 parts.append(
-                    "Card (quoted data): " + _clean(card["title"]) + " | " + card["status"]
+                    "Card (quoted data): " + _clean(card["title"]) + " | " + _clean(card["status"])
                 )
                 count += 1
                 if count == 15:
                     break
         messages = service.space_read(board, after=message_id - 1)["messages"]
         message = next(m for m in messages if m["id"] == message_id)
-        newest = "Person's question or request: " + _clean(message["text"])
+        newest = "Person's question or request: " + _clean(message["text"], quoted=False)
         parts.append(newest[:MAX_INPUT_CHARS])
         prompt = "\n".join(parts)
 
