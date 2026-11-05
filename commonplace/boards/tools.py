@@ -5,7 +5,7 @@ import json
 from commonplace.extensions import ALL_PROFILES, WORK_PROFILES, LocalTool, ToolError, register
 
 from .display import card_url, people
-from .service import BoardService, _trusted_agent
+from .service import APPROVALS_TRUNCATED, BoardService, _trusted_agent, approvals_text
 
 STRING = {"type": "string"}
 TASK = {"type": ["string", "integer"]}
@@ -159,6 +159,8 @@ def _run(ctx, name, args):
             ("backlog_from_agents", "Backlog"),
             ("ready_to_merge", "Ready to merge"),
             ("stale", "Stuck"),
+            ("plans", "Plans"),
+            ("approvals", "Approvals"),
         ):
             if result[key]:
                 lines.append(
@@ -168,11 +170,15 @@ def _run(ctx, name, args):
                         f"#{c['number']} {quoted(c['title'])} — {c['why']}" for c in result[key]
                     )
                 )
+        if result["approvals_truncated"]:
+            lines.append(APPROVALS_TRUNCATED)
         return "\n".join(lines) or "nothing waiting"
+    approval_note = approvals_text(service.approvals_for_me()) if name == "task_heartbeat" else ""
     return (
         f"ok #{result['number']} {result['status']}"
         + (f"  until {result['claim_until']}" if result["claim_until"] else "")
         + parent_line(result)
+        + ("\n" + approval_note if approval_note else "")
     )
 
 
@@ -199,8 +205,8 @@ def add(
                 "task_list": "List visible cards. mine=true also lists stuck claims of agents you supervise.",
                 "task_show": "Read a card and its history and linked memories.",
                 "task_add": "Create a todo card. claim=true or assignee=self starts work immediately. Child-created cards are pending until parent approval.",
-                "task_approve": "Approve or reject a pending proposal as its live parent, top-level root, board coordinator or signed-in workspace owner.",
-                "task_heartbeat": "Renew your doing card's claim. Call every 20 minutes, including while waiting on checks.",
+                "task_approve": "Approve or reject a proposal or advisory plan review with a reason, or escalate to the owner. Never approve a card you hold.",
+                "task_heartbeat": "Renew your doing card's claim and read approvals waiting on you. Call every 20 minutes, including while waiting on checks.",
                 "task_comment": "Append a comment and renew your claim.",
                 "task_take_next": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
                 "task_update": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. "
@@ -292,7 +298,13 @@ def register_tools():
     add("task_heartbeat", {"task": TASK}, ("task",), write=True)
     add(
         "task_approve",
-        {"task": TASK, "approve": {"type": "boolean"}, "version": {"type": "integer"}},
+        {
+            "task": TASK,
+            "approve": {"type": "boolean"},
+            "version": {"type": "integer"},
+            "reason": STRING,
+            "escalate": {"type": "boolean"},
+        },
         ("task",),
         write=True,
     )

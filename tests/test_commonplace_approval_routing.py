@@ -19,7 +19,7 @@ from tests.test_commonplace_session import _reads
 pytest_plugins = ["tests.test_commonplace_board_authority"]
 
 
-def approve(hub, agent, n, **kw):
+def approve_compat(hub, agent, n, **kw):
     ok, text = mcp(hub, agent.token, "task_approve", task=n, reason="synthetic reason", **kw)
     if not ok and text == "no: invalid arguments":
         ok, text = mcp(hub, agent.token, "task_approve", task=n, **kw)
@@ -126,7 +126,7 @@ def test_r06(hub, fresh):
     )
     assert row["number"] in numbers(t.work.needs_me(), "approvals")  # RED
     assert ">Approve<" not in home(fresh, row)
-    assert approve(hub, t, row["number"])[0]
+    assert approve_compat(hub, t, row["number"])[0]
     out = fresh.owner.task_show(row["number"])
     assert out["status"] == "doing" and out["assignee"] == c.principal.actor
 
@@ -156,6 +156,16 @@ def test_r08(hub, fresh):
     emitted = events.after(hub.db, fresh.workspace)
     event = next(e for e in reversed(emitted) if e["kind"] == "card.review_needed")
     assert event["data"]["ask_to"] == fresh.owner.principal.actor
+    from commonplace import webhooks
+
+    hook = dict(
+        workspace_id=fresh.workspace,
+        kinds='["card.review_needed"]',
+        board="work",
+        waiting_on=fresh.owner.principal.actor,
+        owner_actor=p.principal.actor,
+    )
+    assert webhooks._matches(hook, event)
 
 
 def test_r09(hub, fresh):
@@ -175,7 +185,7 @@ def test_r10(hub, fresh):
     assert not ok and "reason" in text  # RED
     ok, text = mcp(hub, p.token, "task_approve", task=row["number"], reason="x" * 501)
     assert not ok and "500" in text
-    assert approve(hub, p, row["number"])[0]
+    assert approve_compat(hub, p, row["number"])[0]
     assert fresh.owner.task_show(row["number"])["events"][-1]["reason"] == "synthetic reason"
 
 
@@ -192,7 +202,7 @@ def test_r12(hub, fresh):
         conn.execute(
             "UPDATE tasks SET approved_by=? WHERE id=?", (k.principal.actor, row["number"])
         )
-    ok, _ = approve(hub, k, row["number"], approve=False)
+    ok, _ = approve_compat(hub, k, row["number"], approve=False)
     assert ok  # RED
     out = fresh.owner.task_show(row["number"])
     assert out["status"] == "backlog" and "plan" in out["labels"]
@@ -203,7 +213,7 @@ def test_r12b(hub, fresh):
     k, row = setup(fresh)
     w = fresh.connect("worker")
     w.work.task_take_next(task=row["number"])
-    ok, text = approve(hub, k, row["number"], approve=False)
+    ok, text = approve_compat(hub, k, row["number"], approve=False)
     assert not ok and "held plan card" in text  # RED
     before = fresh.owner.task_show(row["number"])
     assert before["claim_until"]
@@ -218,19 +228,17 @@ def test_r13(hub, fresh):
     p = fresh.connect("parent", parent=t.id, trust="standard")
     c = fresh.connect("child", parent=p.id, trust="untrusted", write_wing="inbox")
     row = c.work.task_add(board="work", title="Synthetic restricted proposal")
-    assert approve(hub, p, row["number"])[0]
+    assert approve_compat(hub, p, row["number"])[0]
     assert fresh.owner.task_show(row["number"])["approved_by"] == p.principal.actor  # RED
 
 
 def test_r15(hub, fresh):
     k, _ = setup(fresh)
     x = fresh.connect("restricted", trust="untrusted", write_wing="inbox")
-    row = x.work.task_add(board="work", title="Synthetic restricted plan")
-    fresh.owner.task_approve(row["number"])
-    x.work.task_update(row["number"], labels=["plan"])
+    row = x.work.task_add(board="work", title="Synthetic restricted plan", labels=["plan"])
     with k.work.store.transaction() as conn:
         conn.execute("UPDATE tasks SET approved_by=NULL WHERE id=?", (row["number"],))
-    approve(hub, k, row["number"])
+    approve_compat(hub, k, row["number"])
     assert fresh.owner.task_show(row["number"])["approved_by"] == k.principal.actor  # RED
 
 
@@ -241,7 +249,7 @@ def test_r16(hub, fresh):
     row = t.work.task_add(
         board="work", title="Synthetic child plan", assignee=c.principal.actor, labels=["plan"]
     )
-    ok, _ = approve(hub, t, row["number"])
+    ok, _ = approve_compat(hub, t, row["number"])
     assert ok  # RED
     assert fresh.owner.task_show(row["number"])["approved_by"] is None
 
@@ -257,7 +265,7 @@ def test_r16b(hub, fresh):
     )
     with t.work.store.transaction() as conn:
         conn.execute("UPDATE tasks SET restricted_origin=1 WHERE id=?", (row["number"],))
-    approve(hub, t, row["number"])
+    approve_compat(hub, t, row["number"])
     assert fresh.owner.task_show(row["number"])["approved_by"] == t.principal.actor  # RED
 
 
@@ -268,10 +276,16 @@ def test_r17(hub, fresh):
             "UPDATE tasks SET approved_by=? WHERE id=?",
             (fresh.owner.principal.actor, row["number"]),
         )
-    ok, _ = approve(hub, k, row["number"])
-    assert (
-        ok and fresh.owner.task_show(row["number"])["approved_by"] == fresh.owner.principal.actor
-    )  # RED
+    ok, _ = approve_compat(hub, k, row["number"])
+    marker = fresh.owner.task_show(row["number"])["approved_by"]
+    assert ok and marker == fresh.owner.principal.actor  # RED
+    p, child, pending = proposal(fresh)
+    with k.work.store.transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET approved_by=? WHERE id=?", (k.principal.actor, pending["number"])
+        )
+    restored = fresh.owner.task_approve(pending["number"])
+    assert restored["approved_by"] == k.principal.actor
 
 
 def test_r18(hub, fresh):
@@ -295,9 +309,9 @@ def test_r19(hub, fresh):
     row = x.work.task_add(
         board="work", title="Synthetic self plan", assignee=k.principal.actor, labels=["plan"]
     )
-    ok, text = approve(hub, k, row["number"])
-    assert not ok and "direct parent" in text
+    ok, text = approve_compat(hub, k, row["number"])
     assert fresh.owner.task_show(row["number"])["need"] == "you"  # RED
+    assert not ok and "direct parent" in text
     w = fresh.connect("worker")
     with pytest.raises(ToolError):
         w.work.task_take_next(task=row["number"])
@@ -354,13 +368,13 @@ def test_r22(hub, fresh):
         conn.execute(
             "UPDATE tasks SET approved_by=? WHERE id=?", (old.principal.actor, row["number"])
         )
-    approve(hub, k, row["number"])
+    approve_compat(hub, k, row["number"])
     assert fresh.owner.task_show(row["number"])["approved_by"] == k.principal.actor  # RED
 
 
 def test_r23(hub, fresh):
     p, c, row = proposal(fresh)
-    assert approve(hub, p, row["number"])[0]
+    assert approve_compat(hub, p, row["number"])[0]
     event = fresh.owner.task_show(row["number"])["events"][-1]
     assert event.get("reason") == "synthetic reason"  # RED
     rendered = node({"event": event})
@@ -405,7 +419,8 @@ def test_r26(hub, fresh, monkeypatch):
     status, report = api(hub, k.token, "GET", "/api/needs-me")
     assert status == 200 and row["title"] in json.dumps(report)
     assert row["number"] not in numbers(p.work.needs_me(), "approvals")
-    held = p.work.task_add(board="work", title="Synthetic private held", claim=True)
+    fresh.owner.board_add(slug="private", wing="elsewhere")
+    held = p.work.task_add(board="private", title="Synthetic private held", claim=True)
     assert row["title"] not in mcp(hub, p.token, "task_heartbeat", task=held["number"])[1]
     assert row["title"] not in start(hub, p, monkeypatch)
     status, report = api(hub, p.token, "GET", "/api/needs-me")
@@ -423,7 +438,7 @@ def test_r27(hub, fresh):
         reason="Synthetic uncertainty",
     )
     assert ok  # RED
-    ok, text = approve(hub, p, row["number"])
+    ok, text = approve_compat(hub, p, row["number"])
     assert not ok and "escalated to the owner" in text
     out = fresh.owner.task_show(row["number"])
     assert out["approved_by"] is None
@@ -455,9 +470,20 @@ def test_guard(hub, fresh, monkeypatch, case):
     p, c, row = proposal(fresh)
     if case in ("g01", "g10"):
         assert fresh.owner.task_approve(row["number"])["approved_by"] == fresh.owner.principal.actor
-    elif case in ("g02", "g03", "g06"):
+    elif case == "g03":
+        creator = fresh.connect("restricted-creator", trust="untrusted", write_wing="inbox")
+        row = creator.work.task_add(board="work", title="Synthetic root claim", claim=True)
+        creator.work.task_handoff(row["number"], "anyone", "Synthetic shared queue")
+        claimer = fresh.connect("top-level-claimer")
+        claimer.work.task_take_next(task=row["number"])
+        ok, text = approve_compat(hub, claimer, row["number"])
+        assert not ok and "direct parent" in text
+        second = fresh.connect("second-worker")
+        with pytest.raises(ToolError):
+            second.work.task_take_next(task=row["number"])
+    elif case in ("g02", "g06"):
         a = c if case == "g06" else fresh.connect("unrelated")
-        ok, text = approve(hub, a, row["number"])
+        ok, text = approve_compat(hub, a, row["number"])
         assert not ok and "direct parent" in text
     elif case == "g04":
         assert row["number"] not in numbers(fresh.owner.needs_me(), "backlog_from_agents")
@@ -471,7 +497,12 @@ def test_guard(hub, fresh, monkeypatch, case):
         assert ">Answer<" in home(fresh, row)
     elif case == "g07":
         k = fresh.connect("unrelated")
-        assert row["number"] not in numbers(k.work.needs_me(), "approvals")
+        foreign = fresh.connect("foreign", workspace_ref=hub.workspace, user_ref=hub.admin)
+        foreign.work.board_add(slug="other", wing="shared")
+        foreign.work.task_add(board="other", title="Synthetic foreign plan", labels=["plan"])
+        report = k.work.needs_me()
+        assert row["number"] not in numbers(report, "approvals")
+        assert "Synthetic foreign plan" not in json.dumps(report)
     elif case == "g08":
         a = fresh.connect("empty")
         path = Path(a.work.ctx.workspace_dir()) / "boards.sqlite3"
@@ -484,7 +515,9 @@ def test_guard(hub, fresh, monkeypatch, case):
         assert "need-approve" in home(fresh, row)
     elif case in ("g11", "g12", "g13", "g14"):
         if case == "g11":
-            a = p
+            a = fresh.connect("restricted-root", trust="untrusted", write_wing="inbox")
+            child = fresh.connect("root-child", parent=a.id, trust="untrusted", write_wing="inbox")
+            row = child.work.task_add(board="work", title="Synthetic root release")
         elif case == "g12":
             a = fresh.connect("coordinator")
             fresh.owner.board_set("work", coordinator=a.principal.actor)
@@ -498,7 +531,7 @@ def test_guard(hub, fresh, monkeypatch, case):
             )
             child = fresh.connect("child2", parent=a.id, trust="untrusted", write_wing="inbox")
             row = child.work.task_add(board="work", title="Synthetic authority")
-        assert approve(hub, a, row["number"])[0]
+        assert approve_compat(hub, a, row["number"])[0]
         assert fresh.owner.task_show(row["number"])["approved_by"] == (
             None if case == "g14" else a.principal.actor
         )
@@ -520,9 +553,41 @@ def test_g_reject(hub, fresh):
     k, row = setup(fresh)
     x = fresh.connect("restricted", trust="untrusted", write_wing="inbox")
     row = x.work.task_add(board="work", title="Synthetic restricted proposal")
-    assert approve(hub, k, row["number"], approve=False)[0]
+    approve_compat(hub, k, row["number"], approve=False)
     assert fresh.owner.task_show(row["number"])["approved_by"] is None
     fresh.owner.task_update(row["number"], status="todo")
     child = fresh.connect("child", parent=x.id)
     with pytest.raises(ToolError):
         child.work.task_take_next(task=row["number"])
+
+
+def test_g_premigration_reader(hub, fresh, monkeypatch):
+    p, c, row = proposal(fresh)
+    with p.work.store.transaction() as conn:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        if "escalated_to" in columns:
+            conn.execute("ALTER TABLE tasks DROP COLUMN escalated_to")
+        before = conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+    text = start(hub, p, monkeypatch)
+    if hasattr(bs.BoardService, "approvals_for_me"):
+        assert f"#{row['number']}" in text
+    with p.work.store.connection() as conn:
+        after = conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
+    assert [tuple(r) for r in before] == [tuple(r) for r in after]
+
+
+def test_r28_truncated_list_digest(hub, fresh, monkeypatch):
+    k, _ = setup(fresh)
+    for i in range(205):
+        k.work.task_add(board="work", title=f"Synthetic held plan {i}", labels=["plan"], claim=True)
+    report = k.work.needs_me()
+    assert report.get("approvals_truncated") is True  # RED
+    for worker in (k.work, fresh.owner):
+        result = worker.needs_me()
+        assert isinstance(result["count"], int)
+        assert isinstance(result["approvals_truncated"], bool)
+        assert isinstance(worker.needs_me(format="digest")["text"], str)
+    ok, text = mcp(hub, k.token, "needs_me")
+    assert ok and "list truncated" in text
+    ok, text = mcp(hub, k.token, "needs_me", format="digest")
+    assert ok and "list truncated" in text
