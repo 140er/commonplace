@@ -194,7 +194,11 @@ def _connect_dialog(p):
     direct = p.evaluate(
         "() => !!document.querySelector('[aria-modal=\"true\"]:not([hidden]), dialog[open]')"
     )
-    if not direct:
+    if direct:
+        # 03c's primary action makes the setup in the same dialog (03c2).
+        p.locator("dialog[open] .btn.primary, [aria-modal='true'] .btn.primary").first.click()
+        p.wait_for_selector("dialog[open] [data-project-token]", timeout=5000)
+    else:
         p.locator("button", has_text="Connect agent").first.click()
     p.wait_for_selector("dialog[open], [aria-modal='true']:not([hidden])", timeout=5000)
     settle(p, 500)
@@ -251,12 +255,21 @@ def _(ui, seed):
 def _(ui, seed):
     p = ui.open("#/board/field-notes", clock=True)
     _connect_dialog(p)
-    p.clock.fast_forward(121_000)
-    # The next connection check runs on the page's own 2 s timer after the jump.
-    p.wait_for_function(
-        "() => /not connected/.test(document.querySelector('#project-connect-title')?.textContent || '')",
-        timeout=8000,
-    )
+    # fast_forward fires a due timer at most once, and the page re-arms its 2 s check only
+    # after that check's request resolves. Step past 120 s one check at a time.
+    p.clock.fast_forward(118_000)
+    for _ in range(6):
+        p.clock.fast_forward(2_100)
+        try:
+            p.wait_for_function(
+                "() => /not connected/.test("
+                "document.querySelector('#project-connect-title')?.textContent || '')",
+                timeout=1500,
+            )
+            break
+        except Exception as exc:
+            if type(exc).__name__ != "TimeoutError":
+                raise
     failed = p.evaluate(
         "() => (document.querySelector('#project-connect-title') || {}).textContent || ''"
     )
