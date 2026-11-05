@@ -767,9 +767,10 @@ old thread and the successor reference or URL.
   read that thread. Known exceptions: `delete_by_source`, `delete_tunnel` and
   `delete_hallway` take no room and are not checked yet. Fact mutations
   (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived facts are not
-  room-checked. Invalidate's `closed` count is a yes/no oracle for hidden values. This
-  pre-existing write-side exposure is accepted for follow-up alongside
-  `delete_by_source`, `delete_tunnel` and `delete_hallway`.
+  room-checked. A member with fact-write permissions but no source-thread read access
+  can mutate those hidden facts. Invalidate's `closed` count is a yes/no oracle for
+  hidden values. This pre-existing write-side exposure is accepted for follow-up
+  alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`.
 - `handoff.completed` is queued in the same transaction that records the
   successor and delivered exactly once, also after a crash (it goes out
   when the gateway starts again) and with several gateways on one control

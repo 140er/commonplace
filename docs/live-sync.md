@@ -130,9 +130,10 @@ permission to read that thread. Known exceptions: `delete_by_source`, `delete_tu
 and `delete_hallway` take no room and are not checked yet.
 
 Fact mutations (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived
-facts are not room-checked. Invalidate's `closed` count is a yes/no oracle for hidden
-values. This pre-existing write-side exposure is accepted for follow-up alongside
-`delete_by_source`, `delete_tunnel` and `delete_hallway`.
+facts are not room-checked. A member with fact-write permissions but no source-thread
+read access can mutate those hidden facts. Invalidate's `closed` count is a yes/no
+oracle for hidden values. This pre-existing write-side exposure is accepted for
+follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`.
 
 Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
 verified on compact, sqlite_exact and chroma.

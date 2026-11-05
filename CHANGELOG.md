@@ -45,10 +45,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   deleting or linking drawers in a stored-thread room requires permission to read that
   thread. Known exceptions: `delete_by_source`, `delete_tunnel` and `delete_hallway`
   take no room and are not checked yet. Fact mutations (`kg_invalidate`, `kg_supersede`
-  and `kg_save` merges) on thread-derived facts are not room-checked. Invalidate's
-  `closed` count is a yes/no oracle for hidden values. This pre-existing write-side
-  exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and
-  `delete_hallway`.
+  and `kg_save` merges) on thread-derived facts are not room-checked. A member with
+  fact-write permissions but no source-thread read access can mutate those hidden facts.
+  Invalidate's `closed` count is a yes/no oracle for hidden values. This pre-existing
+  write-side exposure is accepted for follow-up alongside `delete_by_source`,
+  `delete_tunnel` and `delete_hallway`.
 - To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).
