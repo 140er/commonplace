@@ -125,8 +125,15 @@ function askConfirm(copy, e, { opener, fallback } = {}) {
   });
 }
 
-export function disconnectCopy(project, connection, { main = false, only = false } = {}, e) {
-  const who = main ? `${project.name} orchestrator` : String(connection.name || "").replace(/^conn:/, "");
+// Disconnect revokes the connection itself (agent-revoke), so the copy names the whole workspace.
+// `others`: names of the other projects it works in; null when they could not be read.
+export function disconnectCopy(project, connection, { main = false, only = false, others = null } = {}, e) {
+  const name = String(connection.name || "").replace(/^conn:/, "");
+  const who = main ? `${project.name} orchestrator` : name;
+  const elsewhere = others === null ? `It also stops working in any other project it works in.`
+    : others.length ? `It also stops working in ${others.map(other => `<b>${e(other)}</b>`).join(", ")}.`
+    : `It works in no other project.`;
+  const scope = `<p class="scope" data-disconnect-scope><b>This revokes the connection “${e(name)}” for the whole workspace</b>, not only in ${e(project.name)}. ${elsewhere}</p>`;
   const lines = [
     ...(main ? [`${e(project.name)} has <b>no orchestrator</b> until an agent connects. The next one you connect becomes it.`] : []),
     ...(main && only ? ["Chat still works: new requests wait, as before your first agent."] : []),
@@ -134,7 +141,22 @@ export function disconnectCopy(project, connection, { main = false, only = false
     `${e(who)}'s setup stops working. To use it again, connect it as a new agent.`,
   ];
   const alone = only ? `<div class="alert" role="note"><h3>It is the only agent in ${e(project.name)}</h3><p>No other agent can take over.</p></div>` : "";
-  return { title: `Disconnect ${who}?`, action: "Disconnect", danger: true, body: `${alone}<p><b>What happens:</b></p><ul>${lines.map(line => `<li>${line}</li>`).join("")}</ul>` };
+  return { title: `Disconnect ${who}?`, action: "Disconnect everywhere", danger: true, body: `${alone}${scope}<p><b>What happens:</b></p><ul>${lines.map(line => `<li>${line}</li>`).join("")}</ul>` };
+}
+
+/** Names of the other projects a connection works in: their orchestrator, or a card assigned to it.
+ * Returns null when the boards or their cards cannot be read. */
+export async function connectionProjects(api, connection, exceptBoard) {
+  const ref = `conn:${String(connection.name || "").replace(/^conn:/, "")}`;
+  try {
+    const { boards = [] } = await api("/api/boards");
+    const found = await Promise.all(boards.filter(board => board.slug !== exceptBoard).map(async (board) => {
+      if (board.coordinator === ref) return board;
+      const page = await api(`/api/boards/${encodeURIComponent(board.slug)}/cards`);
+      return [...page.cards || [], ...page.linked || [], ...page.children || []].some(card => card.assignee === ref) ? board : null;
+    }));
+    return found.filter(Boolean).map(board => board.name || board.slug);
+  } catch { return null; }
 }
 
 function chooseSharedWing(payload, e, options) {
@@ -168,8 +190,19 @@ export function notAnsweringText(project, chat, page = {}) {
   return `Not answering${since ? ` since ${since}` : ""} · ${project.main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected}${seen ? ` · last active ${seen}` : ""}`;
 }
 
-export function connectResultHTML(result, e) {
-  return `<section class="form-tile"><h2 id="project-connect-title">Agent connection</h2><p>Connect attaches an agent to this project's automatic orchestrator seat.</p><p>Copy now. This token will not be shown again.</p><label>Token<input data-project-token value="${e(result.token)}" readonly autocomplete="off" spellcheck="false"></label><button type="button" class="opt" data-project-copy>Copy token</button><label>MCP URL<input value="${e(result.mcp_url)}" readonly></label><p>Use this token as a Bearer token in your agent's MCP configuration. Then call webhook_add to receive project chat messages:</p><pre>${e(JSON.stringify(result.setup?.webhook_add || {}, null, 2))}</pre>${result.warning ? `<p role="status">${e(result.warning)}</p>` : ""}<p role="status" data-project-copy-status></p><button type="button" class="blockbtn" data-project-dismiss>Close</button></section>`;
+// The same agent apps and setup formats as workspace Settings > Agents (agents.js clientConfig).
+export const AGENT_APPS = Object.freeze([["claude-code", "Claude Code"], ["codex", "Codex"], ["cursor", "Cursor"], ["generic", "Generic MCP"]]);
+const appLabel = (app) => (AGENT_APPS.find(([id]) => id === app) || AGENT_APPS[0])[1];
+const appSelect = (app) => `<label>Agent app<select data-project-app>${AGENT_APPS.map(([id, label]) => `<option value="${id}" ${id === app ? "selected" : ""}>${label}</option>`).join("")}</select></label>`;
+
+/** The MCP setup an agent app reads: address plus the key as a Bearer header. */
+export async function connectSetup(app, result) {
+  const { clientConfig } = await import("./agents.js");
+  return clientConfig(AGENT_APPS.some(([id]) => id === app) ? app : "generic", result.mcp_url, result.token);
+}
+
+export function connectResultHTML(result, e, { app = "claude-code" } = {}) {
+  return `<section class="form-tile"><h2 id="project-connect-title">Agent connection</h2><p>Connect attaches an agent to this project's automatic orchestrator seat.</p><p>Copy now. This token will not be shown again.</p><p>The setup holds the MCP address and this token as a Bearer header, in the format your agent app reads. Paste it where the app lists its MCP servers, then restart the app.</p>${appSelect(app)}<button type="button" class="btn primary" data-project-copy-setup>Copy setup</button><details><summary>Show the setup to select it</summary><pre data-project-config></pre></details><label>Token<input data-project-token value="${e(result.token)}" readonly autocomplete="off" spellcheck="false"></label><button type="button" class="opt" data-project-copy>Copy token</button><label>MCP URL<input value="${e(result.mcp_url)}" readonly></label><p>Use this token as a Bearer token in your agent's MCP configuration. Then call webhook_add to receive project chat messages:</p><pre>${e(JSON.stringify(result.setup?.webhook_add || {}, null, 2))}</pre>${result.warning ? `<p role="status">${e(result.warning)}</p>` : ""}<p role="status" data-project-copy-status></p><button type="button" class="blockbtn" data-project-dismiss>Close</button></section>`;
 }
 
 export function modelsHTML(project, e) {
@@ -179,25 +212,43 @@ export function modelsHTML(project, e) {
   }).join("")}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>`;
 }
 
-export function showConnectResult(result, e, { api, path, project, current = () => true, onUpdate = () => {}, opener, fallback, into } = {}) {
+export function showConnectResult(result, e, { api, path, project, current = () => true, onUpdate = () => {}, opener, fallback, into, app = "claude-code", copySetup = false } = {}) {
   let timer;
   const modal = into || projectDialog({ labelledby: "project-connect-title", opener, fallback });
   const { dialog, dismiss } = modal;
   const leave = () => dismiss({ restore: false });
-  dialog.innerHTML = connectResultHTML(result, e);
+  dialog.innerHTML = connectResultHTML(result, e, { app });
   modal.onDismiss(() => clearTimeout(timer));
+  const copyStatus = (text) => { if (!modal.closed()) dialog.querySelector("[data-project-copy-status]").textContent = text; };
+  const chosen = () => dialog.querySelector("[data-project-app]")?.value || app;
+  // The setup text is built only in memory and on screen; it is never logged.
+  const showSetup = async () => {
+    const config = dialog.querySelector("[data-project-config]");
+    if (!config) return "";
+    const text = await connectSetup(chosen(), result);
+    if (!modal.closed() && config.isConnected) config.textContent = text;
+    return text;
+  };
+  const writeSetup = async () => {
+    try {
+      await navigator.clipboard.writeText(await showSetup());
+      copyStatus(`Setup copied for ${appLabel(chosen())}. Paste it into the app's MCP servers, then restart the app.`);
+    } catch { copyStatus("Copy failed. Open “Show the setup to select it” and copy it from there."); }
+  };
+  dialog.querySelector("[data-project-app]").onchange = () => { showSetup().catch(() => {}); copyStatus(""); };
+  dialog.querySelector("[data-project-copy-setup]").onclick = writeSetup;
+  showSetup().catch(() => {});
   dialog.querySelector("[data-project-dismiss]").onclick = () => dismiss();
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(dialog.querySelector("[data-project-token]").value);
-      if (!modal.closed()) dialog.querySelector("[data-project-copy-status]").textContent = "Copied";
-    } catch {
-      if (!modal.closed()) dialog.querySelector("[data-project-copy-status]").textContent = PROJECT_COPY.copyError;
-    }
+      copyStatus("Token copied");
+    } catch { copyStatus(PROJECT_COPY.copyError); }
   };
   dialog.querySelector("[data-project-copy]").onclick = copy;
   if (into) modal.focus("[data-project-token]");
   else modal.show("[data-project-token]");
+  if (copySetup) writeSetup();
   if (!api) return dismiss;
   let started = Date.now();
   const progress = document.createElement("div");
@@ -272,7 +323,7 @@ async function requestConnect({ api, path, project, e, active, ask, onWing }) {
 }
 
 export function connectIntroHTML(name, e) {
-  return `<section class="form-tile"><h2 id="project-connect-title">Connect an agent${name ? ` to ${e(name)}` : ""}</h2><p class="lead">An agent is an AI helper that runs on your computer or a server, for example a coding assistant. It connects to Commonplace through MCP, an open standard many agent apps support.</p><p class="facts"><b>You need:</b> an agent app that supports MCP, and access to its settings. About 2 minutes.</p><ol class="dsteps"><li><b>Copy the setup and paste it into your agent app</b><span class="d">The setup holds a key that is shown once.</span><div class="acts"><button type="button" class="btn primary" data-project-create>Create and copy setup</button></div><ol class="howto" aria-label="Where to paste it"><li>In your agent app, open its settings and find <b>MCP servers</b> (some apps call it <b>Tools</b> or <b>Connectors</b>).</li><li>Choose <b>Add server</b>, then <b>Paste configuration</b> (or open its config file and paste at the end of the server list).</li><li>Save, then restart the app.</li></ol></li><li><b>Start or restart your agent app</b><span class="d">This dialog shows when it connects.</span></li></ol><p role="status" data-project-connect-status></p><div class="acts"><button type="button" class="btn" data-project-dismiss>Cancel</button></div></section>`;
+  return `<section class="form-tile"><h2 id="project-connect-title">Connect an agent${name ? ` to ${e(name)}` : ""}</h2><p class="lead">An agent is an AI helper that runs on your computer or a server, for example a coding assistant. It connects to Commonplace through MCP, an open standard many agent apps support.</p><p class="facts"><b>You need:</b> an agent app that supports MCP, and access to its settings. About 2 minutes.</p><ol class="dsteps"><li><b>Copy the setup and paste it into your agent app</b><span class="d">The setup is the MCP address and a new key, in the format your agent app reads. The key is shown once.</span>${appSelect("claude-code")}<div class="acts"><button type="button" class="btn primary" data-project-create>Create and copy setup</button></div><ol class="howto" aria-label="Where to paste it"><li>In your agent app, open its settings and find <b>MCP servers</b> (some apps call it <b>Tools</b> or <b>Connectors</b>).</li><li>Choose <b>Add server</b>, then <b>Paste configuration</b> (or open its config file and paste at the end of the server list).</li><li>Save, then restart the app.</li></ol></li><li><b>Start or restart your agent app</b><span class="d">This dialog shows when it connects.</span></li></ol><p role="status" data-project-connect-status></p><div class="acts"><button type="button" class="btn" data-project-dismiss>Cancel</button></div></section>`;
 }
 
 // The empty board's "Connect an agent": 03c, then the setup (03c2) in the same dialog.
@@ -313,8 +364,8 @@ export function openConnectDialog({ slug, api, e, opener, current = () => true, 
         },
       });
       if (!result || !active()) return;
-      showConnectResult(result, e, { api, path, project, current: active, onUpdate: (latest) => { project = latest; onUpdate(latest); }, into: modal });
-      dialog.querySelector("[data-project-copy]")?.click();
+      const app = dialog.querySelector("[data-project-app]")?.value || "claude-code";
+      showConnectResult(result, e, { api, path, project, current: active, onUpdate: (latest) => { project = latest; onUpdate(latest); }, into: modal, app, copySetup: true });
     } catch (error) {
       if (active()) status.textContent = changingWing ? ownWingError(error.payload) : PROJECT_COPY.connectError;
     } finally {
@@ -658,7 +709,7 @@ const settingsStyle = `
 .project-dialog p,.project-dialog li {font-size:14px;line-height:1.5}.project-dialog .lead,.project-dialog .d,.project-dialog .howto {color:var(--text-2)}
 .project-dialog .dsteps {padding-left:20px;display:flex;flex-direction:column;gap:12px}.project-dialog .dsteps b,.project-dialog .dsteps .d {display:block}.project-dialog .howto {padding-left:18px;margin:8px 0 0}
 .project-dialog .acts {display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px}.project-dialog .dsteps .acts {justify-content:flex-start;margin-top:8px}
-.project-dialog .alert {padding:10px 12px;border:1px solid var(--block-line);border-radius:8px;background:var(--block-bg)}.project-dialog .alert h3 {font-size:14px;margin:0}.project-dialog .alert p {margin:4px 0 0}
+.project-dialog .scope {padding:10px 12px;border:1px solid var(--wait-line);border-radius:8px;background:var(--wait-bg)}.project-dialog .alert {padding:10px 12px;border:1px solid var(--block-line);border-radius:8px;background:var(--block-bg)}.project-dialog .alert h3 {font-size:14px;margin:0}.project-dialog .alert p {margin:4px 0 0}
 .project-dialog :focus-visible {outline:3px solid var(--accent);outline-offset:2px}
 @media(max-width:699px) {.project-dialog .btn {min-height:44px}}
 @media(min-width:700px) {#card-panel:has(.workbench-project) {position:fixed;inset:0 0 0 236px;display:block;width:auto;height:100%;box-shadow:none;max-width:none;z-index:30;padding:0;background:var(--bg)}#card-panel:has(.workbench-project)>.form-tile {padding:0;background:transparent}#card-panel:has(.workbench-project)>.form-tile>.close {display:none}}
@@ -703,7 +754,11 @@ export async function mountProjectAgents(host, {project, api, e, current, onUpda
       button.onclick = async () => {
         if (busy || !active()) return;
         const id = button.getAttribute("data-project-disconnect"), connection = rows.find(c => c.id === id);
-        const copy = disconnectCopy(project, connection, {main: connection.name === main, only: assigned.size <= 1}, e);
+        busy = true;
+        const others = await connectionProjects(api, connection, project.board);
+        busy = false;
+        if (!active()) return;
+        const copy = disconnectCopy(project, connection, {main: connection.name === main, only: assigned.size <= 1, others}, e);
         const fallback = () => host.querySelector(`[data-project-disconnect="${CSS.escape(id)}"]`);
         if (!await askConfirm(copy, e, {opener: button, fallback}) || !active()) return;
         busy = true; error = ""; render();

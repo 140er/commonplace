@@ -17,6 +17,8 @@ CASES = [
     "disconnect_drawn",
     "restart_heading",
     "on_back",
+    "setup_clipboard",
+    "disconnect_scope",
 ]
 
 
