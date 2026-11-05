@@ -903,7 +903,8 @@ function mountWorkbenchChat() {
         }
         const under = state.underChat;
         state.underChat = null;
-        if (under && !layout.classList.contains("ctx-pushed") && !state.route.startsWith("#/card/")) {
+        // Only a side-column panel comes back; below 1100 px it was a sheet, and a closed chat leaves no sheet open.
+        if (under && !matchMedia("(max-width:1099px)").matches && !layout.classList.contains("ctx-pushed") && !state.route.startsWith("#/card/")) {
           // Same card, same component: no strip (the chat is closed) and focus stays on the control.
           state.route = `#/card/${under.number}`; state.card = under.card;
           history.replaceState(history.state, "", state.route);
