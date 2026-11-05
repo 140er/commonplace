@@ -208,6 +208,35 @@ let showDetailsRef = null;
     const c = e.target.closest && e.target.closest(".board .card");
     if (c && !e.target.closest("button")) showDetails($(".cid", c).textContent, chatOpen() ? "board" : null);
   });
+  // Tapping the dimmed area closes the sheet (touch users have no Esc): the chat closes, a card sheet goes back to the chat.
+  document.addEventListener("click", (e) => {
+    if (!e.target.matches || !e.target.matches(".chat-scrim")) return;
+    const strip = $("#from-chat");
+    if ($(".shell.ctx-pushed") && strip && !strip.hidden) backToChat(); else if (chatOpen()) closeChat();
+  });
+  // Tablet (700–1099 px): the Details button opens the context panel as B's modal sheet; Hide or Esc closes it.
+  document.addEventListener("click", (e) => {
+    const d = e.target.closest && e.target.closest("#details-btn, #ctx .hide");
+    if (!d) return;
+    const sh = $(".shell"), ctx = $("#ctx");
+    if (!sh || !ctx) return;
+    if (d.id === "details-btn") {
+      if (chatOpen()) setOpen(false);
+      ctx.hidden = false;
+      if (!$(".tablet-scrim")) { const sc = document.createElement("div"); sc.className = "tablet-scrim"; sc.setAttribute("aria-hidden", "true"); sh.insertBefore(sc, ctx); }
+      $(".tablet-scrim").hidden = false;
+      sh.classList.add("panel-open");
+      ctx.setAttribute("role", "dialog"); ctx.setAttribute("aria-modal", "true"); ctx.dataset.returnFocus = "details-btn";
+      $$(".shell > .rail, .shell > #main").forEach((x) => x.setAttribute("inert", ""));
+      d.setAttribute("aria-expanded", "true");
+      $(".hide", ctx).focus();
+    } else if (sh.classList.contains("panel-open")) {
+      sh.classList.remove("panel-open");
+      ctx.removeAttribute("aria-modal");
+      $$("[inert]").forEach((x) => x.removeAttribute("inert"));
+      const b = $("#details-btn"); if (b) { b.setAttribute("aria-expanded", "false"); b.focus(); }
+    }
+  });
   // Esc inside the chat (also from the message box; the draft stays) closes it. Dialogs keep their own Esc.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
@@ -232,11 +261,20 @@ let showDetailsRef = null;
   }));
   addEventListener("DOMContentLoaded", () => {
     // Chat logs open at the newest message, or at the message a memory result pointed to.
-    $$('.chatpane [role="log"], .m-chat-log').forEach((l) => {
+    $$('.chatpane [role="log"], .m-chat:not(.m-settings-sheet) .m-chat-log').forEach((l) => {
       const hit = $(".hit", l);
       if (hit) l.scrollTop = hit.offsetTop - l.offsetTop - 60; else l.scrollTop = l.scrollHeight;
     });
     if (chatOpen()) sheet(pane(), true);
+    // A card drawn open from the chat (06f, 06g) is the pushed slot at 1024–1099 px and a modal sheet below 1024 px.
+    const fc = $("#from-chat");
+    if ($(".shell.ctx-pushed") && fc && !fc.hidden) sheet($("#ctx"), true);
+    // An approval confirm opened in place keeps the note field above it in view.
+    const cf = $("#confirm-send:not([hidden])");
+    if (cf) { const body = $("#ctx .ctx-body"); if (body) body.scrollTop = body.scrollHeight; }
+    // Phone Settings opened from Needs me goes back there.
+    const sb = $("#m-settings-back");
+    if (sb && /from=needs/.test(location.search)) { sb.lastChild.textContent = "Back to Needs me"; sb.href = "m2-needs-me.html#m-settings"; }
     const mb = $("#m-chat-back");
     if (mb && /from=needs/.test(location.search)) { mb.lastChild.textContent = "Back to Needs me"; mb.href = "m2-needs-me.html#m-chat-tab"; }
     // A link may name the element to return to (#m-chat-tab, #row-A-135): focus it, so Back keeps your place.
@@ -266,6 +304,7 @@ let showDetailsRef = null;
     const t = document.getElementById(b.dataset.reveal);
     t.hidden = false;
     b.hidden = true;
+    const body = t.closest("#ctx") && $("#ctx .ctx-body"); if (body) body.scrollTop = body.scrollHeight;
     const f = $("[data-autofocus]", t) || focusables(t)[0];
     if (f) f.focus();
   });

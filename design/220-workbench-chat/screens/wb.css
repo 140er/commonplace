@@ -677,3 +677,20 @@ details.set-note summary { cursor: pointer; color: var(--accent); font-weight: 6
   .shell.chat-open { grid-template-columns: 188px minmax(0, 1fr) 304px; }
   .shell.chat-open .card-top { flex-wrap: wrap; row-gap: 2px; }
 }
+
+/* ---------- B + chat, round 4 ---------- */
+.orch-card.warn { background: var(--wait-bg); box-shadow: inset 3px 0 0 var(--wait-line); }
+.restart-box { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--wait-line); border-radius: 8px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.restart-box h3 { font-size: 14px; font-weight: 650; }
+.restart { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; line-height: 20px; }
+.restart-box .acts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.writer-note { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.m-wide { width: 100%; min-height: 44px; justify-content: center; font-size: 15px; }
+.m-settings-sheet .restart { font-size: 15px; line-height: 22px; }
+.m-item.is-last { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.m-item .top .tag.lbl { margin-left: auto; }
+kbd { white-space: nowrap; }
+.chat-input .hint { flex-wrap: wrap; gap: 2px 12px; }
+.chat-input .hint span { white-space: nowrap; }
+@media (min-width: 1280px) and (max-width: 1399px) { .shell.chat-open .card-top { flex-wrap: wrap; row-gap: 2px; } }
+@media (max-width: 699px) { .rail [role="list"] { flex-wrap: wrap; overflow-x: visible; } }

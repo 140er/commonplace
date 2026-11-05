@@ -9,7 +9,7 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<div class="shell">
+<div class="shell ctx-pushed">
 <nav class="rail" aria-label="Workspace">
   <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
   <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
@@ -24,7 +24,7 @@
 </nav>
 <main class="center" id="main">
 <header class="bar">
-  <h1 title="Mobile app beta">Atlas</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="false" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat<kbd>/</kbd></button>
+  <h1 title="Mobile app beta">Atlas</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="false" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat <kbd>/</kbd></button>
   <span class="spacer"></span>
   <div class="seg" role="group" aria-label="Filter cards"><button aria-pressed="true">All</button><button aria-pressed="false">Mine</button><button aria-pressed="false">Agents</button><button aria-pressed="false">Blocked 1</button></div>
   <a class="btn ghost" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg>Settings</a>
@@ -124,7 +124,7 @@
       <div class="msg-b"><p>Is anything stuck on Atlas?</p></div></div></div>
     
     <div class="msg"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div><div class="msg-h"><b>Quick reply</b><span class="tag lbl">local model</span><time>12:41</time></div>
-      <div class="msg-b"><p>From the board: one card is stuck. A-121 is blocked; Otto is waiting on Leon about which rate limit applies to batch sync. That is in Leon's Needs me, not yours. Everything else is moving.</p>
+      <div class="msg-b"><p class="writer-note">Written by the model chosen in Settings, not by the orchestrator.</p><p>From the board: one card is stuck. A-121 is blocked; Otto is waiting on Leon about which rate limit applies to batch sync. That is in Leon's Needs me, not yours. Everything else is moving.</p>
       <div class="made" role="group" aria-labelledby="mh-1241"><div class="made-h"><span id="mh-1241">Cards in this answer</span><span>select one to open its details</span></div><a href="#" data-card="A-121"><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><span><span class="cid">A-121</span> Offline mode: queue edits…</span><span class="where">Doing · Otto</span><span class="sr">, show on the board</span></a></div></div></div></div><div class="msg"><span class="av lg" style="background:#3F6E5A" aria-hidden="true">M</span><div><div class="msg-h"><b>Maya</b><time>14:02</time></div>
       <div class="msg-b"><p>Before Friday's beta: can you get release notes drafted, and make sure the sign-up email bug is really fixed first?</p></div></div></div><div class="msg" id="m-1403"><span class="av agent lg" aria-hidden="true">A</span><div><div class="msg-h"><b>Atlas orchestrator</b><span class="tag agent">agent</span><time>14:03</time></div>
       <div class="msg-b"><p>Yes. I made two cards and linked the bug that's already in progress. Release notes wait until the fix is checked.</p>
@@ -200,7 +200,7 @@
 </div><div class="ctx-foot"><div class="reply"><label class="sr" for="cm">Comment on A-118</label><textarea class="field" id="cm" rows="1" placeholder="Comment or @mention…"></textarea><button class="btn">Send</button></div></div></template><template id="tpl-A-121"><div class="ctx-body">
   <div class="detail-h">
     <div class="row"><span class="cid">A-121</span><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><span style="margin-left:auto;display:flex;gap:2px"><button class="iconbtn" aria-label="Copy link to card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/></svg></button><button class="iconbtn" aria-label="More actions for A-121"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button></span></div>
-    <div class="title-row"><h2>Offline mode: queue edits while disconnected</h2><button class="btn ghost sm" aria-keyshortcuts="E"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/></svg>Edit <kbd>E</kbd></button></div>
+    <div class="title-row"><h2 tabindex="-1">Offline mode: queue edits while disconnected</h2><button class="btn ghost sm" aria-keyshortcuts="E"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/></svg>Edit <kbd>E</kbd></button></div>
   </div>
   <dl class="fields">
     <dt>Status</dt><dd><button class="sel" aria-label="Status: Doing. Change">Doing<svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button></dd>
