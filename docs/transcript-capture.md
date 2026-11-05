@@ -83,6 +83,29 @@ the existing adapter that supplies that path. No hook is installed by these
 commands. Remove the local hook or unset the local switch to stop scheduling;
 disable the workspace setting to reject uploads immediately.
 
+## Find captured history in Memory
+
+After an accepted append or exact retry, background indexing makes the session's
+readable messages searchable in Memory, including its earlier history. Upload
+responses do not wait for indexing. Original text stays unchanged; raw archive
+records are retained but are not copied into Memory search.
+
+Search requires the same thread-read and private-read permissions as reading
+the stored session, including the filing-user check. Capture permission alone
+is not enough. Default self-service PAT and OAuth connections do not receive
+captured words in Memory search or startup context.
+
+Untouched older captured sessions are not indexed automatically. Operators can
+include them with:
+
+```bash
+commonplace search-index run --workspace WORKSPACE_ID --captures
+```
+
+Index storage counts toward the plan limit and pauses 16 MiB before it. See
+[indexing progress and controls](one-time-import.md#indexing-progress-and-storage)
+for status, resuming work and safely disabling indexing.
+
 ## Append protocol, privacy and recovery
 
 `GET /api/capture?source=codex&thread_id=NATIVE_ID` returns the caller's accepted
@@ -98,7 +121,7 @@ interval. A new stream starts at zero with SHA-256 of the empty byte string.
 The response reports the new cursor and `status: "appended"` or `"duplicate"`.
 Requests are limited to 64 MiB of JSON, including escaping. The server validates
 the expected prefix and atomically commits the raw segment, readable messages,
-search index, counts and storage-budget checks. Retries after a lost response,
+thread search index, counts and storage-budget checks. Retries after a lost response,
 even an older saved chunk after later growth, do not duplicate text. There is
 no separate cursor write that can get ahead of stored content.
 
