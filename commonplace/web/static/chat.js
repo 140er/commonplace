@@ -1,175 +1,367 @@
+import { actor } from "./api.js";
+import { cardId } from "./board.js";
+import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
+
 export const CHAT_COPY = Object.freeze({
   title: "Chat", loading: "Loading chat…", unavailable: "Chat is unavailable. Try again.",
-  noProjects: "Choose a project to chat with its orchestrator.", empty: "Send a message to your project's orchestrator.",
-  placeholder: "Message the orchestrator…", send: "Send", basic: "Basic replies (no model)",
+  noProjects: "Choose a project to chat with its orchestrator.",
+  empty: "Write what you need. The orchestrator answers here and turns the work into cards marked “From chat” on the board.",
+  placeholder: "Ask for something…", send: "Send", basic: "Basic replies (no model)",
   model: "Answers by {provider}/{model}", statusPrivate: "status private", decisions: "Decisions",
   runnerAnswer: "via your {cli} login", runnerMode: "Answers via your {cli} login",
   runnerUsage: "{used}/{cap} today", runnerError: "Last error: {code}",
-  noOrchestratorOwner: "This project's orchestrator isn't connected yet. Use Connect above.",
-  noOrchestratorMember: "This project's orchestrator isn't connected yet. Ask the workspace owner to connect it.",
+  offline: "Not sent. This device is offline. Your words are kept here until it sends.",
+  retry: "Not sent. Try again",
 });
 
-// Escape first: only the fixed redaction wrapper becomes markup.
 const marked = (value, e) => e(value).replace(/\[(?:redacted|omitted):[a-z_]+\]/g, (marker) => `<mark class="redacted">${marker}</mark>`);
-const cardLink = (number, e) => Number.isSafeInteger(number) && number > 0 ? `<a href="#/card/${number}">Card #${e(number)}</a>` : "";
+const validId = (number) => Number.isSafeInteger(number) && number > 0;
+const merge = (rows = [], added = []) => [...new Map([...rows, ...added].map((row) => [row.id, row])).values()].sort((a, b) => a.id - b.id);
+const writer = (ref, me, board) => ref === `user:${me?.user}` ? "You" : ref && ref === board.coordinator
+  ? `${board.name || board.slug} orchestrator` : `${actor(ref)}${ref?.startsWith("conn:") ? " (agent)" : ""}`;
+const localSetting = (front) => {
+  if (front?.provider !== "openai_compatible") return false;
+  try {
+    const host = new URL(front.base_url).hostname;
+    return host === "localhost" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host);
+  } catch { return false; }
+};
+const quickLabel = (model) => `Quick reply · ${model?.startsWith("local:") ? "local model" : "hosted provider"}`;
+const modelName = (model) => String(model || "").replace(/^local:/, "");
+
+function cardRows(cards, heading, key, board, e) {
+  if (!cards.length) return "";
+  return `<div class="chat-cards" role="group" aria-labelledby="${e(key)}"><div class="chat-cards-heading" id="${e(key)}">${e(heading)}</div>${cards.map((card) => `<a id="chat-row-${e(key)}-${card.number}" href="#/card/${card.number}" data-chat-card="${card.number}"><span class="cid">${e(cardId(board, card.number))}</span><span>${marked(card.title || "", e)}</span><span class="chat-card-status">${e(card.status || "")} <span class="chat-show">Show →</span></span></a>`).join("")}</div>`;
+}
 
 export function chatHTML(page, me, e) {
-  const replies = new Map();
-  for (const reply of page.replies || []) {
-    if (!replies.has(reply.message_id)) replies.set(reply.message_id, []);
-    replies.get(reply.message_id).push(reply);
-  }
-  return (page.messages || []).map((message) => `<li class="chat-message">
-    <article><div class="chat-stamp">${marked(message.actor === `user:${me?.user}` ? "You" : message.actor, e)} <time datetime="${e(message.at)}">${e(message.at)}</time></div><p>${marked(message.text, e)}</p></article>
-    ${(replies.get(message.id) || []).sort((a, b) => a.id - b.id).map((reply) => {
-      let stamp = `Orchestrator${reply.model ? ` · ${marked(reply.model, e)}` : ""}`;
-      if (reply.model?.startsWith("runner:")) {
-        const login = reply.model.slice("runner:".length), separator = login.indexOf("/");
-        const cli = separator < 0 ? login : login.slice(0, separator);
-        const model = separator < 0 ? "" : login.slice(separator + 1);
-        stamp = e(`${CHAT_COPY.runnerAnswer.replace("{cli}", () => cli)}${model ? ` · ${model}` : ""}`);
-      }
-      return `<article class="chat-reply"><div class="chat-stamp">${stamp}</div><p>${marked(reply.text, e)}</p>${cardLink(reply.task, e)}</article>`;
-    }).join("")}
-    ${(page.linked || []).filter((card) => card.message_id === message.id).map((card) => cardLink(card.number, e)).join(" ")}
-  </li>`).join("") || `<li class="chat-hint">${e(CHAT_COPY.empty)}</li>`;
+  const board = page.project || { slug: page.board || "", coordinator: page.coordinator };
+  const cards = [...new Map([...(page.cards || []), ...(page.linked || [])].filter((card) => validId(card.number) && (!card.board || card.board === board.slug)).map((card) => [card.number, card])).values()];
+  const ownReplies = (page.replies || []).filter((reply) => reply.for_user == null || reply.for_user === me?.user);
+  let divided = false, today = false;
+  return (page.messages || []).map((message) => {
+    let prefix = "";
+    if (!divided && ((message.actor?.startsWith("conn:") && message.id > (page.seen?.message ?? Infinity)) || ownReplies.some((reply) => reply.message_id === message.id && ["answer", "handoff"].includes(reply.kind) && reply.id > (page.seen?.reply ?? Infinity)))) {
+      divided = true; prefix += '<li class="chat-new" role="separator">New since you last looked</li>';
+    }
+    if (!today && page.todayIds?.includes(message.id)) { today = true; prefix += '<li class="chat-day">Today</li>'; }
+    return `${prefix}<li class="chat-message${message.id === page.at ? " chat-hit" : ""}" id="chat-message-${message.id}">
+      ${message.id === page.at ? '<p class="chat-hint">Found in memory</p>' : ""}
+      <article><div class="chat-stamp"><b>${marked(writer(message.actor, me, board), e)}</b> <time datetime="${e(message.at)}">${e(message.at)}</time></div><p>${marked(message.text, e)}</p></article>
+      ${ownReplies.filter((reply) => reply.message_id === message.id).sort((a, b) => a.id - b.id).map((reply) => {
+        let stamp = reply.kind === "answer" ? quickLabel(reply.model) : "Delivery update";
+        if (reply.model?.startsWith("runner:")) {
+          const [cli, ...model] = reply.model.slice(7).split("/");
+          stamp += ` · ${CHAT_COPY.runnerAnswer.replace("{cli}", () => cli)}${model.length ? ` · ${model.join("/")}` : ""}`;
+        } else if (reply.model) stamp += ` · ${modelName(reply.model)}`;
+        const prefix = cardId(board, 1).split("-")[0];
+        const refs = new Set([...String(reply.text).matchAll(/(?:^|[^\w-])(?:#([1-9]\d*)|([A-Za-z])-([1-9]\d*))(?![\w-])/g)].filter((m) => m[1] || m[2].toUpperCase() === prefix).map((m) => Number(m[1] || m[3])));
+        const referenced = reply.kind === "answer" ? cards.filter((card) => refs.has(card.number)) : [];
+        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b></div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the orchestrator.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
+      }).join("")}
+      ${cardRows(cards.filter((card) => card.message_id === message.id), "From this request · on the board now", `request-${message.id}`, board, e)}
+    </li>`;
+  }).join("") || `<li class="chat-empty"><h3>Ask the orchestrator for something</h3><p>${e(CHAT_COPY.empty)}</p><p>Try asking</p><div class="chat-suggestions">${["What is blocked?", "Plan the next launch", "Split a card into smaller cards"].map((text) => `<button type="button" data-chat-suggest="${e(text)}">${e(text)}</button>`).join("")}</div></li>`;
 }
 
 export function statusHTML(status, e) {
   const agent = status.orchestrator, front = status.front;
-  let mode = front?.mode === "model" ? `Answers by ${front.model}` : front?.mode === "off" ? "Front replies off" : CHAT_COPY.basic;
-  if (front?.mode === "runner") {
+  let mode = front?.mode === "model" ? `Answers by ${front.provider ? `${front.provider}/` : ""}${modelName(front.model)}` : front?.mode === "off" ? "Chat answers off" : CHAT_COPY.basic;
+  if (front?.applies === false) mode = `${front.provider === "none" ? "Basic" : localSetting(front) ? "Local" : "Hosted"}${front.inherited ? " · set for the whole workspace" : ""} · Turn on in Settings for this board`;
+  else if (front?.mode === "runner") {
     mode = CHAT_COPY.runnerMode.replace("{cli}", () => front.runner?.cli || "CLI");
-    mode += ` · ${CHAT_COPY.runnerUsage.replace("{used}", front.runner.used_today).replace("{cap}", front.runner.daily_cap)}`;
+    mode += ` · ${CHAT_COPY.runnerUsage.replace("{used}", front.runner?.used_today ?? 0).replace("{cap}", front.runner?.daily_cap ?? 0)}`;
   }
-  if ((front?.mode === "runner" || front?.mode === "basic") && front.runner?.last_error) {
-    mode += ` · ${CHAT_COPY.runnerError.replace("{code}", () => front.runner.last_error)}`;
-  }
+  if ((front?.mode === "runner" || front?.mode === "basic") && front.runner?.last_error) mode += ` · ${CHAT_COPY.runnerError.replace("{code}", () => front.runner.last_error)}`;
   return `${agent ? `<span>${marked(agent.name, e)} · ${marked(agent.visible ? agent.status : CHAT_COPY.statusPrivate, e)}</span>${agent.visible && agent.console === "#/console" ? ' <a href="#/console">Console</a>' : ""}` : ""}
-    ${front ? `<span>${e(mode)}</span>` : ""}
-    ${status.needs_you > 0 ? `<a href="#/decide">${e(CHAT_COPY.decisions)} (${e(status.needs_you)})</a>` : ""}
-    ${(status.starts || []).map((job) => `<span>${cardLink(job.task, e)} · ${marked(job.state, e)}${job.machine_label ? ` · ${marked(job.machine_label, e)}` : ""}</span>`).join("")}`;
+    ${front ? `<span>${e(mode)}</span>` : ""}${status.needs_you > 0 ? `<a href="#/decide">${e(CHAT_COPY.decisions)} (${e(status.needs_you)})</a>` : ""}`;
 }
 
-export function createChat({ mount, api, e }) {
+const part = (value) => encodeURIComponent(value).replace(/\./g, "%2E");
+const unsentKey = (user, slug) => `cmmn.unsent.${part(user)}.${part(slug)}`;
+function storage() { try { return globalThis.sessionStorage; } catch { return null; } }
+
+export function createChat({ mount, api, e, me, board, coordinator, onCard = () => {}, onState = () => {} }) {
   let active = false, generation = 0, timer = null, delay = 2000, state;
-  const drafts = new Map();
   let lastProject = null;
+  const offlineQueue = new Map();
+  const drafts = new Map(), pending = new Map(), seen = new Map(), users = new Set(me?.user ? [me.user] : []);
+  const root = () => typeof mount === "function" ? mount() : mount;
   const current = (token) => active && token === generation;
+  const path = () => `/api/chat/${encodeURIComponent(state.slug)}`;
+  const field = () => root()?.querySelector(".chat-compose")?.elements.text;
   function cancel() { if (timer !== null) clearTimeout(timer); timer = null; }
+  function key() { return state.me?.user ? unsentKey(state.me.user, state.slug) : null; }
+  function remember(text) {
+    const name = key();
+    if (!name) return;
+    pending.set(name, text);
+    try { storage()?.setItem(name, text); } catch { /* Keep the in-memory bubble. */ }
+  }
+  function restore() {
+    const name = key();
+    if (!name) return;
+    let text = pending.get(name);
+    try { text ??= storage()?.getItem(name); } catch { /* Storage may be denied. */ }
+    if (text != null) {
+      pending.set(name, text); state.unsent = { text, draft: text, offline: false, auto: false };
+      if (field()) field().value = text;
+    }
+  }
+  function forget(name, text) {
+    if (!name) return;
+    if (pending.get(name) === text) pending.delete(name);
+    try { if (storage()?.getItem(name) === text) storage()?.removeItem(name); } catch { /* No persisted draft. */ }
+  }
+  function clearUnsent() {
+    for (const user of users) {
+      const prefix = `cmmn.unsent.${part(user)}.`;
+      try {
+        const store = storage(), keys = Array.from({ length: store?.length || 0 }, (_, i) => store.key(i));
+        for (const name of keys) if (name?.startsWith(prefix)) store.removeItem(name);
+      } catch { /* Clear memory even if storage is denied. */ }
+      clearSeen(user);
+    }
+    for (const store of seen.values()) store.clearSeen();
+    seen.clear(); pending.clear(); drafts.clear(); offlineQueue.clear();
+    if (state) { state.unsent = null; state.quote = null; }
+    if (field()) field().value = "";
+  }
+  function signOut() {
+    clearUnsent(); controller.stop();
+    document.removeEventListener("session-expired", signOut);
+    document.removeEventListener("signout", signOut);
+    document.removeEventListener("click", logout, true);
+    globalThis.removeEventListener?.("online", online);
+  }
+  function logout(event) { if (event.target.closest?.('[data-action="logout"]')) signOut(); }
+  document.addEventListener("session-expired", signOut);
+  document.addEventListener("signout", signOut);
+  document.addEventListener("click", logout, true);
+  globalThis.addEventListener?.("online", online);
+  function project() { return { ...state.projects.find((p) => p.slug === state.slug), ...(typeof board === "object" && board.slug === state.slug ? board : {}), slug: state.slug, coordinator: coordinator || board?.coordinator || state.page.orchestrator?.actor || (state.page.orchestrator?.name ? `conn:${state.page.orchestrator.name}` : null) }; }
   function render() {
-    const root = mount();
-    if (!root) return;
-    const old = root.querySelector(".chat-stream");
-    const bottom = !old || old.scrollHeight - old.scrollTop - old.clientHeight < 60;
-    const top = old?.scrollTop || 0;
-    // Keep the composer mounted so polling never interrupts typing or selection.
-    if (!root.querySelector(".chat-view")) {
-      root.innerHTML = `<section class="chat-view" aria-label="Chat"><header class="chat-header"><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><p data-chat-error role="status" hidden></p><ol class="chat-stream" aria-label="Messages" tabindex="0">${chatHTML(state.page, state.me, e)}</ol><form class="chat-compose"><label class="chat-hint" for="chat-text">${e(CHAT_COPY.placeholder)}</label><textarea id="chat-text" name="text" rows="2" required></textarea><button class="blockbtn">${e(CHAT_COPY.send)}</button></form></section>`;
-      const form = root.querySelector(".chat-compose");
+    const host = root();
+    if (!host) return;
+    const old = host.querySelector(".chat-stream"), top = old?.scrollTop || 0;
+    const bottom = !old || old.scrollHeight - top - old.clientHeight < 60;
+    const page = { ...state.page, project: project(), cards: state.cards, at: state.at, seen: state.baseline, todayIds: state.todayIds };
+    if (!host.querySelector(".chat-view")) {
+      host.innerHTML = `<aside class="chat-view chatpane" aria-labelledby="chat-h"><header class="chat-header"><h2 id="chat-h">${e(project().name || state.slug || "Project")} chat</h2><button class="btn ghost sm" type="button" data-close-chat>Close chat</button><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><div data-chat-source></div><p data-chat-error role="alert" hidden></p><div class="chat-history"><button type="button" data-chat-earlier>Show earlier</button></div><ol class="chat-stream" role="log" aria-label="Messages" tabindex="0">${chatHTML(page, state.me, e)}</ol><div data-chat-recovery></div><div data-chat-unsent></div><form class="chat-compose"><div data-chat-quote></div><label class="chat-hint" for="chat-text">Message to ${e(project().name || state.slug || "project")} chat</label><textarea id="chat-text" name="text" rows="2" placeholder="${e(CHAT_COPY.placeholder)}" required></textarea><button class="btn primary" type="submit">Send</button><p class="chat-hint">Enter to send · Shift+Enter new line</p></form></aside>`;
+      const form = host.querySelector(".chat-compose");
       if (form) {
         form.onsubmit = send;
         form.elements.text.value = drafts.get(state.slug) || "";
         form.elements.text.oninput = () => drafts.set(state.slug, form.elements.text.value);
+        form.elements.text.onkeydown = (event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send({ preventDefault() {}, currentTarget: form }); }
+        };
       }
+      host.onclick = click;
     }
-    const view = root.querySelector(".chat-view");
+    const put = (selector, html) => { const el = host.querySelector(selector); if (el) el.innerHTML = html; };
+    const view = host.querySelector(".chat-view");
     if (view) view.dataset.board = state.slug || "";
-    const picker = root.querySelector("[data-chat-project]");
+    const picker = host.querySelector("[data-chat-project]");
     if (picker) {
-      picker.innerHTML = '<option value="">Choose a project</option>' + state.projects.map((project) => `<option value="${e(project.slug)}" ${project.slug === state.slug ? "selected" : ""}>${marked(project.name || project.slug, e)}</option>`).join("");
-      picker.onchange = () => { location.hash = `#/chat/${encodeURIComponent(picker.value)}`; };
+      picker.innerHTML = '<option value="">Choose a project</option>' + state.projects.map((p) => `<option value="${e(p.slug)}" ${p.slug === state.slug ? "selected" : ""}>${marked(p.name || p.slug, e)}</option>`).join("");
+      picker.onchange = () => { location.hash = `#/board/${encodeURIComponent(picker.value)}/chat`; };
     }
-    const board = root.querySelector("[data-chat-board]");
-    if (board) { board.hidden = !state.slug; board.href = `#/board/${encodeURIComponent(state.slug)}`; }
-    const status = root.querySelector("[data-chat-status]");
-    if (status) status.innerHTML = state.status ? statusHTML(state.status, e) : "";
-    const error = root.querySelector("[data-chat-error]");
+    const link = host.querySelector("[data-chat-board]");
+    if (link) { link.hidden = !state.slug; link.href = `#/board/${encodeURIComponent(state.slug)}`; }
+    put("[data-chat-status]", state.status ? statusHTML(state.status, e) : "");
+    const error = host.querySelector("[data-chat-error]");
     if (error) { error.hidden = !state.error; error.textContent = state.error; }
-    const stream = root.querySelector(".chat-stream");
-    if (stream) {
-      stream.innerHTML = state.slug ? chatHTML(state.page, state.me, e) : `<li>${e(CHAT_COPY.noProjects)}</li>`;
-      stream.scrollTop = bottom ? stream.scrollHeight : top;
+    const stream = host.querySelector(".chat-stream");
+    if (stream) { stream.innerHTML = state.slug ? chatHTML(page, state.me, e) : `<li>${e(CHAT_COPY.noProjects)}</li>`; stream.scrollTop = bottom ? stream.scrollHeight : top; }
+    const earlier = host.querySelector("[data-chat-earlier]");
+    if (earlier) earlier.hidden = !state.page.has_more;
+    put("[data-chat-source]", state.at ? '<p class="chat-source">Opened from memory. Your question takes the quote along, word for word. <button type="button" data-close-chat>Back to the source</button></p>' : "");
+    put("[data-chat-quote]", state.quote ? `<div class="chat-quote">Quoting ${e(state.quote.author)}, ${e(state.quote.date ?? state.quote.at)}, exact words <button type="button" data-chat-remove-quote aria-label="Remove the quote">×</button></div>` : "");
+    put("[data-chat-unsent]", state.unsent ? `<div class="chat-unsent" role="alert"><p>${marked(state.unsent.text, e)}</p><p>${e(state.unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p><button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button></div>` : "");
+    const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
+    const recovery = state.derived?.state;
+    put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${state.derived.last_seen ? `<p>Agent last seen ${e(state.derived.last_seen)}</p>` : ""}${recovery !== "working" ? `<div>${recovery === "no_answer" ? `<a href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button type="button" data-chat-ask-again>Ask again</button>` : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>'}<button type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
+    const form = host.querySelector(".chat-compose");
+    if (form) { form.hidden = !state.slug; form.querySelector("button[type=submit]").disabled = !!state.sending; }
+  }
+  function update(page, { history = false } = {}) {
+    const previous = state.page;
+    state.page = { ...previous, ...page, cursor: Math.max(previous.cursor || 0, page.cursor || 0), reply_cursor: Math.max(previous.reply_cursor || 0, page.reply_cursor || 0), messages: merge(previous.messages, page.messages), replies: merge(previous.replies, page.replies), linked: [...new Map([...(previous.linked || []), ...(page.linked || [])].map((c) => [c.number, c])).values()] };
+    if (!history && previous.messages.length) { state.page.oldest = previous.oldest; state.page.has_more = previous.has_more; }
+    state.me = page.me || state.me;
+    if (state.me?.user) {
+      users.add(state.me.user);
+      const name = key();
+      if (!seen.has(name)) seen.set(name, seenStore(state.me.user, state.slug));
+      state.baseline ??= seen.get(name).read(state.page);
+      state.derived = deriveChatState(state.page, state.status, project(), Date.now(), state.baseline);
+      onState(state.derived);
+      if (!document.hidden) seen.get(name).markSeen(state.page);
     }
-    const form = root.querySelector(".chat-compose");
-    if (form) { form.hidden = !state.slug; form.querySelector("button").disabled = !!state.sending; }
   }
   function schedule(token) {
-    if (!current(token)) return;
-    cancel();
-    timer = setTimeout(() => { timer = null; void tick(token); }, delay);
-  }
-  function merge(rows, added) {
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    for (const row of added || []) byId.set(row.id, row);
-    return [...byId.values()].sort((a, b) => a.id - b.id);
+    if (!current(token) || document.hidden) return;
+    cancel(); timer = setTimeout(() => { timer = null; void tick(token); }, delay);
   }
   async function tick(token) {
-    if (!current(token)) return;
-    if (document.hidden) { schedule(token); return; }
+    if (!current(token) || document.hidden) return;
     try {
       if (!state.loaded) {
         const list = await api("/api/chat");
         if (!current(token)) return;
         state.projects = list.projects || [];
-        if (!state.slug) state.slug = state.projects.find((p) => p.slug === lastProject)?.slug || list.default || (state.projects.length === 1 ? state.projects[0].slug : null);
-        if (state.slug && !state.projects.some((project) => project.slug === state.slug)) throw new Error("Project unavailable");
-        const field = mount()?.querySelector(".chat-compose textarea");
-        if (field) field.value = drafts.get(state.slug) || "";
-        state.loaded = true;
+        state.slug ||= state.projects.find((p) => p.slug === lastProject)?.slug || list.default || (state.projects.length === 1 ? state.projects[0].slug : null);
+        if (state.slug && !state.projects.some((p) => p.slug === state.slug)) throw new Error("Project unavailable");
       }
       if (state.slug) {
-        const path = `/api/chat/${encodeURIComponent(state.slug)}`;
-        const query = state.page.cursor ? `after=${state.page.cursor}&replies_after=${state.page.reply_cursor || 0}` : "last=50";
-        const [page, status] = await Promise.all([api(`${path}?${query}`), api(`${path}/status`)]);
+        const query = state.loaded ? `after=${state.page.cursor || 0}&replies_after=${state.page.reply_cursor || 0}` : "last=20";
+        const [page, status, cards, settings] = await Promise.all([api(`${path()}?${query}`), api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)]);
         if (!current(token)) return;
-        const linked = new Map((state.page.linked || []).map((card) => [card.number, card]));
-        for (const card of page.linked || []) linked.set(card.number, card);
-        state.page = { ...page, linked: [...linked.values()], messages: merge(state.page.messages, page.messages), replies: merge(state.page.replies, page.replies) };
-        state.me = page.me;
-        state.status = status;
+        state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = cards.cards || [];
+        update(page);
+        if (!state.loaded) restore();
         lastProject = state.slug;
       }
-      state.error = ""; delay = 2000;
-    } catch {
-      if (!current(token)) return;
-      state.error = CHAT_COPY.unavailable; delay = Math.min(delay * 2, 30000);
-    }
+      state.loaded = true; state.error = ""; delay = 2000;
+    } catch { if (!current(token)) return; state.error = CHAT_COPY.unavailable; delay = Math.min(delay * 2, 30000); }
     render(); schedule(token);
+  }
+  async function post(text, fromRetry = false) {
+    if (!active || state.sending || !state.slug || !text.trim()) return;
+    const token = ++generation, sendingState = state, name = key(), sentDraft = field()?.value;
+    const originalDraft = fromRetry ? state.unsent?.draft : sentDraft;
+    cancel(); remember(text);
+    state.sending = true;
+    if (globalThis.navigator?.onLine === false) {
+      state.unsent = { text, draft: originalDraft, offline: true, auto: true };
+      offlineQueue.set(name, { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft });
+      state.sending = false; render(); return;
+    }
+    offlineQueue.delete(name);
+    state.unsent = { text, draft: originalDraft, offline: false, auto: false }; render();
+    let sent = false;
+    try { await api(`/api/boards/${encodeURIComponent(state.slug)}/chat`, { method: "POST", body: { text } }); sent = true; }
+    catch {
+      if (!current(token)) return;
+      try {
+        const page = await api(`${path()}?after=${state.page.cursor || 0}`);
+        if (!current(token)) return;
+        sent = (page.messages || []).some((m) => m.actor === `user:${state.me?.user}` && m.text === text);
+        update(page);
+      } catch { /* The outcome remains ambiguous; only an explicit retry may send again. */ }
+    }
+    if (sent) forget(name, text);
+    if (!current(token)) return;
+    sendingState.sending = false;
+    if (sent) {
+      state.unsent = null; state.quote = null;
+      if (field()?.value === sentDraft && (!fromRetry || sentDraft === originalDraft)) { field().value = ""; drafts.delete(state.slug); }
+      await tick(token);
+    } else { state.unsent = { text, draft: originalDraft, offline: false, auto: false }; render(); schedule(token); }
   }
   async function send(event) {
     event.preventDefault();
-    if (state.sending || !state.slug) return;
-    const form = event.currentTarget, text = form.elements.text.value;
-    if (!text.trim()) return;
-    const token = ++generation;
-    cancel(); state.sending = true; render();
+    const question = event.currentTarget.elements.text.value;
+    const quote = state.quote;
+    const text = quote ? `${question}\n\n${quote.author}, ${quote.sourceLabel}, ${quote.date ?? quote.at}, exact words:\n“${quote.text}”` : question;
+    if (question.trim()) await post(text);
+  }
+  async function history(at = null) {
+    if (!active || !state.loaded || state.sending || state.historyLoading) return;
+    const token = generation;
+    state.historyLoading = true;
     try {
-      await api(`/api/boards/${encodeURIComponent(state.slug)}/chat`, { method: "POST", body: { text } });
-      if (!current(token)) return;
-      if (form.elements.text.value === text) { form.elements.text.value = ""; drafts.delete(state.slug); }
-      state.sending = false;
-      await tick(token);
-    } catch {
-      if (!current(token)) return;
-      state.error = CHAT_COPY.unavailable; state.sending = false; render(); schedule(token);
+      if (at !== null) {
+        const before = await api(`${path()}?before=${at + 1}&last=3`);
+        if (!current(token)) return;
+        const after = await api(`${path()}?after=${at}`);
+        if (!current(token)) return;
+        const today = await api(`${path()}?last=20`);
+        if (!current(token)) return;
+        state.at = at; state.todayIds = (today.messages || []).map((m) => m.id);
+        update(before, { history: true }); update({ ...after, messages: (after.messages || []).slice(0, 2) }); update(today);
+      } else {
+        const page = await api(`${path()}?before=${state.page.oldest || state.page.messages[0]?.id || 0}&last=20`);
+        if (!current(token)) return;
+        update(page, { history: true });
+      }
+      state.error = ""; render();
+      if (at !== null) root()?.querySelector(`#chat-message-${at}`)?.scrollIntoView?.({ block: "center" });
+    } catch { if (current(token)) { state.error = CHAT_COPY.unavailable; render(); } }
+    finally { if (current(token)) state.historyLoading = false; }
+  }
+  async function click(event) {
+    const button = event.target.closest?.("[data-chat-card], [data-chat-suggest], [data-chat-remove-quote], [data-chat-retry], [data-chat-make-card], [data-chat-ask-again], [data-chat-earlier]");
+    if (!button) return;
+    if (button.dataset.chatCard) { event.preventDefault(); onCard(Number(button.dataset.chatCard), button); }
+    else if (button.dataset.chatSuggest) { if (field()) field().value = button.dataset.chatSuggest; controller.focusComposer(); }
+    else if (button.hasAttribute("data-chat-remove-quote")) { controller.setQuote(null); controller.focusComposer(); }
+    else if (button.hasAttribute("data-chat-retry")) await post(state.unsent?.text || "", true);
+    else if (button.hasAttribute("data-chat-earlier")) await history();
+    else {
+      const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
+      if (!request) return;
+      if (button.hasAttribute("data-chat-ask-again")) await post(request.text);
+      else if (!state.making) {
+        const token = generation; state.making = true; render();
+        try {
+          const card = await api(`/api/boards/${encodeURIComponent(state.slug)}/cards`, { method: "POST", body: { title: request.text, message_id: request.id } });
+          if (!current(token)) return;
+          update({ linked: [{ ...card, message_id: request.id }] });
+        } catch { if (current(token)) state.error = "Could not make a card. Try again."; }
+        finally { if (current(token)) { state.making = false; render(); } }
+      }
     }
   }
-  function visibility() { if (active && !state.sending && !document.hidden) { cancel(); void tick(++generation); } }
-  return {
-    show(slug) {
-      if (active && state.requested === slug) return;
-      this.stop(); active = true;
-      state = { requested: slug, slug, projects: [], loaded: false, page: { messages: [], replies: [], cursor: 0, reply_cursor: 0 }, status: null, error: CHAT_COPY.loading };
-      const root = mount();
-      if (root) root.innerHTML = "";
-      document.addEventListener("visibilitychange", visibility);
+  function visibility() { cancel(); if (active && !state.sending && !document.hidden) void tick(++generation); }
+  async function flushOffline(item) {
+    let sent = false;
+    try {
+      await api(`/api/boards/${encodeURIComponent(item.slug)}/chat`, { method: "POST", body: { text: item.text } });
+      sent = true;
+    } catch {
+      try {
+        const page = await api(`/api/chat/${encodeURIComponent(item.slug)}?after=${item.cursor}`);
+        sent = (page.messages || []).some((m) => m.actor === `user:${item.user}` && m.text === item.text);
+      } catch { /* Keep an ambiguous send for an explicit retry when reopened. */ }
+    }
+    if (sent) forget(item.name, item.text);
+    if (active && key() === item.name && state.unsent?.text === item.text) {
+      state.unsent = sent ? null : { text: item.text, draft: item.draft, offline: false, auto: false };
+      if (sent) {
+        state.quote = null;
+        if (field()?.value === item.draft || field()?.value === item.text) { field().value = ""; drafts.delete(item.slug); }
+      }
       render();
-      return tick(++generation);
+    }
+  }
+  function online() {
+    for (const item of offlineQueue.values()) {
+      offlineQueue.delete(item.name);
+      if (active && key() === item.name && state.unsent?.auto) {
+        state.unsent.auto = false; void post(item.text, true);
+      } else void flushOffline(item);
+    }
+  }
+  const controller = {
+    async show(slug, { at, quote } = {}) {
+      if (active && state.requested === slug) {
+        if (quote !== undefined) this.setQuote(quote);
+        if (validId(at)) await history(at);
+        this.focusComposer(); return;
+      }
+      this.stop(); active = true;
+      state = { requested: slug, slug, projects: [], cards: [], me, loaded: false, page: { messages: [], replies: [], cursor: 0, reply_cursor: 0 }, status: null, quote: quote || null, error: CHAT_COPY.loading };
+      if (root()) root().innerHTML = "";
+      document.addEventListener("visibilitychange", visibility);
+      render(); await tick(++generation);
+      if (active && state.requested === slug) { if (validId(at)) await history(at); this.focusComposer(); }
     },
-    stop() {
-      active = false; generation++; cancel();
-      document.removeEventListener("visibilitychange", visibility);
-    },
+    stop() { active = false; generation++; cancel(); document.removeEventListener("visibilitychange", visibility); },
+    focusComposer() { field()?.focus(); },
+    setQuote(quote) { if (state) { state.quote = quote ? { ...quote } : null; render(); } },
+    clearUnsent,
   };
+  return controller;
 }
