@@ -14,7 +14,7 @@ const card = {
   child_cards: ["done", "done", "review", "todo"].map((status, i) => ({ number: i + 5, title: 'Original <script> & "words"', status, need: status === "review" ? "you" : "idle" })),
 };
 const collapsed = childProgress(card, false, dot);
-assert.match(collapsed, /2\/4 klaar/);
+assert.match(collapsed, /2\/4 done/);
 assert.match(collapsed, /aria-expanded="false"/);
 assert.match(collapsed, /status-dot you/);
 assert.doesNotMatch(collapsed, /Original/);
@@ -33,7 +33,7 @@ const app = await read("app.js");
 const html = childProgress(card, true, dot, "space") + childProgress(card, true, dot, "chat");
 assert.match(html, /id="children-space-4"/);
 assert.match(html, /id="children-chat-4"/);
-assert.equal((html.match(/2\/4 klaar/g) || []).length, 2);
+assert.equal((html.match(/2\/4 done/g) || []).length, 2);
 assert.match(app, /children\(card, inline \? "chat" : "space"\)/);
 const source = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
 const linkedTop = { ...card, message_id: 20, version: 1 };

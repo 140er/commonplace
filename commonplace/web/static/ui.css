@@ -43,7 +43,7 @@ body:has(.signin) { overflow-y: auto; }
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
 .setting-row button:hover { filter: none; color: var(--strong); box-shadow: inset 0 0 0 1px var(--muted); }
 .mtabs b { min-width: 0; padding: 0; background: none; color: var(--accent); font-size: 12px; }
-.space-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--strong); }
+.space-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--strong); font-weight: 700; box-shadow: inset 0 -2px var(--strong); }
 .settings-section .message { box-shadow: none; padding: 12px 0; color: var(--muted); }
 .setting-row:last-child { border-bottom: 0; }
 .setting-row button[aria-pressed="true"] { color: var(--strong); box-shadow: inset 0 0 0 1px var(--muted); }
