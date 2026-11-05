@@ -37,6 +37,12 @@ def world(tmp_path, monkeypatch, config, kg):
     monkeypatch.setenv("COMMONPLACE_PLANS", "on")
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
     _patch_mcp_server(monkeypatch, config, kg)
+    from mempalace import palace_graph
+
+    monkeypatch.setattr(
+        palace_graph, "_get_tunnel_file", lambda *a, **k: str(tmp_path / "tunnels.json")
+    )
+    monkeypatch.setattr(palace_graph, "_legacy_tunnel_file", lambda: str(tmp_path / "legacy.json"))
     mailbox = Mailbox()
     monkeypatch.setattr(mailer, "from_env", lambda: mailbox)
     db = ControlDB(str(tmp_path / "control.sqlite3"))
@@ -185,7 +191,18 @@ def mirror(w, result, *, private=False):
     else:
         stored = store.get(result["results"][0]["stored_thread_id"])
     principal = sessions.person_principal(w.client.db, w.me["user"], w.me["workspace"])
-    return mirror_pending(ctx.call_tool, principal, stored, store)
+    ids = mirror_pending(ctx.call_tool, principal, stored, store)
+    if ids:
+        return ids
+    result = ctx.call_tool(
+        principal,
+        "mempalace_list_drawers",
+        {
+            "wing": "private_threads",
+            "room": stored.id,
+        },
+    )
+    return [row["drawer_id"] for row in result.get("drawers", [])]
 
 
 def test_imported_search_r01_acl_import_http_search(world, monkeypatch):
@@ -447,7 +464,7 @@ def writer(w, user=None):
         w,
         user=user,
         policy=Policy.build(
-            profile="standard",
+            profile="full",
             trust="standard",
             read_wings=["*"],
             write_wings=["*"],
@@ -464,7 +481,19 @@ def member(w):
 
 
 def tool_value(reply):
-    return json.loads(reply["result"]["content"][0]["text"])
+    try:
+        return json.loads(reply["result"]["content"][0]["text"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {}
+
+
+def mirror_record(w, ids, text, token):
+    for drawer_id in ids:
+        status, reply = rpc(w, token, "mempalace_get_drawer", {"drawer_id": drawer_id})
+        record = tool_value(reply)
+        if status == 200 and isinstance(record, dict) and text in record.get("content", ""):
+            return record
+    return {}
 
 
 def private_mirror(w, text):
@@ -495,11 +524,17 @@ def test_imported_search_r10b_duplicate_flag_without_thread_read(world):
     text = words("duplicateflag")
     status, result = imported(w, text)
     assert status == 200
-    mirror(w, result)
+    ids = mirror(w, result)
     control(w, text)
+    owner = writer(w)
+    record = mirror_record(w, ids, text, owner)
+    document = record.get("content")
+    assert isinstance(document, str) and text in document
+    public_duplicate_control(w, owner)
     _, token = operator(w, ["memory:read", "private:read"])
-    status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": text})
+    status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": document})
     assert status == 200
+    assert "is_duplicate" in tool_value(reply)
     assert tool_value(reply)["is_duplicate"] is False  # RED
 
 
@@ -534,6 +569,8 @@ def test_imported_search_r12_tunnel_preview_uses_drawer_metadata(world):
     text = words("tunnel")
     ids = private_mirror(w, text)
     owner = writer(w)
+    record = mirror_record(w, ids, text, owner)
+    assert text in record.get("content", "")
     public_rooms(w, owner)
     status, reply = rpc(
         w,
@@ -544,7 +581,7 @@ def test_imported_search_r12_tunnel_preview_uses_drawer_metadata(world):
             "source_room": "source",
             "target_wing": "shared",
             "target_room": "destination",
-            "target_drawer_id": ids[0],
+            "target_drawer_id": record["drawer_id"],
         },
     )
     assert status == 200
@@ -557,23 +594,61 @@ def test_imported_search_r12_tunnel_preview_uses_drawer_metadata(world):
     status, reply = rpc(w, token, "mempalace_follow_tunnels", args)
     assert status == 200
     assert not quoted(text, reply)  # RED
+    assert tool_value(reply) == []
+
+
+def public_duplicate_control(w, token, checkpoint=False):
+    content = "Public reference document with unrelated botanical observations."
+    status, reply = rpc(
+        w,
+        token,
+        "mempalace_add_drawer",
+        {
+            "wing": "shared",
+            "room": "control",
+            "content": content,
+        },
+    )
+    assert status == 200
+    assert tool_value(reply).get("success"), reply
+    if checkpoint:
+        status, reply = rpc(
+            w,
+            token,
+            "mempalace_checkpoint",
+            {
+                "items": [{"wing": "shared", "room": "control-copy", "content": content}],
+            },
+        )
+        assert status == 200
+        assert tool_value(reply).get("duplicates"), reply
+    else:
+        status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": content})
+        assert status == 200
+        assert tool_value(reply).get("is_duplicate") is True, reply
 
 
 def test_imported_search_r13_checkpoint_does_not_skip_hidden_copy(world):
     w = world
     text = words("checkpoint")
-    private_mirror(w, text)
+    ids = private_mirror(w, text)
+    owner = writer(w)
+    record = mirror_record(w, ids, text, owner)
+    document = record.get("content")
+    assert isinstance(document, str) and text in document
     token = writer(w, member(w))
+    public_duplicate_control(w, token, checkpoint=True)
     status, reply = rpc(
         w,
         token,
         "mempalace_checkpoint",
         {
-            "items": [{"wing": "shared", "room": "saved", "content": text}],
+            "items": [{"wing": "shared", "room": "saved", "content": document}],
         },
     )
     assert status == 200
     value = tool_value(reply)
+    assert "added" in value and "duplicates" in value, reply
     assert value.get("added") and not value.get("duplicates")  # RED
 
 
@@ -592,7 +667,7 @@ def test_imported_search_r14_member_cannot_link_owner_thread_room(world):
         "target_wing": "private_threads",
         "target_room": room,
     }
-    # Owner can link the room. Remove that link before testing the member.
+    # Owner can link the room; the member uses a distinct public source.
     status, reply = rpc(w, owner, "mempalace_create_tunnel", args)
     assert status == 200
     value = tool_value(reply)
@@ -602,7 +677,13 @@ def test_imported_search_r14_member_cannot_link_owner_thread_room(world):
     token = writer(w, member(w))
     status, reply = rpc(w, token, "mempalace_create_tunnel", args)
     assert status == 200
-    assert tool_value(reply).get("denied") is True  # RED
+    refused = tool_value(reply)
     status, reply = rpc(w, owner, "mempalace_list_tunnels", {})
     assert status == 200
-    assert "destination" not in "\n".join(strings(reply))
+    connections = tool_value(reply)
+    assert isinstance(connections, list), reply
+    assert not any(  # RED
+        t.get("source", {}).get("room") == "destination" and t.get("target", {}).get("room") == room
+        for t in connections
+    )
+    assert refused.get("error") == "Room not found"

@@ -463,7 +463,11 @@ class Mediator:
         result = _tool_result(response) if isinstance(response, dict) else None
         cleaned = gate(self.gateway, principal, rule, result)
         if cleaned is not result:
-            response = _replace_result(response, cleaned)
+            response = (
+                _replace_result(response, cleaned)
+                if isinstance(response, dict) and isinstance(response.get("result"), dict)
+                else _tool_response(req_id, cleaned)
+            )
 
         if classify_tool(name) != "read":
             result = _tool_result(response) if isinstance(response, dict) else None
@@ -768,10 +772,14 @@ class Mediator:
 
         mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
         if mirror or (isinstance(room, str) and _THREAD_ROOM.fullmatch(room)):
-            if not isinstance(room, str) or not self.gateway.handoff.recall.can_read(
-                principal, room
-            ):
-                raise Denied("this connection can't change this thread room")
+            try:
+                allowed = isinstance(room, str) and self.gateway.handoff.recall.can_read(
+                    principal, room
+                )
+            except Exception:
+                allowed = False
+            if not allowed:
+                raise Hidden({"success": False, "error": "Room not found"})
 
     def _drawer_wings(self, principal, ids: list) -> dict:
         if not ids:

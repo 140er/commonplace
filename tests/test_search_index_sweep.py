@@ -131,8 +131,9 @@ def test_u3_c_crash_retry_idempotence(world):
     assert len(first) == 64
     assert world.store.mirror_progress(stored.id)[0] == -1
     world.worker.fail_at = None
-    # Simulate losing the process-local replay cache after a crash.
-    world.service._index_states.clear()
+    # Errors invalidate earlier successes too: replay repairs a replaced palace.
+    assert not world.service._index_states[world.ws].batches
+    world.worker.entries.clear()
     world.service.index_later(world.ws)
     world.service.wait_for_mirrors(10)
     clean = Worker()
@@ -166,6 +167,7 @@ def test_u3_d_quota_defers_between_batches(world, monkeypatch):
     world.service.index_later(world.ws, [stored.id])
     world.service.wait_for_mirrors(10)
     assert world.worker.batches == [64]
+    assert not world.service._index_states[world.ws].batches
     assert world.service.index_status(world.ws)["state"] == "deferred_storage"
     assert world.service.index_status(world.ws)["units_written"] == 64
     assert world.store.mirror_progress(stored.id)[0] == -1
@@ -220,3 +222,22 @@ def test_u3_f_principals_and_import_groups(world, monkeypatch):
     assert world.store.mirror_progress(holder.id)[0] == 0
     assert world.store.mirror_progress(fork.id)[0] == 0
     assert world.store.mirror_progress(untouched.id) is None
+
+
+def test_import_groups_enrolled_once_per_state(world, monkeypatch):
+    groups = []
+    monkeypatch.setattr(search_index, "import_groups", lambda *_: groups.append(world.ws) or set())
+    state = search_index.State()
+    assert search_index.sweep(world.service, world.ws, state) is False
+    assert search_index.sweep(world.service, world.ws, state) is False
+    assert groups == [world.ws]
+
+
+def test_batch_cache_evicts_oldest_thread(world):
+    row = put(world)
+    stale = {f"old_{i}": {b"digest": {"drawer_ids": ["old"]}} for i in range(4)}
+    state = search_index.State(batches=stale.copy())
+    search_index.sweep(world.service, world.ws, state)
+    assert "old_0" not in state.batches
+    assert row.id not in state.batches  # successful completion prunes its cache
+    assert len(state.batches) == 3

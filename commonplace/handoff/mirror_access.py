@@ -34,30 +34,30 @@ def gate(gateway, principal, rule, result):
                 pass
         return allowed[room]
 
+    def unreadable(wing, room):
+        mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
+        thread_room = isinstance(room, str) and _THREAD_ROOM.fullmatch(room)
+        return (mirror or thread_room) and (not isinstance(room, str) or not can_read(room))
+
     def scrub(node):
         if isinstance(node, dict):
-            wing = node.get("wing")
-            room = node.get("room")
-            mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
-            if mirror or (isinstance(room, str) and _THREAD_ROOM.fullmatch(room)):
-                if not isinstance(room, str) or not can_read(room):
-                    return _DROP
-            # Tunnel endpoints need not identify the previewed drawer's room.
-            if "drawer_preview" in node:
-                drawer_wing = node.get("drawer_wing")
-                drawer_room = node.get("drawer_room")
-                private = (
-                    isinstance(drawer_wing, str) and canonical_wing(drawer_wing) == MIRROR_WING
-                )
-                thread_room = isinstance(drawer_room, str) and _THREAD_ROOM.fullmatch(drawer_room)
-                if (private or thread_room) and (
-                    not isinstance(drawer_room, str) or not can_read(drawer_room)
-                ):
-                    node = {
-                        k: v
-                        for k, v in node.items()
-                        if k not in ("drawer_preview", "drawer_id", "drawer_wing", "drawer_room")
-                    }
+            if unreadable(node.get("wing"), node.get("room")):
+                return _DROP
+            if "connected_wing" in node and unreadable(
+                node.get("connected_wing"), node.get("connected_room")
+            ):
+                return _DROP
+            # Preview metadata belongs to the drawer, not to the endpoint.
+            if (
+                "drawer_preview" in node or (node.get("drawer_id") and "connected_wing" in node)
+            ) and (
+                not isinstance(node.get("drawer_wing"), str)
+                or not node["drawer_wing"].strip()
+                or not isinstance(node.get("drawer_room"), str)
+                or not node["drawer_room"].strip()
+                or unreadable(node["drawer_wing"], node["drawer_room"])
+            ):
+                return _DROP
             out = {}
             for key, value in node.items():
                 cleaned = scrub(value)
@@ -95,8 +95,7 @@ def gate(gateway, principal, rule, result):
         if all(a is b for a, b in zip(items, result["results"])):
             return result
         out = {**result, "results": items, "count": len(items), "errors": errors}
-        if "total" in out:
-            out["total"] = len(items)
+        out.pop("total", None)
         return out
     cleaned = scrub(result)
     if cleaned is _DROP:
@@ -107,6 +106,6 @@ def gate(gateway, principal, rule, result):
 def _recount(original, cleaned):
     for key in ("drawers", "results"):
         if isinstance(cleaned.get(key), list) and cleaned[key] is not original.get(key):
-            for count in ("total", "count"):
-                if count in cleaned:
-                    cleaned[count] = len(cleaned[key])
+            cleaned.pop("total", None)
+            if "count" in cleaned:
+                cleaned["count"] = len(cleaned[key])

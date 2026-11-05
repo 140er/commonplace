@@ -18,6 +18,7 @@ from tests.test_handoff_recall import MemoryStore, reader, stored
 @pytest.fixture
 def world():
     principal = reader(scopes=("memory:read", "private:read", "threads:read"), wings=("*",))
+    principal = replace(principal, policy=replace(principal.policy, tools="full"))
     store = MemoryStore()
     thread = stored()
     store.threads[thread.id] = thread
@@ -156,6 +157,7 @@ def test_u5_a1_roomless_words_fail_closed(world, field, room):
 
 
 def test_roomless_taxonomy_fails_closed(world):
+    # The rooms mapping exposes stored thread ids and counts without a readable room.
     item = {"wing": "private_threads", "rooms": {"thr_ab": 2}, "text": ""}
     assert search(world, item) == []
 
@@ -186,7 +188,7 @@ def test_odd_result_fails_closed(world, value, rule):
     assert "error" in gate(world.gateway, world.principal, rule, value)
 
 
-def test_preview_uses_own_room_and_preserves_connection(world):
+def test_preview_uses_own_room_and_drops_connection(world):
     world.private.readable.return_value = False
     connection = {
         "connected_wing": "shared",
@@ -198,7 +200,7 @@ def test_preview_uses_own_room_and_preserves_connection(world):
         "tunnel_id": "link",
     }
     result = gate(world.gateway, world.principal, "all_wings", [connection])
-    assert result == [{"connected_wing": "shared", "connected_room": "public", "tunnel_id": "link"}]
+    assert result == []
 
 
 def test_list_counts_after_drops(world):
@@ -213,4 +215,214 @@ def test_list_counts_after_drops(world):
             "total": 2,
         },
     )
-    assert result["count"] == result["total"] == 1
+    assert result["count"] == 1
+    assert "total" not in result
+
+
+@pytest.mark.parametrize("metadata", [{}, {"drawer_wing": None, "drawer_room": None}])
+def test_missing_preview_metadata_is_unreadable(world, metadata):
+    assert (
+        gate(
+            world.gateway,
+            world.principal,
+            "all_wings",
+            [
+                {
+                    "connected_wing": "shared",
+                    "connected_room": "public",
+                    "drawer_preview": "words",
+                    "drawer_id": "drawer",
+                    **metadata,
+                }
+            ],
+        )
+        == []
+    )
+
+
+def test_private_endpoint_hides_connection_without_preview(world):
+    world.private.readable.return_value = False
+    assert (
+        gate(
+            world.gateway,
+            world.principal,
+            "all_wings",
+            [
+                {
+                    "connected_wing": "private_threads",
+                    "connected_room": world.thread.id,
+                }
+            ],
+        )
+        == []
+    )
+
+
+def test_gateway_returns_original_worker_response(world):
+    from commonplace.gateway import Mediator, _tool_response
+
+    response = _tool_response(1, {"wing": "shared", "content": "words"})
+    workers = Mock(post=Mock(return_value=response))
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    assert (
+        mediator._tools_call(
+            world.principal,
+            {
+                "id": 1,
+                "params": {"name": "mempalace_status", "arguments": {}},
+            },
+        )
+        is response
+    )
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("mempalace_add_drawer", {"wing": "private_threads", "room": "{room}", "content": "words"}),
+        (
+            "mempalace_checkpoint",
+            {"items": [{"wing": "private_threads", "room": "{room}", "content": "words"}]},
+        ),
+        ("mempalace_update_drawer", {"drawer_id": "drawer", "content": "new words"}),
+        ("mempalace_delete_drawer", {"drawer_id": "drawer"}),
+        ("mempalace_delete_drawers", {"drawer_ids": ["drawer"]}),
+        (
+            "mempalace_create_tunnel",
+            {
+                "source_wing": "shared",
+                "source_room": "public",
+                "target_wing": "private_threads",
+                "target_room": "{room}",
+            },
+        ),
+        (
+            "mempalace_create_tunnel",
+            {
+                "source_wing": "shared",
+                "source_room": "public",
+                "target_wing": "shared",
+                "target_room": "public",
+                "target_drawer_id": "drawer",
+            },
+        ),
+    ],
+)
+def test_refused_thread_writes_never_reach_worker(world, tool, args):
+    import json
+
+    from commonplace.gateway import Mediator, _tool_result
+    from commonplace.policy import Policy
+
+    w = world
+    w.private.readable.return_value = False
+    policy = Policy.build(
+        profile="full",
+        trust="trusted",
+        read_wings=["*"],
+        write_wings=["*"],
+        scopes=[
+            "memory:read",
+            "memory:write",
+            "memory:delete",
+            "threads:read",
+            "private:read",
+            "private:write",
+        ],
+    )
+    principal = replace(w.principal, policy=policy)
+    workers = Mock()
+    workers.call_tool.return_value = {"results": [hit(w)]}
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = w.gateway
+    args = json.loads(json.dumps(args).replace("{room}", w.thread.id))
+    response = mediator._tools_call(
+        principal, {"id": 1, "params": {"name": tool, "arguments": args}}
+    )
+    assert _tool_result(response) == {"success": False, "error": "Room not found"}
+    workers.post.assert_not_called()
+
+
+def test_gate_cost_info_only(world, monkeypatch):
+    from statistics import median
+    from time import perf_counter
+
+    from commonplace.gateway import Mediator, _tool_response
+    from commonplace.handoff import mirror_access
+
+    w = world
+    hits = {"results": [hit(w) for _ in range(100)]}
+    gate(w.gateway, w.principal, "search", hits)  # Warm store and access path.
+
+    def sample(call, repeats):
+        values = []
+        for _ in range(repeats):
+            start = perf_counter()
+            call()
+            values.append((perf_counter() - start) * 1000)
+        return median(values)
+
+    before_hits = sample(lambda: hits, 100)
+    after_hits = sample(lambda: gate(w.gateway, w.principal, "search", hits), 100)
+    response = _tool_response(
+        1,
+        {
+            "items": [{"wing": "shared", "content": "x" * 1024} for _ in range(1024)],
+        },
+    )
+    workers = Mock(post=Mock(return_value=response))
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = w.gateway
+    request = {"id": 1, "params": {"name": "mempalace_status", "arguments": {}}}
+    # Baseline models the former whitelist's skip for a non-search tool.
+    with monkeypatch.context() as patch:
+        patch.setattr(mirror_access, "gate", lambda _g, _p, _r, result: result)
+        before_large = sample(lambda: mediator._tools_call(w.principal, request), 20)
+    after_large = sample(lambda: mediator._tools_call(w.principal, request), 20)
+    print(
+        f"P1 warm 100 hits ms: before={before_hits:.6f} after={after_hits:.6f} delta={after_hits - before_hits:.6f}"
+    )
+    size = len(response["result"]["content"][0]["text"].encode())
+    print(
+        f"P1 non-mirror {size} bytes ms: before={before_large:.6f} after={after_large:.6f} delta={after_large - before_large:.6f}"
+    )
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("metadata", [{}, {"drawer_wing": "", "drawer_room": ""}])
+def test_unhydrated_or_empty_preview_metadata_fails_closed(world, preview, metadata):
+    connection = {
+        "connected_wing": "shared",
+        "connected_room": "public",
+        "drawer_id": "drawer",
+        **metadata,
+    }
+    if preview:
+        connection["drawer_preview"] = "words"
+    assert gate(world.gateway, world.principal, "all_wings", [connection]) == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {"error": "unavailable"},
+        {"result": {"content": [{"text": "not JSON"}]}},
+        {"result": {"content": [{"text": '"unexpected words"'}]}},
+    ],
+)
+def test_gateway_malformed_drawer_response_is_not_found(world, response):
+    from commonplace.gateway import Mediator, _tool_result
+
+    workers = Mock(post=Mock(return_value=response))
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    result = mediator._tools_call(
+        world.principal,
+        {
+            "id": 1,
+            "params": {"name": "mempalace_get_drawer", "arguments": {"drawer_id": "missing"}},
+        },
+    )
+    assert _tool_result(result) == {"error": "Drawer not found: None"}
