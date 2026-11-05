@@ -35,32 +35,26 @@
   <div class="fs now" role="listitem"><span class="num" aria-hidden="true">2</span><div><b>Connect an agent</b><p>An agent is an AI helper that works on cards. The first one becomes the orchestrator.</p><button class="btn primary sm" id="connect-btn"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="7.5" rx="2"/><path d="M8 2.5V5M6 8.5v.6M10 8.5v.6"/></svg>Connect an agent</button></div></div>
   <div class="fs" role="listitem"><span class="num" aria-hidden="true">3</span><div><b>Ask for something</b><p>Write in chat. The orchestrator turns requests into cards.</p><button class="btn sm" aria-controls="chat"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Write in chat <kbd>/</kbd></button></div></div>
 </div><div class="board" role="region" aria-label="Board">
-<section class="col" aria-label="Todo, 0 cards">
+<section class="col" id="col-todo" aria-label="Todo, 0 cards">
   <div class="col-h"><h2>Todo</h2><span class="n">0</span><button class="iconbtn" aria-label="Add card to Todo"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div><p class="col-hint">Work waiting to be picked up.</p>
   <div class="cards"><button class="add-ghost"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card</button></div>
 </section>
-<section class="col" aria-label="Doing, 0 cards">
+<section class="col" id="col-doing" aria-label="Doing, 0 cards">
   <div class="col-h"><h2>Doing</h2><span class="n">0</span></div><p class="col-hint">An agent or a person is on it.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
-<section class="col" aria-label="Review, 0 cards">
+<section class="col" id="col-review" aria-label="Review, 0 cards">
   <div class="col-h"><h2>Review</h2><span class="n">0</span></div><p class="col-hint">Done, waiting for a check.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
-<section class="col" aria-label="Done, 0 cards">
+<section class="col" id="col-done" aria-label="Done, 0 cards">
   <div class="col-h"><h2>Done</h2><span class="n">0</span></div><p class="col-hint">Finished and checked.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
 </div>
 </main>
 
-<aside class="context" id="ctx" hidden aria-label="Context panel">
-  <div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context"><button role="tab" id="tab-details" aria-selected="true" aria-controls="ctx-panel" tabindex="0"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg>Details</button><button role="tab" id="tab-memory" aria-selected="false" aria-controls="ctx-panel" tabindex="-1"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</button></div><button class="hide" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg>Hide</button></div>
-  <div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-details" style="display:flex;flex-direction:column;flex:1;min-height:0">
-  <div class="ctx-body"><p style="color:var(--text-2)">Select a card to see its details here.</p></div>
-  
-  </div>
-</aside>
+
 <aside class="chatpane" id="chat" aria-labelledby="chat-h" data-return-focus="chat-toggle">
   <div class="chat-head"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div class="ch-t"><h2 id="chat-h">Atlas chat</h2><p>No orchestrator yet</p></div><button class="btn ghost sm" id="chat-close" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Close chat</button></div>
   
@@ -70,7 +64,7 @@
     <div class="msg"><span class="av lg" style="background:#3F6E5A" aria-hidden="true">M</span><div><div class="msg-h"><b>Maya</b><time>10:02</time></div>
       <div class="msg-b"><p>Plan the beta launch for 40 testers by the end of November.</p>
       <div class="msg-state" role="status"><span style="display:flex;gap:6px;align-items:center"><span class="spin" aria-hidden="true"></span><b>Waiting for an agent.</b></span><span>No agent is connected, so nobody has read this yet. It stays here and goes to the orchestrator as soon as one connects.</span>
-      <div class="acts"><button class="btn sm primary"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="7.5" rx="2"/><path d="M8 2.5V5M6 8.5v.6M10 8.5v.6"/></svg>Connect an agent</button><button class="btn sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg>Make it a card now</button></div></div></div></div></div>
+      <div class="acts"><button class="btn sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg>Make it a card now</button></div></div></div></div></div>
     <div class="msg"><span class="av lg" style="background:#3F6E5A" aria-hidden="true">M</span><div><div class="msg-h"><b>Maya</b><time>10:04</time></div>
       <div class="msg-b"><p>Also add a card for the store listing.</p>
       <div class="msg-state err" role="alert"><b>Not sent. This device is offline.</b><span style="color:var(--text)">Your words are kept here until it sends.</span><div class="acts"><button class="btn sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>Try again</button><button class="btn sm ghost"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/></svg>Edit</button></div></div></div></div></div>

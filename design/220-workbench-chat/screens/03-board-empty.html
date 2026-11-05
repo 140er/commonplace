@@ -9,7 +9,7 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<div class="shell chat-open">
+<div class="shell two">
 <nav class="rail" aria-label="Workspace">
   <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
   <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
@@ -24,7 +24,7 @@
 </nav>
 <main class="center" id="main">
 <header class="bar">
-  <h1 title="Mobile app beta">Atlas</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="true" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat<span class="ct-chip off">no orchestrator yet</span><kbd>/</kbd></button>
+  <h1 title="Mobile app beta">Atlas</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="false" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat<span class="ct-chip off">no orchestrator yet</span><kbd>/</kbd></button>
   <span class="spacer"></span>
   
   <a class="btn ghost" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg>Settings</a>
@@ -35,38 +35,31 @@
   <div class="fs" role="listitem"><span class="num" aria-hidden="true">2</span><div><b>Connect an agent</b><p>An agent is an AI helper that works on cards. The first one becomes the orchestrator.</p><button class="btn sm" id="connect-btn"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="7.5" rx="2"/><path d="M8 2.5V5M6 8.5v.6M10 8.5v.6"/></svg>Connect an agent</button></div></div>
   <div class="fs" role="listitem"><span class="num" aria-hidden="true">3</span><div><b>Ask for something</b><p>Write in chat. The orchestrator turns requests into cards.</p><button class="btn sm" aria-controls="chat"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Write in chat <kbd>/</kbd></button></div></div>
 </div><div class="board" role="region" aria-label="Board">
-<section class="col" aria-label="Todo, 0 cards">
+<section class="col" id="col-todo" aria-label="Todo, 0 cards">
   <div class="col-h"><h2>Todo</h2><span class="n">0</span><button class="iconbtn" aria-label="Add card to Todo"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div><p class="col-hint">Work waiting to be picked up.</p>
   <div class="cards"><button class="add-ghost"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card</button></div>
 </section>
-<section class="col" aria-label="Doing, 0 cards">
+<section class="col" id="col-doing" aria-label="Doing, 0 cards">
   <div class="col-h"><h2>Doing</h2><span class="n">0</span></div><p class="col-hint">An agent or a person is on it.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
-<section class="col" aria-label="Review, 0 cards">
+<section class="col" id="col-review" aria-label="Review, 0 cards">
   <div class="col-h"><h2>Review</h2><span class="n">0</span></div><p class="col-hint">Done, waiting for a check.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
-<section class="col" aria-label="Done, 0 cards">
+<section class="col" id="col-done" aria-label="Done, 0 cards">
   <div class="col-h"><h2>Done</h2><span class="n">0</span></div><p class="col-hint">Finished and checked.</p>
   <div class="cards"><p class="empty-col">Nothing yet</p></div>
 </section>
 </div>
 </main>
 
-<aside class="context" id="ctx" hidden aria-label="Context panel">
-  <div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context"><button role="tab" id="tab-details" aria-selected="true" aria-controls="ctx-panel" tabindex="0"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg>Details</button><button role="tab" id="tab-memory" aria-selected="false" aria-controls="ctx-panel" tabindex="-1"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</button></div><button class="hide" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg>Hide</button></div>
-  <div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-details" style="display:flex;flex-direction:column;flex:1;min-height:0">
-  <div class="ctx-body"><p style="color:var(--text-2)">Select a card to see its details here.</p></div>
-  
-  </div>
-</aside>
-<aside class="chatpane" id="chat" aria-labelledby="chat-h" data-return-focus="chat-toggle">
+
+<aside class="chatpane" hidden id="chat" aria-labelledby="chat-h" data-return-focus="chat-toggle">
   <div class="chat-head"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div class="ch-t"><h2 id="chat-h">Atlas chat</h2><p>No orchestrator yet</p></div><button class="btn ghost sm" id="chat-close" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Close chat</button></div>
   
   <div class="ctx-body" role="log" aria-label="Messages in Atlas chat">
-  <div class="callout info"><h3><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>This is Atlas chat. You can already write here.</h3><span>Ask for work in your own words. The <b>orchestrator</b>, the project's lead agent, reads it and turns it into cards. There is no orchestrator until you connect your first agent, so for now your messages wait here and you can turn any of them into a card yourself.</span>
-    <div class="acts"><button class="btn sm" id="connect-btn-chat"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="7.5" rx="2"/><path d="M8 2.5V5M6 8.5v.6M10 8.5v.6"/></svg>Connect an agent</button></div></div>
+  <div class="callout info"><h3><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>You can already write here</h3><span>Until an agent is connected, your messages wait here, and you can turn any of them into a card yourself.</span></div>
   <div><p class="sec-h" style="margin-bottom:8px">Try asking</p>
   <div class="suggest"><button class="chip">Plan the beta launch</button><button class="chip">Split this into cards: …</button><button class="chip">What is blocked?</button></div></div>
   </div>

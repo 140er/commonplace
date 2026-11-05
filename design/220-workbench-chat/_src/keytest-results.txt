@@ -22,8 +22,24 @@ PASS 04 Esc in message box closes, focus back on toggle: {"open":false,"ctx":tru
 PASS 04 '/' from the board opens and focuses the box: {"open":true,"ctx":false,"exp":"true","focus":"ci","inChat":true}
 PASS 04 Close chat button: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
 PASS 04 toggle again closes: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
-PASS 07 Ask a question opens chat: {"open":true,"ctx":false,"exp":"true","focus":"ci","inChat":true}
-PASS 07 Back to the approval: {"open":false,"ctx":true,"exp":"false","focus":"ask-question","inChat":false}
-PASS 09 Open in chat, then Esc: {"open":false,"ctx":true,"exp":"false","focus":"open-in-chat","inChat":false}
+PASS 07 Ask a question opens chat (both openers expanded): {"open":true,"ctx":false,"exp":"true,true","focus":"ci","inChat":true}
+PASS 07 Back to the approval: {"open":false,"ctx":true,"exp":"false,false","focus":"ask-question","inChat":false}
+PASS 09 Open in chat, then Esc: {"open":false,"ctx":true,"exp":"false,false","focus":"open-in-chat","inChat":false}
 PASS 06c chat row focus outlines its card: A-135 row → A-135; A-118 row → A-118
+PASS 06c click A-134 row → A-134 details, Back to chat strip: {"chat":false,"ctx":true,"ctxId":"A-134","ctxTitle":"Draft beta 0.9 release notes","selId":"A-134","selTitle":"Draft beta 0.9 release notes","strip":true,"focus":"H2"}
+PASS 06c Back to chat → chat open, focus on the same row: {"chat":true,"ctx":false,"ctxId":"A-134","ctxTitle":"Draft beta 0.9 release notes","selId":"A-134","selTitle":"Draft beta 0.9 release notes","strip":false,"focus":"A:A-134"}
+PASS 06c Enter on A-118 row → A-118 details: {"chat":false,"ctx":true,"ctxId":"A-118","ctxTitle":"Fix sign-up email not arriving on some domains","selId":"A-118","selTitle":"Fix sign-up email not arriving on some domains","strip":true,"focus":"H2"}
+PASS 06c open and close chat again → still A-118: {"chat":false,"ctx":true,"ctxId":"A-118","ctxTitle":"Fix sign-up email not arriving on some domains","selId":"A-118","selTitle":"Fix sign-up email not arriving on some domains","strip":false,"focus":"BUTTON"}
+PASS 06c click a board card → its details, no strip: {"chat":false,"ctx":true,"ctxId":"A-124","ctxTitle":"Translate the settings screen (de, nl, fr)","selId":"A-124","selTitle":"Translate the settings screen (de, nl, fr)","strip":false,"focus":"ARTICLE"}
+PASS 06f static: A-134 details match the selected card: {"chat":false,"ctx":true,"ctxId":"A-134","ctxTitle":"Draft beta 0.9 release notes","selId":"A-134","selTitle":"Draft beta 0.9 release notes","strip":true,"focus":"H2"}
+PASS 06f2 static: A-118 details match the selected card: {"chat":false,"ctx":true,"ctxId":"A-118","ctxTitle":"Fix sign-up email not arriving on some domains","selId":"A-118","selTitle":"Fix sign-up email not arriving on some domains","strip":true,"focus":"H2"}
+PASS 1024 px: chat row A-135 → its details beside the board (not over it): {"shown":true,"id":"A-135","boardRight":684,"ctxLeft":684}
+PASS outline follows focus and pointer: focus A-135 → A-135; focus leaves → ""; hover A-118 → A-118; pointer leaves → ""
+PASS 07 Atlas chat toggle opens without the approval strip (hidden); R opens it with the strip (shown), expanded=true,true
+PASS 09 Atlas chat toggle: quote and strip hidden,hidden; Open in chat: shown,shown
+PASS 03 starts closed (shell two); open (shell chat-open); closed again (shell two)
+PASS m10 Show A-134 → Todo 6, selected A-134; Back to chat → focus #row-A-134
+PASS m10 Show A-135 → Todo 6, selected A-135; Back to chat → focus #row-A-135
+PASS m10 Show A-118 → Doing 3, selected A-118; Back to chat → focus #row-A-118
+PASS m10 Back to board → focus #m-chat-tab (want #m-chat-tab)
 ALL PASS

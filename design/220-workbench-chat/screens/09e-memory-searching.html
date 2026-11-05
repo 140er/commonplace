@@ -23,7 +23,7 @@
   </div>
 </nav>
 <main class="center" id="main">
-<header class="bar"><h1>Memory</h1><span class="sub">Exact words from chats, cards and notes. Never summarised.</span></header>
+<header class="bar"><h1>Memory</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="false" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Atlas chat<kbd>/</kbd></button><span class="sub">Exact words from chats, cards and notes. Never summarised.</span></header>
 <div style="padding:14px 16px 6px;display:flex;flex-direction:column;gap:10px">
   <div class="search-big" role="search"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><label class="sr" for="mq">Search memory</label><input id="mq" type="search" value="rate limit batch sync exports" placeholder="Search exact words…"><kbd>↵</kbd></div>
   <div class="filters"><button class="chip">Project: <b>All</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">Source: <b>Any</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">From: <b>Anyone</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">When: <b>Any time</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><span style="margin-left:auto;font-size:12.5px;color:var(--text-3)" role="status"><span style="display:inline-flex;gap:6px;align-items:center"><span class="spin" aria-hidden="true"></span>Searching… showing results for “rate limit batch sync” until done</span></span></div>
@@ -32,6 +32,8 @@
     <p class="ex">“<mark>Batch sync</mark> should use the per-workspace <mark>limit</mark>, 600 requests a minute. The per-user <mark>limit</mark> is only for the public API.”</p></a>
   <a class="res is-loading" href="#"><div class="src"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg><b>Card A-121</b><span class="sep">·</span><span class="who agent"><span class="av agent" aria-hidden="true">O</span><b>Otto</b><span class="sr">(agent)</span></span><span class="sep">·</span><span>today, 12:40</span></div>
     <p class="ex">“I need to know which <mark>rate limit</mark> applies to <mark>batch sync</mark> before I can size the queue. …”</p></a>
+  <a class="res is-loading" href="#"><div class="src"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg><b>Atlas chat</b><span class="sep">·</span><span class="tag lbl">Quick reply · local model</span><span class="sep">·</span><span>today, 12:41</span></div>
+    <p class="ex">“… A-121 is blocked; Otto is waiting on Leon about which <mark>rate limit</mark> applies to <mark>batch sync</mark>. …”</p></a>
   <a class="res is-loading" href="#"><div class="src"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg><b>Note: API design</b><span class="sep">·</span><span class="who"><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span>Maya</span><span class="sep">·</span><span>Mon 12 Oct 2026</span></div>
     <p class="ex">“Keep one <mark>rate limit</mark> per workspace for internal traffic (<mark>sync</mark>, exports). Public API gets per-user limits.”</p></a>
 </div>
@@ -39,7 +41,20 @@
 </main>
 
 
-
+<aside class="chatpane" hidden id="chat" aria-labelledby="chat-h" data-return-focus="chat-toggle">
+  <div class="chat-head"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div class="ch-t"><h2 id="chat-h">Atlas chat</h2><p>Orchestrator connected</p></div><button class="btn ghost sm" id="chat-close" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Close chat</button></div>
+  
+  <div class="ctx-body" role="log" aria-label="Messages in Atlas chat">
+  <div class="msgs"><p class="daysep">Today</p>
+    <div class="msg"><span class="av lg" style="background:#3F6E5A" aria-hidden="true">M</span><div><div class="msg-h"><b>Maya</b><time>12:30</time></div>
+      <div class="msg-b"><p>Is anything stuck on Atlas?</p></div></div></div>
+    <p class="newsep" role="separator">New since you last looked</p>
+    <div class="msg"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div><div class="msg-h"><b>Quick reply</b><span class="tag lbl">local model</span><time>12:41</time></div>
+      <div class="msg-b"><p>From the board: one card is stuck. A-121 is blocked; Otto is waiting on Leon about which rate limit applies to batch sync. That is in Leon's Needs me, not yours. Everything else is moving.</p>
+      <div class="made" role="group" aria-labelledby="mh-1241"><div class="made-h"><span id="mh-1241">Cards in this answer</span><span>select one to open its details</span></div><a href="#" data-card="A-121"><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><span><span class="cid">A-121</span> Offline mode: queue edits…</span><span class="where">Doing · Otto</span><span class="sr">, show on the board</span></a></div></div></div></div></div>
+  </div>
+  <div class="ctx-foot"><div class="chat-input"><label class="sr" for="ci">Message to Atlas chat</label><div class="box"><textarea id="ci" rows="2" placeholder="Ask for something…"></textarea><button class="btn primary sm" aria-label="Send"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8 13.5 3l-3 10.5-2.3-4.3z"/><path d="M8.2 9.2 13.5 3"/></svg></button></div><div class="hint"><span>Enter to send · Shift+Enter new line</span><span><kbd>Esc</kbd> closes the chat</span></div></div></div>
+</aside>
 </div>
 
 </body>

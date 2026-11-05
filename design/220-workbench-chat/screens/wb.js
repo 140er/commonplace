@@ -1,6 +1,7 @@
 /* Workbench keyboard behaviour for the static screens (design reference, no network).
    Demonstrates: initial focus, roving tabindex on the board, tablists, the palette
    listbox, modal focus trap + Esc + focus return, and the single-key shortcut rules. */
+let showDetailsRef = null;
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -43,6 +44,7 @@
       $$(".board .card").forEach((c) => { c.classList.remove("is-selected"); c.removeAttribute("aria-current"); });
       card.classList.add("is-selected");
       card.setAttribute("aria-current", "true");
+      if (typeof showDetailsRef === "function") showDetailsRef($(".cid", card).textContent, null);
     }
     if (next) { e.preventDefault(); moveTo(next); }
   });
@@ -107,7 +109,7 @@
     if (e.key === "/") { e.preventDefault(); openChat($("#chat-toggle")); return; }
     if (e.key === "]" && chatOpen()) { e.preventDefault(); closeChat(); return; }
     const target = keys[e.key.toLowerCase()] && $(keys[e.key.toLowerCase()]);
-    if (target) { e.preventDefault(); target.focus(); }
+    if (target) { e.preventDefault(); if (e.key.toLowerCase() === "r") target.click(); else target.focus(); }
   });
 
   // 8. Chat (B + chat): one toggle opens and closes the project chat in the right-hand slot.
@@ -120,15 +122,22 @@
     const p = pane(); if (!p) return;
     p.hidden = !on;
     const ctx = $("#ctx"); if (ctx) ctx.hidden = on;
-    const shell = $(".shell"); if (shell) shell.classList.toggle("chat-open", on);
+    const shell = $(".shell");
+    if (shell) { shell.classList.toggle("chat-open", on); if (!ctx) shell.classList.toggle("two", !on); }
     $$('[aria-controls="chat"]').forEach((b) => b.setAttribute("aria-expanded", String(on)));
   }
-  function openChat(from) {
+  function openChat(from, focusEl) {
     if (!pane()) return;
     opener = from || $("#chat-toggle");
+    // Context strips ("You are asking about…", the memory quote) only belong to the control that opened them.
+    $$("[data-about-for]", pane()).forEach((el) => (el.hidden = !(opener && el.dataset.aboutFor === opener.id)));
+    const strip = $("#from-chat"); if (strip) strip.hidden = true;
+    const sh = $(".shell"); if (sh) sh.classList.remove("ctx-pushed");
     setOpen(true);
-    const log = $('[role="log"]', pane()); if (log) log.scrollTop = log.scrollHeight;
-    const box = $("textarea", pane()); if (box) box.focus();
+    const log = $('[role="log"]', pane()), hit = log && $(".hit", log);
+    if (focusEl) focusEl.scrollIntoView({ block: "nearest" });
+    else if (log) log.scrollTop = hit && opener && opener.id === "open-in-chat" ? hit.offsetTop - log.offsetTop - 60 : log.scrollHeight;
+    const f = focusEl || $("textarea", pane()); if (f) f.focus();
   }
   function closeChat() {
     setOpen(false);
@@ -143,6 +152,40 @@
     if (chatOpen() && t.id === "chat-toggle") return closeChat();
     openChat(t);
   });
+
+  // 9. Card details always match the selected card. A chat card row opens THAT card's details in the right-hand
+  //    slot with a "Back to chat" strip; Back to chat reopens the chat at the same row. Board selection does the same
+  //    (without the strip). Details come from <template id="tpl-A-…">, built from the same data as the card.
+  const cardOf = (id) => $$(".board .card").find((c) => $(".cid", c) && $(".cid", c).textContent === id);
+  showDetailsRef = (id, row) => showDetails(id, row);
+  function showDetails(id, row) {
+    const tpl = document.getElementById("tpl-" + id), panel = $("#ctx-panel");
+    $$(".board .card").forEach((c) => { c.classList.remove("is-selected"); c.removeAttribute("aria-current"); });
+    const c = cardOf(id);
+    if (c) { c.classList.add("is-selected"); c.setAttribute("aria-current", "true"); c.scrollIntoView({ block: "nearest" }); }
+    if (!tpl || !panel) return;
+    panel.innerHTML = tpl.innerHTML;
+    $$("#ctx [role=tab]").forEach((t) => { const on = t.id === "tab-details"; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; });
+    panel.setAttribute("aria-labelledby", "tab-details");
+    const strip = $("#from-chat");
+    if (strip) { strip.hidden = !row; strip.dataset.row = row ? id : ""; }
+    if (row) {
+      setOpen(false);
+      const sh = $(".shell"); if (sh) sh.classList.add("ctx-pushed");
+      const h = $("h2", panel); if (h) h.focus();
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const r = e.target.closest && e.target.closest("#chat [data-card]");
+    if (r) { e.preventDefault(); return showDetails(r.dataset.card, r); }
+    const back = e.target.closest && e.target.closest("[data-back-chat]");
+    if (back) {
+      const id = $("#from-chat").dataset.row;
+      return openChat($("#chat-toggle"), id && $(`#chat [data-card="${id}"]`));
+    }
+    const c = e.target.closest && e.target.closest(".board .card");
+    if (c && !e.target.closest("button")) showDetails($(".cid", c).textContent, null);
+  });
   // Esc inside the chat (also from the message box; the draft stays) closes it. Dialogs keep their own Esc.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || modal() || !chatOpen() || !pane().contains(document.activeElement)) return;
@@ -150,28 +193,25 @@
     closeChat();
   });
   // Rows in chat point at cards: focus or hover outlines the card on the board (dashed), so the link is visible.
-  const mark = (row, on) => {
-    const id = row.dataset.card;
-    $$(".board .card").forEach((c) => { if (c.querySelector(".cid") && c.querySelector(".cid").textContent === id) c.classList.toggle("is-linked", on); });
-  };
-  ["focusin", "mouseover"].forEach((ev) => document.addEventListener(ev, (e) => { const r = e.target.closest && e.target.closest("[data-card]"); if (r) { $$(".card.is-linked").forEach((c) => c.classList.remove("is-linked")); mark(r, true); } }));
-  // Selecting a chat row selects its card on the board (focus stays in the chat).
-  document.addEventListener("click", (e) => {
+  // The outline goes away when focus or the pointer leaves the row.
+  const clearLinked = () => $$(".board .card.is-linked").forEach((c) => c.classList.remove("is-linked"));
+  ["focusin", "mouseover"].forEach((ev) => document.addEventListener(ev, (e) => {
     const r = e.target.closest && e.target.closest("#chat [data-card]");
-    if (!r) return;
-    e.preventDefault();
-    $$(".board .card").forEach((c) => {
-      const on = c.querySelector(".cid") && c.querySelector(".cid").textContent === r.dataset.card;
-      c.classList.toggle("is-selected", on);
-      if (on) { c.setAttribute("aria-current", "true"); c.scrollIntoView({ block: "nearest" }); } else c.removeAttribute("aria-current");
-    });
-  });
-  // Chat logs open at the newest message, or at the message a memory result pointed to.
+    if (r) { clearLinked(); const c = cardOf(r.dataset.card); if (c) c.classList.add("is-linked"); }
+  }));
+  ["focusout", "mouseout"].forEach((ev) => document.addEventListener(ev, (e) => {
+    const r = e.target.closest && e.target.closest("#chat [data-card]");
+    if (r && !(e.relatedTarget && r.contains(e.relatedTarget))) clearLinked();
+  }));
   addEventListener("DOMContentLoaded", () => {
+    // Chat logs open at the newest message, or at the message a memory result pointed to.
     $$('.chatpane [role="log"], .m-chat-log').forEach((l) => {
       const hit = $(".hit", l);
       if (hit) l.scrollTop = hit.offsetTop - l.offsetTop - 60; else l.scrollTop = l.scrollHeight;
     });
+    // A link may name the element to return to (#m-chat-tab, #row-A-135): focus it, so Back keeps your place.
+    const target = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
+    if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
     // Restore the single-key switch from storage so the sheet never shows On while keys are off.
     const sw = $('[role="switch"]');
     if (sw && localStorage.getItem("wb-single-keys") === "off") { sw.setAttribute("aria-checked", "false"); const st = $(".state", sw); if (st) st.textContent = "Off"; }

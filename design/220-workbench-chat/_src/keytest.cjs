@@ -1,5 +1,5 @@
 // Live keyboard check of the static screens (playwright-core + local Chrome; no network).
-// Usage: node _src/keytest.cjs <path-to-playwright-core>
+// Usage: node _src/keytest.cjs <path-to-playwright-core>   (uses /usr/bin/google-chrome)
 const { chromium } = require(process.argv[2]);
 const path = require("path");
 const D = path.resolve(__dirname, "..", "screens");
@@ -100,9 +100,9 @@ const cases = [
   check("04 toggle again closes", await st(), { open: false, exp: "false", focus: "chat-toggle" });
   await page.goto("file://" + D + "/07-needs-me.html"); await page.waitForTimeout(100);
   await page.click("#ask-question");
-  check("07 Ask a question opens chat", await st(), { open: true, ctx: false, exp: "true", inChat: true });
+  check("07 Ask a question opens chat (both openers expanded)", await st(), { open: true, ctx: false, exp: "true,true", inChat: true });
   await page.click("[data-close-chat]");
-  check("07 Back to the approval", await st(), { open: false, ctx: true, exp: "false", focus: "ask-question" });
+  check("07 Back to the approval", await st(), { open: false, ctx: true, exp: "false,false", focus: "ask-question" });
   await page.goto("file://" + D + "/09-memory.html"); await page.waitForTimeout(100);
   await page.click("#open-in-chat"); await page.keyboard.press("Escape");
   check("09 Open in chat, then Esc", await st(), { open: false, ctx: true, focus: "open-in-chat" });
@@ -115,6 +115,100 @@ const cases = [
   const lok = l1 === "A-135" && l2 === "A-118";
   if (!lok) fails++;
   console.log(`${lok ? "PASS" : "FAIL"} 06c chat row focus outlines its card: A-135 row → ${l1}; A-118 row → ${l2}`);
+  // Round 2: chat card row → that card's details (with Back to chat); details always match the selected card.
+  const det = () => page.evaluate(() => {
+    const sel = document.querySelector(".board .card.is-selected");
+    const ctx = document.getElementById("ctx");
+    return {
+      chat: !document.getElementById("chat").hidden, ctx: !ctx.hidden,
+      ctxId: ctx.querySelector(".detail-h .cid").textContent, ctxTitle: ctx.querySelector(".detail-h h2").textContent.trim(),
+      selId: sel && sel.querySelector(".cid").textContent, selTitle: sel && sel.querySelector("h3").textContent.trim(),
+      strip: !document.getElementById("from-chat").hidden, focus: document.activeElement.tagName + (document.activeElement.dataset.card ? ":" + document.activeElement.dataset.card : ""),
+    };
+  });
+  const agree = (label, d, id, extra = {}) => {
+    const ok = d.ctxId === id && d.selId === id && d.ctxTitle === d.selTitle && Object.keys(extra).every((k) => d[k] === extra[k]);
+    if (!ok) fails++;
+    console.log(`${ok ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(d)}`);
+  };
+  await page.goto("file://" + D + "/06c-chat-answer.html"); await page.waitForTimeout(100);
+  await page.click('#chat [data-card="A-134"]');
+  agree("06c click A-134 row → A-134 details, Back to chat strip", await det(), "A-134", { chat: false, ctx: true, strip: true, focus: "H2" });
+  await page.click("[data-back-chat]");
+  const back1 = await det();
+  const bok = back1.chat && back1.focus === "A:A-134";
+  if (!bok) fails++;
+  console.log(`${bok ? "PASS" : "FAIL"} 06c Back to chat → chat open, focus on the same row: ${JSON.stringify(back1)}`);
+  await page.focus('#chat [data-card="A-118"]'); await page.keyboard.press("Enter");
+  agree("06c Enter on A-118 row → A-118 details", await det(), "A-118", { chat: false, strip: true });
+  await page.click("#chat-toggle"); await page.click("#chat-toggle");
+  agree("06c open and close chat again → still A-118", await det(), "A-118", { chat: false, ctx: true, strip: false });
+  await page.click('.board .card[aria-label^="A-124"] h3');
+  agree("06c click a board card → its details, no strip", await det(), "A-124", { strip: false });
+  await page.goto("file://" + D + "/06f-chat-card-details.html"); await page.waitForTimeout(100);
+  agree("06f static: A-134 details match the selected card", await det(), "A-134", { chat: false, strip: true });
+  await page.goto("file://" + D + "/06f2-chat-card-details-a118.html"); await page.waitForTimeout(100);
+  agree("06f2 static: A-118 details match the selected card", await det(), "A-118", { chat: false, strip: true });
+  // Tablet: a chat row opens the card in the pushed slot, visible next to the board
+  const tp = await browser.newPage({ viewport: { width: 1024, height: 768 } });
+  await tp.goto("file://" + D + "/06c-chat-answer.html"); await tp.waitForTimeout(100);
+  await tp.click('#chat [data-card="A-135"]');
+  const tv = await tp.evaluate(() => { const c = document.getElementById("ctx"); const r = c.getBoundingClientRect(); return { shown: getComputedStyle(c).display !== "none" && r.width > 300, id: c.querySelector(".detail-h .cid").textContent, boardRight: document.querySelector(".center").getBoundingClientRect().right, ctxLeft: r.left }; });
+  const tok = tv.shown && tv.id === "A-135" && tv.ctxLeft >= tv.boardRight - 1;
+  if (!tok) fails++;
+  console.log(`${tok ? "PASS" : "FAIL"} 1024 px: chat row A-135 → its details beside the board (not over it): ${JSON.stringify(tv)}`);
+  await tp.close();
+  // focusout / mouseout clear the dashed outline
+  await page.goto("file://" + D + "/06c-chat-answer.html"); await page.waitForTimeout(100);
+  await page.focus('#chat [data-card="A-135"]'); const f1 = await linked();
+  await page.focus("#ci"); const f2 = await linked();
+  await page.hover('#chat [data-card="A-118"]'); const m1 = await linked();
+  await page.mouse.move(600, 850); const m2 = await linked();
+  const ook = f1 === "A-135" && f2 === "" && m1 === "A-118" && m2 === "";
+  if (!ook) fails++;
+  console.log(`${ook ? "PASS" : "FAIL"} outline follows focus and pointer: focus A-135 → ${f1}; focus leaves → "${f2}"; hover A-118 → ${m1}; pointer leaves → "${m2}"`);
+  // Needs me and Memory have the project Chat control; context strips only for their own opener
+  const strips = () => page.evaluate(() => [...document.querySelectorAll("#chat [data-about-for]")].map((e) => e.hidden ? "hidden" : "shown").join(","));
+  await page.goto("file://" + D + "/07-needs-me.html"); await page.waitForTimeout(100);
+  await page.click("#chat-toggle");
+  const s1 = await st(); const sa = await strips();
+  await page.keyboard.press("Escape");
+  await page.focus("h2[data-autofocus]"); await page.keyboard.press("r");
+  const s2 = await st(); const sb = await strips();
+  const nok = s1.open && sa === "hidden" && s2.open && sb === "shown" && s2.exp === "true,true";
+  if (!nok) fails++;
+  console.log(`${nok ? "PASS" : "FAIL"} 07 Atlas chat toggle opens without the approval strip (${sa}); R opens it with the strip (${sb}), expanded=${s2.exp}`);
+  await page.goto("file://" + D + "/09-memory.html"); await page.waitForTimeout(100);
+  await page.click("#chat-toggle"); const ma = await strips(); await page.keyboard.press("Escape");
+  await page.click("#open-in-chat"); const mb = await strips();
+  const mok = ma === "hidden,hidden" && mb === "shown,shown";
+  if (!mok) fails++;
+  console.log(`${mok ? "PASS" : "FAIL"} 09 Atlas chat toggle: quote and strip ${ma}; Open in chat: ${mb}`);
+  await page.goto("file://" + D + "/03-board-empty.html"); await page.waitForTimeout(100);
+  const cls = () => page.evaluate(() => document.querySelector(".shell").className);
+  const c0 = await cls(); await page.click("#chat-toggle"); const c1 = await cls(); await page.keyboard.press("Escape"); const c2 = await cls();
+  const eok = /two/.test(c0) && /chat-open/.test(c1) && !/two/.test(c1) && /two/.test(c2) && !/chat-open/.test(c2);
+  if (!eok) fails++;
+  console.log(`${eok ? "PASS" : "FAIL"} 03 starts closed (${c0}); open (${c1}); closed again (${c2})`);
+  // Mobile: each Show goes to its own card; Back keeps your place
+  const mp = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const res = [];
+  for (const id of ["A-134", "A-135", "A-118"]) {
+    await mp.goto("file://" + D + "/m10-chat.html"); await mp.waitForTimeout(100);
+    await mp.click(`#row-${id}`); await mp.waitForTimeout(150);
+    const r = await mp.evaluate(() => ({ sel: document.querySelector(".card.is-selected .cid").textContent, col: document.querySelector('[role=tab][aria-selected=true]').textContent.trim(), focus: document.activeElement.getAttribute("aria-label") || "" }));
+    await mp.click(".m-frombar a"); await mp.waitForTimeout(150);
+    const back = await mp.evaluate(() => document.activeElement.id);
+    const ok = r.sel === id && r.focus.startsWith(id) && back === "row-" + id && r.col.startsWith(id === "A-118" ? "Doing" : "Todo");
+    if (!ok) fails++;
+    res.push(`${ok ? "PASS" : "FAIL"} m10 Show ${id} → ${r.col}, selected ${r.sel}; Back to chat → focus #${back}`);
+  }
+  await mp.goto("file://" + D + "/m10-chat.html"); await mp.waitForTimeout(100);
+  await mp.click("#m-chat-back"); await mp.waitForTimeout(150);
+  const tb = await mp.evaluate(() => document.activeElement.id);
+  if (tb !== "m-chat-tab") fails++;
+  res.push(`${tb === "m-chat-tab" ? "PASS" : "FAIL"} m10 Back to board → focus #${tb} (want #m-chat-tab)`);
+  console.log(res.join("\n"));
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASS");
   process.exit(fails ? 1 : 0);
