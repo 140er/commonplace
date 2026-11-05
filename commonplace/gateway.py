@@ -458,6 +458,13 @@ class Mediator:
                     args["drawer_id"] = unhide.get(args.get("drawer_id"), args.get("drawer_id"))
                 notes.append(f"{len(unhide)} hidden drawer(s) answered as missing")
 
+        if rule in ("search", "drawer_read", "read_wing"):
+            from .handoff.mirror_access import gate
+
+            result = _tool_result(response) if isinstance(response, dict) else None
+            if result is not None:
+                response = _replace_result(response, gate(self.gateway, principal, rule, result))
+
         if classify_tool(name) != "read":
             result = _tool_result(response) if isinstance(response, dict) else None
             ok = isinstance(result, dict) and not result.get("error") and "error" not in response
