@@ -142,6 +142,8 @@ class FrontWorker:
                 called = True
                 store.finish(db, job, "running", "", called=True)
 
+            if settings.front(db, job.workspace_id, job.board) != config:
+                return finish("skipped", "off")
             reply = model.complete(config, key, system, turns, on_sent=sent)
             if not called:
                 sent()
@@ -184,6 +186,16 @@ class FrontWorker:
 
 
 def build_context(gateway, principal, job: Job) -> tuple[str, list[dict]]:
+    config = settings.front(gateway.db, job.workspace_id, job.board)
+    return _build_context(gateway, principal, job, full=settings.is_local(config))
+
+
+def build_runner_context(gateway, principal, job: Job) -> tuple[str, list[dict]]:
+    """The poster's opted-in full runner context is independent of chat settings."""
+    return _build_context(gateway, principal, job, full=True, runner=True)
+
+
+def _build_context(gateway, principal, job, *, full, runner=False):
     def clean(value, *, quoted=True):
         text = str(value) if value is not None else ""
         if len(text) > redact.MAX_CHARS:
@@ -207,11 +219,10 @@ def build_context(gateway, principal, job: Job) -> tuple[str, list[dict]]:
         parts.append(
             "Status: " + clean(orchestrator.status if orchestrator.visible else "status private")
         )
-    config = settings.front(gateway.db, job.workspace_id, job.board)
-    if settings.is_local(config):
+    if full:
         for card in service.task_list(job.board)[:15]:
             parts.append(
-                f"Card (quoted data): #{card['number']} "
+                ("Card (quoted data): " if runner else f"Card (quoted data): #{card['number']} ")
                 + " | ".join(clean(card.get(k)) for k in ("title", "status", "assignee"))
             )
         view = status.snapshot(gateway, principal, job.board)
@@ -222,9 +233,11 @@ def build_context(gateway, principal, job: Job) -> tuple[str, list[dict]]:
     recent = service.space_read(job.board, before=job.message_id, last=CONTEXT_MESSAGES)["messages"]
     from commonplace.web import _people
 
-    people = _people(gateway.db, principal.workspace_id)
+    people = {} if runner else _people(gateway.db, principal.workspace_id)
 
     def display(actor):
+        if runner:
+            return actor
         return people.get(
             actor,
             actor.removeprefix("conn:") + " (agent)" if actor.startswith("conn:") else "Person",

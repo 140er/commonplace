@@ -36,6 +36,10 @@ def ensure_schema(db) -> None:
         db._conn.executescript(_SCHEMA)
 
 
+class LocalProviderMismatch(ValueError):
+    pass
+
+
 class NotLoopback(ValueError):
     pass
 
@@ -155,6 +159,8 @@ def set_front(db, principal, body: dict) -> FrontSettings:
     ):
         raise ValueError("Invalid chat key reference")
     if mode == "local":
+        if provider != "openai_compatible":
+            raise LocalProviderMismatch()
         if base_url is None:
             base_url = "http://127.0.0.1:11434"
         try:
@@ -201,6 +207,8 @@ def set_front(db, principal, body: dict) -> FrontSettings:
         principal.user_id,
         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
+    if scope != "*" and settings.provider != "none" and not is_local(settings) and mode != "hosted":
+        raise ValueError("Turn on is required for a board's hosted provider")
     if key_ref is not None and not key_allowed(settings):
         raise types.ChatDenied("key references need operator approval")
     with db._lock, db._tx() as conn:

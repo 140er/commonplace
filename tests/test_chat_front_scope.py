@@ -298,3 +298,61 @@ def test_r11_probe_wire(response_status):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+# Fix-round consent and freshness proofs use existing HTTP and worker APIs.
+def test_fix_r01_scoped_hosted_requires_turn_on(chat_hub, monkeypatch):
+    h = chat_hub
+    with model_server() as (origin, calls):
+        url = origin.replace("127.0.0.1", "model.ts.net")
+        real = socket.getaddrinfo
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda host, *a, **kw: real("127.0.0.1" if host == "model.ts.net" else host, *a, **kw),
+        )
+        front = {"provider": "openai_compatible", "model": "small", "base_url": url}
+        code, _ = put(h, front=front, scope="work")
+        h.post(h.owner, "hello before consent")
+        h.drain()
+        assert (code, len(calls)) == (400, 0)  # RED
+        assert put(h, front=front, scope="work", mode="hosted")[0] == 200
+        h.post(h.owner, "hello after consent")
+        h.drain()
+        assert len(calls) == 1
+
+
+def test_fix_r02_local_provider_mismatch(chat_hub):
+    code, body = put(chat_hub, front={"provider": "none", "model": "small"}, mode="local")
+    assert code == 400
+    assert body == {"error": "invalid_local_provider"}  # RED
+
+
+def test_fix_r03_revoke_during_context_build(chat_hub, monkeypatch):
+    h = chat_hub
+    assert h.configure()[0] == 200
+    calls = h.fake_model(monkeypatch)
+    original = worker.build_context
+
+    def build(*args):
+        result = original(*args)
+        settings.set_front(h.db, h.person(h.admin), {"front": {"provider": "none"}})
+        return result
+
+    monkeypatch.setattr(worker, "build_context", build)
+    h.post(h.owner, "hello")
+    h.drain()
+    assert calls == []  # RED
+    assert h.rows("chat_front_jobs")[0]["code"] == "off"
+
+
+def test_fix_g01_legacy_workspace_hosted_write(chat_hub):
+    code, _ = put(
+        chat_hub,
+        front={
+            "provider": "openai_compatible",
+            "model": "small",
+            "base_url": "https://example.invalid",
+        },
+    )
+    assert code == 200

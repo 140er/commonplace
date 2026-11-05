@@ -176,6 +176,9 @@ def configuration(gateway, h):
         except ChatDenied:
             send_json(h, 403, {"error": "Chat settings not allowed"})
             return
+        except settings.LocalProviderMismatch:
+            send_json(h, 400, {"error": "invalid_local_provider"})
+            return
         except settings.NotLoopback:
             send_json(h, 400, {"error": "not_loopback"})
             return

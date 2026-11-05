@@ -115,6 +115,10 @@ def handle(gateway, principal, slug: str, params: dict[str, str]) -> tuple[int, 
             results.extend(_result("reply", board["slug"], row) for row in replies[:20])
             truncated |= len(replies) > 20
     results.sort(
-        key=lambda row: (datetime.fromisoformat(row["at"]).timestamp(), row["id"]), reverse=True
+        key=lambda row: (
+            datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp(),
+            row["id"],
+        ),
+        reverse=True,
     )
     return 200, {"results": results, "truncated": truncated}
