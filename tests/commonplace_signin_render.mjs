@@ -78,7 +78,7 @@ test("messages match the contract and unknown codes never get reflected", () => 
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProviders = () => ({ providers }), me, answers = {}, elements = {} } = {}) {
-  const listeners = new Map(), rootListeners = new Map(), calls = [], replacements = [];
+  const listeners = new Map(), rootListeners = new Map(), calls = [], cleared = [], replacements = [];
   const voice = { resets: 0, stops: 0, reset() { this.resets++; }, stop() { this.stops++; }, load() {} };
   const root = { innerHTML: "", addEventListener: (name, handler) => rootListeners.set(name, handler), querySelector: (selector) => elements[selector] || null, querySelectorAll: () => [] };
   const location = { search, pathname, hash };
@@ -95,6 +95,8 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
     digestSpeech: () => ({ stop() {} }),
     voiceInput: () => voice,
     rulesHandlers: () => ({ stale: false, force: false, busy: () => false, update() {} }),
+    // Imports are stripped: sign-out clears the signed-in user's chat seen ids through this.
+    clearSeen: (user) => cleared.push(user),
     setInterval() {}, setTimeout() {}, clearTimeout() {},
     async api(path) {
       calls.push(path);
@@ -111,7 +113,7 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
   });
   const source = me === undefined ? appSource : appSource.replace("async function route() {", 'async function route() { calls.push("route:" + location.hash); return; } async function __route() {');
   runInContext(source, context);
-  return { root, calls, replacements, location, context, voice, expire: () => listeners.get("session-expired")(), logout: () => rootListeners.get("click")({ target: { closest: () => ({ dataset: { action: "logout" } }) } }) };
+  return { root, calls, cleared, replacements, location, context, voice, expire: () => listeners.get("session-expired")(), logout: () => rootListeners.get("click")({ target: { closest: () => ({ dataset: { action: "logout" } }) } }) };
 }
 
 test("boot maps callback errors, clears auth parameters and caches providers across expiry", async () => {
@@ -192,6 +194,7 @@ test("sign-out stops voice before the request and resets it on return to sign-in
   runInContext('state.me = { user: "test-user" }; state.drafts.set("message", "draft");', page.context);
   await page.logout();
   assert.equal(page.calls.at(-1), "/app/logout");
+  assert.deepEqual(page.cleared, ["test-user"]);
   assert.equal(page.voice.stops, 1);
   assert.equal(page.voice.resets, resets + 1);
   assert.equal(runInContext("state.me === null && state.drafts.size === 0", page.context), true);
