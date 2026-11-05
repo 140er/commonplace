@@ -28,7 +28,7 @@ const typing = (el) => el?.isContentEditable || !!el?.closest('input, textarea, 
 export function createDock({ root, api, e = escapeHTML, chat }) {
   const shell = typeof root === "function" ? root() : root;
   const doc = shell.ownerDocument, win = doc.defaultView;
-  let header, toggle, announcement, pane, content, about, scrim, heading;
+  let header, toggle, announcement, pane, content, about, scrim, heading, statusLine;
   let board, label = "Chat", unread = 0, hasOrchestrator = false;
   let opened = false, inDetails = false, opener = null, openerKey = null, returnRow = null, generation = 0;
   let context, contextHidden, wasTwo, strip = null, shownBoard = null;
@@ -152,14 +152,21 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     pane.setAttribute("aria-labelledby", "chat-h");
     pane.setAttribute("tabindex", "-1");
     const bar = make("div", "chat-head", pane);
+    const icon = make("span", "ch-ic", bar);
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>';
     const title = make("div", "ch-t", bar);
     heading = make("h2", "", title);
     heading.id = "chat-h";
+    // The chat's one-line status ("Orchestrator connected", "Connected, not answering since 14:02").
+    statusLine = make("p", "ch-status", title);
+    statusLine.hidden = true;
+    chat.watchHeader?.((text) => { statusLine.textContent = text; statusLine.hidden = !text; });
     const closeButton = make("button", "btn ghost sm", bar);
     closeButton.type = "button";
     closeButton.id = "chat-close";
     closeButton.dataset.closeChat = "";
-    closeButton.textContent = "Close chat";
+    closeButton.innerHTML = '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Close chat';
     closeButton.setAttribute("aria-keyshortcuts", "Escape ]");
     about = make("div", "chat-about", pane);
     about.setAttribute("role", "note");

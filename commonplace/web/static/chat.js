@@ -11,7 +11,7 @@ export const CHAT_COPY = Object.freeze({
   runnerAnswer: "via your {cli} login", runnerMode: "Answers via your {cli} login",
   runnerUsage: "{used}/{cap} today", runnerError: "Last error: {code}",
   offline: "Not sent. This device is offline. Your words are kept here until it sends.",
-  retry: "Not sent. Try again", sending: "Sending…", waiting: "Waiting to send your earlier message.", discard: "Discard",
+  retry: "Not sent. Try again", sending: "Sending…", kept: "Your message is kept, and nothing changed on the board.", waiting: "Waiting to send your earlier message.", discard: "Discard",
 });
 
 const marked = (value, e) => e(value).replace(/\[(?:redacted|omitted):[a-z_]+\]/g, (marker) => `<mark class="redacted">${marker}</mark>`);
@@ -43,9 +43,9 @@ function messageSource(message, me, board) {
   return words(`${writer(message.actor, me, board).replace(/ \(agent\)$/, "")}'s`, clock(message.at), "message");
 }
 
-function cardRows(cards, heading, key, board, e, src = "") {
+function cardRows(cards, heading, key, board, e, src = "", note = "select one to open its details") {
   if (!cards.length) return "";
-  return `<div class="chat-cards" role="group" aria-labelledby="${e(key)}"><div class="chat-cards-heading" id="${e(key)}">${e(heading)}</div>${cards.map((card) => `<a id="chat-row-${e(key)}-${card.number}" href="#/card/${card.number}" data-chat-card="${card.number}" data-src="${e(src)}"><span class="cid">${e(cardId(board, card.number))}</span><span>${marked(card.title || "", e)}</span><span class="chat-card-status">${e(card.status || "")} <span class="chat-show">Show →</span></span></a>`).join("")}</div>`;
+  return `<div class="chat-cards" role="group" aria-labelledby="${e(key)}"><div class="chat-cards-heading"><span id="${e(key)}">${e(heading)}</span><span class="chat-cards-note">${e(note)}</span></div>${cards.map((card) => `<a id="chat-row-${e(key)}-${card.number}" href="#/card/${card.number}" data-chat-card="${card.number}" data-src="${e(src)}"><span class="cid">${e(cardId(board, card.number))}</span><span>${marked(card.title || "", e)}</span><span class="chat-card-status">${e(card.status || "")} <span class="chat-show">Show →</span></span></a>`).join("")}</div>`;
 }
 
 export function chatHTML(page, me, e) {
@@ -80,15 +80,15 @@ export function chatHTML(page, me, e) {
         if (reply.model?.startsWith("runner:")) {
           const [cli, ...model] = reply.model.slice(7).split("/");
           stamp += ` · ${CHAT_COPY.runnerAnswer.replace("{cli}", () => cli)}${model.length ? ` · ${model.join("/")}` : ""}`;
-        } else if (reply.model) stamp += ` · ${modelName(reply.model)}`;
+        }
         const prefix = cardId(board, 1).split("-")[0];
         const refs = new Set([...String(reply.text).matchAll(/(?:^|[^\w-])(?:#([1-9]\d*)|([A-Za-z])-([1-9]\d*))(?![\w-])/g)].filter((m) => m[1] || m[2].toUpperCase() === prefix).map((m) => Number(m[1] || m[3])));
         const referenced = reply.kind === "answer" ? cards.filter((card) => refs.has(card.number)) : [];
         // Never the model id: the strip names the kind of quick reply only.
         const src = words("the", clock(reply.at), reply.kind === "answer" ? `quick reply (${quickKind(reply.model)})` : "delivery update");
-        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b></div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the orchestrator.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e, src)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}" data-src="${e(src)}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
+        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b>${clock(reply.at) ? ` <time datetime="${e(reply.at)}">${e(clock(reply.at))}</time>` : ""}</div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the orchestrator.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e, src)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}" data-src="${e(src)}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
       }).join("")}
-      ${(hosted.get(message.id) || []).map((request) => cardRows(cards.filter((card) => card.message_id === request), "From this request · on the board now", `request-${request}`, board, e, messageSource(message, me, board))).join("")}
+      ${(hosted.get(message.id) || []).map((request) => cardRows(cards.filter((card) => card.message_id === request), "From this request · on the board now", `request-${request}`, board, e, messageSource(message, me, board), `${cards.filter((card) => card.message_id === request).length} new`)).join("")}
     </li>`;
   }).join("") || `<li class="chat-empty"><h3>Ask the orchestrator for something</h3><p>${e(CHAT_COPY.empty)}</p><p>Try asking</p><div class="chat-suggestions">${["What is blocked?", "Plan the next launch", "Split a card into smaller cards"].map((text) => `<button type="button" data-chat-suggest="${e(text)}">${e(text)}</button>`).join("")}</div></li>`;
 }
@@ -282,6 +282,19 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     host.addEventListener("mouseover", (event) => { linked.hover = rowOf(event.target); outline(); });
     host.addEventListener("mouseout", (event) => { linked.hover = rowOf(event.relatedTarget); outline(); });
   }
+  // The one-line status the dock shows under its heading (M5); the pane itself has no header row.
+  let headerSink = null, headerShown = null;
+  function headerLine() {
+    let text = "";
+    if (state?.slug && state.loaded) {
+      const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
+      const hasOrchestrator = !!(state.status?.orchestrator || project().coordinator);
+      if (state.derived?.state === "no_answer") text = `Connected, not answering since ${clock(request?.at) || "earlier"}`;
+      else if (state.derived?.state === "waiting" || !hasOrchestrator) text = "No orchestrator yet";
+      else text = "Orchestrator connected";
+    }
+    if (text !== headerShown) { headerShown = text; headerSink?.(text); }
+  }
   function render() {
     const host = root();
     if (!host) return;
@@ -289,7 +302,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const bottom = !old || old.scrollHeight - top - old.clientHeight < 60;
     const page = { ...state.page, project: project(), cards: state.cards, at: state.at, seen: state.baseline, todayIds: state.todayIds };
     if (!host.querySelector(".chat-view")) {
-      host.innerHTML = `<aside class="chat-view chatpane" aria-labelledby="chat-h"><header class="chat-header"><h2 id="chat-h">${e(project().name || state.slug || "Project")} chat</h2><button class="btn ghost sm" type="button" data-close-chat>Close chat</button><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><div data-chat-source></div><p data-chat-error role="alert" hidden></p><div class="chat-history"><button type="button" data-chat-earlier>Show earlier</button></div><ol class="chat-stream" role="log" aria-label="Messages" tabindex="0">${chatHTML(page, state.me, e)}</ol><div data-chat-recovery></div><div data-chat-unsent></div><form class="chat-compose"><div data-chat-quote></div><label class="chat-hint" for="chat-text">Message to ${e(project().name || state.slug || "project")} chat</label><textarea id="chat-text" name="text" rows="2" placeholder="${e(CHAT_COPY.placeholder)}" required></textarea><button class="btn primary" type="submit" aria-describedby="chat-wait">Send</button><p class="chat-wait" id="chat-wait" data-chat-wait role="status" hidden>${e(CHAT_COPY.waiting)}</p><p class="chat-hint">Enter to send · Shift+Enter new line</p></form></aside>`;
+      host.innerHTML = `<aside class="chat-view chatpane" aria-labelledby="chat-h"><header class="chat-header"><h2 id="chat-h">${e(project().name || state.slug || "Project")} chat</h2><button class="btn ghost sm" type="button" data-close-chat>Close chat</button><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><div data-chat-source></div><p data-chat-error role="alert" hidden></p><div class="chat-history"><button type="button" data-chat-earlier>Show earlier</button></div><ol class="chat-stream" role="log" aria-label="Messages" tabindex="0">${chatHTML(page, state.me, e)}</ol><div data-chat-recovery></div><div data-chat-unsent></div><form class="chat-compose"><div data-chat-quote></div><label class="sr" for="chat-text">Message to ${e(project().name || state.slug || "project")} chat</label><div class="chat-box"><textarea id="chat-text" name="text" rows="2" placeholder="${e(CHAT_COPY.placeholder)}" required></textarea><button class="btn primary sm" type="submit" aria-label="Send" aria-describedby="chat-wait"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8 13.5 3l-3 10.5-2.3-4.3z"/><path d="M8.2 9.2 13.5 3"/></svg></button></div><p class="chat-wait" id="chat-wait" data-chat-wait role="status" hidden>${e(CHAT_COPY.waiting)}</p><p class="chat-hint chat-keys"><span>Enter to send · Shift+Enter new line</span><span><kbd>Esc</kbd> closes the chat</span></p></form></aside>`;
       const form = host.querySelector(".chat-compose");
       if (form) {
         form.onsubmit = send;
@@ -336,7 +349,15 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     put("[data-chat-unsent]", unsent ? `<div class="chat-unsent" role="${inFlight ? "status" : "alert"}"><p>${marked(unsent.text, e)}</p><p>${e(inFlight ? CHAT_COPY.sending : unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p>${inFlight ? "" : `<div><button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button> <button type="button" data-chat-discard ${state.sending ? "disabled" : ""}>${e(CHAT_COPY.discard)}</button></div>`}</div>` : "");
     const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
     const recovery = state.derived?.state;
-    put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${state.derived.last_seen ? `<p>Agent last seen ${e(state.derived.last_seen)}</p>` : ""}${recovery !== "working" ? `<div>${recovery === "no_answer" ? `<a href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button type="button" data-chat-ask-again>Ask again</button>` : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>'}<button type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
+    const lastActive = clock(state.derived?.last_seen) || state.derived?.last_seen;
+    const recoveryText = recovery === "no_answer"
+      ? `It has not answered your message from ${clock(request?.at) || "earlier"}.${lastActive ? ` Its agent was last active at ${lastActive}.` : ""} ${CHAT_COPY.kept}`
+      : lastActive ? `Agent last active at ${lastActive}.` : "";
+    const acts = recovery === "no_answer"
+      ? `<a class="btn sm primary" href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button class="btn sm" type="button" data-chat-ask-again>Ask again</button>`
+      : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>';
+    put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${recoveryText ? `<p>${e(recoveryText)}</p>` : ""}${recovery !== "working" ? `<div class="chat-acts">${acts}<button class="btn sm" type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
+    headerLine();
     const form = host.querySelector(".chat-compose");
     // While an earlier message is unsent, the composer keeps its text but does not send.
     const waiting = !!unsent && !state.sending;
@@ -549,7 +570,9 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       render(); await tick(++generation);
       if (active && state.requested === slug) { if (validId(at)) await history(at); this.focusComposer(); }
     },
-    stop() { active = false; generation++; cancel(); unlink(); document.removeEventListener("visibilitychange", visibility); },
+    stop() { active = false; generation++; cancel(); unlink(); document.removeEventListener("visibilitychange", visibility); headerShown = ""; headerSink?.(""); },
+    /** The dock's status line under its heading; called with the text whenever it changes. */
+    watchHeader(fn) { headerSink = typeof fn === "function" ? fn : null; headerSink?.(headerShown || ""); },
     focusComposer() { field()?.focus(); },
     /** The dock opened or closed the pane. Closed: no 2 s poll and no seen marks; reopened: read now. */
     setOpen(value) {
