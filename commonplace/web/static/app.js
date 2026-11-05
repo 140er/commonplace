@@ -387,7 +387,7 @@ function showError(text) {
 function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
   // A redraw keeps focus on the same header control (Details, Chat).
-  const head = root.querySelector("#head-actions"), active = document.activeElement, keep = head.contains(active) && active.id;
+  const head = root.querySelector("#head-actions"), active = document.activeElement, keep = active?.closest?.("#head-actions") && active.id;
   head.innerHTML = actions;
   if (keep) head.querySelector(`#${CSS.escape(keep)}`)?.focus({ preventScroll: true });
   document.title = `${text} · Commonplace`;
@@ -1362,10 +1362,10 @@ root.addEventListener("focusin", (event) => {
 });
 root.addEventListener("click", async (event) => {
   if (event.defaultPrevented) return;
-  const restart = event.target.closest('#chat .chat-recovery a[href$="/settings"]');
-  if (restart) { event.preventDefault(); await openRestart(restart).catch((error) => showError(error.message)); return; }
   const b = event.target.closest("[data-action]");
   if (!b) {
+    const restart = event.target.closest('#chat .chat-recovery a[href$="/settings"]');
+    if (restart) { event.preventDefault(); await openRestart(restart).catch((error) => showError(error.message)); return; }
     const card = event.target.closest(".workbench-board .card[data-card]");
     if (card && !event.target.closest("a,button,input,select,textarea")) { state.selected = Number(card.dataset.card); location.hash = `#/card/${state.selected}`; }
     if (event.target.closest("#shell-dialog a")) root.querySelector("#shell-dialog").close();
