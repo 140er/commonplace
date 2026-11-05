@@ -356,7 +356,7 @@ mark, .res mark, .quote mark { background: #FFE9A8; color: inherit; border-radiu
 .m-body .card h3 { font-size: 15px; line-height: 20px; }
 .m-body .card-meta, .m-body .card-note { font-size: 13.5px; line-height: 18px; }
 .m-hint { font-size: 13px; color: var(--text-3); }
-.m-tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--bg); padding-bottom: 14px; }
+.m-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); background: var(--bg); padding-bottom: 14px; }
 .m-tabs a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 56px; font-size: 12px; font-weight: 600; color: var(--text-2); text-decoration: none; position: relative; }
 .m-tabs a .i { width: 22px; height: 22px; }
 .m-tabs a[aria-current] { color: var(--accent); }
@@ -578,17 +578,14 @@ select.selectbox { appearance: none; width: 100%; font: inherit; font-size: 13px
 .attach .iconbtn { width: 28px; height: 28px; }
 .chat-input .box.is-focus { outline: 3px solid var(--accent); outline-offset: 2px; }
 .toast-msg { display: inline-flex; align-items: center; gap: 8px; }
-@media (min-width: 700px) and (max-width: 1099px) {
+@media (min-width: 1024px) and (max-width: 1099px) {
   /* Tablet: the chat pushes the board instead of covering it. The board scrolls sideways; Todo, where chat cards land, stays in view. */
   .shell.chat-open { grid-template-columns: 220px minmax(0, 1fr) 340px; }
   .shell.chat-open .board { grid-template-columns: repeat(4, 190px); overflow-x: auto; }
 }
-@media (max-width: 699px) {
-  .chatpane { border-left: 0; border-top: 1px solid var(--line); }
-  .chatpane .ctx-body { overflow: visible; }
-}
+/* (Phones never stack the chat under the board: below 700 px it is a full-screen sheet, see round 3.) */
 /* Mobile: the chat tab opens a full-screen sheet with "Back to board" top left. */
-.m-tabs .badge.newb { background: var(--accent-weak); color: var(--accent); box-shadow: inset 0 0 0 1px #AEB8EC; right: calc(50% - 44px); }
+.m-tabs .badge.newb { background: var(--accent-weak); color: var(--accent); box-shadow: inset 0 0 0 1px #AEB8EC; right: calc(50% - 52px); }
 a.m-back { text-decoration: none; }
 .m-chat { position: fixed; inset: 0; z-index: 41; display: flex; flex-direction: column; background: var(--surface); }
 .m-chat .m-top { background: var(--surface); }
@@ -622,14 +619,61 @@ a.m-back { text-decoration: none; }
 .mobile .more { display: flex; align-items: center; min-height: 44px; }
 /* Tablet with the chat open: a column jump bar so Review and Done are one tap away. */
 .col-jump { display: none; }
-@media (min-width: 700px) and (max-width: 1099px) {
+@media (min-width: 1024px) and (max-width: 1099px) {
   .shell.chat-open .col-jump { display: flex; gap: 6px; padding: 8px 14px 0; }
   .col-jump a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 16px; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600; background: var(--surface); }
 }
-@media (min-width: 700px) and (max-width: 1099px) {
+@media (min-width: 1024px) and (max-width: 1099px) {
   /* Tablet: a card opened from a chat row takes the chat's pushed slot (not modal), with Back to chat. */
   .shell.ctx-pushed { grid-template-columns: 220px minmax(0, 1fr) 340px; }
   .shell.ctx-pushed .context { display: flex; }
   .shell.ctx-pushed .board { grid-template-columns: repeat(4, 190px); overflow-x: auto; }
   .shell.ctx-pushed .col-jump { display: flex; gap: 6px; padding: 8px 14px 0; }
+}
+
+/* ---------- B + chat, round 3 ---------- */
+/* One rule per width. ≥1100: chat in the right-hand slot. 1024–1099: chat pushes the board. 700–1023: chat is a
+   modal sheet over a dimmed board (like B's tablet Details). <700: chat is a full-screen sheet (as the m-screens). */
+@media (min-width: 1100px) and (max-width: 1279px) {
+  .shell.chat-open { grid-template-columns: 200px minmax(0, 1fr) 320px; }
+}
+@media (max-width: 1023px) {
+  .shell.chat-open .chatpane, .shell.ctx-pushed .context { display: flex; position: fixed; top: 0; right: 0; bottom: 0; width: min(396px, calc(100vw - 48px)); z-index: 31; box-shadow: -16px 0 40px rgba(23,24,28,.18); }
+  .shell.chat-open .chat-scrim, .shell.ctx-pushed .chat-scrim { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(23,24,28,.42); }
+}
+@media (max-width: 699px) {
+  .shell.chat-open .chatpane, .shell.ctx-pushed .context { left: 0; width: auto; height: 100vh; border: 0; box-shadow: none; }
+  .shell.chat-open .chat-scrim { display: none; }
+@media (min-width: 700px) and (max-width: 1023px) { .shell.two.chat-open { grid-template-columns: 220px minmax(0, 1fr); } }
+  .chatpane .chat-head .btn { min-height: 44px; }
+  .chatpane .chat-input .box textarea { font-size: 16px; }
+}
+.chat-scrim { display: none; }
+@media (min-width: 700px) and (max-width: 1023px) { .shell.two.chat-open { grid-template-columns: 220px minmax(0, 1fr); } }
+.m-top .m-settings { min-height: 44px; padding: 0 12px; font-size: 15px; }
+.m-about { flex-direction: column; align-items: stretch; padding: 10px 16px; font-size: 14px; line-height: 20px; }
+.m-about .typ { align-self: flex-start; }
+.m-about .btn, .m-acts .btn { min-height: 44px; justify-content: center; font-size: 15px; }
+.m-acts { display: flex; flex-direction: column; gap: 8px; }
+.m-suggest .chip { min-height: 44px; padding: 0 14px; font-size: 14px; border-radius: 22px; }
+.m-chat-log .callout { margin-top: 14px; font-size: 14px; }
+.m-chat-log .msg-state .btn { min-height: 44px; }
+.m-set { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); }
+.m-set h3 { font-size: 16px; font-weight: 650; }
+.m-set legend { padding: 0; margin-bottom: 6px; }
+.m-radio { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.m-radio input { width: 20px; height: 20px; accent-color: var(--accent); }
+.m-radio small { font-weight: 400; color: var(--text-2); font-size: 13px; margin-left: auto; text-align: right; }
+.m-agents { list-style: none; margin: 0; padding: 0; }
+.m-agents li { display: flex; justify-content: space-between; align-items: center; min-height: 44px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.m-agents li > span:last-child { color: var(--text-2); font-size: 13px; }
+.m-settings-sheet .saved { font-size: 13px; color: var(--ok); display: inline-flex; gap: 4px; align-items: center; padding-right: 8px; }
+.m-settings-sheet .set-note { font-size: 13px; color: var(--text-2); }
+details.set-note summary { cursor: pointer; color: var(--accent); font-weight: 600; min-height: 24px; }
+@media (max-width: 699px) { .chatpane .made a { min-height: 48px; } }
+.m-about > span:not(.typ) { flex: none; }
+.cid { white-space: nowrap; }
+@media (min-width: 1100px) and (max-width: 1279px) {
+  .shell.chat-open { grid-template-columns: 188px minmax(0, 1fr) 304px; }
+  .shell.chat-open .card-top { flex-wrap: wrap; row-gap: 2px; }
 }

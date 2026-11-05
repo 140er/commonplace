@@ -33,7 +33,7 @@
   <section class="set-sec" aria-labelledby="s2">
     <h2 id="s2">Chat answers</h2>
     <p class="lead">Which model writes the quick reply you see in chat. The orchestrator still does the work.</p>
-    <p class="set-note">Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the orchestrator's name.</p>
+    <details class="set-note"><summary>What quick replies are</summary>A short answer from this model, shown in chat before or beside the orchestrator's own answer. Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the orchestrator's name.</details>
     <fieldset class="radios" style="border:0;padding:0;margin:0"><legend class="sr">Chat answer mode</legend>
       <div class="radio"><input type="radio" name="mode" id="m-basic"><span><label for="m-basic"><b>Basic</b><small>No model. Instead of an answer, a short receipt confirms your message reached the orchestrator.</small></label></span></div>
       <div class="radio"><input type="radio" name="mode" id="m-local"><span><label for="m-local"><b>Local model</b><small>Runs on your machine. Nothing leaves it.</small></label>
@@ -57,6 +57,7 @@
   </section>
 </div></div>
 </main>
+
 
 
 

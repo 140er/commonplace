@@ -209,6 +209,70 @@ const cases = [
   if (tb !== "m-chat-tab") fails++;
   res.push(`${tb === "m-chat-tab" ? "PASS" : "FAIL"} m10 Back to board → focus #${tb} (want #m-chat-tab)`);
   console.log(res.join("\n"));
+  // ---- Round 3
+  const ok3 = (label, cond, info) => { if (!cond) fails++; console.log(`${cond ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(info)}`); };
+  // Composer label follows the project, from the same data as heading and log
+  for (const [scr, proj] of [["07-needs-me", "Atlas"], ["08-needs-me-done", "Harbor"]]) {
+    await page.goto("file://" + D + "/" + scr + ".html"); await page.waitForTimeout(100);
+    await page.click("#chat-toggle");
+    const n = await page.evaluate(() => ({ label: document.querySelector('label[for="ci"]').textContent, head: document.getElementById("chat-h").textContent, log: document.querySelector('#chat [role="log"]').getAttribute("aria-label"), toggle: document.getElementById("chat-toggle").textContent }));
+    ok3(`${scr}: composer, heading, log and control all name ${proj}`, n.label === `Message to ${proj} chat` && n.head === `${proj} chat` && n.log.includes(proj) && n.toggle.includes(proj), n);
+  }
+  // Board card chosen while the chat is open → its details in the same slot, board-origin strip, Back to chat
+  await page.goto("file://" + D + "/06c-chat-answer.html"); await page.waitForTimeout(100);
+  await page.click('.board .card[aria-label^="A-121"] h3');
+  const bo = await det(); const bt = await page.evaluate(() => document.querySelector("#from-chat .fc-text").textContent);
+  ok3("06c chat open, click board card A-121 → A-121 details, board-origin strip", bo.ctxId === "A-121" && bo.selId === "A-121" && bo.strip && !bo.chat && /on the board/.test(bt), { ...bo, bt });
+  await page.click("[data-back-chat]");
+  const bb = await page.evaluate(() => ({ chat: !document.getElementById("chat").hidden, focus: document.activeElement.id }));
+  ok3("06c board-origin Back to chat → chat open, cursor in the box", bb.chat && bb.focus === "ci", bb);
+  await page.focus('.board .card[aria-label^="A-124"]'); await page.keyboard.press("Enter");
+  const be = await det();
+  ok3("06c chat open, Enter on board card A-124 → A-124 details with strip", be.ctxId === "A-124" && be.selId === "A-124" && be.strip && !be.chat, be);
+  // ] closes the chat from outside a field
+  await page.goto("file://" + D + "/04-board.html"); await page.waitForTimeout(100);
+  await page.click("#chat-toggle"); await page.focus("#chat-close"); await page.keyboard.press("]");
+  const br = await st();
+  ok3("04 ] closes the chat", !br.open && br.exp === "false", br);
+  // Below 1024 px the chat is a modal sheet: dialog, board inert, Tab trapped, Esc returns
+  const tab = await browser.newPage({ viewport: { width: 768, height: 1024 } });
+  await tab.goto("file://" + D + "/04-board.html"); await tab.waitForTimeout(100);
+  await tab.click("#chat-toggle");
+  const q0 = await tab.evaluate(() => ({ modal: document.getElementById("chat").getAttribute("aria-modal"), role: document.getElementById("chat").getAttribute("role"), inertMain: document.getElementById("main").hasAttribute("inert"), scrim: getComputedStyle(document.querySelector(".chat-scrim")).display }));
+  let trapped = true;
+  for (let i = 0; i < 25; i++) { await tab.keyboard.press("Tab"); trapped = trapped && (await tab.evaluate(() => !!document.activeElement.closest("#chat"))); }
+  await tab.keyboard.press("Escape"); await tab.keyboard.press("Escape");
+  const q1 = await tab.evaluate(() => ({ open: !document.getElementById("chat").hidden, inert: document.querySelectorAll("[inert]").length, focus: document.activeElement.id }));
+  ok3("768 px: chat is a modal sheet (dialog, scrim, board inert), Tab stays inside, Esc closes to the control", q0.modal === "true" && q0.role === "dialog" && q0.inertMain && q0.scrim === "block" && trapped && !q1.open && q1.inert === 0 && q1.focus === "chat-toggle", { ...q0, trapped, ...q1 });
+  await tab.goto("file://" + D + "/06c-chat-answer.html"); await tab.waitForTimeout(100);
+  const q2 = await tab.evaluate(() => ({ modal: document.getElementById("chat").getAttribute("aria-modal"), inert: document.getElementById("main").hasAttribute("inert") }));
+  await tab.click('#chat [data-card="A-134"]');
+  const q3 = await tab.evaluate(() => ({ ctxModal: document.getElementById("ctx").getAttribute("aria-modal"), id: document.querySelector("#ctx .detail-h .cid").textContent, inert: document.getElementById("main").hasAttribute("inert"), focus: document.activeElement.tagName }));
+  await tab.keyboard.press("Escape");
+  const q4 = await tab.evaluate(() => ({ chat: !document.getElementById("chat").hidden, focus: document.activeElement.dataset.card || document.activeElement.id }));
+  ok3("768 px: 06c drawn open is modal; a chat row opens its details as a modal sheet; Esc goes back to the same row", q2.modal === "true" && q2.inert && q3.ctxModal === "true" && q3.id === "A-134" && q3.inert && q3.focus === "H2" && q4.chat && q4.focus === "A-134", { q2, q3, q4 });
+  await tab.close();
+  // Below 700 px the chat is a full-screen sheet (not stacked under the board)
+  const ph = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await ph.goto("file://" + D + "/06c-chat-answer.html"); await ph.waitForTimeout(100);
+  const p0 = await ph.evaluate(() => { const r = document.getElementById("chat").getBoundingClientRect(); return { top: r.top, left: r.left, w: r.width, h: r.height, modal: document.getElementById("chat").getAttribute("aria-modal"), boardInert: document.getElementById("main").hasAttribute("inert") }; });
+  ok3("390 px: 06c chat is a full-screen modal sheet from the top", p0.top === 0 && p0.left === 0 && p0.w === 390 && p0.h >= 840 && p0.modal === "true" && p0.boardInert, p0);
+  // Phone ask paths and returns
+  const go = async (u) => { await ph.goto("file://" + D + "/" + u); await ph.waitForTimeout(120); };
+  const here = () => ph.evaluate(() => ({ page: location.pathname.split("/").pop(), focus: document.activeElement.id, strip: (document.querySelector(".m-about") || {}).textContent || "", back: (document.getElementById("m-chat-back") || {}).textContent || "" }));
+  await go("m3-needs-me-item.html"); await ph.click("#m-ask"); await ph.waitForTimeout(150); const a1 = await here();
+  await ph.click("#m-chat-back"); await ph.waitForTimeout(150); const a2 = await here();
+  ok3("q3 Ask a question → m10b with the approval strip; Back to the approval → q3, focus on Ask", a1.page === "m10b-chat-ask-approval.html" && /You are asking about/.test(a1.strip) && /Back to the approval/.test(a1.back) && a2.page === "m3-needs-me-item.html" && a2.focus === "m-ask", { a1, a2 });
+  await go("m8-send-too-late.html"); await ph.click("#m-ask-orch"); await ph.waitForTimeout(150); const b1 = await here();
+  await ph.click("#m-chat-back"); await ph.waitForTimeout(150); const b2 = await here();
+  ok3("m8 Ask the orchestrator → m10c with the released strip; back → m8, focus on the button", b1.page === "m10c-chat-ask-released.html" && /can't be recalled/.test(b1.strip) && b2.page === "m8-send-too-late.html" && b2.focus === "m-ask-orch", { b1, b2 });
+  await go("m2-needs-me.html"); await ph.click("#m-chat-tab"); await ph.waitForTimeout(150); const n1 = await here();
+  await ph.click("#m-chat-back"); await ph.waitForTimeout(150); const n2 = await here();
+  ok3("q2 Chat tab → chat says Back to Needs me; returns to Needs me, focus on the Chat tab", /Back to Needs me/.test(n1.back) && n2.page === "m2-needs-me.html" && n2.focus === "m-chat-tab", { n1, n2 });
+  await go("m1-board.html"); const sl = await ph.evaluate(() => document.getElementById("m-settings").textContent.trim());
+  await ph.click("#m-settings"); await ph.waitForTimeout(150); const d1 = await here();
+  await ph.click("#m-settings-back"); await ph.waitForTimeout(150); const d2 = await here();
+  ok3("q1 labelled Settings → m13 sheet; back → q1, focus on Settings", sl === "Settings" && d1.page === "m13-settings.html" && d2.page === "m1-board.html" && d2.focus === "m-settings", { sl, d1, d2 });
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASS");
   process.exit(fails ? 1 : 0);

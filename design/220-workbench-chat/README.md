@@ -1,4 +1,4 @@
-# Direction B + chat: Workbench with the orchestrator chat (round 2)
+# Direction B + chat: Workbench with the orchestrator chat (round 3)
 
 **Owner decision (5 Nov 2026):** B Workbench is the base. One element comes from C (Conversation rail): the project chat with the orchestrator has to be visible inside B, and it may sit behind a button.
 
@@ -6,16 +6,18 @@
 
 **Serves best:** people who run several projects with several agents and check in many times a day. **Gives up:** the calm first look of a one-column design, and seeing card details and chat side by side (one click apart instead; see *What I traded away*).
 
-Open `index.html` for the contact sheet: 53 screens and 58 PNGs, including 6 renders at other widths. Round-2 answers are in `RESPONSES-r1.md`. `_src/build.py` generates the HTML, `index.html` and the shot list. `_src/shoot.sh` takes the screenshots with headless Chrome (`bash _src/shoot.sh`). `screens/wb.js` (local, no network) makes the keyboard behaviour, the Chat control and the chat-to-card paths work in a browser. `_src/keytest.cjs` checks them live in headless Chrome. Its last run, in `_src/keytest-results.txt`, is **ALL PASS** with 41 checks: 15 dialogs (initial focus, Tab trap, Esc, focus return), the chat open and close paths, chat row → details → Back to chat (also at 1024 px), the outline clearing on focusout and mouseout, the Needs me and Memory controls, R, and the mobile Show and Back paths.
+Open `index.html` for the contact sheet: 59 screens and 66 PNGs, including 8 renders at other widths. Answers to the reviews are in `RESPONSES-r1.md` and `RESPONSES-r2.md`. `_src/build.py` generates the HTML, `index.html` and the shot list. `_src/shoot.sh` takes the screenshots with headless Chrome (`bash _src/shoot.sh`). `screens/wb.js` (local, no network) makes the keyboard behaviour, the Chat control and the chat-to-card paths work in a browser. `_src/keytest.cjs` checks them live in headless Chrome. Its last run, in `_src/keytest-results.txt`, is **ALL PASS** with 54 checks: 15 dialogs (initial focus, Tab trap, Esc, focus return), the chat open and close paths (control, `/`, Esc, `]`), chat row → details → Back to chat, a board card chosen while chatting, the composer label per project, the outline clearing on focusout and mouseout, the Needs me and Memory controls, R, the modal sheet at 768 px, the full-screen sheet at 390 px, and every phone Show, Ask and Back path.
 
 ## Where the chat control lives, and why
 
 - **The control:** one button, `id="chat-toggle"`, with `aria-controls="chat"`, `aria-expanded`, a text label and its shortcut (`/`). On the board it reads **Chat**, right after the project name, in the place of B's "Orchestrator connected" label. On Needs me and Memory, which span projects, it names its project: **Atlas chat**. That is the project of the selected item, or the project you last had open. Open, it is drawn filled (17.6:1), and the chat pane appears with it.
 - **Status shows only by exception (attention is scarce).** It shows nothing extra when all is well. It shows **1 new reply** (or "3 new replies") when the orchestrator or a quick reply answered while the chat was closed (`04`, `07`, `09`). It shows **no orchestrator yet** before an agent connects (`03`). Messages between teammates don't raise the count. They are in the chat when you open it, but they don't call for you.
+- **One rule per width.** 1100 px and up: the chat takes the right-hand slot (at 1100–1279 px the rail narrows to 188 px and the chat to 304 px, and card tags wrap, so the board keeps room). 1024–1099 px: the chat pushes the board (220 | board | 340). **700–1023 px: the chat is a modal sheet** over a dimmed board: `role="dialog"`, `aria-modal`, rail and board inert, Tab kept inside, Esc back to the control (like B's tablet Details sheet; `r-06c-chat-768`). **Below 700 px the phone design applies:** the `m` screens, where the chat is a full-screen sheet. The desktop markup at those widths shows the same full-screen sheet, never a chat stacked under the board (`r-06c-chat-390`).
 - **Where the chat opens:** the right-hand slot that the context panel uses, as a right rail (C's idea). It is not a third column, so the board keeps its 4 readable columns at 1440 px. Closing the chat brings back whatever the context panel showed.
 - **Why not a tab in the context panel (as in B before)?** The context panel shows *what you selected*. Chat is project-wide and runs on its own time, so it needs its own control that can say "1 new reply". The context panel has Details and Memory only, so there is one control for chat, not two.
 - **Why not a permanent third column (C's layout)?** At 1440 px, rail + board + details + chat leaves about 450 px for 4 columns. The board is the default view and must stay readable.
 - **Open and close:** the control (Enter or Space), `/` outside a field on the board, Needs me and Memory (it opens the chat and puts the cursor in the message box), **Close chat** in the pane header, `Esc` while focus is in the chat (the draft is kept), or `]` outside a field. Focus goes into the message box on open and back to the control that opened it on close. Settings has no chat control and `/` does nothing there.
+- **A card chosen while the chat is open** (on the board, by click or Enter) shows its Details in the same slot. The strip says "You picked A-121 on the board. The chat is one click away." and has **Back to chat**. So the selected card and the Details always agree, and nothing changes out of sight. Below 1024 px those Details are a modal sheet too, and Esc goes back to the chat.
 - **Contextual openers:** on Needs me, **Ask a question (R)** opens the same chat with a strip "You are asking about…" and **Back to the approval** (`07d`). On Memory, **Open in chat, ask about it ↵** opens it at the found message with the quote attached and **Back to the source** (`09f`). Opened from the header control instead, the chat shows its newest messages without those strips. The keytest checks both.
 
 ## Words used in the product
@@ -40,8 +42,9 @@ Workspace (Northwind)
 └─ Right-hand slot (one at a time)
    ├─ Context panel: Details (selected card or item; "Back to chat" strip when opened from chat) · Memory
    └─ Chat pane: the project chat
-Tablet 700–1099 px: context panel = modal sheet via Details (as B); chat = push pane, with a column jump bar
-Mobile: bottom tabs Board / Chat ⟨new⟩ / Needs me / Memory; Chat = full-screen sheet with "Back to board"
+Tablet 1024–1099 px: chat pushes the board (column jump bar); 700–1023 px: chat = modal sheet; Details button = B's modal sheet
+Phone (< 700 px): top bar Project · Search · [Settings]; bottom tabs Board / Chat ⟨1 new⟩ / Needs me;
+                  Chat and Settings = full-screen sheets with a labelled way back
 ```
 
 Rules (unchanged from B): the board is the default view and the place every flow returns to. There is at most one orchestrator per project, assigned automatically. Nothing files cards behind the user's back. Needs me only holds what a person must do. Memory always shows exact words with author, source and time. Chat never approves or declines anything: Approve and Decline stay as buttons in Needs me. **Details always match the selected card.** Selecting a card, on the board or from a chat row, rewrites the Details panel from the same data as the card (keytest: ID and title agree).
@@ -71,7 +74,7 @@ Rules (unchanged from B): the board is the default view and the place every flow
 2. `07-needs-me`: the approval, in its exact words, with the linked cards and the send fact. Buttons: **Approve and send…**, **Decline**, **Ask a question (R)**.
 3. `07d-needs-me-ask`: **Ask a question** (or R) opens Atlas chat with "You are asking about *Send beta 0.9 to 40 testers?* Approve or decline it in Needs me" and **Back to the approval**. The answer says nothing has been sent.
 4. `07c-approve-confirm` → `08-needs-me-done` (the 60-second hold, Stop, the next decision; the control reads **Harbor chat** for the selected Harbor item), as B. `07b-needs-me-empty`.
-5. Mobile: `m2` → `m3` → `m5` → `m6` → `m7` / `m8`, as B. `m7`'s action now says **Approve or decline…**. *Not drawn:* **Ask a question** on `m3` and **Ask the orchestrator** on `m8` open the `m10` sheet with the same "You are asking about…" strip as `07d`. The desktop "stopped" result shows the `m7` content.
+5. Mobile: `m2` → `m3` → `m5` → `m6` → `m7` / `m8`, as B. `m7`'s action now says **Approve or decline…**. **Ask a question** on `m3` opens `m10b-chat-ask-approval`, with "You are asking about *Send beta 0.9 to 40 testers?* Approve or decline it in Needs me" and **Back to the approval** (top left), which returns to `m3` with focus on Ask. **Ask the orchestrator** on `m8` opens `m10c-chat-ask-released`, with "…released at 14:22. It can't be recalled here." and the same way back. A follow-up email would be a new approval in Needs me. The desktop "stopped" result shows the `m7` content.
 
 **6. Find a memory**
 1. `09-memory`: search, 4 results with source, author and date. One is **Atlas chat · Quick reply · local model · today, 12:41**, so a model-written reply is never shown under the orchestrator's name. The Memory panel shows the full message between its neighbours. The header carries **Atlas chat 1 new reply**.
@@ -84,10 +87,14 @@ Rules (unchanged from B): the board is the default view and the place every flow
 
 ## Tablet and mobile
 
-- **Tablet, 700–1099 px.** Closed (`r2-04-board-1024`): the board is full width, and the header shows **Chat 1 new reply** next to **Details**. Open (`r-06c-chat-1024`): the chat **pushes** the board (220 | board | 340 px), so nothing is dimmed or covered (2.4.11). Columns are 190 px and scroll sideways. A **column jump bar** (Todo · Doing · Review · Done 14) puts Review and Done one tap away. A chat row opens that card's Details in the same pushed slot (not modal), with the same Back to chat (keytest at 1024 px). The **Details** button still opens B's modal sheet (`r2-04-board-1024-panel`).
-- **Why not a modal at tablet?** The chat's job is to show cards appearing next to it, and a dimmed board would hide exactly that.
-- **Mobile, 390×844.** `m1-board` and `m2-needs-me`: the **Chat** tab carries **new** ("1 new reply" for screen readers) on every screen with the tab bar, until the chat is opened. `m10-chat`: a full-screen sheet (`role="dialog"`, `aria-modal`), with focus on **Back to board**. Back and Esc both return focus to the Chat tab (keytest). Each card row ends in **Show →** (48 px) and opens **its own card**: `m11-board-from-chat` (A-134, Todo), `m11b-board-from-chat-a135` (A-135, Todo) and `m11c-board-from-chat-a118` (A-118 on the **Doing** tab). Each opens selected and outlined, under a bar "Showing A-…" with **Back to chat**, which returns to the same row with focus on it (keytest).
-- Below 700 px, the desktop markup (`r1-04-board-320`) stacks the chat pane under the board, like B's context panel.
+- **Tablet, 1024–1099 px.** Closed (`r2-04-board-1024`): the board is full width, and the header shows **Chat 1 new reply** next to **Details**. Open (`r-06c-chat-1024`): the chat **pushes** the board (220 | board | 340 px), so nothing is dimmed or covered. Columns are 190 px and scroll sideways, and a **column jump bar** (Todo · Doing · Review · Done 14) puts Review and Done one tap away. A chat row or a board card opens its Details in the same pushed slot, with Back to chat.
+- **Tablet, 700–1023 px** (`r-06c-chat-768`). Pushing would leave about 200 px for the board, so the chat is a **modal sheet** over a dimmed board: Tab stays inside, Esc and Close chat return to the control. A chat row opens that card's Details as the same kind of sheet, and Esc goes back to the same row. The **Details** button still opens B's modal sheet (`r2-04-board-1024-panel`).
+- **Phone, below 700 px: one rule.** The phone design is the `m` screens. Chat is a full-screen sheet with a labelled way back (`m10`). The desktop markup at phone widths does the same: the chat covers the screen from the top as a modal sheet with **Close chat** (`r-06c-chat-390`, rendered from the shipped `06c` markup). It is never stacked under the board.
+- **Phone screens.** The top bar has a labelled **Settings** button (44 px), which opens `m13-settings`. That is one full-screen sheet with the orchestrator, the chat-answer mode (Basic, Local model; Hosted provider is set up on a computer) and the agent list. Connecting and disconnecting agents happens on a computer, and the sheet says so. The tab bar is **Board / Chat / Needs me**. Memory search is not part of this direction's phone design, so its tab is gone rather than left empty. The Chat tab shows **1 new** on every screen with the bar until the chat is opened.
+  - `m10-chat` is the connected chat. Opened from the Needs me tab, its back link reads **Back to Needs me** and returns there.
+  - Chat states: `m12-chat-no-agent` (**Waiting for an agent**, **Make it a card now (adds it to Todo)**, and "Connect an agent on a computer: … your message is delivered when it connects"), `m12b-chat-error` (**No answer yet.**, with **Ask again**, **Make it a card now** and **Check the agent in Settings** → `m13`) and `m12c-chat-empty` (two sentences and three 44 px starter chips).
+  - Asking from an approval: `m10b`, `m10c` (flow 5).
+  - Card rows end in **Show →** (48 px) and open **their own card**: `m11` (A-134), `m11b` (A-135), `m11c` (A-118 on the Doing tab). Each has **Back to chat** to the same row.
 
 ## Screens
 
@@ -103,8 +110,8 @@ Rules (unchanged from B): the board is the default view and the place every flow
 | 09-memory · 09f-memory-ask · 09e · 09b · 09c · 09d | 1440×900 | Memory with **Atlas chat** and a quick-reply source, ask at the source, states |
 | 10-settings · 10b · 10e (1440×1180) · 10c · 10d (1440×900) | | Settings |
 | 11-command-palette · 11b-command-palette-card · 12-shortcuts | 1440×900 | Palette, card actions, shortcuts |
-| m1-board · m10-chat · m11 · m11b · m11c · m9 · m4 · m2 · m3 · m5 · m6 · m7 · m8 | 390×844 @2x | Mobile; chat sheet; **each card from chat** |
-| r2-04-board-1024 · r-06c-chat-1024 · r2-04-board-1024-panel · r1-04-board-320 · r2-m1-board-320 · r1-m3-needs-me-item-360 | as named | Same markup at other widths |
+| m1-board · m10-chat · m11 · m11b · m11c · m10b · m10c · m12 · m12b · m12c · m13-settings · m9 · m4 · m2 · m3 · m5 · m6 · m7 · m8 | 390×844 @2x | Phone: chat sheet, each card from chat, asking from an approval, no agent / no answer / empty, Settings |
+| r2-04-board-1024 · r-06c-chat-1024 · r-06c-chat-768 · r-06c-chat-390 · r2-04-board-1024-panel · r1-04-board-320 · r2-m1-board-320 · r1-m3-needs-me-item-360 | as named | Same markup at other widths (chat: push at 1024, modal sheet at 768, full screen at 390) |
 
 ## Accessibility notes (WCAG 2.2 AA)
 
@@ -115,7 +122,8 @@ Everything in B's notes still holds (tokens, focus ring, dialogs, roving board, 
 - **Who wrote it:** every message names its writer in text, so the source never depends on the avatar.
 - **Not colour alone:** "1 new reply", "no orchestrator yet", **New since you last looked** (a line plus words), **From chat · 14:03** and **Linked in chat · 14:03** on the cards, and a **dashed** outline for the card a row points at (accent 6.7:1 on the column well). The outline clears on focusout and mouseout (keytest).
 - **Measured contrast of the new parts:** "1 new reply" chip 6.8:1 · "no orchestrator yet" chip 8.5:1 · open control 17.6:1 · chat subtitle 8.5:1 · New-since line 7.8:1 · context strip 17.0:1 · mobile "Showing…" bar 15.4:1 · control border 3.9:1 on the header.
-- **Targets:** control 32 px, Close chat and Back to chat 28 px, chat rows 36 px (48 px on mobile), Back to board 44 px, mobile send 44×44, mobile "Show N more" 44 px, tablet column jump 32 px.
+- **Announcements:** a reply that arrives while the chat is closed updates a `role="status"` line next to the control ("1 new reply in Atlas chat"). It sits outside the button, so the button's name stays short.
+- **Targets:** control 32 px, Close chat and Back to chat 28 px (44 px on phones), chat rows 36 px (48 px on phones), phone Settings 44 px, phone chips and sheet buttons 44 px, Back to board 44 px, mobile send 44×44, mobile "Show N more" 44 px, tablet column jump 32 px.
 - **Motion:** the only motion is the "working" ring turning (`06b`, `03b`). `prefers-reduced-motion` stops it, and the text carries the state.
 - **Focus:** opening the chat puts focus in the box; closing returns it to the opener. A chat row opens that card's details with focus on its title. Back to chat returns focus to the same row. On mobile, links that return carry the target in the address (`#m-chat-tab`, `#row-A-135`), and the page focuses it on load.
 
@@ -128,13 +136,18 @@ Everything in B's notes still holds (tokens, focus ring, dialogs, roving board, 
 
 ## No ev0lve-theme visuals: hex check
 
-`python3 -I _src/hexcheck.py . <ev0lve theme folder>`, run in this folder against the local ev0lve theme folder (it is not part of this repository). **Scope:** in this folder, every `.css`, `.html`, `.js` and `.py` file (58 files). In the theme folder, every file of any type, read as text, with `.git` skipped (93 files). Values are lower-cased, short forms are expanded, and the alpha part is ignored. Id selectors such as `#add-card` are not counted as colours.
+`python3 -I _src/hexcheck.py . <ev0lve theme folder>`, run in this folder against the local ev0lve theme folder (it is not part of this repository).
+- **Pattern:** `#[0-9a-fA-F]{3,8}(?![\w-])`, so `#add-card` and other id selectors don't count. Values are lower-cased, 3/4-digit forms are expanded, and the alpha part of 8-digit values is ignored.
+- **Scope:** in this folder, every `.css`, `.html`, `.js` and `.py` file (64 files). In the theme folder, every file of any type, read as text, with `.git` skipped (93 files).
+- **Result, round 3 (5 Nov 2026): 36 colours here, 336 in the theme folder, shared: none.** A plainer pattern without the look-ahead finds more values on both sides (a reviewer counted 376 in the theme folder), and still none shared.
 
-Result on 5 Nov 2026, round 2: **36 colours here, 336 in the theme folder, shared: none.** In round 1 the only shared value was plain white `#ffffff`. It is now near-white `#FEFEFC` everywhere (CSS tokens, inline styles, the contact sheet), which is not in the theme set. There are no shared accents, backgrounds or textures, and no images from it. The palette is B's own: accent #2E43C0, neutrals #F3F3EF / #FAFAF8 / #EDEDE7, and status colours.
+In round 1 the only shared value was plain white. It is now near-white `#FEFEFC` everywhere. There are no shared accents, backgrounds or textures, and no images from the theme. The palette is B's own: accent #2E43C0, neutrals #F3F3EF / #FAFAF8 / #EDEDE7, and status colours.
 
 ## Open risks
 
 - **Two things in one slot.** Some users may want chat and details side by side. On screens wider than about 1700 px, a third column could be offered later; it is not designed.
-- **Tablet sideways board.** With the chat open, Review and Done need the jump bar or a sideways scroll.
+- **Tablet sideways board** at 1024–1099 px: with the chat open, Review and Done need the jump bar or a sideways scroll.
+- **Cross-project unread.** The Needs me and Memory control counts one project's chat (the selected item's). A reply in another project shows on that project's own control.
+- **No phone Memory.** Memory search is desktop-only in this direction. Phone users reach memory only through chat quotes and card details.
 - **Quick replies vs the orchestrator.** Two writers in one chat must stay clearly named in every surface that quotes chat: cards, memory, exports.
 - B's risks still stand: density on day one, single-key shortcuts with voice control, the 60-second send hold, dark theme not designed, system font.

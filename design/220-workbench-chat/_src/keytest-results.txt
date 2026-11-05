@@ -42,4 +42,17 @@ PASS m10 Show A-134 → Todo 6, selected A-134; Back to chat → focus #row-A-13
 PASS m10 Show A-135 → Todo 6, selected A-135; Back to chat → focus #row-A-135
 PASS m10 Show A-118 → Doing 3, selected A-118; Back to chat → focus #row-A-118
 PASS m10 Back to board → focus #m-chat-tab (want #m-chat-tab)
+PASS 07-needs-me: composer, heading, log and control all name Atlas: {"label":"Message to Atlas chat","head":"Atlas chat","log":"Messages in Atlas chat","toggle":"Atlas chat1 new reply/"}
+PASS 08-needs-me-done: composer, heading, log and control all name Harbor: {"label":"Message to Harbor chat","head":"Harbor chat","log":"Messages in Harbor chat","toggle":"Harbor chat/"}
+PASS 06c chat open, click board card A-121 → A-121 details, board-origin strip: {"chat":false,"ctx":true,"ctxId":"A-121","ctxTitle":"Offline mode: queue edits while disconnected","selId":"A-121","selTitle":"Offline mode: queue edits while disconnected","strip":true,"focus":"ARTICLE","bt":"You picked A-121 on the board. The chat is one click away."}
+PASS 06c board-origin Back to chat → chat open, cursor in the box: {"chat":true,"focus":"ci"}
+PASS 06c chat open, Enter on board card A-124 → A-124 details with strip: {"chat":false,"ctx":true,"ctxId":"A-124","ctxTitle":"Translate the settings screen (de, nl, fr)","selId":"A-124","selTitle":"Translate the settings screen (de, nl, fr)","strip":true,"focus":"ARTICLE"}
+PASS 04 ] closes the chat: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
+PASS 768 px: chat is a modal sheet (dialog, scrim, board inert), Tab stays inside, Esc closes to the control: {"modal":"true","role":"dialog","inertMain":true,"scrim":"block","trapped":true,"open":false,"inert":0,"focus":"chat-toggle"}
+PASS 768 px: 06c drawn open is modal; a chat row opens its details as a modal sheet; Esc goes back to the same row: {"q2":{"modal":"true","inert":true},"q3":{"ctxModal":"true","id":"A-134","inert":true,"focus":"H2"},"q4":{"chat":true,"focus":"A-134"}}
+PASS 390 px: 06c chat is a full-screen modal sheet from the top: {"top":0,"left":0,"w":390,"h":844,"modal":"true","boardInert":true}
+PASS q3 Ask a question → m10b with the approval strip; Back to the approval → q3, focus on Ask: {"a1":{"page":"m10b-chat-ask-approval.html","focus":"m-chat-back","strip":"ApprovalYou are asking about Send beta 0.9 to 40 testers? Approve or decline it in Needs me.","back":"Back to the approval"},"a2":{"page":"m3-needs-me-item.html","focus":"m-ask","strip":"","back":""}}
+PASS m8 Ask the orchestrator → m10c with the released strip; back → m8, focus on the button: {"b1":{"page":"m10c-chat-ask-released.html","focus":"m-chat-back","strip":"ReleasedYou are asking about Send beta 0.9 to 40 testers, released at 14:22. It can't be recalled here.","back":"Back to the approval"},"b2":{"page":"m8-send-too-late.html","focus":"m-ask-orch","strip":"","back":""}}
+PASS q2 Chat tab → chat says Back to Needs me; returns to Needs me, focus on the Chat tab: {"n1":{"page":"m10-chat.html","focus":"m-chat-back","strip":"","back":"Back to Needs me"},"n2":{"page":"m2-needs-me.html","focus":"m-chat-tab","strip":"","back":""}}
+PASS q1 labelled Settings → m13 sheet; back → q1, focus on Settings: {"sl":"Settings","d1":{"page":"m13-settings.html","focus":"m-settings-back","strip":"","back":""},"d2":{"page":"m1-board.html","focus":"m-settings","strip":"","back":""}}
 ALL PASS

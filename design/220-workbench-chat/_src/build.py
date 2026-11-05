@@ -139,11 +139,16 @@ CHIPS = {
 }
 
 
-def chat_toggle(open_=False, chip="", label="Chat"):
+def chat_toggle(open_=False, chip="", label="Chat", proj="Atlas"):
     """The one control that opens and closes the project chat (B + chat). Status shows only by exception."""
     return (
         f'<button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="{"true" if open_ else "false"}" '
         f'aria-keyshortcuts="/">{ic("chat")}{label}{CHIPS[chip]}<kbd>/</kbd></button>'
+        + (
+            f'<span class="sr" role="status">1 new reply in {proj} chat</span>'
+            if chip == "new"
+            else ""
+        )
     )
 
 
@@ -317,7 +322,7 @@ def ctx(tab, body, foot="", from_chat=""):
         )
     return f"""<aside class="context" id="ctx" aria-label="Context panel">
   <div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context">{"".join(tabs)}</div><button class="hide" aria-keyshortcuts="]">{ic("panel")}Hide</button></div>
-  <div class="chat-about from-chat" id="from-chat"{"" if from_chat else " hidden"} data-row="{from_chat}">{ic("chat")}<span>Opened from Atlas chat, the 14:03 answer.</span><button class="btn sm" data-back-chat>{ic("back")}Back to chat</button></div>
+  <div class="chat-about from-chat" id="from-chat"{"" if from_chat else " hidden"} data-row="{from_chat}">{ic("chat")}<span class="fc-text">Opened from Atlas chat, the 14:03 answer.</span><button class="btn sm" data-back-chat>{ic("back")}Back to chat</button></div>
   <div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-{tab.lower()}" style="display:flex;flex-direction:column;flex:1;min-height:0">
   {body}
   {f'<div class="ctx-foot">{foot}</div>' if foot else ""}
@@ -374,6 +379,7 @@ def shell(
 </main>
 {'<div class="tablet-scrim" aria-hidden="true"></div>' if panel_open else ""}
 {context or ""}
+{'<div class="chat-scrim" aria-hidden="true"></div>' if chat else ""}
 {chat or ""}
 </div>
 {tpls}{extra}"""
@@ -386,7 +392,9 @@ def chat_input(idn="ci", disabled=False, value="", focus=False, attach=""):
 def chatpane(body, foot=None, connected=True, about="", ret="chat-toggle", proj="Atlas"):
     """The project chat. A complementary region, never modal on desktop or tablet, so the board stays usable."""
     sub = "Orchestrator connected" if connected else "No orchestrator yet"
-    foot = chat_input("ci") if foot is None else foot
+    foot = (chat_input("ci") if foot is None else foot).replace(
+        "Message to Atlas chat", f"Message to {proj} chat"
+    )
     return f"""<aside class="chatpane" id="chat" aria-labelledby="chat-h" data-return-focus="{ret}">
   <div class="chat-head"><span class="ch-ic" aria-hidden="true">{ic("chat")}</span><div class="ch-t"><h2 id="chat-h">{proj} chat</h2><p>{sub}</p></div><button class="btn ghost sm" id="chat-close" aria-keyshortcuts="]">{ic("x")}Close chat</button></div>
   {about}
@@ -562,7 +570,7 @@ waiting_chat = chatpane(
     <div class="msg">{av("M", lg=True, color=PEOPLE["Maya"])}<div><div class="msg-h"><b>Maya</b><time>10:02</time></div>
       <div class="msg-b"><p>Plan the beta launch for 40 testers by the end of November.</p>
       <div class="msg-state" role="status"><span style="display:flex;gap:6px;align-items:center"><span class="spin" aria-hidden="true"></span><b>Waiting for an agent.</b></span><span>No agent is connected, so nobody has read this yet. It stays here and goes to the orchestrator as soon as one connects.</span>
-      <div class="acts"><button class="btn sm">{ic("card")}Make it a card now</button></div></div></div></div></div>
+      <div class="acts"><button class="btn sm">{ic("card")}Make it a card now (adds it to Todo)</button></div></div></div></div></div>
     <div class="msg">{av("M", lg=True, color=PEOPLE["Maya"])}<div><div class="msg-h"><b>Maya</b><time>10:04</time></div>
       <div class="msg-b"><p>Also add a card for the store listing.</p>
       <div class="msg-state err" role="alert"><b>Not sent. This device is offline.</b><span style="color:var(--text)">Your words are kept here until it sends.</span><div class="acts"><button class="btn sm">{ic("retry")}Try again</button><button class="btn sm ghost">{ic("edit")}Edit</button></div></div></div></div></div>
@@ -1024,7 +1032,7 @@ screens["06e-chat-empty"] = page(
         card_detail,
         chat_open=True,
         chat=chatpane(
-            f"""<div class="callout info"><h3>{ic("chat")}Ask the orchestrator for something</h3><span>Write what you need in your own words. The Atlas orchestrator, the project's lead agent, reads the board, answers here and turns the work into cards. You see them appear on the board, marked “From chat”. Short answers may come first as a <b>Quick reply</b> from a model (set in Settings); each message says who wrote it. Anything that leaves this workspace, like an email to testers, still waits for you in Needs me.</span></div>
+            f"""<div class="callout info"><h3>{ic("chat")}Ask the orchestrator for something</h3><span>Write what you need. The orchestrator answers here and turns the work into cards marked “From chat” on the board.</span></div>
   <div><p class="sec-h" style="margin-bottom:8px">Try asking</p>
   <div class="suggest"><button class="chip">What is blocked?</button><button class="chip">Plan the beta launch</button><button class="chip">Split A-121 into smaller cards</button></div></div>""",
             chat_input("ci", focus=True),
@@ -1405,7 +1413,7 @@ screens["09d-memory-error"] = page(
         + f"""<div class="list" style="display:flex"><div class="empty" role="alert">
   <span class="big err" aria-hidden="true">{ic("you")}</span>
   <h2>Search couldn't run</h2>
-  <p>Search is updating after a new version. This takes about 2 minutes. Your memories are safe and unchanged.</p>
+  <p>Search is unavailable right now. This usually takes about 2 minutes. Your memories are safe and unchanged.</p>
   <div class="acts"><button class="btn primary">{ic("retry")}Try again</button></div>
 </div></div>""",
         nav="memory",
@@ -1457,7 +1465,7 @@ def settings_page(model_state="ok", hosted=False, solo=False):
   <section class="set-sec" aria-labelledby="s2">
     <h2 id="s2">Chat answers</h2>
     <p class="lead">Which model writes the quick reply you see in chat. The orchestrator still does the work.</p>
-    <p class="set-note">Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the orchestrator's name.</p>
+    <details class="set-note"><summary>What quick replies are</summary>A short answer from this model, shown in chat before or beside the orchestrator's own answer. Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the orchestrator's name.</details>
     <fieldset class="radios" style="border:0;padding:0;margin:0"><legend class="sr">Chat answer mode</legend>
       <div class="radio"><input type="radio" name="mode" id="m-basic"><span><label for="m-basic"><b>Basic</b><small>No model. Instead of an answer, a short receipt confirms your message reached the orchestrator.</small></label></span></div>
       <div class="radio{"" if hosted else " on"}"><input type="radio" name="mode" id="m-local"{"" if hosted else " checked"}><span><label for="m-local"><b>Local model</b><small>Runs on your machine. Nothing leaves it.</small></label>
@@ -1592,7 +1600,7 @@ KROWS = [
     ("Y / L", "Copy exact words / link to card (memory)", True),
     ("Z", "Undo or stop (while the toast shows)", True),
     ("]", "Close the chat, or hide the side panel", True),
-    ("Esc", "Close a dialog or the palette", False),
+    ("Esc", "Close a dialog, the palette, or the chat (focus in the chat)", False),
 ]
 krows = "".join(
     f"<tr><td><kbd>{k}</kbd></td><td>{a}</td><td>"
@@ -1655,7 +1663,7 @@ def m_top(title="Atlas"):
   <button class="projbtn" aria-label="Project: {title}. Switch project">{sw}{title}{ic("chev")}</button>
   <span class="spacer"></span>
   <button class="iconbtn" aria-label="Search or do (command palette)">{ic("search")}</button>
-  <button class="iconbtn" aria-label="Project settings">{ic("settings")}</button>
+  <a class="btn m-settings" href="m13-settings.html" id="m-settings">{ic("settings")}Settings</a>
 </header>"""
 
 
@@ -1665,7 +1673,6 @@ def m_tabs(cur, needs=3, chat_new=True):
         ("board", "Board", "board"),
         ("chat", "Chat", "chat"),
         ("needs", "Needs me", "inbox"),
-        ("memory", "Memory", "memory"),
     ):
         c = ' aria-current="page"' if key == cur else ""
         b = (
@@ -1676,12 +1683,12 @@ def m_tabs(cur, needs=3, chat_new=True):
         if key == "chat":
             # Chat opens as a full-screen sheet over the board, with a clear way back.
             b = (
-                '<span class="badge newb">new<span class="sr">: 1 new reply</span></span>'
+                '<span class="badge newb">1 new<span class="sr"> reply</span></span>'
                 if chat_new
                 else ""
             )
             out.append(
-                f'<a href="m10-chat.html" id="m-chat-tab" aria-haspopup="dialog">{ic(icn)}{label}{b}</a>'
+                f'<a href="m10-chat.html{"?from=needs" if cur == "needs" else ""}" id="m-chat-tab" aria-haspopup="dialog">{ic(icn)}{label}{b}</a>'
             )
             continue
         out.append(f'<a href="#"{c}>{ic(icn)}{label}{b}</a>')
@@ -1733,7 +1740,7 @@ screens["m3-needs-me-item"] = page(
   <p class="quote" style="font-size:15px;line-height:22px">{APPROVAL_QUOTE}</p>
   {linked_cards(mobile=True)}
   {SEND_FACT}
-  <button class="btn" style="min-height:44px;justify-content:center">{ic("chat")}Ask a question</button>
+  <a class="btn" href="m10b-chat-ask-approval.html" id="m-ask" style="min-height:44px;justify-content:center">{ic("chat")}Ask a question</a>
 </main>
 <div class="m-actions"><button class="btn danger">{ic("x")}Decline</button><button class="btn primary" id="m-approve">{ic("check")}Approve and send…</button></div>
 </div>""",
@@ -1802,8 +1809,8 @@ screens["m8-send-too-late"] = page(
     m_after(
         f"""<section class="m-banner ok" aria-labelledby="mb-h">
   <b id="mb-h">Released to the orchestrator at 14:22</b>
-  <span style="font-size:14px">The 60 seconds have passed, so this can't be stopped here anymore. The orchestrator reported at 14:23: “Build 0.9 sent to 40 of 40 testers.” To change something, ask the orchestrator.</span>
-  <a class="btn is-focus" href="#" autofocus style="background:#FEFEFC">{ic("chat")}Ask the orchestrator</a>
+  <span style="font-size:14px">The 60 seconds have passed, so this can't be stopped here anymore. The orchestrator reported at 14:23: “Build 0.9 sent to 40 of 40 testers.” This can't be recalled here. To follow up, ask the orchestrator.</span>
+  <a class="btn is-focus" href="m10c-chat-ask-released.html" id="m-ask-orch" autofocus style="background:#FEFEFC">{ic("chat")}Ask the orchestrator</a>
 </section>""",
         "Released",
         "done",
@@ -1916,7 +1923,139 @@ M_CHAT = f"""<div class="m-chat" role="dialog" aria-modal="true" aria-labelledby
     ic("send")
 }</button></div></div>
 </div>"""
-screens["m10-chat"] = page("Chat (mobile)", m_board(extra=M_CHAT, inert=True), mobile=True)
+M10_LOG = M_CHAT.split(
+    '<div class="m-chat-log" role="log" aria-label="Messages in Atlas chat">', 1
+)[1].split('\n  <div class="m-chat-in">', 1)[0]
+
+
+def m_chat(
+    log,
+    about="",
+    back=("m1-board.html#m-chat-tab", "Back to board"),
+    ret="m-chat-tab",
+    connected=True,
+    value="",
+    focus_box=False,
+):
+    sub = (
+        "Orchestrator connected · it answers here"
+        if connected
+        else "No orchestrator yet · messages wait here"
+    )
+    fb = "" if focus_box else " is-focus"
+    return f"""<div class="m-chat" role="dialog" aria-modal="true" aria-labelledby="mch-h" data-return-focus="{ret}">
+  <header class="m-top"><a class="m-back{fb}" href="{back[0]}" id="m-chat-back"{"" if focus_box else " autofocus"}>{ic("back")}{back[1]}</a><span class="spacer"></span></header>
+  <div class="m-chat-h"><span class="ch-ic" aria-hidden="true">{ic("chat")}</span><div><h2 id="mch-h">Atlas chat</h2><p>{sub}</p></div></div>
+  {about}
+  <div class="m-chat-log" role="log" aria-label="Messages in Atlas chat">{log}
+  <div class="m-chat-in"><label class="sr" for="mci">Message to Atlas chat</label><div class="box{" is-focus" if focus_box else ""}"><textarea id="mci" rows="1" placeholder="Ask for something…"{" autofocus" if focus_box else ""}>{value}</textarea><button class="btn primary" aria-label="Send">{ic("send")}</button></div></div>
+</div>"""
+
+
+screens["m10-chat"] = page("Chat (mobile)", m_board(extra=m_chat(M10_LOG), inert=True), mobile=True)
+M_ABOUT_APPROVAL = """<div class="chat-about m-about" role="note"><span class="typ approve">Approval</span><span>You are asking about <b>Send beta 0.9 to 40 testers?</b> Approve or decline it in Needs me.</span></div>"""
+M_ABOUT_RELEASED = """<div class="chat-about m-about" role="note"><span class="typ done">Released</span><span>You are asking about <b>Send beta 0.9 to 40 testers</b>, released at 14:22. It can't be recalled here.</span></div>"""
+M8_BODY = (
+    screens["m8-send-too-late"]
+    .split('<body class="mobile">', 1)[1]
+    .split("</body>", 1)[0]
+    .replace(" autofocus", "")
+    .replace(" is-focus", "")
+)
+screens["m10b-chat-ask-approval"] = page(
+    "Chat (mobile): asking about an approval",
+    M3_BODY.replace('<div class="m">', '<div class="m" inert>', 1)
+    + m_chat(
+        f"""<div class="msgs"><button class="btn ghost" style="align-self:center;min-height:44px">Show earlier messages</button>{MSG_1409}
+    <div class="msg">{av("M", lg=True, color=PEOPLE["Maya"])}<div><div class="msg-h"><b>Maya</b><time>14:15</time></div>
+      <div class="msg-b"><p class="msg-about"><span class="typ approve">Approval</span>Send beta 0.9 to 40 testers?</p><p>Who exactly is in the Beta group? Is anyone outside the company?</p></div></div></div>
+    <div class="msg">{av("A", True, lg=True)}<div><div class="msg-h"><b>Atlas orchestrator</b><span class="tag agent">agent</span><time>14:15</time></div>
+      <div class="msg-b"><p>The Beta group has 40 people: 38 testers who signed up through the beta form (A-112) and 2 from your team, you and Leon. So 38 are outside the company.</p><p>Nothing has been sent. The approval is still waiting for you in Needs me.</p></div></div></div></div></div>""",
+        about=M_ABOUT_APPROVAL,
+        back=("m3-needs-me-item.html#m-ask", "Back to the approval"),
+        ret="m-ask",
+    ),
+    mobile=True,
+)
+screens["m10c-chat-ask-released"] = page(
+    "Chat (mobile): asking about a released send",
+    M8_BODY.replace('<div class="m">', '<div class="m" inert>', 1)
+    + m_chat(
+        f"""<div class="msgs">
+    <div class="msg">{av("M", lg=True, color=PEOPLE["Maya"])}<div><div class="msg-h"><b>Maya</b><time>14:30</time></div>
+      <div class="msg-b"><p class="msg-about"><span class="typ done">Released</span>Send beta 0.9 to 40 testers</p><p>Can you send the testers a short note tomorrow with the known issues?</p></div></div></div>
+    <div class="msg">{av("A", True, lg=True)}<div><div class="msg-h"><b>Atlas orchestrator</b><span class="tag agent">agent</span><time>14:31</time></div>
+      <div class="msg-b"><p>Yes. That is a new email outside the workspace, so I'll ask you to approve it in Needs me before anything is sent. The 14:22 send can't be recalled.</p></div></div></div></div></div>""",
+        about=M_ABOUT_RELEASED,
+        back=("m8-send-too-late.html#m-ask-orch", "Back to the approval"),
+        ret="m-ask-orch",
+    ),
+    mobile=True,
+)
+screens["m12-chat-no-agent"] = page(
+    "Chat (mobile): no orchestrator yet",
+    m_board(
+        inert=True,
+        extra=m_chat(
+            f"""<div class="msgs"><p class="daysep">Today</p>
+    <div class="msg">{av("M", lg=True, color=PEOPLE["Maya"])}<div><div class="msg-h"><b>Maya</b><time>10:02</time></div>
+      <div class="msg-b"><p>Plan the beta launch for 40 testers by the end of November.</p>
+      <div class="msg-state" role="status"><b>Waiting for an agent.</b><span>Nobody has read this yet. It goes to the orchestrator as soon as an agent connects.</span>
+      <div class="acts"><button class="btn">{ic("card")}Make it a card now (adds it to Todo)</button></div></div></div></div></div>
+    <div class="callout info"><h3>{ic("agent")}Connect an agent on a computer</h3><span>Agents run on a computer. Open Commonplace there and choose <b>Connect an agent</b>. Your message is delivered when it connects.</span></div></div></div>""",
+            connected=False,
+        ),
+    ),
+    mobile=True,
+)
+screens["m12b-chat-error"] = page(
+    "Chat (mobile): no answer",
+    m_board(
+        inert=True,
+        extra=m_chat(
+            f"""<div class="msgs"><p class="daysep">Today</p>{MAYA_ASK}
+    <div class="msg">{av("A", True, lg=True)}<div><div class="msg-h"><b>Atlas orchestrator</b><span class="tag agent">agent</span></div>
+      <div class="msg-state err" role="alert"><b>No answer yet.</b><span style="color:var(--text)">It read your message at 14:02 but hasn't answered in 5 minutes. Its agent on “Maya's laptop” may be closed or asleep. Your message is kept.</span>
+      <div class="m-acts"><button class="btn primary">{ic("retry")}Ask again</button><button class="btn">{ic("card")}Make it a card now</button><a class="btn" href="m13-settings.html">{ic("settings")}Check the agent in Settings</a></div></div></div></div></div></div>"""
+        ),
+    ),
+    mobile=True,
+)
+screens["m12c-chat-empty"] = page(
+    "Chat (mobile): nothing asked yet",
+    m_board(
+        inert=True,
+        extra=m_chat(
+            f"""<div class="msgs"><div class="callout info"><h3>{ic("chat")}Ask the orchestrator for something</h3><span>Write what you need. It answers here and turns the work into cards marked “From chat”.</span></div>
+    <p class="sec-h">Try asking</p><div class="suggest m-suggest"><button class="chip">What is blocked?</button><button class="chip">Plan the beta launch</button><button class="chip">Split A-121 into smaller cards</button></div></div></div>""",
+            focus_box=True,
+        ),
+    ),
+    mobile=True,
+)
+screens["m13-settings"] = page(
+    "Project settings (mobile)",
+    m_board(
+        inert=True,
+        extra=f"""<div class="m-chat m-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="mst-h" data-return-focus="m-settings">
+  <header class="m-top"><a class="m-back is-focus" href="m1-board.html#m-settings" id="m-settings-back" autofocus>{ic("back")}Back to board</a><span class="spacer"></span><span class="saved" role="status">{ic("check")}Saves automatically</span></header>
+  <div class="m-chat-log"><h2 id="mst-h" class="m-h1" style="padding:0 0 8px">Atlas settings</h2>
+  <section class="m-set" aria-labelledby="ms1"><h3 id="ms1">Orchestrator</h3>
+    <div class="orch-card">{av("A", True)}<div><b>Atlas orchestrator</b> <span class="tag ok">{ic("check")}Connected</span><small>Agent on “Maya's laptop” · last active 2 min ago</small></div></div>
+    <p class="set-note">Chosen automatically: the agent connected longest.</p></section>
+  <section class="m-set" aria-labelledby="ms2"><fieldset style="border:0;padding:0;margin:0"><legend id="ms2"><h3>Chat answers</h3></legend>
+    <label class="m-radio"><input type="radio" name="mm">Basic <small>a short receipt, no model</small></label>
+    <label class="m-radio"><input type="radio" name="mm" checked>Local model <small>reachable · nothing leaves this machine</small></label>
+    <label class="m-radio"><input type="radio" name="mm" disabled>Hosted provider <small>set up on a computer</small></label></fieldset>
+    <p class="set-note">Quick replies are saved under their own name, never the orchestrator's.</p></section>
+  <section class="m-set" aria-labelledby="ms3"><h3 id="ms3">Agents</h3>
+    <ul class="m-agents"><li>{who("Atlas orchestrator", True)}<span>Orchestrator</span></li><li>{who("Iris", True)}<span>Works on cards</span></li><li>{who("Otto", True)}<span>Works on cards</span></li><li>{who("Juno", True)}<span>Works on cards</span></li></ul>
+    <p class="set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section>
+  </div>
+</div>""",
+    ),
+    mobile=True,
+)
 
 c134m = card(
     "A-134",
@@ -2033,6 +2172,8 @@ for name in screens:
 SHOTS += [
     ("04-board", "r2-04-board-1024", 1024, 768, 1),
     ("06c-chat-answer", "r-06c-chat-1024", 1024, 768, 1),
+    ("06c-chat-answer", "r-06c-chat-768", 768, 1024, 1),
+    ("06c-chat-answer", "r-06c-chat-390", 390, 844, 2),
     ("04c-board-tablet-panel", "r2-04-board-1024-panel", 1024, 768, 1),
     ("04-board", "r1-04-board-320", 320, 2600, 2),
     ("m1-board", "r2-m1-board-320", 320, 640, 2),
@@ -2111,6 +2252,12 @@ GROUPS = [
             "m11-board-from-chat",
             "m11b-board-from-chat-a135",
             "m11c-board-from-chat-a118",
+            "m10b-chat-ask-approval",
+            "m10c-chat-ask-released",
+            "m12-chat-no-agent",
+            "m12b-chat-error",
+            "m12c-chat-empty",
+            "m13-settings",
             "m9-card-menu",
             "m4-add-card",
             "m2-needs-me",
@@ -2126,6 +2273,8 @@ GROUPS = [
         [
             "r2-04-board-1024",
             "r-06c-chat-1024",
+            "r-06c-chat-768",
+            "r-06c-chat-390",
             "r2-04-board-1024-panel",
             "r1-04-board-320",
             "r2-m1-board-320",
@@ -2137,7 +2286,7 @@ src = {b: a for a, b, *_ in SHOTS}
 sec = []
 for g, names in GROUPS:
     cells = "".join(
-        f'<li><a href="screens/{src[n]}.html"><img src="shots/{n}.png" alt="Screenshot: {n}" loading="lazy" class="{"mob" if n.startswith(("m", "r1-m", "r2-m", "r1-04-board-320")) else ""}"></a>'
+        f'<li><a href="screens/{src[n]}.html"><img src="shots/{n}.png" alt="Screenshot: {n}" loading="lazy" class="{"mob" if n.startswith(("m", "r1-m", "r2-m", "r1-04-board-320", "r-06c-chat-390")) else ""}"></a>'
         f'<span><b>{n}</b> · <a href="shots/{n}.png">PNG</a></span></li>'
         for n in names
     )
@@ -2154,8 +2303,8 @@ img{{width:360px;height:225px;object-fit:cover;object-position:top left;border:1
 img.mob{{width:120px;height:260px}} a{{color:#2E43C0}} a:focus-visible{{outline:3px solid #2E43C0;outline-offset:2px}}
 li span{{font-size:13px;color:#4A4C55}}
 </style></head><body>
-<h1>Direction B + chat · Workbench with the orchestrator chat (round 2)</h1>
-<p>B Workbench, plus one element from C: the project chat sits next to the board behind one labelled <b>Chat</b> toggle in the board header. Click a thumbnail for the live HTML screen. Flows and notes: <a href="README.md">README.md</a>; answers to the round-1 reviews: <a href="RESPONSES-r1.md">RESPONSES-r1.md</a>.</p>
+<h1>Direction B + chat · Workbench with the orchestrator chat (round 3)</h1>
+<p>B Workbench, plus one element from C: the project chat sits next to the board behind one labelled <b>Chat</b> toggle in the board header. Click a thumbnail for the live HTML screen. Flows and notes: <a href="README.md">README.md</a>; answers to the reviews: <a href="RESPONSES-r1.md">round 1</a>, <a href="RESPONSES-r2.md">round 2</a>.</p>
 {"".join(sec)}
 </body></html>
 """)

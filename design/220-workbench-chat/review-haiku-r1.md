@@ -1,7 +1,7 @@
 # Card #220 · B + chat · review round 1 (Haiku)
 
 - **Direction:** `B-chat/`, branch head `2bdd2fae2cce2323fe99425156c2039856dd5ab2` (`design/220-workbench-chat`)
-- **Reviewer:** Haiku, non-gate review. Read-only: no design file edited, no subagents. Scratch checks only in `/tmp/bchat-r1-*`.
+- **Reviewer:** Haiku, non-gate review. Read-only: no design file edited, no subagents. Scratch checks only in a scratch folder outside the design.
 - **Read:** the review and B+chat briefs, DESIGN-BRIEF, DIRECTIONS, `B-chat/README.md`, `index.html`, `screens/wb.css` and `wb.js` in full, the chat, Needs me, memory, settings, mobile and tablet markup, `_src/keytest-results.txt`, and B's round-4 reviews and `REPORT-ALL-PASS.md`. **Opened all 54 PNGs in `shots/`.** I did not open `review-terra-r1.md` in the folder, so this review stays independent.
 
 **Count: BLOCKING 0 · MAJOR 3 · MINOR 14.**
@@ -15,7 +15,7 @@
 - **Targets (CSS).** `.chat-toggle` 32 px (`wb.css:550`); Close chat `.btn.sm` 28 px (`wb.css:51`); chat card rows 36 px (`wb.css:211`), 48 px on mobile (`wb.css:600`); Back to board 44 px (`wb.css:376`); mobile send 44×44 (`wb.css:606`); mobile tabs 56 px (`wb.css:360`). Every chat target I checked is ≥ 24 px. The mobile exception is MINOR 14.
 - **Motion.** `prefers-reduced-motion` removes all animation and transition (`wb.css:39`). The file has no `@keyframes`, so the working ring `.spin` (`wb.css:426`) is static.
 - **Keyboard.** `keytest-results.txt` is ALL PASS (15 dialog checks, 10 chat checks). I read the logic in `wb.js:113–168` and found one gap (MINOR 2).
-- **No ev0lve visuals.** A text scan of `~/work/ev0lve-themes` finds 52 distinct hex values; B-chat has 38. The only shared value is `#ffffff`, so the claim holds, but the README's counts (37 and 41) do not reproduce (MINOR 10).
+- **No ev0lve visuals.** A text scan of the local ev0lve theme folder finds 52 distinct hex values; B-chat has 38. The only shared value is `#ffffff`, so the claim holds, but the README's counts (37 and 41) do not reproduce (MINOR 10).
 - **B to B+chat.** The `wb.css` delta is additions only; no existing rule changed. The single-key switch now restores its saved state on load (B r4 minor 4). Fixed from B r4: counts (`05`, `05b`, `06c`, `11`); toasts (`05b`, `08`: the button sits beside `role="status"`); the Chat pill (now the toggle); "(Maya's laptop)" (`10`, `10b`, `10c`, `10e`); "localhost" and "index" (`10b`, `09d`); the desktop Stop note in the README. Still open: B r4 minor 5 (`m7`, see MINOR 11) and minor 9 (320 px project strip).
 
 ## Brief questions
@@ -63,7 +63,7 @@ None. Every core flow finishes: the chat sends, shows and closes; the board stay
 7. **`aria-label` on a generic `div`.** `06a-chat-open.html:138` and `m10-chat.html`: `<div class="made" aria-label="Cards in this answer">`. Naming a generic element is not reliable (ARIA 1.2). Fix: `role="group"` with `aria-labelledby` pointing at the `.made-h` text.
 8. **Tablet with chat open hides two columns** (`r-06c-chat-1024.png`). Review is cut and Done is off-screen with no visible control. The README tells the user to close the chat to see Done. Fix: a column switcher or a "Done 14 →" cue above the board at 700–1099 px.
 9. **`/` does nothing on most screens.** `wb.js:127` returns when there is no `#chat`. Chat panes are absent on `10`, `10b`–`10e`, `09b`–`09e`, `07b`, `07c`, `08` and onboarding, yet the README says "`/` from anywhere outside a field" and `12` lists it. Fix: narrow the claim to the screens that have the chat, or fix it with M1.
-10. **README hex counts do not reproduce.** The README says 37 colours in B-chat and 41 in ev0lve-themes. My text scan finds 38 and 52 across all text files (script `/tmp/bchat-r1-hexcmp.py`). The shared value is `#ffffff` only, as the README says. Fix: correct the counts or state the file scope.
+10. **README hex counts do not reproduce.** The README says 37 colours in B-chat and 41 in ev0lve-themes. My text scan finds 38 and 52 across all text files (a scratch script). The shared value is `#ffffff` only, as the README says. Fix: correct the counts or state the file scope.
 11. **Carried from B r4: "Decide again →"** (`m7-send-stopped.html`; PNG byte-identical to B's). The bottom action does not say what it does, and Approve and Decline sit below the fold. Fix: label it "Approve or decline…", or show both buttons in the bottom bar as `m3` does.
 12. **The "1 new" chip has no rule** (`04-board.html:27`). "1 new" does not say new what. The README admits there is no rule for two or more messages or for teammate messages. Fix: visible text "1 new reply", "3 new replies", and one README line on teammate messages.
 13. **The "working" ring is static** (`06b-chat-thinking.html`, `03b`; `.spin`, `wb.css:426`, no `@keyframes`). It reads as stalled work, although the text carries the status. Fix: add a rotation keyframe; the reduced-motion rule already removes it.

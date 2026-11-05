@@ -44,7 +44,7 @@ let showDetailsRef = null;
       $$(".board .card").forEach((c) => { c.classList.remove("is-selected"); c.removeAttribute("aria-current"); });
       card.classList.add("is-selected");
       card.setAttribute("aria-current", "true");
-      if (typeof showDetailsRef === "function") showDetailsRef($(".cid", card).textContent, null);
+      if (typeof showDetailsRef === "function") showDetailsRef($(".cid", card).textContent, $("#chat") && !$("#chat").hidden ? "board" : null);
     }
     if (next) { e.preventDefault(); moveTo(next); }
   });
@@ -89,6 +89,7 @@ let showDetailsRef = null;
       else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
     }
     if (e.key === "Escape") {
+      if (m.id === "chat" || (m.id === "ctx" && $(".shell.ctx-pushed"))) return;
       e.preventDefault();
       m.hidden = true;
       $$(".scrim, .tablet-scrim").forEach((s) => (s.hidden = true));
@@ -118,6 +119,16 @@ let showDetailsRef = null;
   const pane = () => $("#chat");
   const chatOpen = () => pane() && !pane().hidden;
   let opener = null;
+  // Below 1024 px the chat (and a card opened from it) is a modal sheet: role=dialog, aria-modal, rail and board inert.
+  const narrow = () => innerWidth < 1024;
+  function sheet(el, on) {
+    if (!el) return;
+    const modalNow = on && narrow();
+    if (modalNow) { el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); }
+    else { el.removeAttribute("aria-modal"); if (el.id === "chat") el.removeAttribute("role"); }
+    const anyModal = $$("#chat[aria-modal=true]:not([hidden]), #ctx[aria-modal=true]:not([hidden])").length > 0;
+    $$(".shell > .rail, .shell > #main").forEach((x) => (anyModal ? x.setAttribute("inert", "") : x.removeAttribute("inert")));
+  }
   function setOpen(on) {
     const p = pane(); if (!p) return;
     p.hidden = !on;
@@ -125,6 +136,7 @@ let showDetailsRef = null;
     const shell = $(".shell");
     if (shell) { shell.classList.toggle("chat-open", on); if (!ctx) shell.classList.toggle("two", !on); }
     $$('[aria-controls="chat"]').forEach((b) => b.setAttribute("aria-expanded", String(on)));
+    sheet(p, on);
   }
   function openChat(from, focusEl) {
     if (!pane()) return;
@@ -133,6 +145,7 @@ let showDetailsRef = null;
     $$("[data-about-for]", pane()).forEach((el) => (el.hidden = !(opener && el.dataset.aboutFor === opener.id)));
     const strip = $("#from-chat"); if (strip) strip.hidden = true;
     const sh = $(".shell"); if (sh) sh.classList.remove("ctx-pushed");
+    sheet($("#ctx"), false);
     setOpen(true);
     const log = $('[role="log"]', pane()), hit = log && $(".hit", log);
     if (focusEl) focusEl.scrollIntoView({ block: "nearest" });
@@ -140,6 +153,7 @@ let showDetailsRef = null;
     const f = focusEl || $("textarea", pane()); if (f) f.focus();
   }
   function closeChat() {
+    const sh = $(".shell"); if (sh) sh.classList.remove("ctx-pushed");
     setOpen(false);
     const back = opener || document.getElementById(pane().dataset.returnFocus || "") || $("#chat-toggle");
     if (back) back.focus();
@@ -158,6 +172,10 @@ let showDetailsRef = null;
   //    (without the strip). Details come from <template id="tpl-A-…">, built from the same data as the card.
   const cardOf = (id) => $$(".board .card").find((c) => $(".cid", c) && $(".cid", c).textContent === id);
   showDetailsRef = (id, row) => showDetails(id, row);
+  function backToChat() {
+    const id = $("#from-chat").dataset.row;
+    openChat($("#chat-toggle"), id && $(`#chat [data-card="${id}"]`));
+  }
   function showDetails(id, row) {
     const tpl = document.getElementById("tpl-" + id), panel = $("#ctx-panel");
     $$(".board .card").forEach((c) => { c.classList.remove("is-selected"); c.removeAttribute("aria-current"); });
@@ -167,28 +185,37 @@ let showDetailsRef = null;
     panel.innerHTML = tpl.innerHTML;
     $$("#ctx [role=tab]").forEach((t) => { const on = t.id === "tab-details"; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; });
     panel.setAttribute("aria-labelledby", "tab-details");
-    const strip = $("#from-chat");
-    if (strip) { strip.hidden = !row; strip.dataset.row = row ? id : ""; }
+    const strip = $("#from-chat"), fromRow = row && row !== "board";
+    if (strip) {
+      strip.hidden = !row;
+      strip.dataset.row = fromRow ? id : "";
+      const t = $(".fc-text", strip);
+      if (t) t.textContent = fromRow ? "Opened from Atlas chat, the 14:03 answer." : `You picked ${id} on the board. The chat is one click away.`;
+    }
     if (row) {
       setOpen(false);
       const sh = $(".shell"); if (sh) sh.classList.add("ctx-pushed");
-      const h = $("h2", panel); if (h) h.focus();
+      sheet($("#ctx"), true);
+      const h = $("h2", panel);
+      if (h && (fromRow || narrow())) h.focus();
     }
   }
   document.addEventListener("click", (e) => {
     const r = e.target.closest && e.target.closest("#chat [data-card]");
     if (r) { e.preventDefault(); return showDetails(r.dataset.card, r); }
     const back = e.target.closest && e.target.closest("[data-back-chat]");
-    if (back) {
-      const id = $("#from-chat").dataset.row;
-      return openChat($("#chat-toggle"), id && $(`#chat [data-card="${id}"]`));
-    }
+    if (back) return backToChat();
     const c = e.target.closest && e.target.closest(".board .card");
-    if (c && !e.target.closest("button")) showDetails($(".cid", c).textContent, null);
+    if (c && !e.target.closest("button")) showDetails($(".cid", c).textContent, chatOpen() ? "board" : null);
   });
   // Esc inside the chat (also from the message box; the draft stays) closes it. Dialogs keep their own Esc.
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || modal() || !chatOpen() || !pane().contains(document.activeElement)) return;
+    if (e.key !== "Escape") return;
+    const m = modal();
+    const strip = $("#from-chat");
+    if (strip && !strip.hidden && $("#ctx").contains(document.activeElement) && (!m || m.id === "ctx")) { e.preventDefault(); return backToChat(); }
+    if (m && m.id !== "chat") return;
+    if (!chatOpen() || !pane().contains(document.activeElement)) return;
     e.preventDefault();
     closeChat();
   });
@@ -209,6 +236,9 @@ let showDetailsRef = null;
       const hit = $(".hit", l);
       if (hit) l.scrollTop = hit.offsetTop - l.offsetTop - 60; else l.scrollTop = l.scrollHeight;
     });
+    if (chatOpen()) sheet(pane(), true);
+    const mb = $("#m-chat-back");
+    if (mb && /from=needs/.test(location.search)) { mb.lastChild.textContent = "Back to Needs me"; mb.href = "m2-needs-me.html#m-chat-tab"; }
     // A link may name the element to return to (#m-chat-tab, #row-A-135): focus it, so Back keeps your place.
     const target = location.hash.length > 1 && document.getElementById(location.hash.slice(1));
     if (target) { target.scrollIntoView({ block: "center" }); target.focus(); }
