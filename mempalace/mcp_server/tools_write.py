@@ -559,8 +559,8 @@ def write_mirror_units(thread_id: str, units: list):
     for arguments in prepared:
         if arguments["drawer_id"] in committed:
             continue
-        # Handled units include idempotent replays. No backend handle survives
-        # a yield: each _write_drawer reopens its collection locally.
+        # Handled units include idempotent replays. The loop holds no collection
+        # locally across a yield; each unit re-fetches through _get_collection.
         if committed and mine_yield_point():
             refusal = _mcp_tool_preflight_refusal(None, "mempalace_add_drawer")
             if refusal is not None:

@@ -53,15 +53,15 @@ def _drawer(drawer_id):
     }
 
 
-def test_u2_red_search_reads_hits_in_one_batch():
+def test_search_reads_hits_in_one_batch():
     from commonplace import memory_tools
 
     ctx = _Fake(["a", "b", "c"], {i: _drawer(i) for i in "abc"})
     memory_tools._search(ctx, {"query": "q", "limit": 3})
-    assert ctx.calls == ["mempalace_search", "mempalace_get_drawers"]  # RED
+    assert ctx.calls == ["mempalace_search", "mempalace_get_drawers"]
 
 
-def test_guard_output_equals_per_id_records():
+def test_output_equals_per_id_records():
     from commonplace import memory_tools
 
     ctx = _Fake(["a", "chunked"], {i: _drawer(i) for i in ["a", "chunked"]})
@@ -70,7 +70,7 @@ def test_guard_output_equals_per_id_records():
     assert got == want
 
 
-def test_guard_duplicate_hits_keep_first_seen_order():
+def test_duplicate_hits_keep_first_seen_order():
     from commonplace import memory_tools
 
     ctx = _Fake(["a", "b", "a"], {i: _drawer(i) for i in "ab"})
@@ -79,7 +79,7 @@ def test_guard_duplicate_hits_keep_first_seen_order():
     assert ctx.read_ids == ["a", "b"]
 
 
-def test_guard_missing_item_raises_no_memory_not_found():
+def test_missing_item_raises_no_memory_not_found():
     from commonplace import memory_tools
     from commonplace.extensions import ToolError
 
@@ -89,7 +89,7 @@ def test_guard_missing_item_raises_no_memory_not_found():
     assert str(info.value) == "no: memory not found"
 
 
-def test_guard_slim_profile_keeps_per_id_reads():
+def test_slim_profile_keeps_per_id_reads():
     from commonplace import memory_tools
 
     ctx = _Fake(
@@ -102,7 +102,7 @@ def test_guard_slim_profile_keeps_per_id_reads():
     assert ctx.calls == ["mempalace_search", "mempalace_get_drawer", "mempalace_get_drawer"]
 
 
-def test_guard_zero_hits_do_not_fetch_drawers():
+def test_zero_hits_do_not_fetch_drawers():
     from commonplace import memory_tools
 
     ctx = _Fake([], {})

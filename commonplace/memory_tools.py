@@ -84,7 +84,7 @@ def _memory(ctx, name, args):
                 return {"wings": {}}
             if name == "mempalace_search":
                 return {"results": []}
-            if name == "mempalace_get_drawer":
+            if name in ("mempalace_get_drawer", "mempalace_get_drawers"):
                 raise ToolError("no: memory not found") from None
         if "not found" in str(exc).lower():
             raise ToolError("no: memory not found") from None
@@ -215,7 +215,7 @@ def _search(ctx, args, store=None):
     ids = list(dict.fromkeys(hit["drawer_id"] for hit in result.get("results", [])))
     if not ids:
         return []
-    if not _available(ctx, "mempalace_get_drawers"):
+    if not (_available(ctx, "mempalace_get_drawer") and _available(ctx, "mempalace_get_drawers")):
         return [_get(ctx, memory_id, store) for memory_id in ids]
     records = _memory(ctx, "mempalace_get_drawers", {"drawer_ids": ids}).get("results", [])
     if len(records) != len(ids):
@@ -223,7 +223,9 @@ def _search(ctx, args, store=None):
     for record in records:
         if record.get("error"):
             # Match the singular read's error translation, including refusals.
-            if "not found" in str(record["error"]).lower():
+            if str(record["error"]) in ("No palace found", "Chroma database missing") or (
+                "not found" in str(record["error"]).lower()
+            ):
                 raise ToolError("no: memory not found")
             raise ToolError("no: memory request refused or unavailable")
     return [_record(ctx, record, store) for record in records]

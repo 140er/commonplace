@@ -1,4 +1,4 @@
-"""Card #230 plan-review probe: a mirror batch lets a queued read in between units."""
+"""Mirror batches admit queued reads between complete units."""
 
 import json
 import threading
@@ -104,7 +104,7 @@ def test_startup_read_runs_between_mirror_units_not_after_batch(monkeypatch):
     try:
         assert u1_entered.wait(10), "sweep never reached unit 1"
         reader.start()
-        assert reader_done.wait(5), "startup read waited for the whole mirror batch"  # RED
+        assert reader_done.wait(5), "startup read waited for the whole mirror batch"
         assert order[:2] == ["u1", "read"]
     finally:
         release.set()
@@ -153,7 +153,7 @@ def test_mirror_write_refuses_after_yield_when_preflight_changes(monkeypatch):
     reader.join(10)
     assert not errors, errors
     payload = _payload(result)
-    assert payload["success"] is False  # RED
+    assert payload["success"] is False
     assert order == ["u1", "read"]
     assert "u2" not in json.dumps(payload) and "u3" not in json.dumps(payload)
 
@@ -225,4 +225,4 @@ def test_every_unit_completes_with_a_reader_at_each_boundary(monkeypatch):
         expected.append(f"u{i}")
         if i < 64:
             expected.append("read")
-    assert order == expected  # RED
+    assert order == expected
