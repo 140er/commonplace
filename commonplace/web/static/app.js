@@ -11,7 +11,9 @@ import { signinView, signinMessage } from "./signin.js";
 import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 import { createConsole } from "./console.js";
-import { createChat, CHAT_COPY } from "./chat.js";
+import { createChat } from "./chat.js";
+import { createDock } from "./chatdock.js";
+import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard } from "./board.js";
 import { createDetails } from "./details.js";
@@ -185,6 +187,7 @@ function restore(saved) {
 async function signin(code = null) {
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
+  clearWorkbenchChat();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
@@ -203,7 +206,7 @@ function currentBoard() {
   const selected = needsCards().find((card) => card.number === state.selected);
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* This visit still works without storage. */ }
-  const slug = routeSlug ? decodeURIComponent(routeSlug) : state.card?.board || selected?.board || last;
+  const slug = routeSlug ? decodeURIComponent(routeSlug) : state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : state.card?.board || selected?.board || last;
   return state.boards.find((board) => board.slug === slug) || state.boards[0] || null;
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
@@ -236,10 +239,13 @@ function shellMenu(kind = "palette") {
   dialog.querySelector("input")?.focus();
 }
 function shell() {
+  state.workbenchChat?.dispose();
   root.innerHTML = `<style>
     .shell #content { flex:1; min-height:0; overflow:auto; }
     .shell .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
     .shell .head h1 { font-size:18px; } .shell .head .right { display:flex; gap:8px; }
+    #chat-content .chat-view { border-left:0; }
+    #chat-content .chat-header > h2, #chat-content .chat-header > [data-close-chat] { display:none; }
     .shell #card-panel { overflow:auto; } .shell .workbench-board { min-height:100%; }
     #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
     #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
@@ -252,6 +258,7 @@ function shell() {
   const narrow = matchMedia("(max-width:1099px)");
   let opener = null, wasOpen = false;
   const sync = () => {
+    if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     const open = !panel.hidden, modal = open && narrow.matches;
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
@@ -329,7 +336,7 @@ function needsCards() {
   return needItems(state.needs).map((item) => item.card);
 }
 function needsView() {
-  title("Home");
+  title("Home", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
   const cards = needsCards();
   if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
   // Keep the Speak/Stop node (and its focus) through live refreshes.
@@ -341,7 +348,7 @@ function needsView() {
 function boardView() {
   const board = currentBoard();
   if (!board) { boardsView(); return; }
-  title(board.name || board.slug, `<a class="btn" href="#/board/${enc(board.slug)}/chat">Chat</a><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
+  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
   const content = root.querySelector("#content");
   // Keep the active phone column and a parked-card disclosure through polling.
   const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
@@ -477,6 +484,7 @@ async function cardPanel(number, epoch) {
   const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
   if (opening) panel.innerHTML = message("Loading card…");
   const request = ++state.panelRequest;
+  const chatOrigin = state.chatDetail?.number === number ? state.chatDetail.row : null;
   try {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
@@ -485,7 +493,7 @@ async function cardPanel(number, epoch) {
     detailsUI?.stop();
     detailsUI = createDetails({ mount: panel, api });
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: state.base.startsWith("#/board/") ? { kind: "board" } : null });
+    const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
@@ -494,6 +502,7 @@ async function cardPanel(number, epoch) {
     restore(saved);
     await shown;
     if (request !== state.panelRequest || epoch !== state.screen) return;
+    if (state.workbenchChat?.dock.isOpen()) state.workbenchChat.dock.close({ toDetails: true, row: chatOrigin });
     if (state.cardKey) { const action = state.cardKey; state.cardKey = null; openSelectedCard(action); }
   } catch (error) {
     if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
@@ -569,7 +578,7 @@ async function settingsView(epoch) {
 }
 
 async function memoryView(epoch, refresh = false) {
-  title("Memory");
+  title("Memory", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
   const content = root.querySelector("#content");
   if (refresh && state.mapDispose) return; // Map data is refreshed through its controller.
   state.mapDispose?.(); state.mapDispose = null;
@@ -613,27 +622,144 @@ async function search(form) {
   if (epoch !== state.screen) return;
   results.innerHTML = found.results.map((m) => `<button data-action="memory" data-id="${e(m.id)}"><span class="meta">${e(m.theme)} · ${e(m.author)} · ${e(m.at)}</span><p>${e(m.text)}</p></button>`).join("") || message("No memories found");
 }
-async function chatScreen(epoch) {
-  chatUI ??= createChat({ mount: () => root.querySelector("#content"), api, e });
-  let slug = state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : state.base.endsWith("/chat") ? decodeURIComponent(state.base.split("/")[2]) : null;
-  title("Chat");
-  await chatUI.show(slug);
-  if (epoch !== state.screen) return;
-  slug = root.querySelector(".chat-view")?.dataset.board || slug;
-  const board = state.boards.find((b) => b.slug === slug);
-  const header = root.querySelector(".chat-header");
-  if (header && slug) {
-    const { mountProject } = await import("./projects.js");
-    if (epoch !== state.screen || !header.isConnected) return;
-    header.querySelector("[data-chat-orchestrator]")?.remove();
-    const main = document.createElement("div");
-    main.dataset.chatOrchestrator = "";
-    header.append(main);
-    await mountProject(main, {
-      slug, api, e, current: () => epoch === state.screen,
-      notice: board?.can_configure ? CHAT_COPY.noOrchestratorOwner : CHAT_COPY.noOrchestratorMember,
+// The shell keeps one dock and one pane across header refreshes. Only the pane's
+// successful visible reads advance seen ids; closed polling merely accumulates rows.
+function mountWorkbenchChat() {
+  const board = currentBoard(), layout = root.querySelector(".shell");
+  if (!board || !layout) { state.workbenchChat?.dispose(); return; }
+  let service = state.workbenchChat;
+  if (!service) {
+    const pages = new Map(), stores = new Map(), waiters = new Set();
+    let disposed = false, timer = null, running = false, rerun = false, lastRead = null;
+    const user = state.me.user || state.me.actor?.replace(/^user:/, "");
+    const store = (slug) => {
+      if (!stores.has(slug)) stores.set(slug, seenStore(user, slug));
+      return stores.get(slug);
+    };
+    const visible = () => !disposed && !document.hidden && service.dock.isOpen();
+    const wake = () => { for (const resolve of waiters) resolve(); waiters.clear(); };
+    async function whenVisible(slug) {
+      while (!disposed && service.board.slug === slug && !visible()) await new Promise((resolve) => waiters.add(resolve));
+      if (disposed || service.board.slug !== slug) throw new Error("Chat view changed");
+    }
+    const paneApi = async (path, options) => {
+      const slug = service.board.slug;
+      // Offline delivery belongs to the pane, even after it has been closed.
+      if (!options?.method || options.method === "GET") await whenVisible(slug);
+      const result = await api(path, options);
+      if (!options?.method || options.method === "GET") {
+        await whenVisible(slug);
+        if (path.startsWith(`/api/chat/${enc(slug)}?`)) lastRead = { slug, page: result };
+      }
+      return result;
+    };
+    chatUI ??= createChat({ mount: () => root.querySelector("#chat-content"), api: paneApi, e, me: state.me,
+      onState() {
+        const heading = root.querySelector("#chat-content #chat-h"), view = root.querySelector("#chat-content .chat-view");
+        if (heading && view) { heading.id = "chat-content-h"; view.setAttribute("aria-labelledby", heading.id); }
+        if (!visible() || lastRead?.slug !== service.board.slug) return;
+        store(lastRead.slug).markSeen(lastRead.page);
+        service.unread = 0; service.dock.update({ unread: 0 }); service.phone();
+      },
+      onCard(number, row) {
+        const item = row.closest(".chat-message"), reply = row.closest(".chat-reply");
+        const stamp = (reply || item)?.querySelector(".chat-stamp")?.textContent?.trim() || "";
+        row.dataset.src = stamp;
+        state.chatDetail = { number, row };
+        state.selected = number;
+        location.hash = `#/card/${number}`;
+      },
     });
+    const dock = createDock({ root: layout, api, e, chat: chatUI });
+    function schedule() {
+      clearTimeout(timer);
+      if (!disposed && !document.hidden) timer = setTimeout(pollUnread, 15000);
+    }
+    async function pollUnread() {
+      clearTimeout(timer);
+      if (disposed || document.hidden) return;
+      if (running) { rerun = true; return; }
+      if (dock.isOpen()) { schedule(); return; }
+      running = true;
+      const slug = service.board.slug;
+      try {
+        const old = pages.get(slug);
+        const query = old ? `after=${old.cursor || 0}&replies_after=${old.reply_cursor || 0}` : "last=20";
+        const [page, status] = await Promise.all([api(`/api/chat/${enc(slug)}?${query}`), api(`/api/chat/${enc(slug)}/status`)]);
+        if (disposed || document.hidden || service.board.slug !== slug) return;
+        const merge = (a = [], b = []) => [...new Map([...a, ...b].map((row) => [row.id, row])).values()];
+        const merged = { ...old, ...page, messages: merge(old?.messages, page.messages), replies: merge(old?.replies, page.replies),
+          cursor: Math.max(old?.cursor || 0, page.cursor || 0), reply_cursor: Math.max(old?.reply_cursor || 0, page.reply_cursor || 0) };
+        pages.set(slug, merged);
+        const derived = deriveChatState(merged, status, service.board, Date.now(), store(slug).read(merged));
+        service.unread = derived.unread;
+        dock.update({ unread: derived.unread, hasOrchestrator: !!service.board.coordinator });
+        service.phone();
+      } catch { /* Keep the last honest count; the next event or visible tick retries. */ }
+      finally {
+        running = false;
+        if (rerun) { rerun = false; void pollUnread(); } else schedule();
+      }
+    }
+    function visibility() { clearTimeout(timer); wake(); if (!document.hidden) void pollUnread(); }
+    const observer = new MutationObserver(() => {
+      wake();
+      if (dock.isOpen()) {
+        if (state.route.startsWith("#/card/")) {
+          state.route = state.base; state.card = null; state.chatDetail = null;
+          history.replaceState(history.state, "", state.base);
+        }
+        service.phone();
+      }
+      else {
+        if (state.base.endsWith("/chat")) {
+          const base = state.base.slice(0, -5);
+          if (state.route === state.base) { state.route = base; history.replaceState(history.state, "", base); }
+          state.base = base;
+        }
+        void pollUnread();
+      }
+    });
+    observer.observe(layout, { attributes: true, attributeFilter: ["class"] });
+    document.addEventListener("visibilitychange", visibility);
+    service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
+      phone() {
+        const mount = root.querySelector("#phone-tabs");
+        if (!mount) return;
+        const view = state.base === "#/needs" ? "needs" : state.base.startsWith("#/memory") ? "memory" : dock.isOpen() ? "chat" : "board";
+        mount.innerHTML = renderPhoneTabs({ board: service.board, view, needs: state.needs.count || 0, unread: dock.isOpen() ? 0 : service.unread });
+        const tab = mount.querySelector("#m-chat-tab");
+        if (tab) {
+          tab.setAttribute("aria-controls", "chat"); tab.setAttribute("aria-expanded", String(dock.isOpen()));
+          tab.onclick = (event) => {
+            event.preventDefault(); event.stopPropagation();
+            void dock.open({ from: tab, strip: view === "needs" ? { text: `${service.board.name || service.board.slug} chat`, backLabel: "Back to Needs me" } : null });
+          };
+        }
+      },
+      dispose() {
+        disposed = true; clearTimeout(timer); observer.disconnect(); wake();
+        document.removeEventListener("visibilitychange", visibility);
+        dock.destroy(); chatUI = null; state.workbenchChat = null;
+      },
+      clear() { for (const value of stores.values()) value.clearSeen(); clearSeen(user); pages.clear(); stores.clear(); },
+    };
   }
+  const changed = service.board.slug !== board.slug;
+  service.board = board;
+  if (changed) service.unread = 0;
+  layout.dataset.singleKeys = singleKeysEnabled() ? "on" : "off";
+  service.dock.mount(root.querySelector("#head-actions"), { board, label: state.base === "#/needs" || state.base.startsWith("#/memory") ? `${board.name || board.slug} chat` : "Chat", unread: service.unread });
+  service.phone();
+  if (state.base.endsWith("/chat") && !service.dock.isOpen()) void service.dock.open();
+  else void service.pollUnread();
+}
+function clearWorkbenchChat() {
+  chatUI?.clearUnsent();
+  state.workbenchChat?.clear();
+  state.workbenchChat?.dispose();
+  chatUI?.stop(); chatUI = null;
+  if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
 }
 function consoleScreen() {
   consoleUI ??= createConsole({ mount: () => root.querySelector("#content"), api, e });
@@ -677,8 +803,7 @@ async function refresh({ background = false, events = [] } = {}) {
     }
     const saved = remember(), play = capture(state.base);
     navigation();
-    if (state.base.startsWith("#/board/") && state.base.endsWith("/chat")) { if (!background) await chatScreen(epoch); }
-    else if (state.base.startsWith("#/board/")) boardView();
+    if (state.base.startsWith("#/board/")) boardView();
     else if (state.base.startsWith("#/space/")) spaceView();
     else if (state.base === "#/boards" || state.base === "#/start") boardsView();
     else if (state.base === "#/rules") {
@@ -695,7 +820,7 @@ async function refresh({ background = false, events = [] } = {}) {
       const changed = events.some((event) => event.kind.startsWith("memory."));
       if (!background || changed) await memoryView(epoch, background && !changed);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
-      if (!background) await chatScreen(epoch);
+      boardView();
     } else if (state.base === "#/console") {
       if (!background) consoleScreen();
     } else if (state.base === "#/settings") {
@@ -705,6 +830,10 @@ async function refresh({ background = false, events = [] } = {}) {
       queueNoteOffline();
     } else needsView();
     if (!current()) return true;
+    if (state.base.startsWith("#/board/") || state.base === "#/needs" || state.base.startsWith("#/memory")) {
+      mountWorkbenchChat();
+      if (events.some((event) => event.kind === "space_message" || event.kind === "space_replied")) void state.workbenchChat?.pollUnread();
+    } else state.workbenchChat?.dispose();
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
     if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
@@ -936,7 +1065,7 @@ async function route() {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings)$/.test(hash) ? hash : "#/");
     state.card = null;
   }
-  if ((/^#\/chat(?:\/|$)/.test(previousBase) || previousBase.endsWith("/chat")) && state.base !== previousBase) chatUI?.stop();
+  if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/console" && state.base !== "#/console") consoleUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
@@ -1033,6 +1162,7 @@ root.addEventListener("focusin", (event) => {
   }
 });
 root.addEventListener("click", async (event) => {
+  if (event.defaultPrevented) return;
   const b = event.target.closest("[data-action]");
   if (!b) {
     const card = event.target.closest(".workbench-board .card[data-card]");
@@ -1073,7 +1203,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "single-keys") {
       const enabled = !singleKeysEnabled();
       try { localStorage.setItem("cmmn.keys.single", String(enabled)); } catch { /* Keep the switch usable for this visit. */ }
-      state.singleKeys = enabled; b.setAttribute("aria-checked", String(enabled)); b.textContent = enabled ? "On" : "Off";
+      state.singleKeys = enabled; root.querySelector(".shell")?.setAttribute("data-single-keys", enabled ? "on" : "off"); b.setAttribute("aria-checked", String(enabled)); b.textContent = enabled ? "On" : "Off";
     }
     else if (action === "cancel-card") { state.addingCard = false; boardView(); }
     else if (action === "open-chat" || action === "back-to-chat") { const board = currentBoard(); if (board) location.hash = `#/board/${enc(board.slug)}/chat`; }
@@ -1146,7 +1276,7 @@ root.addEventListener("click", async (event) => {
       panel.innerHTML = '<form class="form-tile" data-form="memory"><h2>Save memory</h2><label>Text<textarea name="text" required></textarea></label><label>Theme<input name="theme"></label><label>Topic<input name="topic"></label><label>Card<input name="task"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
     } else if (action === "logout") {
       voice.stop();
-      chatUI?.stop(); chatUI = null;
+      clearWorkbenchChat();
       await api("/app/logout", { method: "POST" }); state.me = null; state.drafts.clear(); signin();
     } else if (action === "remove-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}`, { method: "DELETE" }));
     else if (action === "test-hook") await mutate(`hook-${b.dataset.hook}`, () => api(`/api/webhooks/${enc(b.dataset.hook)}/test`, { method: "POST", body: {} }));
@@ -1282,6 +1412,8 @@ function workbenchKey(event) {
   event.preventDefault(); return true;
 }
 document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented) return;
+  if (["/", "]", "Escape", "Tab"].includes(event.key) && root.querySelector(".shell.chat-open, .shell.ctx-pushed")) return;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") { event.preventDefault(); shellMenu(); return; }
   const dialog = root.querySelector("#shell-dialog");
   if (dialog?.open) { if (event.key === "Escape") { event.preventDefault(); dialog.close(); } return; }
