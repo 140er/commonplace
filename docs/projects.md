@@ -52,3 +52,45 @@ listener does not block board creation; the next project view repairs the seat.
 
 See [project routes](boards/API.md#project-routes) for the API contract and
 [project chat](chat.md#coordinator-contract-and-card-fallback) for message routing.
+
+## Give a project its own memory section
+
+Shared projects show why Connect would let an agent read and change all shared
+memory. The primary action, **Give this project its own memory section**, calls
+`POST /api/projects/<slug>/wing` with exactly `{}`. The alternative explicitly
+allows access to all shared memory. Settings exposes the same own-section action.
+
+An owner can convert a shared wing to `project_<slug>` (hyphens become underscores).
+New boards still default to shared; owners opt into this conversion. A non-shared
+wing is unchanged, but its coordinator and seat are still checked. Wildcard wings
+are refused. Another board using that wing, including an archived board, blocks
+conversion. Active connections that would gain read or write access also block it;
+the response gives their count and redacted names so the owner can narrow them.
+The scan cannot see a connection minted after it; this race is accepted.
+
+Existing memory stays verbatim in its old wing. Cards, messages and memory links
+are untouched. Future lessons follow the board wing; task-linked memory saves
+without an explicit theme or pinned write wing default to a concrete `project_*`
+wing if writable. This also applies to boards already using project wings. Other
+boards and wildcard wings keep the shared default. Facts and handoffs are unchanged.
+Board- or repo-scoped `session_start` searches only the current wing. Unscoped
+memory search still finds pre-change shared memories with normal access checks.
+
+Shared-only agents lose visibility of this board, chat, cards and webhooks;
+shared runner workers stop claiming its work. `affected` reports other active
+connections by redacted name, lost permission (`read`, `write`, `read+write`) and
+whether they are runner-managed. It does not revoke those connections. Operators
+must re-point them. A new seat cannot read old shared card links. Agents may get
+one rules refresh on their next checked write after visibility changes.
+
+A coordinator without access is cleared. Displaced orchestrator-seat tokens are
+revoked, rather than rotated; reconnect creates a fresh token, often with a name
+suffix because revoked names stay reserved. Runner-linked seats are reported in
+`runner_linked`: their tokens remain active with their old policy until managed
+through the runner registry, but their seat pointers are cleared. Repeating the
+operation repairs interrupted reconciliation. Connect also reconciles mismatched
+seats on every board, even boards never converted by this action.
+
+There is no undo action here. Owner-held PATs, including standard-trust seat PATs,
+may invoke the equivalent MCP `board_own_wing`; restricted connections are refused.
+The operator connects the project's seat afterwards.
