@@ -95,7 +95,7 @@ class Browser:
 
 
 def seen_script(seed, unread):
-    """Seed sessionStorage seen ids before the app runs (only when absent)."""
+    """Seed the device (localStorage) seen ids before the app runs (only when absent)."""
     user, values = seed.maya, {}
     newest = max(seed.messages.values())
     for board in ("atlas", "harbor", "ledger", "field-notes"):
@@ -111,7 +111,7 @@ def seen_script(seed, unread):
         "(() => { const v = "
         + json.dumps(entries)
         + "; for (const [k, x] of Object.entries(v)) "
-        + "{ try { if (sessionStorage.getItem(k) === null) sessionStorage.setItem(k, x); } "
+        + "{ try { if (localStorage.getItem(k) === null) localStorage.setItem(k, x); } "
         + "catch (e) {} } })();"
     )
 
