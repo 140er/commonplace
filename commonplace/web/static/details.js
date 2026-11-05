@@ -119,10 +119,12 @@ export function createDetails({ mount, api = request, onMemory = () => {} }) {
   return {
     async show(card, settings = {}) {
       const token = ++revision;
+      // A refresh of the same card keeps the user's focus; only a new card moves it to the heading.
+      const changed = current?.number !== card.number || current?.board !== card.board;
       current = card;
       options = { ...settings, tab: "details" };
       draw();
-      mount.querySelector("[data-details-title]")?.focus();
+      if (changed) mount.querySelector("[data-details-title]")?.focus();
       if (card.message_id != null && !originMessage(card, settings.messages)) {
         try {
           const origin = await loadDetailsOrigin(card, api);

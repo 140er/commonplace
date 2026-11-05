@@ -13,7 +13,7 @@ STATIC = Path(__file__).resolve().parents[1] / "commonplace/web/static"
     ["ids", "blocked", "chat", "columns", "backlog", "assignee", "filters", "empty", "escaping"],
 )
 def test_board_contract(case):
-    assert (STATIC / "board.js").is_file(), "Board module missing"  # RED
+    assert (STATIC / "board.js").is_file(), "Board module missing"
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("workbench_board.mjs")), case],
         capture_output=True,

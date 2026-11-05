@@ -15,7 +15,7 @@ import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
-import { boardView as renderBoard, bindBoard } from "./board.js";
+import { boardView as renderBoard, bindBoard, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { createDetails } from "./details.js";
 import { resolveRoute } from "./routes.js";
 
@@ -35,7 +35,7 @@ const state = {
   mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0,
+  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, chatTimes: new Map(),
   phonePushPending: false,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
@@ -129,6 +129,12 @@ function callTree(card) {
   return `<section class="cs" aria-label="Call tree"><div class="cs-head">${head}</div><div class="cs-body"><ul class="cs-tree">${(stack.roots || []).map((n, i) => node(n, String(i), "")).join("")}${cut}${rest}</ul></div></section>`;
 }
 
+// Stable selectors survive a re-render, so focus can return to the same control.
+function focusKey(el) {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  for (const name of ["data-action", "data-details-tab", "data-details-title"]) if (el.hasAttribute?.(name)) return `[${name}="${CSS.escape(el.getAttribute(name))}"]`;
+  return null;
+}
 function remember() {
   voice.remember();
   root.querySelectorAll("[data-draft]").forEach((input) => state.drafts.set(input.dataset.draft, input.value));
@@ -137,6 +143,7 @@ function remember() {
     key: active?.dataset?.draft, start: active?.selectionStart, end: active?.selectionEnd,
     scope: active?.closest?.("#card-panel, #content")?.id,
     ask: ask && !active.dataset.draft ? { card: ask.dataset.ask, option: active.dataset.option } : null,
+    focus: !ask && !active?.dataset?.draft && active?.closest?.("#card-panel") ? focusKey(active) : null,
     queue: root.querySelector(".queue")?.scrollTop, panel: root.querySelector("#card-panel")?.scrollTop,
     tree: root.querySelector(".cs-body")?.scrollTop,
     view: root.querySelector("#content")?.dataset.view, cols: cols && [cols.scrollTop, cols.scrollLeft],
@@ -169,6 +176,8 @@ function restore(saved) {
     const ask = scope.querySelector(`[data-ask="${CSS.escape(saved.ask.card)}"]`);
     (saved.ask.option == null ? ask : ask?.querySelector(`[data-option="${CSS.escape(saved.ask.option)}"]`))?.focus({ preventScroll: true });
   }
+  const lost = !document.activeElement || document.activeElement === document.body;
+  if (saved?.focus && lost) root.querySelector("#card-panel")?.querySelector(saved.focus)?.focus({ preventScroll: true });
   const queue = root.querySelector(".queue"), panel = root.querySelector("#card-panel");
   if (queue && saved?.queue != null) queue.scrollTop = saved.queue;
   if (panel && saved?.panel != null) panel.scrollTop = saved.panel;
@@ -190,7 +199,7 @@ async function signin(code = null) {
   clearWorkbenchChat();
   state.mapDispose?.(); state.mapDispose = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
-  state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear();
+  state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear(); state.chatTimes.clear();
   providersPromise ||= api("/app/auth/providers").catch(() => ({}));
   const { providers = [], paused = [] } = await providersPromise;
   if (state.me) return;
@@ -228,18 +237,19 @@ function openSelectedCard(action) {
 }
 function shortcutsView() {
   const dialog = root.querySelector("#shell-dialog");
-  dialog.innerHTML = `<h2>Keyboard shortcuts</h2><p id="single-keys-label">Single-key shortcuts</p><p>Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</p><button class="btn" data-action="single-keys" role="switch" aria-checked="${singleKeysEnabled()}" aria-labelledby="single-keys-label">${singleKeysEnabled() ? "On" : "Off"}</button><p>Single keys never fire while you type in a field. Approve and Decline always need the button.</p><dl><dt>C</dt><dd>New card</dd><dt>J / K</dt><dd>Next / previous item</dd><dt>Enter</dt><dd>Open selected card</dd><dt>E</dt><dd>Edit card</dd><dt>M</dt><dd>Move card to…</dd><dt>]</dt><dd>Hide the side panel</dd></dl><button class="btn primary" data-action="close-dialog">Done <kbd>Esc</kbd></button>`;
+  dialog.innerHTML = `<h2 id="shell-dialog-h">Keyboard shortcuts</h2><p id="single-keys-label">Single-key shortcuts</p><p>Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</p><button class="btn" data-action="single-keys" role="switch" aria-checked="${singleKeysEnabled()}" aria-labelledby="single-keys-label">${singleKeysEnabled() ? "On" : "Off"}</button><p>Single keys never fire while you type in a field. Approve and Decline always need the button.</p><dl><dt>C</dt><dd>New card</dd><dt>J / K</dt><dd>Next / previous item</dd><dt>Enter</dt><dd>Open selected card</dd><dt>E</dt><dd>Edit card</dd><dt>M</dt><dd>Move card to…</dd><dt>]</dt><dd>Hide the side panel</dd></dl><button class="btn primary" data-action="close-dialog">Done <kbd>Esc</kbd></button>`;
   dialog.showModal();
 }
 function shellMenu(kind = "palette") {
   const dialog = root.querySelector("#shell-dialog");
   // The full palette is mounted by its own unit; keep navigation usable meanwhile.
-  dialog.innerHTML = `<h2>${kind === "switch-workspace" ? "Workspace" : "Search or do…"}</h2>${kind === "palette" ? '<form data-form="shell-search"><label>Search memory<input name="q" type="search" required></label><button class="btn">Search</button></form>' : ""}<nav aria-label="Go to">${state.boards.map((board) => `<a class="btn" href="#/board/${enc(board.slug)}">${e(board.name || board.slug)}</a>`).join("")}<a class="btn" href="#/needs">Needs me</a><a class="btn" href="#/memory">Memory</a><a class="btn" href="#/rules">Rules</a><a class="btn" href="#/console">Console</a><a class="btn" href="#/settings">Workspace settings</a><button class="btn" data-action="new-board">New project</button></nav><button class="btn" data-action="close-dialog">Close</button>`;
+  dialog.innerHTML = `<h2 id="shell-dialog-h">${kind === "switch-workspace" ? "Workspace" : "Search or do…"}</h2>${kind === "palette" ? '<form data-form="shell-search"><label>Search memory<input name="q" type="search" required></label><button class="btn">Search</button></form>' : ""}<nav aria-label="Go to">${state.boards.map((board) => `<a class="btn" href="#/board/${enc(board.slug)}">${e(board.name || board.slug)}</a>`).join("")}<a class="btn" href="#/needs">Needs me</a><a class="btn" href="#/memory">Memory</a><a class="btn" href="#/rules">Rules</a><a class="btn" href="#/console">Console</a><a class="btn" href="#/settings">Workspace settings</a><button class="btn" data-action="new-board">New project</button></nav><button class="btn" data-action="close-dialog">Close</button>`;
   dialog.showModal();
   dialog.querySelector("input")?.focus();
 }
 function shell() {
   state.workbenchChat?.dispose();
+  state.shellSync = null;
   root.innerHTML = `<style>
     .shell #content { flex:1; min-height:0; overflow:auto; }
     .shell .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
@@ -250,8 +260,8 @@ function shell() {
     #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
     #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
     #shell-dialog dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:16px 0; }
-    @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } #shell-dialog button { min-height:44px; } }
-  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-label="Workspace navigation and shortcuts"></dialog>`;
+    @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } .shell .head [data-action="coordinator"] { display:none; } #shell-dialog button { min-height:44px; } }
+  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog>`;
   navigation();
   const panel = root.querySelector("#card-panel"), layout = root.querySelector(".shell");
   if (!panel || !layout) return;
@@ -281,6 +291,8 @@ function shell() {
   });
   state.shellStop?.();
   state.shellStop = () => { observer.disconnect(); narrow.removeEventListener("change", sync); };
+  // navigation() replaces the rail; it re-applies the sheet's inert state through this.
+  state.shellSync = sync;
 }
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
@@ -289,10 +301,11 @@ function navigation() {
   const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.endsWith("/chat") ? "chat" : state.base.startsWith("#/space/") ? "space" : "board";
   const needsByBoard = {};
   for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
-  boardNav.outerHTML = renderRail({ workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  boardNav.outerHTML = renderRail({ workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard, rulesWaiting: state.rulesWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
   root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board });
   root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ board, view, needs: state.needs.count || 0 });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
+  state.shellSync?.();
 }
 function showError(text) {
   state.error = text;
@@ -336,7 +349,7 @@ function needsCards() {
   return needItems(state.needs).map((item) => item.card);
 }
 function needsView() {
-  title("Home", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
+  title("Needs me", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
   const cards = needsCards();
   if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
   // Keep the Speak/Stop node (and its focus) through live refreshes.
@@ -354,21 +367,39 @@ function boardView() {
   const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
   const backlog = content.querySelector(".backlog")?.open;
   boardDispose?.();
-  content.innerHTML = renderBoard({ board, cards: state.cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages: state.chatBoard === board.slug ? state.chat : [], adding: state.addingCard, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
+  content.innerHTML = renderBoard({ board, cards: state.cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   boardDispose = bindBoard(content, { api, board,
     onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
     onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
+    onSelect(number) { state.selected = number; markOpenCard(); },
+    onOpen(number) { state.selected = number; location.hash = `#/card/${number}`; },
   });
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
+  void fillChatTimes(board);
 }
 function markOpenCard() {
   root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
     const selected = Number(card.dataset.card) === state.selected || state.route === `#/card/${card.dataset.card}`;
     card.classList.toggle("is-selected", selected);
-    if (selected) card.setAttribute("aria-current", "true"); else card.removeAttribute("aria-current");
+    if (selected) { card.setAttribute("aria-current", "true"); roveTo(card); } else card.removeAttribute("aria-current");
   });
+}
+// "From chat" shows the source message's time, never the card's; each unknown message is read once.
+async function fillChatTimes(board) {
+  if (!state.chatTimes.has(board.slug)) state.chatTimes.set(board.slug, new Map());
+  const known = state.chatTimes.get(board.slug), chat = state.chatBoard === board.slug ? state.chat : [];
+  const missing = state.cards.filter((card) => card.message_id != null && !known.has(String(card.message_id)) && !chat.some((m) => String(m.id) === String(card.message_id)));
+  if (!missing.length) return;
+  for (const card of missing) known.set(String(card.message_id), null);
+  const found = await loadChatTimes({ api, board, cards: missing });
+  for (const message of found) known.set(String(message.id), message);
+  if (!found.length || !state.me || currentBoard()?.slug !== board.slug) return;
+  for (const card of missing) {
+    root.querySelectorAll(`.workbench-board .card[data-card="${card.number}"] .tag`).forEach((tag) => { if (tag.textContent.startsWith("From chat")) tag.textContent = chatTag(card, found); });
+  }
 }
 function spaceTask(card, inline) {
   return `<article class="space-task" data-key="${card.number}">${taskRow(card, `<span class="actor">${e(actor(card.assignee || card.return_to || card.created_by))}</span>`)}${rowFoot(card)}${children(card, inline ? "chat" : "space")}</article>`;
@@ -490,15 +521,15 @@ async function cardPanel(number, epoch) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    detailsUI?.stop();
-    detailsUI = createDetails({ mount: panel, api });
+    // A refresh of the open card reuses the component, so focus stays where the user left it.
+    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
     const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
     // Keep the existing versioned ask actions and call tree reachable on card routes.
-    panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `<ol class="log">${conversation(card)}</ol>${callTree(card)}`);
+    if (tab === "details") panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `<ol class="log">${conversation(card)}</ol>${callTree(card)}`);
     restore(saved);
     await shown;
     if (request !== state.panelRequest || epoch !== state.screen) return;
@@ -1044,14 +1075,15 @@ async function route() {
   if (!state.me) return;
   remember();
   let hash = location.hash || "#/";
-  if (hash === "#/") {
+  if (hash === "#/" || hash === "#/chat") {
     const result = await api("/api/boards");
     if (!state.me) return;
     state.boards = result.boards;
   }
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
-  const resolved = resolveRoute(hash, { boards: state.boards, last });
+  // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
+  const resolved = hash === "#/chat" ? resolveRoute("#/", { boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
@@ -1391,7 +1423,7 @@ function workbenchKey(event) {
   if (key === "?") { shortcutsView(); event.preventDefault(); return true; }
   if (key === "]") {
     if (!root.querySelector("#card-panel").hidden) closeCardPanel();
-    else if (state.base.endsWith("/chat")) location.hash = state.base.slice(0, -5);
+    else if (/^#\/board\/[^/?]+\/chat$/.test(state.base)) location.hash = state.base.slice(0, -5);
     event.preventDefault(); return true;
   }
   if (!state.base.startsWith("#/board/") || state.base.endsWith("/chat")) return false;
@@ -1414,11 +1446,12 @@ function workbenchKey(event) {
 document.addEventListener("keydown", (event) => {
   if (event.defaultPrevented) return;
   if (["/", "]", "Escape", "Tab"].includes(event.key) && root.querySelector(".shell.chat-open, .shell.ctx-pushed")) return;
+  if (!state.me) return;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") { event.preventDefault(); shellMenu(); return; }
   const dialog = root.querySelector("#shell-dialog");
   if (dialog?.open) { if (event.key === "Escape") { event.preventDefault(); dialog.close(); } return; }
   const typing = event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]");
-  if (event.key !== "Escape" && (event.altKey || event.ctrlKey || event.metaKey || typing)) return;
+  if (event.altKey || event.ctrlKey || event.metaKey || typing) return;
   const panel = root.querySelector("#card-panel");
   const panelOpen = panel && !panel.hidden;
   if (event.key === "Escape") {
@@ -1427,7 +1460,9 @@ document.addEventListener("keydown", (event) => {
     root.querySelector('[data-action="close-panel"]')?.click();
     return;
   }
-  if (!state.me || event.repeat || !singleKeysEnabled()) return;
+  if (event.repeat) return;
+  // Only printable single keys follow the switch; Enter and the arrows always work.
+  if (!singleKeysEnabled()) { if (event.key.length > 1) workbenchKey(event); return; }
   if (workbenchKey(event)) return;
   const ask = event.target instanceof Element && event.target.closest("[data-ask]");
   if (ask && /^[1-6]$/.test(event.key)) {

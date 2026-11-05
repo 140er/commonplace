@@ -12,11 +12,11 @@ REDS = ["shell", "navigation", "board", "details", "routes", "settings", "keys",
 
 @pytest.mark.parametrize("case", REDS)
 def test_red_shell(case):
-    assert HARNESS.is_file(), "Shell harness missing"  # RED
+    assert HARNESS.is_file(), "Shell harness missing"
     result = subprocess.run(
         ["node", str(HARNESS), case], capture_output=True, text=True, timeout=10
     )
-    assert result.returncode == 0, result.stdout + result.stderr  # RED
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("case", ["anchors", "legacy"])

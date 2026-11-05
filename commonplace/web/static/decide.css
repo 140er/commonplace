@@ -143,10 +143,12 @@
 @keyframes decide-rise { from { transform: translateY(8px) scale(0.985); opacity: 0.6; } to { transform: none; opacity: 1; } }
 @keyframes decide-flip { from { transform: perspective(900px) rotateY(-90deg); } to { transform: none; } }
 
+/* The shell sets data-screen; on phones the queue takes the whole screen without the shell chrome. */
 @media (max-width: 640px) {
-  .app[data-screen="decide"] { grid-template-rows: minmax(0, 1fr); height: 100dvh; }
-  .app[data-screen="decide"] :is(.head, .mtabs, #connection-state) { display: none; }
-  .app[data-screen="decide"] #content { padding: 0; overflow: hidden; }
+  .shell[data-screen="decide"] { height: 100dvh; }
+  .shell[data-screen="decide"] .center { height: 100%; overflow: hidden; }
+  .shell[data-screen="decide"] :is(.head, .m-top, .m-tabs, #connection-state) { display: none; }
+  .shell[data-screen="decide"] #content { padding: 0; overflow: hidden; }
 }
 
 @media (min-width: 641px) {

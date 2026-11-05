@@ -11,7 +11,7 @@ STATIC = Path(__file__).resolve().parents[1] / "commonplace/web/static"
 
 @pytest.mark.parametrize("case", ["root", "empty", "chat", "space", "needs"])
 def test_routes(case):
-    assert (STATIC / "routes.js").is_file(), "Route module missing"  # RED
+    assert (STATIC / "routes.js").is_file(), "Route module missing"
     node = shutil.which("node")
     assert node, "Node is required for route checks"
     result = subprocess.run(

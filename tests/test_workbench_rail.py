@@ -11,7 +11,7 @@ STATIC = ROOT / "commonplace" / "web" / "static"
 
 @pytest.mark.parametrize("case", ["phone", "counts", "current", "menu", "escaping"])
 def test_rail_render(case):
-    assert (STATIC / "rail.js").is_file(), "Rail module missing"  # RED
+    assert (STATIC / "rail.js").is_file(), "Rail module missing"
     result = subprocess.run(
         ["node", str(ROOT / "tests" / "workbench_rail.mjs"), case],
         capture_output=True,

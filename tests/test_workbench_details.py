@@ -13,7 +13,7 @@ REDS = ["origin", "blocked", "proposal", "actions", "tabs", "strips", "loading"]
 
 @pytest.mark.parametrize("case", REDS)
 def test_red_details(case):
-    assert (STATIC / "details.js").is_file(), "Details module missing"  # RED
+    assert (STATIC / "details.js").is_file(), "Details module missing"
     result = subprocess.run(
         ["node", str(HARNESS), case], capture_output=True, text=True, timeout=10
     )

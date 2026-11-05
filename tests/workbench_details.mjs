@@ -96,6 +96,20 @@ const cases = {
     assert.ok(renderDetails(card, { ...opts, strip: { kind: 'board' } }).includes('You picked A-21 on the board. The chat is one click away.'));
     assert.ok(!html.includes('Back to chat'));
   },
+  refocus() {
+    // Only a newly shown card moves focus to its heading; a refresh of the same card does not.
+    let focused = 0;
+    const title = { focus: () => { focused++; } };
+    const mount = { innerHTML: '', addEventListener() {}, removeEventListener() {}, querySelector: (s) => s === '[data-details-title]' ? title : null };
+    const component = createDetails({ mount });
+    component.show({ ...card, message_id: null }, opts);
+    assert.equal(focused, 1);
+    component.show({ ...card, message_id: null, title: 'Refreshed' }, opts);
+    assert.equal(focused, 1, 'A refresh of the same card moved focus');
+    component.show({ ...card, number: 22, message_id: null }, opts);
+    assert.equal(focused, 2);
+    component.stop();
+  },
   async loading() {
     const calls = [];
     const api = async (url) => { calls.push(url); return { board: 'atlas', messages: [{ id: 17, text: 'Exact source' }] }; };

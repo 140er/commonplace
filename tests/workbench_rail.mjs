@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../commonplace/web/static/rail.js', import.meta.url), 'utf8');
+const css = await readFile(new URL('../commonplace/web/static/workbench.css', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../commonplace/web/static/api.js', import.meta.url), 'utf8');
 const apiURL = `data:text/javascript;base64,${Buffer.from(apiSource).toString('base64')}`;
 const rail = await import(`data:text/javascript;base64,${Buffer.from(source.replace("'./api.js'", JSON.stringify(apiURL))).toString('base64')}`);
@@ -30,8 +31,8 @@ switch (process.argv[2]) {
   }
   case 'counts': {
     const html = rail.renderRail(options);
-    assert.match(html, /aria-label="3 items">3/);
-    assert.match(html, /aria-label="2 need you">2/);
+    assert.match(html, />3<span class="sr"> items<\/span>/);
+    assert.match(html, />2<span class="sr"> need you<\/span>/);
     assert.ok(!html.includes('>10</span>'));
     assert.equal(rail.projectSubline(board), '2 agents working');
     assert.equal(rail.projectSubline({ agents_working: 1 }), '1 agent working');
@@ -62,8 +63,25 @@ switch (process.argv[2]) {
     assert.match(html, /Workspace settings/);
     assert.match(html, /Control\+K Meta\+K/);
     assert.match(html, /Shortcuts <kbd>\?<\/kbd>/);
-    assert.match(html, /<style>/);
-    assert.match(html, /max-width: 699px/);
+    assert.match(css, /\.m-tabs \{ display: grid;/);
+    break;
+  }
+  case 'nostyle': {
+    // Rail styles live in the shared stylesheet; re-rendering the rail must not add a copy.
+    assert.doesNotMatch(rail.renderRail(options), /<style>/);
+    assert.doesNotMatch(rail.renderPhoneBar(options) + rail.renderPhoneTabs(options), /<style>/);
+    for (const rule of ['.cmdk {', '.proj {', '.m-top {', '.m-tabs {', '.rail .user-links a {']) assert.ok(css.includes(rule), rule);
+    break;
+  }
+  case 'rules': {
+    const html = rail.renderRail({ ...options, rulesWaiting: 2 });
+    const rules = html.match(/<a href="#\/rules">[\s\S]*?<\/a>/), summary = html.match(/<summary[\s\S]*?<\/summary>/);
+    assert.ok(rules && summary, 'Rules entry or user menu missing');
+    assert.match(rules[0], />2</);
+    assert.match(summary[0], />2</);
+    const none = rail.renderRail({ ...options, rulesWaiting: 0 });
+    assert.doesNotMatch(none.match(/<summary[\s\S]*?<\/summary>/)[0], /class="count/);
+    assert.doesNotMatch(none.match(/<a href="#\/rules">[\s\S]*?<\/a>/)[0], /class="count/);
     break;
   }
   case 'escaping': {

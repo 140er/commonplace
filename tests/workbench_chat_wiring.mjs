@@ -16,7 +16,7 @@ for (const name of ['deriveChatState', 'seenStore', 'clearSeen']) assert.equal(t
 const which = process.argv[2];
 const alpha = {slug: 'atlas', name: 'Atlas', coordinator: 'conn:iris'};
 const harbor = {slug: 'harbor', name: 'Harbor', coordinator: null};
-const state = {me: {user: 'maya', actor: 'user:maya', people: {}}, boards: [alpha, harbor], base: '#/board/atlas', route: '#/board/atlas', cards: [], linked: [], chat: [], open: [], selected: 1, needs: {count: 2}, drafts: new Map(), pending: new Set(), panelRequest: 0, screen: 0};
+const state = {me: {user: 'maya', actor: 'user:maya', people: {}}, boards: [alpha, harbor], base: '#/board/atlas', route: '#/board/atlas', cards: [], linked: [], chat: [], chatTimes: new Map(), open: [], selected: 1, needs: {count: 2}, drafts: new Map(), pending: new Set(), panelRequest: 0, screen: 0};
 const nodes = new Map();
 const make = () => ({innerHTML: '', hidden: true, dataset: {}, classList: {contains: () => false, toggle() {}, add() {}, remove() {}}, setAttribute(k,v) {this[k] = v;}, querySelector: () => null, querySelectorAll: () => [], focus() {}});
 for (const selector of ['.shell', '#head-actions', '#title', '#content', '#phone-tabs', '#card-panel']) nodes.set(selector, make());
@@ -54,7 +54,7 @@ const context = {state, root, e, enc: encodeURIComponent, api, ...chatstate,
   Event: class {constructor(type) {this.type=type;}},
   setTimeout(fn, ms) {const key = {}; timers.set(key, {fn, ms}); return key;}, clearTimeout(key) {timers.delete(key);},
   title(_text, actions) {titleActions = actions;}, renderBoard: () => 'board', bindBoard: () => () => {}, boardDispose: null,
-  boardsView() {}, markOpenCard() {}, remember: () => ({}), restore() {}, refresh() {},
+  boardsView() {}, markOpenCard() {}, fillChatTimes() {}, remember: () => ({}), restore() {}, refresh() {},
 };
 const run = (s) => runInNewContext(s, context);
 const flush = async () => {for (let i = 0; i < 15; i++) await Promise.resolve();};

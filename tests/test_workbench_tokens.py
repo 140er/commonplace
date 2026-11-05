@@ -8,20 +8,20 @@ STATIC = Path(__file__).resolve().parents[1] / "commonplace" / "web" / "static"
 
 def stylesheet():
     path = STATIC / "workbench.css"
-    assert path.is_file(), "Workbench stylesheet missing"  # RED existence guard
+    assert path.is_file(), "Workbench stylesheet missing"
     return path.read_text()
 
 
 def test_r01_stylesheet_follows_chat():
     html = (STATIC / "index.html").read_text()
-    assert "/app/workbench.css" in html  # RED
+    assert "/app/workbench.css" in html
     assert html.index("/app/chat.css") < html.index("/app/workbench.css")
     assert html.index("/app/workbench.css") < html.index("/app/app.js")
 
 
 def test_r02_light_scheme():
     html = (STATIC / "index.html").read_text()
-    assert 'name="color-scheme" content="light"' in html  # RED
+    assert 'name="color-scheme" content="light"' in html
     assert "color-scheme: light" in stylesheet()
 
 

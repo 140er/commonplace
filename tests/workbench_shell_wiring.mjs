@@ -17,9 +17,9 @@ async function module(name) {
 }
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const board = { slug: 'alpha', name: 'Alpha', counts: { review: 9 }, agents_working: 2 };
-const state = { me: { actor: 'user:one', workspace: 'workspace', email: 'one@example.com', people: { 'user:one': 'One' } }, boards: [board], needs: { count: 1 }, base: '#/board/alpha', route: '#/board/alpha', cards: [{ number: 5, board: 'alpha', title: 'Exact <words>', status: 'todo' }, { number: 6, board: 'alpha', title: 'Parked', status: 'backlog' }], selected: 5, drafts: new Map(), pending: new Set(), linked: [], chat: [], chatVisible: new Set(), chatTaskRequests: new Map(), screen: 0, panelRequest: 0 };
+const state = { me: { actor: 'user:one', workspace: 'workspace', email: 'one@example.com', people: { 'user:one': 'One' } }, boards: [board], needs: { count: 1 }, base: '#/board/alpha', route: '#/board/alpha', cards: [{ number: 5, board: 'alpha', title: 'Exact <words>', status: 'todo' }, { number: 6, board: 'alpha', title: 'Parked', status: 'backlog' }], selected: 5, drafts: new Map(), pending: new Set(), linked: [], chat: [], chatTimes: new Map(), chatVisible: new Set(), chatTaskRequests: new Map(), screen: 0, panelRequest: 0 };
 const nodes = {};
-function node() { return { innerHTML: '', hidden: true, dataset: {}, children: [{}], classList: { toggle() {}, remove() {}, add() {} }, setAttribute() {}, removeAttribute() {}, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, focus() {}, getClientRects: () => [{}] }; }
+function node() { return { innerHTML: '', hidden: true, dataset: {}, children: [{}], classList: { toggle() {}, remove() {}, add() {}, contains: () => false }, setAttribute() {}, removeAttribute() {}, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, focus() {}, getClientRects: () => [{}] }; }
 for (const selector of ['#board-nav', '#phone-bar', '#phone-tabs', '#content', '#card-panel', '.shell', '#title', '#head-actions']) nodes[selector] = node();
 const root = { innerHTML: '', querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
 const storage = new Map();
@@ -27,6 +27,7 @@ const context = { root, state, e, enc: encodeURIComponent, document: { activeEle
 const run = (s) => runInNewContext(s, context);
 const which = process.argv[2];
 if (which === 'shell') {
+  Object.assign(context, await module('rail'));
   context.navigation = () => {};
   run(slice('function shell()', 'function navigation()') + '\nshell();');
   assert.match(root.innerHTML, /class="rail"/);
@@ -53,7 +54,7 @@ if (which === 'shell') {
   const ui = await module('board');
   assert.equal(typeof ui.boardView, 'function'); assert.equal(typeof ui.bindBoard, 'function');
   let mounted = 0, cleaned = 0;
-  Object.assign(context, { renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
+  Object.assign(context, { fillChatTimes() {}, renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
   run(slice('function boardView()', 'function markOpenCard()') + '\nboardView(); boardView();');
   assert.equal(mounted, 2); assert.equal(cleaned, 1);
   assert.match(nodes['#content'].innerHTML, /class="workbench-board"/);
@@ -72,7 +73,8 @@ if (which === 'shell') {
   assert.match(nodes['#card-panel'].innerHTML, /Exact &lt;words&gt;/);
   assert.match(nodes['#card-panel'].innerHTML, /Body&#13;\noriginal/);
   assert.match(nodes['#card-panel'].innerHTML, /data-form="comment"/);
-  await run('cardPanel(5, 0)'); assert.equal(stopped, 1);
+  // A refresh of the open card keeps its component (and the user's focus).
+  await run('cardPanel(5, 0)'); assert.equal(stopped, 0);
 } else if (which === 'routes') {
   const routes = await module('routes'); assert.equal(typeof routes.resolveRoute, 'function');
   Object.assign(context, routes, { clearAgentSecret() {}, decideStart: () => undefined, speech: {stop() {}}, chatUI: {stop() {}}, consoleUI: {stop() {}}, detailsUI: null, boardDispose: null, markOpenCard() {}, refresh: async () => {}, history: { state: null, replaceState(_s,_t,hash) { context.location.hash = hash; } }, api: async () => ({boards: state.boards}), boardPreference: () => 'last', singleKeysEnabled: () => true });
@@ -97,7 +99,7 @@ if (which === 'shell') {
   context.newCardForm = (card) => { edited = card; };
   await handlers.click({target: {closest: () => ({dataset: {action: 'edit-card'}})}});
   assert.equal(edited, state.card);
-} else if (which === 'keys' || which === 'switch') {
+} else if (which === 'keys' || which === 'switch' || which === 'switch-enter' || which === 'chat-key') {
   assert.ok(app.includes('function singleKeysEnabled()'), 'Single-key preference missing');
   const handlers = {};
   Object.assign(context, { Element: class {}, document: {activeElement: null, addEventListener: (name, fn) => { handlers[name] = fn; }}, performance: {now: () => 0}, detailsUI: null });
@@ -117,7 +119,7 @@ if (which === 'shell') {
     nodes['#card-panel'].hidden = false;
     await key(']'); assert.equal(hidden, 1);
     await key('c', {ctrlKey: true}); await key('c', {repeat: true}); assert.equal(added, 1);
-  } else {
+  } else if (which === 'switch') {
     storage.set('cmmn.keys.single', 'false');
     await key('c'); await key('e'); await key('m'); await key('j'); await key(']');
     assert.equal(added + edited + moved + hidden, 0); assert.equal(state.selected, 5);
@@ -131,6 +133,74 @@ if (which === 'shell') {
     const field = new context.Element(); field.closest = (selector) => selector.includes('input') ? {} : null;
     await key('c', {target: field}); assert.equal(added, 1);
   }
+  if (which === 'switch-enter') {
+    // With single keys off, Enter still opens the selected card; only printable keys are gated.
+    storage.set('cmmn.keys.single', 'false');
+    await key('Enter'); assert.equal(context.location.hash, '#/card/5');
+    context.location.hash = '#/board/alpha'; await key('ArrowDown'); await key('c');
+    assert.equal(context.location.hash, '#/board/alpha'); assert.equal(added, 0);
+  } else if (which === 'chat-key') {
+    // ] on the bare legacy chat route has no board to return to.
+    state.base = state.route = context.location.hash = '#/chat';
+    await key(']'); assert.equal(context.location.hash, '#/chat');
+    state.base = state.route = context.location.hash = '#/board/alpha/chat';
+    await key(']'); assert.equal(context.location.hash, '#/board/alpha');
+  }
+} else if (which === 'inert') {
+  Object.assign(context, await module('rail'));
+  nodes['#card-panel'].hidden = false;
+  nodes['.shell'].classList.contains = () => false;
+  context.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  context.navigation = () => {};
+  run(slice('function shell()', 'function navigation()') + '\nshell();');
+  run(slice('function currentBoard()', 'function shell()'));
+  run(slice('function navigation()', 'function showError'));
+  // navigation() swaps in a fresh rail; the open sheet must make it inert again.
+  nodes['#board-nav'].inert = false;
+  run('navigation();');
+  assert.equal(nodes['#board-nav'].inert, true, 'Rail behind the open sheet is not inert');
+} else if (which === 'rail-once') {
+  Object.assign(context, await module('rail'));
+  context.navigation = () => {};
+  run(slice('function shell()', 'function navigation()') + '\nshell();');
+  // Two re-renders of the rail leave no stylesheet behind; the rules live in workbench.css.
+  run(slice('function currentBoard()', 'function shell()'));
+  run(slice('function navigation()', 'function showError') + '\nnavigation(); navigation();');
+  assert.doesNotMatch(nodes['#board-nav'].outerHTML, /<style>/);
+} else if (which === 'rules-count') {
+  Object.assign(context, await module('rail'));
+  run(slice('function currentBoard()', 'function shell()'));
+  state.rulesWaiting = 2;
+  run(slice('function navigation()', 'function showError') + '\nnavigation();');
+  const rules = nodes['#board-nav'].outerHTML.match(/<a href="#\/rules">[\s\S]*?<\/a>/);
+  assert.ok(rules, 'Rules entry missing');
+  assert.match(rules[0], />2</);
+} else if (which === 'bare-chat') {
+  const routes = await module('routes');
+  Object.assign(context, routes, { clearAgentSecret() {}, decideStart: () => undefined, speech: {stop() {}}, chatUI: {stop() {}}, consoleUI: {stop() {}}, detailsUI: null, boardDispose: null, markOpenCard() {}, refresh: async () => {}, history: { state: null, replaceState(_s,_t,hash) { context.location.hash = hash; } }, api: async () => ({boards: state.boards}), boardPreference: () => 'last', singleKeysEnabled: () => true });
+  run(slice('async function route()', '// The current view'));
+  // Bare #/chat opens the default project's chat; no slug is read from the path.
+  context.location.hash = '#/chat'; await run('route()');
+  assert.equal(state.base, '#/board/alpha/chat');
+  assert.equal(context.location.hash, '#/board/alpha/chat');
+} else if (which === 'panel-focus') {
+  const ui = await module('details');
+  let created = 0;
+  Object.assign(context, { detailsUI: null, createDetails: (options) => { created++; return ui.createDetails(options); }, api: async () => ({ number: 5, board: 'alpha', title: 'Same card', body: '', version: 1, status: 'todo', events: [] }) });
+  state.route = '#/card/5';
+  run(slice('async function cardPanel(', 'function newCardForm('));
+  await run('cardPanel(5, 0)'); await run('cardPanel(5, 0)');
+  assert.equal(created, 1, 'A background refresh must keep the open card component');
+  // Focus returns to the control that had it, found again by a stable selector.
+  const panel = nodes['#card-panel'];
+  const fresh = { focused: 0, focus() { this.focused++; } };
+  const select = { id: 'card-status', dataset: {}, closest: (s) => s.includes('#card-panel') ? panel : null, hasAttribute: () => false };
+  panel.id = 'card-panel'; panel.querySelector = (s) => s === '#card-status' ? fresh : null;
+  Object.assign(context, { voice: { remember() {}, view() {}, stop() {} }, CSS: { escape: (v) => v } });
+  run(slice('function focusKey(', 'async function signin('));
+  context.document.activeElement = select; context.saved = run('remember()');
+  context.document.activeElement = null; run('restore(saved)');
+  assert.equal(fresh.focused, 1);
 } else if (which === 'anchors') {
   for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function reviewForm()', 'function handoffForm('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) slice(start,end);
 } else if (which === 'legacy') {
