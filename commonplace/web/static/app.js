@@ -12,6 +12,10 @@ import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 import { createConsole } from "./console.js";
 import { createChat, CHAT_COPY } from "./chat.js";
+import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
+import { boardView as renderBoard, bindBoard } from "./board.js";
+import { createDetails } from "./details.js";
+import { resolveRoute } from "./routes.js";
 
 const signinParams = new URLSearchParams(location.search);
 const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
@@ -33,7 +37,7 @@ const state = {
   phonePushPending: false,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
-let consoleUI = null, chatUI = null;
+let consoleUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -194,19 +198,94 @@ async function signin(code = null) {
   const path = location.pathname + location.search + location.hash;
   root.innerHTML = signinView({ providers, paused, via, error: state.error, next: signinNext || (path === "/app/" ? "" : path) });
 }
+function currentBoard() {
+  const routeSlug = /^#\/(?:board|space)\/([^/?]+)/.exec(state.base)?.[1];
+  const selected = needsCards().find((card) => card.number === state.selected);
+  let last;
+  try { last = localStorage.getItem(boardPreference()); } catch { /* This visit still works without storage. */ }
+  const slug = routeSlug ? decodeURIComponent(routeSlug) : state.card?.board || selected?.board || last;
+  return state.boards.find((board) => board.slug === slug) || state.boards[0] || null;
+}
+function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
+function closeCardPanel() {
+  detailsUI?.stop(); detailsUI = null;
+  if (state.route.startsWith("#/card/")) location.hash = state.base;
+  else root.querySelector("#card-panel").hidden = true;
+}
+function openSelectedCard(action) {
+  const number = state.route.startsWith("#/card/") ? Number(state.route.slice(7)) : state.selected;
+  if (!number) return;
+  if (state.card?.number === number && !root.querySelector("#card-panel").hidden) {
+    if (action === "edit-card") root.querySelector('[data-action="edit-card"]')?.click();
+    else if (action === "move-card") root.querySelector("#card-status")?.focus();
+  } else {
+    state.cardKey = action;
+    location.hash = `#/card/${number}`;
+  }
+}
+function shortcutsView() {
+  const dialog = root.querySelector("#shell-dialog");
+  dialog.innerHTML = `<h2>Keyboard shortcuts</h2><p id="single-keys-label">Single-key shortcuts</p><p>Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</p><button class="btn" data-action="single-keys" role="switch" aria-checked="${singleKeysEnabled()}" aria-labelledby="single-keys-label">${singleKeysEnabled() ? "On" : "Off"}</button><p>Single keys never fire while you type in a field. Approve and Decline always need the button.</p><dl><dt>C</dt><dd>New card</dd><dt>J / K</dt><dd>Next / previous item</dd><dt>Enter</dt><dd>Open selected card</dd><dt>E</dt><dd>Edit card</dd><dt>M</dt><dd>Move card to…</dd><dt>]</dt><dd>Hide the side panel</dd></dl><button class="btn primary" data-action="close-dialog">Done <kbd>Esc</kbd></button>`;
+  dialog.showModal();
+}
+function shellMenu(kind = "palette") {
+  const dialog = root.querySelector("#shell-dialog");
+  // The full palette is mounted by its own unit; keep navigation usable meanwhile.
+  dialog.innerHTML = `<h2>${kind === "switch-workspace" ? "Workspace" : "Search or do…"}</h2>${kind === "palette" ? '<form data-form="shell-search"><label>Search memory<input name="q" type="search" required></label><button class="btn">Search</button></form>' : ""}<nav aria-label="Go to">${state.boards.map((board) => `<a class="btn" href="#/board/${enc(board.slug)}">${e(board.name || board.slug)}</a>`).join("")}<a class="btn" href="#/needs">Needs me</a><a class="btn" href="#/memory">Memory</a><a class="btn" href="#/rules">Rules</a><a class="btn" href="#/console">Console</a><a class="btn" href="#/settings">Workspace settings</a><button class="btn" data-action="new-board">New project</button></nav><button class="btn" data-action="close-dialog">Close</button>`;
+  dialog.showModal();
+  dialog.querySelector("input")?.focus();
+}
 function shell() {
-  root.innerHTML = `<div class="app"><aside class="side"><div class="ws"><a class="brand-home" href="#/" aria-label="Commonplace"><img class="brand-v2" src="/app/brand/logo-small-dark.svg" alt="Commonplace"></a></div><nav class="navs"><a href="#/" data-nav="needs">Home <span class="n" id="needs-count">0</span></a><a href="#/memory" data-nav="memory">Memory</a><a href="#/chat" data-nav="chat">Chat</a><a href="#/console" data-nav="console">Console</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a></nav><nav class="navs fill" id="board-nav"></nav><nav class="navs"><a href="#/settings" data-nav="settings">Settings</a><button class="logout" data-action="logout">Sign out</button></nav></aside><main class="main"><header class="head"><h1 id="title">Home</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content"></div><aside class="panel" id="card-panel" role="dialog" aria-label="Card" hidden></aside></main><nav class="mtabs"><a href="#/" data-nav="needs">Home <b id="mobile-count">0</b></a><a href="#/boards" data-nav="boards">Spaces</a><a href="#/memory" data-nav="memory">Memory</a><a href="#/chat" data-nav="chat">Chat</a><a href="#/console" data-nav="console">Console</a><a href="#/rules" data-nav="rules">Rules <span class="n" data-rules-count>0</span></a><a href="#/settings" data-nav="settings">Settings</a></nav></div>`;
+  root.innerHTML = `<style>
+    .shell #content { flex:1; min-height:0; overflow:auto; }
+    .shell .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
+    .shell .head h1 { font-size:18px; } .shell .head .right { display:flex; gap:8px; }
+    .shell #card-panel { overflow:auto; } .shell .workbench-board { min-height:100%; }
+    #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
+    #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
+    #shell-dialog dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:16px 0; }
+    @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } #shell-dialog button { min-height:44px; } }
+  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-label="Workspace navigation and shortcuts"></dialog>`;
   navigation();
+  const panel = root.querySelector("#card-panel"), layout = root.querySelector(".shell");
+  if (!panel || !layout) return;
+  const narrow = matchMedia("(max-width:1099px)");
+  let opener = null, wasOpen = false;
+  const sync = () => {
+    const open = !panel.hidden, modal = open && narrow.matches;
+    if (open && !wasOpen) opener = document.activeElement;
+    layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
+    if (modal) panel.setAttribute("aria-modal", "true"); else panel.removeAttribute("aria-modal");
+    for (const target of [root.querySelector("#board-nav"), root.querySelector(".center")]) if (target) target.inert = modal;
+    if (open && !wasOpen && modal) panel.focus();
+    if (!open && wasOpen && opener?.isConnected) opener.focus();
+    wasOpen = open;
+  };
+  const observer = new MutationObserver(sync);
+  observer.observe(panel, { attributes:true, attributeFilter:["hidden"] });
+  narrow.addEventListener("change", sync);
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !narrow.matches) return;
+    const items = [...panel.querySelectorAll('button:not(:disabled),a[href],input,textarea,select,[tabindex="0"]')].filter((el) => el.getClientRects().length);
+    const index = items.indexOf(document.activeElement);
+    if (!items.length) { event.preventDefault(); panel.focus(); }
+    else if (event.shiftKey && index <= 0) { event.preventDefault(); items.at(-1).focus(); }
+    else if (!event.shiftKey && (index === items.length - 1 || index < 0)) { event.preventDefault(); items[0].focus(); }
+  });
+  state.shellStop?.();
+  state.shellStop = () => { observer.disconnect(); narrow.removeEventListener("change", sync); };
 }
 function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
-  boardNav.innerHTML = state.boards.map((b) => `<a href="#/board/${enc(b.slug)}" ${["space", "board"].some((view) => state.base === `#/${view}/${enc(b.slug)}`) ? 'aria-current="page"' : ""}>${e(b.name || b.slug)}${b.counts.review ? `<span class="n">${b.counts.review}</span>` : ""}</a>`).join("") + '<button class="opt" data-action="new-board">New space</button>';
-  root.querySelectorAll("#needs-count, #mobile-count").forEach((n) => { n.textContent = state.needs.count || 0; });
-  root.querySelectorAll("[data-rules-count]").forEach((n) => { const count = state.rulesWaiting; n.textContent = count; n.dataset.waiting = String(count > 0); });
-  root.querySelector(".app")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
-  const key = /^#\/chat(?:\/|$)/.test(state.base) ? "chat" : state.base === "#/rules" ? "rules" : state.base.startsWith("#/memory") ? "memory" : state.base === "#/console" ? "console" : state.base === "#/settings" ? "settings" : /^#\/(board|space)/.test(state.base) ? "boards" : "needs";
-  root.querySelectorAll("[data-nav]").forEach((a) => a.dataset.nav === key ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const board = currentBoard();
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.endsWith("/chat") ? "chat" : state.base.startsWith("#/space/") ? "space" : "board";
+  const needsByBoard = {};
+  for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
+  boardNav.outerHTML = renderRail({ workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board });
+  root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ board, view, needs: state.needs.count || 0 });
+  root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
 }
 function showError(text) {
   state.error = text;
@@ -260,19 +339,28 @@ function needsView() {
   speechView();
 }
 function boardView() {
-  const slug = decodeURIComponent(state.base.slice("#/board/".length));
-  const board = state.boards.find((b) => b.slug === slug);
-  title(board?.name || slug, `<a class="opt" href="#/chat/${enc(slug)}">Chat</a><button class="blockbtn" data-action="new-card">New card</button>`);
-  root.querySelector("#content").innerHTML = `<div class="cols ${state.backlog ? "expanded" : ""}">${statuses.map((status) => {
-    const all = state.cards.filter((c) => c.status === status);
-    const list = status === "done" ? [...all].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 20) : all;
-    return status === "backlog" && !state.backlog ? `<section class="col rail"><header><button data-action="backlog" aria-label="Open backlog">${all.length}</button></header><div class="stack"><button data-action="backlog">Backlog</button></div></section>` : `<section class="col ${status}" data-status="${status}"><header><button ${status === "backlog" ? 'data-action="backlog"' : 'disabled'}>${status}</button><span class="n">${all.length}</span></header><div class="stack">${list.map((card) => `<article class="card" draggable="true" data-card="${card.number}" data-key="${card.number}">${taskRow(card, `${card.assignee ? `<span class="actor">${e(actor(card.assignee))}</span>` : ""}${card.links ? `<span>${card.links} memories</span>` : ""}`)}${card.ask ? `<p class="cq">${e(card.ask)}</p>` : ""}${rowFoot(card)}${children(card, "board")}</article>`).join("")}</div></section>`;
-  }).join("")}</div>`;
+  const board = currentBoard();
+  if (!board) { boardsView(); return; }
+  title(board.name || board.slug, `<a class="btn" href="#/board/${enc(board.slug)}/chat">Chat</a><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
+  const content = root.querySelector("#content");
+  // Keep the active phone column and a parked-card disclosure through polling.
+  const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
+  const backlog = content.querySelector(".backlog")?.open;
+  boardDispose?.();
+  content.innerHTML = renderBoard({ board, cards: state.cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages: state.chatBoard === board.slug ? state.chat : [], adding: state.addingCard, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  if (backlog) content.querySelector(".backlog").open = true;
+  boardDispose = bindBoard(content, { api, board,
+    onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
+    onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
+  });
+  content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
 }
 function markOpenCard() {
-  root.querySelectorAll(".cols .card[data-card]").forEach((card) => {
-    card.classList.toggle("open", state.route === `#/card/${card.dataset.card}`);
+  root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
+    const selected = Number(card.dataset.card) === state.selected || state.route === `#/card/${card.dataset.card}`;
+    card.classList.toggle("is-selected", selected);
+    if (selected) card.setAttribute("aria-current", "true"); else card.removeAttribute("aria-current");
   });
 }
 function spaceTask(card, inline) {
@@ -386,6 +474,7 @@ async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
   const opening = state.card?.number !== number;
+  const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
   if (opening) panel.innerHTML = message("Loading card…");
   const request = ++state.panelRequest;
   try {
@@ -393,18 +482,35 @@ async function cardPanel(number, epoch) {
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
     const saved = remember();
-    panel.innerHTML = `<div class="tile top"><div class="bar"><span class="id">#${card.number}</span><a href="#/board/${enc(card.board)}">${e(card.board)}</a><button class="close" data-action="close-panel" aria-label="Close card">×</button></div><span><span class="state ${e(card.status)}">${e(card.status)}</span></span><h2>${e(card.title)}</h2>${cardMeta(card)}<p class="prose">${e(card.body)}</p>${card.proposal_status ? `<p>Proposal: ${e(card.proposal_status)} · Parent: ${e(actor(card.proposed_to))}</p>` : ""}${card.escalated_to ? `<p>Escalated to ${e(actor(card.escalated_to))}</p>` : ""}${card.can_approve ? '<button class="opt" data-action="approve-proposal">Approve</button><button class="opt" data-action="reject-proposal">Reject</button>' : ""}<div class="panel-actions"><select aria-label="Card status" id="card-status">${options(statuses, card.status)}</select><button class="opt" data-action="panel-move">Move</button><button class="opt" data-action="edit-card">Edit</button><button class="opt" data-action="handoff">Hand off</button></div>${card.linked?.length ? `<div class="linked">${card.linked.map((link) => `<a href="#/memory?id=${enc(link.drawer_id)}" class="${link.invalidated ? "gone" : ""}">${e(link.title || "Memory")}</a>`).join("")}</div>` : ""}${callTree(card)}</div><ol class="log">${conversation(card)}</ol><form class="composer" data-form="comment"><input name="text" data-draft="comment-${card.number}" aria-label="Comment" autocomplete="off" required><button>Send</button></form>`;
+    detailsUI?.stop();
+    detailsUI = createDetails({ mount: panel, api });
+    const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
+    const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: state.base.startsWith("#/board/") ? { kind: "board" } : null });
+    if (tab !== "details") detailsUI.selectTab(tab);
+    panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
+    panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
+    // Keep the existing versioned ask actions and call tree reachable on card routes.
+    panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `<ol class="log">${conversation(card)}</ol>${callTree(card)}`);
     restore(saved);
-    if (opening) panel.querySelector("[data-ask]")?.scrollIntoView({ block: "nearest" });
+    await shown;
+    if (request !== state.panelRequest || epoch !== state.screen) return;
+    if (state.cardKey) { const action = state.cardKey; state.cardKey = null; openSelectedCard(action); }
   } catch (error) {
     if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
 function newCardForm(edit = null) {
   voice.stop();
+  if (!edit && state.base.startsWith("#/board/") && !state.base.endsWith("/chat")) {
+    const saved = remember(); state.addingCard = true; boardView(); restore(saved);
+    root.querySelector('[data-board-add] [name="title"]')?.focus();
+    return;
+  }
+  detailsUI?.stop(); detailsUI = null;
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
-  const slug = edit?.board || decodeURIComponent(state.base.split("/")[2]);
+  const slug = edit?.board || currentBoard()?.slug;
+  if (!slug) return;
   panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(["backlog", "todo", "doing"], "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
   panel.querySelector("input").focus();
 }
@@ -509,7 +615,7 @@ async function search(form) {
 }
 async function chatScreen(epoch) {
   chatUI ??= createChat({ mount: () => root.querySelector("#content"), api, e });
-  let slug = state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : null;
+  let slug = state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : state.base.endsWith("/chat") ? decodeURIComponent(state.base.split("/")[2]) : null;
   title("Chat");
   await chatUI.show(slug);
   if (epoch !== state.screen) return;
@@ -539,7 +645,7 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest;
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
-    const home = state.base === "#/";
+    const home = state.base === "#/" || state.base === "#/needs";
     const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
@@ -571,9 +677,10 @@ async function refresh({ background = false, events = [] } = {}) {
     }
     const saved = remember(), play = capture(state.base);
     navigation();
-    if (state.base.startsWith("#/board/")) boardView();
+    if (state.base.startsWith("#/board/") && state.base.endsWith("/chat")) { if (!background) await chatScreen(epoch); }
+    else if (state.base.startsWith("#/board/")) boardView();
     else if (state.base.startsWith("#/space/")) spaceView();
-    else if (state.base === "#/boards") boardsView();
+    else if (state.base === "#/boards" || state.base === "#/start") boardsView();
     else if (state.base === "#/rules") {
       if (!background || rulesUI.force || !rulesUI.busy()) {
         rulesUI.update(rules, { owner: rules.can_edit });
@@ -807,17 +914,29 @@ async function sendDecide(effect, keepalive) {
 async function route() {
   if (!state.me) return;
   remember();
-  const hash = location.hash || "#/";
+  let hash = location.hash || "#/";
+  if (hash === "#/") {
+    const result = await api("/api/boards");
+    if (!state.me) return;
+    state.boards = result.boards;
+  }
+  let last;
+  try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
+  const resolved = resolveRoute(hash, { boards: state.boards, last });
+  if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
+  if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
+    try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
+  }
   if (hash !== state.route) clearAgentSecret(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   state.screen++; state.route = hash;
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board|space)\/[^/?]+|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings)$/.test(hash) ? hash : "#/");
     state.card = null;
   }
-  if (/^#\/chat(?:\/|$)/.test(previousBase) && state.base !== previousBase) chatUI?.stop();
+  if ((/^#\/chat(?:\/|$)/.test(previousBase) || previousBase.endsWith("/chat")) && state.base !== previousBase) chatUI?.stop();
   if (previousBase === "#/console" && state.base !== "#/console") consoleUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
@@ -832,8 +951,13 @@ async function route() {
     }
   }
   if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
-  if (state.base !== previousBase) { state.chatObserver?.disconnect(); state.chatVisible.clear(); }
-  if (state.base !== "#/") speech.stop();
+  if (state.base !== previousBase) {
+    boardDispose?.(); boardDispose = null; state.addingCard = false; state.boardFilter = "all";
+    state.chatObserver?.disconnect(); state.chatVisible.clear();
+  }
+  if (state.base !== "#/" && state.base !== "#/needs") speech.stop();
+  if (!hash.startsWith("#/card/")) { detailsUI?.stop(); detailsUI = null; state.panelRequest++; }
+  root.querySelector("#shell-dialog")?.close();
   root.querySelector("#card-panel").hidden = !hash.startsWith("#/card/");
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
@@ -901,14 +1025,21 @@ root.addEventListener("input", (event) => {
 });
 root.addEventListener("change", (event) => { if (event.target.matches("[data-agent-client]")) changeAgentClient(event.target); });
 root.addEventListener("focusin", (event) => {
-  const row = event.target.closest("[data-row]");
-  if (row && Number(row.dataset.row) !== state.selected) {
-    state.selected = Number(row.dataset.row);
+  const row = event.target.closest("[data-row], .workbench-board .card[data-card]");
+  if (row && Number(row.dataset.card || row.dataset.row) !== state.selected) {
+    state.selected = Number(row.dataset.card || row.dataset.row);
+    markOpenCard();
     root.querySelectorAll("[data-row]").forEach((r) => r.classList.toggle("sel", Number(r.dataset.row) === state.selected));
   }
 });
 root.addEventListener("click", async (event) => {
-  const b = event.target.closest("[data-action]"); if (!b) return;
+  const b = event.target.closest("[data-action]");
+  if (!b) {
+    const card = event.target.closest(".workbench-board .card[data-card]");
+    if (card && !event.target.closest("a,button,input,select,textarea")) { state.selected = Number(card.dataset.card); location.hash = `#/card/${state.selected}`; }
+    if (event.target.closest("#shell-dialog a")) root.querySelector("#shell-dialog").close();
+    return;
+  }
   const number = Number(b.dataset.card), action = b.dataset.action;
   if (consoleUI?.click(action, b)) return;
   if (action.startsWith("queue-")) {
@@ -936,7 +1067,18 @@ root.addEventListener("click", async (event) => {
     return;
   }
   try {
-    if (action.startsWith("phone-push-")) await phonePushAction(action);
+    if (action === "shortcuts") shortcutsView();
+    else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
+    else if (action === "close-dialog") root.querySelector("#shell-dialog").close();
+    else if (action === "single-keys") {
+      const enabled = !singleKeysEnabled();
+      try { localStorage.setItem("cmmn.keys.single", String(enabled)); } catch { /* Keep the switch usable for this visit. */ }
+      state.singleKeys = enabled; b.setAttribute("aria-checked", String(enabled)); b.textContent = enabled ? "On" : "Off";
+    }
+    else if (action === "cancel-card") { state.addingCard = false; boardView(); }
+    else if (action === "open-chat" || action === "back-to-chat") { const board = currentBoard(); if (board) location.hash = `#/board/${enc(board.slug)}/chat`; }
+    else if (action === "connect-agent") root.querySelector('[data-action="coordinator"]')?.click();
+    else if (action.startsWith("phone-push-")) await phonePushAction(action);
     else if (action.startsWith("agent-")) await agentAction(b);
     else if (action === "speak-digest") await speech.toggle();
     else if (action === "need-accept") {
@@ -980,7 +1122,8 @@ root.addEventListener("click", async (event) => {
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
     } else if (action === "coordinator") {
       voice.stop();
-      const slug = decodeURIComponent(state.base.split("/")[2]), epoch = state.screen;
+      const slug = b.dataset.board || currentBoard()?.slug, epoch = state.screen;
+      if (!slug) return;
       const { mountProject } = await import("./projects.js");
       if (epoch !== state.screen) return;
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
@@ -988,12 +1131,12 @@ root.addEventListener("click", async (event) => {
       await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen });
     }
     else if (action === "close-panel") {
-      if (state.route.startsWith("#/card/")) location.hash = state.base;
-      else root.querySelector("#card-panel").hidden = true;
+      closeCardPanel();
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
     else if (action === "new-board") {
+      root.querySelector("#shell-dialog")?.close();
       const panel = root.querySelector("#card-panel"); panel.hidden = false;
       panel.innerHTML = '<form class="form-tile" data-form="board"><h2>New space</h2><label>Name<input name="name" required maxlength="1000"></label><button class="blockbtn">Create</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
     } else if (action === "memory") await openMemory(b.dataset.id);
@@ -1038,7 +1181,8 @@ root.addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   state.pending.add(formKey);
   try {
-    if (kind === "login") {
+    if (kind === "shell-search") { root.querySelector("#shell-dialog").close(); location.hash = `#/memory?q=${enc(payload.q)}`; }
+    else if (kind === "login") {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
@@ -1108,16 +1252,51 @@ root.addEventListener("drop", async (event) => {
   const number = drag, before = event.target.closest(".card[data-card]")?.dataset.card; drag = null;
   await move(number, column.dataset.status, before && Number(before) !== number ? { before: Number(before) } : {});
 });
+function singleKeysEnabled() {
+  if (state.singleKeys != null) return state.singleKeys;
+  try { return localStorage.getItem("cmmn.keys.single") !== "false"; } catch { return true; }
+}
+function workbenchKey(event) {
+  const key = event.key.toLowerCase();
+  if (key === "?") { shortcutsView(); event.preventDefault(); return true; }
+  if (key === "]") {
+    if (!root.querySelector("#card-panel").hidden) closeCardPanel();
+    else if (state.base.endsWith("/chat")) location.hash = state.base.slice(0, -5);
+    event.preventDefault(); return true;
+  }
+  if (!state.base.startsWith("#/board/") || state.base.endsWith("/chat")) return false;
+  const onControl = event.target instanceof Element && event.target.closest("button,a,summary,[role=tab]");
+  if (onControl && event.key === "Enter") return false;
+  if (key === "c") newCardForm();
+  else if (["j", "k"].includes(key) && root.querySelector("#card-panel").hidden) {
+    const cards = [...root.querySelectorAll(".workbench-board .card[data-card]")].filter((card) => card.getClientRects().length);
+    if (!cards.length) return false;
+    const index = cards.findIndex((card) => Number(card.dataset.card) === state.selected);
+    const card = cards[Math.max(0, Math.min(cards.length - 1, index + (key === "j" ? 1 : -1)))];
+    state.selected = Number(card.dataset.card); markOpenCard();
+    card.focus({preventScroll:true}); card.scrollIntoView({block:"nearest"});
+  } else if (key === "e") openSelectedCard("edit-card");
+  else if (key === "m") openSelectedCard("move-card");
+  else if (event.key === "Enter" && state.selected) location.hash = `#/card/${state.selected}`;
+  else return false;
+  event.preventDefault(); return true;
+}
 document.addEventListener("keydown", (event) => {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]")) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") { event.preventDefault(); shellMenu(); return; }
+  const dialog = root.querySelector("#shell-dialog");
+  if (dialog?.open) { if (event.key === "Escape") { event.preventDefault(); dialog.close(); } return; }
+  const typing = event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]");
+  if (event.key !== "Escape" && (event.altKey || event.ctrlKey || event.metaKey || typing)) return;
   const panel = root.querySelector("#card-panel");
   const panelOpen = panel && !panel.hidden;
   if (event.key === "Escape") {
-    if (panelOpen) { panel.querySelector('[data-action="close-panel"]')?.click(); return; }
+    if (panelOpen) { event.preventDefault(); closeCardPanel(); return; }
     if (state.base === "#/decide") { location.hash = "#/"; return; }
     root.querySelector('[data-action="close-panel"]')?.click();
     return;
   }
+  if (!state.me || event.repeat || !singleKeysEnabled()) return;
+  if (workbenchKey(event)) return;
   const ask = event.target instanceof Element && event.target.closest("[data-ask]");
   if (ask && /^[1-6]$/.test(event.key)) {
     ask.querySelector(`[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`)?.click();
@@ -1151,7 +1330,7 @@ document.addEventListener("keydown", (event) => {
       return;
     }
   }
-  if (state.base !== "#/" || !state.me) return;
+  if (!["#/", "#/needs"].includes(state.base) || !state.me) return;
   // With a card open, its keys answer and open that card, not the row selected behind it.
   const target = /^#\/card\/\d+$/.test(state.route) ? Number(state.route.slice(7)) : state.selected;
   const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
