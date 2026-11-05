@@ -1,4 +1,4 @@
-"""Card 227: identical pin/head probes for approval routing."""
+"""Identical pin/head probes for approval routing."""
 
 import json
 import shutil
@@ -536,12 +536,21 @@ def test_guard(hub, fresh, monkeypatch, case):
             None if case == "g14" else a.principal.actor
         )
     elif case == "g15":
-        k = fresh.connect("unrelated")
+        k = fresh.connect("coordinator")
+        fresh.owner.board_set("work", coordinator=k.principal.actor)
         for i in range(200):
-            fresh.owner.task_add(board="work", title=f"Synthetic unrelated {i}")
+            fresh.owner.task_add(
+                board="work",
+                title=f"Synthetic held plan {i}",
+                labels=["plan"],
+                assignee=k.principal.actor,
+                claim=True,
+            )
         calls = count_roles(monkeypatch)
-        start(hub, k, monkeypatch)
+        text = start(hub, k, monkeypatch)
         assert len(calls) <= 60
+        if hasattr(bs.BoardService, "approvals_for_me"):
+            assert calls and "list truncated" in text
     elif case == "g16":
         status, _ = api(
             hub, fresh.cookie, "POST", f"/api/cards/{row['number']}/approve", {"approve": None}
@@ -567,6 +576,9 @@ def test_g_premigration_reader(hub, fresh, monkeypatch):
         columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         if "escalated_to" in columns:
             conn.execute("ALTER TABLE tasks DROP COLUMN escalated_to")
+        board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
+        if "coordinator" in board_columns:
+            conn.execute("ALTER TABLE boards DROP COLUMN coordinator")
         before = conn.execute("SELECT sql FROM sqlite_master ORDER BY name").fetchall()
     text = start(hub, p, monkeypatch)
     if hasattr(bs.BoardService, "approvals_for_me"):
@@ -578,15 +590,25 @@ def test_g_premigration_reader(hub, fresh, monkeypatch):
 
 def test_r28_truncated_list_digest(hub, fresh, monkeypatch):
     k, _ = setup(fresh)
+    cards = []
     for i in range(205):
-        k.work.task_add(board="work", title=f"Synthetic held plan {i}", labels=["plan"], claim=True)
+        cards.append(
+            k.work.task_add(
+                board="work", title=f"Synthetic held plan {i}", labels=["plan"], claim=True
+            )
+        )
     report = k.work.needs_me()
     assert report.get("approvals_truncated") is True  # RED
     for worker in (k.work, fresh.owner):
         result = worker.needs_me()
         assert isinstance(result["count"], int)
         assert isinstance(result["approvals_truncated"], bool)
-        assert isinstance(worker.needs_me(format="digest")["text"], str)
+        digest = worker.needs_me(format="digest")
+        assert isinstance(digest["text"], str)
+        assert digest["count"] == result["count"]
+    owner_report = fresh.owner.needs_me()
+    assert {c["number"] for c in owner_report["plans"]} == {c["number"] for c in cards}
+    assert owner_report["count"] == len(cards)
     ok, text = mcp(hub, k.token, "needs_me")
     assert ok and "list truncated" in text
     ok, text = mcp(hub, k.token, "needs_me", format="digest")

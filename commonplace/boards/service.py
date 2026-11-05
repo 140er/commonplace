@@ -306,7 +306,11 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
                 and (release is None or release(row))
             ):
                 kind = "backlog_from_agents"
-            if _plan_waiting(row) and (release is None or release(row)) and not _stuck(row, cutoff):
+            if (
+                _plan_waiting(row)
+                and (release is None or release(row))
+                and (principal.person or not _stuck(row, cutoff))
+            ):
                 kind = "plans"
             routes = ()
             if _stuck(row, cutoff):
@@ -371,8 +375,9 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
                     why += f". You are its {role}: resume {holder}, or ask the owner."
             if "escalated_to" in row.keys() and row["escalated_to"]:
                 handoff = conn.execute(
-                    "SELECT reason FROM task_events WHERE task_id=? AND kind='handoff' ORDER BY id DESC LIMIT 1",
-                    (row["id"],),
+                    "SELECT reason FROM task_events WHERE task_id=? AND kind='handoff' "
+                    "AND target=? AND reason IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (row["id"], row["escalated_to"]),
                 ).fetchone()
                 why += " Escalated to the owner."
                 if handoff and handoff["reason"]:
@@ -472,28 +477,31 @@ class BoardService:
         return dict(pr_state=None, pr_head=None, pr_reported_at=None, checks="")
 
     def _release_role(self, q, row):
-        """Authority of a stored release, independent of labels and escalation."""
+        """Authority shared by live decisions and stored parent releases."""
         if q.person:
             return "owner" if q.role == "owner" else None
         if row["assignee"] == q.actor:
             return None
-        try:
-            if row["proposed_to"] == q.actor:
+        if row["proposed_to"] == q.actor:
+            try:
                 creator = self.ctx.db.connection(
                     row["created_by"].removeprefix("conn:"), q.workspace_id
                 )
                 if creator["parent_id"] == q.connection_id:
                     return "parent"
-            if self._owning_top_level(row, q):
-                return "top-level agent"
-            if self._coordinates(q, row):
-                return "board coordinator"
-            if row["created_by"] == q.actor and (row["assignee"] or "").startswith("conn:"):
+            except (ControlError, ValueError, TypeError):
+                pass
+        if not _plan_waiting(row) and self._owning_top_level(row, q):
+            return "top-level agent"
+        if self._coordinates(q, row):
+            return "board coordinator"
+        if row["created_by"] == q.actor and (row["assignee"] or "").startswith("conn:"):
+            try:
                 holder = self.ctx.db.connection(row["assignee"][5:], q.workspace_id)
                 if holder["parent_id"] == q.connection_id:
                     return "creator-parent"
-        except (ControlError, ValueError, TypeError):
-            return None
+            except (ControlError, ValueError, TypeError):
+                pass
         return None
 
     def _approval_role(self, q, row):
@@ -506,6 +514,10 @@ class BoardService:
 
     @staticmethod
     def _approval_visible(q, row):
+        try:
+            _owner(q, trusted_read=True)
+        except ToolError:
+            return False
         return (
             q.policy.has_scope("memory:read")
             and q.policy.has_scope("memory:write")
@@ -544,6 +556,10 @@ class BoardService:
                 return self.approvals_for_me(conn, limit=limit, budget=budget)
         p = self.principal
         result = dict(items=[], truncated=False, more=False)
+        try:
+            _owner(p, trusted_read=True)
+        except ToolError:
+            return result
         if (
             p.person
             or not p.policy.has_scope("memory:read")
@@ -568,14 +584,16 @@ class BoardService:
             ]
         actors = [p.actor, *descendants]
         placeholders = ",".join("?" for _ in actors)
+        board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
+        coordinator = "b.coordinator" if "coordinator" in board_columns else "NULL"
         columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         escalated = "AND t.escalated_to IS NULL " if "escalated_to" in columns else ""
         sql = (
-            "SELECT t.*, b.slug AS board,b.wing AS board_wing,b.coordinator AS board_coordinator "
+            f"SELECT t.*, b.slug AS board,b.wing AS board_wing,{coordinator} AS board_coordinator "
             "FROM tasks t JOIN boards b ON b.id=t.board_id WHERE t.id>? AND t.status!='done' "
             + escalated
             + "AND (t.proposal_status='pending' OR (t.status IN ('todo','doing') AND t.labels LIKE '%\"plan\"%')) "
-            f"AND (t.proposed_to=? OR t.created_by IN ({placeholders}) OR b.coordinator=?) ORDER BY t.id LIMIT 50"
+            f"AND (t.proposed_to=? OR t.created_by IN ({placeholders}) OR {coordinator}=?) ORDER BY t.id LIMIT 50"
         )
         cap = 60 if budget == "session" else 200
         checked, last = 0, 0
@@ -1701,7 +1719,9 @@ class BoardService:
                 raise ToolError("no: card is not a pending proposal or a plan awaiting review")
             if not isinstance(escalate, bool):
                 raise ToolError("no: escalate must be a boolean")
-            if escalate and (p.person or approve is not _UNSET):
+            if escalate and p.person:
+                raise ToolError("no: only agents may escalate to the owner")
+            if escalate and approve is not _UNSET:
                 raise ToolError("no: agents escalate without approve")
             if approve is not _UNSET and not isinstance(approve, bool):
                 raise ToolError("no: approve must be a boolean")

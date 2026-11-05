@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from . import extensions, import_grant
 from .boards.service import BoardService, approvals_text, normalize_repo, validate_text
 from .extensions import ALL_PROFILES, LocalTool, ToolError, register
+from .http_util import log_failure
 from .memory_tools import _limit
 from .policy import canonical_wing
 from .rules import checks, render
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_QUERY = "workspace decisions preferences current work"
 MEMORY_TIMEOUT = 0.08
@@ -109,9 +113,9 @@ def session_start(ctx, args) -> str:
                 note = approvals_text(report)
                 if note:
                     lines.append(note)
-    except Exception:
+    except Exception as exc:
         # Startup context is best effort and must never migrate or create boards.
-        pass
+        log_failure(logger, "session approvals unavailable", exc)
     if _available(ctx, "facts_import"):
         lines.append(import_grant.GUIDANCE)
     return "\n\n".join(lines)

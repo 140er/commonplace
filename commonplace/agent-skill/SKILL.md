@@ -31,7 +31,7 @@ When replacing your complete own rule set, call `rules_publish` with `replace=tr
 ## While working
 
 - Report progress with `task_update task=#n status_line="<what you are doing now>"` at every real step. Call `task_heartbeat task=#n` at least every 20 minutes, including while waiting on checks. Holder writes renew the 30-minute claim. Expiry keeps the assignee and `doing` lane, with an explicit `expired` indication; heartbeat to resume.
-- On each heartbeat, `needs_me` and `session_start`, handle approvals: approve or reject with `reason=…`, or `task_approve escalate=true reason=…` for the owner. Never approve your own proposal or a card you hold. Agents reject only unclaimed plan cards; doing plans may be approved or escalated.
+- On each heartbeat, `needs_me` and `session_start`, handle approvals: approve or reject with `reason=…`, or `task_approve escalate=true reason=…` for the owner. Never approve your own proposal or a card you hold. Agents reject proposals and unclaimed (todo) plan cards. A doing plan can only be approved or escalated; the owner may reject it.
 - The `plan` label is advisory; a doing holder may drop it. Authorized approvals release restricted work.
 - If you supervise agents, `task_list mine=true` lists their stuck claims; resume the agent or `ask` the owner.
 - Record the work: `task_update task=#n repo=… branch=… pr=<url>` as soon as they exist.
