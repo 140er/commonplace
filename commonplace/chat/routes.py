@@ -2,7 +2,7 @@
 
 from commonplace import redact
 from commonplace.boards.service import BoardService
-from commonplace.chat import front, settings, status, store
+from commonplace.chat import front, search, settings, status, store
 from commonplace.chat.types import LINKED_CARDS_MAX, ChatDenied
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, require_principal, send_json
@@ -69,8 +69,11 @@ def install(gateway) -> None:
         if principal is None:
             return
         parts = path_parts(h, "/api/chat/")
-        if len(parts) not in (1, 2) or (len(parts) == 2 and parts[1] != "status"):
+        if len(parts) not in (1, 2) or (len(parts) == 2 and parts[1] not in ("status", "search")):
             send_json(h, 404, {"error": "Not found"})
+            return
+        if len(parts) == 2 and parts[1] == "search":
+            send_json(h, *search.handle(gateway, principal, parts[0], query(h)))
             return
         try:
             if len(parts) == 2:
