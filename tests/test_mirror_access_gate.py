@@ -340,7 +340,14 @@ def test_refused_thread_writes_never_reach_worker(world, tool, args):
     response = mediator._tools_call(
         principal, {"id": 1, "params": {"name": tool, "arguments": args}}
     )
-    assert _tool_result(response) == {"success": False, "error": "Room not found"}
+    expected = (
+        "Room not found"
+        if tool in ("mempalace_add_drawer", "mempalace_checkpoint")
+        or "target_room" in args
+        and not args.get("target_drawer_id")
+        else "Drawer not found: drawer"
+    )
+    assert _tool_result(response) == {"success": False, "error": expected}
     workers.post.assert_not_called()
 
 
@@ -425,4 +432,226 @@ def test_gateway_malformed_drawer_response_is_not_found(world, response):
             "params": {"name": "mempalace_get_drawer", "arguments": {"drawer_id": "missing"}},
         },
     )
-    assert _tool_result(result) == {"error": "Drawer not found: None"}
+    if not isinstance(response, dict) or "result" not in response:
+        assert result is response
+    else:
+        assert _tool_result(result) == {"error": "Drawer not found: None"}
+
+
+@pytest.mark.parametrize("shape", ["wing", "theme", "public-source", "flat-echo"])
+def test_derived_fact_requires_a_readable_source(world, shape):
+    fact = {"subject": "Sample", "predicate": "states", "object": "words"}
+    if shape == "flat-echo":
+        fact = {
+            "fact": "Sample states words",
+            "wing": "private_threads",
+            "source_thread": world.thread.id,
+        }
+    elif shape == "wing":
+        fact.update(wing="private_threads", sources=[{"source_thread": world.thread.id}])
+    else:
+        fact.update(
+            theme="private_threads" if shape == "theme" else "shared",
+            source={"thread": world.thread.id},
+        )
+    result = {"facts": [fact]}
+    assert gate(world.gateway, world.principal, "kg_read", result) is result
+    world.private.readable.return_value = False
+    assert gate(world.gateway, world.principal, "kg_read", result) == {"facts": []}
+
+
+@pytest.mark.parametrize("field", ["wing", "theme"])
+def test_private_fact_without_sources_fails_closed(world, field):
+    assert gate(
+        world.gateway,
+        world.principal,
+        "kg_read",
+        {
+            "facts": [
+                {
+                    field: "private_threads",
+                    "subject": "Sample",
+                    "predicate": "states",
+                    "object": "words",
+                }
+            ]
+        },
+    ) == {"facts": []}
+
+
+def test_fact_keeps_readable_secondary_source_and_scrubs_primary_provenance(world):
+    hidden = "thr_ffffffffffffffff"
+    source = {"source_thread": world.thread.id, "source_seq_start": 0}
+    fact = {
+        "wing": "private_threads",
+        "object": "words",
+        "source_thread": hidden,
+        "origin_id": hidden,
+        "origin_link": "/app/threads/" + hidden,
+        "source_link": "/app/threads/" + hidden,
+        "source": {"thread": hidden},
+        "sources": [{"source_thread": hidden}, source],
+    }
+    result = gate(world.gateway, world.principal, "kg_read", {"facts": [fact]})
+    assert result == {
+        "facts": [{"wing": "private_threads", "object": "words", "sources": [source]}]
+    }
+    assert fact["source_thread"] == hidden  # Never mutate the worker's object.
+
+
+@pytest.mark.parametrize("items", [None, "invalid", 42, {}])
+def test_checkpoint_non_list_items_reaches_worker_validation(world, items):
+    from commonplace.gateway import Mediator, _tool_response
+    from commonplace.policy import Policy
+
+    principal = replace(
+        world.principal,
+        policy=Policy.build(
+            profile="full",
+            trust="trusted",
+            read_wings=["*"],
+            write_wings=["*"],
+            scopes=["memory:read", "private:read", "memory:write", "private:write"],
+        ),
+    )
+    response = _tool_response(1, {"error": "items must be a list"})
+    workers = Mock(post=Mock(return_value=response))
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    assert (
+        mediator._tools_call(
+            principal,
+            {
+                "id": 1,
+                "params": {
+                    "name": "mempalace_checkpoint",
+                    "arguments": {"items": items},
+                },
+            },
+        )
+        is response
+    )
+    workers.post.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("mempalace_search", {"query": "synthetic"}),
+        ("mempalace_get_drawer", {"drawer_id": "drawer"}),
+        ("mempalace_list_drawers", {"wing": "shared"}),
+    ],
+)
+def test_worker_jsonrpc_error_preserves_envelope(world, tool, args):
+    from commonplace.gateway import Mediator
+
+    response = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Invalid params"}}
+    workers = Mock(post=Mock(return_value=response))
+    workers.call_tool.return_value = {"facts": []}
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    assert (
+        mediator._tools_call(
+            world.principal, {"id": 1, "params": {"name": tool, "arguments": args}}
+        )
+        is response
+    )
+
+
+def test_unreadable_related_fact_drops_write_echo(world):
+    result = {
+        "wing": "private_threads",
+        "fact": "Sample states new words",
+        "sources": [{"source_thread": world.thread.id}],
+        "previous": ["hidden old words"],
+        "related_facts": [
+            {
+                "wing": "private_threads",
+                "object": "hidden old words",
+                "sources": [{"source_thread": "thr_ffffffffffffffff"}],
+            }
+        ],
+    }
+    assert gate(world.gateway, world.principal, "kg_write", result) == {
+        "error": "not found",
+        "denied": True,
+    }
+
+
+def test_fact_search_is_gated_before_cli_rendering(world):
+    from commonplace.gateway import Mediator, _tool_response, _tool_result
+
+    world.private.readable.return_value = False
+    principal = replace(
+        world.principal,
+        policy=replace(world.principal.policy, scopes=(*world.principal.policy.scopes, "kg:read")),
+    )
+    workers = Mock(
+        post=Mock(return_value=_tool_response(1, {"results": [], "cli_output": "No drawers"}))
+    )
+    workers.call_tool.return_value = {
+        "facts": [
+            {
+                "subject": "Sample",
+                "predicate": "states",
+                "object": "hidden words",
+                "theme": "private_threads",
+                "source": {"thread": world.thread.id},
+            }
+        ]
+    }
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    response = mediator._tools_call(
+        principal,
+        {
+            "id": 1,
+            "params": {
+                "name": "mempalace_search",
+                "arguments": {"query": "Sample", "cli_compatible": True},
+            },
+        },
+    )
+    result = _tool_result(response)
+    assert result.get("facts", []) == []
+    assert result["cli_output"] == "No drawers"
+
+
+def test_memory_map_uses_same_fact_source_rule(world, tmp_path):
+    from commonplace import memory_tools
+    from mempalace.knowledge_graph import KnowledgeGraph
+    from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
+
+    w = world
+    principal = replace(
+        w.principal,
+        policy=replace(w.principal.policy, scopes=(*w.principal.policy.scopes, "kg:read")),
+    )
+    hidden = "thr_ffffffffffffffff"
+    w.store.threads[hidden] = replace(w.thread, id=hidden)
+    path = tmp_path / "palace" / KNOWLEDGE_GRAPH_FILENAME
+    path.parent.mkdir()
+    with KnowledgeGraph(str(path)) as graph:
+        for name in ("PersonOne", "PersonTwo", "HiddenPerson"):
+            graph.add_entity(name, "person")
+        graph.add_triple("PersonOne", "knows", "PersonTwo", wing="shared")
+        graph.add_triple(
+            "HiddenPerson",
+            "private_knows",
+            "PersonOne",
+            wing="private_threads",
+            source_thread=hidden,
+            source_seq_start=0,
+            source_seq_end=0,
+        )
+    ctx = SimpleNamespace(
+        principal=principal, gateway=w.gateway, workspace_dir=lambda: str(tmp_path)
+    )
+    nodes, links = [], []
+    memory_tools._people(ctx, nodes, links, set())
+    assert "HiddenPerson" in {node["label"] for node in nodes}
+    del w.store.threads[hidden]
+    nodes, links = [], []
+    memory_tools._people(ctx, nodes, links, set())
+    assert {node["label"] for node in nodes} == {"PersonOne", "PersonTwo"}
+    assert {link["label"] for link in links} == {"knows"}

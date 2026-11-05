@@ -118,7 +118,16 @@ Imports, including memory-file imports, are also indexed in the background.
 Searchable text keeps the original words; a hit's `source.thread` can point to
 the shared session rather than an individual import.
 
-Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
+Mirror copies of private stored threads, facts derived from them, and their tunnel
+previews are returned only to callers who can read that thread. This covers Memory
+search, `memory_get` and session start context.
+
+Adding, updating, deleting or linking drawers in a stored-thread room requires
+permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
+and `delete_hallway` take no room and are not checked yet.
+
+Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
+verified on compact, sqlite_exact and chroma.
 Default self-service PAT and OAuth connections still cannot retrieve this
 history through Memory search, `memory_get` or session start context, even when allowed to upload it.
 

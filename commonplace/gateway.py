@@ -460,14 +460,15 @@ class Mediator:
 
         from .handoff.mirror_access import gate
 
-        result = _tool_result(response) if isinstance(response, dict) else None
-        cleaned = gate(self.gateway, principal, rule, result)
-        if cleaned is not result:
-            response = (
-                _replace_result(response, cleaned)
-                if isinstance(response, dict) and isinstance(response.get("result"), dict)
-                else _tool_response(req_id, cleaned)
-            )
+        if isinstance(response, dict) and "result" in response:
+            result = _tool_result(response)
+            cleaned = gate(self.gateway, principal, rule, result)
+            if cleaned is not result:
+                response = (
+                    _replace_result(response, cleaned)
+                    if isinstance(response.get("result"), dict)
+                    else _tool_response(req_id, cleaned)
+                )
 
         if classify_tool(name) != "read":
             result = _tool_result(response) if isinstance(response, dict) else None
@@ -501,7 +502,8 @@ class Mediator:
 
     def _before_all_wings(self, principal, name, args, notes):
         if name == "mempalace_checkpoint":
-            for item in args.get("items", []):
+            items = args.get("items")
+            for item in items if isinstance(items, list) else ():
                 if isinstance(item, dict):
                     self._check_thread_room(principal, item.get("wing"), item.get("room"))
         return None  # Policy.refusal already required every wing.
@@ -577,8 +579,12 @@ class Mediator:
                 or not isinstance(result.get("facts"), list)
             ):
                 raise ValueError("Invalid fact search response")
+            from .handoff.mirror_access import gate
+
+            # Scrub before _with_search_facts can render facts into CLI text.
+            result = gate(self.gateway, principal, "kg_read", result)
             return {
-                "facts": result["facts"],
+                "facts": result.get("facts", []),
                 **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
             }
         except Exception:
@@ -793,7 +799,12 @@ class Mediator:
         wings = {}
         for drawer_id, item in zip(ids, items):
             if isinstance(item, dict) and not item.get("error"):
-                self._check_thread_room(principal, item.get("wing"), item.get("room"))
+                try:
+                    self._check_thread_room(principal, item.get("wing"), item.get("room"))
+                except Hidden:
+                    raise Hidden(
+                        {"success": False, "error": f"Drawer not found: {drawer_id}"}
+                    ) from None
                 wings[drawer_id] = item.get("wing") or ""
         return wings
 

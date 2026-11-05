@@ -20,10 +20,21 @@ class Worker:
         self.entries = {}
         self.batches = []
         self.fail_at = None
+        self.reads = []
 
     def __call__(self, principal, name, args):
         if name == "mempalace_list_drawers":
             return {"drawers": [], "total": 0}
+        if name == "mempalace_get_drawers":
+            self.reads.append(list(args["drawer_ids"]))
+            return {
+                "results": [
+                    {"drawer_id": key}
+                    if key in self.entries
+                    else {"drawer_id": key, "error": "not found"}
+                    for key in args["drawer_ids"]
+                ]
+            }
         assert name == "write_mirror_units"
         if len(self.batches) == self.fail_at:
             raise RuntimeError("synthetic interruption")
@@ -131,7 +142,7 @@ def test_u3_c_crash_retry_idempotence(world):
     assert len(first) == 64
     assert world.store.mirror_progress(stored.id)[0] == -1
     world.worker.fail_at = None
-    # Errors invalidate earlier successes too: replay repairs a replaced palace.
+    # This case covers palace loss AFTER a worker error invalidates the cache.
     assert not world.service._index_states[world.ws].batches
     world.worker.entries.clear()
     world.service.index_later(world.ws)
@@ -241,3 +252,24 @@ def test_batch_cache_evicts_oldest_thread(world):
     assert "old_0" not in state.batches
     assert row.id not in state.batches  # successful completion prunes its cache
     assert len(state.batches) == 3
+
+
+def test_silent_palace_loss_replays_cached_batch_before_completion(world, monkeypatch):
+    monkeypatch.setattr(search_index, "MAX_UNITS", 64)
+    stored = put(world, "import:silent-loss", count=200, text="p" * 4000)
+    state = search_index.State()
+    assert search_index.sweep(world.service, world.ws, state) is True
+    assert world.worker.batches == [64] and state.batches
+    first_ids = set(world.worker.entries)
+    world.worker.entries.clear()  # No error: a cached success is now stale.
+    for _ in range(10):
+        if not search_index.sweep(world.service, world.ws, state):
+            break
+    else:
+        pytest.fail("bounded sweep did not finish")
+    assert len(world.worker.entries) == 400
+    assert first_ids <= set(world.worker.entries)
+    assert world.worker.batches == [64] * 7 + [16]
+    assert world.worker.reads and set(world.worker.reads[0]) == first_ids
+    assert world.store.mirror_progress(stored.id) == (199, 199)
+    assert world.store.index_backlog(world.ws, after_id="", limit=10) == []

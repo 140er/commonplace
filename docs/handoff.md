@@ -755,11 +755,15 @@ old thread and the successor reference or URL.
   restarts before it is explicitly relaunched, the relaunched successor doesn't
   get the user's unanswered message (the control database holds no text);
   the old session showed it was refused.
-- Each stored thread is also written into Memory search in the background,
-  in a private section. Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
-  This covers Memory search, `memory_get`, session start context and tunnel
-  previews. Mirror copies do not count as duplicates for anyone. Writes into
-  thread rooms require permission to read that thread.
+- Each stored thread is also written into Memory search in the background, in a private
+  section. Mirror copies of private stored threads, facts derived from them, and their
+  tunnel previews are returned only to callers who can read that thread. This covers
+  Memory search, `memory_get` and session start context. Mirror copies do not count as
+  duplicates for anyone. Similarity dedup exclusion (D5) is verified on compact,
+  sqlite_exact and chroma. Adding, updating, deleting or linking drawers in a
+  stored-thread room requires permission to read that thread. Known exceptions:
+  `delete_by_source`, `delete_tunnel` and `delete_hallway` take no room and are not
+  checked yet.
 - `handoff.completed` is queued in the same transaction that records the
   successor and delivered exactly once, also after a crash (it goes out
   when the gateway starts again) and with several gateways on one control

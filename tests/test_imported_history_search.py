@@ -81,7 +81,7 @@ def _post(w, path, data):
 
 
 def words(label):
-    return f"  zq176{label} café 🦉\r\nKeep  every word.\t"
+    return f"  zqimport{label} café 🦉\r\nKeep  every word.\t"
 
 
 def drain(w):
@@ -687,3 +687,61 @@ def test_imported_search_r14_member_cannot_link_owner_thread_room(world):
         for t in connections
     )
     assert refused.get("error") == "Room not found"
+
+
+def test_imported_search_r15_member_cannot_find_owner_derived_fact(world):
+    w = world
+    text = words("derivedfact")
+    ids = private_mirror(w, text)
+    scopes = [
+        "memory:read",
+        "memory:write",
+        "private:read",
+        "private:write",
+        "threads:read",
+        "kg:read",
+        "kg:write",
+    ]
+    _, owner = operator(
+        w,
+        policy=Policy.build(
+            profile="full",
+            scopes=scopes,
+            read_wings=["*"],
+            write_wings=["*"],
+            trust="trusted",
+        ),
+    )
+    record = mirror_record(w, ids, text, owner)
+    assert text in record.get("content", "")
+    value = "zqimportderivedfactvalue"
+    status, reply = rpc(
+        w,
+        owner,
+        "fact_save",
+        {
+            "subject": "SyntheticProject",
+            "predicate": "deploy_port",
+            "object": value,
+            "theme": "private_threads",
+            "sensitivity": "private",
+            "source": {"thread": record["room"], "seq_start": 1, "seq_end": 1},
+        },
+    )
+    assert status == 200 and not reply.get("error"), reply
+    status, reply = rpc(w, owner, "mempalace_search", {"query": "SyntheticProject"})
+    assert status == 200
+    assert quoted(value, reply), reply
+    _, token = operator(
+        w,
+        user=member(w),
+        policy=Policy.build(
+            profile="full",
+            scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+            read_wings=["*"],
+            trust="standard",
+        ),
+    )
+    status, reply = rpc(w, token, "mempalace_search", {"query": "SyntheticProject"})
+    assert status == 200
+    assert not quoted(value, reply)  # RED

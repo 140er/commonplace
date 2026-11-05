@@ -90,7 +90,16 @@ readable messages searchable in Memory, including its earlier history. Upload
 responses do not wait for indexing. Original text stays unchanged; raw archive
 records are retained but are not copied into Memory search.
 
-Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
+Mirror copies of private stored threads, facts derived from them, and their tunnel
+previews are returned only to callers who can read that thread. This covers Memory
+search, `memory_get` and session start context.
+
+Adding, updating, deleting or linking drawers in a stored-thread room requires
+permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
+and `delete_hallway` take no room and are not checked yet.
+
+Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
+verified on compact, sqlite_exact and chroma.
 Capture permission alone is not enough. Default self-service PAT and OAuth
 connections do not receive captured words in Memory search, `memory_get` or
 session start context.

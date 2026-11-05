@@ -143,7 +143,24 @@ def sweep(service, workspace_id, state):
                     return service.call_tool(principal, name, arguments)
                 key = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).digest()
                 if key in cached:
-                    return cached[key]
+                    ids = cached[key]["drawer_ids"]
+                    present = service.call_tool(
+                        principal, "mempalace_get_drawers", {"drawer_ids": ids}
+                    )
+                    rows = present.get("results") if isinstance(present, dict) else None
+                    if (
+                        isinstance(rows, list)
+                        and len(rows) == len(ids)
+                        and all(
+                            isinstance(row, dict)
+                            and not row.get("error")
+                            and row.get("drawer_id") == drawer_id
+                            for drawer_id, row in zip(ids, rows)
+                        )
+                    ):
+                        return cached[key]
+                    # Deterministic ids make rewriting the entire missing batch safe.
+                    cached.pop(key)
                 count = len(arguments["units"])
                 if written + count > MAX_UNITS:
                     raise _JobFull()

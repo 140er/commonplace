@@ -41,7 +41,12 @@ def gate(gateway, principal, rule, result):
 
     def scrub(node):
         if isinstance(node, dict):
-            if unreadable(node.get("wing"), node.get("room")):
+            fact = _is_fact(node)
+            if fact:
+                node = _scrub_fact(node, can_read)
+                if node is _DROP:
+                    return _DROP
+            if unreadable(None if fact else node.get("wing"), node.get("room")):
                 return _DROP
             if "connected_wing" in node and unreadable(
                 node.get("connected_wing"), node.get("connected_room")
@@ -61,8 +66,10 @@ def gate(gateway, principal, rule, result):
             out = {}
             for key, value in node.items():
                 cleaned = scrub(value)
-                if cleaned is _DROP:
-                    return _DROP
+                if cleaned is _DROP or (
+                    fact and key == "related_facts" and len(cleaned) != len(value)
+                ):
+                    return _DROP  # Do not leave bare previous/current echoes behind.
                 out[key] = cleaned
             if all(out[k] is v for k, v in node.items()):
                 return node
@@ -109,3 +116,74 @@ def _recount(original, cleaned):
             cleaned.pop("total", None)
             if "count" in cleaned:
                 cleaned["count"] = len(cleaned[key])
+
+
+def _is_fact(node):
+    return bool({"predicate", "object", "fact", "triple_id"}.intersection(node))
+
+
+def _thread_id(value):
+    return isinstance(value, str) and _THREAD_ROOM.fullmatch(value) is not None
+
+
+def _fact_sources(node):
+    entries = []
+    source = node.get("source")
+    if isinstance(source, dict):
+        entries.append((source.get("thread"), source))
+    sources = node.get("sources")
+    if isinstance(sources, list):
+        entries.extend((row.get("source_thread"), row) for row in sources if isinstance(row, dict))
+    if "source_thread" in node:
+        entries.append((node["source_thread"], node))
+    return entries
+
+
+def _scrub_fact(node, can_read):
+    sources = _fact_sources(node)
+    private = any(
+        isinstance(node.get(key), str) and canonical_wing(node[key]) == MIRROR_WING
+        for key in ("wing", "theme")
+    )
+    if not private and not any(_thread_id(thread) for thread, _ in sources):
+        return node
+    readable = {thread for thread, _ in sources if _thread_id(thread) and can_read(thread)}
+    if not readable:
+        return _DROP
+    out = dict(node)
+    source = node.get("source")
+    if "source" in node and (
+        not isinstance(source, dict)
+        or not _thread_id(source.get("thread"))
+        or source["thread"] not in readable
+    ):
+        out.pop("source")
+    if isinstance(node.get("sources"), list):
+        kept = [
+            row
+            for row in node["sources"]
+            if isinstance(row, dict)
+            and _thread_id(row.get("source_thread"))
+            and row["source_thread"] in readable
+        ]
+        if len(kept) != len(node["sources"]):
+            out["sources"] = kept
+    # Flat provenance describes the primary source; do not retain a hidden
+    # primary thread's ids/links just because another source is readable.
+    primary = node.get("source_thread")
+    if primary is None and _thread_id(node.get("origin_id")):
+        primary = node["origin_id"]
+    if primary is not None and (not _thread_id(primary) or primary not in readable):
+        for key in (
+            "source_thread",
+            "source_seq_start",
+            "source_seq_end",
+            "source_url",
+            "source_link",
+            "source_drawer_id",
+            "source_file",
+            "origin_id",
+            "origin_link",
+        ):
+            out.pop(key, None)
+    return node if out == node else out

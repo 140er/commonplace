@@ -232,12 +232,17 @@ long messages are split into searchable sections. Follow a hit's `source.thread`
 to read more. For a shared native session, this may point to the session's
 stored thread rather than the import's own stored ID.
 
-Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
-This covers Memory search, `memory_get`, session start context and tunnel
-previews. An import grant alone does not enable those reads. Mirror copies
-do not count as duplicates for anyone, including the filing user; checkpoint
-can file the same words as a separate memory. Writes into thread rooms require
-permission to read that thread.
+Mirror copies of private stored threads, facts derived from them, and their tunnel
+previews are returned only to callers who can read that thread. This covers Memory
+search, `memory_get` and session start context.
+
+An import grant alone does not enable those reads. Mirror copies do not count as
+duplicates for anyone. Similarity dedup exclusion (D5) is verified on compact,
+sqlite_exact and chroma. Checkpoint can file the same words as a separate memory.
+
+Adding, updating, deleting or linking drawers in a stored-thread room requires
+permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
+and `delete_hallway` take no room and are not checked yet.
 
 ### Indexing progress and storage
 
