@@ -215,3 +215,5 @@ def test_stuck_plan_without_supervisor_keeps_owner_recovery_actions(fresh):
     html = home(fresh, card)
     assert all(f"need-{action}" in html for action in stale["actions"]), NO_HOME
     assert APPROVE not in html and "need-approve" not in html
+    # The owner can still answer the holder: an Answer link to the card.
+    assert f'href="#/card/{card["number"]}">Answer<' in html, NO_HOME

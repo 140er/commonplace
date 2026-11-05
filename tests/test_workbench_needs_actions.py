@@ -13,7 +13,7 @@ from tests.test_commonplace_boards import api
 TESTS = Path(__file__).parent
 
 
-@pytest.mark.parametrize("case", ["plan_direct", "shell_actions"])
+@pytest.mark.parametrize("case", ["plan_direct", "shell_actions", "answer_error_stale"])
 def test_needs_detail_actions(case):
     result = subprocess.run(
         ["node", str(TESTS / "workbench_needs.mjs"), case],

@@ -254,6 +254,23 @@ const cases = {
     }
     assert.equal(s.requests.filter((r) => r.method === 'POST').length, 0); s.ui.stop();
   },
+  async answer_error_stale() {
+    // A failure for card A must not be drawn under card B, selected while A's request was in flight.
+    const failing = [];
+    const fail = () => new Promise((_, reject) => failing.push(() => reject(Object.assign(new Error('card changed'), { status: 409 }))));
+    const run = async (from, to, start, path, copy) => {
+      const s = setup({ api: (p, options) => options.method === 'POST' && p === path ? fail() : undefined });
+      await s.ui.show({ needs, boards: [board], selected: from });
+      const pending = start(s); await new Promise((r) => setTimeout(r, 0));
+      assert.equal(failing.length, 1, `${path} was not sent`);
+      await s.ui.select(to); failing.pop()(); await pending;
+      assert.ok(s.detailMount.innerHTML.includes(to === 21 ? proposal.title : decision.title), 'the newly selected card must stay shown');
+      assert.ok(!s.detailMount.innerHTML.includes(copy), `${copy} drawn under the wrong card`); s.ui.stop();
+    };
+    await run(22, 21, (s) => s.ui.answer('C'), '/api/cards/22/decide', 'Could not send your answer');
+    await run(21, 22, (s) => s.ui.decline(), '/api/cards/21/approve', 'Could not decline');
+    await run(21, 22, (s) => { s.ui.approve(); return s.ui.confirm(); }, '/api/holds', 'Could not confirm approval');
+  },
 };
 assert.ok(Object.hasOwn(cases, process.argv[2]), 'Unknown case');
 await cases[process.argv[2]]();
