@@ -83,7 +83,8 @@ const unsentKey = (user, slug) => `cmmn.unsent.${part(user)}.${part(slug)}`;
 function storage() { try { return globalThis.sessionStorage; } catch { return null; } }
 
 export function createChat({ mount, api, e, me, board, coordinator, onCard = () => {}, onState = () => {} }) {
-  let active = false, generation = 0, timer = null, delay = 2000, state;
+  // open: the dock shows the pane. Only an open, visible pane polls every 2 s and marks chat seen.
+  let active = false, open = true, generation = 0, timer = null, delay = 2000, state;
   let lastProject = null;
   const offlineQueue = new Map(), written = new WeakMap();
   const drafts = new Map(), pending = new Map(), seen = new Map(), users = new Set(me?.user ? [me.user] : []);
@@ -93,6 +94,12 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   const field = () => root()?.querySelector(".chat-compose")?.elements.text;
   function cancel() { if (timer !== null) clearTimeout(timer); timer = null; }
   function key() { return state.me?.user ? unsentKey(state.me.user, state.slug) : null; }
+  function seenFor() {
+    const name = key();
+    if (!name) return null;
+    if (!seen.has(name)) seen.set(name, seenStore(state.me.user, state.slug));
+    return seen.get(name);
+  }
   function remember(text) {
     const name = key();
     if (!name) return;
@@ -199,18 +206,36 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     state.me = page.me || state.me;
     if (state.me?.user) {
       users.add(state.me.user);
-      const name = key();
-      if (!seen.has(name)) seen.set(name, seenStore(state.me.user, state.slug));
+      const store = seenFor();
       // The divider keeps the boundary from when the pane opened; unread follows the store.
-      state.baseline ??= seen.get(name).read(state.page);
-      state.derived = deriveChatState(state.page, state.status, project(), Date.now(), seen.get(name).read(state.page));
+      state.baseline ??= store.read(state.page);
+      state.derived = deriveChatState(state.page, state.status, project(), Date.now(), store.read(state.page));
       onState(state.derived);
-      if (!document.hidden) seen.get(name).markSeen(state.page);
+      // A closed or hidden pane has not been read: a reply arriving meanwhile stays new.
+      if (open && !document.hidden) store.markSeen(state.page);
     }
   }
   function schedule(token) {
-    if (!current(token) || document.hidden) return;
+    if (!current(token) || document.hidden || !open) return;
     cancel(); timer = setTimeout(() => { timer = null; void tick(token); }, delay);
+  }
+  // A stored seen entry reads everything after it, page by page; only a first sight uses the last 20.
+  async function firstRead(token) {
+    const stored = seenFor()?.peek();
+    if (!stored) return api(`${path()}?last=20`);
+    const read = (from) => api(`${path()}?after=${from.cursor || 0}&replies_after=${from.reply_cursor || 0}`);
+    let page = await read({ cursor: stored.message, reply_cursor: stored.reply }), last = page;
+    // A full page (100 rows) may have more behind it.
+    while (current(token) && ((last.messages || []).length >= 100 || (last.replies || []).length >= 100)) {
+      last = await read(page);
+      if ((last.cursor || 0) <= (page.cursor || 0) && (last.reply_cursor || 0) <= (page.reply_cursor || 0)) break;
+      page = { ...last, oldest: page.oldest, has_more: page.has_more, messages: merge(page.messages, last.messages), replies: merge(page.replies, last.replies) };
+    }
+    if (!current(token) || (page.messages || []).length >= 20) return page;
+    // Few new rows: the last 20 give them context.
+    const recent = await api(`${path()}?last=20`);
+    return { ...page, ...recent, messages: merge(recent.messages, page.messages), replies: merge(recent.replies, page.replies),
+      cursor: Math.max(page.cursor || 0, recent.cursor || 0), reply_cursor: Math.max(page.reply_cursor || 0, recent.reply_cursor || 0) };
   }
   async function tick(token) {
     if (!current(token) || document.hidden) return;
@@ -223,10 +248,10 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
         if (state.slug && !state.projects.some((p) => p.slug === state.slug)) throw new Error("Project unavailable");
       }
       if (state.slug) {
-        const query = state.loaded ? `after=${state.page.cursor || 0}&replies_after=${state.page.reply_cursor || 0}` : "last=20";
+        const read = state.loaded ? api(`${path()}?after=${state.page.cursor || 0}&replies_after=${state.page.reply_cursor || 0}`) : firstRead(token);
         // New messages every tick; status, cards and settings change slowly.
         const slow = !state.loaded || Date.now() - (state.slowAt || 0) >= SLOW_MS;
-        const [page, status, cards, settings] = await Promise.all([api(`${path()}?${query}`), ...(slow ? [api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)] : [])]);
+        const [page, status, cards, settings] = await Promise.all([read, ...(slow ? [api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)] : [])]);
         if (!current(token)) return;
         if (slow) { state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = cards.cards || []; state.slowAt = Date.now(); }
         update(page);
@@ -332,7 +357,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       }
     }
   }
-  function visibility() { cancel(); if (active && !state.sending && !document.hidden) void tick(++generation); }
+  function visibility() { cancel(); if (active && open && !state.sending && !document.hidden) void tick(++generation); }
   async function flushOffline(item) {
     let sent = false;
     try {
@@ -378,6 +403,13 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     },
     stop() { active = false; generation++; cancel(); document.removeEventListener("visibilitychange", visibility); },
     focusComposer() { field()?.focus(); },
+    /** The dock opened or closed the pane. Closed: no 2 s poll and no seen marks; reopened: read now. */
+    setOpen(value) {
+      const was = open;
+      open = !!value;
+      if (!open) cancel();
+      else if (!was && active && !state.sending && !document.hidden) { cancel(); void tick(++generation); }
+    },
     /** The dock reopened the pane on the same board: move the divider to what was read before. */
     reopened() {
       const store = state?.me?.user && seen.get(key());

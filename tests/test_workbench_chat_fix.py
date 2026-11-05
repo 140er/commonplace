@@ -16,6 +16,9 @@ VIEW = [
     "sending_is_pending",
     "destroy_removes_listeners",
     "slow_endpoints_every_15s",
+    "open_reads_after_seen",
+    "open_pages_full",
+    "closed_keeps_divider",
 ]
 CASES = [
     *(("commonplace_chat_view.mjs", case) for case in VIEW),
@@ -25,6 +28,7 @@ CASES = [
     ("workbench_chat_wiring.mjs", "chat_destroy"),
     ("workbench_chatdock.mjs", "reopen_baseline"),
     ("workbench_chatdock.mjs", "open_promise"),
+    ("workbench_chatdock.mjs", "open_state"),
 ]
 
 

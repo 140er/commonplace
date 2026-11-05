@@ -426,3 +426,63 @@ test("RED fix slow_endpoints_every_15s", async (t) => {
   from = h.calls.length; now += 13000; await fire(h);
   assert.equal(slow(from), 3);
 });
+
+// 150 agent messages; a stored seen entry at 100 means 101–150 are new.
+const longChat = (count) => {
+  const rows = Array.from({ length: count }, (_, i) => ({ id: i + 1, actor: "conn:main", text: `Row ${i + 1}`, at: "2026-01-01T00:00:00Z" }));
+  const base = { board: "work", me: { user: "me" }, orchestrator: { actor: "conn:main" }, replies: [], linked: [] };
+  const slice = (picked) => ({ ...base, messages: picked, cursor: picked.at(-1)?.id ?? 0, reply_cursor: 0, oldest: picked[0]?.id ?? 0, has_more: (picked[0]?.id ?? 1) > 1 });
+  return (path) => {
+    if (!path.startsWith("/api/chat/work?")) return undefined;
+    const query = new URLSearchParams(path.split("?")[1]);
+    if (query.has("after")) return slice(rows.filter((row) => row.id > Number(query.get("after"))).slice(0, 100));
+    return slice(rows.slice(-Number(query.get("last") || 20)));
+  };
+};
+const seenKey = "cmmn.chat.seen.me.work";
+const dividerAbove = (html, id) => new RegExp(`New since you last looked</li><li class="chat-message" id="chat-message-${id}"`).test(html);
+
+test("RED fix open_reads_after_seen", async (t) => {
+  const h = setup(t, { get: longChat(150), stored: new Map([[seenKey, '{"message":100,"reply":0}']]) });
+  await h.controller.show("work");
+  assert.ok(h.calls.some((c) => c.path === "/api/chat/work?after=100&replies_after=0"), "the first read must start after the stored seen id");
+  const html = h.nodes.get(".chat-stream").innerHTML;
+  for (const id of [101, 130, 150]) assert.match(html, new RegExp(`id="chat-message-${id}"`), `message ${id} missing`);
+  assert.ok(dividerAbove(html, 101), "the divider must sit above message 101");
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 150);
+});
+
+test("RED fix open_pages_full", async (t) => {
+  const h = setup(t, { get: longChat(150), stored: new Map([[seenKey, '{"message":20,"reply":0}']]) });
+  await h.controller.show("work");
+  assert.ok(h.calls.some((c) => c.path === "/api/chat/work?after=120&replies_after=0"), "a full page must be followed");
+  const html = h.nodes.get(".chat-stream").innerHTML;
+  for (const id of [21, 120, 121, 150]) assert.match(html, new RegExp(`id="chat-message-${id}"`), `message ${id} missing`);
+  assert.ok(dividerAbove(html, 21), "the divider must sit above message 21");
+});
+
+test("RED fix closed_keeps_divider", async (t) => {
+  const { deriveChatState } = await import("../commonplace/web/static/chatstate.js");
+  const base = { board: "work", me: { user: "me" }, orchestrator: { actor: "conn:main" }, replies: [], linked: [] };
+  const rows = [{ id: 5, actor: "user:me", text: "Please draft", at: "2026-01-01T00:00:00Z" }, { id: 6, actor: "conn:main", text: "On it", at: "2026-01-01T00:01:00Z" }];
+  const get = (path) => {
+    if (!path.startsWith("/api/chat/work?")) return undefined;
+    const after = Number(new URLSearchParams(path.split("?")[1]).get("after") ?? 0);
+    const picked = rows.filter((row) => row.id > after);
+    return { ...base, messages: picked, cursor: picked.at(-1)?.id ?? after, reply_cursor: 0 };
+  };
+  const h = setup(t, { get, stored: new Map([[seenKey, '{"message":6,"reply":0}']]) });
+  await h.controller.show("work");
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 6);
+  // The dock closes the pane on a visible tab; then the agent replies.
+  requireMethod(h.controller, "setOpen"); h.controller.setOpen(false);
+  rows.push({ id: 7, actor: "conn:main", text: "Done, see the card", at: "2026-01-01T00:05:00Z" });
+  for (const [id, fn] of [...h.timers]) { h.timers.delete(id); fn(); await settle(); }
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 6, "a closed pane must not mark the reply seen");
+  const closed = deriveChatState({ ...base, messages: rows, cursor: 7 }, { orchestrator: null }, { slug: "work", coordinator: "conn:main" }, Date.now(), JSON.parse(h.data.get(seenKey)));
+  assert.equal(closed.unread, 1);
+  // Reopen as the dock does: the divider sits above the reply that arrived while closed.
+  h.controller.reopened(); h.controller.setOpen(true); await settle();
+  assert.ok(dividerAbove(h.nodes.get(".chat-stream").innerHTML, 7), "the divider must sit above message 7 after reopening");
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 7);
+});

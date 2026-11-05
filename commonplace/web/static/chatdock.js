@@ -187,6 +187,7 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     let result;
     // Reading resumes after a close: the divider moves to what was read before.
     if (reopening) chat.reopened?.();
+    chat.setOpen?.(true);
     if (shownBoard !== board.slug || at !== undefined) {
       shownBoard = board.slug;
       result = chat.show(board.slug, { at, quote });
@@ -208,6 +209,8 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     if (!opened && !inDetails) return;
     generation++;
     opened = false;
+    // A closed pane is not read: the controller stops marking chat seen.
+    chat.setOpen?.(false);
     inDetails = toDetails && !!context;
     returnRow = inDetails ? row : null;
     pane.hidden = true;

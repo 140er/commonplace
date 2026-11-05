@@ -105,7 +105,7 @@ function fixture(width = 1440) {
   const detailsTitle = add(ctx, "h2"); detailsTitle.setAttribute("data-details-title", ""); detailsTitle.setAttribute("tabindex", "-1");
   const tabs = add(shell, "nav", "m-tabs");
   const ask = add(main, "button", "", "ask-question"); ask.setAttribute("aria-controls", "chat");
-  const calls = { show: [], focus: 0, stop: 0, quotes: [], reopened: 0 };
+  const calls = { show: [], focus: 0, stop: 0, quotes: [], reopened: 0, open: [] };
   const chat = {
     show(slug, options) {
       calls.show.push([slug, options]);
@@ -114,6 +114,7 @@ function fixture(width = 1440) {
     focusComposer() { calls.focus++; shell.querySelector("textarea")?.focus(); },
     setQuote(quote) { calls.quotes.push(quote); },
     reopened() { calls.reopened++; },
+    setOpen(value) { calls.open.push(value); },
     stop() { calls.stop++; },
   };
   const dock = createDock({ root: shell, chat, api: () => assert.fail("Dock must not fetch") });
@@ -316,6 +317,13 @@ switch (which) {
     const f = fixture(); await f.dock.open(); assert.equal(f.calls.reopened, 0);
     f.dock.close(); await f.dock.open(); assert.equal(f.calls.reopened, 1);
     f.dock.close({ toDetails: true }); await f.dock.backToChat(); assert.equal(f.calls.reopened, 1); break;
+  }
+  case "open_state": {
+    // The controller learns every open and close, so a closed pane never marks chat seen.
+    const f = fixture(); await f.dock.open(); assert.deepEqual(f.calls.open, [true]);
+    f.dock.close(); assert.deepEqual(f.calls.open, [true, false]);
+    await f.dock.open(); f.dock.close({ toDetails: true }); await f.dock.backToChat();
+    assert.deepEqual(f.calls.open, [true, false, true, false, true]); break;
   }
   case "open_promise": {
     const f = fixture(); f.toggle.remove();
