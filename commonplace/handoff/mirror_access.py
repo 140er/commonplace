@@ -151,6 +151,9 @@ def _scrub_fact(node, can_read):
     if not readable:
         return _DROP
     out = dict(node)
+    # Fact ids encode words. This pointer belongs to another fact whose
+    # sources are not authorized by the readable sources of this one.
+    out.pop("superseded_by", None)
     source = node.get("source")
     if "source" in node and (
         not isinstance(source, dict)

@@ -655,3 +655,23 @@ def test_memory_map_uses_same_fact_source_rule(world, tmp_path):
     memory_tools._people(ctx, nodes, links, set())
     assert {node["label"] for node in nodes} == {"PersonOne", "PersonTwo"}
     assert {link["label"] for link in links} == {"knows"}
+
+
+def test_readable_fact_does_not_echo_another_facts_word_bearing_id(world):
+    fact = {
+        "wing": "private_threads",
+        "object": "readable words",
+        "sources": [{"source_thread": world.thread.id}],
+        "superseded_by": "t_sample_states_hidden_object",
+    }
+    result = gate(world.gateway, world.principal, "kg_read", {"facts": [fact]})
+    assert result == {
+        "facts": [
+            {
+                "wing": "private_threads",
+                "object": "readable words",
+                "sources": [{"source_thread": world.thread.id}],
+            }
+        ]
+    }
+    assert fact["superseded_by"] == "t_sample_states_hidden_object"
