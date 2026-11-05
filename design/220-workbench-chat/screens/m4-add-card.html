@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add a card (mobile) · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body class="mobile">
+<div class="m" inert>
+<header class="m-top">
+  <button class="projbtn" aria-label="Project: Atlas. Switch project"><span class="sw" style="width:12px;height:12px;border-radius:3px;background:#2E43C0" aria-hidden="true"></span>Atlas<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
+  <span class="spacer"></span>
+  <button class="iconbtn" aria-label="Search or do (command palette)"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></button>
+  <button class="iconbtn" aria-label="Project settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg></button>
+</header>
+<div class="m-cols" role="tablist" aria-label="Columns"><button role="tab" aria-selected="false" aria-controls="colpanel" tabindex="-1">Todo 4</button><button role="tab" aria-selected="true" aria-controls="colpanel" id="t-doing">Doing 3</button><button role="tab" aria-selected="false" aria-controls="colpanel" tabindex="-1">Review 2</button><button role="tab" aria-selected="false" aria-controls="colpanel" tabindex="-1">Done 14</button></div>
+<main class="m-body" id="main" style="position:relative"><div id="colpanel" role="tabpanel" aria-labelledby="t-doing" style="display:flex;flex-direction:column;gap:8px">
+  <div class="m-hintrow"><p class="m-hint">Tap ⋯ on a card to move or edit it.</p><button class="btn primary m-add-inline"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card</button></div>
+  <article class="card is-blocked" tabindex="-1" aria-label="A-121 Offline mode: queue edits while disconnected, Blocked">
+  <div class="card-top"><span class="cid">A-121</span><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><button class="iconbtn" id="more-A-121" aria-label="Actions for A-121: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button></div>
+  <h3>Offline mode: queue edits while disconnected</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">O</span><b>Otto</b><span class="sr">(agent)</span></span><span>· 3 h</span></div><p class="card-note">Waiting on Leon: which rate limit applies to batch sync?</p>
+</article>
+  <article class="card " tabindex="-1" aria-label="A-118 Fix sign-up email not arriving on some domains">
+  <div class="card-top"><span class="cid">A-118</span><span class="tag lbl">bug</span><button class="iconbtn" id="more-A-118" aria-label="Actions for A-118: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button></div>
+  <h3>Fix sign-up email not arriving on some domains</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">I</span><b>Iris</b><span class="sr">(agent)</span></span><span>· working 2 h</span></div>
+</article>
+  <article class="card " tabindex="-1" aria-label="A-124 Translate the settings screen (de, nl, fr)">
+  <div class="card-top"><span class="cid">A-124</span><button class="iconbtn" id="more-A-124" aria-label="Actions for A-124: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button></div>
+  <h3>Translate the settings screen (de, nl, fr)</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">J</span><b>Juno</b><span class="sr">(agent)</span></span><span>· 40 min</span></div>
+</article>
+</div></main>
+<button class="fab" id="fab"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg><span class="fab-t">Add card</span></button>
+<nav class="m-tabs" aria-label="Sections"><a href="#" aria-current="page"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="3.4" height="11" rx=".6"/><rect x="6.3" y="2.5" width="3.4" height="7.5" rx=".6"/><rect x="10.6" y="2.5" width="3.4" height="9" rx=".6"/></svg>Board</a><a href="m10-chat.html" id="m-chat-tab" aria-haspopup="dialog"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat<span class="badge newb">new<span class="sr">: 1 new reply</span></span></a><a href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h3.5l1 2h3l1-2H14"/><path d="M3.8 3h8.4L14 9v4H2V9z"/></svg>Needs me<span class="badge" aria-label="3 items">3</span></a><a href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</a></nav>
+</div><div class="scrim" aria-hidden="true"></div>
+<form class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-h" data-return-focus="fab">
+  <span class="grab" aria-hidden="true"></span>
+  <h2 id="sh-h">New card in Atlas · Todo</h2>
+  <label class="lbl">Title<input class="field is-focus" value="Collect crash logs from beta group 2" autofocus></label>
+  <label class="lbl">Details <span class="help">Optional</span><textarea class="field" rows="2"></textarea></label>
+  <div class="chips" role="group" aria-label="Card fields"><button class="chip" type="button">Who: <b>Any agent</b></button><button class="chip" type="button">Label: <b>none</b></button><button class="chip" type="button">Due: <b>none</b></button></div>
+  <div class="row2"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card</button></div>
+</form>
+</body>
+</html>

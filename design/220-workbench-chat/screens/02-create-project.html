@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create your first project · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="shell two" inert>
+<nav class="rail" aria-label="Workspace">
+  <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
+  <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h3.5l1 2h3l1-2H14"/><path d="M3.8 3h8.4L14 9v4H2V9z"/></svg>Needs me <span class="count quiet" aria-label="no items">0</span></a>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</a>
+  <div class="rail-h"><span id="ph">Projects</span><button class="iconbtn" id="new-project" aria-label="New project"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div role="list" aria-labelledby="ph"></div>
+  <div class="rail-foot">
+    <a class="nav" href="#" id="shortcuts-link"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/></svg>Shortcuts <kbd style="margin-left:auto">?</kbd></a>
+    <div class="me"><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span>Maya</div>
+  </div>
+</nav>
+<main class="center" id="main">
+<header class="bar"><h1>Welcome, Maya</h1></header><div class="board" role="region" aria-label="Board" style="opacity:.45">
+<section class="col" aria-label="Todo, 0 cards">
+  <div class="col-h"><h2>Todo</h2><span class="n">0</span></div>
+  <div class="cards"></div>
+</section><section class="col" aria-label="Doing, 0 cards">
+  <div class="col-h"><h2>Doing</h2><span class="n">0</span></div>
+  <div class="cards"></div>
+</section><section class="col" aria-label="Review, 0 cards">
+  <div class="col-h"><h2>Review</h2><span class="n">0</span></div>
+  <div class="cards"></div>
+</section><section class="col" aria-label="Done, 0 cards">
+  <div class="col-h"><h2>Done</h2><span class="n">0</span></div>
+  <div class="cards"></div>
+</section>
+</div>
+</main>
+
+
+
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-h" data-return-focus="new-project">
+  <h2 id="dlg-h">Create your first project</h2>
+  <p class="lead" style="margin-top:-8px">A project is one board, one chat and one memory. You can make more later.</p>
+  <label class="lbl">Project name<input class="field is-focus" value="Atlas" autofocus style="outline-offset:0"></label>
+  <label class="lbl">What is it for? <span class="help">Optional. Agents read this to understand the work.</span><textarea class="field" rows="2">Mobile app beta for 40 testers, due end of November.</textarea></label>
+  <div class="callout info"><h3><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="7.5" rx="2"/><path d="M8 2.5V5M6 8.5v.6M10 8.5v.6"/></svg>No agent yet? That's fine.</h3><span>You can add cards and write in chat right away. When you connect your first agent, it becomes this project's orchestrator (its lead agent) automatically.</span></div>
+  <div class="acts"><button class="btn ghost">Cancel <kbd>Esc</kbd></button><button class="btn primary">Create project <kbd>↵</kbd></button></div>
+</div>
+</body>
+</html>

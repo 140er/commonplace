@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approval (mobile) · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body class="mobile">
+<div class="m">
+<header class="m-top"><button class="m-back"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3M7 4 3 8l4 4"/></svg>Needs me</button><span class="spacer"></span><span style="font-size:13px;color:var(--text-3);padding-right:8px">1 of 3</span></header>
+<main class="m-detail" id="main">
+  <div style="display:flex;gap:8px;align-items:center"><span class="typ approve">Approval</span><span style="font-size:13px;color:var(--text-3)">Atlas · asked 14:09</span></div>
+  <h2 tabindex="-1">Send beta 0.9 to 40 testers?</h2>
+  <div class="src"><span class="who agent"><span class="av agent" aria-hidden="true">A</span><b>Atlas orchestrator</b><span class="sr">(agent)</span></span><span class="sep">·</span><span class="verbatim">exact words</span></div>
+  <p class="quote" style="font-size:15px;line-height:22px">Beta 0.9 is ready. A-118, A-134 and A-135 are done: the sign-up email arrives on all 3 test domains, and Leon reviewed the release notes.
+
+If you approve, I'll send build 0.9 (212 of 212 tests passed) to the 40 people in the Beta group and post the release notes. If you decline, nothing is sent.</p>
+  <div class="linked">
+    <a href="#" style="min-height:44px"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><span><span class="cid">A-118</span> Fix sign-up email not arriving on some domains</span><span class="tag ok">Done</span></a>
+    <a href="#" style="min-height:44px"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><span><span class="cid">A-134</span> Draft beta 0.9 release notes</span><span class="tag ok">Done</span></a>
+    <a href="#" style="min-height:44px"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><span><span class="cid">A-135</span> Check the sign-up email on 3 test domains</span><span class="tag ok">Done</span></a>
+  </div>
+  <div class="facts" role="note"><span style="display:flex;gap:6px;align-items:center"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/></svg><b>Goes outside this workspace</b></span><span>40 testers get an email with the build. Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can't send earlier. Until then, Stop cancels it and nothing is sent. After that it can't be undone here.</span></div>
+  <button class="btn" style="min-height:44px;justify-content:center"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Ask a question</button>
+</main>
+<div class="m-actions"><button class="btn danger"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Decline</button><button class="btn primary" id="m-approve"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg>Approve and send…</button></div>
+</div>
+</body>
+</html>

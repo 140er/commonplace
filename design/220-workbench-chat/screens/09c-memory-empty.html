@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory: nothing saved yet · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="shell two">
+<nav class="rail" aria-label="Workspace">
+  <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
+  <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h3.5l1 2h3l1-2H14"/><path d="M3.8 3h8.4L14 9v4H2V9z"/></svg>Needs me <span class="count quiet" aria-label="no items">0</span></a>
+  <a class="nav" href="#" aria-current="page"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</a>
+  <div class="rail-h"><span id="ph">Projects</span><button class="iconbtn" id="new-project" aria-label="New project"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div role="list" aria-labelledby="ph"><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#2E43C0" aria-hidden="true"></span><span class="pn"><b>Atlas</b><small>New project</small></span></a></div></div>
+  <div class="rail-foot">
+    <a class="nav" href="#" id="shortcuts-link"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/></svg>Shortcuts <kbd style="margin-left:auto">?</kbd></a>
+    <div class="me"><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span>Maya</div>
+  </div>
+</nav>
+<main class="center" id="main">
+<header class="bar"><h1>Memory</h1><span class="sub">Exact words from chats, cards and notes. Never summarised.</span></header>
+<div style="padding:14px 16px 6px;display:flex;flex-direction:column;gap:10px">
+  <div class="search-big" role="search"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><label class="sr" for="mq">Search memory</label><input id="mq" type="search" value="" placeholder="Search exact words…"><kbd>↵</kbd></div>
+  <div class="filters"><button class="chip">Project: <b>All</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">Source: <b>Any</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">From: <b>Anyone</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><button class="chip">When: <b>Any time</b><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button><span style="margin-left:auto;font-size:12.5px;color:var(--text-3)" role="status"></span></div>
+</div><div class="list" style="display:flex"><div class="empty">
+  <span class="big neutral" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg></span>
+  <h2>Nothing saved yet</h2>
+  <p>Chats, cards and notes appear here as exact words as soon as they exist. Nothing is summarised or rewritten.</p>
+  <div class="acts"><button class="btn"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Open chat</button><button class="btn"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add a card</button></div>
+</div></div>
+</main>
+
+
+
+</div>
+
+</body>
+</html>

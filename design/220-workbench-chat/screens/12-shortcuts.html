@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard shortcuts · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="shell" inert>
+<nav class="rail" aria-label="Workspace">
+  <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
+  <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h3.5l1 2h3l1-2H14"/><path d="M3.8 3h8.4L14 9v4H2V9z"/></svg>Needs me <span class="count need" aria-label="3 items">3</span></a>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</a>
+  <div class="rail-h"><span id="ph">Projects</span><button class="iconbtn" id="new-project" aria-label="New project"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div role="list" aria-labelledby="ph"><div role="listitem"><a class="proj" href="#" aria-current="page"><span class="sw" style="background:#2E43C0" aria-hidden="true"></span><span class="pn"><b>Atlas</b><small>3 agents working</small></span><span class="count need" aria-label="2 need you">2</span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#B4561A" aria-hidden="true"></span><span class="pn"><b>Harbor</b><small>1 agent working</small></span><span class="count need" aria-label="1 need you">1</span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#3F6E5A" aria-hidden="true"></span><span class="pn"><b>Ledger</b><small>Idle</small></span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#7A5BC2" aria-hidden="true"></span><span class="pn"><b>Field notes</b><small>Idle</small></span></a></div></div>
+  <div class="rail-foot">
+    <a class="nav" href="#" id="shortcuts-link"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/></svg>Shortcuts <kbd style="margin-left:auto">?</kbd></a>
+    <div class="me"><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span>Maya</div>
+  </div>
+</nav>
+<main class="center" id="main">
+<header class="bar">
+  <h1 title="Mobile app beta">Atlas</h1><button class="chat-toggle" id="chat-toggle" aria-controls="chat" aria-expanded="false" aria-keyshortcuts="/"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg>Chat<kbd>/</kbd></button>
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="Filter cards"><button aria-pressed="true">All</button><button aria-pressed="false">Mine</button><button aria-pressed="false">Agents</button><button aria-pressed="false">Blocked 1</button></div>
+  <a class="btn ghost" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg>Settings</a>
+  <button class="btn only-narrow" id="details-btn" aria-controls="ctx" aria-expanded="false"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg>Details</button>
+  <button class="btn primary" id="add-card" aria-keyshortcuts="C"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>
+</header><div class="board" role="region" aria-label="Board">
+<section class="col" aria-label="Todo, 6 cards">
+  <div class="col-h"><h2>Todo</h2><span class="n">6</span><button class="iconbtn" aria-label="Add card to Todo"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div class="cards"><article class="card is-new" tabindex="0" aria-label="A-134 Draft beta 0.9 release notes, New, from chat 14:03">
+  <div class="card-top"><span class="cid">A-134</span><span class="tag new">From chat · 14:03</span></div>
+  <h3>Draft beta 0.9 release notes</h3>
+  <div class="card-meta"><span class="open-claim">Available for an agent</span></div>
+</article><article class="card is-new" tabindex="-1" aria-label="A-135 Check the sign-up email on 3 test domains, New, from chat 14:03">
+  <div class="card-top"><span class="cid">A-135</span><span class="tag new">From chat · 14:03</span></div>
+  <h3>Check the sign-up email on 3 test domains</h3>
+  <div class="card-meta"><span class="open-claim">Available for an agent</span></div><p class="card-note dep"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/></svg>Starts after A-118 is done</p>
+</article><article class="card " tabindex="-1" aria-label="A-131 Write onboarding copy for the invite screen">
+  <div class="card-top"><span class="cid">A-131</span><span class="tag lbl">copy</span></div>
+  <h3>Write onboarding copy for the invite screen</h3>
+  <div class="card-meta"><span class="open-claim">Available for an agent</span></div>
+</article><article class="card " tabindex="-1" aria-label="A-129 Add dark-mode screenshots to the store listing">
+  <div class="card-top"><span class="cid">A-129</span><span class="tag lbl">store</span></div>
+  <h3>Add dark-mode screenshots to the store listing</h3>
+  <div class="card-meta"><span class="who"><span class="av" style="background:#9A4A1E" aria-hidden="true">L</span>Leon</span></div>
+</article></div><a class="more" href="#">Show 2 more</a>
+</section>
+<section class="col" aria-label="Doing, 3 cards">
+  <div class="col-h"><h2>Doing</h2><span class="n">3</span><button class="iconbtn" aria-label="Add card to Doing"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div class="cards"><article class="card " tabindex="-1" aria-label="A-118 Fix sign-up email not arriving on some domains">
+  <div class="card-top"><span class="cid">A-118</span><span class="tag lbl">bug</span></div>
+  <h3>Fix sign-up email not arriving on some domains</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">I</span><b>Iris</b><span class="sr">(agent)</span></span><span>· working 2 h</span></div>
+</article><article class="card is-blocked is-selected" tabindex="0" aria-label="A-121 Offline mode: queue edits while disconnected, Blocked" aria-current="true">
+  <div class="card-top"><span class="cid">A-121</span><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span></div>
+  <h3>Offline mode: queue edits while disconnected</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">O</span><b>Otto</b><span class="sr">(agent)</span></span><span>· 3 h</span></div><p class="card-note">Waiting on Leon: which rate limit applies to batch sync?</p>
+</article><article class="card " tabindex="-1" aria-label="A-124 Translate the settings screen (de, nl, fr)">
+  <div class="card-top"><span class="cid">A-124</span></div>
+  <h3>Translate the settings screen (de, nl, fr)</h3>
+  <div class="card-meta"><span class="who agent"><span class="av agent" aria-hidden="true">J</span><b>Juno</b><span class="sr">(agent)</span></span><span>· 40 min</span></div>
+</article></div>
+</section>
+<section class="col" aria-label="Review, 2 cards">
+  <div class="col-h"><h2>Review</h2><span class="n">2</span><button class="iconbtn" aria-label="Add card to Review"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div class="cards"><article class="card is-you" tabindex="0" aria-label="A-115 Push-notification opt-in screen, Needs me">
+  <div class="card-top"><span class="cid">A-115</span><span class="tag you"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.4M8 10.8v.1"/></svg>Needs me</span></div>
+  <h3>Push-notification opt-in screen</h3>
+  <div class="card-meta">Built by <span class="who agent"><span class="av agent" aria-hidden="true">I</span><b>Iris</b><span class="sr">(agent)</span></span></div>
+</article><article class="card " tabindex="-1" aria-label="A-116 Cold start under 2 seconds">
+  <div class="card-top"><span class="cid">A-116</span></div>
+  <h3>Cold start under 2 seconds</h3>
+  <div class="card-meta">Reviewer <span class="who"><span class="av" style="background:#9A4A1E" aria-hidden="true">L</span>Leon</span></div>
+</article></div>
+</section>
+<section class="col" aria-label="Done, 14 cards">
+  <div class="col-h"><h2>Done</h2><span class="n">14</span></div>
+  <ul class="done-list">
+    <li><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><a class="done-link" href="#" tabindex="0"><span class="cid">A-112</span> Beta sign-up form</a></li>
+    <li><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><a class="done-link" href="#" tabindex="-1"><span class="cid">A-110</span> Crash reporting wired up</a></li>
+    <li><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><a class="done-link" href="#" tabindex="-1"><span class="cid">A-109</span> Store listing text</a></li>
+    <li><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg><a class="done-link" href="#" tabindex="-1"><span class="cid">A-107</span> App icon, 3 variants</a></li>
+  </ul>
+  <a class="more" href="#">Show 10 more</a>
+</section>
+</div>
+</main>
+
+<aside class="context" id="ctx" aria-label="Context panel">
+  <div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context"><button role="tab" id="tab-details" aria-selected="true" aria-controls="ctx-panel" tabindex="0"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/></svg>Details</button><button role="tab" id="tab-memory" aria-selected="false" aria-controls="ctx-panel" tabindex="-1"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</button></div><button class="hide" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg>Hide</button></div>
+  <div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-details" style="display:flex;flex-direction:column;flex:1;min-height:0">
+  <div class="ctx-body">
+  <div class="detail-h">
+    <div class="row"><span class="cid">A-121</span><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><span style="margin-left:auto;display:flex;gap:2px"><button class="iconbtn" aria-label="Copy link to card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/></svg></button><button class="iconbtn" aria-label="More actions for A-121"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button></span></div>
+    <div class="title-row"><h2>Offline mode: queue edits while disconnected</h2><button class="btn ghost sm" aria-keyshortcuts="E"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/></svg>Edit <kbd>E</kbd></button></div>
+  </div>
+  <dl class="fields">
+    <dt>Status</dt><dd><button class="sel" aria-label="Status: Doing. Change">Doing<svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button></dd>
+    <dt>Working on it</dt><dd><span class="who agent"><span class="av agent" aria-hidden="true">O</span><b>Otto</b><span class="sr">(agent)</span></span><span style="color:var(--text-3);font-size:12.5px">since 11:02</span></dd>
+    <dt>Waiting on</dt><dd><span class="who"><span class="av" style="background:#9A4A1E" aria-hidden="true">L</span>Leon</span></dd>
+    <dt>Labels</dt><dd><span class="tag lbl">sync</span> <span class="tag lbl">beta</span></dd>
+    <dt>Due</dt><dd><button class="sel" aria-label="Due: Fri 6 Nov. Change">Fri 6 Nov<svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button></dd>
+  </dl>
+  <div class="callout block" role="note">
+    <h3><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked since 12:40</h3>
+    <p class="quote" style="border-color:var(--block-line)">“I need to know which rate limit applies to batch sync before I can size the queue. @Leon, is it the per-user or the per-workspace limit?”</p>
+    <span style="color:var(--text-2);font-size:12.5px">Otto (agent), exact words. Leon has this in his Needs me.</span>
+    <div class="acts"><button class="btn sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Search memory for the answer</button><button class="btn sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3z"/><path d="M6.8 14h2.4"/></svg>Remind Leon</button></div>
+  </div>
+  <div><div class="sec-row"><p class="sec-h">Description</p><button class="btn ghost sm"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/></svg>Edit</button></div>
+  <div class="body-text"><p>Edits made offline should be kept on the phone and sent when the connection returns. Conflicts: last write wins, but keep both versions in history.</p></div></div>
+  <div><p class="sec-h" style="margin-bottom:8px">Activity</p>
+  <ul class="activity">
+    <li><span class="av agent" aria-hidden="true">O</span><div><span class="verb"><b>Otto</b> marked this blocked</span><div class="meta">12:40</div></div></li>
+    <li><span class="av agent" aria-hidden="true">O</span><div><span class="verb"><b>Otto</b> started working on it</span><div class="meta">11:02</div></div></li>
+    <li><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span><div><span class="verb"><b>Maya</b> created the card</span><div class="meta">Tue 3 Nov</div></div></li>
+  </ul></div>
+</div>
+  <div class="ctx-foot"><div class="reply"><label class="sr" for="cm">Comment on A-121</label><textarea class="field" id="cm" rows="1" placeholder="Comment or @mention…"></textarea><button class="btn">Send</button></div></div>
+  </div>
+</aside>
+<aside class="chatpane" hidden id="chat" aria-labelledby="chat-h" data-return-focus="chat-toggle">
+  <div class="chat-head"><span class="ch-ic" aria-hidden="true"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7H7.2L4.3 13v-2.5H2.5z"/></svg></span><div class="ch-t"><h2 id="chat-h">Atlas chat</h2><p>Orchestrator connected</p></div><button class="btn ghost sm" id="chat-close" aria-keyshortcuts="]"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>Close chat</button></div>
+  
+  <div class="ctx-body" role="log" aria-label="Messages in Atlas chat">
+  <div class="msgs"><p class="daysep">Today</p>
+    <div class="msg"><span class="av lg" style="background:#3F6E5A" aria-hidden="true">M</span><div><div class="msg-h"><b>Maya</b><time>12:30</time></div>
+      <div class="msg-b"><p>Is anything stuck on Atlas?</p></div></div></div>
+    <p class="newsep" role="separator">New since you last looked</p>
+    <div class="msg"><span class="av agent lg" aria-hidden="true">A</span><div><div class="msg-h"><b>Atlas orchestrator</b><span class="tag agent">agent</span><time>12:41</time></div>
+      <div class="msg-b"><p>One thing. A-121 is blocked: Otto needs to know which rate limit applies to batch sync. I asked Leon, so it's in his Needs me, not yours. Everything else is moving.</p>
+      <div class="made" aria-label="Cards in this answer"><div class="made-h"><span>Cards in this answer</span><span>select to show on the board</span></div>
+        <a href="#" data-card="A-121"><span class="tag block"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m4.2 11.8 7.6-7.6"/></svg>Blocked</span><span><span class="cid">A-121</span> Offline mode: queue edits…</span><span class="where">Doing · Otto</span><span class="sr">, show on the board</span></a></div></div></div></div></div>
+  </div>
+  <div class="ctx-foot"><div class="chat-input"><label class="sr" for="ci">Message to Atlas chat</label><div class="box"><textarea id="ci" rows="2" placeholder="Ask for something…"></textarea><button class="btn primary sm" aria-label="Send"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8 13.5 3l-3 10.5-2.3-4.3z"/><path d="M8.2 9.2 13.5 3"/></svg></button></div><div class="hint"><span>Enter to send · Shift+Enter new line</span><span><kbd>Esc</kbd> closes the chat</span></div></div></div>
+</aside>
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="dlg-h" data-return-focus="shortcuts-link">
+  <h2 id="dlg-h">Keyboard shortcuts</h2>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:8px;background:var(--pane);border:1px solid var(--line)">
+  <span><b id="sk-l">Single-key shortcuts</b><br><span style="font-size:13px;color:var(--text-2)">Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</span></span>
+  <button class="switch is-focus" role="switch" aria-checked="true" aria-labelledby="sk-l" autofocus><span class="track" aria-hidden="true"></span><span class="state">On</span></button></div>
+  <p style="font-size:13px;color:var(--text-2)">Single keys never fire while you type in a field. <b>Approve and Decline have no shortcut</b>; they always need the button.</p>
+  <table class="kt"><caption class="sr">Shortcuts</caption><thead><tr><th>Key</th><th>Action</th><th><span class="sr">Change</span></th></tr></thead><tbody><tr><td><kbd>⌘K / Ctrl K</kbd></td><td>Search or do (palette)</td><td><span style="color:var(--text-3);font-size:12.5px">Always on</span></td></tr><tr><td><kbd>C</kbd></td><td>New card</td><td><button class="btn ghost sm" aria-label="Change shortcut for New card">Change…</button></td></tr><tr><td><kbd>/</kbd></td><td>Open the chat and put the cursor in it</td><td><button class="btn ghost sm" aria-label="Change shortcut for Open the chat and put the cursor in it">Change…</button></td></tr><tr><td><kbd>G then B / N / M</kbd></td><td>Go to board / Needs me / memory</td><td><button class="btn ghost sm" aria-label="Change shortcut for Go to board / Needs me / memory">Change…</button></td></tr><tr><td><kbd>J / K</kbd></td><td>Next / previous item</td><td><button class="btn ghost sm" aria-label="Change shortcut for Next / previous item">Change…</button></td></tr><tr><td><kbd>E</kbd></td><td>Edit the selected field</td><td><button class="btn ghost sm" aria-label="Change shortcut for Edit the selected field">Change…</button></td></tr><tr><td><kbd>M</kbd></td><td>Move card to…</td><td><button class="btn ghost sm" aria-label="Change shortcut for Move card to…">Change…</button></td></tr><tr><td><kbd>R</kbd></td><td>Ask a question (Needs me)</td><td><button class="btn ghost sm" aria-label="Change shortcut for Ask a question (Needs me)">Change…</button></td></tr><tr><td><kbd>Y / L</kbd></td><td>Copy exact words / link to card (memory)</td><td><button class="btn ghost sm" aria-label="Change shortcut for Copy exact words / link to card (memory)">Change…</button></td></tr><tr><td><kbd>Z</kbd></td><td>Undo or stop (while the toast shows)</td><td><button class="btn ghost sm" aria-label="Change shortcut for Undo or stop (while the toast shows)">Change…</button></td></tr><tr><td><kbd>]</kbd></td><td>Close the chat, or hide the side panel</td><td><button class="btn ghost sm" aria-label="Change shortcut for Close the chat, or hide the side panel">Change…</button></td></tr><tr><td><kbd>Esc</kbd></td><td>Close a dialog or the palette</td><td><span style="color:var(--text-3);font-size:12.5px">Always on</span></td></tr></tbody></table>
+  <div class="acts"><button class="btn">Reset to defaults</button><button class="btn primary">Done <kbd>Esc</kbd></button></div>
+</div>
+</body>
+</html>

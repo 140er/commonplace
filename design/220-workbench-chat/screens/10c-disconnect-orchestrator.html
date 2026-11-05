@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disconnect the orchestrator · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="shell two" inert>
+<nav class="rail" aria-label="Workspace">
+  <button class="ws" aria-label="Workspace: Northwind. Switch workspace"><span class="mark" aria-hidden="true">N</span>Northwind <svg class="i chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></button>
+  <button class="cmdk" id="cmdk" aria-keyshortcuts="Control+K Meta+K"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9h3.5l1 2h3l1-2H14"/><path d="M3.8 3h8.4L14 9v4H2V9z"/></svg>Needs me <span class="count need" aria-label="3 items">3</span></a>
+  <a class="nav" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.5h6.5L12.5 5v8.5h-9z"/><path d="M5.8 7h4.4M5.8 9.5h4.4M5.8 12h2.4"/></svg>Memory</a>
+  <div class="rail-h"><span id="ph">Projects</span><button class="iconbtn" id="new-project" aria-label="New project"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div role="list" aria-labelledby="ph"><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#2E43C0" aria-hidden="true"></span><span class="pn"><b>Atlas</b><small>3 agents working</small></span><span class="count need" aria-label="2 need you">2</span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#B4561A" aria-hidden="true"></span><span class="pn"><b>Harbor</b><small>1 agent working</small></span><span class="count need" aria-label="1 need you">1</span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#3F6E5A" aria-hidden="true"></span><span class="pn"><b>Ledger</b><small>Idle</small></span></a></div><div role="listitem"><a class="proj" href="#"><span class="sw" style="background:#7A5BC2" aria-hidden="true"></span><span class="pn"><b>Field notes</b><small>Idle</small></span></a></div></div>
+  <div class="rail-foot">
+    <a class="nav" href="#" id="shortcuts-link"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/></svg>Shortcuts <kbd style="margin-left:auto">?</kbd></a>
+    <div class="me"><span class="av" style="background:#3F6E5A" aria-hidden="true">M</span>Maya</div>
+  </div>
+</nav>
+<main class="center" id="main">
+<header class="bar"><h1>Atlas</h1><span class="sub">Project settings</span><span class="spacer"></span><span class="saved" role="status"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg>Changes save automatically · saved 14:31</span><a class="btn" href="#"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8H3M7 4 3 8l4 4"/></svg>Back to board <kbd>G</kbd><kbd>B</kbd></a></header>
+<div class="settings"><div class="settings-inner">
+  <section class="set-sec" aria-labelledby="s1">
+    <h2 id="s1">Orchestrator</h2>
+    <p class="lead">The project's lead agent: it reads chat and turns requests into cards. Whenever at least one agent is connected there is exactly one orchestrator, chosen automatically: the agent connected longest. With no agent connected there is none, and chat requests wait.</p>
+    <div class="orch-card"><span class="av agent" aria-hidden="true">A</span><div><b>Atlas orchestrator</b> <span class="tag ok"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg>Connected</span><small>Agent on “Maya's laptop” · last active 2 min ago · reads chat, makes cards</small></div><button class="btn sm" id="disc-orch">Disconnect…</button></div>
+  </section>
+  <section class="set-sec" aria-labelledby="s2">
+    <h2 id="s2">Chat answers</h2>
+    <p class="lead">Which model writes the quick reply you see in chat. The orchestrator still does the work.</p>
+    <fieldset class="radios" style="border:0;padding:0;margin:0"><legend class="sr">Chat answer mode</legend>
+      <div class="radio"><input type="radio" name="mode" id="m-basic"><span><label for="m-basic"><b>Basic</b><small>No model. Instead of an answer, a short receipt confirms your message reached the orchestrator.</small></label></span></div>
+      <div class="radio on"><input type="radio" name="mode" id="m-local" checked><span><label for="m-local"><b>Local model</b><small>Runs on your machine. Nothing leaves it.</small></label>
+        <span class="sub-fields"><label for="model">Model</label><span class="selwrap"><select id="model" class="selectbox"><option>llama-3.1-8b-instruct</option><option>qwen-2.5-7b-instruct</option></select><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg></span><span>Status</span><span class="tag ok" style="justify-self:start"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg>Reachable</span></span></span></div>
+      <div class="radio"><input type="radio" name="mode" id="m-hosted"><span><label for="m-hosted"><b>Hosted provider</b><small>Off. Sends chat messages to an outside AI service using a key your workspace owner saved. Choosing it shows the details before anything is sent.</small></label></span></div>
+    </fieldset>
+  </section>
+  <section class="set-sec" aria-labelledby="s3">
+    <h2 id="s3">Agents</h2>
+    <div class="inline-row"><span id="ma" style="font-weight:600">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="ma"><button aria-label="One fewer">−</button><output aria-live="polite">3</output><button aria-label="One more">+</button></div><span style="color:var(--text-2);font-size:13px">Extra cards wait in Todo.</span></div>
+    <table class="agents-t"><caption class="sr">Connected agents</caption><thead><tr><th>Agent</th><th>Role</th><th>Last active</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
+      <tr><td><span class="who agent"><span class="av agent" aria-hidden="true">A</span><b>Atlas orchestrator</b><span class="sr">(agent)</span></span> <span style="color:var(--text-3);font-size:12.5px">(Maya's laptop)</span></td><td>Orchestrator</td><td>2 min ago</td><td style="text-align:right;color:var(--text-3);font-size:12.5px">Automatic · see above</td></tr>
+<tr><td><span class="who agent"><span class="av agent" aria-hidden="true">I</span><b>Iris</b><span class="sr">(agent)</span></span></td><td>Works on cards</td><td>now</td><td style="text-align:right"><button class="btn ghost sm" aria-label="Disconnect Iris…">Disconnect…</button></td></tr><tr><td><span class="who agent"><span class="av agent" aria-hidden="true">O</span><b>Otto</b><span class="sr">(agent)</span></span></td><td>Works on cards</td><td>now</td><td style="text-align:right"><button class="btn ghost sm" aria-label="Disconnect Otto…">Disconnect…</button></td></tr><tr><td><span class="who agent"><span class="av agent" aria-hidden="true">J</span><b>Juno</b><span class="sr">(agent)</span></span></td><td>Works on cards</td><td>5 min ago</td><td style="text-align:right"><button class="btn ghost sm" aria-label="Disconnect Juno…">Disconnect…</button></td></tr>
+    </tbody></table>
+    <div><button class="btn"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Connect an agent</button></div>
+  </section>
+</div></div>
+</main>
+
+
+
+</div>
+<div class="scrim" aria-hidden="true"></div>
+<div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-h" data-return-focus="disc-orch">
+  <h2 id="dlg-h">Disconnect Atlas orchestrator?</h2>
+  <div style="display:flex;flex-direction:column;gap:8px">
+  <p><b>What happens:</b></p>
+  <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+    <li><b>Iris becomes the orchestrator</b> automatically. Iris has been connected longest of the other agents.</li>
+    <li>Cards, chat and memory stay exactly as they are.</li>
+    <li>Atlas orchestrator's setup stops working. To use it again, connect it as a new agent.</li>
+  </ul></div>
+  <div class="acts"><button class="btn is-focus" autofocus>Cancel <kbd>Esc</kbd></button><button class="btn danger">Disconnect</button></div>
+</div>
+</body>
+</html>

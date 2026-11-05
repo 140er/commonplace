@@ -1,0 +1,29 @@
+PASS 02-create-project: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#new-project (want #new-project)
+PASS 03c-connect-agent: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#connect-btn (want #connect-btn)
+PASS 03c2-connect-waiting: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#connect-btn (want #connect-btn)
+PASS 03d-connect-done: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#connect-btn (want #connect-btn)
+PASS 03e-connect-failed: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#connect-btn (want #connect-btn)
+PASS 10c-disconnect-orchestrator: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#disc-orch (want #disc-orch)
+PASS 10d-disconnect-last-agent: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#disc-orch (want #disc-orch)
+PASS 11-command-palette: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#cmdk (want #cmdk)
+PASS 11b-command-palette-card: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#cmdk (want #cmdk)
+PASS 12-shortcuts: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#shortcuts-link (want #shortcuts-link)
+PASS 04c-board-tablet-panel: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#details-btn (want #details-btn)
+PASS m4-add-card: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#fab (want #fab)
+PASS m5-approve-confirm: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#m-approve (want #m-approve)
+PASS m9-card-menu: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#more-A-121 (want #more-A-121)
+PASS m10-chat: initial=true trapped=true visibleModals=0 visibleScrims=0 inert=0 focus=#m-chat-tab (want #m-chat-tab)
+board arrows: A-124 Translat → A-115 Push-not → A-112 Beta sig → A-110 Crash re → A-115 Push-not | board tab stops: 4
+palette ArrowDown → opt-1 / New request to the orchestrato
+needs-me: A/D pressed, confirm shown=false (want false)
+PASS 04 closed at load: {"open":false,"ctx":true,"exp":"false","focus":"BODY","inChat":false}
+PASS 04 toggle Enter opens: {"open":true,"ctx":false,"exp":"true","focus":"ci","inChat":true}
+PASS 04 Esc in message box closes, focus back on toggle: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
+PASS 04 '/' from the board opens and focuses the box: {"open":true,"ctx":false,"exp":"true","focus":"ci","inChat":true}
+PASS 04 Close chat button: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
+PASS 04 toggle again closes: {"open":false,"ctx":true,"exp":"false","focus":"chat-toggle","inChat":false}
+PASS 07 Ask a question opens chat: {"open":true,"ctx":false,"exp":"true","focus":"ci","inChat":true}
+PASS 07 Back to the approval: {"open":false,"ctx":true,"exp":"false","focus":"ask-question","inChat":false}
+PASS 09 Open in chat, then Esc: {"open":false,"ctx":true,"exp":"false","focus":"open-in-chat","inChat":false}
+PASS 06c chat row focus outlines its card: A-135 row → A-135; A-118 row → A-118
+ALL PASS

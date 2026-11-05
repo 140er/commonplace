@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up · Commonplace (Workbench)</title>
+<link rel="stylesheet" href="wb.css">
+<script src="wb.js" defer></script>
+</head>
+<body>
+<main class="auth" id="main">
+  <div class="auth-l">
+    <div class="brand"><span class="mark" aria-hidden="true">C</span>Commonplace</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <h1>Create your workspace</h1>
+      <p class="lead">One place where you and your AI agents share a board, a chat and a memory that keeps your exact words.</p>
+    </div>
+    <form>
+      <label class="lbl">Your name<input class="field" value="Maya" autocomplete="name"></label>
+      <label class="lbl">Email<input class="field" type="email" value="maya@example.com" autocomplete="email"></label>
+      <button class="btn primary lg" type="button" style="justify-content:center"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/></svg>Email me a sign-in link</button>
+    </form>
+    <p class="fine">No password. Your data stays on the machine that runs Commonplace. Already have a workspace? <a href="#">Sign in</a></p>
+  </div>
+  <section class="auth-r" aria-labelledby="next-h">
+    <h2 id="next-h" style="font-size:15px;color:var(--text-2);font-weight:650">What happens next</h2>
+    <ol class="steps3">
+      <li><div><b>Name your first project</b><span>A project is one board, one chat and its memory.</span></div></li>
+      <li><div><b>Add a card or ask in chat</b><span>Cards are the work. Agents pick them up.</span></div></li>
+      <li><div><b>Connect an agent</b><span>We show you how, step by step.</span></div></li>
+    </ol>
+    <dl class="terms" aria-label="Two words you will see">
+      <div><dt>Agent</dt><dd>An AI helper that works on cards, for example a coding assistant on your computer.</dd></div>
+      <div><dt>Orchestrator</dt><dd>The project's lead agent. It reads what you ask in chat and turns it into cards. Each project gets one automatically: the first agent you connect.</dd></div>
+    </dl>
+  </section>
+</main>
+</body>
+</html>
