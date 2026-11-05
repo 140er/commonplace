@@ -92,7 +92,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   .shell.chat-open .card-top { flex-wrap: wrap; row-gap: 2px; }
 }
 @media (min-width: 1100px) and (max-width: 1279px) {
-  .shell.chat-open { grid-template-columns: 188px minmax(0, 1fr) 304px; }
+  .shell.chat-open, .shell.two.chat-open { grid-template-columns: 188px minmax(0, 1fr) 304px; }
 }
 @media (min-width: 700px) and (max-width: 1099px) {
   .shell, .shell.two { grid-template-columns: 220px minmax(0, 1fr); }
@@ -109,7 +109,12 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   }
 }
 @media (min-width: 1024px) and (max-width: 1099px) {
-  .shell.chat-open, .shell.ctx-pushed { grid-template-columns: 220px minmax(0, 1fr) 340px; }
+  /* README: 220 | board | 340 while the chat or its Details push the board. */
+  .shell.chat-open, .shell.two.chat-open, .shell.ctx-pushed { grid-template-columns: 220px minmax(0, 1fr) 340px; }
+  .bar:has(.ct-chip.off) [data-action="coordinator"] .wl {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
   .shell.ctx-pushed .context { display: flex; }
   .shell.chat-open .bar:has(.ct-chip.off) .wl {
     position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -216,4 +221,21 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
     padding: 6px 8px 6px 14px; background: var(--accent-weak); border-bottom: 1px solid var(--line); font-size: 14px;
   }
   .m-frombar .btn { min-height: 44px; display: inline-flex; align-items: center; }
+}
+
+/* ---------- Header (all screens) ---------- */
+.shell .head h1#title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell .head .right { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; align-items: center; }
+@media (max-width: 699px) {
+  .shell .head .right kbd { display: none; }
+  /* The phone top bar already names the project (m1). */
+  .shell[data-view="board"] #title, .shell[data-view="chat"] #title {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+}
+
+/* ---------- Project settings are a page from 700 px up (10), not a dimmed sheet ---------- */
+@media (min-width: 700px) and (max-width: 1099px) {
+  .shell.panel-open:has(#card-panel [data-project-settings]) .tablet-scrim { display: none; }
+  .shell.panel-open #card-panel:has(.workbench-project) { left: 220px; box-shadow: none; }
 }

@@ -338,7 +338,9 @@ function shell() {
     // Needs me lends the shared panel to project settings; it draws there again once the panel closes.
     if (panel.hidden && state.needsUI?.paused?.()) state.needsUI.pause(false);
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
-    const open = !panel.hidden, modal = open && narrow.matches;
+    // Project settings are a page from 700 px up (10), never a dimmed sheet; on a phone they are the m13 sheet.
+    const page = panel.querySelector("[data-project-settings]") && !matchMedia("(max-width:699px)").matches;
+    const open = !panel.hidden, modal = open && narrow.matches && !page;
     root.querySelector("#details-btn")?.setAttribute("aria-expanded", String(open));
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
@@ -377,6 +379,8 @@ function navigation() {
   root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board });
   root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ board, view, needs: state.needs.count || 0 });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
+  // The phone top bar already names the project, so the board hides its own title there (m1).
+  root.querySelector(".shell")?.setAttribute("data-view", view);
   state.shellSync?.();
 }
 function showError(text) {
@@ -477,19 +481,19 @@ function boardView() {
   const board = currentBoard();
   if (!board) { boardsView(); return; }
   const panelOpen = !root.querySelector("#card-panel").hidden;
-  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
+  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn ghost" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg><span class="wl">Settings</span></button><button class="btn primary" data-action="new-card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>`);
   // The redrawn header gets the chat control back without waiting for the next refresh.
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
   // Keep the active phone column and a parked-card disclosure through polling.
   const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
-  const backlog = content.querySelector(".backlog")?.open;
+  const backlog = content.querySelector(".backlog")?.open, doneAll = Boolean(content.querySelector("#col-done[data-all]"));
   boardDispose?.();
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  content.innerHTML = fromBar + renderBoard({ board, cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
@@ -662,7 +666,9 @@ async function cardPanel(number, epoch) {
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
     // Keep the existing versioned ask actions and call tree reachable on card routes.
-    if (tab === "details") panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `<ol class="log">${conversation(card)}</ol>${callTree(card)}`);
+    // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
+    const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
+    if (tab === "details") panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `${asks}${callTree(card)}`);
     restore(saved);
     await shown;
     if (request !== state.panelRequest || epoch !== state.screen) return;
