@@ -486,3 +486,56 @@ test("RED fix closed_keeps_divider", async (t) => {
   assert.ok(dividerAbove(h.nodes.get(".chat-stream").innerHTML, 7), "the divider must sit above message 7 after reopening");
   assert.equal(JSON.parse(h.data.get(seenKey)).message, 7);
 });
+
+// A server whose rows can grow; the first chat page can be held back or failed.
+const growingChat = (rows, first = null) => {
+  const base = { board: "work", me: { user: "me" }, orchestrator: { actor: "conn:main" }, replies: [], linked: [] };
+  const slice = (picked, after = 0) => ({ ...base, messages: picked, cursor: picked.at(-1)?.id ?? after, reply_cursor: 0, oldest: picked[0]?.id ?? 0, has_more: (picked[0]?.id ?? 1) > 1 });
+  let reads = 0;
+  return (path) => {
+    if (!path.startsWith("/api/chat/work?")) return undefined;
+    const query = new URLSearchParams(path.split("?")[1]);
+    const page = () => query.has("after") ? slice(rows.filter((row) => row.id > Number(query.get("after"))).slice(0, 100), Number(query.get("after"))) : slice(rows.slice(-Number(query.get("last") || 20)));
+    return ++reads === 1 && first ? first(page) : page();
+  };
+};
+const agentRows = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => ({ id: from + i, actor: "conn:main", text: `Row ${from + i}`, at: "2026-01-01T00:00:00Z" }));
+const settled = async () => { for (let i = 0; i < 10; i++) await settle(); };
+const startsAfterZero = (h) => h.calls.some((c) => /^\/api\/chat\/work\?after=0(?:&|$)/.test(c.path));
+
+test("RED fix reopen_before_first_page", async (t) => {
+  let release;
+  const get = growingChat(agentRows(1, 150), (page) => new Promise((resolve) => { release = () => resolve(page()); }));
+  const h = setup(t, { get });
+  const shown = h.controller.show("work"); await settled();
+  assert.equal(typeof release, "function", "the first page was not requested");
+  // The dock closes and reopens while the first page is still in flight.
+  h.controller.setOpen(false); h.controller.reopened(); h.controller.setOpen(true);
+  release(); await shown; await settled();
+  assert.ok(!startsAfterZero(h), "a reopen before the first page must not read from 0");
+  assert.ok(!dividerAbove(h.nodes.get(".chat-stream").innerHTML, 1), "first sight must not mark the whole history new");
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 150);
+});
+
+test("RED fix reopen_after_failed_first_page", async (t) => {
+  const get = growingChat(agentRows(1, 150), () => { throw new Error("500"); });
+  const h = setup(t, { get });
+  await h.controller.show("work"); await settled();
+  assert.equal(h.data.get(seenKey), undefined, "a failed first page must not store seen ids");
+  h.controller.setOpen(false); h.controller.reopened(); h.controller.setOpen(true); await settled();
+  assert.ok(!startsAfterZero(h), "a reopen after a failed first page must not read from 0");
+  assert.ok(!dividerAbove(h.nodes.get(".chat-stream").innerHTML, 1), "first sight must not mark the whole history new");
+  assert.equal(JSON.parse(h.data.get(seenKey)).message, 150);
+});
+
+test("RED fix reopen_catches_up", async (t) => {
+  const rows = agentRows(1, 6);
+  const h = setup(t, { get: growingChat(rows), stored: new Map([[seenKey, '{"message":6,"reply":0}']]) });
+  await h.controller.show("work"); await settled();
+  h.controller.setOpen(false);
+  rows.push(...agentRows(7, 256));
+  h.controller.reopened(); h.controller.setOpen(true); await settled();
+  const html = h.nodes.get(".chat-stream").innerHTML;
+  for (const id of [7, 106, 107, 206, 207, 256]) assert.match(html, new RegExp(`id="chat-message-${id}"`), `message ${id} missing after one reopen tick`);
+  assert.ok(dividerAbove(html, 7), "the divider must sit above message 7");
+});

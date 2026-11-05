@@ -219,18 +219,22 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     if (!current(token) || document.hidden || !open) return;
     cancel(); timer = setTimeout(() => { timer = null; void tick(token); }, delay);
   }
-  // A stored seen entry reads everything after it, page by page; only a first sight uses the last 20.
-  async function firstRead(token) {
-    const stored = seenFor()?.peek();
-    if (!stored) return api(`${path()}?last=20`);
-    const read = (from) => api(`${path()}?after=${from.cursor || 0}&replies_after=${from.reply_cursor || 0}`);
-    let page = await read({ cursor: stored.message, reply_cursor: stored.reply }), last = page;
-    // A full page (100 rows) may have more behind it.
+  // Reads everything after a cursor: a full page (100 rows) may have more behind it.
+  async function readAfter(from, token) {
+    const read = (at) => api(`${path()}?after=${at.cursor || 0}&replies_after=${at.reply_cursor || 0}`);
+    let page = await read(from), last = page;
     while (current(token) && ((last.messages || []).length >= 100 || (last.replies || []).length >= 100)) {
       last = await read(page);
       if ((last.cursor || 0) <= (page.cursor || 0) && (last.reply_cursor || 0) <= (page.reply_cursor || 0)) break;
       page = { ...last, oldest: page.oldest, has_more: page.has_more, messages: merge(page.messages, last.messages), replies: merge(page.replies, last.replies) };
     }
+    return page;
+  }
+  // A stored seen entry reads everything after it, page by page; only a first sight uses the last 20.
+  async function firstRead(token) {
+    const stored = seenFor()?.peek();
+    if (!stored) return api(`${path()}?last=20`);
+    const page = await readAfter({ cursor: stored.message, reply_cursor: stored.reply }, token);
     if (!current(token) || (page.messages || []).length >= 20) return page;
     // Few new rows: the last 20 give them context.
     const recent = await api(`${path()}?last=20`);
@@ -248,7 +252,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
         if (state.slug && !state.projects.some((p) => p.slug === state.slug)) throw new Error("Project unavailable");
       }
       if (state.slug) {
-        const read = state.loaded ? api(`${path()}?after=${state.page.cursor || 0}&replies_after=${state.page.reply_cursor || 0}`) : firstRead(token);
+        const read = state.loaded ? readAfter({ cursor: state.page.cursor, reply_cursor: state.page.reply_cursor }, token) : firstRead(token);
         // New messages every tick; status, cards and settings change slowly.
         const slow = !state.loaded || Date.now() - (state.slowAt || 0) >= SLOW_MS;
         const [page, status, cards, settings] = await Promise.all([read, ...(slow ? [api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)] : [])]);
@@ -413,7 +417,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     /** The dock reopened the pane on the same board: move the divider to what was read before. */
     reopened() {
       const store = state?.me?.user && seen.get(key());
-      if (!active || !store) return;
+      // Before the first page there is nothing to baseline: first sight sets it from that page.
+      if (!active || !state.loaded || !store) return;
       state.baseline = store.read(state.page); render();
     },
     /** Stop and remove the document and window listeners this controller added. */

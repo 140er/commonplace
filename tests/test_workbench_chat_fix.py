@@ -19,6 +19,9 @@ VIEW = [
     "open_reads_after_seen",
     "open_pages_full",
     "closed_keeps_divider",
+    "reopen_before_first_page",
+    "reopen_after_failed_first_page",
+    "reopen_catches_up",
 ]
 CASES = [
     *(("commonplace_chat_view.mjs", case) for case in VIEW),
