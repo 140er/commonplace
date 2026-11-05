@@ -14,7 +14,7 @@ import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
-import { boardView as renderBoard, bindBoard, chatTag, loadChatTimes, roveTo } from "./board.js";
+import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { createDetails } from "./details.js";
 import { resolveRoute } from "./routes.js";
 import { createNeeds } from "./needs.js";
@@ -54,13 +54,13 @@ let providersPromise;
 
 const root = document.querySelector("#root");
 const state = {
-  me: null, boards: [], needs: {}, cards: [], open: [], card: null, route: "#/", base: "#/",
+  me: null, boards: [], needs: {}, cards: [], children: [], open: [], card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
   screen: 0, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, chatTimes: new Map(),
-  phonePushPending: false,
+  phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
 let consoleUI = null, chatUI = null, detailsUI = null, boardDispose = null;
@@ -68,6 +68,9 @@ const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
 const message = (text, retry = false) => `<div class="message" role="status">${e(text)}${retry ? '<button data-action="retry">Retry</button>' : ""}</div>`;
+// The board lists child cards (an approval's linked cards) too; each card once.
+const boardCards = () => [...new Map([...state.cards, ...(state.children || [])].map((card) => [card.number, card])).values()];
+const phone = () => matchMedia("(max-width:699px)").matches;
 const options = (items, selected) => items.map((s) => `<option value="${e(s)}" ${s === selected ? "selected" : ""}>${e(s)}</option>`).join("");
 let speechState = { active: false, text: "" };
 const speech = digestSpeech(() => api("/api/needs-me/digest"), (next) => { speechState = next; speechView(); }, showError);
@@ -275,7 +278,7 @@ function paletteUI() {
 }
 function shortcutsView() { paletteUI().shortcuts(); }
 function shellMenu() {
-  const board = currentBoard(), cards = state.cards.filter((card) => !card.board || card.board === board?.slug);
+  const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
   paletteUI().open({ board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
 }
 async function paletteCommand(item) {
@@ -332,14 +335,19 @@ function shell() {
   const narrow = matchMedia("(max-width:1099px)");
   let opener = null, wasOpen = false;
   const sync = () => {
+    // Needs me lends the shared panel to project settings; it draws there again once the panel closes.
+    if (panel.hidden && state.needsUI?.paused?.()) state.needsUI.pause(false);
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     const open = !panel.hidden, modal = open && narrow.matches;
+    root.querySelector("#details-btn")?.setAttribute("aria-expanded", String(open));
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
     if (modal) panel.setAttribute("aria-modal", "true"); else panel.removeAttribute("aria-modal");
     for (const target of [root.querySelector("#board-nav"), root.querySelector(".center")]) if (target) target.inert = modal;
     if (open && !wasOpen && modal) panel.focus();
-    if (!open && wasOpen && opener?.isConnected) opener.focus();
+    // A header redraw replaces the opener (Details, Settings): find it again by id.
+    const back = opener?.isConnected ? opener : opener?.id ? root.querySelector(`#${CSS.escape(opener.id)}`) : null;
+    if (!open && wasOpen && back) back.focus();
     wasOpen = open;
   };
   const observer = new MutationObserver(sync);
@@ -378,7 +386,10 @@ function showError(text) {
 }
 function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
-  root.querySelector("#head-actions").innerHTML = actions;
+  // A redraw keeps focus on the same header control (Details, Chat).
+  const head = root.querySelector("#head-actions"), active = document.activeElement, keep = head.contains(active) && active.id;
+  head.innerHTML = actions;
+  if (keep) head.querySelector(`#${CSS.escape(keep)}`)?.focus({ preventScroll: true });
   document.title = `${text} · Commonplace`;
 }
 function decision(card, panel = false, answered = null) {
@@ -437,7 +448,7 @@ function needsView() {
       onClose() { closeCardPanel(); },
       onAsk(card, about) {
         state.selected = card.number; mountWorkbenchChat();
-        void state.workbenchChat?.dock.open({ from: document.activeElement, strip: { text: `${card.proposal_status === "pending" ? "Approval" : "Decision"} · You are asking about ${about.title}`, backLabel: "Back to Needs me" } });
+        void state.workbenchChat?.dock.open({ from: document.activeElement, strip: askStrip(card, about) });
       },
       onChange() { void refresh(); },
       onError() { /* The component shows its own failure text. */ },
@@ -451,17 +462,34 @@ function needsView() {
   const selected = needsCards().some((card) => card.number === state.selected) ? state.selected : undefined;
   void ui.show({ needs: state.needs, boards: state.boards, selected }).finally(() => { if (state.needsUI === ui) state.needsLoading = false; });
 }
+const hhmm = (at) => { const date = new Date(at); return Number.isFinite(date.getTime()) ? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}` : ""; };
+// The strip over a chat opened from a Needs me item names what is being asked about (m10b, m10c).
+function askStrip(card, about) {
+  const hold = about.hold, released = hold?.state === "released" || Boolean(hold?.tooLate);
+  if (released) {
+    const at = hhmm(hold.updated_at || hold.release_at);
+    return { text: `Released · You are asking about ${about.title}${at ? `, released at ${at}` : ""}. It can't be recalled here.`, backLabel: "Back to the approval" };
+  }
+  if (card.proposal_status === "pending" || hold) return { text: `Approval · You are asking about ${about.title} Approve or decline it in Needs me.`, backLabel: "Back to the approval" };
+  return { text: `Decision · You are asking about ${about.title}`, backLabel: "Back to Needs me" };
+}
 function boardView() {
   const board = currentBoard();
   if (!board) { boardsView(); return; }
-  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
+  const panelOpen = !root.querySelector("#card-panel").hidden;
+  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn" data-action="coordinator" data-board="${e(board.slug)}">Settings</button><button class="btn primary" data-action="new-card">New card <kbd>C</kbd></button>`);
+  // The redrawn header gets the chat control back without waiting for the next refresh.
+  if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
   // Keep the active phone column and a parked-card disclosure through polling.
   const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
   const backlog = content.querySelector(".backlog")?.open;
   boardDispose?.();
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
-  content.innerHTML = renderBoard({ board, cards: state.cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
+  const made = from && chatTag(from, messages).split(" · ")[1];
+  const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
+  content.innerHTML = fromBar + renderBoard({ board, cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
@@ -473,6 +501,7 @@ function boardView() {
     onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
     onSelect(number) { state.selected = number; markOpenCard(); },
     onOpen(number) { state.selected = number; location.hash = `#/card/${number}`; },
+    onCancel() { cancelCard(); },
   });
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
@@ -489,7 +518,7 @@ function markOpenCard() {
 async function fillChatTimes(board) {
   if (!state.chatTimes.has(board.slug)) state.chatTimes.set(board.slug, new Map());
   const known = state.chatTimes.get(board.slug), chat = state.chatBoard === board.slug ? state.chat : [];
-  const missing = state.cards.filter((card) => card.message_id != null && !known.has(String(card.message_id)) && !chat.some((m) => String(m.id) === String(card.message_id)));
+  const missing = boardCards().filter((card) => card.message_id != null && !known.has(String(card.message_id)) && !chat.some((m) => String(m.id) === String(card.message_id)));
   if (!missing.length) return;
   for (const card of missing) known.set(String(card.message_id), null);
   const found = await loadChatTimes({ api, board, cards: missing });
@@ -620,11 +649,15 @@ async function cardPanel(number, epoch) {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     state.card = card;
+    // A shared card link draws its own board behind the card, once.
+    const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
+    if (state.rebase === number) state.rebase = null;
+    if (rebase) { state.base = `#/board/${enc(card.board)}`; void refresh(); }
     const saved = remember();
     // A refresh of the open card reuses the component, so focus stays where the user left it.
     if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") ? { kind: "board" } : null });
+    const shown = detailsUI.show(card, { board, me: state.me.actor, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
@@ -634,6 +667,8 @@ async function cardPanel(number, epoch) {
     await shown;
     if (request !== state.panelRequest || epoch !== state.screen) return;
     if (state.workbenchChat?.dock.isOpen()) state.workbenchChat.dock.close({ toDetails: true, row: chatOrigin });
+    // The Details button opens the sheet with focus on Hide (04c).
+    if (state.detailsSheet) { state.detailsSheet = false; panel.querySelector(".hide")?.focus(); }
     if (state.cardKey) { const action = state.cardKey; state.cardKey = null; openSelectedCard(action); }
   } catch (error) {
     if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
@@ -653,6 +688,37 @@ function newCardForm(edit = null) {
   if (!slug) return;
   panel.innerHTML = `<form class="form-tile" data-form="${edit ? "edit-card" : "new-card"}" data-board="${e(slug)}"><div class="bar"><h2>${edit ? "Edit card" : "New card"}</h2><button class="close" type="button" data-action="close-panel" aria-label="Close">×</button></div><label>Title<input name="title" value="${e(edit?.title || "")}" required></label><label>Body<textarea name="body">${e(edit?.body || "")}</textarea></label>${edit ? "" : `<label>Status<select name="status">${options(["backlog", "todo", "doing"], "todo")}</select></label>`}<button class="blockbtn">Save</button></form>`;
   panel.querySelector("input").focus();
+}
+// Phone: a chat row shows its card on the board (m11), with Back to chat to the same row.
+function showFromChat(number, row) {
+  state.fromChat = { number, row: row.id || "" };
+  state.workbenchChat?.dock.close();
+  const saved = remember(); boardView(); restore(saved);
+  const status = boardCards().find((card) => card.number === number)?.status;
+  if (status === "backlog") { const backlog = root.querySelector(".workbench-board .backlog"); if (backlog) backlog.open = true; }
+  else root.querySelector(`.workbench-board [data-board-column="${status}"]`)?.click();
+  const node = root.querySelector(`.workbench-board .card[data-card="${number}"]`);
+  if (node) { roveTo(node); node.focus(); node.scrollIntoView({ block: "nearest" }); }
+}
+// The no-answer error's restart link opens project settings in the chat's Details slot; Back returns to the link.
+async function openRestart(link) {
+  const service = state.workbenchChat, board = service?.board, epoch = state.screen;
+  if (!board) return;
+  voice.stop();
+  service.dock.close({ toDetails: true, row: link });
+  const { mountProject } = await import("./projects.js");
+  if (epoch !== state.screen) return;
+  const panel = root.querySelector("#card-panel");
+  detailsUI?.stop(); detailsUI = null;
+  panel.hidden = false;
+  panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Back to the chat">×</button><div data-project-settings></div></section>';
+  await mountProject(panel.querySelector("[data-project-settings]"), { slug: board.slug, api, e, settings: true, restart: true, origin: `#/board/${enc(board.slug)}/chat`,
+    current: () => epoch === state.screen, onBack() { void state.workbenchChat?.dock.backToChat(); } });
+  if (epoch === state.screen && !panel.hidden) panel.querySelector("[data-project-back]")?.focus();
+}
+function cancelCard() {
+  state.addingCard = false; boardView();
+  root.querySelector('#head-actions [data-action="new-card"]')?.focus();
 }
 function reviewForm() {
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
@@ -764,11 +830,14 @@ function mountWorkbenchChat() {
         service.unread = 0; service.dock.update({ unread: 0 }); service.phone();
       },
       onCard(number, row) {
-        const item = row.closest(".chat-message"), reply = row.closest(".chat-reply");
-        const stamp = (reply || item)?.querySelector(".chat-stamp")?.textContent?.trim() || "";
-        row.dataset.src = stamp;
-        state.chatDetail = { number, row };
+        // The pane names the row's source (I3); the stamp is only a fallback.
+        if (!row.dataset.src) {
+          const item = row.closest(".chat-message"), reply = row.closest(".chat-reply");
+          row.dataset.src = (reply || item)?.querySelector(".chat-stamp")?.textContent?.trim() || "";
+        }
         state.selected = number;
+        if (phone() && state.base.startsWith("#/board/") && boardCards().some((card) => card.number === number)) { showFromChat(number, row); return; }
+        state.chatDetail = { number, row };
         location.hash = `#/card/${number}`;
       },
     });
@@ -818,9 +887,12 @@ function mountWorkbenchChat() {
       state.needsUI?.setChatOpen(dock.isOpen());
       if (dock.isOpen()) {
         if (state.route.startsWith("#/card/")) {
+          // The card under the chat comes back when the chat closes (README: closing restores the panel).
+          state.underChat = { number: Number(state.route.slice(7)), card: state.card };
           state.route = state.base; state.card = null; state.chatDetail = null;
           history.replaceState(history.state, "", state.base);
         }
+        if (state.fromChat) { state.fromChat = null; root.querySelector(".m-frombar")?.remove(); }
         service.phone();
       }
       else {
@@ -828,6 +900,15 @@ function mountWorkbenchChat() {
           const base = state.base.slice(0, -5);
           if (state.route === state.base) { state.route = base; history.replaceState(history.state, "", base); }
           state.base = base;
+        }
+        const under = state.underChat;
+        state.underChat = null;
+        if (under && !layout.classList.contains("ctx-pushed") && !state.route.startsWith("#/card/")) {
+          // Same card, same component: no strip (the chat is closed) and focus stays on the control.
+          state.route = `#/card/${under.number}`; state.card = under.card;
+          history.replaceState(history.state, "", state.route);
+          markOpenCard();
+          void cardPanel(under.number, state.screen);
         }
         void pollUnread();
       }
@@ -892,6 +973,7 @@ async function refresh({ background = false, events = [] } = {}) {
       const result = await api(`/api/boards/${enc(slug)}/cards`);
       if (!current()) return;
       state.cards = result.cards;
+      state.children = result.children || [];
       state.linked = result.linked;
       if (state.base.startsWith("#/space/")) {
         if (state.chatBoard !== slug) {
@@ -1154,7 +1236,9 @@ async function route() {
   if (!state.me) return;
   remember();
   let hash = location.hash || "#/";
-  if (hash === "#/" || hash === "#/chat") {
+  // A shared card link (first screen of the visit) needs a screen behind the card.
+  const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
+  if (hash === "#/" || hash === "#/chat" || direct) {
     const result = await api("/api/boards");
     if (!state.me) return;
     state.boards = result.boards;
@@ -1170,7 +1254,8 @@ async function route() {
   if (hash !== state.route) clearAgentSecret(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
-  state.screen++; state.route = hash;
+  state.screen++; state.route = hash; state.underChat = null; state.fromChat = null;
+  if (direct) { state.base = resolveRoute("#/", { boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings)$/.test(hash) ? hash : "#/");
@@ -1209,7 +1294,7 @@ async function route() {
 // The current view's list first, so a write never sends a version left over from another view.
 function findCard(number) {
   if (state.card?.number === number) return state.card;
-  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.linked];
+  const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.children, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.children, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
 async function mutate(key, action) {
@@ -1277,6 +1362,8 @@ root.addEventListener("focusin", (event) => {
 });
 root.addEventListener("click", async (event) => {
   if (event.defaultPrevented) return;
+  const restart = event.target.closest('#chat .chat-recovery a[href$="/settings"]');
+  if (restart) { event.preventDefault(); await openRestart(restart).catch((error) => showError(error.message)); return; }
   const b = event.target.closest("[data-action]");
   if (!b) {
     const card = event.target.closest(".workbench-board .card[data-card]");
@@ -1313,13 +1400,34 @@ root.addEventListener("click", async (event) => {
   try {
     if (action === "shortcuts") shortcutsView();
     else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
-    else if (action === "cancel-card") { state.addingCard = false; boardView(); }
+    else if (action === "cancel-card") cancelCard();
     else if (action === "card-menu") {
       const card = findCard(number), board = currentBoard();
       if (card && board) cardMenuUI().show(card, { board, from: b });
     }
     else if (action === "open-chat" || action === "back-to-chat") { const board = currentBoard(); if (board) location.hash = `#/board/${enc(board.slug)}/chat`; }
-    else if (action === "connect-agent") root.querySelector('[data-action="coordinator"]')?.click();
+    else if (action === "connect-agent") {
+      const slug = currentBoard()?.slug, epoch = state.screen;
+      if (!slug) return;
+      const { openConnectDialog } = await import("./projects.js");
+      if (epoch !== state.screen) return;
+      // Older project modules have no connect dialog: settings has the same connect step.
+      if (typeof openConnectDialog !== "function") { root.querySelector('[data-action="coordinator"]')?.click(); return; }
+      openConnectDialog({ slug, api, e, opener: b, current: () => epoch === state.screen, onUpdate() { void refresh(); } });
+    }
+    else if (action === "details") {
+      const number = state.selected || Number(root.querySelector(".workbench-board .card[data-card]")?.dataset.card);
+      if (!number) return;
+      state.selected = number; state.detailsSheet = true;
+      if (state.route === `#/card/${number}`) root.querySelector("#card-panel .hide")?.focus();
+      else location.hash = `#/card/${number}`;
+    } else if (action === "from-chat-back") {
+      event.preventDefault();
+      const from = state.fromChat;
+      state.fromChat = null; root.querySelector(".m-frombar")?.remove();
+      const row = (from?.row && document.getElementById(from.row)) || root.querySelector(`#chat [data-chat-card="${from?.number}"]`);
+      void state.workbenchChat?.dock.open({ from: root.querySelector("#m-chat-tab") || undefined, focus: row, resume: true });
+    }
     else if (action.startsWith("phone-push-")) await phonePushAction(action);
     else if (action.startsWith("agent-")) await agentAction(b);
     else if (action === "speak-digest") await speech.toggle();
@@ -1368,9 +1476,14 @@ root.addEventListener("click", async (event) => {
       if (!slug) return;
       const { mountProject } = await import("./projects.js");
       if (epoch !== state.screen) return;
-      const panel = root.querySelector("#card-panel"); panel.hidden = false;
+      const panel = root.querySelector("#card-panel");
+      // On Needs me the panel holds the item's detail: it waits while settings use the panel.
+      const needs = state.base === "#/needs" ? state.needsUI : null;
+      needs?.pause(true);
+      panel.hidden = false;
       panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
-      await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen });
+      await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
+        ...(needs ? { onBack() { panel.hidden = true; } } : {}) });
     }
     else if (action === "close-panel") {
       closeCardPanel();

@@ -202,3 +202,18 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   .m-tabs a { min-width: 0; overflow-wrap: anywhere; }
   .m-tabs .count { position: absolute; top: 4px; right: calc(50% - 22px); }
 }
+
+/* ---------- Phone: add card sheet (m4) and the bar over a card shown from chat (m11) ---------- */
+.m-frombar { display: none; }
+@media (max-width: 699px) {
+  .workbench-board form[data-board-add][aria-modal="true"] {
+    position: fixed; inset: 0; z-index: 40; margin: 0; padding: 16px; overflow: auto;
+    align-content: start; background: var(--surface);
+  }
+  .workbench-board form[data-board-add] input, .workbench-board form[data-board-add] select { min-height: 44px; }
+  .m-frombar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    padding: 6px 8px 6px 14px; background: var(--accent-weak); border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  .m-frombar .btn { min-height: 44px; display: inline-flex; align-items: center; }
+}

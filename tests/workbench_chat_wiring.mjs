@@ -53,10 +53,12 @@ const context = {state, root, e, enc: encodeURIComponent, api, ...chatstate,
   MutationObserver: class {constructor(fn) {this.fn=fn; observers.push(this);} observe() {} disconnect() {this.disconnected = true;}},
   Event: class {constructor(type) {this.type=type;}},
   setTimeout(fn, ms) {const key = {}; timers.set(key, {fn, ms}); return key;}, clearTimeout(key) {timers.delete(key);},
-  title(_text, actions) {titleActions = actions;}, renderBoard: () => 'board', bindBoard: () => () => {}, boardDispose: null,
+  title(_text, actions) {titleActions = actions;}, cardId: () => '', chatTag: () => '', cancelCard() {}, renderBoard: () => 'board', bindBoard: () => () => {}, boardDispose: null,
   boardsView() {}, markOpenCard() {}, fillChatTimes() {}, remember: () => ({}), restore() {}, refresh() {},
 };
 const run = (s) => runInNewContext(s, context);
+// The shell's board helpers (child cards, phone width) come from app.js itself.
+run(source('// The board lists child cards', 'const options =').replace('matchMedia("(max-width:699px)").matches', 'false'));
 const flush = async () => {for (let i = 0; i < 15; i++) await Promise.resolve();};
 function mount() {
   assert.match(app, /function mountWorkbenchChat\(\)/, 'Dock integration missing');
