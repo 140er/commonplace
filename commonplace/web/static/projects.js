@@ -7,15 +7,34 @@ export const PROJECT_COPY = Object.freeze({
   ownWingEffect: "Agents that can only read shared memory will stop seeing this project. Its coordinator may be cleared. This can't be undone here.",
   ownWingDone: "This project now has its own memory section.",
   wingTaken: "Another project already uses this memory section name. Nothing was changed.",
+  wingChanged: "Project memory changed while saving. Reload and try again.",
+  ownWingError: "Could not change project memory. Please try again.",
   wingInUse: "Some agent connections would gain access to this project. Nothing was changed.",
-  sharedWing: "This project uses the shared memory wing. Connecting gives the agent read and write access to all shared memory.",
   loadError: "Could not load project settings.", connectError: "Could not connect the agent.",
   saveError: "Could not save project models.", saved: "Project models saved.",
   copyError: "Copy failed. Select the token and copy it manually.",
 });
 
-export function sharedWingHTML(payload, e) {
-  return `<section class="form-tile"><h2 id="project-wing-title">Project memory</h2><p>${e(payload.explanation || PROJECT_COPY.sharedExplain)}</p><p>${e(payload.fix?.effect || PROJECT_COPY.ownWingEffect)}</p><button type="button" class="blockbtn" data-wing-choice="own">${e(PROJECT_COPY.ownWing)}</button><button type="button" class="opt" data-wing-choice="shared">${e(PROJECT_COPY.allowShared)}</button><button type="button" class="opt" data-wing-choice="cancel">Cancel</button></section>`;
+export function sharedWingHTML(payload, e, { allowShared = true } = {}) {
+  return `<section class="form-tile"><h2 id="project-wing-title">Project memory</h2><p>${e(payload.explanation || PROJECT_COPY.sharedExplain)}</p><p>${e(payload.fix?.effect || PROJECT_COPY.ownWingEffect)}</p><button type="button" class="blockbtn" data-wing-choice="own">${e(PROJECT_COPY.ownWing)}</button>${allowShared ? `<button type="button" class="opt" data-wing-choice="shared">${e(PROJECT_COPY.allowShared)}</button>` : ""}<button type="button" class="opt" data-wing-choice="cancel">Cancel</button></section>`;
+}
+
+// These are plain text: callers assign them with textContent.
+export function ownWingError(payload = {}) {
+  if (payload.error === "wing_taken") return PROJECT_COPY.wingTaken;
+  if (payload.error === "wing_changed") return PROJECT_COPY.wingChanged;
+  if (payload.error === "wing_in_use") {
+    const names = (payload.connections || []).join(", ");
+    return PROJECT_COPY.wingInUse + (names ? ` Connections: ${names}.` : "");
+  }
+  return PROJECT_COPY.ownWingError;
+}
+
+export function ownWingStatus(result) {
+  const lines = result.changed ? [PROJECT_COPY.ownWingDone] : [];
+  if (result.runner_linked?.length) lines.push(`Runner-managed connections remain active; manage them in the runner registry: ${result.runner_linked.join(", ")}.`);
+  if (result.affected?.length) lines.push(`Connections losing project access: ${result.affected.map(c => `${c.name} (${c.lost}${c.runner ? "; runner-managed" : ""})`).join(", ")}.`);
+  return lines.join(" ");
 }
 
 export function memoryHTML(project, e) {
@@ -25,11 +44,11 @@ export function memoryHTML(project, e) {
   return `<div class="setting-row"><span>Memory: ${e(label)}</span>${memory.shared && project.can_configure ? `<button type="button" class="opt" data-project-own-wing>${e(PROJECT_COPY.ownWing)}</button>` : ""}</div>`;
 }
 
-function chooseSharedWing(payload, e) {
+function chooseSharedWing(payload, e, options) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.setAttribute("aria-labelledby", "project-wing-title");
-    dialog.innerHTML = sharedWingHTML(payload, e);
+    dialog.innerHTML = sharedWingHTML(payload, e, options);
     let settled = false;
     const dismiss = (choice = "cancel") => {
       if (settled) return;
@@ -127,12 +146,9 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       if (own) { own.disabled = connecting; own.onclick = configureWing; }
     }
   }
-  function wingError(error) {
-    return error.payload?.error === "wing_taken" ? PROJECT_COPY.wingTaken : error.payload?.error === "wing_in_use" ? PROJECT_COPY.wingInUse : PROJECT_COPY.connectError;
-  }
   async function configureWing() {
     if (connecting) return;
-    const choice = await chooseSharedWing({}, e);
+    const choice = await chooseSharedWing({}, e, { allowShared: false });
     if (choice !== "own" || !active()) return;
     connecting = true; renderMain();
     const status = host.querySelector("[data-project-connect-status]");
@@ -140,8 +156,8 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       const result = await api(`${path}/wing`, { method: "POST", body: {} });
       if (!active()) return;
       project = result;
-      status.textContent = result.changed ? PROJECT_COPY.ownWingDone : "";
-    } catch (error) { if (active()) status.textContent = wingError(error); }
+      status.textContent = ownWingStatus(result);
+    } catch (error) { if (active()) status.textContent = ownWingError(error.payload); }
     finally { connecting = false; if (active()) renderMain(); }
   }
   async function connect(event) {
@@ -156,6 +172,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     connecting = true; button.disabled = true;
     const status = host.querySelector("[data-project-connect-status]");
     status.textContent = "";
+    let changingWing = false;
     try {
       let result, wingChanged = false;
       for (;;) {
@@ -167,11 +184,13 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
             if (choice === "cancel" || !active()) return;
             if (choice === "shared") body.allow_shared = true;
             else {
+              changingWing = true;
               const owned = await api(error.payload.fix.path, { method: "POST", body: {} });
               if (!active()) return;
+              changingWing = false;
               project = owned;
               wingChanged = owned.changed;
-              if (wingChanged) status.textContent = PROJECT_COPY.ownWingDone;
+              status.textContent = ownWingStatus(owned);
               renderMain();
             }
           } else if (error.status === 409 && error.payload?.error === "replaces current orchestrator" && !body.replace) {
@@ -186,7 +205,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       project = await api(path);
       if (active()) renderMain();
     } catch (error) {
-      if (active()) status.textContent = wingError(error);
+      if (active()) status.textContent = changingWing ? ownWingError(error.payload) : PROJECT_COPY.connectError;
     } finally {
       connecting = false; button.disabled = false;
       const next = host.querySelector("[data-project-connect]");

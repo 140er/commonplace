@@ -21,7 +21,9 @@ that the agent will have read and write access to all shared memory.
 
 Tokens expire after 90 days. Connecting again rotates an active token and
 invalidates the old one. After revocation or expiry, Connect creates a fresh
-connection. Connections can also be rotated or revoked on the Agents screen.
+connection. Giving a project its own memory section revokes its displaced seat
+token; Connect then creates a fresh one. Connections can also be rotated or revoked
+on the Agents screen.
 
 Register a `space_message` webhook for the project if the agent should wake
 when someone posts; Connect supplies setup details but does not subscribe it.
@@ -63,7 +65,8 @@ allows access to all shared memory. Settings exposes the same own-section action
 An owner can convert a shared wing to `project_<slug>` (hyphens become underscores).
 New boards still default to shared; owners opt into this conversion. A non-shared
 wing is unchanged, but its coordinator and seat are still checked. Wildcard wings
-are refused. Another board using that wing, including an archived board, blocks
+are refused. Project views remain readable for pattern wings, but Connect keeps
+its existing 400 rejection for them. Another board using that wing, including an archived board, blocks
 conversion. Active connections that would gain read or write access also block it;
 the response gives their count and redacted names so the owner can narrow them.
 The scan cannot see a connection minted after it; this race is accepted.
@@ -91,6 +94,8 @@ through the runner registry, but their seat pointers are cleared. Repeating the
 operation repairs interrupted reconciliation. Connect also reconciles mismatched
 seats on every board, even boards never converted by this action.
 
-There is no undo action here. Owner-held PATs, including standard-trust seat PATs,
-may invoke the equivalent MCP `board_own_wing`; restricted connections are refused.
+There is no undo action here. Owner-held trusted or standard-trust PATs
+may invoke the equivalent MCP `board_own_wing` if they can read and write both
+wings. A seat minted by Connect lacks access to the target wing and cannot do
+this itself. Restricted connections are refused.
 The operator connects the project's seat afterwards.

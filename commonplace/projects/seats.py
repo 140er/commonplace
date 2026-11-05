@@ -120,6 +120,7 @@ def active_connection(db, workspace_id, ref):
 def reconcile(db, workspace_id, slug, wing, actor):
     """Revoke mismatched seats, including ones orphaned by an interrupted write."""
     revoked, runner_linked = [], []
+    detached = False
     prefix = SEAT_PREFIX + slug
     with db._lock:
         for row in db.connections(workspace_id):
@@ -127,20 +128,21 @@ def reconcile(db, workspace_id, slug, wing, actor):
                 row["name"] == prefix or row["name"].startswith(prefix + ":")
             ):
                 continue
-            if active_connection(db, workspace_id, row["id"]) is None:
-                continue
-            policy = Policy.from_json(row["policy"])
-            if policy.can_read_wing(wing) and policy.can_write_wing(wing):
-                continue
-            try:
-                db.revoke(row["id"], actor=actor, workspace_ref=workspace_id)
-                revoked.append(row["id"])
-            except RunnerLinkedError:
-                # Registry-managed tokens keep their old policy; detach the seat.
-                runner_linked.append(row["id"])
-            db._conn.execute(
-                "UPDATE project_orchestrators SET connection_id=NULL, updated_at=? "
+            if active_connection(db, workspace_id, row["id"]) is not None:
+                policy = Policy.from_json(row["policy"])
+                if policy.can_read_wing(wing) and policy.can_write_wing(wing):
+                    continue
+                try:
+                    db.revoke(row["id"], actor=actor, workspace_ref=workspace_id)
+                    revoked.append(row["id"])
+                except RunnerLinkedError:
+                    # Registry-managed tokens keep their old policy; detach the seat.
+                    runner_linked.append(row["id"])
+            # Also heal a crash after revoke committed but before pointer clearing.
+            cleared = db._conn.execute(
+                "UPDATE project_orchestrators SET connection_id=NULL "
                 "WHERE workspace_id=? AND board=? AND connection_id IS ?",
-                (control_db._iso(control_db._now()), workspace_id, slug, row["id"]),
-            )
-    return {"revoked": revoked, "runner_linked": runner_linked}
+                (workspace_id, slug, row["id"]),
+            ).rowcount
+            detached = detached or bool(cleared)
+    return {"revoked": revoked, "runner_linked": runner_linked, "_detached": detached}

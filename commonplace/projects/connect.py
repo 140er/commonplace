@@ -3,7 +3,7 @@
 import secrets
 
 from commonplace import control_db, redact, urls
-from commonplace.boards.service import BoardService
+from commonplace.boards.service import BoardService, shared_wing
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.policy import Policy
@@ -35,7 +35,7 @@ def connect(
         trust="standard",
     )
     # Decide consent on the effective grant: every spelling of "shared" counts.
-    if not allow_shared and (policy.can_read_wing("shared") or policy.can_write_wing("shared")):
+    if not allow_shared and shared_wing(wing):
         return 409, {
             "error": "shared_wing",
             "explanation": SHARED_EXPLAIN,

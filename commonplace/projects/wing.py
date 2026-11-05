@@ -13,7 +13,8 @@ def own_wing(gateway, principal, board):
             gateway.db, principal.workspace_id, result["board"], result["wing"], principal.user_id
         )
     )
-    if result["changed"] or any(result[k] for k in ("unbound", "revoked", "runner_linked")):
+    detached = result.pop("_detached")
+    if result["changed"] or detached or result["unbound"] or result["revoked"]:
         gateway.db.audit(
             action="project.wing.own",
             decision="ok",

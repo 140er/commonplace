@@ -52,7 +52,7 @@ def shared_wing(wing):
         profile="standard",
         scopes=("memory:read", "memory:write"),
         read_wings=[wing],
-        write_wing=wing,
+        write_wings=[wing],
         trust="standard",
     )
     return policy.can_read_wing("shared") or policy.can_write_wing("shared")
@@ -1061,7 +1061,6 @@ class BoardService:
                     ).rowcount
                     if not updated:
                         # Never report success for a failed compare-and-set.
-                        conn.execute("SELECT wing FROM boards WHERE id=?", (b["id"],)).fetchone()
                         raise WingRefused("wing_changed")
                     from commonplace.projects.types import SEAT_CLIENT
 

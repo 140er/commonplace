@@ -557,8 +557,9 @@ Own-wing returns 400 for any body other than `{}`, 403 for non-owner callers,
 `wing_in_use` (also `count` and redacted `connections`), or `not_shared` for wildcard
 wings. A failed compare-and-set returns 409 `wing_changed`; retry the request.
 It requires read and write access to both wings. MCP `board_own_wing {board}` runs
-the same full flow for trusted or standard, unrestricted owner-held PATs, including
-seat PATs, with memory-write scope. Conflicts preserve the JSON error payload in
+the same full flow for trusted or standard, unrestricted owner-held PATs with
+memory-write scope and read/write access to both wings. A seat minted by Connect
+does not have both grants and cannot convert its own board. Conflicts preserve the JSON error payload in
 MCP error text. This is a checked write; REST person sessions skip rules freshness.
 
 The shared-wing Connect 409 keeps `message` unchanged and adds `explanation`,
