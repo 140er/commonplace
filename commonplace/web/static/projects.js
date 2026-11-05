@@ -65,7 +65,11 @@ function projectDialog({ labelledby, opener, fallback = () => null, role = "", o
   const hooks = [onClose];
   const self = { dialog, closed: () => closed, dismiss, show, focus, onDismiss: (fn) => hooks.push(fn) };
   function keys(event) {
-    if (event.key !== "Tab" || openDialogs.at(-1) !== self) return;
+    if (openDialogs.at(-1) !== self) return;
+    // The page's own Escape handler would close the panel under the dialog, and its
+    // preventDefault stops the native cancel, so the top dialog takes Escape first.
+    if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); dismiss(); return; }
+    if (event.key !== "Tab") return;
     const controls = [...dialog.querySelectorAll(FOCUSABLE)].filter(n => n.getClientRects().length);
     const at = document.activeElement, first = controls[0], last = controls.at(-1);
     if (!first) { event.preventDefault(); return; }

@@ -224,7 +224,7 @@ const cases = {
       const dialog = openDialog();
       assert.ok(doc.activeElement.matches("[data-project-token]"));
       assertTrapped(dialog);
-      dialog.dispatch("cancel");
+      assert.equal(doc.key("Escape").defaultPrevented, true, "the dialog takes Escape");
       assert.equal(openDialog(), null);
       assert.equal(doc.activeElement, button);
     } finally { globalThis.setTimeout = realTimeout; button.remove(); }
@@ -287,7 +287,7 @@ const cases = {
     assert.match(dialog.textContent, /It is the only agent in Ledger/);
     assert.ok(doc.activeElement.matches('[data-confirm="cancel"]'), "Cancel has focus");
     assertTrapped(dialog);
-    dialog.dispatch("cancel");
+    assert.equal(doc.key("Escape").defaultPrevented, true, "the dialog takes Escape");
     await pending;
     assert.equal(openDialog(), null);
     assert.equal(doc.activeElement, host.querySelector('[data-project-disconnect="c-1"]'));
