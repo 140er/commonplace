@@ -44,39 +44,128 @@ export function memoryHTML(project, e) {
   return `<div class="setting-row"><span>Memory: ${e(label)}</span>${memory.shared && project.can_configure ? `<button type="button" class="opt" data-project-own-wing>${e(PROJECT_COPY.ownWing)}</button>` : ""}</div>`;
 }
 
-function chooseSharedWing(payload, e, options) {
-  return new Promise((resolve) => {
-    const dialog = document.createElement("dialog");
-    dialog.setAttribute("aria-labelledby", "project-wing-title");
-    dialog.innerHTML = sharedWingHTML(payload, e, options);
-    let settled = false;
-    const dismiss = (choice = "cancel") => {
-      if (settled) return;
-      settled = true;
-      dialog.remove();
-      window.removeEventListener("hashchange", cancel);
-      window.removeEventListener("pagehide", cancel);
-      document.removeEventListener("session-expired", cancel);
-      resolve(choice);
-    };
-    const cancel = () => dismiss();
-    dialog.addEventListener("cancel", (event) => { event.preventDefault(); cancel(); });
-    dialog.addEventListener("close", cancel);
-    dialog.querySelectorAll("[data-wing-choice]").forEach(button => {
-      button.onclick = () => dismiss(button.dataset.wingChoice);
-    });
-    window.addEventListener("hashchange", cancel);
-    window.addEventListener("pagehide", cancel);
-    document.addEventListener("session-expired", cancel);
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+const openDialogs = [];
+
+function focusIfShown(node) {
+  if (!node?.isConnected || node.disabled || !node.getClientRects().length) return false;
+  node.focus();
+  return document.activeElement === node;
+}
+
+// A native modal dialog still lets Tab reach the browser, so the top dialog wraps it.
+// Closing returns focus to the opener, or to `fallback()` when the opener was re-rendered.
+function projectDialog({ labelledby, opener, fallback = () => null, role = "", onClose = () => {} } = {}) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "project-dialog";
+  dialog.setAttribute("aria-labelledby", labelledby);
+  dialog.setAttribute("aria-modal", "true");
+  if (role) dialog.setAttribute("role", role);
+  let closed = false;
+  const hooks = [onClose];
+  const self = { dialog, closed: () => closed, dismiss, show, focus, onDismiss: (fn) => hooks.push(fn) };
+  function keys(event) {
+    if (openDialogs.at(-1) !== self) return;
+    // The page's own Escape handler would close the panel under the dialog, and its
+    // preventDefault stops the native cancel, so the top dialog takes Escape first.
+    if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); dismiss(); return; }
+    if (event.key !== "Tab") return;
+    const controls = [...dialog.querySelectorAll(FOCUSABLE)].filter(n => n.getClientRects().length);
+    const at = document.activeElement, first = controls[0], last = controls.at(-1);
+    if (!first) { event.preventDefault(); return; }
+    if (!dialog.contains(at) || at === dialog) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
+    else if (event.shiftKey && at === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && at === last) { event.preventDefault(); first.focus(); }
+  }
+  const leave = () => dismiss({ restore: false });
+  function dismiss({ restore = true } = {}) {
+    if (closed) return;
+    closed = true;
+    if (openDialogs.includes(self)) openDialogs.splice(openDialogs.indexOf(self), 1);
+    document.removeEventListener("keydown", keys, true);
+    window.removeEventListener("hashchange", leave);
+    window.removeEventListener("pagehide", leave);
+    document.removeEventListener("session-expired", leave);
+    dialog.replaceChildren();
+    dialog.remove();
+    hooks.forEach(fn => fn());
+    if (restore && !focusIfShown(opener)) focusIfShown(fallback());
+  }
+  function focus(selector) { dialog.querySelector(selector)?.focus(); }
+  function show(selector) {
+    installProjectStyles();
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
+    dialog.addEventListener("close", () => dismiss());
+    window.addEventListener("hashchange", leave);
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("session-expired", leave);
+    document.addEventListener("keydown", keys, true);
     document.body.append(dialog);
     dialog.showModal();
+    openDialogs.push(self);
+    if (selector) focus(selector);
+  }
+  return self;
+}
+
+export function confirmHTML({ title, body, action, danger = false }, e) {
+  return `<h2 id="project-confirm-title">${e(title)}</h2>${body}<div class="acts"><button type="button" class="btn" data-confirm="cancel">Cancel</button><button type="button" class="btn${danger ? " danger" : ""}" data-confirm="ok">${e(action)}</button></div>`;
+}
+
+// The drawn replacement for window.confirm: Cancel has focus, Esc cancels.
+function askConfirm(copy, e, { opener, fallback } = {}) {
+  return new Promise((resolve) => {
+    let answer = false;
+    const modal = projectDialog({ labelledby: "project-confirm-title", role: "alertdialog", opener, fallback, onClose: () => resolve(answer) });
+    modal.dialog.innerHTML = confirmHTML(copy, e);
+    modal.dialog.querySelectorAll("[data-confirm]").forEach(button => {
+      button.onclick = () => { answer = button.dataset.confirm === "ok"; modal.dismiss({ restore: !answer }); };
+    });
+    modal.show('[data-confirm="cancel"]');
   });
 }
 
-export function mainHTML(project, e) {
+export function disconnectCopy(project, connection, { main = false, only = false } = {}, e) {
+  const who = main ? `${project.name} orchestrator` : String(connection.name || "").replace(/^conn:/, "");
+  const lines = [
+    ...(main ? [`${e(project.name)} has <b>no orchestrator</b> until an agent connects. The next one you connect becomes it.`] : []),
+    ...(main && only ? ["Chat still works: new requests wait, as before your first agent."] : []),
+    "Cards, chat and memory stay exactly as they are.",
+    `${e(who)}'s setup stops working. To use it again, connect it as a new agent.`,
+  ];
+  const alone = only ? `<div class="alert" role="note"><h3>It is the only agent in ${e(project.name)}</h3><p>No other agent can take over.</p></div>` : "";
+  return { title: `Disconnect ${who}?`, action: "Disconnect", danger: true, body: `${alone}<p><b>What happens:</b></p><ul>${lines.map(line => `<li>${line}</li>`).join("")}</ul>` };
+}
+
+function chooseSharedWing(payload, e, options) {
+  return new Promise((resolve) => {
+    let choice = "cancel";
+    const modal = projectDialog({ labelledby: "project-wing-title", onClose: () => resolve(choice) });
+    modal.dialog.innerHTML = sharedWingHTML(payload, e, options);
+    modal.dialog.querySelectorAll("[data-wing-choice]").forEach(button => {
+      button.onclick = () => { choice = button.dataset.wingChoice; modal.dismiss(); };
+    });
+    modal.show();
+  });
+}
+
+export function mainHTML(project, e, { notAnswering = "" } = {}) {
   const main = project.main;
   const status = main.connected ? (main.seen ? main.status || PROJECT_COPY.statusPrivate : PROJECT_COPY.waiting) : "";
-  return `<div class="setting-row" data-project-main data-project-seat="${e(main.name)}"><span>${e(project.name)} orchestrator · ${e(main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected)}${status ? ` · ${e(status)}` : ""}</span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>`;
+  return `<div class="setting-row" data-project-main data-project-seat="${e(main.name)}"><span>${e(project.name)} orchestrator · ${e(main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected)}${status ? ` · ${e(status)}` : ""}</span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>${notAnswering ? `<p class="set-note" data-project-not-answering>${e(notAnswering)}</p>` : ""}`;
+}
+
+const clockTime = (value) => {
+  const date = new Date(value);
+  return value && !Number.isNaN(date.getTime()) ? date.toTimeString().slice(0, 5) : "";
+};
+
+// `chat` is deriveChatState(page, status, …); "since" is the unanswered work message.
+export function notAnsweringText(project, chat, page = {}) {
+  if (chat?.state !== "no_answer") return "";
+  const since = clockTime((page.messages || []).find(m => m.id === chat.message_id)?.at);
+  const seen = clockTime(chat.last_seen);
+  return `Not answering${since ? ` since ${since}` : ""} · ${project.main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected}${seen ? ` · last active ${seen}` : ""}`;
 }
 
 export function connectResultHTML(result, e) {
@@ -90,52 +179,48 @@ export function modelsHTML(project, e) {
   }).join("")}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>`;
 }
 
-export function showConnectResult(result, e, { api, path, project, current = () => true, onUpdate = () => {} } = {}) {
-  const dialog = document.createElement("dialog");
-  dialog.setAttribute("aria-labelledby", "project-connect-title");
+export function showConnectResult(result, e, { api, path, project, current = () => true, onUpdate = () => {}, opener, fallback, into } = {}) {
+  let timer;
+  const modal = into || projectDialog({ labelledby: "project-connect-title", opener, fallback });
+  const { dialog, dismiss } = modal;
+  const leave = () => dismiss({ restore: false });
   dialog.innerHTML = connectResultHTML(result, e);
-  let timer, closed = false;
-  const dismiss = () => {
-    closed = true; clearTimeout(timer);
-    dialog.replaceChildren();
-    dialog.remove();
-    window.removeEventListener("hashchange", dismiss);
-    window.removeEventListener("pagehide", dismiss);
-    document.removeEventListener("session-expired", dismiss);
-  };
-  dialog.addEventListener("close", dismiss);
-  dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
-  dialog.querySelector("[data-project-dismiss]").onclick = dismiss;
-  dialog.querySelector("[data-project-copy]").onclick = async () => {
+  modal.onDismiss(() => clearTimeout(timer));
+  dialog.querySelector("[data-project-dismiss]").onclick = () => dismiss();
+  const copy = async () => {
     try {
       await navigator.clipboard.writeText(dialog.querySelector("[data-project-token]").value);
-      if (dialog.isConnected) dialog.querySelector("[data-project-copy-status]").textContent = "Copied";
+      if (!modal.closed()) dialog.querySelector("[data-project-copy-status]").textContent = "Copied";
     } catch {
-      if (dialog.isConnected) dialog.querySelector("[data-project-copy-status]").textContent = PROJECT_COPY.copyError;
+      if (!modal.closed()) dialog.querySelector("[data-project-copy-status]").textContent = PROJECT_COPY.copyError;
     }
   };
-  window.addEventListener("hashchange", dismiss);
-  window.addEventListener("pagehide", dismiss);
-  document.addEventListener("session-expired", dismiss);
-  document.body.append(dialog);
-  dialog.showModal();
-  dialog.querySelector("[data-project-token]").focus();
+  dialog.querySelector("[data-project-copy]").onclick = copy;
+  if (into) modal.focus("[data-project-token]");
+  else modal.show("[data-project-token]");
   if (!api) return dismiss;
   let started = Date.now();
   const progress = document.createElement("div");
   dialog.append(progress);
   function phase(value) {
     progress.innerHTML = connectPhaseHTML(value, project, e);
+    // One element names the dialog: the phase title replaces the setup heading's id.
+    const head = dialog.querySelector(".form-tile > h2");
+    if (head) {
+      if (progress.querySelector("#project-connect-title")) head.removeAttribute("id");
+      else head.id = "project-connect-title";
+    }
     const close = progress.querySelector("[data-project-dismiss]");
-    if (close) close.onclick = dismiss;
+    if (close) close.onclick = () => dismiss();
     const retry = progress.querySelector("[data-project-retry]");
-    if (retry) retry.onclick = () => { started = Date.now(); phase("waiting"); poll(); };
+    if (retry) retry.onclick = () => { started = Date.now(); phase("waiting"); modal.focus("[data-project-token]"); poll(); };
+    if (value !== "waiting") progress.querySelector(".btn.primary")?.focus();
   }
   async function poll() {
-    if (closed || !current()) { dismiss(); return; }
+    if (modal.closed() || !current()) { leave(); return; }
     try {
       const latest = await api(path);
-      if (closed || !current()) { dismiss(); return; }
+      if (modal.closed() || !current()) { leave(); return; }
       onUpdate(latest);
       if (latest.main.seen) {
         // The one-time credential is removed as soon as it is no longer needed.
@@ -143,7 +228,7 @@ export function showConnectResult(result, e, { api, path, project, current = () 
         dialog.replaceChildren(progress); phase("done"); return;
       }
     } catch { /* Connection checks may recover without issuing another token. */ }
-    if (closed || !current()) { dismiss(); return; }
+    if (modal.closed() || !current()) { leave(); return; }
     if (Date.now() - started >= 120000) { phase("failed"); return; }
     timer = setTimeout(poll, 2000);
   }
@@ -151,12 +236,102 @@ export function showConnectResult(result, e, { api, path, project, current = () 
   return dismiss;
 }
 
+const reconnectCopy = (project, e) => project.main.source === "coordinator"
+  ? { title: "Replace the orchestrator?", body: `<p>Connect replaces ${e(project.main.name)} as this project's orchestrator.</p>`, action: "Connect" }
+  : { title: "Reconnect this agent?", body: "<p>Its current token will stop working.</p>", action: "Reconnect" };
+
+// Shared by the settings Connect button and the empty-board dialog.
+// `onWing(path)` makes the project's own memory section; `ask(copy)` resolves to true or false.
+async function requestConnect({ api, path, project, e, active, ask, onWing }) {
+  const body = {};
+  if (project.main.connected) {
+    if (!await ask(reconnectCopy(project, e))) return null;
+    if (project.main.source === "coordinator") body.replace = true;
+  }
+  let wingChanged = false;
+  for (;;) {
+    try { return await api(`${path}/orchestrator/connect`, { method: "POST", body }); }
+    catch (error) {
+      if (!active()) return null;
+      if (error.status === 409 && error.payload?.error === "shared_wing") {
+        const choice = await chooseSharedWing(error.payload, e);
+        if (choice === "cancel" || !active()) return null;
+        if (choice === "shared") body.allow_shared = true;
+        else {
+          const owned = await onWing(error.payload.fix.path);
+          if (!active()) return null;
+          wingChanged = owned.changed;
+        }
+      } else if (error.status === 409 && error.payload?.error === "replaces current orchestrator" && !body.replace) {
+        const copy = { title: "Replace the orchestrator?", body: `<p>${wingChanged ? PROJECT_COPY.ownWingDone + " " : ""}Connect replaces the current orchestrator.</p>`, action: "Connect" };
+        if (!await ask(copy)) return null;
+        body.replace = true;
+      } else throw error;
+    }
+  }
+}
+
+export function connectIntroHTML(name, e) {
+  return `<section class="form-tile"><h2 id="project-connect-title">Connect an agent${name ? ` to ${e(name)}` : ""}</h2><p class="lead">An agent is an AI helper that runs on your computer or a server, for example a coding assistant. It connects to Commonplace through MCP, an open standard many agent apps support.</p><p class="facts"><b>You need:</b> an agent app that supports MCP, and access to its settings. About 2 minutes.</p><ol class="dsteps"><li><b>Copy the setup and paste it into your agent app</b><span class="d">The setup holds a key that is shown once.</span><div class="acts"><button type="button" class="btn primary" data-project-create>Create and copy setup</button></div><ol class="howto" aria-label="Where to paste it"><li>In your agent app, open its settings and find <b>MCP servers</b> (some apps call it <b>Tools</b> or <b>Connectors</b>).</li><li>Choose <b>Add server</b>, then <b>Paste configuration</b> (or open its config file and paste at the end of the server list).</li><li>Save, then restart the app.</li></ol></li><li><b>Start or restart your agent app</b><span class="d">This dialog shows when it connects.</span></li></ol><p role="status" data-project-connect-status></p><div class="acts"><button type="button" class="btn" data-project-dismiss>Cancel</button></div></section>`;
+}
+
+// The empty board's "Connect an agent": 03c, then the setup (03c2) in the same dialog.
+export function openConnectDialog({ slug, api, e, opener, current = () => true, onUpdate = () => {} }) {
+  const path = `/api/projects/${encodeURIComponent(slug)}`;
+  const fallback = () => document.querySelector('.empty-strip [data-action="connect-agent"]') || document.querySelector('[data-action="connect-agent"]');
+  const modal = projectDialog({ labelledby: "project-connect-title", opener, fallback });
+  const { dialog, dismiss } = modal;
+  const active = () => !modal.closed() && current();
+  let project = null, busy = false;
+  dialog.innerHTML = connectIntroHTML("", e);
+  dialog.querySelector("[data-project-dismiss]").onclick = () => dismiss();
+  const create = dialog.querySelector("[data-project-create]");
+  const loading = api(path).then((loaded) => {
+    project = loaded;
+    if (active()) dialog.querySelector("#project-connect-title").textContent = `Connect an agent to ${loaded.name}`;
+    return loaded;
+  });
+  loading.catch(() => {});
+  create.onclick = async () => {
+    if (busy || !active()) return;
+    busy = true; create.disabled = true;
+    const status = dialog.querySelector("[data-project-connect-status]");
+    status.textContent = "";
+    let changingWing = false;
+    try {
+      project = project || await loading;
+      const result = await requestConnect({
+        api, path, project, e, active,
+        ask: (copy) => askConfirm(copy, e, { opener: create }),
+        onWing: async (wingPath) => {
+          changingWing = true;
+          const owned = await api(wingPath, { method: "POST", body: {} });
+          changingWing = false;
+          project = owned; onUpdate(owned);
+          if (active()) status.textContent = ownWingStatus(owned);
+          return owned;
+        },
+      });
+      if (!result || !active()) return;
+      showConnectResult(result, e, { api, path, project, current: active, onUpdate: (latest) => { project = latest; onUpdate(latest); }, into: modal });
+      dialog.querySelector("[data-project-copy]")?.click();
+    } catch (error) {
+      if (active()) status.textContent = changingWing ? ownWingError(error.payload) : PROJECT_COPY.connectError;
+    } finally {
+      busy = false;
+      if (create.isConnected) create.disabled = false;
+    }
+  };
+  modal.show("[data-project-create]");
+  return dismiss;
+}
+
 // Both app.js entry points keep their handlers here.
-export async function mountProject(host, { slug, api, e, settings = false, current = () => true, notice = "", origin = globalThis.location?.hash || "", restart = origin.endsWith("/chat") }) {
+export async function mountProject(host, { slug, api, e, settings = false, current = () => true, notice = "", origin = globalThis.location?.hash || "", restart = origin.endsWith("/chat"), onBack }) {
   const path = `/api/projects/${encodeURIComponent(slug)}`;
   const active = () => current() && host.isConnected && !host.closest("[hidden]");
   host.innerHTML = '<p role="status">Loading project…</p>';
-  let project, connecting = false;
+  let project, connecting = false, notAnswering = "";
   try { project = await api(path); }
   catch {
     if (active()) host.innerHTML = `<p role="status">${e(PROJECT_COPY.loadError)}</p>`;
@@ -165,7 +340,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
   if (!active()) return;
 
   function renderMain() {
-    host.querySelector("[data-project-heading]").innerHTML = mainHTML(project, e);
+    host.querySelector("[data-project-heading]").innerHTML = mainHTML(project, e, { notAnswering });
     const hint = host.querySelector("[data-project-notice]");
     if (hint) { hint.hidden = project.main.connected; hint.textContent = notice; }
     const button = host.querySelector("[data-project-connect]");
@@ -191,47 +366,39 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     } catch (error) { if (active()) status.textContent = ownWingError(error.payload); }
     finally { connecting = false; if (active()) renderMain(); }
   }
+  // 10f: the chat's last page and status say since when the orchestrator has not answered.
+  async function loadNotAnswering() {
+    try {
+      const chat = `/api/chat/${encodeURIComponent(slug)}`;
+      const [{ deriveChatState }, page, status] = await Promise.all([import("./chatstate.js"), api(`${chat}?last=20`), api(`${chat}/status`)]);
+      notAnswering = notAnsweringText(project, deriveChatState(page, status, { coordinator: project.main.connected ? project.main.name : null }), page);
+    } catch { notAnswering = ""; }
+  }
   async function connect(event) {
     const button = event.currentTarget;
     if (connecting || button.disabled) return;
-    const body = {};
-    if (project.main.connected) {
-      const adopted = project.main.source === "coordinator";
-      if (!confirm(adopted ? `Connect replaces ${project.main.name} as this project's orchestrator. Continue?` : "Reconnect this agent? Its current token will stop working.")) return;
-      if (adopted) body.replace = true;
-    }
+    const fallback = () => host.querySelector("[data-project-connect]");
     connecting = true; button.disabled = true;
     const status = host.querySelector("[data-project-connect-status]");
     status.textContent = "";
     let changingWing = false;
     try {
-      let result, wingChanged = false;
-      for (;;) {
-        try { result = await api(`${path}/orchestrator/connect`, { method: "POST", body }); break; }
-        catch (error) {
-          if (!active()) return;
-          if (error.status === 409 && error.payload?.error === "shared_wing") {
-            const choice = await chooseSharedWing(error.payload, e);
-            if (choice === "cancel" || !active()) return;
-            if (choice === "shared") body.allow_shared = true;
-            else {
-              changingWing = true;
-              const owned = await api(error.payload.fix.path, { method: "POST", body: {} });
-              if (!active()) return;
-              changingWing = false;
-              project = owned;
-              wingChanged = owned.changed;
-              status.textContent = ownWingStatus(owned);
-              renderMain();
-            }
-          } else if (error.status === 409 && error.payload?.error === "replaces current orchestrator" && !body.replace) {
-            if (!confirm(`${wingChanged ? PROJECT_COPY.ownWingDone + " " : ""}Connect replaces the current orchestrator. Continue?`)) return;
-            body.replace = true;
-          } else throw error;
-        }
-      }
-      if (!active()) return;
-      showConnectResult(result, e, { api, path, project, current: active, onUpdate: latest => { project = latest; if (active()) renderMain(); } });
+      let result = await requestConnect({
+        api, path, project, e, active,
+        ask: (copy) => askConfirm(copy, e, { opener: button, fallback }),
+        onWing: async (wingPath) => {
+          changingWing = true;
+          const owned = await api(wingPath, { method: "POST", body: {} });
+          if (!active()) return owned;
+          changingWing = false;
+          project = owned;
+          status.textContent = ownWingStatus(owned);
+          renderMain();
+          return owned;
+        },
+      });
+      if (!result || !active()) return;
+      showConnectResult(result, e, { api, path, project, current: active, opener: button, fallback, onUpdate: latest => { project = latest; if (active()) renderMain(); } });
       result = null;
       project = await api(path);
       if (active()) renderMain();
@@ -246,7 +413,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
   host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
   if (settings) {
     installProjectStyles();
-    bindSettingsNavigation(host, {slug, origin, current: active});
+    bindSettingsNavigation(host, {slug, origin, onBack, current: active});
     const root = host.querySelector(".workbench-project");
     if (globalThis.matchMedia?.("(max-width: 699px)").matches) { root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); }
     mountAgentLimit(host.querySelector("[data-project-limit]"), {project, api, e, current: active});
@@ -258,6 +425,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       status.textContent = "Checking…";
       try {
         project = await api(path);
+        if (restart) await loadNotAnswering();
         if (active()) { renderMain(); status.textContent = project.main.seen ? "Agent connected. Check the chat for an answer." : "No answer yet. Your message is kept."; }
       } catch { if (active()) status.textContent = "Could not check the agent. Try again."; }
       finally { check.disabled = false; }
@@ -265,6 +433,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     await Promise.all([
       mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active}),
       mountProjectAgents(host.querySelector("[data-project-agents]"), {project, api, e, current: active, onUpdate: latest => { project = latest; renderMain(); }}),
+      restart && loadNotAnswering(),
     ]);
     if (!active()) return;
   }
@@ -482,6 +651,16 @@ const settingsStyle = `
 .workbench-project .orch-card {background:var(--ok-bg);padding:12px;border-radius:var(--r)}.workbench-project .restart-box,.workbench-project .callout {padding:12px 14px;margin-top:10px;border:1px solid var(--wait-line);border-radius:8px;background:var(--wait-bg)}
 .workbench-project .agents-t {width:100%;border-collapse:collapse;font-size:13px}.workbench-project th,.workbench-project td {text-align:left;padding:8px;border-bottom:1px solid var(--line)}
 .workbench-project .phone-note {display:none}.workbench-project :focus-visible {outline:3px solid var(--accent);outline-offset:2px}
+.workbench-project .orch-card.warn {background:var(--wait-bg);border:1px solid var(--wait-line)}.workbench-project [data-project-not-answering] {margin:6px 0 0;color:var(--wait);font-weight:600}
+.project-dialog {width:min(600px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid var(--line);border-radius:10px;padding:22px 24px;background:var(--surface);color:var(--text);font-family:var(--font);box-shadow:0 16px 40px rgba(23,24,28,.18)}
+.project-dialog::backdrop {background:rgba(23,24,28,.42)}
+.project-dialog h2 {font-size:17px;margin:0 0 12px}.project-dialog .form-tile {padding:0;background:transparent;box-shadow:none;border:0}
+.project-dialog p,.project-dialog li {font-size:14px;line-height:1.5}.project-dialog .lead,.project-dialog .d,.project-dialog .howto {color:var(--text-2)}
+.project-dialog .dsteps {padding-left:20px;display:flex;flex-direction:column;gap:12px}.project-dialog .dsteps b,.project-dialog .dsteps .d {display:block}.project-dialog .howto {padding-left:18px;margin:8px 0 0}
+.project-dialog .acts {display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px}.project-dialog .dsteps .acts {justify-content:flex-start;margin-top:8px}
+.project-dialog .alert {padding:10px 12px;border:1px solid var(--block-line);border-radius:8px;background:var(--block-bg)}.project-dialog .alert h3 {font-size:14px;margin:0}.project-dialog .alert p {margin:4px 0 0}
+.project-dialog :focus-visible {outline:3px solid var(--accent);outline-offset:2px}
+@media(max-width:699px) {.project-dialog .btn {min-height:44px}}
 @media(min-width:700px) {#card-panel:has(.workbench-project) {position:fixed;inset:0 0 0 236px;display:block;width:auto;height:100%;box-shadow:none;max-width:none;z-index:30;padding:0;background:var(--bg)}#card-panel:has(.workbench-project)>.form-tile {padding:0;background:transparent}#card-panel:has(.workbench-project)>.form-tile>.close {display:none}}
 @media(min-width:700px) and (max-width:1099px) {#card-panel:has(.workbench-project) {left:220px}}
 @media(max-width:699px) {.workbench-project {position:fixed;inset:0;z-index:80;overflow:auto;background:var(--surface)}.workbench-project .project-top {padding:8px 12px;gap:8px}.workbench-project .project-top a {order:-1}.workbench-project .project-top h1 {order:1;flex-basis:100%}.workbench-project .settings {padding:12px}.workbench-project .set-sec {padding:14px 0;border:0;border-top:1px solid var(--line);border-radius:0}.workbench-project .settings-inner {gap:0}.workbench-project .radio .sub-fields,.workbench-project .radio .mode-note,.workbench-project [data-project-chat]>.lead,.workbench-project [data-project-chat]>details,.workbench-project .radio .callout {display:none}.workbench-project .radio label {display:flex;align-items:center;gap:10px}.workbench-project .radio label small {margin-left:auto;text-align:right}.workbench-project .radio.on {outline:0;background:var(--surface);border-color:var(--line)}.workbench-project .sub-fields {grid-template-columns:1fr}.workbench-project .btn,.workbench-project input,.workbench-project select,.workbench-project .stepper button {min-height:44px}.workbench-project .radio {min-height:48px}.workbench-project input[type=radio] {min-height:0}.workbench-project .desktop-agent {display:none}.workbench-project .phone-note {display:block}.workbench-project .agents-t th:nth-child(n+3),.workbench-project .agents-t td:nth-child(n+3) {display:none}}
@@ -498,10 +677,10 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)} settings</h1><span class="set-note">Changes save automatically</span><a class="btn" data-project-back href="${e(back.href)}">${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)} settings</h1><span class="set-note">Changes save automatically</span><a class="btn" data-project-back href="${e(back.href)}">${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
 }
 
-async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
+export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
   const active = () => current() && host.isConnected;
   let connections = [], cards = [], busy = false, error = "";
   const name = value => String(value || "").replace(/^conn:/, "");
@@ -523,8 +702,10 @@ async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
     host.querySelectorAll("[data-project-disconnect]").forEach(button => {
       button.onclick = async () => {
         if (busy || !active()) return;
-        const connection = rows.find(c => c.id === button.getAttribute("data-project-disconnect"));
-        if (!confirm(`Disconnect ${connection.name}? Its current token will stop working.`)) return;
+        const id = button.getAttribute("data-project-disconnect"), connection = rows.find(c => c.id === id);
+        const copy = disconnectCopy(project, connection, {main: connection.name === main, only: assigned.size <= 1}, e);
+        const fallback = () => host.querySelector(`[data-project-disconnect="${CSS.escape(id)}"]`);
+        if (!await askConfirm(copy, e, {opener: button, fallback}) || !active()) return;
         busy = true; error = ""; render();
         try {
           await api(`/api/connections/${encodeURIComponent(connection.id)}`, {method: "DELETE"});
