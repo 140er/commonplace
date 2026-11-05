@@ -114,35 +114,46 @@ function forgetStored(name, text) {
   try { if (storage()?.getItem(name) === text) storage()?.removeItem(name); } catch { /* No persisted draft. */ }
 }
 
-// Offline sends outlive the pane: one queued item per user and board, kept until the server
-// acknowledges it or the person signs out. A live pane that shows the item delivers it with
-// its own bubble; otherwise the module delivers it and tells the live panes.
+// Sends outlive the pane: one item per user and board, kept from the offline queue through the
+// request until the server acknowledges it, the outcome stays ambiguous (explicit retry), or the
+// person signs out. A pane that opens meanwhile shows the item as queued or as sending.
 const OFFLINE = new Map(), LIVE = new Set();
 let held = null;
 function deliverAll() {
   for (const item of [...OFFLINE.values()]) {
-    OFFLINE.delete(item.name);
-    if (![...LIVE].some((pane) => pane.claim(item))) void flushOffline(item);
+    if (item.sending) continue;
+    // A pane showing the item sends it with its own bubble; otherwise it is sent from here.
+    if ([...LIVE].some((pane) => pane.claim(item))) continue;
+    item.sending = true;
+    void deliver(item);
   }
 }
-async function flushOffline(item) {
-  let sent = false;
+// One request and, on failure, one read for the person's own echo. `api` is the sending pane's
+// while that pane is current; afterwards the plain request continues on its own.
+async function deliver(item, api = request, current = () => false) {
+  let sent = false, page = null;
   try {
-    await request(`/api/boards/${encodeURIComponent(item.slug)}/chat`, { method: "POST", body: { text: item.text } });
+    await (current() ? api : request)(`/api/boards/${encodeURIComponent(item.slug)}/chat`, { method: "POST", body: { text: item.text } });
     sent = true;
   } catch {
+    // Signed out or expired: no follow-up request, nothing kept.
+    if (item.cancelled) return { sent, page, cancelled: true };
     try {
-      const page = await request(`/api/chat/${encodeURIComponent(item.slug)}?after=${item.cursor}`);
+      page = await (current() ? api : request)(`/api/chat/${encodeURIComponent(item.slug)}?after=${item.cursor}`);
       sent = (page.messages || []).some((m) => m.actor === `user:${item.user}` && m.text === item.text);
-    } catch { /* Keep an ambiguous send for an explicit retry when its chat opens again. */ }
+    } catch { /* Ambiguous: kept for an explicit retry. */ }
   }
+  if (item.cancelled) return { sent, page, cancelled: true };
   if (sent) forgetStored(item.name, item.text);
+  if (OFFLINE.get(item.name) === item) OFFLINE.delete(item.name);
   for (const pane of [...LIVE]) pane.settled(item, sent);
   release();
+  return { sent, page };
 }
 function dropOffline(prefix = "") {
   for (const item of [...OFFLINE.values()]) {
     if (!item.name.startsWith(prefix)) continue;
+    item.cancelled = true;
     OFFLINE.delete(item.name);
     forgetStored(item.name, item.text);
   }
@@ -151,14 +162,15 @@ function dropOffline(prefix = "") {
 const heldOnline = () => deliverAll();
 function heldSignOut() { for (const pane of [...LIVE]) pane.signOut(); dropOffline(); }
 function heldLogout(event) { if (event.target.closest?.('[data-action="logout"]')) heldSignOut(); }
-function queueOffline(item) {
+function track(item) {
   OFFLINE.set(item.name, item);
-  if (held) return;
+  if (held) return item;
   held = { win: globalThis, doc: globalThis.document };
   held.win.addEventListener?.("online", heldOnline);
   held.doc?.addEventListener?.("session-expired", heldSignOut);
   held.doc?.addEventListener?.("signout", heldSignOut);
   held.doc?.addEventListener?.("click", heldLogout, true);
+  return item;
 }
 function release() {
   if (!held || OFFLINE.size) return;
@@ -202,9 +214,10 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     try { text ??= storage()?.getItem(name); } catch { /* Storage may be denied. */ }
     if (text != null) {
       // A send still queued from before this pane existed keeps sending by itself when online.
-      const queued = OFFLINE.get(name);
+      const queued = OFFLINE.get(name)?.text === text ? OFFLINE.get(name) : null;
       pending.set(name, text);
-      state.unsent = queued?.text === text ? { text, draft: queued.draft, origin: queued.origin, offline: true, auto: true } : { text, draft: text, offline: false, auto: false };
+      state.unsent = queued?.sending ? { text, draft: queued.draft, origin: queued.origin, pending: true }
+        : queued ? { text, draft: queued.draft, origin: queued.origin, offline: true, auto: true } : { text, draft: text, offline: false, auto: false };
       if (field()) field().value = text;
     }
   }
@@ -321,8 +334,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${state.derived.last_seen ? `<p>Agent last seen ${e(state.derived.last_seen)}</p>` : ""}${recovery !== "working" ? `<div>${recovery === "no_answer" ? `<a href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button type="button" data-chat-ask-again>Ask again</button>` : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>'}<button type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
     const form = host.querySelector(".chat-compose");
     // While an earlier message is unsent, the composer keeps its text but does not send.
-    const waiting = !!unsent && !inFlight;
-    if (form) { form.hidden = !state.slug; form.querySelector("button[type=submit]").disabled = !!state.sending || waiting; }
+    const waiting = !!unsent && !state.sending;
+    if (form) { form.hidden = !state.slug; form.querySelector("button[type=submit]").disabled = !!state.sending || !!unsent; }
     const wait = host.querySelector("[data-chat-wait]");
     if (wait) wait.hidden = !waiting;
   }
@@ -398,8 +411,9 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   async function post(text, origin = "composer") {
     if (!active || state.sending || !state.slug || !text.trim()) return;
     const retry = origin === "retry", source = retry ? state.unsent?.origin || "composer" : origin;
-    // One unsent message per board: a new send waits until the earlier one is sent or discarded.
-    if (!retry && state.unsent && !state.unsent.pending) { render(); return; }
+    // One unsent message per board: a new send waits until the earlier one is sent or discarded,
+    // and nothing re-sends a message that is already on its way.
+    if ((!retry && state.unsent) || (retry && OFFLINE.get(key())?.sending)) { render(); return; }
     const token = ++generation, sendingState = state, name = key(), sentDraft = field()?.value;
     const originalDraft = retry ? state.unsent?.draft : source === "composer" ? sentDraft : null;
     const bubble = { text, draft: originalDraft, origin: source, offline: false, auto: false };
@@ -407,25 +421,17 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     state.sending = true;
     if (globalThis.navigator?.onLine === false) {
       state.unsent = { ...bubble, offline: true, auto: true };
-      if (name) queueOffline({ name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source });
+      if (name) track({ name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source, sending: false });
       state.sending = false; render(); return;
     }
-    OFFLINE.delete(name);
+    const item = { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source, sending: true, owner: pane };
+    if (name) track(item);
     state.unsent = { ...bubble, pending: true }; render();
-    let sent = false;
-    try { await api(`/api/boards/${encodeURIComponent(state.slug)}/chat`, { method: "POST", body: { text } }); sent = true; }
-    catch {
-      if (!current(token)) return;
-      try {
-        const page = await api(`${path()}?after=${state.page.cursor || 0}`);
-        if (!current(token)) return;
-        sent = (page.messages || []).some((m) => m.actor === `user:${state.me?.user}` && m.text === text);
-        update(page);
-      } catch { /* The outcome remains ambiguous; only an explicit retry may send again. */ }
-    }
+    const { sent, page, cancelled } = await deliver(item, api, () => current(token));
+    if (cancelled) return;
     if (sent) forget(name, text);
-    release();
     if (!current(token)) return;
+    if (page) update(page);
     sendingState.sending = false;
     if (sent) {
       state.unsent = null; state.slowAt = 0;
@@ -477,8 +483,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     else if (button.hasAttribute("data-chat-retry")) await post(state.unsent?.text || "", "retry");
     else if (button.hasAttribute("data-chat-discard")) {
       // Discarding is explicit: the earlier words leave the queue and this device.
-      if (state.sending || !state.unsent) return;
       const name = key();
+      if (state.sending || !state.unsent || state.unsent.pending || OFFLINE.get(name)?.sending) return;
       if (OFFLINE.get(name)?.text === state.unsent.text) OFFLINE.delete(name);
       forget(name, state.unsent.text); state.unsent = null; release(); render(); controller.focusComposer();
     }
@@ -506,6 +512,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       state.unsent.auto = false; void post(item.text, "retry"); return true;
     },
     settled(item, sent) {
+      // The sending pane finishes its own bubble.
+      if (item.owner === pane) return;
       if (sent && pending.get(item.name) === item.text) pending.delete(item.name);
       if (!active || key() !== item.name || state.unsent?.text !== item.text) return;
       state.unsent = sent ? null : { text: item.text, draft: item.draft, origin: item.origin, offline: false, auto: false };

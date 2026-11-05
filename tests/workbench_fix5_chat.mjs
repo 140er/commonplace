@@ -3,6 +3,8 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 
 const STATIC = new URL("../commonplace/web/static/", import.meta.url);
 const settle = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
@@ -38,7 +40,7 @@ async function setup(t, { online = true, post } = {}) {
   };
   const listeners = registry(), events = registry(), calls = [];
   const session = memoryStorage(), device = memoryStorage();
-  const doc = { hidden: false, addEventListener: (n, fn) => listeners.add(n, fn), removeEventListener: (n, fn) => listeners.remove(n, fn) };
+  const doc = { hidden: false, addEventListener: (n, fn) => listeners.add(n, fn), removeEventListener: (n, fn) => listeners.remove(n, fn), dispatchEvent: (event) => listeners.get(event.type)?.(event) };
   const restore = [];
   const globals = { document: doc, navigator: { onLine: online }, sessionStorage: session, localStorage: device, addEventListener: (n, fn) => events.add(n, fn), removeEventListener: (n, fn) => events.remove(n, fn) };
   for (const [name, value] of Object.entries(globals)) {
@@ -65,8 +67,8 @@ async function setup(t, { online = true, post } = {}) {
       const payload = await serve(path, { ...options, body: options.body ? JSON.parse(options.body) : undefined });
       return { ok: true, status: options.method === "POST" ? 201 : 200, json: async () => payload };
     } catch (error) {
-      if (error.message !== "500") throw error;
-      return { ok: false, status: 500, json: async () => ({ error: "Could not send" }) };
+      if (!["500", "401"].includes(error.message)) throw error;
+      return { ok: false, status: Number(error.message), json: async () => ({ error: "Could not send" }) };
     }
   } });
   restore.push(() => previousFetch ? Object.defineProperty(globalThis, "fetch", previousFetch) : delete globalThis.fetch);
@@ -232,4 +234,145 @@ test("device seen ids stay per user and board, and sign-out clears only that use
   assert.equal(device.getItem("cmmn.chat.seen.maya.atlas"), null);
   assert.equal(device.getItem("cmmn.chat.seen.maya.harbor"), null);
   assert.equal(device.getItem("cmmn.chat.seen.leon.atlas"), '{"message":0,"reply":0}');
+});
+
+// Round 2: a send stays tracked until it settles -----------------------------------------
+
+function deferred() {
+  let settle;
+  const promise = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+  return { promise, ...settle };
+}
+const click = (p, name) => p.host.onclick({ target: { closest: () => ({ dataset: {}, hasAttribute: (n) => n === name }) }, preventDefault() {} });
+
+test("a pane reopened during a background send shows it sending and cannot resend or discard it", async (t) => {
+  const pending = deferred();
+  const h = await setup(t, { online: false, post: () => pending.promise });
+  const first = h.pane(); await first.controller.show("work");
+  await first.send("On its way");
+  first.controller.destroy();
+  h.goOnline(); await settle();
+  assert.equal(h.posts().length, 1, "the background send started");
+  const again = h.pane(); await again.controller.show("work");
+  const bubble = again.nodes.get("[data-chat-unsent]")?.innerHTML || "";
+  assert.match(bubble, /Sending…/, "the reopened pane shows the message on its way");
+  assert.doesNotMatch(bubble, /data-chat-retry/, "no Try again while it is in flight");
+  assert.doesNotMatch(bubble, /data-chat-discard/, "no Discard while it is in flight");
+  assert.equal(again.submit.disabled, true);
+  await click(again, "data-chat-retry"); await click(again, "data-chat-discard"); await settle();
+  assert.equal(h.posts().length, 1, "no second POST");
+  assert.equal(h.session.getItem("cmmn.unsent.me.work"), "On its way", "discard did nothing while in flight");
+  pending.resolve({ id: 2 }); await settle();
+  assert.equal(again.nodes.get("[data-chat-unsent]").innerHTML, "", "the bubble clears once it is acknowledged");
+  assert.equal(h.session.getItem("cmmn.unsent.me.work"), null);
+  assert.equal(h.posts().length, 1);
+});
+
+test("signing out during a background send keeps nothing and reads nothing more", async (t) => {
+  const pending = deferred();
+  const h = await setup(t, { online: false, post: () => pending.promise });
+  const p = h.pane(); await p.controller.show("work");
+  await p.send("Private words");
+  p.controller.destroy();
+  h.goOnline(); await settle();
+  assert.equal(h.posts().length, 1);
+  const signout = h.listeners.get("signout");
+  assert.equal(typeof signout, "function", "the in-flight send listens for sign-out");
+  signout();
+  assert.equal(h.session.getItem("cmmn.unsent.me.work"), null, "the draft leaves the device at sign-out");
+  const before = h.calls.length;
+  pending.reject(new Error("500")); await settle();
+  assert.equal(h.calls.length, before, "no echo read after sign-out");
+  assert.equal(h.session.getItem("cmmn.unsent.me.work"), null);
+});
+
+test("a session that expires during a background send keeps nothing and reads nothing more", async (t) => {
+  const pending = deferred();
+  const h = await setup(t, { online: false, post: () => pending.promise });
+  const p = h.pane(); await p.controller.show("work");
+  await p.send("Expired words");
+  p.controller.destroy();
+  h.goOnline(); await settle();
+  const before = h.calls.length;
+  pending.reject(new Error("401")); await settle();
+  assert.equal(h.calls.length, before, "no echo read after the 401");
+  assert.equal(h.session.getItem("cmmn.unsent.me.work"), null, "the draft leaves the device on expiry");
+});
+
+// Round 2: app.js sign-out, restart settings and dialog keys --------------------------------
+
+const app = readFileSync(new URL("app.js", STATIC), "utf8");
+function slice(start, end) {
+  const at = app.indexOf(start), stop = app.indexOf(end, at + start.length);
+  assert.ok(at >= 0 && stop > at, `Missing slice: ${start} → ${end}`);
+  return app.slice(at, stop);
+}
+
+function seenDevice(t) {
+  const device = memoryStorage();
+  for (const [key, value] of [["cmmn.chat.seen.maya.atlas", '{"message":5,"reply":0}'], ["cmmn.chat.seen.maya.harbor", '{"message":2,"reply":0}'], ["cmmn.chat.seen.leon.atlas", '{"message":9,"reply":0}'], ["other.setting", "keep"]]) device.setItem(key, value);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: device, writable: true });
+  t.after(() => previous ? Object.defineProperty(globalThis, "localStorage", previous) : delete globalThis.localStorage);
+  return device;
+}
+async function shellContext() {
+  const { clearSeen } = await modules();
+  const docListeners = new Map();
+  return { state: { me: { user: "maya", actor: "user:maya" }, drafts: new Map(), queue: null, error: "" }, chatUI: null, clearSeen, Event,
+    document: { dispatchEvent() {}, addEventListener: (n, fn) => docListeners.set(n, fn) }, signin() {}, clearTimeout() {}, timer: null, docListeners };
+}
+const keptOnly = (device) => {
+  assert.equal(device.getItem("cmmn.chat.seen.maya.atlas"), null, "Maya's Atlas seen ids are gone");
+  assert.equal(device.getItem("cmmn.chat.seen.maya.harbor"), null, "Maya's Harbor seen ids are gone");
+  assert.equal(device.getItem("cmmn.chat.seen.leon.atlas"), '{"message":9,"reply":0}', "Leon's ids stay");
+  assert.equal(device.getItem("other.setting"), "keep");
+};
+
+test("signing out with no board service (Settings) clears this user's seen ids only", async (t) => {
+  const device = seenDevice(t);
+  const context = await shellContext();
+  runInNewContext(slice("function clearWorkbenchChat() {", "function consoleScreen()") + "\nclearWorkbenchChat();", context);
+  keptOnly(device);
+});
+
+test("a session expiring off-board clears this user's seen ids before forgetting who it was", async (t) => {
+  const device = seenDevice(t);
+  const context = await shellContext();
+  runInNewContext(slice("function clearWorkbenchChat() {", "function consoleScreen()") + slice('document.addEventListener("session-expired",', "\n"), context);
+  const expired = context.docListeners.get("session-expired");
+  assert.equal(typeof expired, "function");
+  expired();
+  keptOnly(device);
+  assert.equal(context.state.me, null);
+});
+
+test("the restart settings close button goes back to the chat", () => {
+  assert.match(slice("Back to the chat", ">×</button>"), /^Back to the chat"$/);
+  const markup = app.slice(app.lastIndexOf("<button", app.indexOf('aria-label="Back to the chat"')), app.indexOf('aria-label="Back to the chat"'));
+  const action = markup.match(/data-action="([^"]+)"/)?.[1];
+  assert.ok(action, "the × has an action");
+  assert.notEqual(action, "close-panel", "the × does more than hide the panel");
+  const branch = slice(`else if (action === "${action}") {`, "\n    }");
+  const calls = [];
+  runInNewContext(branch.replace(/^else if \([^)]*\) \{/, ""), { state: { workbenchChat: { dock: { backToChat: () => calls.push("back") } } }, closeCardPanel: () => calls.push("close") });
+  assert.deepEqual(calls, ["back"]);
+});
+
+test("board single keys wait while a project dialog is open", () => {
+  const listener = slice('document.addEventListener("keydown", (event) => {', "\n});\n") + "\n});";
+  const handled = [];
+  let dialogOpen = true, keydown = null;
+  const context = {
+    root: { querySelector: () => null }, state: { me: { user: "maya" }, base: "#/board/alpha" }, Element: class {},
+    document: { addEventListener: (type, fn) => { if (type === "keydown") keydown = fn; }, querySelector: (selector) => selector === "dialog[open]" && dialogOpen ? {} : null },
+    singleKeysEnabled: () => true, workbenchKey: (event) => { handled.push(event.key); return true; }, shellMenu() {}, closeCardPanel() {}, location: {},
+  };
+  runInNewContext(listener, context);
+  assert.equal(typeof keydown, "function");
+  const press = (key) => keydown({ key, target: {}, defaultPrevented: false, repeat: false, preventDefault() {} });
+  press("c");
+  assert.deepEqual(handled, [], "no board shortcut behind the dialog");
+  dialogOpen = false; press("c");
+  assert.deepEqual(handled, ["c"], "the shortcut works without a dialog");
 });
