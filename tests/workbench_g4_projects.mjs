@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 
 // A small document: enough markup parsing and selector matching for the project dialogs.
 const VOID = new Set(["input", "br", "img", "hr", "meta", "link"]);
@@ -137,6 +136,7 @@ function makeDocument() {
 const doc = makeDocument();
 globalThis.document = doc;
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
+globalThis.location = { hash: "" };
 globalThis.CSSStyleSheet = class { replaceSync() {} };
 globalThis.CSS = { escape: (value) => String(value) };
 globalThis.confirm = () => { throw new Error("window.confirm must not be used"); };
@@ -204,18 +204,22 @@ const cases = {
       dialog.dispatch("cancel");
     } finally { globalThis.setTimeout = realTimeout; button.remove(); }
   },
-  // Review MAJOR 1: Disconnect revokes the connection workspace-wide; the dialog says so and names
-  // the other project it works in, or says "any other project" when that cannot be read.
+  // Review MAJOR 1/4: Disconnect revokes the connection workspace-wide. The dialog names known
+  // assignments elsewhere, never claims "no other project" (wing access is not visible here), and
+  // always keeps the line that revoking stops its access in every project.
   async disconnect_scope() {
     const boards = [{ slug: "ledger", name: "Ledger", coordinator: null }, { slug: "harbor", name: "Harbor", coordinator: null }, { slug: "atlas", name: "Atlas", coordinator: null }];
     const cardsOf = { ledger: [{ number: 1, assignee: "conn:worker-1" }], harbor: [{ number: 2, assignee: "conn:worker-1" }], atlas: [{ number: 3, assignee: "conn:other" }] };
-    for (const readable of [true, false]) {
+    const generic = /stops all of its access in every project of this workspace/;
+    for (const mode of ["assigned", "none", "unreadable"]) {
+      const readable = mode !== "unreadable";
+      const cards = mode === "none" ? { ...cardsOf, harbor: [] } : cardsOf;
       const host = doc.createElement("div"); doc.body.append(host);
       const api = async (path) => {
         if (path === "/api/connections") return { connections: [{ id: "c-9", name: "worker-1", last_used_at: null }] };
         if (path === "/api/boards") { if (!readable) throw { status: 500 }; return { boards }; }
         const slug = path.match(/^\/api\/boards\/([^/]+)\/cards$/)?.[1];
-        if (slug) return { cards: cardsOf[slug], linked: [], children: [] };
+        if (slug) return { cards: cards[slug], linked: [], children: [] };
         return project;
       };
       await ui.mountProjectAgents(host, { project, api, e, current: () => true, onUpdate() {} });
@@ -224,10 +228,12 @@ const cases = {
       const dialog = openDialog();
       assert.ok(dialog, "a drawn dialog is open");
       assert.match(dialog.textContent, /for the whole workspace/, "the dialog names the workspace-wide scope");
-      if (readable) {
-        assert.match(dialog.textContent, /stops working in Harbor\./, "the other project is named");
-        assert.doesNotMatch(dialog.textContent, /Atlas/);
-      } else assert.match(dialog.textContent, /any other project it works in/);
+      assert.match(dialog.textContent, generic, `${mode}: the workspace-wide access line is always shown`);
+      assert.doesNotMatch(dialog.textContent, /works in no other project/i, `${mode}: no exhaustive negative claim`);
+      assert.doesNotMatch(dialog.textContent, /Atlas/, `${mode}: a board without its assignment is not named`);
+      if (mode === "assigned") assert.match(dialog.textContent, /also assigned in Harbor\./, "the known assignment is named");
+      if (mode === "none") assert.match(dialog.textContent, /No known assignments in other projects\./);
+      if (mode === "unreadable") assert.match(dialog.textContent, /could not be checked/);
       dialog.dispatch("cancel");
       await pending;
       host.remove();
@@ -386,9 +392,26 @@ const cases = {
   // I1: settings hand Back and Esc to the caller's onBack.
   async on_back() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");
-    const source = await readFile(new URL("../commonplace/web/static/projects.js", import.meta.url), "utf8");
-    assert.match(source, /export async function mountProject\(host, \{[^}]*\bonBack\b/);
-    assert.match(source, /bindSettingsNavigation\(host, \{[^}]*\bonBack\b/);
+    const api = async (path) => {
+      if (path.startsWith("/api/chat-settings")) return { front: { provider: "none" }, local_models: [], hosted: [] };
+      if (path === "/api/connections") return { connections: [] };
+      if (path.endsWith("/cards")) return { cards: [], linked: [] };
+      if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+      return { ...project, limits: { max_agents: 3 }, models: {} };
+    };
+    for (const trigger of ["link", "escape"]) {
+      const host = doc.createElement("div"); doc.body.append(host);
+      const backs = [];
+      await ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger/chat", onBack: (href) => backs.push(href) });
+      const link = host.querySelector("[data-project-back]");
+      assert.ok(link, "settings draw the back link");
+      assert.equal(link.textContent, "Back to the chat");
+      if (trigger === "link") link.click();
+      else assert.equal(doc.key("Escape").defaultPrevented, true, "settings take Escape");
+      assert.deepEqual(backs, ["#/board/ledger/chat"], `${trigger}: onBack runs with the origin instead of the default navigation`);
+      host.remove();
+      doc.key("Escape");
+    }
   },
 };
 

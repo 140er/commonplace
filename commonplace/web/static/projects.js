@@ -126,14 +126,16 @@ function askConfirm(copy, e, { opener, fallback } = {}) {
 }
 
 // Disconnect revokes the connection itself (agent-revoke), so the copy names the whole workspace.
-// `others`: names of the other projects it works in; null when they could not be read.
+// `others`: other projects with a known assignment (orchestrator or card); null when unreadable.
 export function disconnectCopy(project, connection, { main = false, only = false, others = null } = {}, e) {
   const name = String(connection.name || "").replace(/^conn:/, "");
   const who = main ? `${project.name} orchestrator` : name;
-  const elsewhere = others === null ? `It also stops working in any other project it works in.`
-    : others.length ? `It also stops working in ${others.map(other => `<b>${e(other)}</b>`).join(", ")}.`
-    : `It works in no other project.`;
-  const scope = `<p class="scope" data-disconnect-scope><b>This revokes the connection “${e(name)}” for the whole workspace</b>, not only in ${e(project.name)}. ${elsewhere}</p>`;
+  // Only known assignments are named: wing access elsewhere is not visible here, so no
+  // exhaustive "no other project" claim is made, and the workspace-wide line always shows.
+  const known = others === null ? "Its assignments in other projects could not be checked."
+    : others.length ? `It is also assigned in ${others.map(other => `<b>${e(other)}</b>`).join(", ")}.`
+    : "No known assignments in other projects.";
+  const scope = `<p class="scope" data-disconnect-scope><b>This revokes the connection “${e(name)}” for the whole workspace</b>, not only in ${e(project.name)}. ${known} Revoking it stops all of its access in every project of this workspace, including memory it can read there.</p>`;
   const lines = [
     ...(main ? [`${e(project.name)} has <b>no orchestrator</b> until an agent connects. The next one you connect becomes it.`] : []),
     ...(main && only ? ["Chat still works: new requests wait, as before your first agent."] : []),
