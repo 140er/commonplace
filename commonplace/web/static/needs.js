@@ -179,7 +179,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   isPhone = () => globalThis.matchMedia?.("(max-width:699px)").matches || false, now = Date.now, document: doc = globalThis.document, setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval } = {}) {
   let data = { needs: {}, boards: [] }, holds = [], selected = null, filter = "all", current = null;
   let holdsLoaded = false;
-  let stopped = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
+  let stopped = false, paused = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
   const cards = new Map(), notes = new Map(), tooLate = new Set();
   const mounts = [...new Set([mount, detailMount].filter(Boolean))];
   const rememberNote = () => { const value = detailMount?.querySelector("[data-needs-note]")?.value; if (current && value != null) notes.set(current.number, value); };
@@ -200,7 +200,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   }
   const withActions = (card) => needsCard(data.needs, card);
   function drawDetail() {
-    if (!detailMount || stopped) return;
+    // While the shell shows something else in the shared panel (project settings), the detail waits.
+    if (!detailMount || stopped || paused) return;
     const restoreFocus = savedFocus(detailMount);
     detailMount.innerHTML = current ? renderNeedDetail(current, { board: boardFor(data.boards, current), hold: currentHold(), now: now(), confirm: confirming, note: notes.get(current.number) || "", error, busy: busy || !holdsLoaded, chatOpen, phone: isPhone(),
       kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
@@ -238,7 +239,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       current = withActions(card); cards.set(card.number, current); draw(); focus("[data-needs-title]"); onSelect(card);
     } catch (failure) {
       if (stopped || token !== revision) return;
-      if (detailMount) detailMount.innerHTML = '<p role="alert">Could not load this card. Open it again to retry.</p>';
+      if (detailMount && !paused) detailMount.innerHTML = '<p role="alert">Could not load this card. Open it again to retry.</p>';
       onError(failure);
     }
   }
@@ -367,11 +368,13 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   }
   function cancel() { confirming = false; drawDetail(); focus("[data-needs-approve]"); }
   const click = async (event) => {
+    if (paused && detailMount?.contains(event.target)) return;
     const button = event.target.closest("[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
     if (!button) return;
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
-    if (button.hasAttribute("data-needs-select")) await select(button.dataset.needsSelect);
+    // Picking an item takes the shared panel back from whatever paused the detail.
+    if (button.hasAttribute("data-needs-select")) { paused = false; await select(button.dataset.needsSelect); }
     else if (button.hasAttribute("data-needs-filter")) await setFilter(button.dataset.needsFilter);
     else if (button.dataset?.needsApprove === "plan") await approvePlan();
     else if (button.hasAttribute("data-needs-approve")) approve();
@@ -384,6 +387,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     else await decline();
   };
   const keydown = (event) => {
+    if (paused && detailMount?.contains(event.target)) return;
     if (event.key === "Escape" && confirming && !busy) { event.preventDefault(); event.stopPropagation(); cancel(); return; }
     if (!singleKeys() || event.altKey || event.ctrlKey || event.metaKey || event.target.closest("input,textarea,select,[contenteditable=true]")) return;
     if (event.key.toLowerCase() === "r") { event.preventDefault(); event.stopPropagation?.(); ask(); }
@@ -391,7 +395,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     else if (["j", "k"].includes(event.key.toLowerCase())) {
       const rows = items(), index = rows.findIndex((card) => card.number === selected);
       const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key.toLowerCase() === "j" ? 1 : -1)))];
-      if (next) { event.preventDefault(); event.stopPropagation?.(); void select(next.number); }
+      if (next) { event.preventDefault(); event.stopPropagation?.(); paused = false; void select(next.number); }
     }
   };
   async function setFilter(value) {
@@ -436,6 +440,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     },
     select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,
     setChatOpen(open) { rememberNote(); chatOpen = Boolean(open); drawDetail(); },
+    pause(on) { if (paused === Boolean(on)) return; paused = Boolean(on); if (!paused) drawDetail(); },
+    paused: () => paused,
     stop() {
       stopped = true; revision++; unschedule(timer);
       detailMount?.querySelector("dialog.confirm")?.close(); cards.clear(); notes.clear(); holds = []; current = null;

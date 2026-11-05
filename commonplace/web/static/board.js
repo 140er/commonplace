@@ -75,21 +75,22 @@ const stopIn = (list, selected) => (list.find((c) => c.number === selected) || l
 export function roveTo(card) {
   card.closest('.cards')?.querySelectorAll(ITEM).forEach((item) => { item.tabIndex = item === card ? 0 : -1; });
 }
-export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], column = 'todo' }) {
+export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], column = 'todo', sheet = true }) {
   const options = { board, me, selected, messages }, visible = filterCards(cards, filter, me);
   const backlog = visible.filter((c) => c.status === 'backlog');
   return `<div class="workbench-board"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div>${!cards.length ? '<section class="empty-strip" aria-label="Get started"><h2>Your project starts here</h2><button data-action="new-card">Add your first card</button><button data-action="connect-agent">Connect an agent</button><button data-action="open-chat">Ask for something · Write in chat /</button></section>' : ''}<nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)}${s === 'done' ? ` ${visible.filter((c) => c.status === s).length}` : ''}</button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
     const list = visible.filter((c) => c.status === s);
     return `<section class="col" id="col-${s}" data-status="${s}" data-active="${column === s}" aria-label="${heading(s)}, ${list.length} cards"><div class="col-h"><h2>${heading(s)}</h2><span class="n">${list.length}</span>${s === 'todo' ? '<button class="iconbtn" data-action="new-card" aria-label="Add card to Todo">+</button>' : ''}</div><div class="cards">${list.map((c) => cardView(c, options, c.number === stopIn(list, selected))).join('')}</div></section>`;
-  }).join('')}</div><details class="backlog"><summary>Backlog (${backlog.length})</summary><div class="cards">${backlog.map((c) => cardView(c, options, c.number === stopIn(backlog, selected))).join('')}</div></details>${adding ? addCardForm({ people }) : ''}</div>`;
+  }).join('')}</div><details class="backlog"><summary>Backlog (${backlog.length})</summary><div class="cards">${backlog.map((c) => cardView(c, options, c.number === stopIn(backlog, selected))).join('')}</div></details>${adding ? addCardForm({ people, sheet }) : ''}</div>`;
 }
-export function addCardForm({ people = [] } = {}) {
-  return `<form data-board-add><h2>Add card</h2><label>Title<input name="title" required maxlength="500"></label><label>Details<textarea name="body"></textarea></label><label>Who<select name="assignee"><option value="">Available for an agent</option>${people.map((p) => `<option value="${e(p.ref)}">${e(p.name)}</option>`).join('')}</select></label><label>Label<input name="label"></label><button class="btn primary" type="submit">Add card</button><button type="button" data-action="cancel-card">Cancel</button><p role="status" data-add-status></p></form>`;
+// On a phone the form is a full-screen modal sheet (m4); wider screens show it in place.
+export function addCardForm({ people = [], sheet = true } = {}) {
+  return `<form data-board-add${sheet ? ' role="dialog" aria-modal="true" aria-labelledby="add-card-h"' : ''}><h2 id="add-card-h">Add card</h2><label>Title<input name="title" required maxlength="500"></label><label>Details<textarea name="body"></textarea></label><label>Who<select name="assignee"><option value="">Available for an agent</option>${people.map((p) => `<option value="${e(p.ref)}">${e(p.name)}</option>`).join('')}</select></label><label>Label<input name="label"></label><button class="btn primary" type="submit">Add card</button><button type="button" data-action="cancel-card">Cancel</button><p role="status" data-add-status></p></form>`;
 }
 export async function submitCard({ api, board, values }) {
   return api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, { method:'POST', body:{ title:values.title, body:values.body || '', assignee:values.assignee || null, labels:values.label ? [values.label] : [] } });
 }
-export function bindBoard(root, { api, board, onAdded = () => {}, onFilter = () => {}, onSelect = () => {}, onOpen = () => {} }) {
+export function bindBoard(root, { api, board, onAdded = () => {}, onFilter = () => {}, onSelect = () => {}, onOpen = () => {}, onCancel = () => {} }) {
   const click = (event) => { const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
   const submit = async (event) => {
     if (!event.target.matches('[data-board-add]')) return;
@@ -103,6 +104,17 @@ export function bindBoard(root, { api, board, onAdded = () => {}, onFilter = () 
   };
   // Enter, Space and arrows on a focused card work whatever the single-key switch says.
   const keydown = (event) => {
+    // The add-card sheet keeps Tab inside; Esc cancels it.
+    const sheet = event.target.closest?.('[data-board-add][aria-modal="true"]');
+    if (sheet) {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); return; }
+      if (event.key !== 'Tab') return;
+      const items = [...sheet.querySelectorAll('input,textarea,select,button:not(:disabled)')].filter((el) => el.getClientRects().length);
+      const i = items.indexOf(event.target);
+      if (event.shiftKey && i <= 0) { event.preventDefault(); items.at(-1)?.focus(); }
+      else if (!event.shiftKey && i === items.length - 1) { event.preventDefault(); items[0]?.focus(); }
+      return;
+    }
     const card = event.target.closest?.(ITEM);
     if (!card || event.target !== card || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(Number(card.dataset.card)); return; }

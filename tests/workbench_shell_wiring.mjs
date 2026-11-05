@@ -54,7 +54,8 @@ if (which === 'shell') {
   const ui = await module('board');
   assert.equal(typeof ui.boardView, 'function'); assert.equal(typeof ui.bindBoard, 'function');
   let mounted = 0, cleaned = 0;
-  Object.assign(context, { fillChatTimes() {}, renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
+  Object.assign(context, { fillChatTimes() {}, cardId: ui.cardId, chatTag: ui.chatTag, cancelCard() {}, renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
+  run(slice('// The board lists child cards', 'const options ='));
   run(slice('function boardView()', 'function markOpenCard()') + '\nboardView(); boardView();');
   assert.equal(mounted, 2); assert.equal(cleaned, 1);
   assert.match(nodes['#content'].innerHTML, /class="workbench-board"/);
@@ -92,12 +93,12 @@ if (which === 'shell') {
   root.addEventListener = (type, handler) => { handlers[type] = handler; };
   state.base = '#/needs';
   Object.assign(context, {consoleUI: null, api() {}, currentBoard: () => ({slug: 'wrong-project'}), injectedMountProject: async (_mount, options) => mounted.push(options.slug)});
-  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replace('await import("./projects.js")', '({mountProject: injectedMountProject})'));
-  await handlers.click({target: {closest: () => ({dataset: {action: 'coordinator', board: 'origin-project'}})}});
+  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injectedMountProject})'));
+  await handlers.click({target: {closest: (s) => s.includes('chat-recovery') ? null : ({dataset: {action: 'coordinator', board: 'origin-project'}})}});
   assert.deepEqual(mounted, ['origin-project']);
   let edited = null; state.card = {number: 5, version: 1, board: 'alpha'};
   context.newCardForm = (card) => { edited = card; };
-  await handlers.click({target: {closest: () => ({dataset: {action: 'edit-card'}})}});
+  await handlers.click({target: {closest: (s) => s.includes('chat-recovery') ? null : ({dataset: {action: 'edit-card'}})}});
   assert.equal(edited, state.card);
 } else if (which === 'keys' || which === 'switch' || which === 'switch-enter' || which === 'chat-key' || which === 'panel-enter') {
   assert.ok(app.includes('function singleKeysEnabled()'), 'Single-key preference missing');
@@ -164,6 +165,7 @@ if (which === 'shell') {
   root.querySelectorAll = (selector) => tags.filter((tag) => selector.endsWith('.tag') || (selector.endsWith('.tag:not(.lbl)') && !tag.className.includes('lbl')));
   state.cards = [{number: 5, board: 'alpha', message_id: 40}];
   Object.assign(context, {chatTag: ui.chatTag, currentBoard: () => board, api() {}, loadChatTimes: async () => [{id: 40, at: '2026-11-05T14:03:00'}]});
+  run(slice('// The board lists child cards', 'const options ='));
   run(slice('async function fillChatTimes(', 'function spaceTask('));
   context.board = board; await run('fillChatTimes(board)');
   assert.equal(tags[0].textContent, 'From chat review', 'Label chip was overwritten');
