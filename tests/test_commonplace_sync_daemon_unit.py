@@ -63,6 +63,12 @@ class State:
     def set_status(self, source, path, native_id, status):
         self.status[source, str(path), native_id] = status
 
+    def statuses(self):
+        return [
+            dict(source=s, path=p, native_id=n, status=value)
+            for (s, p, n), value in self.status.items()
+        ]
+
     def retry_rejected(self):
         self.marked = {op: status for op, status in self.marked.items() if status != "revoked"}
 
@@ -911,7 +917,10 @@ def test_card223_transport_surfaces_retry_after(monkeypatch, header):
         getheader=lambda name: header if name == "Retry-After" else None,
     )
     connection = SimpleNamespace(
-        request=lambda *args: None, getresponse=lambda: response, close=lambda: None
+        connect=lambda: None,
+        request=lambda *args: None,
+        getresponse=lambda: response,
+        close=lambda: None,
     )
     monkeypatch.setattr(
         sync_daemon.http.client, "HTTPSConnection", lambda *args, **kwargs: connection
@@ -921,3 +930,7 @@ def test_card223_transport_surfaces_retry_after(monkeypatch, header):
     )
     assert status == 429
     assert payload.get("_retry_after") == header  # RED
+
+
+def test_card223_capture_off_cursor_marks_stream_paused(backfill_setup):
+    test_capture_off_cursor_marks_stream_paused(backfill_setup)

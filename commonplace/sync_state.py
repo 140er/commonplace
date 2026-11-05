@@ -137,13 +137,11 @@ class State:
         with self.transaction():
             self.conn.execute(
                 "UPDATE source_status SET status='pending' WHERE EXISTS "
-                "(SELECT 1 FROM outbox WHERE state IN ('revoked','failed','unreadable') "
+                "(SELECT 1 FROM outbox WHERE state IN ('revoked') "
                 "AND outbox.source=source_status.source AND outbox.path=source_status.path "
                 "AND outbox.native_id=source_status.native_id)"
             )
-            self.conn.execute(
-                "UPDATE outbox SET state='pending' WHERE state IN ('revoked','failed','unreadable')"
-            )
+            self.conn.execute("UPDATE outbox SET state='pending' WHERE state IN ('revoked')")
 
     def close(self):
         self.conn.close()
@@ -244,7 +242,8 @@ class State:
             raise StateError("Invalid source status")
         with self.transaction():
             self.conn.execute("UPDATE outbox SET state=? WHERE op_id=?", (status, op_id))
-            self._clear_op_retry(op_id)
+            if status not in ("pending", "failed", "unreadable"):
+                self._clear_op_retry(op_id)
 
     def _clear_op_retry(self, op_id):
         self.conn.execute(
