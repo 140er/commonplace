@@ -234,8 +234,7 @@ stored thread rather than the import's own stored ID.
 
 Structured mirror copies of private stored threads, facts derived from them, and their
 tunnel previews are returned only to callers who can read their source thread. This
-covers structured Memory search, `memory_get` and session start context. CLI-format
-(`cli_compatible`) search excludes mirror copies for everyone, including owners. A
+covers structured Memory search, `memory_get` and session start context. CLI-format (`cli_compatible`) search excludes mirror drawer copies for everyone, including owners; its `facts` field is still returned only to callers who can read each fact's source thread. A
 `superseded_by` id is returned only when its target is another kept fact in the same
 response.
 
@@ -247,11 +246,10 @@ Adding, updating, deleting or linking drawers in a stored-thread room requires
 permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
 and `delete_hallway` take no room and are not checked yet.
 
-Fact mutations (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived
+Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived
 facts are not room-checked. A member with fact-write permissions but no source-thread
 read access can mutate those hidden facts. Invalidate's `closed` count is a yes/no
-oracle for hidden values. This pre-existing write-side exposure is accepted for
-follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`.
+oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
 
 ### Indexing progress and storage
 
@@ -271,7 +269,7 @@ The HTTP endpoint's `state` and `units_written` describe its running process.
 Index bytes count toward workspace storage. Indexing pauses 16 MiB before the
 plan limit with `deferred_storage`; free space and run it again to resume.
 Work durably checkpoints bounded message ranges; completed ranges are trusted and
-are not checked again for missing drawers. Restarts and repeated runs resume saved
+are not checked again for missing drawers. Replay also does not repair a unit whose earlier chunks were lost while its last chunk survived (an existing limitation of the drawer writer). Restarts and repeated runs resume saved
 progress without deleting history or adding duplicate searchable copies.
 
 Imports are backfilled automatically. Captured sessions catch up in full on their

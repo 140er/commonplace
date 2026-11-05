@@ -37,19 +37,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Structured mirror copies of private stored threads, facts derived from them, and their
   tunnel previews are returned only to callers who can read their source thread. This
-  covers structured Memory search, `memory_get` and session start context. CLI-format
-  (`cli_compatible`) search excludes mirror copies for everyone, including owners. A
+  covers structured Memory search, `memory_get` and session start context. CLI-format (`cli_compatible`) search excludes mirror drawer copies for everyone, including owners; its `facts` field is still returned only to callers who can read each fact's source thread. A
   `superseded_by` id is returned only when its target is another kept fact in the same
   response. Mirror copies do not count as duplicates for anyone. Similarity dedup
   exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding, updating,
   deleting or linking drawers in a stored-thread room requires permission to read that
   thread. Known exceptions: `delete_by_source`, `delete_tunnel` and `delete_hallway`
-  take no room and are not checked yet. Fact mutations (`kg_invalidate`, `kg_supersede`
-  and `kg_save` merges) on thread-derived facts are not room-checked. A member with
+  take no room and are not checked yet. Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived facts are not room-checked. A member with
   fact-write permissions but no source-thread read access can mutate those hidden facts.
   Invalidate's `closed` count is a yes/no oracle for hidden values. This pre-existing
-  write-side exposure is accepted for follow-up alongside `delete_by_source`,
-  `delete_tunnel` and `delete_hallway`.
+  write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
 - To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).
