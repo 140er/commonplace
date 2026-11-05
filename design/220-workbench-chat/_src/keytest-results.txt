@@ -43,7 +43,7 @@ PASS m10 Show A-135 → Todo 6, selected A-135; Back to chat → focus #row-A-13
 PASS m10 Show A-118 → Doing 3, selected A-118; Back to chat → focus #row-A-118
 PASS m10 Back to board → focus #m-chat-tab (want #m-chat-tab)
 PASS 07-needs-me: composer, heading, log and control all name Atlas: {"label":"Message to Atlas chat","head":"Atlas chat","log":"Messages in Atlas chat","toggle":"Atlas chat 1 new reply/"}
-PASS 08-needs-me-done: composer, heading, log and control all name Harbor: {"label":"Message to Harbor chat","head":"Harbor chat","log":"Messages in Harbor chat","toggle":"Harbor chat /"}
+PASS 08-needs-me-done: composer, heading, log and control all name Harbor: {"label":"Message to Harbor chat","head":"Harbor chat","log":"Messages in Harbor chat","toggle":"Harbor chat 1 new reply/"}
 PASS 06c chat open, click board card A-121 → A-121 details, board-origin strip: {"chat":false,"ctx":true,"ctxId":"A-121","ctxTitle":"Offline mode: queue edits while disconnected","selId":"A-121","selTitle":"Offline mode: queue edits while disconnected","strip":true,"focus":"ARTICLE","bt":"You picked A-121 on the board. The chat is one click away."}
 PASS 06c board-origin Back to chat → chat open, cursor in the box: {"chat":true,"focus":"ci"}
 PASS 06c chat open, Enter on board card A-124 → A-124 details with strip: {"chat":false,"ctx":true,"ctxId":"A-124","ctxTitle":"Translate the settings screen (de, nl, fr)","selId":"A-124","selTitle":"Translate the settings screen (de, nl, fr)","strip":true,"focus":"ARTICLE"}

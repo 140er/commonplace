@@ -348,7 +348,7 @@ mark, .res mark, .quote mark { background: #FFE9A8; color: inherit; border-radiu
 .m-top .iconbtn .i { width: 20px; height: 20px; }
 .m-top .spacer { flex: 1; }
 .badge { position: absolute; top: 4px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--wait-bg); color: var(--wait); box-shadow: inset 0 0 0 1px var(--wait-line); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
-.m-cols { display: flex; gap: 6px; padding: 10px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); background: var(--pane); }
+.m-cols { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--pane); }
 .m-cols button { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--line-strong); background: var(--surface); font-weight: 600; font-size: 14px; color: var(--text-2); }
 .m-cols button[aria-selected="true"] { background: var(--text); color: #FEFEFC; border-color: var(--text); }
 .m-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -702,9 +702,8 @@ kbd { white-space: nowrap; }
   .chatpane .chat-input .hint { display: none; }
 }
 /* Below 1280 px the header keeps one row: key hints hide (they stay in the shortcuts sheet), Settings is icon + hidden label. */
-@media (max-width: 1279px) {
+@media (max-width: 1399px) {
   .cmdk kbd, .bar .btn kbd, .bar .chat-toggle kbd { display: none; }
-  .bar .wl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 .m-tabnote { font-size: 13px; color: var(--text-2); margin-top: -4px; }
 /* Card tags wrap under the ID when a column is narrow (tablet, chat open); IDs never break. */
@@ -713,7 +712,28 @@ kbd { white-space: nowrap; }
 .firststeps { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .list-note { font-size: 13px; color: var(--text-2); padding: 4px 4px 0; }
 /* When the board is narrow (chat open below 1280 px) the filter group takes its own row; Add card stays on the title row. */
-@media (max-width: 1279px) { .shell.chat-open .bar .seg { order: 5; } }
+
 /* While the chat or a card opened from it fills the right-hand slot, the tablet Details button is not shown. */
 .shell.chat-open #details-btn, .shell.ctx-pushed #details-btn { display: none; }
-@media (max-width: 1279px) { .shell.ctx-pushed .bar .seg { order: 5; } }
+
+
+/* ---------- B + chat, round 6 ---------- */
+/* Phone column row: the 44 px tabs wrap onto a second row on narrow phones (reflow at 320 px), never a hidden sideways scroll. */
+@media (max-width: 1399px) {
+  /* The centre is narrow from here down (the right-hand slot takes 304–396 px): filters take their own row,
+     so the title, Chat, Settings (with its word) and Add card share the first row. */
+  .bar .seg { order: 5; }
+}
+@media (max-width: 1099px) {
+  /* Pushed chat on a board with no orchestrator yet: the long status chip needs the room, so Settings shows its icon only. */
+  .shell.chat-open .bar:has(.ct-chip.off) .wl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@media (max-width: 359px) {
+  /* Narrow phones: bottom action bars stack, so both buttons stay on screen. */
+  .m-actions { grid-template-columns: 1fr; }
+}
+@media (max-width: 699px) {
+  /* Dialogs fit the phone: full width less a margin; actions wrap. */
+  .dialog, .dialog.wide { width: calc(100vw - 24px); padding: 18px; }
+  .dialog .acts { flex-wrap: wrap; }
+}
