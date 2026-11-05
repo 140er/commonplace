@@ -53,3 +53,13 @@ test("model fields show both roles and the chat copy points to Connect", async (
   const chat = await load("chat");
   assert.match(chat.CHAT_COPY.noOrchestratorOwner, /Connect/);
 });
+
+test("project memory controls preserve owner consent and escape the memory name", async () => {
+  const ui = await load("projects");
+  assert.equal(typeof ui.memoryHTML, "function");
+  assert.equal(typeof ui.sharedWingHTML, "function");
+  const html = ui.memoryHTML({...project, memory: {shared: false, wing: "<section>"}}, e);
+  assert.match(html, /&lt;section&gt;/);
+  assert.doesNotMatch(html, /data-project-own-wing/);
+  assert.doesNotMatch(ui.sharedWingHTML({}, e, {allowShared: false}), /data-wing-choice="shared"/);
+});
