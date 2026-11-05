@@ -195,3 +195,51 @@ def test_g02_nonworking_creation_allowed_at_cap(projects_hub, status):
     created = second.task_add(title="Waiting task", board="alpha", status=status)
     assert created["status"] == status
     assert second.task_show(created["number"])["status"] == status
+
+
+@pytest.mark.parametrize("creator", ["parent", "owner"])
+def test_r09_creation_for_child_refused(projects_hub, creator):
+    from commonplace import sessions
+
+    h = projects_hub
+    parent, _, cards = setup_agents(h)
+    seed_cap(parent, 1)
+    parent.task_take_next(board="alpha", task=cards[0])
+    child_id, _ = h.db.create_token(
+        workspace_ref=h.workspace,
+        user_ref=h.admin,
+        actor=h.admin,
+        name="child-worker",
+        client="test",
+        parent=parent.principal.connection_id,
+        policy=parent.principal.policy,
+    )
+    caller = parent
+    if creator == "owner":
+        principal = sessions.person_principal(h.db, h.admin, h.workspace)
+        caller = BoardService(ToolContext(principal=principal, gateway=h.gateway))
+    with parent.store.connection() as conn:
+        before = conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+    try:
+        caller.task_add(
+            title="Child task", board="alpha", status="doing", assignee=f"conn:{child_id}"
+        )
+    except ToolError as exc:
+        refusal = str(exc)
+    else:
+        refusal = None
+    with parent.store.connection() as conn:
+        after = conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+    assert (refusal, after) == (
+        "no: alpha already has its maximum of 1 agents working; the card waits in Todo",
+        before,
+    )  # RED
+
+
+def test_g03_working_parent_can_create_claim(projects_hub):
+    parent, _, cards = setup_agents(projects_hub)
+    seed_cap(parent, 1)
+    parent.task_take_next(board="alpha", task=cards[0])
+    created = parent.task_add(title="Another parent task", board="alpha", claim=True)
+    assert created["status"] == "doing"
+    assert created["assignee"] == parent.principal.actor

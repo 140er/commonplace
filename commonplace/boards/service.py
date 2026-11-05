@@ -1731,10 +1731,10 @@ class BoardService:
                     "no: create a proposal for your orchestrator before asking the owner"
                 )
             status, assignee = "backlog", p.actor
-        if status == "doing" and p.actor.startswith("conn:"):
+        if status == "doing":
             from commonplace.projects import limits
 
-            limits.check(conn, board, p.actor)
+            limits.check(conn, board, assignee)
         until = self._until(board) if status == "doing" and assignee.startswith("conn:") else None
         position = conn.execute(
             "SELECT coalesce(max(position),0)+1 FROM tasks WHERE board_id=? AND status=?",
