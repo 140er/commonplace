@@ -23,12 +23,19 @@ def own(h):
     return h.request(h.owner, "POST", "/api/projects/shared-board/wing", {})[:2]
 
 
-def test_pattern_project_view_keeps_connect_rejection(h):
-    assert h.create_board(h.owner, "wild", wing="project_*")[0] == 201
+@pytest.mark.parametrize("wing", ["project_*", "*", "sha*"])
+def test_pattern_project_view_keeps_connect_rejection(h, wing):
+    assert h.create_board(h.owner, "wild", wing=wing)[0] == 201
     status, body = h.project(h.owner, "wild")
     assert status == 200
-    assert body["memory"] == {"wing": "project_*", "shared": False, "own_wing": "project_wild"}
+    assert body["memory"] == {"wing": wing, "shared": False, "own_wing": "project_wild"}
     assert h.connect(h.owner, "wild")[0] == 400
+
+
+def test_bracket_shared_pattern_still_requires_connect_consent(h):
+    assert h.create_board(h.owner, "bracket", wing="[s]hared")[0] == 201
+    status, body = h.connect(h.owner, "bracket")
+    assert status == 409 and body["error"] == "shared_wing"
 
 
 def test_revoke_then_crash_repaired_without_reauditing(h, monkeypatch):

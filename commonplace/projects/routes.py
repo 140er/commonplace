@@ -22,7 +22,7 @@ def _view(gateway, principal, board):
         "board": board["slug"],
         "memory": {
             "wing": board["wing"],
-            "shared": shared_wing(board["wing"]),
+            "shared": shared_wing(board["wing"]) and not any(c in board["wing"] for c in "*?[]"),
             "own_wing": project_wing(board["slug"]),
         },
         "name": redact.redact(board["name"])[0],

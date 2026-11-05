@@ -1,4 +1,4 @@
-"""Card 229 frozen RED and guard matrix (synthetic data only)."""
+"""Project own-wing behaviour and guards (synthetic data only)."""
 
 import json
 import subprocess
@@ -173,7 +173,7 @@ assert.ok(ui.memoryHTML({memory:{wing:'<b>',shared:false},can_configure:true},e)
 
 @pytest.mark.parametrize("body", [{"wing": "x"}, [], None, "x"])
 def test_r12_body(h, body):
-    # None uses a non-empty JSON null body rather than the helper's default.
+    # None exercises the invalid-object fallback, not a literal JSON null.
     actual = {"wing": "x"} if body is None else body
     assert own(h, body=actual)[0] == 400  # RED
     assert h.board("shared-board")["wing"] == "shared"
