@@ -110,6 +110,25 @@ format detection cannot recognize; and identities containing `#sha256:`.
 An incomplete final multipart JSON object is refused; a complete final record
 without a newline is accepted. Exact bytes remain available in every case.
 
+## Find synced history in Memory
+
+Uploads and Memory indexing have separate progress. After an accepted capture
+append or exact retry, background indexing catches up the whole stored session.
+Imports, including memory-file imports, are also indexed in the background.
+Searchable text keeps the original words; a hit's `source.thread` can point to
+the shared session rather than an individual import.
+
+Only readers already allowed to read the private thread can find its words.
+Default self-service PAT and OAuth connections still cannot retrieve this
+history through Memory search or startup context, even when allowed to upload it.
+
+Existing imports are indexed automatically. Older captures that never sync again
+need `commonplace search-index run --workspace WORKSPACE_ID --captures` from an
+operator. This is separate from the upload backfill described above. Index bytes
+count toward workspace storage, and indexing pauses 16 MiB before the plan limit.
+See [indexing progress and controls](one-time-import.md#indexing-progress-and-storage)
+for the owner status endpoint, operator commands and the indexing off switch.
+
 ## Stop or remove
 
 `commonplace sync uninstall` previews removal. Add `--enable` to stop the service

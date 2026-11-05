@@ -6,9 +6,9 @@ importing account. The existing signed-in session/full-ACL route remains
 available separately. Neither route requires an administrator or enabling
 context handoff. Workspace membership and token restrictions still apply.
 
-Parsing, indexing and deduplication run on the gateway, without a model or any
-external API. Selecting a remote gateway deliberately uploads the export to
-that gateway. Use your instance's supplied agent endpoint and HTTPS for remote
+Parsing and deduplication run on the gateway, without a model or any
+external API. Background Memory indexing also runs locally on the gateway.
+Selecting a remote gateway deliberately uploads the export to that gateway. Use your instance's supplied agent endpoint and HTTPS for remote
 requests; keep its token out of exports, shared files and logs.
 
 | Source | Accepted input |
@@ -189,9 +189,10 @@ Grant responses contain no foreign thread IDs, hidden read results or storage
 totals. Existing full-ACL imports retain aggregate account storage figures,
 which include grant bytes; this is not a claim that aggregate usage is hidden
 from eligible workspace members. Direct local operator/database/backup access
-is outside the application read guarantee. Rolling back to an older binary
-loses the filer filter and rejects unknown-scope connections; do not add
-members during such a rollback.
+is outside the application read guarantee. For rollback, set
+`COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read
+protection. Once imported or captured text has been indexed,
+never deploy a build without that protection.
 
 Exact repeats and identical raw Grok lines in the grant namespace add no rows.
 Deduplication between an ACL copy and a grant copy, deduplication of grown
@@ -223,6 +224,53 @@ until the final whole-source hash and recognition checks succeed. No large-file
 performance guarantee is established: server work grows with accumulated history.
 
 ## Find your imported history
+
+Imports become searchable in Memory after background indexing finishes, not
+necessarily when the upload returns. Existing imports are indexed automatically
+when the gateway starts. Original words, spacing and line endings are preserved;
+long messages are split into searchable sections. Follow a hit's `source.thread`
+to read more. For a shared native session, this may point to the session's
+stored thread rather than the import's own stored ID.
+
+Search does not grant new read access. Use your signed-in account, or an
+operator-created token with `threads:read`, `private:read`, at least standard
+trust and access to the thread's workspace and section. Private imports remain
+readable only by the filing user. Default self-service PAT and OAuth connections
+still cannot find imported words through Memory search or startup context.
+An import grant alone does not enable those reads.
+
+### Indexing progress and storage
+
+The workspace owner can call `GET /api/search-index` with a signed-in session.
+It returns `state`, `threads_indexed`, `threads_pending` and `units_written`,
+without text or thread IDs. States are `idle`, `running`, `deferred_storage`
+and `off`. Operators can check or resume indexing with:
+
+```bash
+commonplace search-index status --workspace WORKSPACE_ID
+commonplace search-index run --workspace WORKSPACE_ID
+```
+
+Index bytes count toward workspace storage. Indexing pauses 16 MiB before the
+plan limit with `deferred_storage`; free space and run it again to resume.
+Work runs in bounded background batches. Restarts and repeated runs resume saved
+progress without deleting history or adding duplicate searchable copies.
+
+Imports are backfilled automatically. Captured sessions catch up in full on their
+next accepted sync. Older captured sessions that have not synced again need an
+explicit operator run, starting with the owner's workspace and watching storage:
+
+```bash
+commonplace search-index run --workspace WORKSPACE_ID --captures
+```
+
+Set `COMMONPLACE_SEARCH_INDEX=off` on the gateway to stop new indexing sweeps;
+queued work finishes its current thread. Existing searchable text and read
+protections remain. For rollback, use this switch and ship a hotfix retaining
+the thread-read protection. Never deploy a build without it once any imported
+or captured text has been indexed.
+
+### Browse the original imports
 
 Sign in to your personal workspace, then call `GET /api/imports` with your
 session cookie. Agent tokens cannot list imports. ACL imports are not listed;

@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Imported history and active captured sessions become searchable in Memory after background indexing. Existing imports are indexed automatically; untouched older captures require an operator `commonplace search-index run --workspace WORKSPACE_ID --captures`. Index bytes count toward plan storage; indexing pauses 16 MiB before the limit. Owners can check `GET /api/search-index`; operators can use `commonplace search-index status` ([guide](docs/one-time-import.md#indexing-progress-and-storage)).
+
 - Optional Commonplace live sync joins native session imports and captures, with a durable local outbox, private session reads, plan cadence and explicitly enabled user services ([guide](docs/live-sync.md)).
 - Commonplace can send mail over SMTP, configured with `COMMONPLACE_SMTP_*` and off by default. `commonplace login-link --send` emails the sign-in link and never prints it ([mail setup](commonplace/README.md#mail)).
 - Commonplace rules: the owner can change who a rule applies to, between one agent and All agents (or another agent), from an "Applies to…" menu, and accept an agent's proposal for all agents in one step. The move keeps the rule's history, and the agent's later republishes of that key stay with the moved rule for the owner to review ([design](docs/design/RULES.md)).
@@ -32,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and user-level hooks correctly. Status also tolerates a deleted working directory.
 
 ### Changed
+
+- All private thread search results, including existing handoff copies, require permission to read the original thread as well as private-read access. Tokens with `private:read` alone lose those hits. Default self-service PAT and OAuth connections still cannot retrieve imported or captured history through Memory search or startup context.
+- To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).
 
