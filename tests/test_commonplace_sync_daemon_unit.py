@@ -7,7 +7,7 @@ import json
 import sqlite3
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -30,6 +30,7 @@ class Op:
     native_id: str
     offset: int
     length: int
+    state: str = "pending"
 
 
 class State:
@@ -64,6 +65,12 @@ class State:
 
     def retry_rejected(self):
         self.marked = {op: status for op, status in self.marked.items() if status != "revoked"}
+
+    def outbox_all(self):
+        return [replace(op, state=self.marked.get(op.op_id, "pending")) for op in self.pending]
+
+    def clear_defer(self, key):
+        self.due.pop(key, None)
 
     def outbox_pending(self):
         return [op for op in self.pending if op.op_id not in self.marked]
@@ -281,7 +288,12 @@ def test_exit_table_and_pending_cursor(setup, reply, code, status):
     if reply and not isinstance(reply, Exception) and reply[0] == 429:
         delay = 840 if "840" in reply[1]["error"] else 900 if "900" in reply[1]["error"] else 60
         active = sync_daemon._Session(config, state, lambda: now[0], hub)
-        assert state.next_due(active._stream_key("claude-code", "session")) == now[0] + delay
+        key = (
+            active._stream_key("claude-code", "session")
+            if reply[1]["error"].startswith("Capture not due")
+            else active._token_key(TOKEN_ENV["claude-code"])
+        )
+        assert state.next_due(key) == now[0] + delay
         assert state.next_due(active.key) == 0
 
 
@@ -853,21 +865,21 @@ def test_capture_off_cursor_marks_stream_paused(backfill_setup):
     assert b.state.status.get(("claude-code", "s0", "s0")) == "paused"  # RED
 
 
-def test_continuous_rate_limited_cursors_each_wait_for_their_deadline(backfill_setup):
+def test_continuous_rate_limited_cursor_stops_the_token_pass(backfill_setup):
     b = backfill_setup
     gets = []
 
     def transport(target, token, method, route, body=None):
         if method == "GET":
             gets.append(route)
-            return 429, {"error": "slow down; retry in 5 seconds"}
+            return 429, {"error": "slow down", "_retry_after": "5"}
         return b.transport(target, token, method, route, body)
 
     active = sync_daemon._Session(b.config, b.state, lambda: b.now[0], transport)
     active.cycle()
-    assert len(gets) == len(b.sources.sizes)
+    assert len(gets) == 1
     active.cycle()
-    assert len(gets) == len(b.sources.sizes)
+    assert len(gets) == 1
     assert active.retry_due == b.now[0] + 5
     assert b.state.next_due(active.key) == 0
 
@@ -889,3 +901,23 @@ def test_deferred_stream_keeps_backoff_with_a_refused_stream(backfill_setup):
     assert active.cycle() == 1  # RED
     b.now[0] += 60
     assert active.cycle() == 1  # RED
+
+
+@pytest.mark.parametrize("header", ["37", "Wed, 18 May 2033 03:33:57 GMT"])
+def test_card223_transport_surfaces_retry_after(monkeypatch, header):
+    response = SimpleNamespace(
+        status=429,
+        read=lambda limit: b'{"error":"slow down"}',
+        getheader=lambda name: header if name == "Retry-After" else None,
+    )
+    connection = SimpleNamespace(
+        request=lambda *args: None, getresponse=lambda: response, close=lambda: None
+    )
+    monkeypatch.setattr(
+        sync_daemon.http.client, "HTTPSConnection", lambda *args, **kwargs: connection
+    )
+    status, payload = sync_daemon.request(
+        urlsplit("https://sync.example"), TOKEN, "GET", "/api/capture"
+    )
+    assert status == 429
+    assert payload.get("_retry_after") == header  # RED
