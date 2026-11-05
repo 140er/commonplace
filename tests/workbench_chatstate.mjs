@@ -159,9 +159,11 @@ const checks = {
   },
   reload() {
     const storage = memoryStorage();
-    globalThis.sessionStorage = storage;
-    globalThis.localStorage = { getItem() { assert.fail("Persistent storage must not be read"); }, setItem() { assert.fail("Persistent storage must not be written"); } };
+    // Seen ids live on the device (localStorage), never only in the tab's session.
+    globalThis.localStorage = storage;
+    globalThis.sessionStorage = { getItem() { assert.fail("Seen ids must not be session-only"); }, setItem() { assert.fail("Seen ids must not be session-only"); } };
     seenStore("maya", "atlas").read(page());
+    assert.equal(storage.getItem("cmmn.chat.seen.maya.atlas"), '{"message":10,"reply":0}');
     const p = page([message(11, 0, { actor: "conn:Iris" })]);
     assert.equal(derive(p, status, board, seenStore("maya", "atlas").read(p)).unread, 1);
     delete globalThis.sessionStorage; delete globalThis.localStorage;
@@ -201,7 +203,7 @@ const checks = {
     const full = store("maya", "atlas", { ...denied, getItem() { return null; } });
     full.read(page());
     assert.deepEqual(full.read(page([message(11)])), { message: 10, reply: 0 });
-    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, get() { throw new Error("denied"); } });
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("denied"); } });
     const unavailable = store();
     // Explicit storage works even when accessing the browser's storage is denied.
     assert.deepEqual(unavailable.read(page()), { message: 10, reply: 0 });
@@ -209,7 +211,7 @@ const checks = {
     assert.equal(typeof missing.read, "function");
     assert.deepEqual(missing.read(page()), { message: 10, reply: 0 });
     assert.deepEqual(missing.read(page([message(11)])), { message: 10, reply: 0 });
-    delete globalThis.sessionStorage;
+    delete globalThis.localStorage;
   },
   malformed_store() {
     for (const value of ["broken", "null", "[]", '{"message":-1,"reply":2}', '{"message":"7","reply":2}', '{"text":"private"}']) {

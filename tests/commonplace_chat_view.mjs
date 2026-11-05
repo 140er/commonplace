@@ -88,7 +88,7 @@ function setup(t, { post, echo = false, online = true, stored, page: supplied, o
   const store = { get length() { return data.size; }, key: (i) => [...data.keys()][i], getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
   const doc = { hidden: false, addEventListener: (n, fn) => listeners.set(n, fn), removeEventListener: (n) => listeners.delete(n) };
   const restoreGlobals = [];
-  for (const [name, value] of Object.entries({ document: doc, navigator: { onLine: online }, sessionStorage: store, addEventListener: (n, fn) => events.set(n, fn), removeEventListener: (n) => events.delete(n) })) {
+  for (const [name, value] of Object.entries({ document: doc, navigator: { onLine: online }, sessionStorage: store, localStorage: store, addEventListener: (n, fn) => events.set(n, fn), removeEventListener: (n) => events.delete(n) })) {
     const previous = Object.getOwnPropertyDescriptor(globalThis, name);
     Object.defineProperty(globalThis, name, { configurable: true, value, writable: true });
     restoreGlobals.push(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);

@@ -1,4 +1,4 @@
-"""Browser-free chat state and session seen-id contracts."""
+"""Browser-free chat state and device seen-id contracts."""
 
 import subprocess
 from pathlib import Path
