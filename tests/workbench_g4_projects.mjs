@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 
 // A small document: enough markup parsing and selector matching for the project dialogs.
 const VOID = new Set(["input", "br", "img", "hr", "meta", "link"]);
@@ -33,7 +32,11 @@ class El {
   set disabled(value) { this.toggleAttribute("disabled", !!value); }
   get hidden() { return this.hasAttribute("hidden"); }
   set hidden(value) { this.toggleAttribute("hidden", !!value); }
-  get value() { return this._value ?? this.getAttribute("value") ?? ""; }
+  get value() {
+    if (this._value !== null) return this._value;
+    if (this.localName === "select") { const options = this.querySelectorAll("option"); return (options.find((o) => o.hasAttribute("selected")) || options[0])?.value ?? ""; }
+    return this.getAttribute("value") ?? "";
+  }
   set value(value) { this._value = String(value); }
   get textContent() { return this.children.map((child) => child.textContent).join(""); }
   set textContent(value) { this.replaceChildren(new Text(String(value))); }
@@ -133,9 +136,16 @@ function makeDocument() {
 const doc = makeDocument();
 globalThis.document = doc;
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
+globalThis.location = { hash: "" };
 globalThis.CSSStyleSheet = class { replaceSync() {} };
 globalThis.CSS = { escape: (value) => String(value) };
 globalThis.confirm = () => { throw new Error("window.confirm must not be used"); };
+// Clipboard and console are recorded so a test can check what was copied and that no credential is logged.
+const clipboard = [];
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (text) => { clipboard.push(text); } } } });
+const logged = [];
+for (const level of ["log", "info", "warn", "error", "debug"]) console[level] = (...args) => logged.push(args.map(String).join(" "));
+const say = (text) => process.stdout.write(`${text}\n`);
 
 const ui = await import(new URL("../commonplace/web/static/projects.js", import.meta.url));
 const e = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -152,7 +162,7 @@ function opener(label = "opener") {
 }
 
 function assertTrapped(dialog) {
-  const controls = dialog.querySelectorAll("button:not([disabled]), input:not([disabled])");
+  const controls = dialog.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary");
   assert.ok(controls.length >= 2, "the dialog has controls to cycle");
   controls.at(-1).focus();
   assert.equal(doc.key("Tab").defaultPrevented, true, "Tab on the last control stays in the dialog");
@@ -165,6 +175,70 @@ function assertTrapped(dialog) {
 }
 
 const cases = {
+  // Review MAJOR 2: "Create and copy setup" copies the MCP setup the agent app reads (address and
+  // Bearer key in the Settings > Agents format), not the bare token; nothing is logged.
+  async setup_clipboard() {
+    const { clientConfig } = await import(new URL("../commonplace/web/static/agents.js", import.meta.url));
+    const button = opener();
+    const realTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = () => 0;
+    clipboard.length = 0; logged.length = 0;
+    try {
+      ui.openConnectDialog({ slug: "ledger", e, opener: button, api: async (path, options = {}) => options.method === "POST" ? result : { ...project, main: { ...project.main, connected: false } } });
+      const dialog = openDialog();
+      assert.match(dialog.textContent, /MCP address/, "the dialog says what the setup holds");
+      await dialog.querySelector("[data-project-create]").click();
+      await tick(20);
+      assert.equal(clipboard.length, 1, "Create and copy setup writes the clipboard once");
+      const copied = clipboard[0];
+      assert.notEqual(copied, result.token, "the clipboard holds more than the bare token");
+      assert.equal(copied, clientConfig("claude-code", result.mcp_url, result.token), "the setup is the Settings > Agents format");
+      assert.ok(copied.includes(result.mcp_url) && copied.includes(`Bearer ${result.token}`), "address and Bearer key are in the setup");
+      assert.match(dialog.querySelector("[data-project-copy-status]").textContent, /Setup copied for Claude Code/);
+      const app = dialog.querySelector("[data-project-app]");
+      app.value = "codex"; app.onchange();
+      await dialog.querySelector("[data-project-copy-setup]").click();
+      await tick(20);
+      assert.equal(clipboard.at(-1), clientConfig("codex", result.mcp_url, result.token), "the chosen agent app's format is copied");
+      assert.ok(!logged.some((line) => line.includes(result.token)), "the credential is never logged");
+      dialog.dispatch("cancel");
+    } finally { globalThis.setTimeout = realTimeout; button.remove(); }
+  },
+  // Review MAJOR 1/4: Disconnect revokes the connection workspace-wide. The dialog names known
+  // assignments elsewhere, never claims "no other project" (wing access is not visible here), and
+  // always keeps the line that revoking stops its access in every project.
+  async disconnect_scope() {
+    const boards = [{ slug: "ledger", name: "Ledger", coordinator: null }, { slug: "harbor", name: "Harbor", coordinator: null }, { slug: "atlas", name: "Atlas", coordinator: null }];
+    const cardsOf = { ledger: [{ number: 1, assignee: "conn:worker-1" }], harbor: [{ number: 2, assignee: "conn:worker-1" }], atlas: [{ number: 3, assignee: "conn:other" }] };
+    const generic = /stops all of its access in every project of this workspace/;
+    for (const mode of ["assigned", "none", "unreadable"]) {
+      const readable = mode !== "unreadable";
+      const cards = mode === "none" ? { ...cardsOf, harbor: [] } : cardsOf;
+      const host = doc.createElement("div"); doc.body.append(host);
+      const api = async (path) => {
+        if (path === "/api/connections") return { connections: [{ id: "c-9", name: "worker-1", last_used_at: null }] };
+        if (path === "/api/boards") { if (!readable) throw { status: 500 }; return { boards }; }
+        const slug = path.match(/^\/api\/boards\/([^/]+)\/cards$/)?.[1];
+        if (slug) return { cards: cards[slug], linked: [], children: [] };
+        return project;
+      };
+      await ui.mountProjectAgents(host, { project, api, e, current: () => true, onUpdate() {} });
+      const pending = host.querySelector('[data-project-disconnect="c-9"]').click();
+      await tick();
+      const dialog = openDialog();
+      assert.ok(dialog, "a drawn dialog is open");
+      assert.match(dialog.textContent, /for the whole workspace/, "the dialog names the workspace-wide scope");
+      assert.match(dialog.textContent, generic, `${mode}: the workspace-wide access line is always shown`);
+      assert.doesNotMatch(dialog.textContent, /works in no other project/i, `${mode}: no exhaustive negative claim`);
+      assert.doesNotMatch(dialog.textContent, /Atlas/, `${mode}: a board without its assignment is not named`);
+      if (mode === "assigned") assert.match(dialog.textContent, /also assigned in Harbor\./, "the known assignment is named");
+      if (mode === "none") assert.match(dialog.textContent, /No known assignments in other projects\./);
+      if (mode === "unreadable") assert.match(dialog.textContent, /could not be checked/);
+      dialog.dispatch("cancel");
+      await pending;
+      host.remove();
+    }
+  },
   // 03c: the empty board's Connect an agent is a modal dialog; Esc returns to the opener.
   async connect_dialog() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");
@@ -280,6 +354,7 @@ const cases = {
     const disconnect = host.querySelector('[data-project-disconnect="c-1"]');
     disconnect.focus();
     const pending = disconnect.click();
+    await tick();
     const dialog = doc.querySelector('[aria-modal="true"], dialog[open]');
     assert.ok(dialog, "a drawn dialog is open");
     assert.match(dialog.textContent, /Disconnect Ledger orchestrator\?/);
@@ -293,6 +368,7 @@ const cases = {
     assert.equal(doc.activeElement, host.querySelector('[data-project-disconnect="c-1"]'));
     assert.ok(!calls.some((c) => c.method === "DELETE"), "Esc disconnects nothing");
     const again = host.querySelector('[data-project-disconnect="c-1"]').click();
+    await tick();
     openDialog().querySelector('[data-confirm="ok"]').click();
     await again; await tick();
     assert.deepEqual(calls.filter((c) => c.method === "DELETE").map((c) => c.path), ["/api/connections/c-1"]);
@@ -316,12 +392,29 @@ const cases = {
   // I1: settings hand Back and Esc to the caller's onBack.
   async on_back() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");
-    const source = await readFile(new URL("../commonplace/web/static/projects.js", import.meta.url), "utf8");
-    assert.match(source, /export async function mountProject\(host, \{[^}]*\bonBack\b/);
-    assert.match(source, /bindSettingsNavigation\(host, \{[^}]*\bonBack\b/);
+    const api = async (path) => {
+      if (path.startsWith("/api/chat-settings")) return { front: { provider: "none" }, local_models: [], hosted: [] };
+      if (path === "/api/connections") return { connections: [] };
+      if (path.endsWith("/cards")) return { cards: [], linked: [] };
+      if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+      return { ...project, limits: { max_agents: 3 }, models: {} };
+    };
+    for (const trigger of ["link", "escape"]) {
+      const host = doc.createElement("div"); doc.body.append(host);
+      const backs = [];
+      await ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger/chat", onBack: (href) => backs.push(href) });
+      const link = host.querySelector("[data-project-back]");
+      assert.ok(link, "settings draw the back link");
+      assert.equal(link.textContent, "Back to the chat");
+      if (trigger === "link") link.click();
+      else assert.equal(doc.key("Escape").defaultPrevented, true, "settings take Escape");
+      assert.deepEqual(backs, ["#/board/ledger/chat"], `${trigger}: onBack runs with the origin instead of the default navigation`);
+      host.remove();
+      doc.key("Escape");
+    }
   },
 };
 
 assert.ok(process.argv[2] in cases, "unknown case");
 await cases[process.argv[2]]();
-console.log(`PASS ${process.argv[2]}`);
+say(`PASS ${process.argv[2]}`);
