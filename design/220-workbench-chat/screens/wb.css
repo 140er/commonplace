@@ -477,7 +477,7 @@ select.selectbox { appearance: none; width: 100%; font: inherit; font-size: 13px
   .board { grid-template-columns: minmax(0, 1fr); overflow: visible; }
   .cards { overflow: visible; }
   .context { border-left: 0; border-top: 1px solid var(--line); }
-  .ctx-body { overflow: visible; }
+  .shell:not(.chat-open):not(.ctx-pushed) .context .ctx-body { overflow: visible; }
   .firststeps { grid-template-columns: minmax(0, 1fr); }
 }
 .alert .acts { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -694,3 +694,26 @@ kbd { white-space: nowrap; }
 .chat-input .hint span { white-space: nowrap; }
 @media (min-width: 1280px) and (max-width: 1399px) { .shell.chat-open .card-top { flex-wrap: wrap; row-gap: 2px; } }
 @media (max-width: 699px) { .rail [role="list"] { flex-wrap: wrap; overflow-x: visible; } }
+
+/* ---------- B + chat, round 5 ---------- */
+/* Phones: the chat log keeps scrolling inside the full-screen sheet; keyboard hints are not shown on touch widths. */
+@media (max-width: 699px) {
+  .chatpane .ctx-body { overflow: auto; }
+  .chatpane .chat-input .hint { display: none; }
+}
+/* Below 1280 px the header keeps one row: key hints hide (they stay in the shortcuts sheet), Settings is icon + hidden label. */
+@media (max-width: 1279px) {
+  .cmdk kbd, .bar .btn kbd, .bar .chat-toggle kbd { display: none; }
+  .bar .wl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+.m-tabnote { font-size: 13px; color: var(--text-2); margin-top: -4px; }
+/* Card tags wrap under the ID when a column is narrow (tablet, chat open); IDs never break. */
+.card-top { flex-wrap: wrap; row-gap: 2px; }
+.composer-foot { flex-wrap: wrap; }
+.firststeps { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.list-note { font-size: 13px; color: var(--text-2); padding: 4px 4px 0; }
+/* When the board is narrow (chat open below 1280 px) the filter group takes its own row; Add card stays on the title row. */
+@media (max-width: 1279px) { .shell.chat-open .bar .seg { order: 5; } }
+/* While the chat or a card opened from it fills the right-hand slot, the tablet Details button is not shown. */
+.shell.chat-open #details-btn, .shell.ctx-pushed #details-btn { display: none; }
+@media (max-width: 1279px) { .shell.ctx-pushed .bar .seg { order: 5; } }

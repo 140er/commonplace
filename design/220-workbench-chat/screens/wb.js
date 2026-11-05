@@ -88,6 +88,7 @@ let showDetailsRef = null;
       if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
       else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
     }
+    if (e.key === "Escape" && $('[data-esc="follow"]', m)) { e.preventDefault(); location.href = $('[data-esc="follow"]', m).href; return; }
     if (e.key === "Escape") {
       if (m.id === "chat" || (m.id === "ctx" && $(".shell.ctx-pushed"))) return;
       e.preventDefault();
@@ -109,6 +110,7 @@ let showDetailsRef = null;
     if (localStorage.getItem("wb-single-keys") === "off") return;
     if (e.key === "/") { e.preventDefault(); openChat($("#chat-toggle")); return; }
     if (e.key === "]" && chatOpen()) { e.preventDefault(); closeChat(); return; }
+    if (e.key === "]" && $("#from-chat") && !$("#from-chat").hidden) { e.preventDefault(); backToChat(); return; }
     const target = keys[e.key.toLowerCase()] && $(keys[e.key.toLowerCase()]);
     if (target) { e.preventDefault(); if (e.key.toLowerCase() === "r") target.click(); else target.focus(); }
   });
@@ -190,7 +192,9 @@ let showDetailsRef = null;
       strip.hidden = !row;
       strip.dataset.row = fromRow ? id : "";
       const t = $(".fc-text", strip);
-      if (t) t.textContent = fromRow ? "Opened from Atlas chat, the 14:03 answer." : `You picked ${id} on the board. The chat is one click away.`;
+      // The strip names the message the row sits in (writer and time come from the row itself).
+      const chatName = ($("#chat-h") || {}).textContent || "the chat";
+      if (t) t.textContent = fromRow ? `Opened from ${chatName}: ${row.dataset.src || "a message"}.` : `You picked ${id} on the board. The chat is one click away.`;
     }
     if (row) {
       setOpen(false);
@@ -218,6 +222,8 @@ let showDetailsRef = null;
   document.addEventListener("click", (e) => {
     const d = e.target.closest && e.target.closest("#details-btn, #ctx .hide");
     if (!d) return;
+    const fcs = $("#from-chat");
+    if (d.matches(".hide") && fcs && !fcs.hidden) return backToChat();
     const sh = $(".shell"), ctx = $("#ctx");
     if (!sh || !ctx) return;
     if (d.id === "details-btn") {
@@ -274,7 +280,7 @@ let showDetailsRef = null;
     if (cf) { const body = $("#ctx .ctx-body"); if (body) body.scrollTop = body.scrollHeight; }
     // Phone Settings opened from Needs me goes back there.
     const sb = $("#m-settings-back");
-    if (sb && /from=needs/.test(location.search)) { sb.lastChild.textContent = "Back to Needs me"; sb.href = "m2-needs-me.html#m-settings"; }
+    if (sb && /from=harbor/.test(location.search)) sb.href = "m2b-needs-me-harbor.html#m-settings";
     const mb = $("#m-chat-back");
     if (mb && /from=needs/.test(location.search)) { mb.lastChild.textContent = "Back to Needs me"; mb.href = "m2-needs-me.html#m-chat-tab"; }
     // A link may name the element to return to (#m-chat-tab, #row-A-135): focus it, so Back keeps your place.

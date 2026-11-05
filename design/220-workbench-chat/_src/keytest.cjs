@@ -337,6 +337,51 @@ const cases = [
   ok3("m2 Settings → sheet says Back to Needs me → m2, focus on Settings", sn4 === "Back to Needs me" && rn4.page === "m2-needs-me.html" && rn4.focus === "m-settings", { sn4, rn4 });
   const live4 = await p4.evaluate(() => (document.querySelector('.m-tabs [role="status"]') || {}).textContent);
   ok3("m2: the phone unread count is announced by a status line", live4 === "1 new reply in Atlas chat", { live4 });
+  {
+  // ---- Round 5
+  const ok5 = (label, cond, info) => { if (!cond) fails++; console.log(`${cond ? "PASS" : "FAIL"} ${label}: ${JSON.stringify(info)}`); };
+  const d5 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const strip5 = () => d5.evaluate(() => ({ text: document.querySelector("#from-chat .fc-text").textContent, shown: !document.getElementById("from-chat").hidden, id: document.querySelector("#ctx .detail-h .cid").textContent, chat: !document.getElementById("chat").hidden, focus: document.activeElement.dataset.card || document.activeElement.tagName }));
+  await d5.goto("file://" + D + "/06a-chat-open.html"); await d5.waitForTimeout(100);
+  await d5.click('#chat [data-card="A-121"]'); const q1 = await strip5();
+  ok5("06a: the A-121 row in the 12:41 quick reply opens A-121 with a strip naming that quick reply, not 14:03", q1.id === "A-121" && q1.shown && /12:41 quick reply \(local model\)/.test(q1.text) && !/14:03/.test(q1.text), q1);
+  await d5.goto("file://" + D + "/06c-chat-answer.html"); await d5.waitForTimeout(100);
+  await d5.click('#chat [data-card="A-134"]'); const q2 = await strip5();
+  ok5("06c: the A-134 row names the orchestrator's 14:03 answer", q2.id === "A-134" && /orchestrator's 14:03 answer/.test(q2.text), q2);
+  await d5.goto("file://" + D + "/06f3-chat-card-details-a121.html"); await d5.waitForTimeout(100);
+  const q3 = await strip5();
+  ok5("06f3 static: A-121 from the quick reply, strip names it", q3.id === "A-121" && q3.shown && /12:41 quick reply/.test(q3.text), q3);
+  await d5.goto("file://" + D + "/06f-chat-card-details.html"); await d5.waitForTimeout(100);
+  await d5.click("#ctx .hide"); const q4 = await strip5();
+  await d5.goto("file://" + D + "/06f-chat-card-details.html"); await d5.waitForTimeout(100);
+  await d5.focus("#ctx .detail-h h2"); await d5.keyboard.press("]"); const q5 = await strip5();
+  ok5("06f: Hide and ] on Details opened from the chat both go back to the chat, focus on the A-134 row", q4.chat && q4.focus === "A-134" && q5.chat && q5.focus === "A-134", { q4, q5 });
+  await d5.close();
+  // Esc on phone Settings returns like Back, for each origin, tested separately
+  const e5 = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const where5 = () => e5.evaluate(() => ({ page: location.pathname.split("/").pop(), focus: document.activeElement.id, modals: [...document.querySelectorAll('[aria-modal="true"]')].filter((m) => getComputedStyle(m).display !== "none" && !m.hidden).length }));
+  for (const [start, wantPage, wantFocus, label] of [
+    ["m13b-settings-not-answering.html", "m12b-chat-error.html", "restart-agent", "error origin; back in the chat sheet"],
+    ["m13-settings.html", "m13-settings.html", "m-settings", "board origin (sheet over the board)"],
+    ["m13c-settings-from-needs.html", "m2-needs-me.html", "m-settings", "Needs me origin"],
+    ["m13c-settings-from-needs.html?from=harbor", "m2b-needs-me-harbor.html", "m-settings", "Needs me origin, Harbor last opened"],
+  ]) {
+    await e5.goto("file://" + D + "/" + start); await e5.waitForTimeout(120);
+    await e5.keyboard.press("Escape"); await e5.waitForTimeout(200);
+    const r = await where5();
+    const wantModals = wantPage.startsWith("m12b") ? 1 : 0; // m12b is itself the open chat sheet
+    ok5(`Esc on ${start} (${label}) returns like Back`, r.page === wantPage && r.focus === wantFocus && r.modals === wantModals, r);
+  }
+  await e5.goto("file://" + D + "/m2b-needs-me-harbor.html"); await e5.waitForTimeout(100);
+  await e5.click("#m-settings"); await e5.waitForTimeout(150);
+  await e5.click("#m-settings-back"); await e5.waitForTimeout(150);
+  const hb = await where5();
+  ok5("m2b Settings → Back returns to the Harbor Needs me state, focus on Settings", hb.page === "m2b-needs-me-harbor.html" && hb.focus === "m-settings", hb);
+  // 390 px: the last chat message ends above the composer
+  await e5.goto("file://" + D + "/06c-chat-answer.html"); await e5.waitForTimeout(120);
+  const ov = await e5.evaluate(() => { const log = document.querySelector("#chat [role=log]"); log.scrollTop = log.scrollHeight; const msgs = log.querySelectorAll(".msg"); return { lastBottom: Math.round(msgs[msgs.length - 1].getBoundingClientRect().bottom), composerTop: Math.round(document.querySelector("#chat .ctx-foot").getBoundingClientRect().top), scrolls: getComputedStyle(log).overflowY, hint: getComputedStyle(document.querySelector("#chat .hint")).display }; });
+  ok5("390 px: chat log scrolls, last message ends above the composer, no keyboard hint", ov.lastBottom <= ov.composerTop && ov.scrolls === "auto" && ov.hint === "none", ov);
+  }
   await browser.close();
   console.log(fails ? `${fails} FAILED` : "ALL PASS");
   process.exit(fails ? 1 : 0);

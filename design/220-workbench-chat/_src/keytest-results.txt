@@ -66,4 +66,14 @@ PASS m2b (Harbor item last opened): tab reads 'Harbor chat' → Harbor chat with
 PASS m12b: restart first4 → m13b amber, 3 steps, Back to the chat → m12b, focus on the restart button: {"pfirst":["Show how to restart the agent","Ask again","Make it a card now (adds it to Todo)"],"s13":{"page":"m13b-settings-not-answering.html","warn":"AAtlas orchestrator Not answering since 14:02Agent on “Maya's laptop” · connected · last active 14:03","steps":3,"back":"Back to the chat"},"r13":{"page":"m12b-chat-error.html","focus":"restart-agent"}}
 PASS m2 Settings → sheet says Back to Needs me → m2, focus on Settings: {"sn4":"Back to Needs me","rn4":{"page":"m2-needs-me.html","focus":"m-settings"}}
 PASS m2: the phone unread count is announced by a status line: {"live4":"1 new reply in Atlas chat"}
+PASS 06a: the A-121 row in the 12:41 quick reply opens A-121 with a strip naming that quick reply, not 14:03: {"text":"Opened from Atlas chat: the 12:41 quick reply (local model).","shown":true,"id":"A-121","chat":false,"focus":"H2"}
+PASS 06c: the A-134 row names the orchestrator's 14:03 answer: {"text":"Opened from Atlas chat: the orchestrator's 14:03 answer.","shown":true,"id":"A-134","chat":false,"focus":"H2"}
+PASS 06f3 static: A-121 from the quick reply, strip names it: {"text":"Opened from Atlas chat: the 12:41 quick reply (local model).","shown":true,"id":"A-121","chat":false,"focus":"H2"}
+PASS 06f: Hide and ] on Details opened from the chat both go back to the chat, focus on the A-134 row: {"q4":{"text":"Opened from Atlas chat: the orchestrator's 14:03 answer.","shown":false,"id":"A-134","chat":true,"focus":"A-134"},"q5":{"text":"Opened from Atlas chat: the orchestrator's 14:03 answer.","shown":false,"id":"A-134","chat":true,"focus":"A-134"}}
+PASS Esc on m13b-settings-not-answering.html (error origin; back in the chat sheet) returns like Back: {"page":"m12b-chat-error.html","focus":"restart-agent","modals":1}
+PASS Esc on m13-settings.html (board origin (sheet over the board)) returns like Back: {"page":"m13-settings.html","focus":"m-settings","modals":0}
+PASS Esc on m13c-settings-from-needs.html (Needs me origin) returns like Back: {"page":"m2-needs-me.html","focus":"m-settings","modals":0}
+PASS Esc on m13c-settings-from-needs.html?from=harbor (Needs me origin, Harbor last opened) returns like Back: {"page":"m2b-needs-me-harbor.html","focus":"m-settings","modals":0}
+PASS m2b Settings → Back returns to the Harbor Needs me state, focus on Settings: {"page":"m2b-needs-me-harbor.html","focus":"m-settings","modals":0}
+PASS 390 px: chat log scrolls, last message ends above the composer, no keyboard hint: {"lastBottom":743,"composerTop":759,"scrolls":"auto","hint":"none"}
 ALL PASS
