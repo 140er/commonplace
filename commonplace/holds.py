@@ -84,8 +84,8 @@ def create(service, body, now):
             raise ToolError("no: choose one of the offered options")
         # Board events have second precision. A cursor also distinguishes an older
         # identical answer when an ask is reopened in that same second.
-        events_seen = conn.execute(
-            "SELECT count(*) FROM task_events WHERE task_id=?", (row["id"],)
+        event_after = conn.execute(
+            "SELECT coalesce(max(id),0) FROM task_events WHERE task_id=?", (row["id"],)
         ).fetchone()[0]
     if kind == "decide":
         if body.get("then", "return") not in ("return", "todo", "done", "backlog"):
@@ -107,7 +107,7 @@ def create(service, body, now):
                 principal.user_id,
                 body["card"],
                 kind,
-                json.dumps({**body, "_events_seen": events_seen}),
+                json.dumps({**body, "_event_after": event_after}),
                 release_at,
                 stamp(now),
                 stamp(now),
@@ -219,19 +219,33 @@ class HoldWorker:
             body = json.loads(hold["body"])
             card = service.task_show(hold["card"])
             choice = "approve" if hold["kind"] == "approve" else body.get("choice")
-            visible = recovering and (
-                (hold["kind"] == "approve" and card.get("approved_by") == principal.actor)
-                or any(
-                    e["kind"] == "decide"
-                    and e["actor"] == principal.actor
-                    and e.get("choice") == choice
-                    and datetime.fromisoformat(e["at"].replace("Z", "+00:00"))
-                    >= datetime.fromisoformat(hold["created_at"]).replace(microsecond=0)
-                    for e in card["events"][body["_events_seen"] :]
+            visible = False
+            if recovering:
+                with service.store.connection() as conn:
+                    decided = conn.execute(
+                        "SELECT 1 FROM task_events WHERE task_id=? AND id>? "
+                        "AND kind='decide' AND choice=? AND stamp_connection IS NULL "
+                        "AND stamp_user IN (?,?) AND created_at>=? LIMIT 1",
+                        (
+                            hold["card"],
+                            body.get("_event_after", 0),
+                            choice,
+                            principal.user_id,
+                            principal.actor,
+                            datetime.fromisoformat(hold["created_at"])
+                            .replace(microsecond=0)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        ),
+                    ).fetchone()
+                visible = bool(decided) or (
+                    hold["kind"] == "approve" and card.get("approved_by") == principal.actor
                 )
-            )
             if not visible:
-                args = {k: v for k, v in body.items() if k not in {"card", "kind", "_events_seen"}}
+                args = {
+                    k: v
+                    for k, v in body.items()
+                    if k not in {"card", "kind", "_events_seen", "_event_after"}
+                }
                 if hold["kind"] == "approve":
                     service.task_approve(hold["card"], approve=True, **args)
                 else:
@@ -271,6 +285,9 @@ def install(gateway):
             if h.command == "GET":
                 result = 200, {"holds": listing(gateway.db, principal, now)}
             elif h.path == "/api/holds":
+                if not h.headers.get("Content-Type", "").startswith("application/json"):
+                    http_util.send_json(h, 415, {"error": "Content-Type must be application/json"})
+                    return
                 try:
                     body = http_util.read_json(h)
                 except ValueError:

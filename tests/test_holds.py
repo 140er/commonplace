@@ -247,3 +247,56 @@ def test_r12_full_delay_and_retention(chat_hub):
     assert not worker.run_once(now=1800000060.5)
     assert m.stop(h.db, s.principal, result["id"], 1800000060.5)[0] == 200
     assert m.listing(h.db, s.principal, 1800086460.51) == []
+
+
+@pytest.mark.parametrize("kind", ["link", "unlink"])
+def test_r13_recovery_after_hidden_event(chat_hub, monkeypatch, kind):
+    m = module()
+    from commonplace.boards.service import BoardService
+
+    h = chat_hub
+    s, card, body = setup_hold(h)
+    original = BoardService._history_link_visible
+
+    def visible(self, memory_id, visibility):
+        return False if memory_id == "private-drawer" else original(self, memory_id, visibility)
+
+    monkeypatch.setattr(BoardService, "_history_link_visible", visible)
+    with s.transaction() as conn:
+        s._log(conn, card["number"], kind, target="private-drawer")
+        raw_count = conn.execute(
+            "SELECT count(*) FROM task_events WHERE task_id=?", (card["number"],)
+        ).fetchone()[0]
+    assert len(s.task_show(card["number"])["events"]) == raw_count - 1
+    status, result, _ = post(h, body)
+    assert status == 201
+    with h.db._lock:
+        h.db._conn.execute("UPDATE answer_holds SET state='settling' WHERE id=?", (result["id"],))
+    s.decide(card["number"], choice="First", version=body["version"])
+    recovery = m.HoldWorker(h.gateway, start=False)
+    assert recovery.run_once(now=recovery.now() + 61)
+    row = m.listing(h.db, s.principal, recovery.now() + 61)[0]
+    assert row["state"] == "released" and row["code"] == ""  # RED
+    assert len([e for e in s.task_show(card["number"])["events"] if e["kind"] == "decide"]) == 1
+
+
+@pytest.mark.parametrize("content_type", [None, "text/plain", "application/x-www-form-urlencoded"])
+def test_g03_non_json_person_write_creates_no_hold(chat_hub, content_type):
+    h = chat_hub
+    _, _, body = setup_hold(h)
+    headers = {**h.owner, "Content-Type": content_type or ""}
+    assert h.request(headers, "POST", "/api/holds", body)[0] == 403
+    with h.db._lock:
+        exists = h.db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='answer_holds'"
+        ).fetchone()
+        if exists:
+            assert h.db._conn.execute("SELECT count(*) FROM answer_holds").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "application/json; charset=utf-8"])
+def test_g02_hold_accepts_json_content_type(chat_hub, content_type):
+    h = chat_hub
+    _, _, body = setup_hold(h)
+    headers = {**h.owner, "Content-Type": content_type}
+    assert h.request(headers, "POST", "/api/holds", body)[0] == 201  # RED on pre-hold base
