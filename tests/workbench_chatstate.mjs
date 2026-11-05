@@ -217,6 +217,22 @@ const checks = {
       assert.deepEqual(store("maya", "atlas", storage).read(page()), { message: 10, reply: 0 });
     }
   },
+  receipt_newest() {
+    // An acknowledged work request, then a non-work message whose receipt says nobody is there.
+    const result = derive(page(
+      [message(10, 360), message(11, 300, { actor: "conn:Iris" }), message(12, 10, { text: "hi" })],
+      [reply(1, "receipt", "no_orchestrator", { message_id: 12 })],
+    ));
+    assert.equal(result.state, "waiting");
+    assert.equal(result.message_id, 12);
+  },
+  peek() {
+    const s = store();
+    assert.equal(typeof s.peek, "function", "peek method missing");
+    assert.equal(s.peek(), null);
+    s.read(page());
+    assert.deepEqual(s.peek(), { message: 10, reply: 0 });
+  },
   pure() {
     const p = page([message(), message(11, 1, { actor: "conn:Iris" })], [reply(2, "answer")]);
     const seen = { message: 9, reply: 1 };

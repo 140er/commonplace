@@ -32,24 +32,25 @@ export function deriveChatState(page = {}, status = {}, board = {}, now = Date.n
     + new Set(replies.filter((reply) => mine(reply) && ["answer", "handoff"].includes(reply.kind) && id(reply.id) > id(seen.reply)).map((reply) => reply.id)).size;
   const orchestrator = status?.orchestrator ?? page.orchestrator;
   const last_seen = orchestrator?.visible ? orchestrator.last_seen ?? null : null;
-  const request = messages.reduce((newest, message) => (
-    message.actor?.startsWith("user:") && isWorkRequest(message.text) && (!newest || message.id > newest.id) ? message : newest
-  ), null);
-  const pending = request || messages.reduce((newest, message) => (
-    message.actor?.startsWith("user:") && (!newest || message.id > newest.id) ? message : newest
-  ), null);
-  let state = messages.length || replies.length ? "ok" : "none";
-  if (pending && !messages.some((message) => agent(message) && message.id > pending.id)) {
-    const receipt = replies.filter((reply) => mine(reply) && reply.kind === "receipt" && reply.message_id === pending.id)
-      .reduce((newest, reply) => !newest || reply.id > newest.id ? reply : newest, null);
-    if (["no_orchestrator", "orchestrator_gone"].includes(receipt?.code)
-      || (request && !orchestrator && !board?.coordinator)) {
-      state = "waiting";
-    } else if (request) {
-      state = now - Date.parse(request.at) > ACK_WAIT_MS ? "no_answer" : "working";
-    }
+  const newest = (rows, keep) => rows.reduce((found, row) => keep(row) && (!found || row.id > found.id) ? row : found, null);
+  const person = (message) => message.actor?.startsWith("user:");
+  const request = newest(messages, (message) => person(message) && isWorkRequest(message.text));
+  const latest = newest(messages, person);
+  // A message is open until an agent writes after it.
+  const open = (message) => !!message && !messages.some((other) => agent(other) && other.id > message.id);
+  // Receipts and supersession follow the newest message; the deadline follows the newest work request.
+  const receiptFor = (message) => open(message)
+    ? newest(replies, (reply) => mine(reply) && reply.kind === "receipt" && reply.message_id === message.id) : null;
+  const receipt = receiptFor(latest) || receiptFor(request);
+  let state = messages.length || replies.length ? "ok" : "none", message_id = request?.id ?? null;
+  if (["no_orchestrator", "orchestrator_gone"].includes(receipt?.code)) {
+    state = "waiting";
+    if (!open(request)) message_id = latest.id;
+  } else if (open(request)) {
+    state = !orchestrator && !board?.coordinator ? "waiting"
+      : now - Date.parse(request.at) > ACK_WAIT_MS ? "no_answer" : "working";
   }
-  return { state, unread, message_id: request?.id ?? (state === "waiting" ? pending.id : null), last_seen };
+  return { state, unread, message_id, last_seen };
 }
 
 function session() {
@@ -95,6 +96,11 @@ export function seenStore(user, board, storage = session()) {
     read(page = {}) {
       const value = load();
       return value ? { ...value } : save(cursors(page));
+    },
+    /** The stored ids, or null on first sight; never baselines. */
+    peek() {
+      const value = load();
+      return value ? { ...value } : null;
     },
     markSeen(page = {}) {
       const previous = load() || { message: 0, reply: 0 }, next = cursors(page);

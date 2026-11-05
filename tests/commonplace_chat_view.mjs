@@ -83,7 +83,7 @@ test("controller uses project API and stop clears its polling timer", async (t) 
 
 // A small DOM double keeps these controller checks browser-free. Every selector
 // used by a RED is asserted against the emitted markup before its handler runs.
-function setup(t, { post, echo = false, online = true, stored, page: supplied, onCard, get } = {}) {
+function setup(t, { post, echo = false, online = true, stored, page: supplied, onCard, onState, get } = {}) {
   const listeners = new Map(), events = new Map(), calls = [], data = stored || new Map();
   const store = { get length() { return data.size; }, key: (i) => [...data.keys()][i], getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
   const doc = { hidden: false, addEventListener: (n, fn) => listeners.set(n, fn), removeEventListener: (n) => listeners.delete(n) };
@@ -135,7 +135,7 @@ function setup(t, { post, echo = false, online = true, stored, page: supplied, o
     }
   } });
   restoreGlobals.push(() => previousFetch ? Object.defineProperty(globalThis, "fetch", previousFetch) : delete globalThis.fetch);
-  const controller = ui.createChat({ mount: () => host, api: request, e, me: { user: "me" }, board: { slug: "work", name: "Work" }, onCard });
+  const controller = ui.createChat({ mount: () => host, api: request, e, me: { user: "me" }, board: { slug: "work", name: "Work" }, onCard, onState });
   t.after(() => { controller.stop(); for (const restore of restoreGlobals.reverse()) restore(); });
   const send = async (text) => { field.value = text; await form.onsubmit({ preventDefault() {}, currentTarget: form }); };
   const requireSelector = (name) => { assert.ok(host.innerHTML.includes(name), `${name} missing`); };
@@ -343,4 +343,86 @@ test("RED offline send keeps its board after switching projects", async (t) => {
   navigator.onLine = true; assert.equal(typeof h.events.get("online"), "function"); h.events.get("online")(); await settle();
   assert.equal(h.posts().length, 1); assert.equal(h.posts()[0].path, "/api/boards/work/chat");
   assert.equal(h.field.value, "Other board draft"); assert.equal(h.data.has("cmmn.unsent.me.work"), false);
+});
+
+
+// Fix round: each test name is selected on its own by the pytest wrapper.
+const askPage = { board: "work", me: { user: "me" }, orchestrator: { actor: "conn:main" }, messages: [{ id: 1, actor: "user:me", text: "Please fix exactly\n this", at: "2026-01-01T00:00:00Z" }], replies: [], cursor: 1 };
+const fire = async (h) => {
+  const [id, fn] = [...h.timers].at(-1) || [];
+  assert.equal(typeof fn, "function", "no poll scheduled");
+  h.timers.delete(id); fn(); await settle();
+};
+
+test("RED fix ask_keeps_draft", async (t) => {
+  const h = setup(t, { page: askPage }); await h.controller.show("work"); requireMethod(h.controller, "setQuote");
+  h.controller.setQuote({ author: "Leon", sourceLabel: "Work chat", date: "Today", text: "Exact words" });
+  h.field.value = "my half-written reply";
+  assert.match(h.nodes.get("[data-chat-recovery]").innerHTML, /data-chat-ask-again/);
+  await h.host.onclick({ target: { closest: () => ({ dataset: {}, hasAttribute: (n) => n === "data-chat-ask-again" }) } });
+  assert.equal(h.posts().length, 1); assert.equal(h.posts()[0].body.text, "Please fix exactly\n this");
+  assert.equal(h.field.value, "my half-written reply");
+  assert.match(h.nodes.get("[data-chat-quote]").innerHTML, /Quoting Leon/);
+});
+
+test("RED fix unchanged_poll_keeps_focus", async (t) => {
+  const h = setup(t, { page: askPage }); await h.controller.show("work");
+  // Writing a region's markup replaces its children, so focus inside it falls back to the body.
+  for (const node of h.nodes.values()) {
+    let html = node.innerHTML;
+    Object.defineProperty(node, "innerHTML", { configurable: true, get: () => html, set(value) {
+      html = value; if (h.doc.activeElement?.owner === node) h.doc.activeElement = "body";
+    } });
+  }
+  for (const selector of ["[data-chat-recovery]", ".chat-stream", "[data-chat-status]"]) {
+    const focused = { owner: h.nodes.get(selector) }; h.doc.activeElement = focused;
+    await fire(h);
+    assert.equal(h.doc.activeElement, focused, `${selector} was rewritten by an unchanged poll`);
+  }
+});
+
+test("RED fix reopen_moves_divider", async (t) => {
+  const states = [];
+  const page = { board: "work", me: { user: "me" }, orchestrator: { actor: "conn:main" }, cursor: 6, reply_cursor: 0, messages: [{ id: 5, actor: "user:me", text: "Please draft", at: "2026-01-01T00:00:00Z" }, { id: 6, actor: "conn:main", text: "On it", at: "2026-01-01T00:01:00Z" }], replies: [] };
+  const h = setup(t, { page, stored: new Map([["cmmn.chat.seen.me.work", '{"message":5,"reply":0}']]), onState: (s) => states.push(s) });
+  await h.controller.show("work");
+  assert.match(h.nodes.get(".chat-stream").innerHTML, /New since you last looked/);
+  assert.equal(JSON.parse(h.data.get("cmmn.chat.seen.me.work")).message, 6);
+  // Close and reopen: the store already holds message 6, so nothing above it is new.
+  await fire(h);
+  assert.equal(states.at(-1).unread, 0);
+  requireMethod(h.controller, "reopened"); h.controller.reopened(); await fire(h);
+  assert.doesNotMatch(h.nodes.get(".chat-stream").innerHTML, /New since you last looked/);
+  assert.equal(states.at(-1).unread, 0);
+});
+
+test("RED fix sending_is_pending", async (t) => {
+  let resolve;
+  const h = setup(t, { post: () => new Promise((r) => { resolve = r; }) }); await h.controller.show("work");
+  const sending = h.send("In flight"); await settle();
+  const bubble = h.nodes.get("[data-chat-unsent]").innerHTML;
+  assert.match(bubble, /Sending…/); assert.doesNotMatch(bubble, /Not sent/); assert.doesNotMatch(bubble, /data-chat-retry/);
+  assert.equal(typeof resolve, "function"); resolve({ id: 2 }); await sending;
+  assert.equal(h.nodes.get("[data-chat-unsent]").innerHTML, "");
+});
+
+test("RED fix destroy_removes_listeners", async (t) => {
+  const h = setup(t); await h.controller.show("work");
+  for (const name of ["session-expired", "signout", "click"]) assert.equal(typeof h.listeners.get(name), "function", name);
+  assert.equal(typeof h.events.get("online"), "function");
+  requireMethod(h.controller, "destroy"); h.controller.destroy();
+  for (const name of ["session-expired", "signout", "click", "visibilitychange"]) assert.equal(h.listeners.has(name), false, name);
+  assert.equal(h.events.has("online"), false); assert.equal(h.timers.size, 0);
+});
+
+test("RED fix slow_endpoints_every_15s", async (t) => {
+  let now = Date.parse("2026-11-05T12:00:00Z");
+  t.mock.method(Date, "now", () => now);
+  const h = setup(t); await h.controller.show("work");
+  const slow = (from) => h.calls.slice(from).filter((c) => /\/status$|\/cards$|^\/api\/chat-settings\?/.test(c.path)).length;
+  let from = h.calls.length; now += 2000; await fire(h);
+  assert.ok(h.calls.slice(from).some((c) => c.path === "/api/chat/work?after=1&replies_after=0"));
+  assert.equal(slow(from), 0, "status, cards and settings were refetched within 15 s");
+  from = h.calls.length; now += 13000; await fire(h);
+  assert.equal(slow(from), 3);
 });

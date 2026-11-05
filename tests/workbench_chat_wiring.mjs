@@ -27,7 +27,7 @@ let apiHook = null;
 const handlers = new Map(), timers = new Map(), storage = new Map();
 const storageAPI = {getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v), removeItem: (k) => storage.delete(k), key: (i) => [...storage.keys()][i], get length() {return storage.size;}};
 const document = {hidden: false, activeElement: null, addEventListener: (k,v) => handlers.set(k,v), removeEventListener: (k,v) => {if (handlers.get(k) === v) handlers.delete(k);}, dispatchEvent(event) {handlers.get(event.type)?.(event);}};
-const pane = {show: async (...args) => {pane.shown = args;}, stop: () => stops++, clearUnsent: () => cleared++, focusComposer() {}, setQuote() {}};
+const pane = {show: async (...args) => {pane.shown = args;}, stop: () => stops++, clearUnsent: () => cleared++, focusComposer() {}, setQuote() {}, destroyed: 0, destroy() {pane.destroyed++;}};
 const api = async (path, options) => {
   requests.push({path, options});
   if (apiHook) return apiHook(path, options);
@@ -93,6 +93,17 @@ if (which === 'board_header') {
   assert.match(titleActions, /data-action="new-card"/);
   assert.match(app, /kind === "space-message"/);
 } else {
+  if (which === 'seen_pages') {
+    // 250 agent messages; this device last read 100. The server pages at most 100 rows.
+    const all = Array.from({length: 250}, (_, i) => message(i + 1));
+    storage.set('cmmn.chat.seen.maya.atlas', '{"message":100,"reply":0}');
+    apiHook = (path) => {
+      if (path.endsWith('/status')) return {};
+      const after = path.match(/after=(\d+)/);
+      const list = after ? all.filter((m) => m.id > Number(after[1])).slice(0, 100) : all.slice(-20);
+      return {me: {user: 'maya'}, messages: list, replies: [], cursor: list.at(-1)?.id ?? Number(after?.[1] || 0), reply_cursor: 0};
+    };
+  }
   mount(); await flush();
   const service = state.workbenchChat;
   if (which === 'mount') {
@@ -190,6 +201,13 @@ if (which === 'board_header') {
     resolve({messages:[message(99)], replies:[], cursor:99}); await pending; await flush();
     assert.equal(service.board.slug, 'harbor'); assert.equal(service.unread, 0);
     service.dispose();
+  } else if (which === 'seen_pages') {
+    for (let i = 0; i < 5; i++) await flush();
+    assert.ok(requests.some(({path}) => path === '/api/chat/atlas?after=100&replies_after=0'), 'first closed poll must read after the stored seen id');
+    assert.ok(requests.some(({path}) => path === '/api/chat/atlas?after=200&replies_after=0'), 'a full page must be followed');
+    assert.equal(service.unread, 150);
+  } else if (which === 'chat_destroy') {
+    service.dispose(); assert.equal(pane.destroyed, 1);
   } else assert.fail(`Unknown case: ${which}`);
   state.workbenchChat?.dispose();
 }
