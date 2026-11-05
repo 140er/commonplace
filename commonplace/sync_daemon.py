@@ -150,7 +150,7 @@ class _Session:
                 return code
 
     def _status(self, op, status):
-        if status in ("conflict", "revoked", "failed", "unreadable"):
+        if status in ("conflict", "rejected", "revoked", "failed", "unreadable"):
             self.state.outbox_mark(op.op_id, status)
         self.state.set_status(op.source, op.path, op.native_id, status)
 
@@ -158,15 +158,17 @@ class _Session:
         value = payload.pop("_retry_after", None)
         if value is not None:
             try:
-                return max(1, int(value))
+                seconds = int(value)
             except (ValueError, TypeError):
                 try:
                     when = parsedate_to_datetime(value)
-                    return max(
-                        1, when.replace(tzinfo=when.tzinfo or timezone.utc).timestamp() - self.now()
+                    seconds = (
+                        when.replace(tzinfo=when.tzinfo or timezone.utc).timestamp() - self.now()
                     )
                 except (ValueError, TypeError, OverflowError):
-                    pass
+                    return None
+            # Zero means an invalid/past hint: use the ladder, not a message hint.
+            return min(3600, max(1, seconds)) if seconds > 0 else 0
         return None
 
     def _token_key(self, env_name):
@@ -180,16 +182,14 @@ class _Session:
         self.blocked_tokens.add(env_name)
         count = min(6, int(self.state.next_due(key + ":failures")) + 1)
         self.state.defer(key + ":failures", count)
-        self.state.defer(
-            key, self.now() + (delay if delay is not None else min(1800, 60 * 2 ** (count - 1)))
-        )
+        self.state.defer(key, self.now() + (delay or min(1800, 60 * 2 ** (count - 1))))
         self._waiting(key)
 
     def _rate_limit(self, source, native_id, env_name, payload, delay):
         error = str(payload.get("error", "")).lower()
         if delay is None and "not due" in error:
             match = re.search(RETRY_RE, error, re.IGNORECASE)
-            delay = max(1, int(match[1])) if match else None
+            delay = min(3600, int(match[1])) if match else None
         if error.startswith("capture not due"):
             key = self._stream_key(source, native_id)
             self.state.defer(key, self.now() + (delay or 60))
@@ -208,15 +208,58 @@ class _Session:
         self.retry_due = min(self.retry_due or due, due)
         return True
 
-    def _retry(self, op, status="failed"):
+    def _retry(self, op, status="failed", *, suspect=False):
         key = self.key + ":op:" + op.op_id
-        count = int(self.state.next_due(key + ":failures")) + 1
-        if count >= 6:
+        counter = key + (":suspect_failures" if suspect else ":failures")
+        count = int(self.state.next_due(counter)) + 1
+        if suspect:
+            first = self.state.next_due(key + ":first_failure") or self.now()
+            self.state.defer(key + ":first_failure", first)
+            park = self.now() - first >= 24 * 3600
+        else:
+            park = count >= 6
+        if park:
             self._status(op, status)
             return
-        self.state.defer(key + ":failures", count)
-        self.state.defer(key, self.now() + 60 * 2 ** (count - 1))
+        self.state.defer(counter, min(count, 6))
+        self.state.defer(key, self.now() + min(1800, 60 * 2 ** min(count - 1, 5)))
         self._waiting(key)
+
+    def _cursor_request(self, source, native_id, token):
+        return self.transport(
+            self.target,
+            token,
+            "GET",
+            "/api/capture?" + urlencode({"source": source, "thread_id": native_id}),
+        )
+
+    @staticmethod
+    def _valid_cursor(payload):
+        return (
+            type(payload.get("offset")) is int
+            and payload["offset"] >= 0
+            and isinstance(payload.get("prefix_sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", payload["prefix_sha256"]) is not None
+        )
+
+    def _attribute_failure(self, op, token, env_name, delay):
+        # This health request neither spends a write slot nor adopts a cursor.
+        try:
+            status, payload = self._cursor_request(op.source, op.native_id, token)
+            health_delay = self._retry_delay(payload)
+        except (OSError, http.client.HTTPException, ValueError):
+            self._token_failure(env_name, delay)
+            return
+        if status == 200 and self._valid_cursor(payload):
+            self._retry(op, suspect=True)
+        elif status == 429:
+            # A failed health probe is token-wide, including a stream cadence reply.
+            if health_delay is None and "not due" in str(payload.get("error", "")).lower():
+                match = re.search(RETRY_RE, str(payload["error"]), re.IGNORECASE)
+                health_delay = min(3600, int(match[1])) if match else None
+            self._token_failure(env_name, health_delay if health_delay is not None else delay)
+        else:
+            self._token_failure(env_name, health_delay if health_delay is not None else delay)
 
     def initialize(self, sources=None, *, once=False):
         """Adopt each server cursor before scanning a stream for the first time."""
@@ -240,13 +283,7 @@ class _Session:
             if not token:
                 raise ConfigError("Missing capture token environment variable")
             try:
-                status, payload = self.transport(
-                    self.target,
-                    token,
-                    "GET",
-                    "/api/capture?"
-                    + urlencode({"source": source.source, "thread_id": source.native_id}),
-                )
+                status, payload = self._cursor_request(source.source, source.native_id, token)
             except (OSError, http.client.HTTPException, ValueError):
                 self.initialize_transient = True
                 self.initialize_connection_error = True
@@ -276,18 +313,17 @@ class _Session:
                 )
                 failed |= status != 409
                 continue
-            offset, prefix = payload.get("offset"), payload.get("prefix_sha256")
-            if (
-                type(offset) is not int
-                or offset < 0
-                or not isinstance(prefix, str)
-                or re.fullmatch(r"[0-9a-f]{64}", prefix) is None
-            ):
+            if not self._valid_cursor(payload):
                 failed = True
                 self.initialize_transient = True
                 continue
-            self.state.store_cursor(source.source, source.path, source.native_id, offset, prefix)
-            self._token_success(env_name)
+            self.state.store_cursor(
+                source.source,
+                source.path,
+                source.native_id,
+                payload["offset"],
+                payload["prefix_sha256"],
+            )
         return int(failed)
 
     def _backfill(self, discovered, ops):
@@ -422,9 +458,7 @@ class _Session:
                     failed = max(failed, int(bool(self.unavailable)))
                     continue
                 if status in (408, 425) or status >= 500:
-                    self._token_failure(env_name, delay)
-                    # Bound a poison operation even if its response looks hub-wide.
-                    self._retry(op)
+                    self._attribute_failure(op, token, env_name, delay)
                     failed = 1
                     continue
                 if status == 409:
@@ -432,7 +466,7 @@ class _Session:
                     off = "off" in str(payload.get("error", "")).lower() and payload.get(
                         "code"
                     ) not in {"prefix_conflict", "op_conflict"}
-                    self._status(op, "paused" if off else "conflict")
+                    self._status(op, "paused" if off else "rejected")
                     if off:
                         self.enabled = False
                         return 0

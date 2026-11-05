@@ -232,7 +232,15 @@ class State:
         )
 
     def outbox_mark(self, op_id, status):
-        if status not in ("pending", "conflict", "paused", "revoked", "failed", "unreadable"):
+        if status not in (
+            "pending",
+            "conflict",
+            "rejected",
+            "paused",
+            "revoked",
+            "failed",
+            "unreadable",
+        ):
             raise StateError("Invalid source status")
         with self.transaction():
             self.conn.execute("UPDATE outbox SET state=? WHERE op_id=?", (status, op_id))
@@ -241,7 +249,7 @@ class State:
     def _clear_op_retry(self, op_id):
         self.conn.execute(
             "DELETE FROM cadence WHERE key LIKE ? OR key LIKE ?",
-            ("%:op:" + op_id, "%:op:" + op_id + ":failures"),
+            ("%:op:" + op_id, "%:op:" + op_id + ":%"),
         )
 
     def outbox_ack(self, op_id, response):
@@ -289,6 +297,7 @@ class State:
             "paused",
             "revoked",
             "conflict",
+            "rejected",
             "too_large",
             "unreadable",
             "failed",

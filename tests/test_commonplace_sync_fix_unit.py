@@ -587,11 +587,11 @@ def test_card223_f3_failed_head_yields_then_retries_same_op(local, status):
     active = sync_daemon._Session(config, state, lambda: now[0], transport)
     assert active.cycle() == 1
     assert hub.stored.get("codex-session") is not None  # RED
-    token_scoped = status in (408, 425, 500, 503)
-    assert ("good" in hub.stored) != token_scoped
+    # A valid cursor GET attributes POST-only errors to the suspect operation.
+    assert "good" in hub.stored
     assert any(body["source"] == "native-memory" for body in hub.posts)
     pending = state.outbox_pending()
-    assert len(pending) == (2 if token_scoped else 1)
+    assert len(pending) == 1
     assert pending[0].native_id == "bad" and pending[0].attempts == 1
     assert active.retry_due == NOW + 60
     active = sync_daemon._Session(config, state, lambda: now[0], transport)
@@ -660,9 +660,9 @@ def test_card223_s1_two_poison_captures_do_not_starve_healthy(local):
             (root / "healthy.jsonl").write_bytes(record("healthy"))
         active.cycle()
     assert hub.stored.get("healthy") == record("healthy")  # RED
-    assert len(attempts) == 12
-    assert all(op.state == "failed" for op in state.outbox_all())
-    assert not state.conn.execute("SELECT 1 FROM cadence WHERE key LIKE '%:op:%'").fetchall()
+    assert len(attempts) <= 24
+    assert all(op.state == "pending" for op in state.outbox_all())
+    assert all(state.next_due(active.key + ":op:" + op.op_id) > now[0] for op in state.outbox_all())
 
 
 def test_card223_old_verified_conflict_is_requeued_but_changed_slice_stays_parked(local):
@@ -770,14 +770,16 @@ def test_card223_retry_cap_is_visible_and_restart_recovers_same_op(local, monkey
 def test_card223_guard_s2_short_hub_outage_preserves_budget(local):
     config, state, root = local
     for i in range(130):
-        (root / f"s{i:03d}.jsonl").write_bytes(record(f"s{i:03d}"))
+        path = root / f"s{i:03d}.jsonl"
+        path.write_bytes(record(f"s{i:03d}"))
+        state.store_cursor("claude-code", path, f"s{i:03d}", 0, sha(b""))
     now, attempts, hub = [NOW], [], Hub()
 
     def transport(target, token, method, route, body=None):
         if method == "POST":
             attempts.append(now[0])
-            if now[0] < NOW + 60:
-                return 500, {}
+        if now[0] < NOW + 60:
+            return 500, {}  # The hub outage affects cursor GETs as well as POSTs.
         return hub(target, token, method, route, body)
 
     active = sync_daemon._Session(config, state, lambda: now[0], transport)
@@ -907,9 +909,13 @@ def test_card223_exhausted_budget_does_not_reread_body(local, monkeypatch):
 def test_card223_token_retry_after_exponential_backoff_and_success_reset(local, status):
     parking_sources(local)
     config, state, root = local
+    for name, sid in (("a-bad", "bad"), ("b-good", "good")):
+        state.store_cursor("claude-code", root / f"{name}.jsonl", sid, 0, sha(b""))
     now, posts, hub, broken = [NOW], [], Hub(), [True]
 
     def transport(target, token, method, route, body=None):
+        if method == "GET" and broken[0] and token == config["tokens"][TOKEN_ENV["claude-code"]]:
+            return status, {"error": "slow down"}
         if method == "POST" and body["source"] == "claude-code":
             posts.append((now[0], body["thread_id"]))
             if broken[0]:
@@ -992,3 +998,253 @@ def test_card223_initialize_token_failure_skips_same_token_but_sends_others(loca
     assert "good" not in hub.stored
     assert result == (0 if status == 429 else 1)
     assert state.next_due(active._token_key(TOKEN_ENV["claude-code"])) == NOW + 37
+
+
+@pytest.mark.parametrize("status", [500, 408, 425])
+@pytest.mark.parametrize("post_only", [False, True], ids=["hub-wide", "post-only"])
+def test_card223_e1_outage_recovers_without_restart_or_park(local, status, post_only):
+    config, state, root = local
+    path = root / "bad.jsonl"
+    path.write_bytes(record("bad"))
+    state.store_cursor("claude-code", path, "bad", 0, sha(b""))
+    now, posts, health_gets, hub = [NOW], [], [], Hub()
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST":
+            posts.append(now[0])
+        else:
+            health_gets.append((now[0], route))
+        if now[0] < NOW + 2400 and (method == "POST" or not post_only):
+            return status, {}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    state.defer(active.bkey + "-done", NOW)
+    for step in range(0, 2400, 60):
+        now[0] = NOW + step
+        active.cycle()
+    assert len(posts) <= 8  # RED
+    assert [op.state for op in state.outbox_all()] == ["pending"]  # RED
+    op = state.outbox_all()[0]
+    assert state.next_due(active.key + ":op:" + op.op_id + ":failures") == 0
+    assert len(health_gets) == len(posts)
+    # Cursor health probes spend no client write slots.
+    key = active.key + ":writes:" + TOKEN_ENV["claude-code"]
+    assert sum(state.next_due(f"{key}:{i}") > 0 for i in range(120)) == len(posts)
+    for step in range(2400, 3 * 3600 + 1, 60):
+        now[0] = NOW + step
+        active.cycle()
+    assert hub.stored.get("bad") == record("bad")  # RED
+    assert not state.outbox_all()
+    assert not state.conn.execute("SELECT 1 FROM cadence WHERE key LIKE '%:op:%'").fetchall()
+
+
+def test_card223_s1b_known_healthy_capture_follows_two_poisons_in_first_pass(local):
+    config, state, root = local
+    for sid in ("a0", "a1", "z"):
+        path = root / f"{sid}.jsonl"
+        path.write_bytes(record(sid))
+        state.store_cursor("claude-code", path, sid, 0, sha(b""))
+    hub, posts, gets = Hub(), [], []
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST":
+            posts.append(body.copy())
+            if body["thread_id"].startswith("a"):
+                return 500, {}
+        else:
+            gets.append(route)
+            return 200, {"offset": 12345, "prefix_sha256": sha(b"synthetic remote cursor")}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: NOW, transport)
+    state.defer(active.bkey + "-done", NOW)
+    result = active.cycle()
+    assert hub.stored.get("z") == record("z")  # RED
+    assert result == 1
+    assert [body["thread_id"] for body in posts] == ["a0", "a1", "z"]
+    assert len(gets) == 2
+    for sid, route in zip(("a0", "a1"), gets):
+        assert "source=claude-code" in route and f"thread_id={sid}" in route
+        cursor = state.cursor("claude-code", root / f"{sid}.jsonl", sid)
+        assert cursor["offset"] == 0 and cursor["prefix_sha256"] == sha(b"")
+    assert all(op.state == "pending" for op in state.outbox_all())
+    assert state.next_due(active.key + ":token:" + TOKEN_ENV["claude-code"] + ":failures") == 0
+
+
+@pytest.mark.parametrize(
+    "first,second,scope",
+    [
+        (
+            {"error": "slow down", "_retry_after": "10000000"},
+            {"error": "slow down", "_retry_after": "0"},
+            "token",
+        ),
+        (
+            {"error": "slow down", "_retry_after": "Fri, 01 Jan 2100 00:00:00 GMT"},
+            {"error": "slow down", "_retry_after": "Wed, 01 Jan 2020 00:00:00 GMT"},
+            "token",
+        ),
+        (
+            {"error": "Account capture not due; retry in 10000000 seconds"},
+            {"error": "Account capture not due; retry in 0 seconds"},
+            "token",
+        ),
+        (
+            {"error": "Capture not due; retry in 10000000 seconds"},
+            {"error": "Capture not due; retry in 0 seconds"},
+            "stream",
+        ),
+    ],
+    ids=["seconds", "http-date", "account-message", "stream-message"],
+)
+def test_card223_server_wait_is_clamped_and_invalid_wait_uses_floor(local, first, second, scope):
+    config, state, root = local
+    path = root / "bad.jsonl"
+    path.write_bytes(record("bad"))
+    state.store_cursor("claude-code", path, "bad", 0, sha(b""))
+    now, posts = [NOW], []
+
+    def transport(target, token, method, route, body=None):
+        posts.append(now[0])
+        return 429, dict(first if len(posts) == 1 else second)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    assert active.cycle() == 0
+    # Include the legacy shared key so the base comparison fails by assertion.
+    due = max(
+        state.next_due(active.key),
+        *(
+            state.next_due(key)
+            for key in [
+                active.key + ":token:" + TOKEN_ENV["claude-code"],
+                active._stream_key("claude-code", "bad")
+                if hasattr(active, "_stream_key")
+                else active.key,
+            ]
+        ),
+    )
+    assert due == NOW + 3600  # RED
+    now[0] += 3600
+    assert active.cycle() == 0
+    key = (
+        active._token_key(TOKEN_ENV["claude-code"])
+        if scope == "token"
+        else active._stream_key("claude-code", "bad")
+    )
+    assert state.next_due(key) == now[0] + (120 if scope == "token" else 60)
+    now[0] += 1
+    assert active.cycle() == 0
+    assert len(posts) == 2
+
+
+def test_card223_server_409_stays_rejected_across_restart(local):
+    config, state, root = local
+    (root / "bad.jsonl").write_bytes(record("bad"))
+    hub, posts = Hub(), []
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST":
+            posts.append(body.copy())
+            return 409, {"code": "prefix_conflict"}
+        return hub(target, token, method, route, body)
+
+    assert run(local, transport) == 1
+    assert [op.state for op in state.outbox_all()] == ["rejected"]  # RED
+    assert run(local, transport) == 0
+    assert len(posts) == 1
+    assert any(row["status"] == "rejected" for row in state.statuses())
+
+
+def test_card223_guard_get_outage_never_parks_pending_operation(local):
+    config, state, root = local
+    pending_path = root / "pending.jsonl"
+    pending_path.write_bytes(record("pending"))
+    state.store_cursor("claude-code", pending_path, "pending", 0, sha(b""))
+    (root / "a-unknown.jsonl").write_bytes(record("unknown"))
+    sync_sources.scan(config, state, now=NOW)
+    now, gets, hub = [NOW], [], Hub()
+
+    def transport(target, token, method, route, body=None):
+        if method == "GET":
+            gets.append(now[0])
+        if now[0] < NOW + 2400:
+            return 500, {}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    state.defer(active.bkey + "-done", NOW)
+    for step in range(0, 2400, 60):
+        now[0] = NOW + step
+        active.cycle()
+        assert all(op.state == "pending" for op in state.outbox_all())
+    for step in range(2400, 3 * 3600 + 1, 60):
+        now[0] = NOW + step
+        active.cycle()
+    assert hub.stored.get("pending") == record("pending")
+    assert hub.stored.get("unknown") == record("unknown")
+    assert not state.outbox_all()
+
+
+def test_card223_guard_successful_get_does_not_reset_post_streak(local):
+    config, state, root = local
+    (root / "new.jsonl").write_bytes(record("new"))
+    active = sync_daemon._Session(config, state, lambda: NOW, Hub())
+    key = active.key + ":token:" + TOKEN_ENV["claude-code"]
+    state.defer(key + ":failures", 3)
+    assert active.initialize() == 0
+    assert state.next_due(key + ":failures") == 3
+
+
+def test_card223_suspect_operation_parks_only_after_24_hours(local):
+    config, state, root = local
+    path = root / "bad.jsonl"
+    path.write_bytes(record("bad"))
+    state.store_cursor("claude-code", path, "bad", 0, sha(b""))
+    now, posts, hub = [NOW], [], Hub()
+
+    def transport(target, token, method, route, body=None):
+        if method == "POST":
+            posts.append(body.copy())
+            return 500, {}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    state.defer(active.bkey + "-done", NOW)
+    steps = [0, 60, 180, 420, 900, 1860] + [1860 + 1800 * i for i in range(1, 48)]
+    for step in steps:
+        now[0] = NOW + step
+        active.cycle()
+        if step < 24 * 3600:
+            assert [op.state for op in state.outbox_all()] == ["pending"]  # RED
+        if step == 3660:
+            active = sync_daemon._Session(config, state, lambda: now[0], transport)
+    assert [op.state for op in state.outbox_all()] == ["failed"]  # RED
+    assert all(body == posts[0] for body in posts)
+    assert not state.conn.execute("SELECT 1 FROM cadence WHERE key LIKE '%:op:%'").fetchall()
+    assert any(row["status"] == "failed" for row in state.statuses())
+
+
+@pytest.mark.parametrize("health", ["network", "invalid-cursor"])
+def test_card223_failed_health_probe_keeps_operation_counter_untouched(local, health):
+    parking_sources(local)
+    config, state, root = local
+    for name, sid in (("a-bad", "bad"), ("b-good", "good")):
+        state.store_cursor("claude-code", root / f"{name}.jsonl", sid, 0, sha(b""))
+    hub = Hub()
+
+    def transport(target, token, method, route, body=None):
+        if token == config["tokens"][TOKEN_ENV["claude-code"]]:
+            if method == "POST":
+                return 500, {}
+            if health == "network":
+                raise OSError("Synthetic health probe failure")
+            return 200, {"offset": 0, "prefix_sha256": "invalid"}
+        return hub(target, token, method, route, body)
+
+    active = sync_daemon._Session(config, state, lambda: NOW, transport)
+    assert active.cycle() == 1
+    assert "codex-session" in hub.stored  # RED
+    assert "good" not in hub.stored
+    assert all(op.state == "pending" for op in state.outbox_all())
+    assert not state.conn.execute("SELECT 1 FROM cadence WHERE key LIKE '%:op:%'").fetchall()
