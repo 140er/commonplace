@@ -1179,6 +1179,8 @@ class BoardService:
             raise ToolError("no: take this card before editing it")
 
     def board_list(self, *, top_level=False):
+        from commonplace.projects import limits
+
         with self.transaction() as conn:
             result = []
             for board in self._visible_boards(conn):
@@ -1203,6 +1205,7 @@ class BoardService:
                         "coordinator": board["coordinator"],
                         "can_configure": self.principal.role == "owner",
                         "counts": counts,
+                        "agents_working": len(limits.working(conn, board["id"])),
                     }
                 )
             return result
@@ -2011,6 +2014,9 @@ class BoardService:
             ):
                 raise ToolError("no: card is not available to take")
             self._write(b, row=row, claiming=True)
+            from commonplace.projects import limits
+
+            limits.check(conn, b, self.principal.actor)
             self._set(
                 conn,
                 row,
@@ -2406,6 +2412,9 @@ class BoardService:
                         ask=None, ask_options=None, ask_to=None, return_to=None, review_context=None
                     )
                 if status == "doing":
+                    from commonplace.projects import limits
+
+                    limits.check(conn, board, self.principal.actor)
                     updates["assignee"] = self.principal.actor
                     updates["claim_until"] = None if self.principal.person else self._until(board)
                 else:
