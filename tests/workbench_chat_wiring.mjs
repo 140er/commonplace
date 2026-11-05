@@ -72,12 +72,12 @@ if (which === 'board_header') {
   assert.match(titleActions, /id="chat-toggle"/);
   assert.match(titleActions, /aria-controls="chat"/);
 } else if (which === 'needs_header') {
-  Object.assign(context, {needsCards: () => [], speech: {}, homeView: () => '', dot() {}, taskRow() {}, children() {}, speechView() {}});
+  Object.assign(context, {needsCards: () => [], speech: {}, homeView: () => '', dot() {}, taskRow() {}, children() {}, speechView() {}, createNeeds: () => ({show: async () => {}, stop() {}})});
   run(source('function needsView()', 'function boardView()') + '\nneedsView();');
   assert.match(titleActions, /id="chat-toggle"/);
 } else if (which === 'memory_header') {
-  state.mapDispose = () => {};
-  run(source('async function memoryView(', 'async function openMemoryNode('));
+  state.mapDispose = () => {}; Object.assign(context, {URLSearchParams, createMemory: () => ({stop() {}, search: async () => {}})});
+  run(source('async function memoryView(', '\n// The shell keeps one dock'));
   await run('memoryView(0, true)');
   assert.match(titleActions, /id="chat-toggle"/);
 } else if (which === 'styles') {

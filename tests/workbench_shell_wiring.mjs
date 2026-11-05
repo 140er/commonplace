@@ -99,7 +99,7 @@ if (which === 'shell') {
   context.newCardForm = (card) => { edited = card; };
   await handlers.click({target: {closest: () => ({dataset: {action: 'edit-card'}})}});
   assert.equal(edited, state.card);
-} else if (which === 'keys' || which === 'switch' || which === 'switch-enter' || which === 'chat-key') {
+} else if (which === 'keys' || which === 'switch' || which === 'switch-enter' || which === 'chat-key' || which === 'panel-enter') {
   assert.ok(app.includes('function singleKeysEnabled()'), 'Single-key preference missing');
   const handlers = {};
   Object.assign(context, { Element: class {}, document: {activeElement: null, addEventListener: (name, fn) => { handlers[name] = fn; }}, performance: {now: () => 0}, detailsUI: null });
@@ -127,9 +127,10 @@ if (which === 'shell') {
     await key('k', {ctrlKey: true}); assert.equal(palette, 1);
     nodes['#card-panel'].hidden = false; await key('Escape'); assert.equal(hidden, 1);
     storage.set('cmmn.keys.single', 'true'); await key('c'); assert.equal(added, 1);
-    // The visible switch has the same stored preference and ARIA state.
-    assert.match(app, /role="switch"/); assert.match(app, /aria-checked=/);
-    assert.match(app, /localStorage\.setItem\("cmmn\.keys\.single"/);
+    // The visible switch (now in the palette's shortcuts sheet) has the same stored preference and ARIA state.
+    const paletteSource = await read('palette.js');
+    assert.match(paletteSource, /role="switch"/); assert.match(paletteSource, /aria-checked=/);
+    assert.match(paletteSource, /'cmmn\.keys\.single'/); assert.match(app, /onSingleKeysChange/);
     const field = new context.Element(); field.closest = (selector) => selector.includes('input') ? {} : null;
     await key('c', {target: field}); assert.equal(added, 1);
   }
@@ -139,6 +140,15 @@ if (which === 'shell') {
     await key('Enter'); assert.equal(context.location.hash, '#/card/5');
     context.location.hash = '#/board/alpha'; await key('ArrowDown'); await key('c');
     assert.equal(context.location.hash, '#/board/alpha'); assert.equal(added, 0);
+  } else if (which === 'panel-enter') {
+    // Enter on the open card's heading (card 7, opened by its link) never jumps to the stale selection (5).
+    const heading = new context.Element(); heading.closest = (selector) => selector === '#card-panel' ? nodes['#card-panel'] : null;
+    state.route = context.location.hash = '#/card/7'; nodes['#card-panel'].hidden = false;
+    for (const single of ['false', 'true']) {
+      storage.set('cmmn.keys.single', single);
+      await key('Enter', {target: heading});
+      assert.equal(context.location.hash, '#/card/7', `Enter inside the card panel moved to another card (single keys ${single})`);
+    }
   } else if (which === 'chat-key') {
     // ] on the bare legacy chat route has no board to return to.
     state.base = state.route = context.location.hash = '#/chat';
@@ -146,6 +156,18 @@ if (which === 'shell') {
     state.base = state.route = context.location.hash = '#/board/alpha/chat';
     await key(']'); assert.equal(context.location.hash, '#/board/alpha');
   }
+} else if (which === 'chat-time-label') {
+  // The source time patches only the From chat tag, never a label chip with the same words.
+  const ui = await module('board');
+  assert.equal(typeof ui.chatTag, 'function');
+  const tags = [{className: 'tag lbl', textContent: 'From chat review'}, {className: 'tag', textContent: 'From chat'}];
+  root.querySelectorAll = (selector) => tags.filter((tag) => selector.endsWith('.tag') || (selector.endsWith('.tag:not(.lbl)') && !tag.className.includes('lbl')));
+  state.cards = [{number: 5, board: 'alpha', message_id: 40}];
+  Object.assign(context, {chatTag: ui.chatTag, currentBoard: () => board, api() {}, loadChatTimes: async () => [{id: 40, at: '2026-11-05T14:03:00'}]});
+  run(slice('async function fillChatTimes(', 'function spaceTask('));
+  context.board = board; await run('fillChatTimes(board)');
+  assert.equal(tags[0].textContent, 'From chat review', 'Label chip was overwritten');
+  assert.equal(tags[1].textContent, 'From chat · 14:03');
 } else if (which === 'inert') {
   Object.assign(context, await module('rail'));
   nodes['#card-panel'].hidden = false;

@@ -1,8 +1,7 @@
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
-import { mountMap } from "./map.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
-import { homeView, needItems } from "./home.js";
+import { needItems } from "./home.js";
 import { eventItem, ASKED_KEY, COPY as DECIDE_COPY, createSession, decideQueue, leftCount, offlineNow, queueKey, RELOAD_ERRORS, reduce, renderDecide, statusHTML, toolsHTML } from "./decide.js";
 import { bindSwipe, SWIPE } from "./decide-swipe.js";
 import { planView } from "./plan.js";
@@ -18,6 +17,11 @@ import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { createDetails } from "./details.js";
 import { resolveRoute } from "./routes.js";
+import { createNeeds } from "./needs.js";
+import { createMemory } from "./memory.js";
+import { createPalette } from "./palette.js";
+import { mountOnboarding } from "./onboarding.js";
+import { createCardMenu } from "./cardmenu.js";
 
 const signinParams = new URLSearchParams(location.search);
 const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
@@ -30,9 +34,9 @@ let providersPromise;
 
 const root = document.querySelector("#root");
 const state = {
-  me: null, boards: [], needs: {}, cards: [], open: [], openTotal: null, card: null, route: "#/", base: "#/",
+  me: null, boards: [], needs: {}, cards: [], open: [], card: null, route: "#/", base: "#/",
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, panelRequest: 0, refreshRequest: 0,
-  mapDispose: null, screen: 0, error: "", pollError: false, loading: false,
+  screen: 0, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, chatTimes: new Map(),
@@ -197,7 +201,9 @@ async function signin(code = null) {
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
   clearWorkbenchChat();
-  state.mapDispose?.(); state.mapDispose = null;
+  state.needsUI?.stop(); state.needsUI = null; state.memoryUI?.stop(); state.memoryUI = null;
+  state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
+  state.onboarding?.destroy(); state.onboarding = null;
   state.chatObserver?.disconnect(); state.chatVisible.clear(); state.chatTaskRequests.clear();
   state.chat = []; state.linked = []; state.chatBoard = null; state.chatCursor = 0; state.chatTasks.clear(); state.chatTimes.clear();
   providersPromise ||= api("/app/auth/providers").catch(() => ({}));
@@ -215,7 +221,8 @@ function currentBoard() {
   const selected = needsCards().find((card) => card.number === state.selected);
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* This visit still works without storage. */ }
-  const slug = routeSlug ? decodeURIComponent(routeSlug) : state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : state.card?.board || selected?.board || last;
+  const memory = state.base.startsWith("#/memory") ? state.memoryBoard : null;
+  const slug = routeSlug ? decodeURIComponent(routeSlug) : state.base.startsWith("#/chat/") ? decodeURIComponent(state.base.slice(7)) : state.card?.board || memory || selected?.board || last;
   return state.boards.find((board) => board.slug === slug) || state.boards[0] || null;
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
@@ -235,20 +242,68 @@ function openSelectedCard(action) {
     location.hash = `#/card/${number}`;
   }
 }
-function shortcutsView() {
+// One palette per shell dialog; it owns the shortcuts sheet and the single-key switch.
+function paletteUI() {
   const dialog = root.querySelector("#shell-dialog");
-  dialog.innerHTML = `<h2 id="shell-dialog-h">Keyboard shortcuts</h2><p id="single-keys-label">Single-key shortcuts</p><p>Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</p><button class="btn" data-action="single-keys" role="switch" aria-checked="${singleKeysEnabled()}" aria-labelledby="single-keys-label">${singleKeysEnabled() ? "On" : "Off"}</button><p>Single keys never fire while you type in a field. Approve and Decline always need the button.</p><dl><dt>C</dt><dd>New card</dd><dt>J / K</dt><dd>Next / previous item</dd><dt>Enter</dt><dd>Open selected card</dd><dt>E</dt><dd>Edit card</dd><dt>M</dt><dd>Move card to…</dd><dt>]</dt><dd>Hide the side panel</dd></dl><button class="btn primary" data-action="close-dialog">Done <kbd>Esc</kbd></button>`;
-  dialog.showModal();
+  if (state.palette?.dialog !== dialog) {
+    state.palette?.ui.stop();
+    state.palette = { dialog, ui: createPalette({ dialog, onCommand: paletteCommand, onSingleKeysChange(enabled) {
+      state.singleKeys = enabled; root.querySelector(".shell")?.setAttribute("data-single-keys", enabled ? "on" : "off");
+    } }) };
+  }
+  return state.palette.ui;
 }
-function shellMenu(kind = "palette") {
-  const dialog = root.querySelector("#shell-dialog");
-  // The full palette is mounted by its own unit; keep navigation usable meanwhile.
-  dialog.innerHTML = `<h2 id="shell-dialog-h">${kind === "switch-workspace" ? "Workspace" : "Search or do…"}</h2>${kind === "palette" ? '<form data-form="shell-search"><label>Search memory<input name="q" type="search" required></label><button class="btn">Search</button></form>' : ""}<nav aria-label="Go to">${state.boards.map((board) => `<a class="btn" href="#/board/${enc(board.slug)}">${e(board.name || board.slug)}</a>`).join("")}<a class="btn" href="#/needs">Needs me</a><a class="btn" href="#/memory">Memory</a><a class="btn" href="#/rules">Rules</a><a class="btn" href="#/console">Console</a><a class="btn" href="#/settings">Workspace settings</a><button class="btn" data-action="new-board">New project</button></nav><button class="btn" data-action="close-dialog">Close</button>`;
-  dialog.showModal();
-  dialog.querySelector("input")?.focus();
+function shortcutsView() { paletteUI().shortcuts(); }
+function shellMenu() {
+  const board = currentBoard(), cards = state.cards.filter((card) => !card.board || card.board === board?.slug);
+  paletteUI().open({ board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
+}
+async function paletteCommand(item) {
+  const action = item.action;
+  if (action === "new-card") newCardForm();
+  else if (action === "open-chat") {
+    const slug = item.board || currentBoard()?.slug, target = slug && `#/board/${enc(slug)}/chat`;
+    if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
+  } else if (action === "new-board") openOnboarding();
+  else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
+  else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
+  else if (action === "copy-card-link") {
+    try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
+    catch { showError("Could not copy the link."); }
+  } else if (item.href) location.hash = item.href;
+}
+// Palette commands that already live in the shell's click handler go through it.
+function shellAction(action, board) {
+  const button = document.createElement("button");
+  button.hidden = true; button.dataset.action = action;
+  if (board) button.dataset.board = board;
+  root.append(button); button.click(); button.remove();
+}
+function openOnboarding() {
+  root.querySelector("#shell-dialog")?.close();
+  if (state.onboarding) return;
+  state.onboarding = mountOnboarding(document.body, { api, first: !state.boards.length,
+    onCreated(board) { location.hash = `#/board/${enc(board.slug)}`; },
+    onClose() { state.onboarding = null; },
+  });
+}
+function cardMenuUI() {
+  const mount = root.querySelector("#card-menu-root");
+  if (state.cardMenu?.mount !== mount) {
+    state.cardMenu?.ui.stop();
+    state.cardMenu = { mount, ui: createCardMenu({ mount, api,
+      async onChange() { await refresh(); },
+      // Review needs a question and options, so it opens the shell's existing review form.
+      async onReview(card) {
+        try { state.card = await api(`/api/cards/${card.number}`); reviewForm(); } catch (error) { showError(error.message); }
+      },
+    }) };
+  }
+  return state.cardMenu.ui;
 }
 function shell() {
   state.workbenchChat?.dispose();
+  state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
   state.shellSync = null;
   root.innerHTML = `<style>
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -260,8 +315,10 @@ function shell() {
     #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
     #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
     #shell-dialog dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:16px 0; }
+    .shell .needs-me > .bar > h1 { display:none; } .shell .digest-captions { margin:12px 16px 0; }
+    @media(min-width:700px) { .shell .card-more { display:none; } }
     @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } .shell .head [data-action="coordinator"] { display:none; } #shell-dialog button { min-height:44px; } }
-  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog>`;
+  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog><div id="card-menu-root"></div>`;
   navigation();
   const panel = root.querySelector("#card-panel"), layout = root.querySelector(".shell");
   if (!panel || !layout) return;
@@ -349,14 +406,43 @@ function needsCards() {
   return needItems(state.needs).map((item) => item.card);
 }
 function needsView() {
-  title("Needs me", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
-  const cards = needsCards();
-  if (![...cards, ...state.open].some((c) => c.number === state.selected)) state.selected = cards[0]?.number;
   // Keep the Speak/Stop node (and its focus) through live refreshes.
   const speak = root.querySelector('[data-action="speak-digest"]'), focused = speak && document.activeElement === speak;
-  root.querySelector("#content").innerHTML = homeView({ needs: state.needs, boards: state.boards, open: state.open, total: state.openTotal, selected: state.selected, speak: speech.supported }, { dot, taskRow, children });
+  title("Needs me", `${speech.supported ? '<button class="btn speak" data-action="speak-digest" aria-controls="digest-captions">Speak</button>' : ""}<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>`);
   if (speak) { root.querySelector('[data-action="speak-digest"]')?.replaceWith(speak); if (focused) speak.focus({ preventScroll: true }); }
   speechView();
+  // An open card owns the shared side panel; the list comes back with the route.
+  if (state.route.startsWith("#/card/")) return;
+  const content = root.querySelector("#content"), panel = root.querySelector("#card-panel");
+  if (!state.needsUI || !content.querySelector("[data-needs-mount]")) {
+    state.needsUI?.stop();
+    content.innerHTML = '<div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div><div data-needs-mount></div>';
+    state.needsShown = "";
+    state.needsUI = createNeeds({ mount: content.querySelector("[data-needs-mount]"), detailMount: panel, api, singleKeys: singleKeysEnabled,
+      // Decline goes straight to the existing versioned route; approvals and answers wait as holds.
+      onAction: (action, card, extra) => action === "need-reject" ? api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: false, version: card.version, ...extra } }) : undefined,
+      onSelect(card) {
+        state.selected = card.number;
+        // On a phone the first item is not opened over the list by itself.
+        if (!state.needsLoading || !matchMedia("(max-width:699px)").matches) panel.hidden = false;
+        if (state.workbenchChat) mountWorkbenchChat();
+      },
+      onClose() { closeCardPanel(); },
+      onAsk(card, about) {
+        state.selected = card.number; mountWorkbenchChat();
+        void state.workbenchChat?.dock.open({ from: document.activeElement, strip: { text: `${card.proposal_status === "pending" ? "Approval" : "Decision"} · You are asking about ${about.title}`, backLabel: "Back to Needs me" } });
+      },
+      onChange() { void refresh(); },
+      onError() { /* The component shows its own failure text. */ },
+    });
+  }
+  const shown = JSON.stringify([state.needs, state.boards.map((board) => board.slug)]);
+  if (shown === state.needsShown) return;
+  state.needsShown = shown; state.needsLoading = true;
+  const ui = state.needsUI;
+  // A card that left the queue (declined, answered) is not reopened by the refresh.
+  const selected = needsCards().some((card) => card.number === state.selected) ? state.selected : undefined;
+  void ui.show({ needs: state.needs, boards: state.boards, selected }).finally(() => { if (state.needsUI === ui) state.needsLoading = false; });
 }
 function boardView() {
   const board = currentBoard();
@@ -370,6 +456,11 @@ function boardView() {
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
   content.innerHTML = renderBoard({ board, cards: state.cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
+  // Each card carries its actions button (m9); the menu returns focus to it by id.
+  content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
+    const id = top.querySelector(".cid")?.textContent || "";
+    top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="Actions for ${e(id)}: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button>`);
+  });
   boardDispose = bindBoard(content, { api, board,
     onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
     onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
@@ -398,7 +489,7 @@ async function fillChatTimes(board) {
   for (const message of found) known.set(String(message.id), message);
   if (!found.length || !state.me || currentBoard()?.slug !== board.slug) return;
   for (const card of missing) {
-    root.querySelectorAll(`.workbench-board .card[data-card="${card.number}"] .tag`).forEach((tag) => { if (tag.textContent.startsWith("From chat")) tag.textContent = chatTag(card, found); });
+    root.querySelectorAll(`.workbench-board .card[data-card="${card.number}"] .tag:not(.lbl)`).forEach((tag) => { if (tag.textContent.startsWith("From chat")) tag.textContent = chatTag(card, found); });
   }
 }
 function spaceTask(card, inline) {
@@ -505,8 +596,10 @@ function spaceView() {
   syncSpaceTasks(content.querySelector(".space-tasks .stack"), state.cards);
 }
 function boardsView() {
-  title("Spaces", '<button class="blockbtn" data-action="new-board">New space</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || message("No spaces")}</section>`;
+  title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  // A workspace without projects starts with the create dialog, once per visit.
+  if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
 async function cardPanel(number, epoch) {
   const panel = root.querySelector("#card-panel");
@@ -611,47 +704,18 @@ async function settingsView(epoch) {
 async function memoryView(epoch, refresh = false) {
   title("Memory", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
   const content = root.querySelector("#content");
-  if (refresh && state.mapDispose) return; // Map data is refreshed through its controller.
-  state.mapDispose?.(); state.mapDispose = null;
-  content.innerHTML = `<section class="memory-view"><div class="memory-toolbar"><form data-form="search"><input type="search" name="q" id="memory-query" data-draft="memory-query" aria-label="Search memories" placeholder="Search"><button class="opt">Search</button></form><div class="views" role="tablist" aria-label="Layout"><button role="tab" data-view="map" aria-selected="true">Map</button><button role="tab" data-view="themes" aria-selected="false">Themes</button><button role="tab" data-view="people" aria-selected="false">People</button></div><button class="opt" data-action="new-memory">Save memory</button></div><div class="memory-results" id="memory-results" hidden></div><section class="stage" id="stage" aria-label="Memory map"><canvas id="map" aria-label="Memory connections"></canvas><ul class="legend" id="legend" aria-label="Themes"></ul><div class="when" id="when" aria-label="Memories per week"><div class="bars" id="bars"></div></div><div class="zoom"><button data-zoom="in" aria-label="Zoom in">+</button><span id="pct">100%</span><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit">Fit</button></div><div class="tip" id="tip" hidden></div><div id="map-state" class="memory-empty">Loading memories…</div></section></section>`;
-  restore({});
-  const graph = await api("/api/memory/map?limit=400");
-  if (epoch !== state.screen) return;
-  root.querySelector("#map-state").textContent = graph.nodes.length ? "" : "No memories";
-  state.mapDispose = mountMap(content, graph, openMemoryNode);
-  const id = new URLSearchParams(state.base.split("?")[1]).get("id");
-  if (id) openMemory(id);
-}
-async function openMemoryNode(node) {
-  if (node.kind === "card") {
-    const n = Number(String(node.id).replace(/^(card:|c)/, ""));
-    if (Number.isInteger(n)) location.hash = `#/card/${n}`;
-    return;
-  }
-  if (node.kind === "memory") { await openMemory(node.id); return; }
-  const graph = state.mapDispose?.graph;
-  const linked = (graph?.links || []).filter((l) => l.source === node.id || l.target === node.id);
-  const neighbours = (graph?.nodes || []).filter((n) => linked.some((l) => l.source === n.id || l.target === n.id) && n.id !== node.id);
-  const panel = root.querySelector("#card-panel"); panel.hidden = false;
-  panel.innerHTML = `<div class="tile top"><div class="bar">Person<button class="close" data-action="close-panel" aria-label="Close">×</button></div><h2>${e(node.label)}</h2><ul class="linked">${linked.filter((l) => l.kind === "fact").map((l) => `<li>${e(l.label)}</li>`).join("")}${neighbours.map((n) => `<li><button class="opt" data-action="map-node" data-node="${e(n.id)}">${e(n.label)}</button></li>`).join("")}</ul></div>`;
-}
-async function openMemory(id) {
-  const epoch = state.screen;
-  const panel = root.querySelector("#card-panel"); panel.hidden = false; panel.innerHTML = message("Loading memory…");
-  try {
-    const memory = await api(`/api/memory/${enc(id)}`);
-    if (epoch !== state.screen) return;
-    panel.innerHTML = `<div class="tile top"><div class="bar">Memory<button class="close" data-action="close-panel" aria-label="Close">×</button></div><div class="hit"><p class="q">${e(memory.text)}</p><p class="stamp">${e(memory.author)} · ${e(memory.at)} · ${e(memory.theme)}</p></div><div class="linked">${(memory.cards || []).map((c) => `<a href="#/card/${c.number}">#${c.number} ${e(c.title)}</a>`).join("")}</div></div>`;
-  } catch (error) { if (epoch === state.screen) panel.innerHTML = message(error.message); }
-}
-async function search(form) {
-  const q = new FormData(form).get("q");
-  const epoch = state.screen;
-  const results = root.querySelector("#memory-results");
-  results.hidden = false; results.innerHTML = message("Searching…");
-  const found = await api(`/api/memory/search?q=${enc(q)}&limit=30`);
-  if (epoch !== state.screen) return;
-  results.innerHTML = found.results.map((m) => `<button data-action="memory" data-id="${e(m.id)}"><span class="meta">${e(m.theme)} · ${e(m.author)} · ${e(m.at)}</span><p>${e(m.text)}</p></button>`).join("") || message("No memories found");
+  const query = new URLSearchParams(state.base.split("?")[1] || "").get("q") || "";
+  if (state.memoryUI && content.querySelector("[data-memory-mount]") && (refresh || state.memoryQuery === query)) return;
+  state.memoryUI?.stop();
+  content.innerHTML = "<div data-memory-mount></div>";
+  state.memoryQuery = query;
+  // The dock is mounted after the view; the component reaches it through the shell's service.
+  const dock = { open: (options) => state.workbenchChat?.dock.open(options), close: (options) => state.workbenchChat?.dock.close(options), isOpen: () => Boolean(state.workbenchChat?.dock.isOpen()) };
+  const ui = state.memoryUI = createMemory({ mount: content.querySelector("[data-memory-mount]"), panel: root.querySelector("#card-panel"), api, boards: state.boards, me: state.me, dock, singleKeys: singleKeysEnabled,
+    // The selected source's project becomes the chat destination named in the header.
+    onSelect(result, board) { state.memoryBoard = board?.slug || result.board; mountWorkbenchChat(); },
+  });
+  if (query && epoch === state.screen) await ui.search({ query });
 }
 // The shell keeps one dock and one pane across header refreshes. Only the pane's
 // successful visible reads advance seen ids; closed polling merely accumulates rows.
@@ -744,6 +808,7 @@ function mountWorkbenchChat() {
     function visibility() { clearTimeout(timer); wake(); if (!document.hidden) void pollUnread(); }
     const observer = new MutationObserver(() => {
       wake();
+      state.needsUI?.setChatOpen(dock.isOpen());
       if (dock.isOpen()) {
         if (state.route.startsWith("#/card/")) {
           state.route = state.base; state.card = null; state.chatDetail = null;
@@ -811,12 +876,10 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest;
   const current = () => epoch === state.screen && request === state.refreshRequest;
   try {
-    const home = state.base === "#/" || state.base === "#/needs";
-    const [boards, needs, open, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), home ? api("/api/cards") : null, api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
+    const [boards, needs, rules] = await Promise.all([api("/api/boards"), api("/api/needs-me"), api(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (state.base === "#/rules") throw error; return null; })]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
     if (rules) state.rulesWaiting = rules.waiting;
-    if (open) { state.open = open.cards; state.openTotal = open.total; }
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
       const result = await api(`/api/boards/${enc(slug)}/cards`);
@@ -857,8 +920,8 @@ async function refresh({ background = false, events = [] } = {}) {
       }
       title("Rules", rules.can_edit ? `<button type="button" class="blockbtn" data-rule-action="new" aria-controls="rule-new" aria-expanded="${!!root.querySelector('.rule-new:not([hidden])')}">New rule</button>` : "");
     } else if (state.base.startsWith("#/memory")) {
-      const changed = events.some((event) => event.kind.startsWith("memory."));
-      if (!background || changed) await memoryView(epoch, background && !changed);
+      // Results come from the person's own search; background events never redraw them.
+      await memoryView(epoch, background);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
       boardView();
     } else if (state.base === "#/console") {
@@ -1120,7 +1183,9 @@ async function route() {
       queueArmSlow();
     }
   }
-  if (!state.base.startsWith("#/memory")) { state.mapDispose?.(); state.mapDispose = null; }
+  // Needs me and Memory share the side panel with cards: a card route or another screen stops them.
+  if (state.base !== "#/needs" || hash.startsWith("#/card/")) { state.needsUI?.stop(); state.needsUI = null; }
+  if (!state.base.startsWith("#/memory") || hash.startsWith("#/card/")) { state.memoryUI?.stop(); state.memoryUI = null; }
   if (state.base !== previousBase) {
     boardDispose?.(); boardDispose = null; state.addingCard = false; state.boardFilter = "all";
     state.chatObserver?.disconnect(); state.chatVisible.clear();
@@ -1196,7 +1261,8 @@ root.addEventListener("input", (event) => {
 root.addEventListener("change", (event) => { if (event.target.matches("[data-agent-client]")) changeAgentClient(event.target); });
 root.addEventListener("focusin", (event) => {
   const row = event.target.closest("[data-row], .workbench-board .card[data-card]");
-  if (row && Number(row.dataset.card || row.dataset.row) !== state.selected) {
+  // Needs me keeps its own selection; focus there never moves the shell's.
+  if (row && !row.closest(".needs-me") && Number(row.dataset.card || row.dataset.row) !== state.selected) {
     state.selected = Number(row.dataset.card || row.dataset.row);
     markOpenCard();
     root.querySelectorAll("[data-row]").forEach((r) => r.classList.toggle("sel", Number(r.dataset.row) === state.selected));
@@ -1240,13 +1306,11 @@ root.addEventListener("click", async (event) => {
   try {
     if (action === "shortcuts") shortcutsView();
     else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
-    else if (action === "close-dialog") root.querySelector("#shell-dialog").close();
-    else if (action === "single-keys") {
-      const enabled = !singleKeysEnabled();
-      try { localStorage.setItem("cmmn.keys.single", String(enabled)); } catch { /* Keep the switch usable for this visit. */ }
-      state.singleKeys = enabled; root.querySelector(".shell")?.setAttribute("data-single-keys", enabled ? "on" : "off"); b.setAttribute("aria-checked", String(enabled)); b.textContent = enabled ? "On" : "Off";
-    }
     else if (action === "cancel-card") { state.addingCard = false; boardView(); }
+    else if (action === "card-menu") {
+      const card = findCard(number), board = currentBoard();
+      if (card && board) cardMenuUI().show(card, { board, from: b });
+    }
     else if (action === "open-chat" || action === "back-to-chat") { const board = currentBoard(); if (board) location.hash = `#/board/${enc(board.slug)}/chat`; }
     else if (action === "connect-agent") root.querySelector('[data-action="coordinator"]')?.click();
     else if (action.startsWith("phone-push-")) await phonePushAction(action);
@@ -1306,16 +1370,8 @@ root.addEventListener("click", async (event) => {
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
-    else if (action === "new-board") {
-      root.querySelector("#shell-dialog")?.close();
-      const panel = root.querySelector("#card-panel"); panel.hidden = false;
-      panel.innerHTML = '<form class="form-tile" data-form="board"><h2>New space</h2><label>Name<input name="name" required maxlength="1000"></label><button class="blockbtn">Create</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
-    } else if (action === "memory") await openMemory(b.dataset.id);
-    else if (action === "map-node") { const n = state.mapDispose?.graph.nodes.find((n) => n.id === b.dataset.node); if (n) await openMemoryNode(n); }
-    else if (action === "new-memory") {
-      const panel = root.querySelector("#card-panel"); panel.hidden = false;
-      panel.innerHTML = '<form class="form-tile" data-form="memory"><h2>Save memory</h2><label>Text<textarea name="text" required></textarea></label><label>Theme<input name="theme"></label><label>Topic<input name="topic"></label><label>Card<input name="task"></label><button class="blockbtn">Save</button><button type="button" class="opt" data-action="close-panel">Cancel</button></form>';
-    } else if (action === "logout") {
+    else if (action === "new-board") openOnboarding();
+    else if (action === "logout") {
       voice.stop();
       clearWorkbenchChat();
       await api("/app/logout", { method: "POST" }); state.me = null; state.drafts.clear(); signin();
@@ -1352,8 +1408,7 @@ root.addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   state.pending.add(formKey);
   try {
-    if (kind === "shell-search") { root.querySelector("#shell-dialog").close(); location.hash = `#/memory?q=${enc(payload.q)}`; }
-    else if (kind === "login") {
+    if (kind === "login") {
       let token = payload.token.trim();
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
@@ -1394,11 +1449,6 @@ root.addEventListener("submit", async (event) => {
         warning.textContent = result.warning; form.append(warning);
       } else root.querySelector("#card-panel").hidden = true;
     });
-    else if (kind === "search") await search(form);
-    else if (kind === "memory") await mutate("new-memory", async () => {
-      const result = await api("/api/memory", { method: "POST", body: Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== "")) });
-      root.querySelector("#card-panel").hidden = true; await openMemory(result.id);
-    });
     else if (kind === "webhook") {
       const result = await api("/api/webhooks", { method: "POST", body: { ...payload, events: [payload.events] } });
       await settingsView(state.screen);
@@ -1438,6 +1488,8 @@ function workbenchKey(event) {
   if (!state.base.startsWith("#/board/") || state.base.endsWith("/chat")) return false;
   const onControl = event.target instanceof Element && event.target.closest("button,a,summary,[role=tab]");
   if (onControl && event.key === "Enter") return false;
+  // Enter inside the open card belongs to that card, never to the board selection behind it.
+  if (event.key === "Enter" && event.target instanceof Element && event.target.closest("#card-panel")) return false;
   if (key === "c") newCardForm();
   else if (["j", "k"].includes(key) && root.querySelector("#card-panel").hidden) {
     const cards = [...root.querySelectorAll(".workbench-board .card[data-card]")].filter((card) => card.getClientRects().length);
@@ -1506,27 +1558,10 @@ document.addEventListener("keydown", (event) => {
       return;
     }
   }
-  if (!["#/", "#/needs"].includes(state.base) || !state.me) return;
-  // With a card open, its keys answer and open that card, not the row selected behind it.
-  const target = /^#\/card\/\d+$/.test(state.route) ? Number(state.route.slice(7)) : state.selected;
-  const cards = [...new Map(needsCards().map((c) => [c.number, c])).values()];
-  const index = cards.findIndex((c) => c.number === state.selected);
-  if (["j", "k"].includes(event.key) && cards.length) {
-    event.preventDefault(); state.selected = cards[Math.max(0, Math.min(cards.length - 1, index + (event.key === "j" ? 1 : -1)))].number;
-    const saved = remember(); needsView(); restore(saved);
-    root.querySelector(`[data-row="${state.selected}"]`)?.focus({ preventScroll: true });
-    root.querySelector(`[data-row="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
-  } else if (/^[1-6]$/.test(event.key)) {
-    // Answer through the open card's own buttons, so its "After decision" select applies.
-    const option = `[data-action="decide"][data-option="${Number(event.key) - 1}"]:not(:disabled)`;
-    const button = root.querySelector(`[data-ask="${target}"] ${option}`);
-    if (button) { event.preventDefault(); button.click(); }
-  } else if (event.key === "o" && target) location.hash = `#/card/${target}`;
-  else if (event.key === "Enter" && target && !(event.target instanceof Element && event.target.closest("button,a"))) {
-    event.preventDefault();
-    const reply = root.querySelector(`[data-draft="reply-${target}"]`);
-    if (reply) reply.focus(); else location.hash = `#/card/${target}`;
-  }
+  // Needs me owns J/K/R inside its list and details; elsewhere on the screen they are forwarded to it.
+  if (state.base !== "#/needs" || !["j", "k", "r"].includes(event.key.toLowerCase())) return;
+  const needs = root.querySelector("[data-needs-mount]");
+  if (needs && state.needsUI) { event.preventDefault(); needs.dispatchEvent(new KeyboardEvent("keydown", { key: event.key })); }
 });
 let timer = null, polling = false, retryDelay = 2000;
 function schedule(delay) { clearTimeout(timer); timer = setTimeout(poll, delay ?? (document.hidden ? 30000 : 2000)); }

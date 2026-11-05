@@ -23,6 +23,8 @@ CASES = [
     ("workbench_details.mjs", "refocus"),
     ("workbench_shell_wiring.mjs", "panel-focus"),
     ("workbench_board.mjs", "drag"),
+    ("workbench_shell_wiring.mjs", "panel-enter"),
+    ("workbench_shell_wiring.mjs", "chat-time-label"),
 ]
 
 
@@ -47,6 +49,12 @@ def test_decide_phone_hides_shell_chrome():
     for part in (".head", ".m-top", ".m-tabs", "#connection-state"):
         assert part in chrome.group(1)
     assert re.search(r'\.shell\[data-screen="decide"\] #content \{ padding: 0;', css)
+    # The shell's phone layout (rail hidden, phone bar and tabs shown) runs up to 699 px; decide follows it.
+    queries = re.findall(r"@media \(([^{]*)\) \{", css)
+    phone = css[: css.index(chrome.group(0))].rsplit("@media", 1)[1]
+    assert phone.startswith(" (max-width: 699px)"), phone[:40]
+    wide = [q for q in queries if "min-width" in q]
+    assert wide and all(q.startswith("min-width: 700px") for q in wide), wide
 
 
 def test_guard_node_available():

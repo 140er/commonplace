@@ -91,7 +91,6 @@ def test_g01_existing_entrypoint_and_styles_survive():
         "map",
         "mix",
         "ui",
-        "home",
         "decide",
         "rules",
         "console",
