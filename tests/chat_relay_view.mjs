@@ -23,7 +23,12 @@ test("runner answer labels and escaping", async () => {
   const escaped = ui.chatHTML(page("runner:claude/<b>"), { user: "owner" }, e);
   assert.match(escaped, /&lt;b&gt;/);
   assert.doesNotMatch(escaped, /login · <b>/);
-
+  // Raw <b> tags come only from the template, never from data.
+  const tags = (html) => (html.match(/<b>/g) || []).length;
+  assert.equal(tags(escaped), tags(ui.chatHTML(page("runner:claude/plain"), { user: "owner" }, e)));
+  const board = { slug: "atlas", name: "Atlas", coordinator: "conn:iris" };
+  const agent = { ...page("plain-model"), project: board, messages: [...page("plain-model").messages, { id: 2, actor: "conn:iris", at: "2026-01-01T00:01:00Z", text: "On it" }] };
+  assert.match(ui.chatHTML(agent, { user: "owner" }, e), /<b>Atlas orchestrator<\/b>/);
 });
 
 test("runner status, daily use, errors and basic fallback", async () => {

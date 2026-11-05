@@ -105,7 +105,7 @@ function fixture(width = 1440) {
   const detailsTitle = add(ctx, "h2"); detailsTitle.setAttribute("data-details-title", ""); detailsTitle.setAttribute("tabindex", "-1");
   const tabs = add(shell, "nav", "m-tabs");
   const ask = add(main, "button", "", "ask-question"); ask.setAttribute("aria-controls", "chat");
-  const calls = { show: [], focus: 0, stop: 0, quotes: [] };
+  const calls = { show: [], focus: 0, stop: 0, quotes: [], reopened: 0 };
   const chat = {
     show(slug, options) {
       calls.show.push([slug, options]);
@@ -113,6 +113,7 @@ function fixture(width = 1440) {
     },
     focusComposer() { calls.focus++; shell.querySelector("textarea")?.focus(); },
     setQuote(quote) { calls.quotes.push(quote); },
+    reopened() { calls.reopened++; },
     stop() { calls.stop++; },
   };
   const dock = createDock({ root: shell, chat, api: () => assert.fail("Dock must not fetch") });
@@ -309,6 +310,16 @@ switch (which) {
     const css = readFileSync(path, "utf8");
     for (const value of ["var(--surface", "var(--text)", "var(--accent)", "min-height: 44px", "100dvh", "1023px", "699px", ".chatpane[hidden]", ".chat-about", ".chat-dock-content"]) assert.ok(css.includes(value), value);
     break;
+  }
+  case "reopen_baseline": {
+    // First open shows the board; a later reopen (not a return from Details) moves the divider.
+    const f = fixture(); await f.dock.open(); assert.equal(f.calls.reopened, 0);
+    f.dock.close(); await f.dock.open(); assert.equal(f.calls.reopened, 1);
+    f.dock.close({ toDetails: true }); await f.dock.backToChat(); assert.equal(f.calls.reopened, 1); break;
+  }
+  case "open_promise": {
+    const f = fixture(); f.toggle.remove();
+    const result = f.dock.open(); assert.ok(result instanceof Promise, "open must return a Promise"); await result; break;
   }
   default: assert.fail(`Unknown case: ${which}`);
 }

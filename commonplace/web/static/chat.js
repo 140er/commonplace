@@ -11,7 +11,7 @@ export const CHAT_COPY = Object.freeze({
   runnerAnswer: "via your {cli} login", runnerMode: "Answers via your {cli} login",
   runnerUsage: "{used}/{cap} today", runnerError: "Last error: {code}",
   offline: "Not sent. This device is offline. Your words are kept here until it sends.",
-  retry: "Not sent. Try again",
+  retry: "Not sent. Try again", sending: "Sending…",
 });
 
 const marked = (value, e) => e(value).replace(/\[(?:redacted|omitted):[a-z_]+\]/g, (marker) => `<mark class="redacted">${marker}</mark>`);
@@ -77,6 +77,7 @@ export function statusHTML(status, e) {
     ${front ? `<span>${e(mode)}</span>` : ""}${status.needs_you > 0 ? `<a href="#/decide">${e(CHAT_COPY.decisions)} (${e(status.needs_you)})</a>` : ""}`;
 }
 
+const SLOW_MS = 15000;
 const part = (value) => encodeURIComponent(value).replace(/\./g, "%2E");
 const unsentKey = (user, slug) => `cmmn.unsent.${part(user)}.${part(slug)}`;
 function storage() { try { return globalThis.sessionStorage; } catch { return null; } }
@@ -84,7 +85,7 @@ function storage() { try { return globalThis.sessionStorage; } catch { return nu
 export function createChat({ mount, api, e, me, board, coordinator, onCard = () => {}, onState = () => {} }) {
   let active = false, generation = 0, timer = null, delay = 2000, state;
   let lastProject = null;
-  const offlineQueue = new Map();
+  const offlineQueue = new Map(), written = new WeakMap();
   const drafts = new Map(), pending = new Map(), seen = new Map(), users = new Set(me?.user ? [me.user] : []);
   const root = () => typeof mount === "function" ? mount() : mount;
   const current = (token) => active && token === generation;
@@ -127,13 +128,13 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     if (state) { state.unsent = null; state.quote = null; }
     if (field()) field().value = "";
   }
-  function signOut() {
-    clearUnsent(); controller.stop();
+  function detach() {
     document.removeEventListener("session-expired", signOut);
     document.removeEventListener("signout", signOut);
     document.removeEventListener("click", logout, true);
     globalThis.removeEventListener?.("online", online);
   }
+  function signOut() { clearUnsent(); controller.stop(); detach(); }
   function logout(event) { if (event.target.closest?.('[data-action="logout"]')) signOut(); }
   document.addEventListener("session-expired", signOut);
   document.addEventListener("signout", signOut);
@@ -159,12 +160,17 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       }
       host.onclick = click;
     }
-    const put = (selector, html) => { const el = host.querySelector(selector); if (el) el.innerHTML = html; };
+    // Rewrite a region only when its markup changed, so an unchanged poll keeps focus and selection.
+    const write = (el, html) => {
+      if (!el || written.get(el) === html) return false;
+      el.innerHTML = html; written.set(el, html); return true;
+    };
+    const put = (selector, html) => write(host.querySelector(selector), html);
     const view = host.querySelector(".chat-view");
     if (view) view.dataset.board = state.slug || "";
     const picker = host.querySelector("[data-chat-project]");
     if (picker) {
-      picker.innerHTML = '<option value="">Choose a project</option>' + state.projects.map((p) => `<option value="${e(p.slug)}" ${p.slug === state.slug ? "selected" : ""}>${marked(p.name || p.slug, e)}</option>`).join("");
+      write(picker, '<option value="">Choose a project</option>' + state.projects.map((p) => `<option value="${e(p.slug)}" ${p.slug === state.slug ? "selected" : ""}>${marked(p.name || p.slug, e)}</option>`).join(""));
       picker.onchange = () => { location.hash = `#/board/${encodeURIComponent(picker.value)}/chat`; };
     }
     const link = host.querySelector("[data-chat-board]");
@@ -173,12 +179,13 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const error = host.querySelector("[data-chat-error]");
     if (error) { error.hidden = !state.error; error.textContent = state.error; }
     const stream = host.querySelector(".chat-stream");
-    if (stream) { stream.innerHTML = state.slug ? chatHTML(page, state.me, e) : `<li>${e(CHAT_COPY.noProjects)}</li>`; stream.scrollTop = bottom ? stream.scrollHeight : top; }
+    if (write(stream, state.slug ? chatHTML(page, state.me, e) : `<li>${e(CHAT_COPY.noProjects)}</li>`)) stream.scrollTop = bottom ? stream.scrollHeight : top;
     const earlier = host.querySelector("[data-chat-earlier]");
     if (earlier) earlier.hidden = !state.page.has_more;
     put("[data-chat-source]", state.at ? '<p class="chat-source">Opened from memory. Your question takes the quote along, word for word. <button type="button" data-close-chat>Back to the source</button></p>' : "");
     put("[data-chat-quote]", state.quote ? `<div class="chat-quote">Quoting ${e(state.quote.author)}, ${e(state.quote.date ?? state.quote.at)}, exact words <button type="button" data-chat-remove-quote aria-label="Remove the quote">×</button></div>` : "");
-    put("[data-chat-unsent]", state.unsent ? `<div class="chat-unsent" role="alert"><p>${marked(state.unsent.text, e)}</p><p>${e(state.unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p><button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button></div>` : "");
+    const unsent = state.unsent, inFlight = unsent?.pending;
+    put("[data-chat-unsent]", unsent ? `<div class="chat-unsent" role="${inFlight ? "status" : "alert"}"><p>${marked(unsent.text, e)}</p><p>${e(inFlight ? CHAT_COPY.sending : unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p>${inFlight ? "" : `<button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button>`}</div>` : "");
     const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
     const recovery = state.derived?.state;
     put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${state.derived.last_seen ? `<p>Agent last seen ${e(state.derived.last_seen)}</p>` : ""}${recovery !== "working" ? `<div>${recovery === "no_answer" ? `<a href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button type="button" data-chat-ask-again>Ask again</button>` : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>'}<button type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
@@ -194,8 +201,9 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       users.add(state.me.user);
       const name = key();
       if (!seen.has(name)) seen.set(name, seenStore(state.me.user, state.slug));
+      // The divider keeps the boundary from when the pane opened; unread follows the store.
       state.baseline ??= seen.get(name).read(state.page);
-      state.derived = deriveChatState(state.page, state.status, project(), Date.now(), state.baseline);
+      state.derived = deriveChatState(state.page, state.status, project(), Date.now(), seen.get(name).read(state.page));
       onState(state.derived);
       if (!document.hidden) seen.get(name).markSeen(state.page);
     }
@@ -216,9 +224,11 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       }
       if (state.slug) {
         const query = state.loaded ? `after=${state.page.cursor || 0}&replies_after=${state.page.reply_cursor || 0}` : "last=20";
-        const [page, status, cards, settings] = await Promise.all([api(`${path()}?${query}`), api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)]);
+        // New messages every tick; status, cards and settings change slowly.
+        const slow = !state.loaded || Date.now() - (state.slowAt || 0) >= SLOW_MS;
+        const [page, status, cards, settings] = await Promise.all([api(`${path()}?${query}`), ...(slow ? [api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)] : [])]);
         if (!current(token)) return;
-        state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = cards.cards || [];
+        if (slow) { state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = cards.cards || []; state.slowAt = Date.now(); }
         update(page);
         if (!state.loaded) restore();
         lastProject = state.slug;
@@ -227,19 +237,23 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     } catch { if (!current(token)) return; state.error = CHAT_COPY.unavailable; delay = Math.min(delay * 2, 30000); }
     render(); schedule(token);
   }
-  async function post(text, fromRetry = false) {
+  // origin: "composer" (the form), "ask" (Ask again) or "retry" (keeps the first send's origin).
+  // Only composer sends may clear the composer or the quote.
+  async function post(text, origin = "composer") {
     if (!active || state.sending || !state.slug || !text.trim()) return;
+    const retry = origin === "retry", source = retry ? state.unsent?.origin || "composer" : origin;
     const token = ++generation, sendingState = state, name = key(), sentDraft = field()?.value;
-    const originalDraft = fromRetry ? state.unsent?.draft : sentDraft;
+    const originalDraft = retry ? state.unsent?.draft : source === "composer" ? sentDraft : null;
+    const bubble = { text, draft: originalDraft, origin: source, offline: false, auto: false };
     cancel(); remember(text);
     state.sending = true;
     if (globalThis.navigator?.onLine === false) {
-      state.unsent = { text, draft: originalDraft, offline: true, auto: true };
-      offlineQueue.set(name, { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft });
+      state.unsent = { ...bubble, offline: true, auto: true };
+      offlineQueue.set(name, { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source });
       state.sending = false; render(); return;
     }
     offlineQueue.delete(name);
-    state.unsent = { text, draft: originalDraft, offline: false, auto: false }; render();
+    state.unsent = { ...bubble, pending: true }; render();
     let sent = false;
     try { await api(`/api/boards/${encodeURIComponent(state.slug)}/chat`, { method: "POST", body: { text } }); sent = true; }
     catch {
@@ -255,10 +269,14 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     if (!current(token)) return;
     sendingState.sending = false;
     if (sent) {
-      state.unsent = null; state.quote = null;
-      if (field()?.value === sentDraft && (!fromRetry || sentDraft === originalDraft)) { field().value = ""; drafts.delete(state.slug); }
+      state.unsent = null; state.slowAt = 0;
+      if (source === "composer") {
+        const untouched = field()?.value === sentDraft && (!retry || sentDraft === originalDraft);
+        if (!retry || untouched) state.quote = null;
+        if (untouched) { field().value = ""; drafts.delete(state.slug); }
+      }
       await tick(token);
-    } else { state.unsent = { text, draft: originalDraft, offline: false, auto: false }; render(); schedule(token); }
+    } else { state.unsent = bubble; render(); schedule(token); }
   }
   async function send(event) {
     event.preventDefault();
@@ -297,12 +315,12 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     if (button.dataset.chatCard) { event.preventDefault(); onCard(Number(button.dataset.chatCard), button); }
     else if (button.dataset.chatSuggest) { if (field()) field().value = button.dataset.chatSuggest; controller.focusComposer(); }
     else if (button.hasAttribute("data-chat-remove-quote")) { controller.setQuote(null); controller.focusComposer(); }
-    else if (button.hasAttribute("data-chat-retry")) await post(state.unsent?.text || "", true);
+    else if (button.hasAttribute("data-chat-retry")) await post(state.unsent?.text || "", "retry");
     else if (button.hasAttribute("data-chat-earlier")) await history();
     else {
       const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
       if (!request) return;
-      if (button.hasAttribute("data-chat-ask-again")) await post(request.text);
+      if (button.hasAttribute("data-chat-ask-again")) await post(request.text, "ask");
       else if (!state.making) {
         const token = generation; state.making = true; render();
         try {
@@ -328,8 +346,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     }
     if (sent) forget(item.name, item.text);
     if (active && key() === item.name && state.unsent?.text === item.text) {
-      state.unsent = sent ? null : { text: item.text, draft: item.draft, offline: false, auto: false };
-      if (sent) {
+      state.unsent = sent ? null : { text: item.text, draft: item.draft, origin: item.origin, offline: false, auto: false };
+      if (sent && item.origin !== "ask") {
         state.quote = null;
         if (field()?.value === item.draft || field()?.value === item.text) { field().value = ""; drafts.delete(item.slug); }
       }
@@ -340,7 +358,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     for (const item of offlineQueue.values()) {
       offlineQueue.delete(item.name);
       if (active && key() === item.name && state.unsent?.auto) {
-        state.unsent.auto = false; void post(item.text, true);
+        state.unsent.auto = false; void post(item.text, "retry");
       } else void flushOffline(item);
     }
   }
@@ -360,6 +378,14 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     },
     stop() { active = false; generation++; cancel(); document.removeEventListener("visibilitychange", visibility); },
     focusComposer() { field()?.focus(); },
+    /** The dock reopened the pane on the same board: move the divider to what was read before. */
+    reopened() {
+      const store = state?.me?.user && seen.get(key());
+      if (!active || !store) return;
+      state.baseline = store.read(state.page); render();
+    },
+    /** Stop and remove the document and window listeners this controller added. */
+    destroy() { controller.stop(); detach(); },
     setQuote(quote) { if (state) { state.quote = quote ? { ...quote } : null; render(); } },
     clearUnsent,
   };

@@ -162,8 +162,8 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     return toggle;
   }
   function open({ from = toggle, strip: nextStrip = null, at, quote, focus = null, resume = false } = {}) {
-    if (!board || !toggle?.isConnected) return;
-    const token = ++generation;
+    if (!board || !toggle?.isConnected) return Promise.resolve();
+    const token = ++generation, reopening = !opened && !resume && shownBoard === board.slug;
     if (!opened && !inDetails) {
       context = shell.querySelector("#ctx") || shell.querySelector(".context");
       contextHidden = context?.hidden;
@@ -185,6 +185,8 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     paint();
     place();
     let result;
+    // Reading resumes after a close: the divider moves to what was read before.
+    if (reopening) chat.reopened?.();
     if (shownBoard !== board.slug || at !== undefined) {
       shownBoard = board.slug;
       result = chat.show(board.slug, { at, quote });

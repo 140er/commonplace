@@ -683,11 +683,20 @@ function mountWorkbenchChat() {
       running = true;
       const slug = service.board.slug;
       try {
-        const old = pages.get(slug);
-        const query = old ? `after=${old.cursor || 0}&replies_after=${old.reply_cursor || 0}` : "last=20";
-        const [page, status] = await Promise.all([api(`/api/chat/${enc(slug)}?${query}`), api(`/api/chat/${enc(slug)}/status`)]);
-        if (disposed || document.hidden || service.board.slug !== slug) return;
+        const old = pages.get(slug), seen = old ? null : store(slug).peek();
         const merge = (a = [], b = []) => [...new Map([...a, ...b].map((row) => [row.id, row])).values()];
+        // A stored seen entry reads everything after it; only a first sight uses the last 20.
+        const after = old || (seen && { cursor: seen.message, reply_cursor: seen.reply });
+        const read = (from) => api(`/api/chat/${enc(slug)}?${from ? `after=${from.cursor || 0}&replies_after=${from.reply_cursor || 0}` : "last=20"}`);
+        let [page, status] = await Promise.all([read(after), api(`/api/chat/${enc(slug)}/status`)]), last = page;
+        // A full page (100 rows) may have more behind it.
+        while (after && ((last.messages || []).length >= 100 || (last.replies || []).length >= 100)) {
+          if (disposed || service.board.slug !== slug) return;
+          last = await read(page);
+          if ((last.cursor || 0) <= (page.cursor || 0) && (last.reply_cursor || 0) <= (page.reply_cursor || 0)) break;
+          page = { ...page, ...last, messages: merge(page.messages, last.messages), replies: merge(page.replies, last.replies) };
+        }
+        if (disposed || document.hidden || service.board.slug !== slug) return;
         const merged = { ...old, ...page, messages: merge(old?.messages, page.messages), replies: merge(old?.replies, page.replies),
           cursor: Math.max(old?.cursor || 0, page.cursor || 0), reply_cursor: Math.max(old?.reply_cursor || 0, page.reply_cursor || 0) };
         pages.set(slug, merged);
@@ -740,7 +749,7 @@ function mountWorkbenchChat() {
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
         document.removeEventListener("visibilitychange", visibility);
-        dock.destroy(); chatUI = null; state.workbenchChat = null;
+        dock.destroy(); chatUI?.destroy(); chatUI = null; state.workbenchChat = null;
       },
       clear() { for (const value of stores.values()) value.clearSeen(); clearSeen(user); pages.clear(); stores.clear(); },
     };
