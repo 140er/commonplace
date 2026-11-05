@@ -281,7 +281,7 @@ switch (which) {
   }
   case "quote_jump": {
     const f = fixture(); const quote = { text: "Exact\nwords", author: "Leon" };
-    await f.dock.open({ from: f.ask, at: 7, quote }); assert.deepEqual(f.calls.show[0], ["atlas", { at: 7, quote }]);
+    await f.dock.open({ from: f.ask, at: 7, quote }); assert.deepEqual(f.calls.show[0], ["atlas", { at: 7, quote, name: "Atlas" }]);
     await f.dock.open({ quote }); assert.equal(f.calls.quotes[0], quote);
     f.dock.close({ toDetails: true }); await f.dock.backToChat(); assert.equal(f.calls.quotes.length, 1);
     f.dock.close(); await f.dock.open(); assert.equal(f.calls.quotes.at(-1), null); break;

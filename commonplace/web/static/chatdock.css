@@ -15,6 +15,11 @@
 .chat-head .btn { flex: none; }
 .chat-dock-content { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .chat-dock-content > .chat-view { flex: 1; min-height: 0; }
+/* The pane inside the dock stays in flow: shell rules for the docked .chatpane must not
+   lift it over the dock header or the strip. The dock header names the chat and closes it. */
+#chat-content > .chat-view { position: static; width: auto; height: auto; z-index: auto; box-shadow: none; border: 0; }
+#chat-content .chat-header { position: static; }
+#chat-content .chat-header > h2, #chat-content .chat-header > [data-close-chat] { display: none; }
 .chat-about { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: var(--accent-weak); color: var(--text); border-bottom: 1px solid var(--line); flex: none; font-size: 13px; }
 .chat-about-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .from-chat { border-bottom: 1px solid var(--line); }
@@ -31,4 +36,5 @@
   .chatpane .chat-head .btn, .chatpane .chat-about .btn { min-height: 44px; }
   .chat-toggle { min-height: 44px; }
   .chatpane textarea { font-size: 16px; }
+  .chatpane .chat-dock-content { flex: 1; min-height: 0; overflow: auto; }
 }
