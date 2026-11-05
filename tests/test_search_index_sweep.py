@@ -20,21 +20,11 @@ class Worker:
         self.entries = {}
         self.batches = []
         self.fail_at = None
-        self.reads = []
+        self.writes = []
 
     def __call__(self, principal, name, args):
         if name == "mempalace_list_drawers":
             return {"drawers": [], "total": 0}
-        if name == "mempalace_get_drawers":
-            self.reads.append(list(args["drawer_ids"]))
-            return {
-                "results": [
-                    {"drawer_id": key}
-                    if key in self.entries
-                    else {"drawer_id": key, "error": "not found"}
-                    for key in args["drawer_ids"]
-                ]
-            }
         assert name == "write_mirror_units"
         if len(self.batches) == self.fail_at:
             raise RuntimeError("synthetic interruption")
@@ -46,6 +36,7 @@ class Worker:
             ).hexdigest()
             self.entries[key] = unit
             ids.append(key)
+        self.writes.append(ids)
         return {"drawer_ids": ids}
 
 
@@ -142,8 +133,7 @@ def test_u3_c_crash_retry_idempotence(world):
     assert len(first) == 64
     assert world.store.mirror_progress(stored.id)[0] == -1
     world.worker.fail_at = None
-    # This case covers palace loss AFTER a worker error invalidates the cache.
-    assert not world.service._index_states[world.ws].batches
+    # No range finished: retry must replay this pinned range, including lost units.
     world.worker.entries.clear()
     world.service.index_later(world.ws)
     world.service.wait_for_mirrors(10)
@@ -178,7 +168,6 @@ def test_u3_d_quota_defers_between_batches(world, monkeypatch):
     world.service.index_later(world.ws, [stored.id])
     world.service.wait_for_mirrors(10)
     assert world.worker.batches == [64]
-    assert not world.service._index_states[world.ws].batches
     assert world.service.index_status(world.ws)["state"] == "deferred_storage"
     assert world.service.index_status(world.ws)["units_written"] == 64
     assert world.store.mirror_progress(stored.id)[0] == -1
@@ -244,32 +233,81 @@ def test_import_groups_enrolled_once_per_state(world, monkeypatch):
     assert groups == [world.ws]
 
 
-def test_batch_cache_evicts_oldest_thread(world):
-    row = put(world)
-    stale = {f"old_{i}": {b"digest": {"drawer_ids": ["old"]}} for i in range(4)}
-    state = search_index.State(batches=stale.copy())
-    search_index.sweep(world.service, world.ws, state)
-    assert "old_0" not in state.batches
-    assert row.id not in state.batches  # successful completion prunes its cache
-    assert len(state.batches) == 3
+def test_bounded_ranges_advance_durably_without_cache(world, monkeypatch):
+    monkeypatch.setattr(search_index, "MAX_UNITS", 64)
+    stored = put(world, "import:bounded", count=200, text="p" * 4000)
+    state = search_index.State()
+    completed = []
+    for _ in range(10):
+        more = search_index.sweep(world.service, world.ws, state)
+        progress = world.store.mirror_progress(stored.id)
+        completed.append(progress[0])
+        assert progress[0] == progress[1]
+        if not more:
+            break
+    else:
+        pytest.fail("bounded sweep did not finish")
+    assert completed == [31, 63, 95, 127, 159, 191, 199]
+    assert len(world.worker.entries) == 400
+    assert world.worker.batches == [64] * 6 + [16]
+    assert not hasattr(state, "batches")
 
 
-def test_silent_palace_loss_replays_cached_batch_before_completion(world, monkeypatch):
+def test_finished_range_loss_is_trusted_not_repaired(world, monkeypatch):
     monkeypatch.setattr(search_index, "MAX_UNITS", 64)
     stored = put(world, "import:silent-loss", count=200, text="p" * 4000)
     state = search_index.State()
     assert search_index.sweep(world.service, world.ws, state) is True
-    assert world.worker.batches == [64] and state.batches
+    assert world.store.mirror_progress(stored.id) == (31, 31)
     first_ids = set(world.worker.entries)
-    world.worker.entries.clear()  # No error: a cached success is now stale.
+    world.worker.entries.clear()
     for _ in range(10):
         if not search_index.sweep(world.service, world.ws, state):
             break
     else:
         pytest.fail("bounded sweep did not finish")
-    assert len(world.worker.entries) == 400
-    assert first_ids <= set(world.worker.entries)
-    assert world.worker.batches == [64] * 7 + [16]
-    assert world.worker.reads and set(world.worker.reads[0]) == first_ids
+    assert len(world.worker.entries) == 336
+    assert first_ids.isdisjoint(world.worker.entries)
     assert world.store.mirror_progress(stored.id) == (199, 199)
     assert world.store.index_backlog(world.ws, after_id="", limit=10) == []
+
+
+def test_crash_mid_range_replays_only_unfinished_range(world, monkeypatch):
+    monkeypatch.setattr(search_index, "MAX_UNITS", 128)
+    stored = put(world, "import:range-retry", count=100, text="p" * 8000)
+    state = search_index.State()
+    assert search_index.sweep(world.service, world.ws, state) is True
+    assert world.store.mirror_progress(stored.id)[0] == 31
+    finished_ids = set(world.worker.entries)
+    world.worker.fail_at = len(world.worker.batches) + 1
+    search_index.sweep(world.service, world.ws, state)
+    assert world.store.mirror_progress(stored.id) == (31, 63)
+    before_retry = len(world.worker.writes)
+    state = search_index.State()  # Process-local state can be lost; the range is durable.
+    world.worker.fail_at = None
+    for _ in range(10):
+        if not search_index.sweep(world.service, world.ws, state):
+            break
+    else:
+        pytest.fail("bounded sweep did not finish")
+    replayed_ids = {key for batch in world.worker.writes[before_retry:] for key in batch}
+    assert finished_ids.isdisjoint(replayed_ids)
+    assert len(world.worker.entries) == 300
+    assert world.store.mirror_progress(stored.id) == (99, 99)
+
+
+def test_one_oversized_message_finishes_without_cache(world, monkeypatch):
+    monkeypatch.setattr(search_index, "MAX_UNITS", 2)
+    stored = put(world, "import:oversized", count=1, text="".join(f"{i:04d}" for i in range(5000)))
+    search_index.sweep(world.service, world.ws, search_index.State())
+    assert len(world.worker.entries) == 6
+    assert world.store.mirror_progress(stored.id) == (0, 0)
+
+
+def test_preexisting_whole_thread_pin_can_finish_without_cache(world, monkeypatch):
+    monkeypatch.setattr(search_index, "MAX_UNITS", 64)
+    stored = put(world, "import:legacy-pin", count=200, text="p" * 4000)
+    world.store.begin_mirror(stored.id, 199)
+    search_index.sweep(world.service, world.ws, search_index.State())
+    assert len(world.worker.entries) == 400
+    assert world.store.mirror_progress(stored.id) == (199, 199)

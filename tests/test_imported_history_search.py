@@ -745,3 +745,114 @@ def test_imported_search_r15_member_cannot_find_owner_derived_fact(world):
     status, reply = rpc(w, token, "mempalace_search", {"query": "SyntheticProject"})
     assert status == 200
     assert not quoted(value, reply)  # RED
+
+
+def test_imported_search_r16_cli_search_excludes_mirror_copies(world):
+    w = world
+    body = "zqimportprivateclibody"
+    text = words("climirror") + " " + body
+    private_mirror(w, text)  # Owner's structured-search control on both revisions.
+    owner = writer(w)
+    public = "zqimportpubliccli visible shared note"
+    status, reply = rpc(
+        w,
+        owner,
+        "mempalace_add_drawer",
+        {
+            "wing": "shared",
+            "room": "notes",
+            "content": public,
+        },
+    )
+    assert status == 200 and tool_value(reply).get("success"), reply
+    _, token = operator(w, user=member(w))
+    status, reply = rpc(
+        w, token, "mempalace_search", {"query": "zqimportpubliccli", "cli_compatible": True}
+    )
+    assert status == 200
+    assert "visible shared note" in "\n".join(strings(reply))
+    replies = []
+    for args in (
+        {"query": text.split()[0], "cli_compatible": True},
+        {"query": text.split()[0], "wing": "private_threads", "cli_compatible": True},
+    ):
+        status, reply = rpc(w, token, "mempalace_search", args)
+        assert status == 200
+        replies.append(reply)
+    assert all(body not in "\n".join(strings(reply)) for reply in replies)  # RED
+
+
+def test_imported_search_r17_superseded_reference_requires_kept_target(world):
+    w = world
+    text = words("factreference")
+    ids = private_mirror(w, text)
+    scopes = [
+        "memory:read",
+        "memory:write",
+        "private:read",
+        "private:write",
+        "threads:read",
+        "kg:read",
+        "kg:write",
+    ]
+    _, owner = operator(
+        w,
+        policy=Policy.build(
+            profile="full", scopes=scopes, read_wings=["*"], write_wings=["*"], trust="trusted"
+        ),
+    )
+    record = mirror_record(w, ids, text, owner)
+    assert text in record.get("content", "")
+    status, reply = rpc(
+        w,
+        owner,
+        "mempalace_kg_save",
+        {
+            "subject": "SyntheticReference",
+            "predicate": "deploy_port",
+            "object": "8000",
+            "wing": "shared",
+            "single_valued": True,
+            "valid_from": "2026-01-01",
+        },
+    )
+    assert status == 200 and tool_value(reply).get("success"), reply
+    status, reply = rpc(
+        w,
+        owner,
+        "fact_save",
+        {
+            "subject": "SyntheticReference",
+            "predicate": "deploy_port",
+            "object": "zqimportsuccessor",
+            "theme": "shared",
+            "single_valued": True,
+            "valid_from": "2026-02-01",
+            "source": {"thread": record["room"], "seq_start": 1, "seq_end": 1},
+        },
+    )
+    assert status == 200 and not reply.get("error"), reply
+    status, reply = rpc(w, owner, "mempalace_kg_query", {"entity": "SyntheticReference"})
+    assert status == 200
+    rows = tool_value(reply).get("facts", [])
+    old = next((row for row in rows if row.get("object") == "8000"), {})
+    new = next((row for row in rows if row.get("object") == "zqimportsuccessor"), {})
+    assert new.get("id") and old.get("superseded_by") == new["id"]
+    _, token = operator(
+        w,
+        user=member(w),
+        policy=Policy.build(
+            profile="full",
+            scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+            read_wings=["*"],
+            trust="standard",
+        ),
+    )
+    # The successor is outside this payload's temporal selection on BOTH revisions.
+    status, reply = rpc(
+        w, token, "mempalace_kg_query", {"entity": "SyntheticReference", "as_of": "2026-01-15"}
+    )
+    assert status == 200
+    rows = tool_value(reply).get("facts", [])
+    assert [row.get("object") for row in rows] == ["8000"]
+    assert "superseded_by" not in rows[0]  # RED

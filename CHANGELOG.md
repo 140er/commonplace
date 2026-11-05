@@ -35,14 +35,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Mirror copies of private stored threads, facts derived from them, and their tunnel
-  previews are returned only to callers who can read that thread. This covers Memory
-  search, `memory_get` and session start context. Mirror copies do not count as
-  duplicates for anyone. Similarity dedup exclusion (D5) is verified on compact,
-  sqlite_exact and chroma. Adding, updating, deleting or linking drawers in a
-  stored-thread room requires permission to read that thread. Known exceptions:
-  `delete_by_source`, `delete_tunnel` and `delete_hallway` take no room and are not
-  checked yet.
+- Structured mirror copies of private stored threads, facts derived from them, and their
+  tunnel previews are returned only to callers who can read their source thread. This
+  covers structured Memory search, `memory_get` and session start context. CLI-format
+  (`cli_compatible`) search excludes mirror copies for everyone, including owners. A
+  `superseded_by` id is returned only when its target is another kept fact in the same
+  response. Mirror copies do not count as duplicates for anyone. Similarity dedup
+  exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding, updating,
+  deleting or linking drawers in a stored-thread room requires permission to read that
+  thread. Known exceptions: `delete_by_source`, `delete_tunnel` and `delete_hallway`
+  take no room and are not checked yet. Fact mutations (`kg_invalidate`, `kg_supersede`
+  and `kg_save` merges) on thread-derived facts are not room-checked. Invalidate's
+  `closed` count is a yes/no oracle for hidden values. This pre-existing write-side
+  exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and
+  `delete_hallway`.
 - To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).

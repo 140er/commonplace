@@ -460,8 +460,9 @@ class Mediator:
 
         from .handoff.mirror_access import gate
 
+        committed_result = None
         if isinstance(response, dict) and "result" in response:
-            result = _tool_result(response)
+            result = committed_result = _tool_result(response)
             cleaned = gate(self.gateway, principal, rule, result)
             if cleaned is not result:
                 response = (
@@ -471,7 +472,7 @@ class Mediator:
                 )
 
         if classify_tool(name) != "read":
-            result = _tool_result(response) if isinstance(response, dict) else None
+            result = committed_result
             ok = isinstance(result, dict) and not result.get("error") and "error" not in response
             self._audit(
                 principal,
@@ -533,6 +534,11 @@ class Mediator:
             or any(not isinstance(w, str) or not w for w in requested)
         ):
             raise Denied("wings must be a list of at most 64 wing names")
+        from .handoff.models import MIRROR_WING
+
+        cli = bool(args.get("cli_compatible"))
+        if cli and canonical_wing(args.get("wing") or "") == MIRROR_WING:
+            return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
         policy = principal.policy
         if requested is not None:
             requested = [w for w in requested if policy.can_read_wing(w)]
@@ -548,7 +554,7 @@ class Mediator:
         # A worker has workspace authority. Always suppress its unscoped fact
         # search, including captured CLI output, and attach the scoped read.
         args["include_facts"] = False
-        if wing or (policy.sees_all_wings and requested is None):
+        if wing or (policy.sees_all_wings and requested is None and not cli):
             if requested is not None and not any(
                 canonical_wing(wing) == canonical_wing(w) for w in requested
             ):
@@ -566,7 +572,8 @@ class Mediator:
         try:
             if not principal.policy.tool_visible("mempalace_kg_query"):
                 return {"facts": []}
-            call = {"entity": args.get("query", ""), "search": True, "limit": args.get("limit", 5)}
+            limit = max(1, min(int(args.get("limit", 5)), 100))
+            call = {"entity": args.get("query", ""), "search": True, "limit": min(limit * 4, 100)}
             if args.get("wing"):
                 call["wings"] = [args["wing"]]
             elif args.get("wings") is not None:
@@ -584,7 +591,7 @@ class Mediator:
             # Scrub before _with_search_facts can render facts into CLI text.
             result = gate(self.gateway, principal, "kg_read", result)
             return {
-                "facts": result.get("facts", []),
+                "facts": gate(self.gateway, principal, "kg_read", result.get("facts", [])[:limit]),
                 **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
             }
         except Exception:
@@ -810,12 +817,15 @@ class Mediator:
 
     def _fan_out_search(self, principal, name, args) -> dict:
         """One worker search and one ranking over the readable wing union."""
+        from .handoff.models import MIRROR_WING
+
         listing = self.workers.call_tool(principal, "mempalace_list_wings", {}) or {}
         requested = args.get("wings")
         wings = sorted(
             w
             for w in (listing.get("wings") or {})
             if principal.policy.can_read_wing(w)
+            and (not args.get("cli_compatible") or canonical_wing(w) != MIRROR_WING)
             and (
                 requested is None or any(canonical_wing(w) == canonical_wing(r) for r in requested)
             )

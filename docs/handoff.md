@@ -756,14 +756,20 @@ old thread and the successor reference or URL.
   get the user's unanswered message (the control database holds no text);
   the old session showed it was refused.
 - Each stored thread is also written into Memory search in the background, in a private
-  section. Mirror copies of private stored threads, facts derived from them, and their
-  tunnel previews are returned only to callers who can read that thread. This covers
-  Memory search, `memory_get` and session start context. Mirror copies do not count as
-  duplicates for anyone. Similarity dedup exclusion (D5) is verified on compact,
-  sqlite_exact and chroma. Adding, updating, deleting or linking drawers in a
-  stored-thread room requires permission to read that thread. Known exceptions:
-  `delete_by_source`, `delete_tunnel` and `delete_hallway` take no room and are not
-  checked yet.
+  section. Structured mirror copies of private stored threads, facts derived from them,
+  and their tunnel previews are returned only to callers who can read their source
+  thread. This covers structured Memory search, `memory_get` and session start context.
+  CLI-format (`cli_compatible`) search excludes mirror copies for everyone, including
+  owners. A `superseded_by` id is returned only when its target is another kept fact in
+  the same response. Mirror copies do not count as duplicates for anyone. Similarity
+  dedup exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding,
+  updating, deleting or linking drawers in a stored-thread room requires permission to
+  read that thread. Known exceptions: `delete_by_source`, `delete_tunnel` and
+  `delete_hallway` take no room and are not checked yet. Fact mutations
+  (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived facts are not
+  room-checked. Invalidate's `closed` count is a yes/no oracle for hidden values. This
+  pre-existing write-side exposure is accepted for follow-up alongside
+  `delete_by_source`, `delete_tunnel` and `delete_hallway`.
 - `handoff.completed` is queued in the same transaction that records the
   successor and delivered exactly once, also after a crash (it goes out
   when the gateway starts again) and with several gateways on one control

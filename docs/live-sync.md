@@ -118,13 +118,21 @@ Imports, including memory-file imports, are also indexed in the background.
 Searchable text keeps the original words; a hit's `source.thread` can point to
 the shared session rather than an individual import.
 
-Mirror copies of private stored threads, facts derived from them, and their tunnel
-previews are returned only to callers who can read that thread. This covers Memory
-search, `memory_get` and session start context.
+Structured mirror copies of private stored threads, facts derived from them, and their
+tunnel previews are returned only to callers who can read their source thread. This
+covers structured Memory search, `memory_get` and session start context. CLI-format
+(`cli_compatible`) search excludes mirror copies for everyone, including owners. A
+`superseded_by` id is returned only when its target is another kept fact in the same
+response.
 
 Adding, updating, deleting or linking drawers in a stored-thread room requires
 permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
 and `delete_hallway` take no room and are not checked yet.
+
+Fact mutations (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived
+facts are not room-checked. Invalidate's `closed` count is a yes/no oracle for hidden
+values. This pre-existing write-side exposure is accepted for follow-up alongside
+`delete_by_source`, `delete_tunnel` and `delete_hallway`.
 
 Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
 verified on compact, sqlite_exact and chroma.

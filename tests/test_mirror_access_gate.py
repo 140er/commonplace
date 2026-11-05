@@ -558,24 +558,31 @@ def test_worker_jsonrpc_error_preserves_envelope(world, tool, args):
     )
 
 
-def test_unreadable_related_fact_drops_write_echo(world):
+def test_hidden_related_fact_keeps_committed_result(world):
     result = {
+        "success": True,
+        "triple_id": "new",
+        "action": "superseded",
         "wing": "private_threads",
         "fact": "Sample states new words",
         "sources": [{"source_thread": world.thread.id}],
         "previous": ["hidden old words"],
+        "superseded": ["old"],
         "related_facts": [
             {
+                "id": "old",
                 "wing": "private_threads",
                 "object": "hidden old words",
                 "sources": [{"source_thread": "thr_ffffffffffffffff"}],
             }
         ],
     }
-    assert gate(world.gateway, world.principal, "kg_write", result) == {
-        "error": "not found",
-        "denied": True,
-    }
+    cleaned = gate(world.gateway, world.principal, "kg_write", result)
+    assert (
+        cleaned["success"] and cleaned["triple_id"] == "new" and cleaned["action"] == "superseded"
+    )
+    assert cleaned["related_facts"] == cleaned["previous"] == cleaned["superseded"] == []
+    assert "hidden old words" not in str(cleaned)
 
 
 def test_fact_search_is_gated_before_cli_rendering(world):
@@ -589,7 +596,7 @@ def test_fact_search_is_gated_before_cli_rendering(world):
     workers = Mock(
         post=Mock(return_value=_tool_response(1, {"results": [], "cli_output": "No drawers"}))
     )
-    workers.call_tool.return_value = {
+    facts = {
         "facts": [
             {
                 "subject": "Sample",
@@ -600,6 +607,11 @@ def test_fact_search_is_gated_before_cli_rendering(world):
             }
         ]
     }
+    workers.call_tool.side_effect = [
+        facts,
+        {"wings": {"shared": 1, "private_threads": 1}},
+        {"results": [], "cli_output": "No drawers"},
+    ]
     mediator = Mediator(Mock(), workers)
     mediator.gateway = world.gateway
     response = mediator._tools_call(
@@ -675,3 +687,143 @@ def test_readable_fact_does_not_echo_another_facts_word_bearing_id(world):
         ]
     }
     assert fact["superseded_by"] == "t_sample_states_hidden_object"
+
+
+@pytest.mark.parametrize(
+    "rule,key", [("kg_read", "facts"), ("kg_read", "timeline"), ("kg_write", "related_facts")]
+)
+def test_superseded_pointer_requires_target_in_whole_kept_payload(world, rule, key):
+    old = {"id": "old", "object": "old words", "superseded_by": "new"}
+    new = {
+        "id": "new",
+        "object": "new words",
+        "wing": "private_threads",
+        "sources": [{"source_thread": world.thread.id}],
+    }
+    payload = {key: [old, new]}
+    assert gate(world.gateway, world.principal, rule, payload) is payload
+    only_old = gate(world.gateway, world.principal, rule, {key: [old]})
+    assert "superseded_by" not in only_old[key][0]
+    world.private.readable.return_value = False
+    cleaned = gate(world.gateway, world.principal, rule, payload)
+    assert cleaned[key] == [{"id": "old", "object": "old words"}]
+
+
+@pytest.mark.parametrize("field", ["approval_link", "origin_link"])
+def test_fact_links_need_their_own_thread_readability(world, field):
+    fact = {
+        "object": "words",
+        "source_thread": world.thread.id,
+        field: "/app/threads/thr_ffffffffffffffff",
+    }
+    cleaned = gate(world.gateway, world.principal, "kg_read", {"facts": [fact]})
+    assert field not in cleaned["facts"][0]
+    fact[field] = "/app/threads/" + world.thread.id
+    assert gate(world.gateway, world.principal, "kg_read", {"facts": [fact]})["facts"][0] is fact
+
+
+@pytest.mark.parametrize("limit,fetch", [(5, 20), (40, 100)])
+def test_fact_search_overfetches_before_filtering_and_truncation(world, limit, fetch):
+    from commonplace.gateway import Mediator
+
+    principal = replace(
+        world.principal,
+        policy=replace(world.principal.policy, scopes=(*world.principal.policy.scopes, "kg:read")),
+    )
+    hidden = [
+        {
+            "id": f"hidden_{i}",
+            "object": "hidden",
+            "wing": "private_threads",
+            "source_thread": "thr_ffffffffffffffff",
+        }
+        for i in range(5)
+    ]
+    readable = [
+        {"id": f"readable_{i}", "object": "readable", "source_thread": world.thread.id}
+        for i in range(limit + 2)
+    ]
+    workers = Mock()
+    workers.call_tool.return_value = {"facts": hidden + readable}
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    result = mediator._search_facts(principal, {"query": "sample", "limit": limit})
+    assert result["facts"] == readable[:limit]
+    assert workers.call_tool.call_args.args[2]["limit"] == fetch
+
+
+def test_committed_fact_result_and_audit_survive_hidden_echo(world):
+    from commonplace.gateway import Mediator, _tool_response, _tool_result
+    from commonplace.policy import Policy
+
+    world.private.readable.return_value = False
+    principal = replace(
+        world.principal,
+        policy=Policy.build(
+            profile="full",
+            trust="trusted",
+            read_wings=["*"],
+            write_wings=["*"],
+            scopes=[
+                "memory:read",
+                "memory:write",
+                "kg:read",
+                "kg:write",
+                "private:read",
+                "private:write",
+                "threads:read",
+            ],
+        ),
+    )
+    committed = {
+        "success": True,
+        "triple_id": "new",
+        "action": "merged",
+        "wing": "private_threads",
+        "fact": "caller supplied words",
+        "sources": [{"source_thread": world.thread.id}],
+    }
+    workers = Mock(post=Mock(return_value=_tool_response(1, committed)))
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    mediator._audit = Mock()
+    response = mediator._tools_call(
+        principal,
+        {
+            "id": 1,
+            "params": {
+                "name": "mempalace_kg_save",
+                "arguments": {
+                    "wing": "private_threads",
+                    "subject": "Sample",
+                    "predicate": "states",
+                    "object": "caller supplied words",
+                },
+            },
+        },
+    )
+    assert _tool_result(response) == {"success": True, "triple_id": "new", "action": "merged"}
+    assert mediator._audit.call_args.args[2] == "ok"
+
+
+@pytest.mark.parametrize("wing", [None, "private_threads"])
+def test_owner_cli_search_also_excludes_mirrors(world, wing):
+    from commonplace.gateway import Mediator
+
+    world.principal = replace(world.principal, role="owner")
+    workers = Mock()
+    workers.call_tool.side_effect = [
+        {"wings": {"private_threads": 1, "shared": 1}},
+        {"results": [], "cli_output": "public"},
+    ]
+    mediator = Mediator(Mock(), workers)
+    mediator.gateway = world.gateway
+    args = {"query": "sample", "cli_compatible": True, "include_facts": False}
+    if wing:
+        args["wing"] = wing
+    plan = mediator._before_search(world.principal, "mempalace_search", args, [])
+    if wing:
+        assert plan["respond"]["results"] == []
+        workers.call_tool.assert_not_called()
+    else:
+        assert workers.call_tool.call_args.args[2]["wings"] == ["shared"]

@@ -1,6 +1,7 @@
 """Apply thread read boundaries to every outgoing mirror drawer."""
 
 import re
+from urllib.parse import unquote, urlsplit
 
 from commonplace.policy import canonical_wing
 from commonplace.rules import checks
@@ -46,6 +47,7 @@ def gate(gateway, principal, rule, result):
                 node = _scrub_fact(node, can_read)
                 if node is _DROP:
                     return _DROP
+            node = _scrub_thread_links(node, can_read)
             if unreadable(None if fact else node.get("wing"), node.get("room")):
                 return _DROP
             if "connected_wing" in node and unreadable(
@@ -66,12 +68,11 @@ def gate(gateway, principal, rule, result):
             out = {}
             for key, value in node.items():
                 cleaned = scrub(value)
-                if cleaned is _DROP or (
-                    fact and key == "related_facts" and len(cleaned) != len(value)
-                ):
-                    return _DROP  # Do not leave bare previous/current echoes behind.
+                if cleaned is _DROP:
+                    return _DROP
                 out[key] = cleaned
-            if all(out[k] is v for k, v in node.items()):
+            out = _clean_related(node, out)
+            if len(out) == len(node) and all(out[k] is v for k, v in node.items()):
                 return node
             _recount(node, out)
             return out
@@ -100,14 +101,14 @@ def gate(gateway, principal, rule, result):
             errors += bool(isinstance(cleaned, dict) and cleaned.get("error"))
             items.append(cleaned)
         if all(a is b for a, b in zip(items, result["results"])):
-            return result
+            return _filter_fact_links(result)
         out = {**result, "results": items, "count": len(items), "errors": errors}
         out.pop("total", None)
-        return out
+        return _filter_fact_links(out)
     cleaned = scrub(result)
     if cleaned is _DROP:
-        return missing(result) if rule == "drawer_read" else {"error": "not found", "denied": True}
-    return cleaned
+        return _dropped_result(rule, result)
+    return _filter_fact_links(cleaned)
 
 
 def _recount(original, cleaned):
@@ -151,9 +152,6 @@ def _scrub_fact(node, can_read):
     if not readable:
         return _DROP
     out = dict(node)
-    # Fact ids encode words. This pointer belongs to another fact whose
-    # sources are not authorized by the readable sources of this one.
-    out.pop("superseded_by", None)
     source = node.get("source")
     if "source" in node and (
         not isinstance(source, dict)
@@ -190,3 +188,96 @@ def _scrub_fact(node, can_read):
         ):
             out.pop(key, None)
     return node if out == node else out
+
+
+def _scrub_thread_links(node, can_read):
+    out = node
+    for key in ("approval_link", "origin_link", "source_link", "source_url"):
+        value = node.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            match = re.search(r"/app/threads/(thr_[0-9a-f]+)(?:/|$)", unquote(urlsplit(value).path))
+        except ValueError:
+            match = None
+        if match and not can_read(match[1]):
+            if out is node:
+                out = dict(node)
+            out.pop(key)
+    return out
+
+
+def _clean_related(original, out):
+    related = original.get("related_facts")
+    if not isinstance(related, list) or len(out.get("related_facts", [])) == len(related):
+        return out
+    kept = {
+        row.get("id") or row.get("triple_id")
+        for row in out["related_facts"]
+        if isinstance(row, dict)
+    }
+    superseded = original.get("superseded")
+    if isinstance(superseded, list):
+        out["superseded"] = [key for key in superseded if key in kept]
+        previous = original.get("previous")
+        if isinstance(previous, list) and len(previous) == len(superseded):
+            out["previous"] = [value for key, value in zip(superseded, previous) if key in kept]
+        else:
+            out.pop("previous", None)
+    else:
+        out.pop("previous", None)
+    if original.get("current") not in kept:
+        out.pop("current", None)
+    return out
+
+
+def _dicts(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _dicts(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _dicts(value)
+
+
+def _filter_fact_links(node):
+    kept = {
+        value
+        for row in _dicts(node)
+        if {"object", "predicate", "fact"}.intersection(row)
+        and isinstance(value := row.get("id") or row.get("triple_id"), str)
+    }
+
+    def prune(value):
+        if isinstance(value, dict):
+            out = {
+                key: prune(child)
+                for key, child in value.items()
+                if key != "superseded_by" or isinstance(child, str) and child in kept
+            }
+            return (
+                value
+                if len(out) == len(value) and all(out[key] is child for key, child in value.items())
+                else out
+            )
+        if isinstance(value, list):
+            out = [prune(child) for child in value]
+            return value if all(a is b for a, b in zip(out, value)) else out
+        return value
+
+    return prune(node)
+
+
+def _dropped_result(rule, result):
+    if (
+        rule == "kg_write"
+        and isinstance(result, dict)
+        and result.get("success") is True
+        and not result.get("error")
+    ):
+        return {key: result[key] for key in ("success", "triple_id", "action") if key in result}
+    if rule == "drawer_read":
+        drawer_id = result.get("drawer_id") if isinstance(result, dict) else None
+        return {"error": f"Drawer not found: {drawer_id}"}
+    return {"error": "not found", "denied": True}

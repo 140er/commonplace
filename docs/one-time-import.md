@@ -232,9 +232,12 @@ long messages are split into searchable sections. Follow a hit's `source.thread`
 to read more. For a shared native session, this may point to the session's
 stored thread rather than the import's own stored ID.
 
-Mirror copies of private stored threads, facts derived from them, and their tunnel
-previews are returned only to callers who can read that thread. This covers Memory
-search, `memory_get` and session start context.
+Structured mirror copies of private stored threads, facts derived from them, and their
+tunnel previews are returned only to callers who can read their source thread. This
+covers structured Memory search, `memory_get` and session start context. CLI-format
+(`cli_compatible`) search excludes mirror copies for everyone, including owners. A
+`superseded_by` id is returned only when its target is another kept fact in the same
+response.
 
 An import grant alone does not enable those reads. Mirror copies do not count as
 duplicates for anyone. Similarity dedup exclusion (D5) is verified on compact,
@@ -243,6 +246,11 @@ sqlite_exact and chroma. Checkpoint can file the same words as a separate memory
 Adding, updating, deleting or linking drawers in a stored-thread room requires
 permission to read that thread. Known exceptions: `delete_by_source`, `delete_tunnel`
 and `delete_hallway` take no room and are not checked yet.
+
+Fact mutations (`kg_invalidate`, `kg_supersede` and `kg_save` merges) on thread-derived
+facts are not room-checked. Invalidate's `closed` count is a yes/no oracle for hidden
+values. This pre-existing write-side exposure is accepted for follow-up alongside
+`delete_by_source`, `delete_tunnel` and `delete_hallway`.
 
 ### Indexing progress and storage
 
@@ -261,7 +269,8 @@ The HTTP endpoint's `state` and `units_written` describe its running process.
 
 Index bytes count toward workspace storage. Indexing pauses 16 MiB before the
 plan limit with `deferred_storage`; free space and run it again to resume.
-Work runs in bounded background batches. Restarts and repeated runs resume saved
+Work durably checkpoints bounded message ranges; completed ranges are trusted and
+are not checked again for missing drawers. Restarts and repeated runs resume saved
 progress without deleting history or adding duplicate searchable copies.
 
 Imports are backfilled automatically. Captured sessions catch up in full on their

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from commonplace import continuity_read, plans, sessions
@@ -31,9 +29,6 @@ class State:
     skipped: int = 0
     after_id: str = ""
     dirty: bool = False
-    # Successful batches of an unfinished thread, keyed by content digest.
-    # Replaying these results lets a single large thread span bounded jobs.
-    batches: dict = field(default_factory=dict)
     enrolled: bool = False
 
 
@@ -126,9 +121,6 @@ def sweep(service, workspace_id, state):
                 state.after_id = stored.id
                 visited += 1
                 continue
-            if stored.id not in state.batches and len(state.batches) >= 4:
-                state.batches.pop(next(iter(state.batches)))
-            cached = state.batches.setdefault(stored.id, {})
 
             def allowed():
                 nonlocal deferred
@@ -137,33 +129,15 @@ def sweep(service, workspace_id, state):
                     return False
                 return True
 
-            def call(principal, name, arguments, cached=cached):
+            def budget(units):
+                if written and written + len(units) > MAX_UNITS:
+                    raise _JobFull()
+
+            def call(principal, name, arguments):
                 nonlocal written
                 if name != "write_mirror_units":
                     return service.call_tool(principal, name, arguments)
-                key = hashlib.sha256(json.dumps(arguments, sort_keys=True).encode()).digest()
-                if key in cached:
-                    ids = cached[key]["drawer_ids"]
-                    present = service.call_tool(
-                        principal, "mempalace_get_drawers", {"drawer_ids": ids}
-                    )
-                    rows = present.get("results") if isinstance(present, dict) else None
-                    if (
-                        isinstance(rows, list)
-                        and len(rows) == len(ids)
-                        and all(
-                            isinstance(row, dict)
-                            and not row.get("error")
-                            and row.get("drawer_id") == drawer_id
-                            for drawer_id, row in zip(ids, rows)
-                        )
-                    ):
-                        return cached[key]
-                    # Deterministic ids make rewriting the entire missing batch safe.
-                    cached.pop(key)
                 count = len(arguments["units"])
-                if written + count > MAX_UNITS:
-                    raise _JobFull()
                 result = service.call_tool(principal, name, arguments)
                 ids = result.get("drawer_ids") if isinstance(result, dict) else None
                 if (
@@ -174,26 +148,34 @@ def sweep(service, workspace_id, state):
                     and result.get("success") is not False
                     and not result.get("isError")
                 ):
-                    cached[key] = result
                     written += count
                     state.units_written += count
                 return result
 
             try:
-                palace_mirror.mirror_pending(
-                    call, principal, stored, store, skip_empty=True, should_continue=allowed
-                )
-            except palace_mirror.MirrorError as exc:
-                if not isinstance(exc.__cause__, _JobFull):
-                    state.batches.pop(stored.id, None)
+                while True:
+                    if written >= MAX_UNITS:
+                        return True
+                    palace_mirror.mirror_pending(
+                        call,
+                        principal,
+                        stored,
+                        store,
+                        skip_empty=True,
+                        should_continue=allowed,
+                        max_messages=max(1, min(32, MAX_UNITS // 2)),
+                        max_units=MAX_UNITS,
+                        before_range=budget,
+                    )
+                    if store.mirror_progress(stored.id)[0] >= stored.message_count - 1:
+                        break
+            except _JobFull:
+                return True
+            except palace_mirror.MirrorError:
                 if deferred:
                     state.state = "deferred_storage"
                     return False
-                if isinstance(exc.__cause__, _JobFull):
-                    return True
-                # A failed thread remains pending for the next external trigger.
-            else:
-                state.batches.pop(stored.id, None)
+                # A failed range stays pinned; the next trigger replays only it.
             state.after_id = stored.id
             visited += 1
         if len(threads) == MAX_THREADS or state.dirty:
@@ -202,7 +184,6 @@ def sweep(service, workspace_id, state):
         state.state = "idle"
         return False
     except Exception:
-        state.batches.clear()
         state.state = "idle"
         return False
     finally:
