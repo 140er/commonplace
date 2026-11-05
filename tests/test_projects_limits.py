@@ -162,3 +162,36 @@ def test_r07_invalid_limits_leave_setting_untouched(projects_hub):
         assert h.request(h.owner, "PUT", "/api/projects/work/limits", body)[0] == 400
         assert h.project(h.owner, "work")[1]["limits"] == {"max_agents": 2}
     assert h.request(h.owner, "PUT", "/api/projects/missing/limits", {"max_agents": 1})[0] == 404
+
+
+@pytest.mark.parametrize(
+    "creation", [{"claim": True}, {"status": "doing"}, {"status": "todo", "assignee": "self"}]
+)
+def test_r08_creation_into_doing_refused(projects_hub, creation):
+    first, second, cards = setup_agents(projects_hub)
+    seed_cap(first, 1)
+    first.task_take_next(board="alpha", task=cards[0])
+    with first.store.connection() as conn:
+        before = conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+    try:
+        second.task_add(title="Another task", board="alpha", **creation)
+    except ToolError as exc:
+        refusal = str(exc)
+    else:
+        refusal = None
+    with first.store.connection() as conn:
+        after = conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+    assert (refusal, after) == (
+        "no: alpha already has its maximum of 1 agents working; the card waits in Todo",
+        before,
+    )  # RED
+
+
+@pytest.mark.parametrize("status", ["backlog", "todo"])
+def test_g02_nonworking_creation_allowed_at_cap(projects_hub, status):
+    first, second, cards = setup_agents(projects_hub)
+    seed_cap(first, 1)
+    first.task_take_next(board="alpha", task=cards[0])
+    created = second.task_add(title="Waiting task", board="alpha", status=status)
+    assert created["status"] == status
+    assert second.task_show(created["number"])["status"] == status
