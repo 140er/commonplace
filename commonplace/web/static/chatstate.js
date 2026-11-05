@@ -53,8 +53,10 @@ export function deriveChatState(page = {}, status = {}, board = {}, now = Date.n
   return { state, unread, message_id, last_seen };
 }
 
-function session() {
-  try { return globalThis.sessionStorage; } catch { return undefined; }
+// Seen ids persist on the device (contract: localStorage), so a new tab or a later visit
+// still knows what was read. Only the two ids are stored.
+function device() {
+  try { return globalThis.localStorage; } catch { return undefined; }
 }
 
 // Escape dots as well, so user/board boundaries cannot collide.
@@ -63,11 +65,11 @@ const userPrefix = (user) => `${SEEN_PREFIX}${keyPart(user)}.`;
 const validSeen = (value) => value && Number.isSafeInteger(value.message) && value.message >= 0
   && Number.isSafeInteger(value.reply) && value.reply >= 0;
 
-/** Session-only ids for one user and board. read(page) baselines only if absent;
+/** Device ids for one user and board (localStorage `cmmn.chat.seen.<user>.<board>`). read(page) baselines only if absent;
  * markSeen(page) advances when chat is read, never when it is merely polled.
  * Storage denial falls back to this store instance's memory.
  */
-export function seenStore(user, board, storage = session()) {
+export function seenStore(user, board, storage = device()) {
   const key = `${userPrefix(user)}${keyPart(board)}`;
   let fallback = null;
   let memoryOnly = !storage;
@@ -114,7 +116,7 @@ export function seenStore(user, board, storage = session()) {
 }
 
 /** Clear this user's seen ids across boards on sign-out; preserve other keys. */
-export function clearSeen(user, storage = session()) {
+export function clearSeen(user, storage = device()) {
   const prefix = userPrefix(user);
   try {
     const keys = Array.from({ length: storage?.length || 0 }, (_, index) => storage.key(index));

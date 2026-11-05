@@ -711,7 +711,7 @@ async function openRestart(link) {
   const panel = root.querySelector("#card-panel");
   detailsUI?.stop(); detailsUI = null;
   panel.hidden = false;
-  panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Back to the chat">×</button><div data-project-settings></div></section>';
+  panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="settings-back-to-chat" aria-label="Back to the chat">×</button><div data-project-settings></div></section>';
   await mountProject(panel.querySelector("[data-project-settings]"), { slug: board.slug, api, e, settings: true, restart: true, origin: `#/board/${enc(board.slug)}/chat`,
     current: () => epoch === state.screen, onBack() { void state.workbenchChat?.dock.backToChat(); } });
   if (epoch === state.screen && !panel.hidden) panel.querySelector("[data-project-back]")?.focus();
@@ -948,7 +948,11 @@ function mountWorkbenchChat() {
   if (state.base.endsWith("/chat") && !service.dock.isOpen()) void service.dock.open();
   else void service.pollUnread();
 }
+// The signed-in user's seen ids live on the device: clear them on sign-out and session expiry
+// even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
+  const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
+  if (user) clearSeen(user);
   chatUI?.clearUnsent();
   state.workbenchChat?.clear();
   state.workbenchChat?.dispose();
@@ -1412,8 +1416,6 @@ root.addEventListener("click", async (event) => {
       if (!slug) return;
       const { openConnectDialog } = await import("./projects.js");
       if (epoch !== state.screen) return;
-      // Older project modules have no connect dialog: settings has the same connect step.
-      if (typeof openConnectDialog !== "function") { root.querySelector('[data-action="coordinator"]')?.click(); return; }
       openConnectDialog({ slug, api, e, opener: b, current: () => epoch === state.screen, onUpdate() { void refresh(); } });
     }
     else if (action === "details") {
@@ -1488,6 +1490,10 @@ root.addEventListener("click", async (event) => {
     }
     else if (action === "close-panel") {
       closeCardPanel();
+    }
+    // The restart settings' × reads "Back to the chat": it takes the same path as its Back link.
+    else if (action === "settings-back-to-chat") {
+      if (state.workbenchChat) void state.workbenchChat.dock.backToChat(); else closeCardPanel();
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
@@ -1632,6 +1638,8 @@ document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") { event.preventDefault(); shellMenu(); return; }
   const dialog = root.querySelector("#shell-dialog");
   if (dialog?.open) { if (event.key === "Escape") { event.preventDefault(); dialog.close(); } return; }
+  // Project dialogs sit on document.body and keep their own keys; no board shortcut runs behind them.
+  if (document.querySelector?.("dialog[open]")) return;
   const typing = event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]");
   if (event.altKey || event.ctrlKey || event.metaKey || typing) return;
   const panel = root.querySelector("#card-panel");
@@ -1713,7 +1721,7 @@ async function poll() {
   }
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
-document.addEventListener("session-expired", () => { state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
+document.addEventListener("session-expired", () => { clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
 window.addEventListener("pagehide", () => { clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });

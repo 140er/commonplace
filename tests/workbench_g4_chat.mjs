@@ -212,6 +212,17 @@ test("closing the chat finds an opener redrawn by its data attribute", async () 
   assert.equal(f.doc.activeElement, again, "focus returns to Ask a question");
 });
 
+test("focus returns to the same row after the list is rebuilt", async () => {
+  const f = await dockFixture();
+  const list = f.doc.createElement("section"); f.shell.append(list);
+  const row = (n) => { const b = f.doc.createElement("a"); b.dataset.needsSelect = String(n); list.append(b); return b; };
+  row(1); const second = row(2); row(3);
+  second.focus(); await f.dock.open({ from: second });
+  list.replaceChildren(); row(1); row(2); row(3);
+  f.dock.close();
+  assert.equal(f.doc.activeElement?.dataset?.needsSelect, "2", "focus went to another row");
+});
+
 test("a redraw just after the close gives focus back to the opener", async () => {
   const f = await dockFixture();
   await f.dock.open({ from: f.button({ id: "m-chat-tab" }) });

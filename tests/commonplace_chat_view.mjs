@@ -84,11 +84,21 @@ test("controller uses project API and stop clears its polling timer", async (t) 
 // A small DOM double keeps these controller checks browser-free. Every selector
 // used by a RED is asserted against the emitted markup before its handler runs.
 function setup(t, { post, echo = false, online = true, stored, page: supplied, onCard, onState, get } = {}) {
-  const listeners = new Map(), events = new Map(), calls = [], data = stored || new Map();
+  // Listeners are registered per event and function, as a browser keeps them.
+  const registry = () => {
+    const all = new Map();
+    return {
+      add: (n, fn) => { if (!all.has(n)) all.set(n, new Set()); all.get(n).add(fn); },
+      remove: (n, fn) => { all.get(n)?.delete(fn); if (!all.get(n)?.size) all.delete(n); },
+      has: (n) => !!all.get(n)?.size,
+      get: (n) => all.get(n)?.size ? (event) => { for (const fn of [...all.get(n)]) fn(event); } : undefined,
+    };
+  };
+  const listeners = registry(), events = registry(), calls = [], data = stored || new Map();
   const store = { get length() { return data.size; }, key: (i) => [...data.keys()][i], getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
-  const doc = { hidden: false, addEventListener: (n, fn) => listeners.set(n, fn), removeEventListener: (n) => listeners.delete(n) };
+  const doc = { hidden: false, addEventListener: (n, fn) => listeners.add(n, fn), removeEventListener: (n, fn) => listeners.remove(n, fn) };
   const restoreGlobals = [];
-  for (const [name, value] of Object.entries({ document: doc, navigator: { onLine: online }, sessionStorage: store, addEventListener: (n, fn) => events.set(n, fn), removeEventListener: (n) => events.delete(n) })) {
+  for (const [name, value] of Object.entries({ document: doc, navigator: { onLine: online }, sessionStorage: store, localStorage: store, addEventListener: (n, fn) => events.add(n, fn), removeEventListener: (n, fn) => events.remove(n, fn) })) {
     const previous = Object.getOwnPropertyDescriptor(globalThis, name);
     Object.defineProperty(globalThis, name, { configurable: true, value, writable: true });
     restoreGlobals.push(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);

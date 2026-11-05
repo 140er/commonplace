@@ -46,10 +46,17 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
   const keyOf = (el) => {
     if (el?.id) return { id: el.id };
     const attr = [...(el?.attributes || [])].find((a) => a.name.startsWith("data-"));
-    return attr ? { attr: attr.name } : null;
+    // Keep the value too: a rebuilt list has many [data-needs-select] rows, and only one is this.
+    return attr ? { attr: attr.name, value: el.getAttribute(attr.name) ?? "" } : null;
   };
+  const quoted = (value) => `"${String(value).replace(/["\\]/g, (c) => `\\${c}`)}"`;
   const refind = (key) => {
-    try { return !key ? null : key.id ? doc.getElementById(key.id) : shell.querySelector(`[${key.attr}]`) || doc.querySelector(`[${key.attr}]`); } catch { return null; }
+    if (!key) return null;
+    try {
+      if (key.id) return doc.getElementById(key.id);
+      const selector = `[${key.attr}=${quoted(key.value)}]`;
+      return shell.querySelector(selector) || doc.querySelector(selector);
+    } catch { return null; }
   };
   // After a close the view may redraw the opener once more (unread counts, tabs): until the
   // person moves focus or points elsewhere, a lost focus goes back to the redrawn opener.

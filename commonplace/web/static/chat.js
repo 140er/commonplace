@@ -1,4 +1,4 @@
-import { actor } from "./api.js";
+import { actor, api as request } from "./api.js";
 import { cardId } from "./board.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 
@@ -11,7 +11,7 @@ export const CHAT_COPY = Object.freeze({
   runnerAnswer: "via your {cli} login", runnerMode: "Answers via your {cli} login",
   runnerUsage: "{used}/{cap} today", runnerError: "Last error: {code}",
   offline: "Not sent. This device is offline. Your words are kept here until it sends.",
-  retry: "Not sent. Try again", sending: "Sending…",
+  retry: "Not sent. Try again", sending: "Sending…", waiting: "Waiting to send your earlier message.", discard: "Discard",
 });
 
 const marked = (value, e) => e(value).replace(/\[(?:redacted|omitted):[a-z_]+\]/g, (marker) => `<mark class="redacted">${marker}</mark>`);
@@ -110,12 +110,85 @@ const SLOW_MS = 15000;
 const part = (value) => encodeURIComponent(value).replace(/\./g, "%2E");
 const unsentKey = (user, slug) => `cmmn.unsent.${part(user)}.${part(slug)}`;
 function storage() { try { return globalThis.sessionStorage; } catch { return null; } }
+function forgetStored(name, text) {
+  try { if (storage()?.getItem(name) === text) storage()?.removeItem(name); } catch { /* No persisted draft. */ }
+}
+
+// Sends outlive the pane: one item per user and board, kept from the offline queue through the
+// request until the server acknowledges it, the outcome stays ambiguous (explicit retry), or the
+// person signs out. A pane that opens meanwhile shows the item as queued or as sending.
+const OFFLINE = new Map(), LIVE = new Set();
+let held = null;
+function deliverAll() {
+  for (const item of [...OFFLINE.values()]) {
+    if (item.sending) continue;
+    // A pane showing the item sends it with its own bubble; otherwise it is sent from here.
+    if ([...LIVE].some((pane) => pane.claim(item))) continue;
+    item.sending = true;
+    void deliver(item);
+  }
+}
+// One request and, on failure, one read for the person's own echo. `api` is the sending pane's
+// while that pane is current; afterwards the plain request continues on its own.
+async function deliver(item, api = request, current = () => false) {
+  let sent = false, page = null;
+  try {
+    await (current() ? api : request)(`/api/boards/${encodeURIComponent(item.slug)}/chat`, { method: "POST", body: { text: item.text } });
+    sent = true;
+  } catch {
+    // Signed out or expired: no follow-up request, nothing kept.
+    if (item.cancelled) return { sent, page, cancelled: true };
+    try {
+      page = await (current() ? api : request)(`/api/chat/${encodeURIComponent(item.slug)}?after=${item.cursor}`);
+      sent = (page.messages || []).some((m) => m.actor === `user:${item.user}` && m.text === item.text);
+    } catch { /* Ambiguous: kept for an explicit retry. */ }
+  }
+  if (item.cancelled) return { sent, page, cancelled: true };
+  if (sent) forgetStored(item.name, item.text);
+  if (OFFLINE.get(item.name) === item) OFFLINE.delete(item.name);
+  for (const pane of [...LIVE]) pane.settled(item, sent);
+  release();
+  return { sent, page };
+}
+function dropOffline(prefix = "") {
+  for (const item of [...OFFLINE.values()]) {
+    if (!item.name.startsWith(prefix)) continue;
+    item.cancelled = true;
+    OFFLINE.delete(item.name);
+    forgetStored(item.name, item.text);
+  }
+  release();
+}
+const heldOnline = () => deliverAll();
+function heldSignOut() { for (const pane of [...LIVE]) pane.signOut(); dropOffline(); }
+function heldLogout(event) { if (event.target.closest?.('[data-action="logout"]')) heldSignOut(); }
+function track(item) {
+  // Never replace another message for the same user and board.
+  const existing = OFFLINE.get(item.name);
+  if (existing && existing !== item && (existing.sending || existing.text !== item.text)) return existing;
+  OFFLINE.set(item.name, item);
+  if (held) return item;
+  held = { win: globalThis, doc: globalThis.document };
+  held.win.addEventListener?.("online", heldOnline);
+  held.doc?.addEventListener?.("session-expired", heldSignOut);
+  held.doc?.addEventListener?.("signout", heldSignOut);
+  held.doc?.addEventListener?.("click", heldLogout, true);
+  return item;
+}
+function release() {
+  if (!held || OFFLINE.size) return;
+  held.win.removeEventListener?.("online", heldOnline);
+  held.doc?.removeEventListener?.("session-expired", heldSignOut);
+  held.doc?.removeEventListener?.("signout", heldSignOut);
+  held.doc?.removeEventListener?.("click", heldLogout, true);
+  held = null;
+}
 
 export function createChat({ mount, api, e, me, board, coordinator, onCard = () => {}, onState = () => {} }) {
   // open: the dock shows the pane. Only an open, visible pane polls every 2 s and marks chat seen.
   let active = false, open = true, generation = 0, timer = null, delay = 2000, state;
   let lastProject = null;
-  const offlineQueue = new Map(), written = new WeakMap(), bound = new WeakSet();
+  const written = new WeakMap(), bound = new WeakSet();
   // The board card a focused or hovered chat row points at carries is-linked (the dashed outline).
   const linked = { focus: null, hover: null };
   const drafts = new Map(), pending = new Map(), seen = new Map(), users = new Set(me?.user ? [me.user] : []);
@@ -140,17 +213,23 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   function restore() {
     const name = key();
     if (!name) return;
-    let text = pending.get(name);
+    // The shared item wins: it outlives this pane even when storage is denied.
+    const shared = OFFLINE.get(name);
+    let text = shared?.text ?? pending.get(name);
     try { text ??= storage()?.getItem(name); } catch { /* Storage may be denied. */ }
     if (text != null) {
-      pending.set(name, text); state.unsent = { text, draft: text, offline: false, auto: false };
+      // A send still queued or on its way from before this pane existed keeps going by itself.
+      const queued = shared?.text === text ? shared : null;
+      pending.set(name, text);
+      state.unsent = queued?.sending ? { text, draft: queued.draft, origin: queued.origin, pending: true }
+        : queued ? { text, draft: queued.draft, origin: queued.origin, offline: true, auto: true } : { text, draft: text, offline: false, auto: false };
       if (field()) field().value = text;
     }
   }
   function forget(name, text) {
     if (!name) return;
     if (pending.get(name) === text) pending.delete(name);
-    try { if (storage()?.getItem(name) === text) storage()?.removeItem(name); } catch { /* No persisted draft. */ }
+    forgetStored(name, text);
   }
   function clearUnsent() {
     for (const user of users) {
@@ -162,7 +241,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       clearSeen(user);
     }
     for (const store of seen.values()) store.clearSeen();
-    seen.clear(); pending.clear(); drafts.clear(); offlineQueue.clear();
+    seen.clear(); pending.clear(); drafts.clear();
+    for (const user of users) dropOffline(`cmmn.unsent.${part(user)}.`);
     if (state) { state.unsent = null; state.quote = null; }
     if (field()) field().value = "";
   }
@@ -171,6 +251,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     document.removeEventListener("signout", signOut);
     document.removeEventListener("click", logout, true);
     globalThis.removeEventListener?.("online", online);
+    LIVE.delete(pane);
   }
   function signOut() { clearUnsent(); controller.stop(); detach(); }
   function logout(event) { if (event.target.closest?.('[data-action="logout"]')) signOut(); }
@@ -208,7 +289,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const bottom = !old || old.scrollHeight - top - old.clientHeight < 60;
     const page = { ...state.page, project: project(), cards: state.cards, at: state.at, seen: state.baseline, todayIds: state.todayIds };
     if (!host.querySelector(".chat-view")) {
-      host.innerHTML = `<aside class="chat-view chatpane" aria-labelledby="chat-h"><header class="chat-header"><h2 id="chat-h">${e(project().name || state.slug || "Project")} chat</h2><button class="btn ghost sm" type="button" data-close-chat>Close chat</button><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><div data-chat-source></div><p data-chat-error role="alert" hidden></p><div class="chat-history"><button type="button" data-chat-earlier>Show earlier</button></div><ol class="chat-stream" role="log" aria-label="Messages" tabindex="0">${chatHTML(page, state.me, e)}</ol><div data-chat-recovery></div><div data-chat-unsent></div><form class="chat-compose"><div data-chat-quote></div><label class="chat-hint" for="chat-text">Message to ${e(project().name || state.slug || "project")} chat</label><textarea id="chat-text" name="text" rows="2" placeholder="${e(CHAT_COPY.placeholder)}" required></textarea><button class="btn primary" type="submit">Send</button><p class="chat-hint">Enter to send · Shift+Enter new line</p></form></aside>`;
+      host.innerHTML = `<aside class="chat-view chatpane" aria-labelledby="chat-h"><header class="chat-header"><h2 id="chat-h">${e(project().name || state.slug || "Project")} chat</h2><button class="btn ghost sm" type="button" data-close-chat>Close chat</button><label>Project<select data-chat-project></select></label><a data-chat-board>Board</a><div class="chat-status" data-chat-status></div></header><div data-chat-source></div><p data-chat-error role="alert" hidden></p><div class="chat-history"><button type="button" data-chat-earlier>Show earlier</button></div><ol class="chat-stream" role="log" aria-label="Messages" tabindex="0">${chatHTML(page, state.me, e)}</ol><div data-chat-recovery></div><div data-chat-unsent></div><form class="chat-compose"><div data-chat-quote></div><label class="chat-hint" for="chat-text">Message to ${e(project().name || state.slug || "project")} chat</label><textarea id="chat-text" name="text" rows="2" placeholder="${e(CHAT_COPY.placeholder)}" required></textarea><button class="btn primary" type="submit" aria-describedby="chat-wait">Send</button><p class="chat-wait" id="chat-wait" data-chat-wait role="status" hidden>${e(CHAT_COPY.waiting)}</p><p class="chat-hint">Enter to send · Shift+Enter new line</p></form></aside>`;
       const form = host.querySelector(".chat-compose");
       if (form) {
         form.onsubmit = send;
@@ -252,12 +333,16 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     put("[data-chat-source]", state.at ? '<p class="chat-source">Opened from memory. Your question takes the quote along, word for word. <button type="button" data-close-chat>Back to the source</button></p>' : "");
     put("[data-chat-quote]", state.quote ? `<div class="chat-quote">Quoting ${e(state.quote.author)}, ${e(state.quote.date ?? state.quote.at)}, exact words <button type="button" data-chat-remove-quote aria-label="Remove the quote">×</button></div>` : "");
     const unsent = state.unsent, inFlight = unsent?.pending;
-    put("[data-chat-unsent]", unsent ? `<div class="chat-unsent" role="${inFlight ? "status" : "alert"}"><p>${marked(unsent.text, e)}</p><p>${e(inFlight ? CHAT_COPY.sending : unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p>${inFlight ? "" : `<button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button>`}</div>` : "");
+    put("[data-chat-unsent]", unsent ? `<div class="chat-unsent" role="${inFlight ? "status" : "alert"}"><p>${marked(unsent.text, e)}</p><p>${e(inFlight ? CHAT_COPY.sending : unsent.offline ? CHAT_COPY.offline : CHAT_COPY.retry)}</p>${inFlight ? "" : `<div><button type="button" data-chat-retry ${state.sending ? "disabled" : ""}>Try again</button> <button type="button" data-chat-discard ${state.sending ? "disabled" : ""}>${e(CHAT_COPY.discard)}</button></div>`}</div>` : "");
     const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
     const recovery = state.derived?.state;
     put("[data-chat-recovery]", request && ["waiting", "working", "no_answer"].includes(recovery) ? `<div class="chat-recovery" role="${recovery === "no_answer" ? "alert" : "status"}"><b>${recovery === "waiting" ? "Waiting for an agent" : recovery === "working" ? "Working on it…" : "No answer yet."}</b>${state.derived.last_seen ? `<p>Agent last seen ${e(state.derived.last_seen)}</p>` : ""}${recovery !== "working" ? `<div>${recovery === "no_answer" ? `<a href="#/board/${encodeURIComponent(state.slug)}/settings">Show how to restart the agent</a><button type="button" data-chat-ask-again>Ask again</button>` : '<p>Connect an agent in Settings. Your message is delivered when it connects.</p>'}<button type="button" data-chat-make-card ${state.making ? "disabled" : ""}>Make it a card now (adds it to Todo)</button></div>` : ""}</div>` : "");
     const form = host.querySelector(".chat-compose");
-    if (form) { form.hidden = !state.slug; form.querySelector("button[type=submit]").disabled = !!state.sending; }
+    // While an earlier message is unsent, the composer keeps its text but does not send.
+    const waiting = !!unsent && !state.sending;
+    if (form) { form.hidden = !state.slug; form.querySelector("button[type=submit]").disabled = !!state.sending || !!unsent; }
+    const wait = host.querySelector("[data-chat-wait]");
+    if (wait) wait.hidden = !waiting;
   }
   function update(page, { history = false } = {}) {
     const previous = state.page;
@@ -331,6 +416,10 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   async function post(text, origin = "composer") {
     if (!active || state.sending || !state.slug || !text.trim()) return;
     const retry = origin === "retry", source = retry ? state.unsent?.origin || "composer" : origin;
+    // One unsent message per board: a new send waits until the earlier one is sent or discarded,
+    // and nothing re-sends a message that is already on its way.
+    const shared = OFFLINE.get(key());
+    if ((!retry && (state.unsent || shared)) || (retry && shared?.sending)) { render(); return; }
     const token = ++generation, sendingState = state, name = key(), sentDraft = field()?.value;
     const originalDraft = retry ? state.unsent?.draft : source === "composer" ? sentDraft : null;
     const bubble = { text, draft: originalDraft, origin: source, offline: false, auto: false };
@@ -338,24 +427,18 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     state.sending = true;
     if (globalThis.navigator?.onLine === false) {
       state.unsent = { ...bubble, offline: true, auto: true };
-      offlineQueue.set(name, { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source });
+      if (name) track({ name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source, sending: false });
       state.sending = false; render(); return;
     }
-    offlineQueue.delete(name);
+    const item = { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source, sending: true, owner: pane };
+    // Defensive: the guard above already refuses a send while another one is tracked.
+    if (name && track(item) !== item) { state.sending = false; render(); return; }
     state.unsent = { ...bubble, pending: true }; render();
-    let sent = false;
-    try { await api(`/api/boards/${encodeURIComponent(state.slug)}/chat`, { method: "POST", body: { text } }); sent = true; }
-    catch {
-      if (!current(token)) return;
-      try {
-        const page = await api(`${path()}?after=${state.page.cursor || 0}`);
-        if (!current(token)) return;
-        sent = (page.messages || []).some((m) => m.actor === `user:${state.me?.user}` && m.text === text);
-        update(page);
-      } catch { /* The outcome remains ambiguous; only an explicit retry may send again. */ }
-    }
+    const { sent, page, cancelled } = await deliver(item, api, () => current(token));
+    if (cancelled) return;
     if (sent) forget(name, text);
     if (!current(token)) return;
+    if (page) update(page);
     sendingState.sending = false;
     if (sent) {
       state.unsent = null; state.slowAt = 0;
@@ -399,12 +482,19 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     finally { if (current(token)) state.historyLoading = false; }
   }
   async function click(event) {
-    const button = event.target.closest?.("[data-chat-card], [data-chat-suggest], [data-chat-remove-quote], [data-chat-retry], [data-chat-make-card], [data-chat-ask-again], [data-chat-earlier]");
+    const button = event.target.closest?.("[data-chat-card], [data-chat-suggest], [data-chat-remove-quote], [data-chat-retry], [data-chat-discard], [data-chat-make-card], [data-chat-ask-again], [data-chat-earlier]");
     if (!button) return;
     if (button.dataset.chatCard) { event.preventDefault(); onCard(Number(button.dataset.chatCard), button); }
     else if (button.dataset.chatSuggest) { if (field()) field().value = button.dataset.chatSuggest; controller.focusComposer(); }
     else if (button.hasAttribute("data-chat-remove-quote")) { controller.setQuote(null); controller.focusComposer(); }
     else if (button.hasAttribute("data-chat-retry")) await post(state.unsent?.text || "", "retry");
+    else if (button.hasAttribute("data-chat-discard")) {
+      // Discarding is explicit: the earlier words leave the queue and this device.
+      const name = key();
+      if (state.sending || !state.unsent || state.unsent.pending || OFFLINE.get(name)?.sending) return;
+      if (OFFLINE.get(name)?.text === state.unsent.text) OFFLINE.delete(name);
+      forget(name, state.unsent.text); state.unsent = null; release(); render(); controller.focusComposer();
+    }
     else if (button.hasAttribute("data-chat-earlier")) await history();
     else {
       const request = state.page.messages.find((m) => m.id === state.derived?.message_id);
@@ -422,35 +512,28 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     }
   }
   function visibility() { cancel(); if (active && open && !state.sending && !document.hidden) void tick(++generation); }
-  async function flushOffline(item) {
-    let sent = false;
-    try {
-      await api(`/api/boards/${encodeURIComponent(item.slug)}/chat`, { method: "POST", body: { text: item.text } });
-      sent = true;
-    } catch {
-      try {
-        const page = await api(`/api/chat/${encodeURIComponent(item.slug)}?after=${item.cursor}`);
-        sent = (page.messages || []).some((m) => m.actor === `user:${item.user}` && m.text === item.text);
-      } catch { /* Keep an ambiguous send for an explicit retry when reopened. */ }
-    }
-    if (sent) forget(item.name, item.text);
-    if (active && key() === item.name && state.unsent?.text === item.text) {
+  // This pane's view of the shared offline queue.
+  const pane = {
+    claim(item) {
+      if (!active || key() !== item.name || !state.unsent?.auto) return false;
+      state.unsent.auto = false; void post(item.text, "retry"); return true;
+    },
+    settled(item, sent) {
+      // The sending pane finishes its own bubble.
+      if (item.owner === pane) return;
+      if (sent && pending.get(item.name) === item.text) pending.delete(item.name);
+      if (!active || key() !== item.name || state.unsent?.text !== item.text) return;
       state.unsent = sent ? null : { text: item.text, draft: item.draft, origin: item.origin, offline: false, auto: false };
       if (sent && item.origin !== "ask") {
         state.quote = null;
         if (field()?.value === item.draft || field()?.value === item.text) { field().value = ""; drafts.delete(item.slug); }
       }
       render();
-    }
-  }
-  function online() {
-    for (const item of offlineQueue.values()) {
-      offlineQueue.delete(item.name);
-      if (active && key() === item.name && state.unsent?.auto) {
-        state.unsent.auto = false; void post(item.text, "retry");
-      } else void flushOffline(item);
-    }
-  }
+    },
+    signOut,
+  };
+  LIVE.add(pane);
+  function online() { deliverAll(); }
   const controller = {
     async show(slug, { at, quote, name } = {}) {
       if (active && state.requested === slug) {
