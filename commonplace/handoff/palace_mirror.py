@@ -202,11 +202,13 @@ def mirror_pending(call_tool, principal, stored, store, *, skip_empty=False, sho
             raise MirrorError("Stored thread has an incomplete mirror range")
         if skip_empty:
             messages = [message for message in messages if message.text]
-        drawer_ids.extend(
-            mirror(
-                call_tool, principal, stored, class_units(messages), should_continue=should_continue
+        units = class_units(messages)
+        if should_continue is None:
+            drawer_ids.extend(mirror(call_tool, principal, stored, units))
+        else:
+            drawer_ids.extend(
+                mirror(call_tool, principal, stored, units, should_continue=should_continue)
             )
-        )
         store.finish_mirror(stored.id, through)
 
 
