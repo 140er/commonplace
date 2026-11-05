@@ -306,15 +306,16 @@ def needs_me(store, principal, *, release=None, names=None, supervisors=None) ->
                 and (release is None or release(row))
             ):
                 kind = "backlog_from_agents"
-            if (
-                _plan_waiting(row)
-                and (release is None or release(row))
-                and (principal.person or not _stuck(row, cutoff))
-            ):
-                kind = "plans"
             routes = ()
             if _stuck(row, cutoff):
                 routes = supervisors(row) if supervisors is not None else ()
+            if (
+                _plan_waiting(row)
+                and (release is None or release(row))
+                and (not _stuck(row, cutoff) or (principal.person and routes))
+            ):
+                kind = "plans"
+            if _stuck(row, cutoff):
                 if (principal.person and not routes) or (
                     not principal.person and principal.actor in {a for a, _ in routes}
                 ):

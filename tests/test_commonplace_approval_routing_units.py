@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from commonplace.boards import tools as board_tools
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import task_row
 from commonplace.extensions import ToolError
@@ -157,3 +158,53 @@ def test_person_escalation_error_explains_agent_only_operation(fresh):
     with pytest.raises(ToolError, match="only agents may escalate to the owner"):
         fresh.owner.task_approve(card["number"], escalate=True)
     assert fresh.owner.task_show(card["number"]) == before
+
+
+def test_heartbeat_logs_approval_failure_without_exception_text(fresh, monkeypatch, caplog):
+    holder = fresh.connect("holder")
+    card = holder.work.task_add(board="work", title="Synthetic heartbeat", claim=True)
+    before = holder.work.task_show(card["number"])
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("private synthetic exception text")
+
+    monkeypatch.setattr(BoardService, "approvals_for_me", unavailable)
+    with caplog.at_level(logging.ERROR, logger="commonplace.boards.tools"):
+        text = board_tools.run(holder.work.ctx, "task_heartbeat", {"task": card["number"]})
+    assert text.startswith(f"ok #{card['number']} doing")
+    assert "approvals waiting on you" not in text
+    assert "heartbeat approvals unavailable" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "private synthetic exception text" not in text + caplog.text
+    after = holder.work.task_show(card["number"])
+    assert after["version"] == before["version"] + 1
+    assert after["events"][-1]["kind"] == "renew"
+
+
+def test_stuck_plan_without_supervisor_keeps_owner_recovery_actions(fresh):
+    holder = fresh.connect("holder")
+    card = fresh.owner.task_add(
+        board="work",
+        title="Synthetic unsupervised plan",
+        labels=["plan"],
+        assignee=holder.principal.actor,
+        claim=True,
+    )
+    with holder.work.store.transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (card["number"],)
+        )
+
+    assert fresh.owner.task_show(card["number"])["need"] == "you"
+    report = fresh.owner.needs_me()
+    assert not report["plans"]
+    assert report["count"] == 1
+    assert {c["number"] for c in report["stale"]} == {card["number"]}
+    stale = report["stale"][0]
+    assert stale["need"] == "you"
+    assert stale["actions"] == ["requeue", "reassign", "park"]
+    assert "claim that ran out" in stale["why"]
+    html = home(fresh, card)
+    assert ">Answer<" in html
+    assert all(f"need-{action}" in html for action in stale["actions"])
+    assert "need-approve" not in html

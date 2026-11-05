@@ -71,8 +71,8 @@ to `todo` or `doing` by withdrawing its ask in the same transaction. Person
 recipients (including the default owner), person assignees and person return
 targets block withdrawal and keep their decision queue intact. Agents cannot
 complete person-directed reviews or relay a person's approval through `decide`.
-Only a signed-in workspace owner may answer those decisions. Parents, top-level agents and board coordinators
-may approve proposals and advisory plan reviews with `task_approve` and a reason, or escalate to the owner.
+Only a signed-in workspace owner may answer those decisions. Direct parents, top-level agents, board coordinators and the owner may approve proposals.
+For advisory plan reviews, approvers are the direct parent, creator-parent, board coordinator and owner. Agents use `task_approve` with a reason, or escalate to the owner.
 
 Withdrawal preserves the review/open-ask database constraint. A `release`
 event stores the original ask and optional verbatim reason, with actor, time,

@@ -1,11 +1,15 @@
 """Short MCP replies; quoted card and history text remains untrusted data."""
 
 import json
+import logging
 
 from commonplace.extensions import ALL_PROFILES, WORK_PROFILES, LocalTool, ToolError, register
+from commonplace.http_util import log_failure
 
 from .display import card_url, people
 from .service import APPROVALS_TRUNCATED, BoardService, _trusted_agent, approvals_text
+
+logger = logging.getLogger(__name__)
 
 STRING = {"type": "string"}
 TASK = {"type": ["string", "integer"]}
@@ -173,7 +177,12 @@ def _run(ctx, name, args):
         if result["approvals_truncated"]:
             lines.append(APPROVALS_TRUNCATED)
         return "\n".join(lines) or "nothing waiting"
-    approval_note = approvals_text(service.approvals_for_me()) if name == "task_heartbeat" else ""
+    approval_note = ""
+    if name == "task_heartbeat":
+        try:
+            approval_note = approvals_text(service.approvals_for_me())
+        except Exception as exc:
+            log_failure(logger, "heartbeat approvals unavailable", exc)
     return (
         f"ok #{result['number']} {result['status']}"
         + (f"  until {result['claim_until']}" if result["claim_until"] else "")

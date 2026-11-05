@@ -50,7 +50,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 | `space_post` | `board`, `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
 | `task_list` | `board?`, `status?`, `mine?` | |
 | `task_heartbeat` | `task` | holder-only claim renewal, including after expiry |
-| `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | parent, top-level agent, board coordinator or owner decides proposals and advisory plan reviews; agents give a reason or escalate |
+| `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | direct parent, top-level agent, board coordinator or owner decides proposals; direct parent, creator-parent, board coordinator or owner decides plan reviews; agents give a reason or escalate |
 | `task_show` | `task` | includes branch / PR / checks / status line / links |
 | `task_add` | `title`, `body?`, `board?`, `status?`, `assignee?`, `labels?`, `message_id?`, `claim?` | top-level defaults todo; claim=true or assignee=self starts doing; child-created cards are pending; parent-created child assignments are ready |
 | `task_comment` | `task`, `text` | |
