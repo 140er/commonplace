@@ -121,14 +121,21 @@ def setup(page, step):
         page.click("#chat-toggle")
         page.wait_for_selector("#chat:not([hidden]) .chat-stream", timeout=5000)
     elif step == "pick-a121":
+        # Phones show one column at a time; A-121 sits in Review.
+        jump = page.locator('[data-board-column="review"]')
+        if jump.is_visible():
+            jump.click()
         page.click('.workbench-board .card[data-card="121"] h3')
         page.wait_for_selector("#card-panel:not([hidden]) .detail-h", timeout=5000)
     elif step == "add-card":
         page.locator('#head-actions [data-action="new-card"]').first.click()
     elif step == "approve":
-        page.locator("[data-needs-select]", has_text="Send beta 0.9").first.click()
-        settle(page, 300)
-        page.locator("[data-needs-approve]").first.click()
+        # From 700 px the first item (the approval) is already open beside the list.
+        approve = page.locator("[data-needs-approve]").first
+        if not approve.is_visible():
+            page.locator("[data-needs-select]", has_text="Send beta 0.9").first.click()
+            settle(page, 300)
+        approve.click()
     elif step == "settings":
         page.locator('[data-action="coordinator"]:visible').first.click()
         page.wait_for_selector(".workbench-project", timeout=5000)

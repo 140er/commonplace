@@ -66,8 +66,9 @@ def pytest_sessionstart(session):
     if ENABLED:
         for name in ("console.jsonl", "layout.jsonl"):
             path = out_dir(name)
-            if path is not None and path.exists():
-                path.unlink()
+            if path is not None:
+                # Written even when empty: no line means no console error or warning.
+                path.write_text("", encoding="utf-8")
 
 
 def pytest_sessionfinish(session, exitstatus):
