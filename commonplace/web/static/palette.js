@@ -58,7 +58,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
 }
 
 // Scoped styles travel with the component so no shell stylesheet needs changing.
-const styles = `<style>
+const styles = `
   dialog.workbench-palette, #shell-dialog.workbench-palette {
     padding:0; width:640px; max-width:calc(100vw - 32px); max-height:calc(100dvh - 112px); margin:96px auto 0;
     border:0; border-radius:12px; background:var(--surface); color:var(--text);
@@ -102,7 +102,13 @@ const styles = `<style>
     .workbench-palette .scope { display:none; }
     .workbench-palette .kt td { padding:8px 4px; }
   }
-</style>`;
+`;
+// The app's CSP is style-src 'self', which refuses inline style elements: adopt a constructed sheet once.
+if (globalThis.document?.adoptedStyleSheets) {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(styles);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
 
 const icons = {
   card: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h3.5"/>',
@@ -151,7 +157,11 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
     dialog.querySelector('.state').textContent = enabled ? 'On' : 'Off';
     onSingleKeysChange(enabled);
   }
-  function restoreFocus() { if (opener?.isConnected) opener.focus(); }
+  // The close event can arrive after a command moved focus (new card, composer): only restore focus nobody claimed.
+  function restoreFocus() {
+    const active = document.activeElement;
+    if (opener?.isConnected && (!active || active === document.body || dialog.contains(active))) opener.focus();
+  }
   function close() { if (dialog.open) dialog.close(); }
   function show(label) {
     if (!dialog.open) opener = document.activeElement;
@@ -181,7 +191,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
   function open(options = {}) {
     context = options; mode = 'commands';
     show('Command palette');
-    dialog.innerHTML = `${styles}<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span></div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span class="note">Every action except Approve and Decline, which stay in Needs me</span><button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
+    dialog.innerHTML = `<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span></div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span class="note">Every action except Approve and Decline, which stay in Needs me</span><button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
     const input = dialog.querySelector('[role="combobox"]');
     input.value = options.query || '';
     renderResults(input.value); input.focus();
@@ -189,7 +199,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
   function shortcuts() {
     mode = 'shortcuts'; show('Keyboard shortcuts');
     const enabled = singleKeys();
-    dialog.innerHTML = `${styles}<section class="shortcut-body"><h2>Keyboard shortcuts</h2><div class="key-setting"><span><b id="palette-single-label">Single-key shortcuts</b><br><span class="key-help">Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</span></span><button class="switch" data-palette-action="single-keys" role="switch" aria-checked="${enabled}" aria-labelledby="palette-single-label"><span class="track" aria-hidden="true"></span><span class="state">${enabled ? 'On' : 'Off'}</span></button></div><p class="key-note">Single keys never fire while you type in a field. <b>Approve and Decline have no shortcut</b>; they always need the button.</p><table class="kt"><caption class="sr">Shortcuts</caption><thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead><tbody>${shortcutRows.map(([key, action]) => `<tr><td><kbd>${e(key)}</kbd></td><td>${e(action)}</td></tr>`).join('')}</tbody></table><div class="acts"><button class="btn" data-palette-action="reset">Reset to defaults</button><button class="btn primary" data-palette-action="done">Done <kbd>Esc</kbd></button></div></section>`;
+    dialog.innerHTML = `<section class="shortcut-body"><h2>Keyboard shortcuts</h2><div class="key-setting"><span><b id="palette-single-label">Single-key shortcuts</b><br><span class="key-help">Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</span></span><button class="switch" data-palette-action="single-keys" role="switch" aria-checked="${enabled}" aria-labelledby="palette-single-label"><span class="track" aria-hidden="true"></span><span class="state">${enabled ? 'On' : 'Off'}</span></button></div><p class="key-note">Single keys never fire while you type in a field. <b>Approve and Decline have no shortcut</b>; they always need the button.</p><table class="kt"><caption class="sr">Shortcuts</caption><thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead><tbody>${shortcutRows.map(([key, action]) => `<tr><td><kbd>${e(key)}</kbd></td><td>${e(action)}</td></tr>`).join('')}</tbody></table><div class="acts"><button class="btn" data-palette-action="reset">Reset to defaults</button><button class="btn primary" data-palette-action="done">Done <kbd>Esc</kbd></button></div></section>`;
     dialog.querySelector('[role="switch"]').focus();
   }
   function run(index) {

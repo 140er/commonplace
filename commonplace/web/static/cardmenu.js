@@ -6,7 +6,7 @@ const label = (value) => value[0].toUpperCase() + value.slice(1);
 const icon = (path) => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
 const arrow = icon('<path d="M3 8h10M9 4l4 4-4 4"/>');
 const check = icon('<path d="m3 8.5 3 3 7-7"/>');
-const styles = `<style>
+const styles = `
 .card-menu { --menu-paper:#FEFEFC; position:fixed; inset:auto 0 0; margin:0; width:100%; max-width:none; max-height:calc(100dvh - 16px); overflow:auto; border:0; border-radius:16px 16px 0 0; padding:10px 16px max(24px,env(safe-area-inset-bottom)); background:var(--surface,var(--menu-paper)); color:var(--text); box-shadow:0 -12px 32px rgba(0,0,0,.2); }
 .card-menu::backdrop { background:rgba(23,24,28,.42); }
 .card-menu .menu-body { display:flex; flex-direction:column; gap:12px; }
@@ -24,12 +24,18 @@ const styles = `<style>
 .card-menu form,.card-menu label { display:grid; gap:12px; }
 .card-menu input { width:100%; min-height:48px; font-size:16px; }
 .card-menu [data-menu-error]:empty { display:none; }
-</style>`;
+`;
+// The app's CSP is style-src 'self', which refuses inline style elements: adopt a constructed sheet once.
+if (globalThis.document?.adoptedStyleSheets) {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(styles);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
 
 export function renderCardMenu(card, { board = {}, editing = false } = {}) {
   const id = cardId(board, card.number), proposal = card.proposal_status === 'pending';
   const actions = `<p class="move-label">MOVE TO</p><div role="group" aria-label="Move to column">${columns.map((status) => `<button type="button" class="opt" data-menu-move="${status}"${status === card.status ? ' aria-current="true"' : ''}${proposal ? ' disabled' : ''}>${status === card.status ? check : arrow}${label(status)}${status === card.status ? '<span class="sub">now here</span>' : ''}</button>`).join('')}</div><div role="group" aria-label="Other actions"><button type="button" class="opt" data-menu-action="edit">${icon('<path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/>')}Edit title</button><button type="button" class="opt" data-menu-action="copy">${icon('<path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/>')}Copy link</button></div>`;
-  return `${styles}<dialog class="sheet menu-sheet card-menu" aria-modal="true" aria-labelledby="cm-h" data-return-focus="more-${e(id)}"><div class="menu-body"><span class="grab" aria-hidden="true"></span><h2 id="cm-h">${e(id)} ${e(card.title)}</h2>${editing ? `<form data-menu-title><label>Title<input name="title" value="${e(card.title)}" maxlength="5000" required></label><button class="btn primary" type="submit">Save title</button><button class="btn" type="button" data-menu-action="cancel-edit">Cancel</button></form>` : actions}<p role="alert" data-menu-error></p><button type="button" class="btn menu-close" data-menu-action="close">Close</button></div></dialog>`;
+  return `<dialog class="sheet menu-sheet card-menu" aria-modal="true" aria-labelledby="cm-h" data-return-focus="more-${e(id)}"><div class="menu-body"><span class="grab" aria-hidden="true"></span><h2 id="cm-h">${e(id)} ${e(card.title)}</h2>${editing ? `<form data-menu-title><label>Title<input name="title" value="${e(card.title)}" maxlength="5000" required></label><button class="btn primary" type="submit">Save title</button><button class="btn" type="button" data-menu-action="cancel-edit">Cancel</button></form>` : actions}<p role="alert" data-menu-error></p><button type="button" class="btn menu-close" data-menu-action="close">Close</button></div></dialog>`;
 }
 
 /** Mount outside the shell's modal regions. onChange refreshes the board before focus returns.

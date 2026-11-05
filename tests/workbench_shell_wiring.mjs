@@ -230,5 +230,16 @@ if (which === 'shell') {
   assert.match(app, /\/api\/cards\/\$\{number\}\/approve/);
   assert.match(app, /data-form="comment"/);
   assert.match(app, /kind === "space-message"/);
+} else if (which === 'shell-nostyle') {
+  // The app's CSP (style-src 'self') refuses inline style elements: the shell's rules travel as a constructed sheet.
+  Object.assign(context, await module('rail'));
+  context.navigation = () => {};
+  run(slice('function shell()', 'function navigation()') + '\nshell();');
+  assert.match(root.innerHTML, /class="shell two"/);
+  assert.doesNotMatch(root.innerHTML, /<style/i);
+  const sheet = /const shellStyles = `([^`]*)`;/.exec(app);
+  assert.ok(sheet, 'Shell sheet missing');
+  assert.match(sheet[1], /#shell-dialog \{/); assert.match(sheet[1], /\.shell \.needs-me > \.bar > h1 \{ display:none; \}/);
+  assert.match(app, /sheet\.replaceSync\(shellStyles\)/);
 } else assert.fail(`Unknown case: ${which}`);
 console.log(`${which}: PASS`);

@@ -12,7 +12,7 @@ function agentRows(rows) {
 
 export function agentsView(payload) {
   const rows = payload.connections || [];
-  return `<section class="settings-section agents-settings"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label style="flex-basis:100%;flex-direction:row;align-items:start"><input type="checkbox" name="import" style="width:18px;height:18px;min-height:0;flex-shrink:0">${e(importConsent)}</label><details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows)}</div></section>`;
+  return `<section class="settings-section agents-settings"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows)}</div></section>`;
 }
 
 export function clientConfig(client, url, token) {

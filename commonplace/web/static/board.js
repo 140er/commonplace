@@ -45,7 +45,7 @@ function cardView(card, options, stop) {
   return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${tags.map((t) => `<span class="tag ${t === 'Blocked' ? 'block' : t === 'Needs me' ? 'you' : ''}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
 }
 // Component styles stay with this renderer until the shell mounts it.
-const styles = `<style>
+const styles = `
 .workbench-board { --board-paper:#FEFEFC; }
 .workbench-board .board { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; padding:16px; align-items:start; }
 .workbench-board .col { background:var(--well); border-radius:var(--r); min-width:0; padding:8px; }
@@ -63,7 +63,13 @@ const styles = `<style>
 @media (min-width:1100px) { .workbench-board .col-jump { display:none; } }
 @media (min-width:700px) and (max-width:1099px) { .workbench-board .board { grid-template-columns:repeat(4,minmax(190px,1fr)); overflow-x:auto; } }
 @media (max-width:699px) { .workbench-board .board { display:block; } .workbench-board .col { display:none; margin-bottom:12px; } .workbench-board .col[data-active="true"] { display:block; } .workbench-board .col-jump button,.workbench-board button,.workbench-board summary { min-height:44px; } }
-</style>`;
+`;
+// The app's CSP is style-src 'self', which refuses inline style elements: adopt a constructed sheet once.
+if (globalThis.document?.adoptedStyleSheets) {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(styles);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
 // One tab stop per column (the selected card, else the first); arrows move inside and across columns.
 const stopIn = (list, selected) => (list.find((c) => c.number === selected) || list[0])?.number;
 export function roveTo(card) {
@@ -72,7 +78,7 @@ export function roveTo(card) {
 export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], column = 'todo' }) {
   const options = { board, me, selected, messages }, visible = filterCards(cards, filter, me);
   const backlog = visible.filter((c) => c.status === 'backlog');
-  return `${styles}<div class="workbench-board"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div>${!cards.length ? '<section class="empty-strip" aria-label="Get started"><h2>Your project starts here</h2><button data-action="new-card">Add your first card</button><button data-action="connect-agent">Connect an agent</button><button data-action="open-chat">Ask for something · Write in chat /</button></section>' : ''}<nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)}${s === 'done' ? ` ${visible.filter((c) => c.status === s).length}` : ''}</button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
+  return `<div class="workbench-board"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div>${!cards.length ? '<section class="empty-strip" aria-label="Get started"><h2>Your project starts here</h2><button data-action="new-card">Add your first card</button><button data-action="connect-agent">Connect an agent</button><button data-action="open-chat">Ask for something · Write in chat /</button></section>' : ''}<nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)}${s === 'done' ? ` ${visible.filter((c) => c.status === s).length}` : ''}</button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
     const list = visible.filter((c) => c.status === s);
     return `<section class="col" id="col-${s}" data-status="${s}" data-active="${column === s}" aria-label="${heading(s)}, ${list.length} cards"><div class="col-h"><h2>${heading(s)}</h2><span class="n">${list.length}</span>${s === 'todo' ? '<button class="iconbtn" data-action="new-card" aria-label="Add card to Todo">+</button>' : ''}</div><div class="cards">${list.map((c) => cardView(c, options, c.number === stopIn(list, selected))).join('')}</div></section>`;
   }).join('')}</div><details class="backlog"><summary>Backlog (${backlog.length})</summary><div class="cards">${backlog.map((c) => cardView(c, options, c.number === stopIn(backlog, selected))).join('')}</div></details>${adding ? addCardForm({ people }) : ''}</div>`;

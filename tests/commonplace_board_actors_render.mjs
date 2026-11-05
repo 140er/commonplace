@@ -7,7 +7,6 @@ const apiUrl = url(await read("api.js"));
 const decideUrl = url((await read("decide.js")).replace('"./api.js"', `"${apiUrl}"`));
 const load = async (name) => import(url((await read(name)).replace('"./api.js"', `"${apiUrl}"`).replace('"./decide.js"', `"${decideUrl}"`)));
 const { childProgress } = await load("children.js");
-const { homeView } = await load("home.js");
 const dot = (c) => `<i class="status-dot ${c.need}"></i>`;
 const card = {
   number: 4, board: "work", title: "Top actor", need: "working", status: "doing",
@@ -26,15 +25,16 @@ assert.match(expanded, /#5<\/a>.*Original &lt;script&gt; &amp; &quot;words&quot;
 assert.match(expanded, /<span>review<\/span>/);
 assert.doesNotMatch(expanded, /<script>/);
 assert.equal(childProgress({ number: 1 }, false, dot), "");
-const rows = { dot, taskRow: () => "row", children: (c, scope) => childProgress(c, true, dot, scope) };
-const html = homeView({ open: [card] }, rows);
-assert.match(html, /id="children-home-4"/);
-assert.match(html, /id="children-stack-4"/);
-assert.equal((html.match(/2\/4 klaar/g) || []).length, 2);
 assert.doesNotMatch(childProgress({ ...card, children_need_you: false }, false, dot), /status-dot you/);
 
 // Exercise the app's actual chat map and hydration with a child absent from the Tasks list.
 const app = await read("app.js");
+// Home is gone: the project's task list and the chat each draw the progress under their own id.
+const html = childProgress(card, true, dot, "space") + childProgress(card, true, dot, "chat");
+assert.match(html, /id="children-space-4"/);
+assert.match(html, /id="children-chat-4"/);
+assert.equal((html.match(/2\/4 klaar/g) || []).length, 2);
+assert.match(app, /children\(card, inline \? "chat" : "space"\)/);
 const source = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
 const linkedTop = { ...card, message_id: 20, version: 1 };
 const linkedChild = { number: 8, parent: 4, message_id: 20, version: 3, status: "review", ask: "Ship <original>?", ask_to: "user:owner", return_to: "conn:worker", ask_options: ["Ship", "Wait"], updated_at: card.updated_at };

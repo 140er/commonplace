@@ -25,6 +25,13 @@ export function needsItems(needs = {}, filter = "all") {
     .filter((item) => filter === "all" || `${item.kind}s` === filter);
 }
 
+// A loaded card gets the actions the server queued for this version; nothing else draws a button.
+export function needsCard(needs, card) {
+  const queued = needsItems(needs).find((item) => item.card.number === card.number)?.card;
+  return { ...card, actions: queued?.version === card.version ? queued.actions || [] :
+    card.can_approve && card.proposal_status === "pending" ? ["approve", "reject"] : [] };
+}
+
 export function holdState(hold, now = Date.now()) {
   if (!hold) return { state: "none", seconds: 0, canStop: false };
   const remaining = Date.parse(hold.release_at) - now;
@@ -35,7 +42,7 @@ export function holdState(hold, now = Date.now()) {
 const countdown = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 function stopButton(hold, now) {
   const state = holdState(hold, now);
-  return state.canStop ? `<button class="btn sm" data-needs-stop="${e(hold.id)}">Stop · <span data-hold-countdown="${e(hold.id)}">${countdown(state.seconds)}</span></button>` : "";
+  return state.canStop ? `<button class="btn sm" data-needs-stop="${e(hold.id)}">Stop · <span data-hold-countdown="${e(hold.id)}" aria-hidden="true">${countdown(state.seconds)}</span></button>` : "";
 }
 function holdCopy(hold, now) {
   const state = holdState(hold, now).state;
@@ -49,7 +56,7 @@ function holdCopy(hold, now) {
 }
 
 // Styles are scoped here so the shell can wire the module without a shared-sheet edit.
-const styles = `<style>
+const styles = `
 .needs-me,.needs-detail { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:#FEFEFC; color:var(--text); }
 .needs-me .bar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
 .needs-me h1 { font-size:18px; line-height:24px; font-weight:650; }
@@ -108,12 +115,19 @@ const styles = `<style>
 .needs-detail .confirm { position:relative; } .needs-detail .confirm .acts { flex-wrap:nowrap; }
 }
 @media(max-width:359px) { .needs-detail .decide-acts { flex-direction:column; } }
-</style>`;
+`;
+// The app's CSP is style-src 'self', which refuses inline style elements: adopt a constructed sheet once.
+if (globalThis.document?.adoptedStyleSheets) {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(styles);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
 
 export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], filter = "all", selected = null, now = Date.now() } = {}) {
   const items = needsItems(needs, filter);
   const known = new Map([...cards, ...needsItems(needs).map((item) => item.card)].map((card) => [card.number, card]));
-  const held = [...new Set(holds.map((hold) => hold.card))].map((number) => latestHold(holds, number))
+  const approvals = holds.filter((hold) => hold.kind === "approve");
+  const held = [...new Set(approvals.map((hold) => hold.card))].map((number) => latestHold(approvals, number))
     .filter((hold) => known.has(hold.card) && (filter === "all" || filter === (hold.kind === "approve" ? "approvals" : "decisions")));
   const row = (card, kind, hold = null) => {
     const board = boardFor(boards, card), state = holdState(hold, now);
@@ -134,15 +148,15 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
   };
   const visibleCards = [...new Set([...items.map((item) => item.card.number), ...held.map((hold) => hold.card)])];
   const projects = new Set(visibleCards.map((number) => known.get(number)?.board).filter(Boolean)).size;
-  return `${styles}<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${visibleCards.length} ${visibleCards.length === 1 ? "item" : "items"}, ${projects} ${projects === 1 ? "project" : "projects"}</span><div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([key, text]) => `<button data-needs-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("")}</div></header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
+  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${visibleCards.length} ${visibleCards.length === 1 ? "item" : "items"}, ${projects} ${projects === 1 ? "project" : "projects"}</span><div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([key, text]) => `<button data-needs-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("")}</div></header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
 }
 
 export function renderNeedDetail(card, { board = { slug: card.board }, hold = null, now = Date.now(), confirm = false, note = "", error = "", busy = false, chatOpen = false, phone = false, kind } = {}) {
   const proposal = card.proposal_status === "pending";
   kind ||= proposal ? "approval" : card.review_kind === "completion" || card.need === "merge" ? "review" : "decision";
   const context = detailsContext(card), canAnswer = !active(hold) && !hold?.tooLate;
-  const allowed = (action) => (card.actions || []).includes(action) && !card.restricted_origin;
-  const quote = context.text == null ? "" : `<section class="context-words"><h3>Context (exact words)</h3><p class="quote" data-context-text>${exact(context.text)}</p>${context.author ? `<p>— ${e(detailsAuthor(context.author, board))}</p>` : ""}</section>`;
+  const allowed = (action) => (card.actions || []).includes(action);
+  const quote = !context.text ? "" : `<section class="context-words"><h3>Context (exact words)</h3><p class="quote" data-context-text>${exact(context.text)}</p>${context.author ? `<p>— ${e(detailsAuthor(context.author, board))}</p>` : ""}</section>`;
   const linked = card.child_cards?.length ? `<section><h3>Linked cards</h3><div class="linked">${card.child_cards.map((child) => `<a href="#/card/${e(child.number)}"><span><span class="cid">${e(cardId(board, child.number))}</span> ${e(child.title)}</span><span class="tag${child.status === "done" ? " ok" : ""}">${e(child.status)}</span></a>`).join("")}</div></section>` : "";
   const ask = `<button class="btn" data-needs-ask aria-keyshortcuts="R" aria-controls="chat" aria-expanded="${chatOpen}">${hold?.tooLate || hold?.state === "released" ? "Ask the orchestrator" : "Ask a question"} <kbd>R</kbd></button>`;
   const disabled = busy ? " disabled" : "";
@@ -150,7 +164,7 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const noteBox = canAnswer && (proposal || allowed("answer")) ? `<label class="lbl">Note to the orchestrator <span class="help">Optional. Sent with your answer.</span><textarea data-needs-note rows="1"${proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
   const decisions = !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
   const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `<div class="decide-acts">${decisions}<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>${ask}</div>` : ask;
-  return `${styles}<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${labels[kind]}</span><span>${e(board.name || board.slug)}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${actions}</footer></section>`;
+  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${labels[kind]}</span><span>${e(board.name || board.slug)}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${actions}</footer></section>`;
 }
 
 // The shell owns routing, sheet modality and chat. All requests use the shared JSON api.
@@ -177,11 +191,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (typeof start === "number") next?.setSelectionRange?.(start, end);
     };
   }
-  function withActions(card) {
-    const queued = needsItems(data.needs).find((item) => item.card.number === card.number)?.card;
-    return { ...card, actions: queued?.version === card.version ? queued.actions || [] :
-      card.can_approve && card.proposal_status === "pending" ? ["approve", "reject"] : [] };
-  }
+  const withActions = (card) => needsCard(data.needs, card);
   function drawDetail() {
     if (!detailMount || stopped) return;
     const restoreFocus = savedFocus(detailMount);
@@ -231,7 +241,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     holdRead = (async () => {
       const page = await api("/api/holds");
       if (stopped) return;
-      const next = page.holds.map((hold) => ({ ...hold, ...(tooLate.has(hold.id) ? { tooLate: true } : {}) }));
+      const next = page.holds.filter((hold) => hold.kind === "approve").map((hold) => ({ ...hold, ...(tooLate.has(hold.id) ? { tooLate: true } : {}) }));
       const changed = !holdsLoaded || JSON.stringify(next) !== JSON.stringify(holds);
       holds = next; holdsLoaded = true; lastPoll = now();
       for (const hold of holds) if (!cards.has(hold.card)) {
@@ -261,7 +271,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (stopped) return;
       const hold = { ...result, card: body.card, kind: body.kind, state: "waiting" };
       holds = [...holds.filter((item) => item.id !== hold.id), hold]; confirming = false;
-      await refreshHolds();
+      try { await refreshHolds(); } catch (failure) { onError(failure); }
       if (!stopped) onChange();
     } catch (failure) {
       // A response can be lost after the hold was persisted. Read once, never resend.
@@ -275,11 +285,25 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     const reason = notes.get(current.number) || "";
     return sendHold({ card: current.number, kind: "approve", version: current.version, ...(reason ? { reason } : {}) });
   }
+  function dropFromQueue(card, token) {
+    const needs = {};
+    for (const [bucket, value] of Object.entries(data.needs)) needs[bucket] = Array.isArray(value) ? value.filter((item) => item.number !== card.number) : value;
+    data = { ...data, needs };
+    if (token === revision) { confirming = false; current = null; selected = null; revision++; }
+  }
+  // Only Approve waits 60 seconds; a decision answer goes straight to the card's decide route.
   async function answer(choice, reply) {
-    if (!holdsLoaded || !current || active(currentHold()) || !(current.actions || []).includes("answer") || !(current.ask_options || []).includes(choice)) return;
-    rememberNote();
-    const text = reply ?? notes.get(current.number) ?? "";
-    return sendHold({ card: current.number, kind: "decide", version: current.version, choice, ...(text ? { reply: text } : {}) });
+    if (stopped || busy || !current || !(current.actions || []).includes("answer") || !(current.ask_options || []).includes(choice)) return;
+    rememberNote(); const card = current, token = revision;
+    const text = reply ?? notes.get(card.number) ?? "";
+    busy = true; error = ""; drawDetail();
+    try {
+      await api(`/api/cards/${card.number}/decide`, { method: "POST", body: { choice, version: card.version, ...(text ? { reply: text } : {}) } });
+      if (stopped) return;
+      notes.delete(card.number); dropFromQueue(card, token);
+      onChange();
+    } catch (failure) { showError("Could not send your answer. Open the card again before trying again.", failure); }
+    finally { busy = false; draw(); }
   }
   async function decline() {
     if (stopped || !holdsLoaded || busy || !current || active(currentHold()) || !(current.actions || []).includes("reject")) return;
@@ -290,10 +314,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (onAction) await onAction("need-reject", card, reason ? { reason } : {});
       else await api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: false, version: card.version, ...(reason ? { reason } : {}) } });
       if (stopped) return;
-      const needs = {};
-      for (const [bucket, value] of Object.entries(data.needs)) needs[bucket] = Array.isArray(value) ? value.filter((item) => item.number !== card.number) : value;
-      data = { ...data, needs };
-      if (token === revision) { confirming = false; current = null; selected = null; revision++; }
+      dropFromQueue(card, token);
       onChange();
     } catch (failure) { showError("Could not decline. Open the card again before trying again.", failure); }
     finally { busy = false; draw(); }
@@ -342,6 +363,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (event.key === "Escape" && confirming && !busy) { event.preventDefault(); event.stopPropagation(); cancel(); return; }
     if (!singleKeys() || event.altKey || event.ctrlKey || event.metaKey || event.target.closest("input,textarea,select,[contenteditable=true]")) return;
     if (event.key.toLowerCase() === "r") { event.preventDefault(); event.stopPropagation?.(); ask(); }
+    else if (event.key.toLowerCase() === "z" && holdState(currentHold(), now()).canStop) { event.preventDefault(); event.stopPropagation?.(); void stopHold(currentHold().id); }
     else if (["j", "k"].includes(event.key.toLowerCase())) {
       const rows = items(), index = rows.findIndex((card) => card.number === selected);
       const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key.toLowerCase() === "j" ? 1 : -1)))];

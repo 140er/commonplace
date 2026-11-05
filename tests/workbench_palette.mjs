@@ -196,5 +196,26 @@ switch (process.argv[2]) {
     second.stop();
     break;
   }
+  case 'nostyle': {
+    // The app's CSP (style-src 'self') refuses inline style elements.
+    palette.open(options); assert.doesNotMatch(dialog.innerHTML, /<style/i);
+    palette.shortcuts(); assert.doesNotMatch(dialog.innerHTML, /<style/i);
+    break;
+  }
+  case 'focus-race': {
+    // Browsers fire the dialog's close event after the command ran; a focus the command set must stay.
+    class LateDialog extends Dialog { close() { this.open = false; setTimeout(() => this.emit('close'), 0); } }
+    const late = new LateDialog(), target = new Node();
+    const ui2 = ui.createPalette({dialog: late, storage, onCommand: (item) => { if (item.action === 'new-card') target.focus(); }});
+    const keyOn = (k) => late.emit('keydown', {key: k, target: late.querySelector('[role="combobox"]')});
+    opener.focus(); ui2.open({...options, query: 'new card'}); keyOn('Enter');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(document.activeElement, target, 'Focus moved by the command was taken back');
+    opener.focus(); ui2.open({...options, query: 'rules'}); keyOn('Enter');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(document.activeElement, opener, 'Unclaimed focus must return to the opener');
+    ui2.stop();
+    break;
+  }
   default: assert.fail('Unknown test case');
 }

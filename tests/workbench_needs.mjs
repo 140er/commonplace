@@ -159,7 +159,13 @@ const cases = {
     const s = setup(); await s.ui.show({ needs, selected: 22 });
     assert.ok(s.detailMount.innerHTML.includes('A &amp; B')); assert.ok(!s.detailMount.innerHTML.includes('data-needs-approve'));
     await s.ui.answer('A & B', '  Exact reply\n');
-    assert.deepEqual(s.requests.filter((r) => r.method === 'POST'), [{ path: '/api/holds', method: 'POST', body: { card: 22, kind: 'decide', version: 8, choice: 'A & B', reply: '  Exact reply\n' } }]); s.ui.stop();
+    // Only Approve waits 60 seconds: a decision goes straight to the card's decide route, once.
+    assert.deepEqual(s.requests.filter((r) => r.method === 'POST'), [{ path: '/api/cards/22/decide', method: 'POST', body: { choice: 'A & B', version: 8, reply: '  Exact reply\n' } }]);
+    assert.ok(!s.mount.innerHTML.includes('Approved, not sent yet')); assert.ok(!s.mount.innerHTML.includes(decision.title)); s.ui.stop();
+    assert.ok(!renderNeeds({ needs, holds: [{ ...waiting, card: 22, kind: 'decide' }], ...opts }).includes('Approved, not sent yet'));
+    const failing = setup({ api: (path) => { if (path.endsWith('/decide')) throw Object.assign(new Error('card changed'), { status: 409 }); } });
+    await failing.ui.show({ needs, selected: 22 }); await failing.ui.answer('C');
+    assert.ok(failing.detailMount.innerHTML.includes('Could not send your answer')); assert.equal(failing.requests.filter((r) => r.path === '/api/holds' && r.method === 'POST').length, 0); failing.ui.stop();
     const noOption = setup(); await noOption.ui.show({ needs, selected: 22 }); await noOption.ui.answer('unknown'); assert.equal(noOption.requests.filter((r) => r.method === 'POST').length, 0); noOption.ui.stop();
     const plan = renderNeedDetail({ ...proposal, proposal_status: null, labels: ['plan'] }, { board }); assert.ok(!plan.includes('data-needs-approve'));
   },
@@ -172,6 +178,34 @@ const cases = {
     assert.ok(phone.includes('<dialog class="confirm" role="alertdialog" aria-modal="true"'));
     assert.ok(phone.includes('aria-describedby="needs-confirm-description"'));
     assert.equal(s.detailMount.focused, '[data-needs-approve]'); assert.ok(!s.detailMount.innerHTML.includes('Yes, approve')); s.ui.stop();
+  },
+  restricted() {
+    // The owner approves proposals from restricted agents: the server's actions decide, not a client flag.
+    const html = renderNeedDetail({ ...proposal, restricted: true, restricted_origin: 1 }, { board, now });
+    assert.ok(html.includes('data-needs-approve')); assert.ok(html.includes('data-action="need-reject"'));
+    assert.ok(!renderNeedDetail({ ...proposal, actions: [] }, { board, now }).includes('data-needs-approve'));
+  },
+  async zkey() {
+    const key = { key: 'z', target: { closest: () => null }, preventDefault() {}, stopPropagation() {} };
+    const s = setup(); s.setHolds([waiting]); await s.ui.show({ needs, boards: [board], selected: 21 });
+    s.detailMount.handlers.get('keydown')(key); await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(s.requests.filter((r) => r.method === 'POST'), [{ path: '/api/holds/hold-one/stop', method: 'POST', body: {} }]); s.ui.stop();
+    const idle = setup(); await idle.ui.show({ needs, selected: 21 });
+    idle.detailMount.handlers.get('keydown')(key); await new Promise((r) => setTimeout(r, 10));
+    assert.equal(idle.requests.filter((r) => r.method === 'POST').length, 0); idle.ui.stop();
+  },
+  async quiet() {
+    // The countdown is rewritten every second; only the state copy is announced.
+    assert.match(renderNeedDetail(proposal, { board, hold: waiting, now }), /data-hold-countdown="hold-one" aria-hidden="true"/);
+    assert.ok(!renderNeedDetail({ ...decision, events: [{ kind: 'ask', actor: 'user:maya', context: '' }] }, { board }).includes('Context (exact words)'));
+    let stored = false;
+    const s = setup({ api: (path, options) => {
+      if (path === '/api/holds' && options.method === 'POST') { stored = true; return undefined; }
+      if (path === '/api/holds' && stored) throw new Error('timeout');
+    } });
+    await s.ui.show({ needs, selected: 21 }); s.ui.approve(); await s.ui.confirm();
+    assert.ok(!s.detailMount.innerHTML.includes('Could not confirm approval')); assert.ok(s.detailMount.innerHTML.includes('nothing has been sent'));
+    assert.equal(s.requests.filter((r) => r.method === 'POST').length, 1); s.ui.stop();
   },
 };
 assert.ok(Object.hasOwn(cases, process.argv[2]), 'Unknown case');

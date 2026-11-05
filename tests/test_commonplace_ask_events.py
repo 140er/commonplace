@@ -209,8 +209,12 @@ def test_app_sends_the_rendered_version_and_keeps_one_live_place():
     app = (Path(STATIC) / "app.js").read_text()
     assert 'data-version="${e(card.version)}"' in app
     assert "body: { ...payload, version }" in app
-    # Home draws no choice buttons. A question in the needbox opens the decide queue.
-    assert "homeView(" in app and "decision(card)" not in app
+    # Needs me draws its own choices and sends them to the decide route with the rendered version.
+    # It never reuses the shell's decide buttons, so one click answers once.
+    needs = (Path(STATIC) / "needs.js").read_text()
+    assert "homeView(" not in app and "decision(card)" not in app
+    assert 'data-action="decide"' not in needs
+    assert "/decide`" in needs and "version: card.version" in needs
     assert 'data-action="decide"' not in (Path(STATIC) / "home.js").read_text()
 
 

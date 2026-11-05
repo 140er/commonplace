@@ -49,7 +49,7 @@ const cases = {
     const sameWing = { ...other, wing: board.wing };
     assert.equal(memory.memoryActions(row, sameWing, [card], me).quote, true);
     assert.equal(memory.memoryActions(row, sameWing, [card], me).post.length, 0);
-    for (const invalid of [{ status: 'doing' }, { ask_to: me }, { review_kind: 'completion' }, { board: 'harbor' }, { ask: '' }, { restricted_origin: true }]) {
+    for (const invalid of [{ status: 'doing' }, { ask_to: me }, { review_kind: 'completion' }, { board: 'harbor' }, { ask: '' }, { restricted: true }]) {
       assert.equal(memory.memoryActions(row, board, [{ ...card, ...invalid }], me).post.length, 0);
     }
     let calls = 0;
@@ -152,7 +152,7 @@ const cases = {
     assert.deepEqual(calls[0], ['/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: 'memory-link', method: 'tools/call', params: { name: 'memory_link', arguments: { id: note.id, task: 21 } } } }]);
     await assert.rejects(memory.linkMemory({ ...args, result: row }));
     await assert.rejects(memory.linkMemory({ ...args, destination: other }));
-    await assert.rejects(memory.linkMemory({ ...args, card: { ...card, restricted_origin: true } }));
+    await assert.rejects(memory.linkMemory({ ...args, card: { ...card, restricted: true } }));
     assert.equal(calls.length, 1);
     await assert.rejects(memory.linkMemory({ ...args, api: async () => ({ result: { isError: true } }) }), /Could not link/);
   },
@@ -233,6 +233,12 @@ const cases = {
     assert.equal(result.results.length, 1); assert.equal(result.truncated, true); assert.equal(result.errors.length, 1);
     assert.equal(result.results[0].board, 'harbor');
     await assert.rejects(memory.loadNeighbours(row, async () => ({ board: 'wrong', messages: [] })), /source could not/);
+  },
+  source_author() {
+    // After the header switches to another same-wing project, neighbours keep their own board's names.
+    const harbor = { ...other, wing: board.wing, coordinator: 'conn:harbor-lead' };
+    const html = memory.renderMemoryPanel({ result: { ...row, hit: true }, destination: harbor, source: board, cards: [], me, neighbours: [{ kind: 'chat', id: 16, board: 'atlas', actor: 'conn:lead', text: 'Earlier words', at: row.at }] });
+    assert.ok(html.includes('Atlas orchestrator')); assert.ok(!html.includes('Harbor orchestrator'));
   },
 };
 assert.equal(typeof cases[process.argv[2]], 'function', 'Unknown contract case');

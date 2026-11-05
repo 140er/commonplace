@@ -42,7 +42,7 @@ export function memoryActions(result, destination, cards = [], me) {
   return {
     quote: sameWing,
     link: sameWing && result?.kind === "note",
-    post: sameWing && result.board === destination.slug ? cards.filter((card) => card.board === result.board && isBlocked(card, me) && !card.restricted_origin) : [],
+    post: sameWing && result.board === destination.slug ? cards.filter((card) => card.board === result.board && isBlocked(card, me) && !card.restricted) : [],
   };
 }
 
@@ -115,7 +115,7 @@ export async function postMemory({ result, destination, card, me, api = request 
 }
 
 export async function linkMemory({ result, destination, card, api = request }) {
-  if (!memoryActions(result, destination).link || card.board !== destination.slug || card.restricted_origin) throw new Error("Choose a card in the note's wing.");
+  if (!memoryActions(result, destination).link || card.board !== destination.slug || card.restricted) throw new Error("Choose a card in the note's wing.");
   const response = await api("/mcp", { method: "POST", body: { jsonrpc: "2.0", id: "memory-link", method: "tools/call", params: { name: "memory_link", arguments: { id: result.id, task: card.number } } } });
   if (response.error || response.result?.isError || !response.result) throw new Error("Could not link this note. Try again.");
   return response.result;
@@ -134,12 +134,12 @@ export function renderMemory(state) {
     <div class="keys"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open source</span><span><kbd>Y</kbd> copy exact words</span>${memoryActions(selected, state.destination).link ? '<span><kbd>L</kbd> link to a card</span>' : ""}</div></section>`;
 }
 
-export function renderMemoryPanel({ result, destination, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen }) {
+export function renderMemoryPanel({ result, destination, source, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen }) {
   if (!result) return "";
   const actions = memoryActions(result, destination, cards, me);
   const thread = neighbours.length ? neighbours : [{ ...result, hit: true }];
-  const message = (row) => row.hit ? result : { ...row, author: memoryAuthor(row, destination) };
-  const linkCards = cards.filter((card) => card.board === destination?.slug && !card.restricted_origin);
+  const message = (row) => row.hit ? result : { ...row, author: memoryAuthor(row, source || destination) };
+  const linkCards = cards.filter((card) => card.board === destination?.slug && !card.restricted);
   return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src"><b>${e(result.sourceLabel)}</b><time>${e(result.at)}</time></div></div>
     ${loading ? '<p role="status">Loading source…</p>' : ""}${panelError ? `<p role="alert">${e(panelError)}</p><button class="btn" data-memory-action="source-retry">Try again</button>` : ""}
     <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h"><b>${e(msg.author)}</b><time>${e(msg.at)}</time></div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
@@ -193,7 +193,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     const epoch = ++sourceEpoch;
     const board = state.boards.find((board) => board.slug === result.board);
     if (!board || board.wing !== result.wing) return;
-    Object.assign(state, { selected: result, destination: board, neighbours: [], cards: [], loading: true, panelError: "", notice: "", linking: false, at: null, chatOpen: false });
+    Object.assign(state, { selected: result, destination: board, source: board, neighbours: [], cards: [], loading: true, panelError: "", notice: "", linking: false, at: null, chatOpen: false });
     onSelect(result, board);
     draw();
     const [source, cards] = await Promise.allSettled([loadNeighbours(result, api), api(`/api/boards/${enc(board.slug)}/cards`)]);

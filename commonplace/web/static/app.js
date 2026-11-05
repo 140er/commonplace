@@ -22,6 +22,26 @@ import { createMemory } from "./memory.js";
 import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
+// Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
+const shellStyles = `
+    .shell #content { flex:1; min-height:0; overflow:auto; }
+    .shell .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
+    .shell .head h1 { font-size:18px; } .shell .head .right { display:flex; gap:8px; }
+    #chat-content .chat-view { border-left:0; }
+    #chat-content .chat-header > h2, #chat-content .chat-header > [data-close-chat] { display:none; }
+    .shell #card-panel { overflow:auto; } .shell .workbench-board { min-height:100%; }
+    #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
+    #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
+    #shell-dialog dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:16px 0; }
+    .shell .needs-me > .bar > h1 { display:none; } .shell .digest-captions { margin:12px 16px 0; }
+    @media(min-width:700px) { .shell .card-more { display:none; } }
+    @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } .shell .head [data-action="coordinator"] { display:none; } #shell-dialog button { min-height:44px; } }
+`;
+if (globalThis.document?.adoptedStyleSheets) {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(shellStyles);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+}
 
 const signinParams = new URLSearchParams(location.search);
 const signinCode = signinParams.get("signin"), signinNext = signinParams.get("next") || "";
@@ -305,20 +325,7 @@ function shell() {
   state.workbenchChat?.dispose();
   state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
   state.shellSync = null;
-  root.innerHTML = `<style>
-    .shell #content { flex:1; min-height:0; overflow:auto; }
-    .shell .head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
-    .shell .head h1 { font-size:18px; } .shell .head .right { display:flex; gap:8px; }
-    #chat-content .chat-view { border-left:0; }
-    #chat-content .chat-header > h2, #chat-content .chat-header > [data-close-chat] { display:none; }
-    .shell #card-panel { overflow:auto; } .shell .workbench-board { min-height:100%; }
-    #shell-dialog { background:#FEFEFC; color:var(--text); border:1px solid var(--line-strong); border-radius:var(--r); padding:24px; max-width:min(640px,calc(100vw - 32px)); max-height:90vh; overflow:auto; }
-    #shell-dialog::backdrop { background:rgba(23,24,28,.42); } #shell-dialog nav { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
-    #shell-dialog dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; margin:16px 0; }
-    .shell .needs-me > .bar > h1 { display:none; } .shell .digest-captions { margin:12px 16px 0; }
-    @media(min-width:700px) { .shell .card-more { display:none; } }
-    @media(max-width:699px) { .shell.panel-open #card-panel { position:fixed; inset:0; width:100%; height:100dvh; z-index:31; display:flex; } .shell .head { flex-wrap:wrap; } .shell .head [data-action="coordinator"] { display:none; } #shell-dialog button { min-height:44px; } }
-  </style><a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog><div id="card-menu-root"></div>`;
+  root.innerHTML = `<a class="skip" href="#content">Skip to content</a><div class="shell two"><nav class="rail" id="board-nav" aria-label="Workspace"><a href="#/memory">Memory</a><a href="#/chat">Chat</a><a href="#/console">Console</a></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Projects</h1><div class="right" id="head-actions"></div></header><div id="connection-state" role="status" hidden>Disconnected</div><div id="screen-error" role="alert" hidden></div><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main><aside class="context" id="card-panel" role="dialog" aria-label="Card" tabindex="-1" hidden></aside><button class="tablet-scrim" data-action="close-panel" aria-label="Close card"></button></div><dialog id="shell-dialog" aria-labelledby="shell-dialog-h"></dialog><div id="card-menu-root"></div>`;
   navigation();
   const panel = root.querySelector("#card-panel"), layout = root.querySelector(".shell");
   if (!panel || !layout) return;
