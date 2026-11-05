@@ -119,8 +119,9 @@ def install(gateway, data_dir=None, **_ignored) -> HandoffContext:
     )
     gateway.handoff = ctx
     api.register(ctx)
-    from commonplace import capture, imports, sync_sessions
+    from commonplace import capture, imports, search_index_api, sync_sessions
 
+    search_index_api.register(gateway)
     imports.register(ctx)
     capture.register(ctx)
     sync_sessions.register(ctx)
