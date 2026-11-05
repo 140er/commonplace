@@ -9,12 +9,11 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from commonplace import control_db, events, privacy, redact
+from commonplace import events, privacy
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
-from commonplace.policy import Policy, canonical_wing
 
 from .digest import digest
 from .display import merge_ready, people, stale_before
@@ -44,10 +43,14 @@ def open_store(workspace_dir, *, legacy_origin=None, db=None, workspace_id=None)
 
 
 def project_wing(slug):
+    from commonplace.policy import canonical_wing
+
     return canonical_wing("project_" + slug)
 
 
 def shared_wing(wing):
+    from commonplace.policy import Policy
+
     policy = Policy.build(
         profile="standard",
         scopes=("memory:read", "memory:write"),
@@ -1014,6 +1017,9 @@ class BoardService:
             }
 
     def board_own_wing(self, board):
+        from commonplace import control_db, redact
+        from commonplace.policy import Policy, canonical_wing
+
         p, db = self.principal, self.ctx.db
         _owner(p)
         unbound, affected = [], []
