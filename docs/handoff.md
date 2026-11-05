@@ -756,9 +756,10 @@ old thread and the successor reference or URL.
   get the user's unanswered message (the control database holds no text);
   the old session showed it was refused.
 - Each stored thread is also written into Memory search in the background,
-  in a private section. Memory hits, including existing handoff copies, now
-  require both `private:read` and `threads:read`, plus permission to read the
-  original thread. A token with only `private:read` no longer sees those hits.
+  in a private section. Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
+  This covers Memory search, `memory_get`, session start context and tunnel
+  previews. Mirror copies do not count as duplicates for anyone. Writes into
+  thread rooms require permission to read that thread.
 - `handoff.completed` is queued in the same transaction that records the
   successor and delivered exactly once, also after a crash (it goes out
   when the gateway starts again) and with several gateways on one control

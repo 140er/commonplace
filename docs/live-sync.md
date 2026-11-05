@@ -118,9 +118,9 @@ Imports, including memory-file imports, are also indexed in the background.
 Searchable text keeps the original words; a hit's `source.thread` can point to
 the shared session rather than an individual import.
 
-Only readers already allowed to read the private thread can find its words.
+Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
 Default self-service PAT and OAuth connections still cannot retrieve this
-history through Memory search or startup context, even when allowed to upload it.
+history through Memory search, `memory_get` or session start context, even when allowed to upload it.
 
 Existing imports are indexed automatically. Older captures that never sync again
 need `commonplace search-index run --workspace WORKSPACE_ID --captures` from an

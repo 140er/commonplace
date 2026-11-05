@@ -232,12 +232,12 @@ long messages are split into searchable sections. Follow a hit's `source.thread`
 to read more. For a shared native session, this may point to the session's
 stored thread rather than the import's own stored ID.
 
-Search does not grant new read access. Use your signed-in account, or an
-operator-created token with `threads:read`, `private:read`, at least standard
-trust and access to the thread's workspace and section. Private imports remain
-readable only by the filing user. Default self-service PAT and OAuth connections
-still cannot find imported words through Memory search or startup context.
-An import grant alone does not enable those reads.
+Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
+This covers Memory search, `memory_get`, session start context and tunnel
+previews. An import grant alone does not enable those reads. Mirror copies
+do not count as duplicates for anyone, including the filing user; checkpoint
+can file the same words as a separate memory. Writes into thread rooms require
+permission to read that thread.
 
 ### Indexing progress and storage
 
@@ -250,6 +250,9 @@ and `off`. Operators can check or resume indexing with:
 commonplace search-index status --workspace WORKSPACE_ID
 commonplace search-index run --workspace WORKSPACE_ID
 ```
+
+The CLI prints only persisted `threads_indexed` and `threads_pending` counts.
+The HTTP endpoint's `state` and `units_written` describe its running process.
 
 Index bytes count toward workspace storage. Indexing pauses 16 MiB before the
 plan limit with `deferred_storage`; free space and run it again to resume.

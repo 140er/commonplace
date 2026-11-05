@@ -34,6 +34,7 @@ class State:
     # Successful batches of an unfinished thread, keyed by content digest.
     # Replaying these results lets a single large thread span bounded jobs.
     batches: dict = field(default_factory=dict)
+    enrolled: bool = False
 
 
 class _JobFull(Exception):
@@ -108,10 +109,12 @@ def sweep(service, workspace_id, state):
             state.state = "off"
             return False
         store = service.store_for(workspace_id)
-        for stored_id in import_groups(service.control_db, workspace_id):
-            stored = store.get(stored_id)
-            if stored is not None and stored.workspace_id == workspace_id:
-                store.begin_mirror(stored_id, -1, bootstrap=-1)
+        if not state.enrolled:
+            for stored_id in import_groups(service.control_db, workspace_id):
+                stored = store.get(stored_id)
+                if stored is not None and stored.workspace_id == workspace_id:
+                    store.begin_mirror(stored_id, -1, bootstrap=-1)
+            state.enrolled = True
         threads = store.index_backlog(workspace_id, after_id=state.after_id, limit=MAX_THREADS)
         for stored in threads:
             if not enabled():
@@ -123,6 +126,8 @@ def sweep(service, workspace_id, state):
                 state.after_id = stored.id
                 visited += 1
                 continue
+            if stored.id not in state.batches and len(state.batches) >= 4:
+                state.batches.pop(next(iter(state.batches)))
             cached = state.batches.setdefault(stored.id, {})
 
             def allowed():
@@ -162,6 +167,8 @@ def sweep(service, workspace_id, state):
                     call, principal, stored, store, skip_empty=True, should_continue=allowed
                 )
             except palace_mirror.MirrorError as exc:
+                if not isinstance(exc.__cause__, _JobFull):
+                    state.batches.pop(stored.id, None)
                 if deferred:
                     state.state = "deferred_storage"
                     return False
@@ -178,6 +185,7 @@ def sweep(service, workspace_id, state):
         state.state = "idle"
         return False
     except Exception:
+        state.batches.clear()
         state.state = "idle"
         return False
     finally:

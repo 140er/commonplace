@@ -35,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- All private thread search results, including existing handoff copies, require permission to read the original thread as well as private-read access. Tokens with `private:read` alone lose those hits. Default self-service PAT and OAuth connections still cannot retrieve imported or captured history through Memory search or startup context.
+- Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself). This covers Memory search, `memory_get`, session start context and tunnel previews. Mirror copies no longer count as duplicates for anyone. Writes into thread rooms require permission to read the thread.
 - To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).

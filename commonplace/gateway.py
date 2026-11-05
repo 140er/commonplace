@@ -458,12 +458,12 @@ class Mediator:
                     args["drawer_id"] = unhide.get(args.get("drawer_id"), args.get("drawer_id"))
                 notes.append(f"{len(unhide)} hidden drawer(s) answered as missing")
 
-        if rule in ("search", "drawer_read", "read_wing"):
-            from .handoff.mirror_access import gate
+        from .handoff.mirror_access import gate
 
-            result = _tool_result(response) if isinstance(response, dict) else None
-            if result is not None:
-                response = _replace_result(response, gate(self.gateway, principal, rule, result))
+        result = _tool_result(response) if isinstance(response, dict) else None
+        cleaned = gate(self.gateway, principal, rule, result)
+        if cleaned is not result:
+            response = _replace_result(response, cleaned)
 
         if classify_tool(name) != "read":
             result = _tool_result(response) if isinstance(response, dict) else None
@@ -496,6 +496,10 @@ class Mediator:
         return None
 
     def _before_all_wings(self, principal, name, args, notes):
+        if name == "mempalace_checkpoint":
+            for item in args.get("items", []):
+                if isinstance(item, dict):
+                    self._check_thread_room(principal, item.get("wing"), item.get("room"))
         return None  # Policy.refusal already required every wing.
 
     def _before_wing_list(self, principal, name, args, notes):
@@ -598,6 +602,7 @@ class Mediator:
                 continue
             if not policy.can_write_wing(wing):
                 raise Denied(f"this connection can't change memories in wing {wing!r}")
+        self._check_thread_room(principal, args.get("wing"), args.get("room"))
         new_wing = args.get("wing")
         if new_wing and not policy.can_write_wing(new_wing):
             raise Denied(f"this connection can't write to wing {new_wing!r}")
@@ -611,6 +616,7 @@ class Mediator:
         return None
 
     def _before_add_drawer(self, principal, name, args, notes):
+        self._check_thread_room(principal, args.get("wing"), args.get("room"))
         self._pin_write_wing(principal.policy, args, args.get("wing"), notes)
         return None
 
@@ -635,6 +641,10 @@ class Mediator:
             wing = args.get(key)
             if not wing or not policy.can_write_wing(wing):
                 raise Denied(f"this connection can't link wing {wing!r}")
+        for prefix in ("source", "target"):
+            self._check_thread_room(
+                principal, args.get(prefix + "_wing"), args.get(prefix + "_room")
+            )
         ids = [args[k] for k in ("source_drawer_id", "target_drawer_id") if args.get(k)]
         wings = self._drawer_wings(principal, ids) if ids else {}
         for drawer_id in ids:
@@ -752,6 +762,17 @@ class Mediator:
         return _replace_result(response, cleaned)
 
     # ── helpers that ask the worker ──
+    def _check_thread_room(self, principal, wing, room):
+        from .handoff.mirror_access import _THREAD_ROOM
+        from .handoff.models import MIRROR_WING
+
+        mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
+        if mirror or (isinstance(room, str) and _THREAD_ROOM.fullmatch(room)):
+            if not isinstance(room, str) or not self.gateway.handoff.recall.can_read(
+                principal, room
+            ):
+                raise Denied("this connection can't change this thread room")
+
     def _drawer_wings(self, principal, ids: list) -> dict:
         if not ids:
             return {}
@@ -764,6 +785,7 @@ class Mediator:
         wings = {}
         for drawer_id, item in zip(ids, items):
             if isinstance(item, dict) and not item.get("error"):
+                self._check_thread_room(principal, item.get("wing"), item.get("room"))
                 wings[drawer_id] = item.get("wing") or ""
         return wings
 

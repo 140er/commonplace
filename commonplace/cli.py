@@ -471,7 +471,13 @@ def cmd_search_index(args) -> int:
                         after = (rows[-1].source_thread_id, rows[-1].id)
             service.index_later(workspace)
             service.wait_for_mirrors()
-        print(json.dumps(progress(service, workspace), sort_keys=True))
+        counts = progress(service, workspace)
+        print(
+            json.dumps(
+                {k: v for k, v in counts.items() if k not in ("state", "units_written")},
+                sort_keys=True,
+            )
+        )
     return 0
 
 

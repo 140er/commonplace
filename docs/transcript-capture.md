@@ -90,10 +90,10 @@ readable messages searchable in Memory, including its earlier history. Upload
 responses do not wait for indexing. Original text stays unchanged; raw archive
 records are retained but are not copied into Memory search.
 
-Search requires the same thread-read and private-read permissions as reading
-the stored session, including the filing-user check. Capture permission alone
-is not enough. Default self-service PAT and OAuth connections do not receive
-captured words in Memory search or startup context.
+Memory tools never return words from a private stored thread to a caller who cannot read that thread (the same rule as reading the thread itself).
+Capture permission alone is not enough. Default self-service PAT and OAuth
+connections do not receive captured words in Memory search, `memory_get` or
+session start context.
 
 Untouched older captured sessions are not indexed automatically. Operators can
 include them with:

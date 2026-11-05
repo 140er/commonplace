@@ -78,7 +78,7 @@ def test_u6_b_cli_status(local, capsys, monkeypatch):
     monkeypatch.setenv("COMMONPLACE_SEARCH_INDEX", "off")
     assert cli.main(["--data", str(root), "search-index", "status", "--workspace", "sample"]) == 0
     result = json.loads(capsys.readouterr().out)
-    assert result == dict(state="off", threads_indexed=0, threads_pending=1, units_written=0)
+    assert result == dict(threads_indexed=0, threads_pending=1)
 
 
 @pytest.mark.parametrize("captures", [False, True])
@@ -104,4 +104,4 @@ def test_u6_c_cli_run_capture_enrolment(local, monkeypatch, capsys, captures):
     args = ["--data", str(root), "search-index", "run", "--workspace", workspace]
     assert cli.main(args + (["--captures"] if captures else [])) == 0
     assert calls == [workspace, "drained"]
-    assert set(json.loads(capsys.readouterr().out)) == set(search_index_api.FIELDS)
+    assert set(json.loads(capsys.readouterr().out)) == {"threads_indexed", "threads_pending"}

@@ -155,6 +155,62 @@ def test_u5_a1_roomless_words_fail_closed(world, field, room):
     assert search(world, item) == []
 
 
-def test_u5_a1_roomless_taxonomy_kept(world):
+def test_roomless_taxonomy_fails_closed(world):
     item = {"wing": "private_threads", "rooms": {"thr_ab": 2}, "text": ""}
-    assert search(world, item) == [item]
+    assert search(world, item) == []
+
+
+@pytest.mark.parametrize(
+    "payload", [{"object": "words"}, {"summary": "words"}, {"documents": ["words"]}]
+)
+def test_roomless_private_objects_fail_closed(world, payload):
+    assert search(world, {"wing": "private_threads", **payload}) == []
+
+
+def test_room_only_and_wrong_wing_fail_closed(world):
+    world.private.readable.return_value = False
+    for wing in (None, "shared"):
+        assert search(world, {"wing": wing, "room": world.thread.id, "object": "words"}) == []
+
+
+def test_identity_for_unchanged_results(world):
+    plain = {"results": [{"wing": "shared", "content": "words"}]}
+    assert gate(world.gateway, world.principal, "search", plain) is plain
+    mirror = {"results": [hit(world)]}
+    assert gate(world.gateway, world.principal, "drawer_read", mirror) is mirror
+
+
+@pytest.mark.parametrize("value", [None, "unexpected words", 42, True])
+@pytest.mark.parametrize("rule", ["search", "drawer_read", "read_wing"])
+def test_odd_result_fails_closed(world, value, rule):
+    assert "error" in gate(world.gateway, world.principal, rule, value)
+
+
+def test_preview_uses_own_room_and_preserves_connection(world):
+    world.private.readable.return_value = False
+    connection = {
+        "connected_wing": "shared",
+        "connected_room": "public",
+        "drawer_wing": "private_threads",
+        "drawer_room": world.thread.id,
+        "drawer_preview": "words",
+        "drawer_id": "hidden",
+        "tunnel_id": "link",
+    }
+    result = gate(world.gateway, world.principal, "all_wings", [connection])
+    assert result == [{"connected_wing": "shared", "connected_room": "public", "tunnel_id": "link"}]
+
+
+def test_list_counts_after_drops(world):
+    world.private.readable.return_value = False
+    result = gate(
+        world.gateway,
+        world.principal,
+        "read_wing",
+        {
+            "drawers": [hit(world), {"wing": "shared", "room": "public"}],
+            "count": 2,
+            "total": 2,
+        },
+    )
+    assert result["count"] == result["total"] == 1

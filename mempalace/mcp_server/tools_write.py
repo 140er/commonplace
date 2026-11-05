@@ -676,7 +676,11 @@ def _write_drawer(
         last_chunk_idx = (len(content) - 1) // chunk_size
         idempotency_probe_ids = [drawer_id, f"{drawer_id}_chunk_{last_chunk_idx:06d}"]
     try:
-        existing = col.get(ids=idempotency_probe_ids, include=["metadatas"])
+        existing = col.get(
+            ids=idempotency_probe_ids,
+            include=["metadatas"],
+            where={"wing": {"$ne": "private_threads"}},
+        )
         if _get_result_ids(existing):
             outcome = {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
             stored = next(iter(existing.get("metadatas") or []), None) or {}

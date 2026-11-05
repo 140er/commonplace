@@ -54,7 +54,7 @@ def world(tmp_path, monkeypatch, config, kg):
     thread.start()
     client = Client(gateway, server.server_address[1])
     client.db = db
-    cookie = client.signin(mailbox, "synthetic176@example.test")
+    cookie = client.signin(mailbox, "synthetic@example.test")
     me = client.me(cookie)
     yield SimpleNamespace(
         client=client, cookie=cookie, me=me, gateway=gateway, mailbox=mailbox, clock=clock
@@ -126,10 +126,11 @@ def grant(w):
 
 
 def operator(w, scopes=None, user=None, policy=None):
+    w.token_serial = getattr(w, "token_serial", 0) + 1
     return w.client.db.create_token(
         workspace_ref=w.me["workspace"],
         user_ref=user or w.me["user"],
-        name="synthetic-reader",
+        name=f"synthetic-reader-{w.token_serial}",
         client="generic",
         policy=policy
         or Policy.build(
@@ -187,7 +188,7 @@ def mirror(w, result, *, private=False):
     return mirror_pending(ctx.call_tool, principal, stored, store)
 
 
-def test_card176_r01_acl_import_http_search(world, monkeypatch):
+def test_imported_search_r01_acl_import_http_search(world, monkeypatch):
     w = world
     text = words("acl")
     status, result = imported(w, text)
@@ -202,7 +203,7 @@ def test_card176_r01_acl_import_http_search(world, monkeypatch):
     )
 
 
-def test_card176_r02_grant_import_http_search(world, monkeypatch):
+def test_imported_search_r02_grant_import_http_search(world, monkeypatch):
     w = world
     text = words("grant")
     status, connection = grant(w)
@@ -214,7 +215,7 @@ def test_card176_r02_grant_import_http_search(world, monkeypatch):
     assert any(text in record["text"] for record in reply["results"])  # RED
 
 
-def test_card176_r03_native_memory_import_http_search(world, monkeypatch):
+def test_imported_search_r03_native_memory_import_http_search(world, monkeypatch):
     w = world
     text = words("nativememory")
     status, connection = grant(w)
@@ -226,7 +227,7 @@ def test_card176_r03_native_memory_import_http_search(world, monkeypatch):
     assert any(text in record["text"] for record in reply["results"])  # RED
 
 
-def test_card176_r04_capture_http_search(world, monkeypatch):
+def test_imported_search_r04_capture_http_search(world, monkeypatch):
     w = world
     text = words("capture")
     status, _ = post(w, "/api/settings/capture", {"enabled": True})
@@ -248,7 +249,7 @@ def test_card176_r04_capture_http_search(world, monkeypatch):
     assert any(text in record["text"] for record in reply["results"])  # RED
 
 
-def test_card176_r05_acl_import_mcp_memory_search(world, monkeypatch):
+def test_imported_search_r05_acl_import_mcp_memory_search(world, monkeypatch):
     w = world
     text = words("mcpmemory")
     status, result = imported(w, text)
@@ -259,7 +260,7 @@ def test_card176_r05_acl_import_mcp_memory_search(world, monkeypatch):
     assert quoted(text, reply)  # RED
 
 
-def test_card176_r06_acl_import_mcp_session_start(world, monkeypatch):
+def test_imported_search_r06_acl_import_mcp_session_start(world, monkeypatch):
     w = world
     text = words("mcpsession")
     status, result = imported(w, text)
@@ -271,7 +272,7 @@ def test_card176_r06_acl_import_mcp_session_start(world, monkeypatch):
     assert "Relevant memories" in "\n".join(strings(reply))
 
 
-def test_card176_r07_acl_import_startup_injection(world, monkeypatch):
+def test_imported_search_r07_acl_import_startup_injection(world, monkeypatch):
     w = world
     text = words("startup")
     status, result = imported(w, text)
@@ -291,7 +292,7 @@ def test_card176_r07_acl_import_startup_injection(world, monkeypatch):
     assert quoted(text, reply)  # RED
 
 
-def test_card176_r08_mirror_hidden_without_thread_read(world):
+def test_imported_search_r08_mirror_hidden_without_thread_read(world):
     w = world
     text = words("nothread")
     status, result = imported(w, text)
@@ -308,7 +309,7 @@ def test_card176_r08_mirror_hidden_without_thread_read(world):
         assert "memory not found" in "\n".join(strings(reply))
 
 
-def test_card176_r09_member_cannot_find_owner_grant_import(world):
+def test_imported_search_r09_member_cannot_find_owner_grant_import(world):
     w = world
     text = words("member")
     status, connection = grant(w)
@@ -316,7 +317,7 @@ def test_card176_r09_member_cannot_find_owner_grant_import(world):
     status, result = imported(w, text, connection["token"])
     assert status == 200
     ids = mirror(w, result, private=True)
-    cookie = w.client.signin(w.mailbox, "second176@example.test")
+    cookie = w.client.signin(w.mailbox, "second@example.test")
     user = w.client.me(cookie)["user"]
     w.client.db.add_member(w.me["workspace"], user, "member", actor=w.me["user"])
     _, token = operator(w, user=user)
@@ -329,12 +330,13 @@ def test_card176_r09_member_cannot_find_owner_grant_import(world):
         assert not quoted(text, reply)
 
 
-def test_card176_g01_default_pat_never_finds_import(world):
+def test_imported_search_g01_default_pat_never_finds_import(world):
     w = world
     text = words("defaultpat")
     status, result = imported(w, text)
     assert status == 200
     mirror(w, result)
+    control(w, text)
     status, connection = post(w, "/api/connections", {"name": "synthetic", "client": "generic"})
     assert status == 201
     status, reply = rpc(w, connection["token"], "memory_search", {"query": text.split()[0]})
@@ -342,12 +344,13 @@ def test_card176_g01_default_pat_never_finds_import(world):
     assert not quoted(text, reply)
 
 
-def test_card176_g02_oauth_shaped_token_never_finds_import(world):
+def test_imported_search_g02_oauth_shaped_token_never_finds_import(world):
     w = world
     text = words("oauth")
     status, result = imported(w, text)
     assert status == 200
     mirror(w, result)
+    control(w, text)
     _, token = operator(
         w,
         policy=Policy.build(
@@ -363,12 +366,13 @@ def test_card176_g02_oauth_shaped_token_never_finds_import(world):
     assert not quoted(text, reply)
 
 
-def test_card176_g03_threads_read_without_private_read(world):
+def test_imported_search_g03_threads_read_without_private_read(world):
     w = world
     text = words("noprivate")
     status, result = imported(w, text)
     assert status == 200
     mirror(w, result)
+    control(w, text)
     status, connection = grant(w)
     assert status == 201
     private_text = words("noprivategrant")
@@ -396,12 +400,13 @@ def test_card176_g03_threads_read_without_private_read(world):
         mirror_pending(w.gateway.handoff.call_tool, principal, stored, store)
     _, token = operator(w, ["memory:read", "threads:read"])
     for value in (text, private_text, capture_text):
+        control(w, value)
         status, reply = rpc(w, token, "memory_search", {"query": value.split()[0]})
         assert status == 200
         assert not quoted(value, reply)
 
 
-def test_card176_g04_exact_reimport_is_noop(world):
+def test_imported_search_g04_exact_reimport_is_noop(world):
     w = world
     text = words("reimport")
     status, first = imported(w, text)
@@ -410,16 +415,194 @@ def test_card176_g04_exact_reimport_is_noop(world):
     assert status == 200
     assert second["results"][0]["stored_thread_id"] == first["results"][0]["stored_thread_id"]
     assert second["results"][0]["status"] == "duplicate"
+    mirror(w, first)
+    control(w, text)
 
 
-def test_card176_g05_revoked_reader_token_refused(world):
+def test_imported_search_g05_revoked_reader_token_refused(world):
     w = world
     text = words("revoked")
     status, result = imported(w, text)
     assert status == 200
     mirror(w, result)
+    control(w, text)
     cid, token = operator(w)
+    control(w, text, token)
     w.client.db.revoke(cid, actor=w.me["user"], workspace_ref=w.me["workspace"])
     status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
-    assert status in (200, 401, 403)
+    assert status in (401, 403)
     assert not quoted(text, reply)
+
+
+def control(w, text, token=None):
+    if token is None:
+        _, token = operator(w)
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert quoted(text, reply)
+
+
+def writer(w, user=None):
+    return operator(
+        w,
+        user=user,
+        policy=Policy.build(
+            profile="standard",
+            trust="standard",
+            read_wings=["*"],
+            write_wings=["*"],
+            scopes=["memory:read", "memory:write", "private:read", "private:write", "threads:read"],
+        ),
+    )[1]
+
+
+def member(w):
+    cookie = w.client.signin(w.mailbox, "member@example.test")
+    user = w.client.me(cookie)["user"]
+    w.client.db.add_member(w.me["workspace"], user, "member", actor=w.me["user"])
+    return user
+
+
+def tool_value(reply):
+    return json.loads(reply["result"]["content"][0]["text"])
+
+
+def private_mirror(w, text):
+    status, connection = grant(w)
+    assert status == 201
+    status, result = imported(w, text, connection["token"])
+    assert status == 200
+    ids = mirror(w, result, private=True)
+    control(w, text)
+    return ids
+
+
+def test_imported_search_r10_duplicate_words_without_thread_read(world):
+    w = world
+    text = words("duplicate")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    control(w, text)
+    _, token = operator(w, ["memory:read", "private:read"])
+    status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": text, "threshold": 0.0})
+    assert status == 200
+    assert not quoted(text, reply)  # RED
+
+
+def test_imported_search_r10b_duplicate_flag_without_thread_read(world):
+    w = world
+    text = words("duplicateflag")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    control(w, text)
+    _, token = operator(w, ["memory:read", "private:read"])
+    status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": text})
+    assert status == 200
+    assert tool_value(reply)["is_duplicate"] is False  # RED
+
+
+def test_imported_search_r11_member_duplicate_words(world):
+    w = world
+    text = words("memberduplicate")
+    private_mirror(w, text)
+    _, token = operator(w, user=member(w))
+    status, reply = rpc(w, token, "mempalace_check_duplicate", {"content": text, "threshold": 0.0})
+    assert status == 200
+    assert not quoted(text, reply)  # RED
+
+
+def public_rooms(w, token):
+    for room in ("source", "destination"):
+        status, reply = rpc(
+            w,
+            token,
+            "mempalace_add_drawer",
+            {
+                "wing": "shared",
+                "room": room,
+                "content": "Public fixture " + room,
+            },
+        )
+        assert status == 200
+        assert tool_value(reply)["success"]
+
+
+def test_imported_search_r12_tunnel_preview_uses_drawer_metadata(world):
+    w = world
+    text = words("tunnel")
+    ids = private_mirror(w, text)
+    owner = writer(w)
+    public_rooms(w, owner)
+    status, reply = rpc(
+        w,
+        owner,
+        "mempalace_create_tunnel",
+        {
+            "source_wing": "shared",
+            "source_room": "source",
+            "target_wing": "shared",
+            "target_room": "destination",
+            "target_drawer_id": ids[0],
+        },
+    )
+    assert status == 200
+    assert not tool_value(reply).get("error")
+    args = {"wing": "shared", "room": "source"}
+    status, reply = rpc(w, owner, "mempalace_follow_tunnels", args)
+    assert status == 200
+    assert quoted(text, reply)
+    _, token = operator(w, ["memory:read", "private:read"])
+    status, reply = rpc(w, token, "mempalace_follow_tunnels", args)
+    assert status == 200
+    assert not quoted(text, reply)  # RED
+
+
+def test_imported_search_r13_checkpoint_does_not_skip_hidden_copy(world):
+    w = world
+    text = words("checkpoint")
+    private_mirror(w, text)
+    token = writer(w, member(w))
+    status, reply = rpc(
+        w,
+        token,
+        "mempalace_checkpoint",
+        {
+            "items": [{"wing": "shared", "room": "saved", "content": text}],
+        },
+    )
+    assert status == 200
+    value = tool_value(reply)
+    assert value.get("added") and not value.get("duplicates")  # RED
+
+
+def test_imported_search_r14_member_cannot_link_owner_thread_room(world):
+    w = world
+    text = words("linkwrite")
+    ids = private_mirror(w, text)
+    owner = writer(w)
+    public_rooms(w, owner)
+    status, reply = rpc(w, owner, "mempalace_get_drawer", {"drawer_id": ids[0]})
+    assert status == 200
+    room = tool_value(reply)["room"]
+    args = {
+        "source_wing": "shared",
+        "source_room": "source",
+        "target_wing": "private_threads",
+        "target_room": room,
+    }
+    # Owner can link the room. Remove that link before testing the member.
+    status, reply = rpc(w, owner, "mempalace_create_tunnel", args)
+    assert status == 200
+    value = tool_value(reply)
+    assert not value.get("error")
+    # Use the other public source so the refused write has a distinct id.
+    args["source_room"] = "destination"
+    token = writer(w, member(w))
+    status, reply = rpc(w, token, "mempalace_create_tunnel", args)
+    assert status == 200
+    assert tool_value(reply).get("denied") is True  # RED
+    status, reply = rpc(w, owner, "mempalace_list_tunnels", {})
+    assert status == 200
+    assert "destination" not in "\n".join(strings(reply))
