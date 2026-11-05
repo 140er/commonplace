@@ -271,6 +271,26 @@ const cases = {
     await run(21, 22, (s) => s.ui.decline(), '/api/cards/21/approve', 'Could not decline');
     await run(21, 22, (s) => { s.ui.approve(); return s.ui.confirm(); }, '/api/holds', 'Could not confirm approval');
   },
+  async answer_error_same_card() {
+    // A failure for the card still on screen is drawn, even after that card was re-selected or the list refreshed.
+    const failing = [];
+    const fail = () => new Promise((_, reject) => failing.push(() => reject(Object.assign(new Error('card changed'), { status: 409 }))));
+    const run = async (name, number, start, again, path, copy) => {
+      const s = setup({ api: (p, options) => options.method === 'POST' && p === path ? fail() : undefined });
+      await s.ui.show({ needs, boards: [board], selected: number });
+      const pending = start(s); await new Promise((r) => setTimeout(r, 0));
+      assert.equal(failing.length, 1, `${name}: ${path} was not sent`);
+      await again(s, number); failing.pop()(); await pending;
+      assert.ok(s.detailMount.innerHTML.includes(number === 21 ? proposal.title : decision.title), `${name}: card ${number} must stay shown`);
+      assert.ok(s.detailMount.innerHTML.includes(copy), `${name}: the failure for the card still shown must be drawn`); s.ui.stop();
+    };
+    const reselect = (s, number) => s.ui.select(number);
+    const refresh = (s, number) => s.ui.show({ needs, boards: [board], selected: number });
+    await run('answer reselect', 22, (s) => s.ui.answer('C'), reselect, '/api/cards/22/decide', 'Could not send your answer');
+    await run('answer refresh', 22, (s) => s.ui.answer('C'), refresh, '/api/cards/22/decide', 'Could not send your answer');
+    await run('decline refresh', 21, (s) => s.ui.decline(), refresh, '/api/cards/21/approve', 'Could not decline');
+    await run('hold reselect', 21, (s) => { s.ui.approve(); return s.ui.confirm(); }, reselect, '/api/holds', 'Could not confirm approval');
+  },
 };
 assert.ok(Object.hasOwn(cases, process.argv[2]), 'Unknown case');
 await cases[process.argv[2]]();

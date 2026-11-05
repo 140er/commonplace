@@ -266,15 +266,15 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (stopped) return;
     error = message; drawDetail(); onError(failure);
   }
-  // A request's failure belongs to the card it was sent for: once another card is selected, only report it.
-  const failedFor = (token, message, failure) => token === revision ? showError(message, failure) : onError(failure);
+  // A request's failure belongs to the card it was sent for: drawn while that card is selected, otherwise only reported.
+  const failedFor = (number, message, failure) => number === selected ? showError(message, failure) : onError(failure);
   function approve() {
     if (stopped || !holdsLoaded || busy || !current || current.proposal_status !== "pending" || !(current.actions || []).includes("approve") || active(currentHold())) return;
     rememberNote(); confirming = true; drawDetail(); focus("[data-needs-cancel]");
   }
   async function sendHold(body) {
     if (stopped || busy) return;
-    const token = revision;
+    const number = body.card;
     busy = true; error = ""; drawDetail();
     try {
       const result = await api("/api/holds", { method: "POST", body });
@@ -286,7 +286,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     } catch (failure) {
       // A response can be lost after the hold was persisted. Read once, never resend.
       try { await refreshHolds(); } catch { /* Keep the ambiguous outcome visible. */ }
-      failedFor(token, "Could not confirm approval. Check Needs me before trying again.", failure);
+      failedFor(number, "Could not confirm approval. Check Needs me before trying again.", failure);
     } finally { busy = false; if (!stopped) draw(); }
   }
   async function confirm() {
@@ -311,7 +311,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (stopped) return;
       dropFromQueue(card, token);
       onChange();
-    } catch (failure) { failedFor(token, "Could not approve. Open the card again before trying again.", failure); }
+    } catch (failure) { failedFor(card.number, "Could not approve. Open the card again before trying again.", failure); }
     finally { busy = false; draw(); }
   }
   // Only Approve waits 60 seconds; a decision answer goes straight to the card's decide route.
@@ -325,7 +325,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (stopped) return;
       notes.delete(card.number); dropFromQueue(card, token);
       onChange();
-    } catch (failure) { failedFor(token, "Could not send your answer. Open the card again before trying again.", failure); }
+    } catch (failure) { failedFor(card.number, "Could not send your answer. Open the card again before trying again.", failure); }
     finally { busy = false; draw(); }
   }
   async function decline() {
@@ -339,7 +339,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (stopped) return;
       dropFromQueue(card, token);
       onChange();
-    } catch (failure) { failedFor(token, "Could not decline. Open the card again before trying again.", failure); }
+    } catch (failure) { failedFor(card.number, "Could not decline. Open the card again before trying again.", failure); }
     finally { busy = false; draw(); }
   }
   async function stopHold(id) {
