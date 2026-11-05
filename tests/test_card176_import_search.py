@@ -1,0 +1,425 @@
+"""Imported history recall and non-widening access regressions."""
+
+import hashlib
+import json
+import sqlite3
+import threading
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import quote
+
+import pytest
+
+from commonplace import mailer, plans, ratelimit, session, sessions, sync_protocol, urls
+from commonplace.capture import EMPTY_SHA256
+from commonplace.control_db import ControlDB
+from commonplace.extensions import ToolContext
+from commonplace.gateway import Gateway
+from commonplace.handoff.palace_mirror import mirror_pending
+from commonplace.policy import Policy
+from commonplace.rules import checks
+from commonplace.workers import WorkerSupervisor
+from tests._commonplace_helpers import InProcessLauncher, functional_worker_transport  # noqa: F401
+from tests._mcp_server_helpers import _patch_mcp_server
+from tests.test_commonplace_email_auth import Client, Mailbox
+
+
+def native(text):
+    return json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n"
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch, config, kg):
+    clock = {"now": datetime(2026, 11, 3, 12, tzinfo=timezone.utc)}
+    monkeypatch.setattr(plans, "_now", lambda: clock["now"])
+    monkeypatch.setenv("COMMONPLACE_SIGNUP", "open")
+    monkeypatch.setenv("COMMONPLACE_PLANS", "on")
+    monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
+    _patch_mcp_server(monkeypatch, config, kg)
+    mailbox = Mailbox()
+    monkeypatch.setattr(mailer, "from_env", lambda: mailbox)
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    supervisor = WorkerSupervisor(str(tmp_path), launcher=InProcessLauncher(monkeypatch))
+    gateway = Gateway(db, supervisor)
+    mailbox.auth = gateway.email_auth
+    gateway.limiter = ratelimit.TokenBuckets(clock=lambda: 0.0)
+    server = gateway.build_server("127.0.0.1", 0)
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setattr(urls, "APP_URL", origin)
+    monkeypatch.setattr(urls, "AGENT_URL", origin)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    client = Client(gateway, server.server_address[1])
+    client.db = db
+    cookie = client.signin(mailbox, "synthetic176@example.test")
+    me = client.me(cookie)
+    yield SimpleNamespace(
+        client=client, cookie=cookie, me=me, gateway=gateway, mailbox=mailbox, clock=clock
+    )
+    server.shutdown()
+    server.server_close()
+    gateway.webhooks.stop()
+    if getattr(gateway, "handoff", None) is not None:
+        gateway.handoff.close()
+    supervisor.stop_all()
+    db.close()
+
+
+def _post(w, path, data):
+    return w.client.request(
+        path, "POST", cookie=w.cookie, headers={"Origin": urls.APP_URL}, data=data
+    )
+
+
+def words(label):
+    return f"  zq176{label} café 🦉\r\nKeep  every word.\t"
+
+
+def drain(w):
+    w.gateway.handoff.service.wait_for_mirrors(timeout=30)
+
+
+def post(w, path, data, token=None):
+    w.clock["now"] += timedelta(seconds=901)
+    headers = {"Origin": urls.APP_URL}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    status, _, raw = w.client.request(
+        path, "POST", cookie=None if token else w.cookie, headers=headers, data=data
+    )
+    drain(w)
+    return status, json.loads(raw)
+
+
+def payload(text, source="claude-code"):
+    tid = "synthetic-session"
+    fmt, transcript = "claude-code", native(text)
+    if source == "native-memory":
+        fmt, transcript = "file", text
+        tid = sync_protocol.memory_thread_id(
+            "claude", "memory/notes.md", hashlib.sha256(text.encode()).hexdigest()
+        )
+    return {
+        "source": source,
+        "threads": [{"thread_id": tid, "format": fmt, "transcript": transcript}],
+    }
+
+
+def imported(w, text, token=None, source="claude-code"):
+    return post(w, "/api/import", payload(text, source), token)
+
+
+def search(w, text):
+    status, _, raw = w.client.request(
+        "/api/memory/search?q=" + quote(text.split()[0]), cookie=w.cookie
+    )
+    return status, json.loads(raw)
+
+
+def grant(w):
+    return post(
+        w, "/api/connections", {"name": "synthetic-grant", "client": "generic", "import": True}
+    )
+
+
+def operator(w, scopes=None, user=None, policy=None):
+    return w.client.db.create_token(
+        workspace_ref=w.me["workspace"],
+        user_ref=user or w.me["user"],
+        name="synthetic-reader",
+        client="generic",
+        policy=policy
+        or Policy.build(
+            profile="standard",
+            scopes=scopes or ["memory:read", "threads:read", "private:read"],
+            read_wings=["*"],
+            trust="standard",
+        ),
+        actor=w.me["user"],
+    )
+
+
+def rpc(w, token, name, args):
+    status, _, raw = w.client.request(
+        "/mcp",
+        "POST",
+        headers={"Authorization": "Bearer " + token, "Origin": urls.APP_URL},
+        data={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        },
+    )
+    return status, json.loads(raw)
+
+
+def quoted(text, reply):
+    # Match exact JSON-quoted words inside public tool output.
+    return json.dumps(text, ensure_ascii=False)[1:-1] in "\n".join(strings(reply))
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from strings(child)
+
+
+def mirror(w, result, *, private=False):
+    ctx = w.gateway.handoff
+    store = ctx.store_for(w.me["workspace"])
+    if private:
+        stored = store.by_source(
+            w.me["workspace"],
+            f"import-private:{w.me['user']}:claude-code:synthetic-session",
+        )
+    else:
+        stored = store.get(result["results"][0]["stored_thread_id"])
+    principal = sessions.person_principal(w.client.db, w.me["user"], w.me["workspace"])
+    return mirror_pending(ctx.call_tool, principal, stored, store)
+
+
+def test_card176_r01_acl_import_http_search(world, monkeypatch):
+    w = world
+    text = words("acl")
+    status, result = imported(w, text)
+    assert status == 200
+    status, reply = search(w, text)
+    assert status == 200
+    assert any(text in record["text"] for record in reply["results"])  # RED
+    assert any(
+        record["source"]["thread"] == result["results"][0]["stored_thread_id"]
+        for record in reply["results"]
+        if text in record["text"]
+    )
+
+
+def test_card176_r02_grant_import_http_search(world, monkeypatch):
+    w = world
+    text = words("grant")
+    status, connection = grant(w)
+    assert status == 201
+    status, result = imported(w, text, connection["token"])
+    assert status == 200
+    status, reply = search(w, text)
+    assert status == 200
+    assert any(text in record["text"] for record in reply["results"])  # RED
+
+
+def test_card176_r03_native_memory_import_http_search(world, monkeypatch):
+    w = world
+    text = words("nativememory")
+    status, connection = grant(w)
+    assert status == 201
+    status, result = imported(w, text, connection["token"], "native-memory")
+    assert status == 200
+    status, reply = search(w, text)
+    assert status == 200
+    assert any(text in record["text"] for record in reply["results"])  # RED
+
+
+def test_card176_r04_capture_http_search(world, monkeypatch):
+    w = world
+    text = words("capture")
+    status, _ = post(w, "/api/settings/capture", {"enabled": True})
+    assert status == 200
+    status, result = post(
+        w,
+        "/api/capture",
+        {
+            "source": "claude-code",
+            "thread_id": "synthetic-capture",
+            "offset": 0,
+            "prefix_sha256": EMPTY_SHA256,
+            "transcript": native(text),
+        },
+    )
+    assert status == 200
+    status, reply = search(w, text)
+    assert status == 200
+    assert any(text in record["text"] for record in reply["results"])  # RED
+
+
+def test_card176_r05_acl_import_mcp_memory_search(world, monkeypatch):
+    w = world
+    text = words("mcpmemory")
+    status, result = imported(w, text)
+    assert status == 200
+    _, token = operator(w)
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert quoted(text, reply)  # RED
+
+
+def test_card176_r06_acl_import_mcp_session_start(world, monkeypatch):
+    w = world
+    text = words("mcpsession")
+    status, result = imported(w, text)
+    assert status == 200
+    _, token = operator(w)
+    status, reply = rpc(w, token, "session_start", {"query": text.split()[0]})
+    assert status == 200
+    assert quoted(text, reply)  # RED
+    assert "Relevant memories" in "\n".join(strings(reply))
+
+
+def test_card176_r07_acl_import_startup_injection(world, monkeypatch):
+    w = world
+    text = words("startup")
+    status, result = imported(w, text)
+    assert status == 200
+    _, token = operator(w)
+    monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
+    root = Path(w.gateway.supervisor.workspace_dir(w.me["workspace"]))
+    marker = root / "palace" / "chroma.sqlite3"
+    marker.parent.mkdir(exist_ok=True)
+    with sqlite3.connect(marker) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS embeddings(id TEXT)")
+        conn.execute("INSERT INTO embeddings VALUES ('memory')")
+    principal = w.gateway.authenticate("Bearer " + token)
+    reply = session.initialize_context(
+        ToolContext(principal, w.gateway), budget=3000, query=text.split()[0]
+    )
+    assert quoted(text, reply)  # RED
+
+
+def test_card176_r08_mirror_hidden_without_thread_read(world):
+    w = world
+    text = words("nothread")
+    status, result = imported(w, text)
+    assert status == 200
+    ids = mirror(w, result)
+    _, token = operator(w, ["memory:read", "private:read"])
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert not quoted(text, reply)  # RED: match the full imported words, not a header
+    for drawer_id in ids:
+        status, reply = rpc(w, token, "memory_get", {"id": drawer_id})
+        assert status == 200
+        assert not quoted(text, reply)
+        assert "memory not found" in "\n".join(strings(reply))
+
+
+def test_card176_r09_member_cannot_find_owner_grant_import(world):
+    w = world
+    text = words("member")
+    status, connection = grant(w)
+    assert status == 201
+    status, result = imported(w, text, connection["token"])
+    assert status == 200
+    ids = mirror(w, result, private=True)
+    cookie = w.client.signin(w.mailbox, "second176@example.test")
+    user = w.client.me(cookie)["user"]
+    w.client.db.add_member(w.me["workspace"], user, "member", actor=w.me["user"])
+    _, token = operator(w, user=user)
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert not quoted(text, reply)  # RED: match the full imported words, not a header
+    for drawer_id in ids:
+        status, reply = rpc(w, token, "memory_get", {"id": drawer_id})
+        assert status == 200
+        assert not quoted(text, reply)
+
+
+def test_card176_g01_default_pat_never_finds_import(world):
+    w = world
+    text = words("defaultpat")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    status, connection = post(w, "/api/connections", {"name": "synthetic", "client": "generic"})
+    assert status == 201
+    status, reply = rpc(w, connection["token"], "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert not quoted(text, reply)
+
+
+def test_card176_g02_oauth_shaped_token_never_finds_import(world):
+    w = world
+    text = words("oauth")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    _, token = operator(
+        w,
+        policy=Policy.build(
+            profile="slim",
+            trust="standard",
+            write_wing="inbox",
+            read_wings=["shared", "inbox", "project_*"],
+            scopes=["memory:read"],
+        ),
+    )
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status == 200
+    assert not quoted(text, reply)
+
+
+def test_card176_g03_threads_read_without_private_read(world):
+    w = world
+    text = words("noprivate")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    status, connection = grant(w)
+    assert status == 201
+    private_text = words("noprivategrant")
+    status, result = imported(w, private_text, connection["token"])
+    assert status == 200
+    mirror(w, result, private=True)
+    status, _ = post(w, "/api/settings/capture", {"enabled": True})
+    assert status == 200
+    capture_text = words("noprivatecapture")
+    status, _ = post(
+        w,
+        "/api/capture",
+        {
+            "source": "claude-code",
+            "thread_id": "guard-capture",
+            "offset": 0,
+            "prefix_sha256": EMPTY_SHA256,
+            "transcript": native(capture_text),
+        },
+    )
+    assert status == 200
+    store = w.gateway.handoff.store_for(w.me["workspace"])
+    principal = sessions.person_principal(w.client.db, w.me["user"], w.me["workspace"])
+    for stored in store.list_source_range(w.me["workspace"], "capture:", limit=20):
+        mirror_pending(w.gateway.handoff.call_tool, principal, stored, store)
+    _, token = operator(w, ["memory:read", "threads:read"])
+    for value in (text, private_text, capture_text):
+        status, reply = rpc(w, token, "memory_search", {"query": value.split()[0]})
+        assert status == 200
+        assert not quoted(value, reply)
+
+
+def test_card176_g04_exact_reimport_is_noop(world):
+    w = world
+    text = words("reimport")
+    status, first = imported(w, text)
+    assert status == 200
+    status, second = imported(w, text)
+    assert status == 200
+    assert second["results"][0]["stored_thread_id"] == first["results"][0]["stored_thread_id"]
+    assert second["results"][0]["status"] == "duplicate"
+
+
+def test_card176_g05_revoked_reader_token_refused(world):
+    w = world
+    text = words("revoked")
+    status, result = imported(w, text)
+    assert status == 200
+    mirror(w, result)
+    cid, token = operator(w)
+    w.client.db.revoke(cid, actor=w.me["user"], workspace_ref=w.me["workspace"])
+    status, reply = rpc(w, token, "memory_search", {"query": text.split()[0]})
+    assert status in (200, 401, 403)
+    assert not quoted(text, reply)
