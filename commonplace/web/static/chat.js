@@ -163,6 +163,9 @@ const heldOnline = () => deliverAll();
 function heldSignOut() { for (const pane of [...LIVE]) pane.signOut(); dropOffline(); }
 function heldLogout(event) { if (event.target.closest?.('[data-action="logout"]')) heldSignOut(); }
 function track(item) {
+  // Never replace another message for the same user and board.
+  const existing = OFFLINE.get(item.name);
+  if (existing && existing !== item && (existing.sending || existing.text !== item.text)) return existing;
   OFFLINE.set(item.name, item);
   if (held) return item;
   held = { win: globalThis, doc: globalThis.document };
@@ -210,11 +213,13 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   function restore() {
     const name = key();
     if (!name) return;
-    let text = pending.get(name);
+    // The shared item wins: it outlives this pane even when storage is denied.
+    const shared = OFFLINE.get(name);
+    let text = shared?.text ?? pending.get(name);
     try { text ??= storage()?.getItem(name); } catch { /* Storage may be denied. */ }
     if (text != null) {
-      // A send still queued from before this pane existed keeps sending by itself when online.
-      const queued = OFFLINE.get(name)?.text === text ? OFFLINE.get(name) : null;
+      // A send still queued or on its way from before this pane existed keeps going by itself.
+      const queued = shared?.text === text ? shared : null;
       pending.set(name, text);
       state.unsent = queued?.sending ? { text, draft: queued.draft, origin: queued.origin, pending: true }
         : queued ? { text, draft: queued.draft, origin: queued.origin, offline: true, auto: true } : { text, draft: text, offline: false, auto: false };
@@ -413,7 +418,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const retry = origin === "retry", source = retry ? state.unsent?.origin || "composer" : origin;
     // One unsent message per board: a new send waits until the earlier one is sent or discarded,
     // and nothing re-sends a message that is already on its way.
-    if ((!retry && state.unsent) || (retry && OFFLINE.get(key())?.sending)) { render(); return; }
+    const shared = OFFLINE.get(key());
+    if ((!retry && (state.unsent || shared)) || (retry && shared?.sending)) { render(); return; }
     const token = ++generation, sendingState = state, name = key(), sentDraft = field()?.value;
     const originalDraft = retry ? state.unsent?.draft : source === "composer" ? sentDraft : null;
     const bubble = { text, draft: originalDraft, origin: source, offline: false, auto: false };
@@ -425,7 +431,8 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
       state.sending = false; render(); return;
     }
     const item = { name, slug: state.slug, user: state.me?.user, cursor: state.page.cursor || 0, text, draft: originalDraft, origin: source, sending: true, owner: pane };
-    if (name) track(item);
+    // Defensive: the guard above already refuses a send while another one is tracked.
+    if (name && track(item) !== item) { state.sending = false; render(); return; }
     state.unsent = { ...bubble, pending: true }; render();
     const { sent, page, cancelled } = await deliver(item, api, () => current(token));
     if (cancelled) return;

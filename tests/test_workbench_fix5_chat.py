@@ -25,6 +25,8 @@ CASES = [
     "a session expiring off-board clears this user's seen ids before forgetting who it was",
     "the restart settings close button goes back to the chat",
     "board single keys wait while a project dialog is open",
+    "with storage denied a new pane shows the queued message, holds the next one and sends it once",
+    "with storage denied a new pane during an in-flight send cannot send it again",
 ]
 
 

@@ -26,7 +26,7 @@ function memoryStorage(data = new Map()) {
 }
 
 // A browser-free page: globals, a fake server and a small DOM double for one chat pane.
-async function setup(t, { online = true, post } = {}) {
+async function setup(t, { online = true, post, denied = false } = {}) {
   const ui = await modules();
   // Listener registries keyed by event and function, as a browser keeps them.
   const registry = () => {
@@ -40,9 +40,12 @@ async function setup(t, { online = true, post } = {}) {
   };
   const listeners = registry(), events = registry(), calls = [];
   const session = memoryStorage(), device = memoryStorage();
+  // Denied storage: every call throws, as a locked-down browser does.
+  const refuse = () => { throw new Error("denied"); };
+  const deniedStorage = { get length() { return refuse(); }, key: refuse, getItem: refuse, setItem: refuse, removeItem: refuse };
   const doc = { hidden: false, addEventListener: (n, fn) => listeners.add(n, fn), removeEventListener: (n, fn) => listeners.remove(n, fn), dispatchEvent: (event) => listeners.get(event.type)?.(event) };
   const restore = [];
-  const globals = { document: doc, navigator: { onLine: online }, sessionStorage: session, localStorage: device, addEventListener: (n, fn) => events.add(n, fn), removeEventListener: (n, fn) => events.remove(n, fn) };
+  const globals = { document: doc, navigator: { onLine: online }, sessionStorage: denied ? deniedStorage : session, localStorage: device, addEventListener: (n, fn) => events.add(n, fn), removeEventListener: (n, fn) => events.remove(n, fn) };
   for (const [name, value] of Object.entries(globals)) {
     const previous = Object.getOwnPropertyDescriptor(globalThis, name);
     Object.defineProperty(globalThis, name, { configurable: true, value, writable: true });
@@ -247,6 +250,7 @@ const click = (p, name) => p.host.onclick({ target: { closest: () => ({ dataset:
 
 test("a pane reopened during a background send shows it sending and cannot resend or discard it", async (t) => {
   const pending = deferred();
+  t.after(() => pending.resolve({ id: 9 }));
   const h = await setup(t, { online: false, post: () => pending.promise });
   const first = h.pane(); await first.controller.show("work");
   await first.send("On its way");
@@ -270,6 +274,7 @@ test("a pane reopened during a background send shows it sending and cannot resen
 
 test("signing out during a background send keeps nothing and reads nothing more", async (t) => {
   const pending = deferred();
+  t.after(() => pending.resolve({ id: 9 }));
   const h = await setup(t, { online: false, post: () => pending.promise });
   const p = h.pane(); await p.controller.show("work");
   await p.send("Private words");
@@ -288,6 +293,7 @@ test("signing out during a background send keeps nothing and reads nothing more"
 
 test("a session that expires during a background send keeps nothing and reads nothing more", async (t) => {
   const pending = deferred();
+  t.after(() => pending.resolve({ id: 9 }));
   const h = await setup(t, { online: false, post: () => pending.promise });
   const p = h.pane(); await p.controller.show("work");
   await p.send("Expired words");
@@ -375,4 +381,40 @@ test("board single keys wait while a project dialog is open", () => {
   assert.deepEqual(handled, [], "no board shortcut behind the dialog");
   dialogOpen = false; press("c");
   assert.deepEqual(handled, ["c"], "the shortcut works without a dialog");
+});
+
+// Round 3: storage denied — the shared item is the only record ------------------------------
+
+test("with storage denied a new pane shows the queued message, holds the next one and sends it once", async (t) => {
+  const h = await setup(t, { online: false, denied: true });
+  const first = h.pane(); await first.controller.show("work");
+  await first.send("Kept without storage");
+  first.controller.destroy();
+  const again = h.pane(); await again.controller.show("work");
+  assert.match(again.nodes.get("[data-chat-unsent]")?.innerHTML || "", /Kept without storage/, "the new pane shows the queued message");
+  await again.send("Second message");
+  assert.equal(h.posts().length, 0);
+  assert.match(again.nodes.get("[data-chat-unsent]")?.innerHTML || "", /Kept without storage/, "the queued message is not replaced");
+  assert.equal(again.field.value, "Second message", "the new draft stays in the composer");
+  h.goOnline(); await settle();
+  assert.deepEqual(h.posts().map((c) => c.body.text), ["Kept without storage"], "exactly one POST of the queued message");
+});
+
+test("with storage denied a new pane during an in-flight send cannot send it again", async (t) => {
+  const pending = deferred();
+  t.after(() => pending.resolve({ id: 9 }));
+  const h = await setup(t, { online: false, denied: true, post: () => pending.promise });
+  const first = h.pane(); await first.controller.show("work");
+  await first.send("Only once");
+  first.controller.destroy();
+  h.goOnline(); await settle();
+  assert.equal(h.posts().length, 1, "the background send started");
+  const again = h.pane(); await again.controller.show("work");
+  // Not awaited: a second POST (the bug) would wait on the same deferred response.
+  void again.send("Only once"); await settle();
+  assert.equal(h.posts().length, 1, "no second POST of the same message");
+  assert.match(again.nodes.get("[data-chat-unsent]")?.innerHTML || "", /Sending…/, "the new pane shows it on its way");
+  pending.resolve({ id: 2 }); await settle();
+  assert.equal(h.posts().length, 1);
+  assert.equal(again.nodes.get("[data-chat-unsent]").innerHTML, "", "acknowledged");
 });
