@@ -163,7 +163,14 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const confirmTag = phone ? "dialog" : "div";
   const noteBox = canAnswer && (proposal || allowed("answer")) ? `<label class="lbl">Note to the orchestrator <span class="help">Optional. Sent with your answer.</span><textarea data-needs-note rows="1"${proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
   const decisions = !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
-  const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `<div class="decide-acts">${decisions}<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>${ask}</div>` : ask;
+  // The shell's existing handlers carry these: Accept, and recovery for a card whose claim ran out.
+  const shellButton = (action, label, tone = "") => allowed(action) ? `<button class="btn${tone}" data-action="need-${action}" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>${label}</button>` : "";
+  // A plan is approved directly; only a proposal's approval waits as a hold.
+  const plan = !proposal && allowed("approve") ? `<button class="btn primary" data-needs-approve="plan"${disabled}>Approve</button>${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Reject</button>` : ""}` : "";
+  const recovery = ["requeue", "reassign", "park"].map((action) => shellButton(action, { requeue: "Requeue", reassign: "Reassign", park: "Park" }[action])).join("");
+  const direct = proposal ? "" : plan + shellButton("accept", "Accept", " primary") + recovery;
+  const open = recovery ? `<a class="btn" href="#/card/${e(card.number)}">Answer</a>` : `<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>`;
+  const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
   return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${labels[kind]}</span><span>${e(board.name || board.slug)}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${actions}</footer></section>`;
 }
 
@@ -291,6 +298,19 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     data = { ...data, needs };
     if (token === revision) { confirming = false; current = null; selected = null; revision++; }
   }
+  // A plan's Approve uses the card's approve route at once; no hold, unlike a proposal.
+  async function approvePlan() {
+    if (stopped || busy || !current || current.proposal_status === "pending" || !(current.actions || []).includes("approve")) return;
+    const card = current, token = revision;
+    busy = true; error = ""; drawDetail();
+    try {
+      await api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: true, version: card.version } });
+      if (stopped) return;
+      dropFromQueue(card, token);
+      onChange();
+    } catch (failure) { showError("Could not approve. Open the card again before trying again.", failure); }
+    finally { busy = false; draw(); }
+  }
   // Only Approve waits 60 seconds; a decision answer goes straight to the card's decide route.
   async function answer(choice, reply) {
     if (stopped || busy || !current || !(current.actions || []).includes("answer") || !(current.ask_options || []).includes(choice)) return;
@@ -350,6 +370,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (button.disabled) return;
     if (button.hasAttribute("data-needs-select")) await select(button.dataset.needsSelect);
     else if (button.hasAttribute("data-needs-filter")) await setFilter(button.dataset.needsFilter);
+    else if (button.dataset?.needsApprove === "plan") await approvePlan();
     else if (button.hasAttribute("data-needs-approve")) approve();
     else if (button.hasAttribute("data-needs-confirm")) await confirm();
     else if (button.hasAttribute("data-needs-cancel")) cancel();
@@ -410,7 +431,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (!current && selected == null && items().length) await select(items()[0].number);
       draw();
     },
-    select, setFilter, approve, confirm, decline, answer, stopHold, ask, refreshHolds,
+    select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,
     setChatOpen(open) { rememberNote(); chatOpen = Boolean(open); drawDetail(); },
     stop() {
       stopped = true; revision++; unschedule(timer);

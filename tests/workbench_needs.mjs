@@ -167,7 +167,10 @@ const cases = {
     await failing.ui.show({ needs, selected: 22 }); await failing.ui.answer('C');
     assert.ok(failing.detailMount.innerHTML.includes('Could not send your answer')); assert.equal(failing.requests.filter((r) => r.path === '/api/holds' && r.method === 'POST').length, 0); failing.ui.stop();
     const noOption = setup(); await noOption.ui.show({ needs, selected: 22 }); await noOption.ui.answer('unknown'); assert.equal(noOption.requests.filter((r) => r.method === 'POST').length, 0); noOption.ui.stop();
-    const plan = renderNeedDetail({ ...proposal, proposal_status: null, labels: ['plan'] }, { board }); assert.ok(!plan.includes('data-needs-approve'));
+    // A plan the server lets this viewer approve gets the direct Approve, never the held one.
+    const plan = renderNeedDetail({ ...proposal, proposal_status: null, labels: ['plan'] }, { board });
+    assert.ok(plan.includes('data-needs-approve="plan"')); assert.ok(!plan.includes('Approve and send')); assert.ok(!plan.includes('data-needs-confirm'));
+    assert.ok(!renderNeedDetail({ ...proposal, proposal_status: null, labels: ['plan'], actions: [] }, { board }).includes('data-needs-approve'));
   },
   async focus() {
     const s = setup(); await s.ui.show({ needs, selected: 21 }); assert.equal(s.detailMount.focused, '[data-needs-title]');
@@ -206,6 +209,50 @@ const cases = {
     await s.ui.show({ needs, selected: 21 }); s.ui.approve(); await s.ui.confirm();
     assert.ok(!s.detailMount.innerHTML.includes('Could not confirm approval')); assert.ok(s.detailMount.innerHTML.includes('nothing has been sent'));
     assert.equal(s.requests.filter((r) => r.method === 'POST').length, 1); s.ui.stop();
+  },
+  async plan_direct() {
+    // A plan is approved or rejected at once on the card's approve route; no hold, no 60 seconds.
+    const plan = { number: 24, board: 'atlas', title: 'Plan the launch', status: 'review', version: 5, labels: ['plan'], actions: ['approve', 'reject'] };
+    const planNeeds = { plans: [plan] }, { actions, ...loaded } = plan;
+    const run = async (attr, body) => {
+      const s = setup({ api: (path) => path === '/api/cards/24' ? loaded : undefined });
+      await s.ui.show({ needs: planNeeds, boards: [board], selected: 24 });
+      const html = s.detailMount.innerHTML;
+      assert.ok(html.includes('data-needs-approve="plan"'), 'plan Approve missing'); assert.ok(html.includes('>Reject</button>'), 'plan Reject missing');
+      assert.ok(!html.includes('Approve and send') && !html.includes('60 seconds'), 'a plan must not be held');
+      const button = { dataset: attr === 'approve' ? { needsApprove: 'plan' } : { action: 'need-reject' }, disabled: false,
+        hasAttribute: (name) => name === (attr === 'approve' ? 'data-needs-approve' : 'data-action') };
+      const want = attr === 'approve' ? '[data-needs-approve]' : '[data-action=need-reject]';
+      await s.detailMount.handlers.get('click')({ target: { closest: (sel) => sel.split(',').includes(want) ? button : null }, preventDefault() {}, stopPropagation() {} });
+      assert.deepEqual(s.requests.filter((r) => r.method === 'POST'), [{ path: '/api/cards/24/approve', method: 'POST', body }]);
+      assert.ok(!s.mount.innerHTML.includes(plan.title), 'the plan must leave the queue'); s.ui.stop();
+    };
+    await run('approve', { approve: true, version: 5 });
+    await run('reject', { approve: false, version: 5 });
+    // A proposal keeps the held Approve: no direct plan button.
+    assert.ok(!renderNeedDetail(proposal, { board, now }).includes('data-needs-approve="plan"'));
+  },
+  async shell_actions() {
+    // Accept and stale-card recovery are drawn for the shell's existing need-* handlers.
+    const stale = { number: 25, board: 'atlas', title: 'Stuck card', status: 'doing', version: 7, need: 'you', actions: ['requeue', 'reassign', 'park'] };
+    const html = renderNeedDetail(stale, { board, kind: 'decision' });
+    for (const [action, label] of [['requeue', 'Requeue'], ['reassign', 'Reassign'], ['park', 'Park']]) {
+      assert.ok(html.includes(`data-action="need-${action}" data-card="25" data-version="7">${label}</button>`), `${label} missing`);
+    }
+    assert.ok(html.includes('<a class="btn" href="#/card/25">Answer</a>'), 'Answer link missing');
+    assert.ok(!html.includes('data-needs-approve') && !html.includes('need-accept'));
+    const done = renderNeedDetail({ ...review, version: 4 }, { board, kind: 'review' });
+    assert.ok(done.includes('data-action="need-accept" data-card="23" data-version="4">Accept</button>'), 'Accept missing');
+    assert.ok(!renderNeedDetail({ ...review, version: 4, actions: ['answer'] }, { board, kind: 'review' }).includes('need-accept'));
+    assert.ok(!renderNeedDetail(proposal, { board, now }).includes('need-accept'));
+    // The component leaves these clicks to the shell: no preventDefault, no stopPropagation.
+    const s = setup(); await s.ui.show({ needs, boards: [board], selected: 23 });
+    for (const action of ['need-accept', 'need-requeue', 'need-reassign', 'need-park']) {
+      const event = { target: { closest: (sel) => sel.split(',').some((part) => part === `[data-action=${action}]`) ? { dataset: { action } } : null }, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
+      await s.detailMount.handlers.get('click')(event);
+      assert.ok(!event.prevented && !event.stopped, `${action} must reach the shell`);
+    }
+    assert.equal(s.requests.filter((r) => r.method === 'POST').length, 0); s.ui.stop();
   },
 };
 assert.ok(Object.hasOwn(cases, process.argv[2]), 'Unknown case');
