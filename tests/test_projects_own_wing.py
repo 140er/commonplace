@@ -28,14 +28,9 @@ def own(h, auth=None, slug="shared-board", body=None):
 
 
 def service(h):
-    return BoardService(
-        ToolContext(
-            principal=h.gateway.authenticate_session(h.owner["Cookie"].split("=", 1)[1])
-            if False
-            else h.gateway.authenticate("Bearer " + h.hub.owner_token("store-owner")),
-            gateway=h.gateway,
-        )
-    )
+    if not hasattr(h, "store_principal"):
+        h.store_principal = h.gateway.authenticate("Bearer " + h.hub.owner_token("store-owner"))
+    return BoardService(ToolContext(principal=h.store_principal, gateway=h.gateway))
 
 
 def store(h):
