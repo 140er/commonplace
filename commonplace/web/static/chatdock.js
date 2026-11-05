@@ -30,7 +30,7 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
   const doc = shell.ownerDocument, win = doc.defaultView;
   let header, toggle, announcement, pane, content, about, scrim, heading;
   let board, label = "Chat", unread = 0, hasOrchestrator = false;
-  let opened = false, inDetails = false, opener = null, returnRow = null, generation = 0;
+  let opened = false, inDetails = false, opener = null, openerKey = null, returnRow = null, generation = 0;
   let context, contextHidden, wasTwo, strip = null, shownBoard = null;
   const inertBefore = new Map(), modalBefore = new Map();
   const make = (tag, className, parent) => {
@@ -41,6 +41,34 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
   };
   const controls = () => [...shell.querySelectorAll('[aria-controls="chat"]')];
   const projectName = () => board?.name || board?.slug || "Project";
+  const shown = (el) => !!el?.isConnected && !el.closest('[hidden], [inert]') && el.getClientRects().length > 0;
+  // A view may re-render its opener while the chat is open: remember how to find it again.
+  const keyOf = (el) => {
+    if (el?.id) return { id: el.id };
+    const attr = [...(el?.attributes || [])].find((a) => a.name.startsWith("data-"));
+    return attr ? { attr: attr.name } : null;
+  };
+  const refind = (key) => {
+    try { return !key ? null : key.id ? doc.getElementById(key.id) : shell.querySelector(`[${key.attr}]`) || doc.querySelector(`[${key.attr}]`); } catch { return null; }
+  };
+  // After a close the view may redraw the opener once more (unread counts, tabs): until the
+  // person moves focus or points elsewhere, a lost focus goes back to the redrawn opener.
+  let keeper = null, keeperKey = null;
+  function release() { keeper?.disconnect(); keeper = null; }
+  function keepFocus(key) {
+    release();
+    if (!key || typeof win.MutationObserver !== "function") return;
+    keeper = new win.MutationObserver(() => {
+      const active = doc.activeElement;
+      if (active && active !== doc.body && active.isConnected) return;
+      const again = refind(key);
+      if (shown(again)) again.focus();
+    });
+    keeper.observe(shell, { childList: true, subtree: true });
+  }
+  function moved(event) {
+    if (keeper && (event.type === "pointerdown" || !refind(keeperKey)?.contains(event.target))) release();
+  }
   const focusables = (region) => [...region.querySelectorAll(focusableSelector)].filter((el) =>
     !el.disabled && el.tabIndex >= 0 && !el.closest('[hidden], [inert], [aria-hidden="true"]') && el.getClientRects().length);
   function setExpanded() {
@@ -163,6 +191,7 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
   }
   function open({ from = toggle, strip: nextStrip = null, at, quote, focus = null, resume = false } = {}) {
     if (!board || !toggle?.isConnected) return Promise.resolve();
+    release();
     const token = ++generation, reopening = !opened && !resume && shownBoard === board.slug;
     if (!opened && !inDetails) {
       context = shell.querySelector("#ctx") || shell.querySelector(".context");
@@ -170,6 +199,7 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
       wasTwo = shell.classList.contains("two");
     }
     opener = from || toggle;
+    openerKey = keyOf(opener);
     if (opener?.setAttribute) {
       opener.setAttribute("aria-controls", "chat");
       opener.setAttribute("aria-expanded", "true");
@@ -190,7 +220,7 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     chat.setOpen?.(true);
     if (shownBoard !== board.slug || at !== undefined) {
       shownBoard = board.slug;
-      result = chat.show(board.slug, { at, quote });
+      result = chat.show(board.slug, { at, quote, name: board.name });
     } else if (!resume) {
       chat.setQuote?.(quote ?? null);
     }
@@ -223,9 +253,13 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     if (inDetails) {
       (context.querySelector("[data-details-title]") || focusables(context)[0] || context).focus();
     } else {
-      const target = opener?.isConnected ? opener : toggle;
+      const again = shown(opener) ? opener : refind(openerKey);
+      const target = shown(again) ? again : toggle;
       if (target?.isConnected) target.focus();
+      keeperKey = target === toggle ? { id: toggle.id } : openerKey;
+      keepFocus(keeperKey);
       opener = null;
+      openerKey = null;
       paintStrip(null);
     }
   }
@@ -280,6 +314,8 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
   }
   shell.addEventListener("click", click);
   doc.addEventListener("keydown", keydown);
+  doc.addEventListener("focusin", moved);
+  doc.addEventListener("pointerdown", moved, true);
   win.addEventListener("resize", place);
   return {
     mount, open, close, backToChat,
@@ -291,6 +327,9 @@ export function createDock({ root, api, e = escapeHTML, chat }) {
     },
     destroy() {
       close();
+      release();
+      doc.removeEventListener("focusin", moved);
+      doc.removeEventListener("pointerdown", moved, true);
       chat.stop();
       shell.removeEventListener("click", click);
       doc.removeEventListener("keydown", keydown);

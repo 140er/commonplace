@@ -41,6 +41,8 @@
 .chat-empty p { margin: 8px 0; }
 .chat-history { text-align: center; }
 .chat-view mark.redacted { color: inherit; background: var(--wait-bg); }
+/* A chat row in focus or under the pointer outlines the board card it points at. */
+.workbench-board .card.is-linked { outline: 2px dashed var(--accent); outline-offset: 2px; }
 @media (max-width: 699px) {
   .chat-stream { padding: 16px; }
   .chat-message { font-size: 15px; line-height: 22px; }
@@ -51,4 +53,6 @@
   .chat-cards a { min-height: 48px; font-size: 14px; }
   .chat-card-status { font-size: 0; }
   .chat-show { display: inline; font-size: 13px; color: var(--accent); }
+  /* Phones have no Enter key hint; the composer label stays. */
+  .chat-compose > p.chat-hint { display: none; }
 }

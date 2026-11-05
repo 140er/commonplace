@@ -26,12 +26,26 @@ const localSetting = (front) => {
     return host === "localhost" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host);
   } catch { return false; }
 };
-const quickLabel = (model) => `Quick reply · ${model?.startsWith("local:") ? "local model" : "hosted provider"}`;
+const quickKind = (model) => model?.startsWith("local:") ? "local model" : "hosted provider";
+const quickLabel = (model) => `Quick reply · ${quickKind(model)}`;
 const modelName = (model) => String(model || "").replace(/^local:/, "");
+const pad = (n) => String(n).padStart(2, "0");
+// Local wall-clock HH:MM, as the design draws it; the ISO stamp stays in the datetime attribute.
+const clock = (at) => {
+  const date = at ? new Date(at) : null;
+  return date && !Number.isNaN(date.getTime()) ? `${pad(date.getHours())}:${pad(date.getMinutes())}` : "";
+};
+const words = (...parts) => parts.filter(Boolean).join(" ");
+// The phrase a card row's Details strip reads after "Opened from {Project} chat:".
+function messageSource(message, me, board) {
+  if (message.actor && message.actor === board.coordinator) return words("the orchestrator's", clock(message.at), "answer");
+  if (message.actor === `user:${me?.user}`) return words("your", clock(message.at), "message");
+  return words(`${writer(message.actor, me, board).replace(/ \(agent\)$/, "")}'s`, clock(message.at), "message");
+}
 
-function cardRows(cards, heading, key, board, e) {
+function cardRows(cards, heading, key, board, e, src = "") {
   if (!cards.length) return "";
-  return `<div class="chat-cards" role="group" aria-labelledby="${e(key)}"><div class="chat-cards-heading" id="${e(key)}">${e(heading)}</div>${cards.map((card) => `<a id="chat-row-${e(key)}-${card.number}" href="#/card/${card.number}" data-chat-card="${card.number}"><span class="cid">${e(cardId(board, card.number))}</span><span>${marked(card.title || "", e)}</span><span class="chat-card-status">${e(card.status || "")} <span class="chat-show">Show →</span></span></a>`).join("")}</div>`;
+  return `<div class="chat-cards" role="group" aria-labelledby="${e(key)}"><div class="chat-cards-heading" id="${e(key)}">${e(heading)}</div>${cards.map((card) => `<a id="chat-row-${e(key)}-${card.number}" href="#/card/${card.number}" data-chat-card="${card.number}" data-src="${e(src)}"><span class="cid">${e(cardId(board, card.number))}</span><span>${marked(card.title || "", e)}</span><span class="chat-card-status">${e(card.status || "")} <span class="chat-show">Show →</span></span></a>`).join("")}</div>`;
 }
 
 export function chatHTML(page, me, e) {
@@ -39,7 +53,20 @@ export function chatHTML(page, me, e) {
   const cards = [...new Map([...(page.cards || []), ...(page.linked || [])].filter((card) => validId(card.number) && (!card.board || card.board === board.slug)).map((card) => [card.number, card])).values()];
   const ownReplies = (page.replies || []).filter((reply) => reply.for_user == null || reply.for_user === me?.user);
   let divided = false, today = false;
-  return (page.messages || []).map((message) => {
+  const messages = page.messages || [];
+  // A request's cards sit under the orchestrator's answer to it (the first orchestrator
+  // message before the next person's message), else under the request itself.
+  const hosted = new Map();
+  messages.forEach((message, index) => {
+    if (!cards.some((card) => card.message_id === message.id)) return;
+    let host = message;
+    for (const next of messages.slice(index + 1)) {
+      if (next.actor && next.actor === board.coordinator) { host = next; break; }
+      if (next.actor?.startsWith("user:")) break;
+    }
+    hosted.set(host.id, [...(hosted.get(host.id) || []), message.id]);
+  });
+  return messages.map((message) => {
     let prefix = "";
     if (!divided && ((message.actor?.startsWith("conn:") && message.id > (page.seen?.message ?? Infinity)) || ownReplies.some((reply) => reply.message_id === message.id && ["answer", "handoff"].includes(reply.kind) && reply.id > (page.seen?.reply ?? Infinity)))) {
       divided = true; prefix += '<li class="chat-new" role="separator">New since you last looked</li>';
@@ -47,7 +74,7 @@ export function chatHTML(page, me, e) {
     if (!today && page.todayIds?.includes(message.id)) { today = true; prefix += '<li class="chat-day">Today</li>'; }
     return `${prefix}<li class="chat-message${message.id === page.at ? " chat-hit" : ""}" id="chat-message-${message.id}">
       ${message.id === page.at ? '<p class="chat-hint">Found in memory</p>' : ""}
-      <article><div class="chat-stamp"><b>${marked(writer(message.actor, me, board), e)}</b> <time datetime="${e(message.at)}">${e(message.at)}</time></div><p>${marked(message.text, e)}</p></article>
+      <article><div class="chat-stamp"><b>${marked(writer(message.actor, me, board), e)}</b> <time datetime="${e(message.at)}">${e(clock(message.at) || message.at)}</time></div><p>${marked(message.text, e)}</p></article>
       ${ownReplies.filter((reply) => reply.message_id === message.id).sort((a, b) => a.id - b.id).map((reply) => {
         let stamp = reply.kind === "answer" ? quickLabel(reply.model) : "Delivery update";
         if (reply.model?.startsWith("runner:")) {
@@ -57,9 +84,11 @@ export function chatHTML(page, me, e) {
         const prefix = cardId(board, 1).split("-")[0];
         const refs = new Set([...String(reply.text).matchAll(/(?:^|[^\w-])(?:#([1-9]\d*)|([A-Za-z])-([1-9]\d*))(?![\w-])/g)].filter((m) => m[1] || m[2].toUpperCase() === prefix).map((m) => Number(m[1] || m[3])));
         const referenced = reply.kind === "answer" ? cards.filter((card) => refs.has(card.number)) : [];
-        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b></div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the orchestrator.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
+        // Never the model id: the strip names the kind of quick reply only.
+        const src = words("the", clock(reply.at), reply.kind === "answer" ? `quick reply (${quickKind(reply.model)})` : "delivery update");
+        return `<article class="chat-reply"><div class="chat-stamp"><b>${e(stamp)}</b></div>${reply.kind === "answer" ? '<p class="chat-writer-note">Written by the model chosen in Settings, not by the orchestrator.</p>' : ""}<p>${marked(reply.text, e)}</p>${cardRows(referenced, "Cards in this answer", `answer-${reply.id}`, board, e, src)}${reply.kind !== "answer" && validId(reply.task) ? `<a href="#/card/${reply.task}" data-chat-card="${reply.task}" data-src="${e(src)}">Card ${e(cardId(board, reply.task))}</a>` : ""}</article>`;
       }).join("")}
-      ${cardRows(cards.filter((card) => card.message_id === message.id), "From this request · on the board now", `request-${message.id}`, board, e)}
+      ${(hosted.get(message.id) || []).map((request) => cardRows(cards.filter((card) => card.message_id === request), "From this request · on the board now", `request-${request}`, board, e, messageSource(message, me, board))).join("")}
     </li>`;
   }).join("") || `<li class="chat-empty"><h3>Ask the orchestrator for something</h3><p>${e(CHAT_COPY.empty)}</p><p>Try asking</p><div class="chat-suggestions">${["What is blocked?", "Plan the next launch", "Split a card into smaller cards"].map((text) => `<button type="button" data-chat-suggest="${e(text)}">${e(text)}</button>`).join("")}</div></li>`;
 }
@@ -86,7 +115,9 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   // open: the dock shows the pane. Only an open, visible pane polls every 2 s and marks chat seen.
   let active = false, open = true, generation = 0, timer = null, delay = 2000, state;
   let lastProject = null;
-  const offlineQueue = new Map(), written = new WeakMap();
+  const offlineQueue = new Map(), written = new WeakMap(), bound = new WeakSet();
+  // The board card a focused or hovered chat row points at carries is-linked (the dashed outline).
+  const linked = { focus: null, hover: null };
   const drafts = new Map(), pending = new Map(), seen = new Map(), users = new Set(me?.user ? [me.user] : []);
   const root = () => typeof mount === "function" ? mount() : mount;
   const current = (token) => active && token === generation;
@@ -147,7 +178,29 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
   document.addEventListener("signout", signOut);
   document.addEventListener("click", logout, true);
   globalThis.addEventListener?.("online", online);
-  function project() { return { ...state.projects.find((p) => p.slug === state.slug), ...(typeof board === "object" && board.slug === state.slug ? board : {}), slug: state.slug, coordinator: coordinator || board?.coordinator || state.page.orchestrator?.actor || (state.page.orchestrator?.name ? `conn:${state.page.orchestrator.name}` : null) }; }
+  function project() {
+    const found = { ...state.projects.find((p) => p.slug === state.slug), ...(typeof board === "object" && board.slug === state.slug ? board : {}) };
+    return { ...found, name: found.name || state.name, slug: state.slug, coordinator: coordinator || board?.coordinator || state.page.orchestrator?.actor || (state.page.orchestrator?.name ? `conn:${state.page.orchestrator.name}` : null) };
+  }
+  let lit = false;
+  function outline() {
+    const want = new Set([linked.focus, linked.hover].filter((n) => validId(n)).map(String));
+    if (!want.size && !lit) return;
+    lit = want.size > 0;
+    const cards = (selector) => document.querySelectorAll?.(selector) || [];
+    for (const card of cards(".workbench-board .card.is-linked")) if (!want.has(card.dataset.card)) card.classList.remove("is-linked");
+    for (const number of want) for (const card of cards(`.workbench-board .card[data-card="${number}"]`)) card.classList.add("is-linked");
+  }
+  function unlink() { linked.focus = linked.hover = null; outline(); }
+  const rowOf = (el) => { const row = el?.closest?.("[data-chat-card]"); return row && root()?.contains(row) ? Number(row.dataset.chatCard) : null; };
+  function bindOutline(host) {
+    if (bound.has(host) || typeof host.addEventListener !== "function") return;
+    bound.add(host);
+    host.addEventListener("focusin", (event) => { linked.focus = rowOf(event.target); outline(); });
+    host.addEventListener("focusout", (event) => { linked.focus = rowOf(event.relatedTarget); outline(); });
+    host.addEventListener("mouseover", (event) => { linked.hover = rowOf(event.target); outline(); });
+    host.addEventListener("mouseout", (event) => { linked.hover = rowOf(event.relatedTarget); outline(); });
+  }
   function render() {
     const host = root();
     if (!host) return;
@@ -166,6 +219,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
         };
       }
       host.onclick = click;
+      bindOutline(host);
     }
     // Rewrite a region only when its markup changed, so an unchanged poll keeps focus and selection.
     const write = (el, html) => {
@@ -175,6 +229,12 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     const put = (selector, html) => write(host.querySelector(selector), html);
     const view = host.querySelector(".chat-view");
     if (view) view.dataset.board = state.slug || "";
+    // The project name can arrive after the first render (the list or the dock's board).
+    const name = project().name || state.slug;
+    const heading = host.querySelector(".chat-header h2"), label = host.querySelector('.chat-compose label[for="chat-text"]');
+    if (heading) heading.textContent = `${name || "Project"} chat`;
+    if (label) label.textContent = `Message to ${name || "project"} chat`;
+    host.querySelector(".chat-stream")?.setAttribute?.("aria-label", name ? `Messages in ${name} chat` : "Messages");
     const picker = host.querySelector("[data-chat-project]");
     if (picker) {
       write(picker, '<option value="">Choose a project</option>' + state.projects.map((p) => `<option value="${e(p.slug)}" ${p.slug === state.slug ? "selected" : ""}>${marked(p.name || p.slug, e)}</option>`).join(""));
@@ -257,7 +317,7 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
         const slow = !state.loaded || Date.now() - (state.slowAt || 0) >= SLOW_MS;
         const [page, status, cards, settings] = await Promise.all([read, ...(slow ? [api(`${path()}/status`), api(`/api/boards/${encodeURIComponent(state.slug)}/cards`), api(`/api/chat-settings?board=${encodeURIComponent(state.slug)}`)] : [])]);
         if (!current(token)) return;
-        if (slow) { state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = cards.cards || []; state.slowAt = Date.now(); }
+        if (slow) { state.status = { ...status, front: { ...status.front, ...settings.front } }; state.cards = [...(cards.cards || []), ...(cards.children || [])]; state.slowAt = Date.now(); }
         update(page);
         if (!state.loaded) restore();
         lastProject = state.slug;
@@ -392,26 +452,27 @@ export function createChat({ mount, api, e, me, board, coordinator, onCard = () 
     }
   }
   const controller = {
-    async show(slug, { at, quote } = {}) {
+    async show(slug, { at, quote, name } = {}) {
       if (active && state.requested === slug) {
+        if (name) { state.name = name; render(); }
         if (quote !== undefined) this.setQuote(quote);
         if (validId(at)) await history(at);
         this.focusComposer(); return;
       }
       this.stop(); active = true;
-      state = { requested: slug, slug, projects: [], cards: [], me, loaded: false, page: { messages: [], replies: [], cursor: 0, reply_cursor: 0 }, status: null, quote: quote || null, error: CHAT_COPY.loading };
+      state = { requested: slug, slug, name: name || "", projects: [], cards: [], me, loaded: false, page: { messages: [], replies: [], cursor: 0, reply_cursor: 0 }, status: null, quote: quote || null, error: CHAT_COPY.loading };
       if (root()) root().innerHTML = "";
       document.addEventListener("visibilitychange", visibility);
       render(); await tick(++generation);
       if (active && state.requested === slug) { if (validId(at)) await history(at); this.focusComposer(); }
     },
-    stop() { active = false; generation++; cancel(); document.removeEventListener("visibilitychange", visibility); },
+    stop() { active = false; generation++; cancel(); unlink(); document.removeEventListener("visibilitychange", visibility); },
     focusComposer() { field()?.focus(); },
     /** The dock opened or closed the pane. Closed: no 2 s poll and no seen marks; reopened: read now. */
     setOpen(value) {
       const was = open;
       open = !!value;
-      if (!open) cancel();
+      if (!open) { cancel(); unlink(); }
       else if (!was && active && !state.sending && !document.hidden) { cancel(); void tick(++generation); }
     },
     /** The dock reopened the pane on the same board: move the divider to what was read before. */
