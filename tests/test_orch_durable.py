@@ -745,7 +745,7 @@ def test_runner_job_evidence_id_is_bounded(env):
             token,
             "s1",
             "done",
-            evidence={"type": "runner_job", "job": "j" * (durable.MAX_JOB_ID + 1)},
+            evidence={"type": "runner_job", "job": "j" * 65},  # MAX_JOB_ID is 64
             now=at(6),
         )
     assert code_of(exc) == "invalid_evidence" and exc.value.status == 400
