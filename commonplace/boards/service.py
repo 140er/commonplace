@@ -788,7 +788,104 @@ class BoardService:
             if self._awaits_origin_release(row):
                 if q.person or row["proposal_status"] != "pending":
                     result["can_approve"] = self._can_release_origin(q, row)
+            if self._feature_on():
+                result.update(
+                    blocked_by=[
+                        r[0]
+                        for r in conn.execute(
+                            "SELECT blocker_id FROM task_blockers WHERE task_id=? ORDER BY blocker_id",
+                            (row["id"],),
+                        )
+                    ],
+                    blocks=[
+                        r[0]
+                        for r in conn.execute(
+                            "SELECT task_id FROM task_blockers WHERE blocker_id=? ORDER BY task_id",
+                            (row["id"],),
+                        )
+                    ],
+                    waiting=self._waiting(conn, row),
+                )
             return result
+
+    def _feature_on(self):
+        from commonplace.projects import orchestration as orch
+
+        try:
+            return orch.enabled(self.ctx.db, self.principal.workspace_id)
+        except orch.SettingsUnavailable:
+            # Projection stays usable; admission still raises the captured failure.
+            return False
+
+    def _waiting(self, conn, row, usage=None):
+        from commonplace.boards import why
+        from commonplace.boards.store import active_blockers
+        from commonplace.projects import split
+
+        runner = getattr(self, "_admission_conn", None)
+        if runner is not None:
+            usage = usage or self._usage(conn, runner, row)
+            stuck = split.stuck(runner, row["id"])
+        else:
+            with split.runner_read(self.ctx.workspace_dir()) as runner:
+                usage = usage or self._usage(conn, runner, row)
+                stuck = split.stuck(runner, row["id"])
+        marked = conn.execute("SELECT 1 FROM card_splits WHERE task_id=?", (row["id"],)).fetchone()
+        stuck = stuck and marked is None
+        released = (
+            row["proposal_status"] not in ("pending", "rejected")
+            and (row["restricted_origin"] == 0 or self._origin_released(row))
+            and not _plan_waiting(row)
+        )
+        return why.waiting(
+            {**dict(row), "split_stuck": stuck},
+            blockers=active_blockers(conn, row["id"]),
+            released=released and not stuck,
+            usage=usage,
+        )
+
+    def _usage(self, boards, runner, row):
+        from commonplace.projects import orchestration as orch
+        from commonplace.runner import jobs
+
+        workers = getattr(self, "_workers", None)
+        if workers is None:
+            workers = orch.workers(self.ctx.db, self.principal.workspace_id)
+        if runner is None:
+            slots = frozenset(
+                ("card", r["id"]) if r["assignee"] in workers else ("agent", r["assignee"])
+                for r in boards.execute(
+                    "SELECT id,assignee FROM tasks WHERE board_id=? AND status='doing' AND assignee LIKE 'conn:%'",
+                    (row["board_id"],),
+                )
+            )
+            return orch.Usage(slots, orch.effective_cap(boards, row["board_id"], on=True))
+        return orch.usage(
+            boards,
+            runner,
+            board_id=row["board_id"],
+            board_slug=row["board"],
+            workers=workers,
+            now=jobs._now(),
+        )
+
+    def _refuse_waiting(self, conn, row):
+        from commonplace.boards.store import CardRefused
+
+        if self._orchestration_on is True:
+            reason = self._waiting(conn, row)
+            if reason is not None and reason["code"] != "project_limit":
+                raise CardRefused(reason["code"], reason["text"])
+
+    def orchestrator_inbox(self, board):
+        from commonplace.projects import split
+
+        return split.inbox(self.ctx.gateway, self.principal, board)
+
+    def card_split_done(self, task, state):
+        from commonplace.projects import split
+
+        return split.mark(self.ctx.gateway, self.principal, task, state)
 
     def _legacy_restricted_origin(self, row):
         if row["stamp_trust"] not in ("trusted", "standard"):
@@ -1379,6 +1476,18 @@ class BoardService:
                             lease=True,
                         )
                         result[-1].update(max_agents=used.cap, used=used.used)
+                    from commonplace.boards import why
+
+                    summary = dict.fromkeys(why.CODES, 0)
+                    for found in conn.execute(
+                        "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
+                        + ("AND parent_number IS NULL" if top_level else ""),
+                        (board["id"],),
+                    ).fetchall():
+                        reason = self._waiting(conn, task_row(conn, found["id"]))
+                        if reason:
+                            summary[reason["code"]] += 1
+                    result[-1]["waiting"] = summary
             return result
 
     def board_add(self, slug, name=None, wing=None, repo=None):
@@ -1889,6 +1998,25 @@ class BoardService:
                 self._emit(conn, row["id"], "card.updated")
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
+    def _split_parent(self, conn, board, parent, labels, *, delegating):
+        p = self.principal
+        split_parent = None
+        if self._orchestration_on is True:
+            from commonplace.projects import split
+
+            split_parent = split.parent_for(conn, board, p, parent, labels)
+            if split_parent is not None:
+                existing = split.check_key(conn, split_parent, labels)
+                if existing is not None:
+                    from commonplace.boards.store import CardRefused
+
+                    raise CardRefused("split_key_exists", number=existing)
+        return (
+            split_parent
+            if split_parent is not None
+            else self._parent_card(conn, board, parent, delegating=delegating)
+        )
+
     def _new_card(
         self,
         conn,
@@ -1956,7 +2084,9 @@ class BoardService:
             or not child.policy.can_read_wing(board["wing"])
         ):
             raise ToolError("no: child cannot work on this board")
-        parent_number = self._parent_card(conn, board, parent, delegating=child is not None)
+        parent_number = self._split_parent(
+            conn, board, parent, labels, delegating=child is not None
+        )
         if (
             claim
             or status == "doing"
@@ -2074,11 +2204,14 @@ class BoardService:
         message_id=None,
         parent=None,
         claim=False,
+        blocked_by=_UNSET,
     ):
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
             self._expire(conn, b)
+            if blocked_by is not _UNSET and self._orchestration_on is not True:
+                raise ToolError("no: orchestration_off")
             result = self._new_card(
                 conn,
                 b,
@@ -2091,6 +2224,14 @@ class BoardService:
                 parent=parent,
                 claim=claim,
             )
+            if blocked_by is not _UNSET:
+                from commonplace.boards.store import CardRefused, set_blockers
+
+                row = task_row(conn, result["number"])
+                set_blockers(conn, row, blocked_by, self.principal.actor)
+                if row["status"] == "doing" and blocked_by:
+                    raise CardRefused("blocked_by")
+                result = self._card(conn, row)
         return self._start_assignment(result)
 
     def task_approve(self, task, approve=_UNSET, version=None, reason=None, escalate=False):
@@ -2267,6 +2408,11 @@ class BoardService:
                         if self.principal.person
                         else "AND coalesce(ask,'')='' AND (ask_to IS NULL OR ask_to NOT LIKE 'user:%') "
                     )
+                    + (
+                        "AND NOT EXISTS (SELECT 1 FROM task_blockers tb JOIN tasks dep ON dep.id=tb.blocker_id WHERE tb.task_id=tasks.id AND dep.status!='done') "
+                        if self._orchestration_on is True
+                        else ""
+                    )
                     + "ORDER BY assignee IS NULL,position,id",
                     (
                         b["id"],
@@ -2284,6 +2430,7 @@ class BoardService:
                         break
                 if row is None:
                     return None
+            self._refuse_waiting(conn, row)
             held = (
                 task is not None
                 and row["status"] == "doing"
@@ -2307,7 +2454,15 @@ class BoardService:
                 return self._card(conn, row, self.principal)
             from commonplace.projects import limits
 
-            limits.check(conn, b, self.principal.actor, service=self, card_id=row["id"])
+            try:
+                limits.check(conn, b, self.principal.actor, service=self, card_id=row["id"])
+            except ToolError as exc:
+                if getattr(exc, "code", None) == "project_limit":
+                    from commonplace.boards.store import CardRefused
+
+                    reason = self._waiting(conn, row)
+                    raise CardRefused("project_limit", reason["text"]) from None
+                raise
             self._set(
                 conn,
                 row,
@@ -2601,11 +2756,22 @@ class BoardService:
             if "pr_state" not in args:
                 updates["pr_reported_at"] = None
 
+    def _update_waiting(self, conn, row, args):
+        if "blocked_by" in args:
+            from commonplace.boards.store import set_blockers
+
+            if self._orchestration_on is not True:
+                raise ToolError("no: orchestration_off")
+            set_blockers(conn, row, args["blocked_by"], self.principal.actor)
+        if args.get("status") == "doing":
+            self._refuse_waiting(conn, row)
+
     def task_update(self, task, *, version=None, **args):
         permitted = {
             "title",
             "body",
             "labels",
+            "blocked_by",
             "status",
             "before",
             "after",
@@ -2650,7 +2816,8 @@ class BoardService:
             self._holder(
                 row,
                 completing=args.get("status") == "done",
-                editing=bool(set(args) & {"title", "body", "labels"}) and not content_edit,
+                editing=bool(set(args) & {"title", "body", "labels", "blocked_by"})
+                and not content_edit,
                 reopening=set(args) == {"status"} and args["status"] == "todo",
                 annotating=bool(set(args) - {"status"})
                 and set(args) - {"status"} <= {"lesson", "pr", "link"}
@@ -2679,6 +2846,7 @@ class BoardService:
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
             updates = {}
+            self._update_waiting(conn, row, args)
             if "labels" in args:
                 labels = args["labels"]
                 if not isinstance(labels, list) or len(labels) > 100:
@@ -2776,7 +2944,9 @@ class BoardService:
                 updates["flags"] = json.dumps(
                     sorted(set(json.loads(row["flags"] or "[]")) | set(new_flags))
                 )
-            if not updates and not any(key in args for key in ("link", "unlink", "lesson")):
+            if not updates and not any(
+                key in args for key in ("link", "unlink", "lesson", "blocked_by")
+            ):
                 return self._card(conn, row, self.principal)
             self._set(conn, row, updates)
             moved = updates.get("status", row["status"]) != row["status"]

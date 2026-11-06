@@ -380,6 +380,40 @@ appears in the owner queue again without changing its stored words or audit log.
 
 - Timings are informational, never a gate.
 
+### Opt-in blockers, waiting reasons and split delivery
+
+- The workspace switch defaults off. Enabled boards add same-board blocker
+  edges (maximum 16 per card, no self/cycles, DFS bounded to 200 nodes).
+  Only Done unblocks. SQL selection skips unresolved blockers and the runner
+  checks them before starting. Views use the pure `boards.why` predicate in
+  blocker/person/release/cap order; explicit claims share its waiting text.
+  Dependency waiting alone does not enter `needs_me`.
+- `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
+  `split:<parent>:<key>` labels; key checks and inserts share the board write
+  transaction. Inbox reads include open unsplit roots, excluding children and
+  coordinator-created roots. Only the coordinator PAT or a signed-in owner
+  reads or marks them. The first split/kept marker wins and appends card history.
+- Configured todo triggers retain their prior behavior with the switch off.
+  Enabled roots launch `main`; children never trigger split starts. Jobs pin
+  the selected `launch_role` in an additive runner column, so later switch
+  changes cannot change a queued job's launch instructions. Messages include
+  inbox context; the agent creates missing stable keys and marks completion.
+- Each runner sweep reconciles eligible roots older than 10 minutes with no
+  active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
+  90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
+  `orch_misses` log with negative event ids. Eligibility and attempt number are
+  rechecked under `fenced_start` before inserting a job or miss. Three refused
+  attempts show `not_released` / `split stuck` in waiting reasons and checkpoints.
+  A completed marker stops reconciliation. The hub never creates children.
+- Board reads inside runner transactions use the read-only connection path;
+  no BoardService or BoardStore migration runs there. New route lock timeouts
+  return `409 busy` without mutation. No external service is called.
+- Without a runner, card delivery uses a subscribed `card.created` webhook
+  plus the inbox at the next session. Without either, a new card waits for that
+  session. Continuous orchestration, done/stuck routing and runner-job events
+  remain separate work. Stable keys are the agent's responsibility; changing
+  keys after a crash can create additional children.
+
 ### Webhook dispatcher recovery
 
 - Each delivery pass contains unexpected errors from reconciliation, due-delivery lookup and delivery.
@@ -499,7 +533,7 @@ appears in the owner queue again without changing its stored words or audit log.
 |---|---|---|---|
 | `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
-| `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
+| `runner.sqlite3` | workspace | runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).

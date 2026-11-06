@@ -1265,7 +1265,15 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
     for key in view:
         view[key] = view[key][-MAX_LIST:]
     view["finished"].reverse()
+    from commonplace.projects import orchestration, split
+
+    inbox_note = {}
+    if orchestration.enabled(ctx.db, ctx.principal.workspace_id):
+        note = split.context(ctx.gateway, ctx.principal, board)
+        if note:
+            inbox_note = {"inbox": note}
     return {
+        **inbox_note,
         "board": board,
         "role": role,
         "lease": None
