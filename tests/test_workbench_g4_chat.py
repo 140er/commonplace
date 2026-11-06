@@ -18,6 +18,7 @@ CASES = [
     "closing the chat finds an opener redrawn by its data attribute",
     "focus returns to the same row after the list is rebuilt",
     "a redraw just after the close gives focus back to the opener",
+    "the dock shows the chat's status line under its heading",
     "the dock hands the board's name to the chat",
     "a focused or hovered chat row outlines its board card",
     "styles: outline, in-flow docked pane, no phone key hint",

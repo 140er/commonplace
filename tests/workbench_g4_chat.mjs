@@ -179,6 +179,7 @@ async function dockFixture() {
     show(slug, options) { shows.push([slug, options]); if (!shell.querySelector("textarea")) add(shell.querySelector("#chat-content"), "textarea", "", "composer"); },
     focusComposer() { shell.querySelector("textarea")?.focus(); },
     setQuote() {}, reopened() {}, setOpen() {}, stop() {},
+    watchHeader(fn) { chat.header = fn; },
   };
   const dock = createDock({ root: shell, chat, api: () => assert.fail("the dock does not fetch") });
   dock.mount(header, { board: { ...BOARD }, label: "Atlas chat" });
@@ -191,7 +192,7 @@ async function dockFixture() {
     }
     return el;
   };
-  return { doc, shell, dock, shows, button, mutate };
+  return { doc, shell, dock, shows, button, mutate, chat };
 }
 
 test("closing the chat finds an opener redrawn by id", async () => {
@@ -238,6 +239,18 @@ test("a redraw just after the close gives focus back to the opener", async () =>
   f.doc.activeElement = f.doc.body;
   f.mutate();
   assert.equal(f.doc.activeElement, f.doc.body, "no focus pulled back after the person moved on");
+});
+
+test("the dock shows the chat's status line under its heading", async () => {
+  const f = await dockFixture();
+  const line = f.shell.querySelector("#chat .chat-head .ch-status");
+  assert.ok(line, "a status line under the heading");
+  assert.equal(typeof f.chat.header, "function", "the dock listens for the chat's status");
+  assert.equal(line.hidden, true, "empty until the chat knows");
+  f.chat.header("Orchestrator connected");
+  assert.equal(line.textContent, "Orchestrator connected");
+  assert.equal(line.hidden, false);
+  assert.equal(f.shell.querySelector("#chat-h").textContent, "Atlas chat", "the heading keeps only the name");
 });
 
 test("the dock hands the board's name to the chat", async () => {
