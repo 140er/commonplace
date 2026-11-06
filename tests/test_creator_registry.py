@@ -58,6 +58,11 @@ ALWAYS = frozenset(
         "write_text",
         "write_bytes",
         "renames",
+        # Known helpers that create files (handoff.hook, mempalace.fsio).
+        "_atomic_text",
+        "_write_json",
+        "_private_dir",
+        "atomic_write_json",
     }
 )
 SHUTIL_ONLY = frozenset({"move", "copy", "copy2", "copyfile", "copytree"})
