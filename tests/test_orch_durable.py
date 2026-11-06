@@ -282,6 +282,28 @@ def test_resume_refused_while_restore_flag_is_set(env):
     assert code_of(exc) == "restore_pending"
 
 
+def test_restore_drops_leases_so_resume_after_the_ack_claims_a_new_epoch(env):
+    """A converted restore marker releases every lease in the flag's transaction: after
+    the ack a successor claims epoch+1 at once (not 'held' until the old expiry) and
+    the old token stays fenced."""
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env, env.a)
+    directory = env.hub.gateway.workspace_dir(env.ws)
+    marker = {"version": 1, "backup_created_at": T0, "id": "d" * 32}
+    with open(f"{directory}/{orch_store.RESTORE_MARKER}", "w") as handle:
+        json.dump(marker, handle)
+    st = orch_store.open_store(env.hub.gateway, env.ws)
+    with env.runner_db() as conn:
+        row = conn.execute("SELECT token_hash, released_by FROM orch_leases").fetchone()
+    assert (row["token_hash"], row["released_by"]) == (None, "restore")
+    st.restore_ack(env.owner, st.restore_state().ack_text)
+    claim = env.resume(env.b, now=at(60))
+    assert claim["epoch"] == epoch + 1
+    with pytest.raises(ToolError) as exc:
+        durable.heartbeat(ctx, BOARD, ROLE, epoch, token, now=at(61))
+    assert code_of(exc) == "fenced"
+
+
 # ---------------------------------------------------------------------- R23
 
 
@@ -663,6 +685,70 @@ def test_runner_start_steps_follow_their_job_on_resume(env):
     with env.runner_db() as conn:
         assert conn.execute("SELECT state FROM orch_steps").fetchone()[0] == "done"
     assert durable.job_step_state("cancelled") == "failed"
+
+
+def test_runner_start_fails_only_with_its_failed_job_as_evidence(env):
+    """A holder cannot mark a runner start failed while its job may still run: failed
+    needs runner_job evidence of a failed, cancelled or uncertain job."""
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env)
+    card = env.card()
+    job = "job_eeeeeeeeeeeeeeee"
+    _orch_job(env, job=job, card=card, role=ROLE, step_key="s1", state="queued")
+    _start_step(env, epoch=epoch, token=token, step_key="s1", card=card, job=job)
+    for evidence in (None, {"type": "holder_attested", "note": "gave up"}):
+        with pytest.raises(ToolError) as exc:
+            durable.journal_record(
+                ctx, BOARD, ROLE, epoch, token, "s1", "failed", evidence=evidence, now=at(6)
+            )
+        assert code_of(exc) == "evidence_required"
+    with pytest.raises(ToolError) as exc:
+        durable.journal_record(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "s1",
+            "failed",
+            evidence={"type": "runner_job", "job": job},
+            now=at(7),
+        )
+    assert code_of(exc) == "evidence_mismatch"
+    with env.runner_db() as conn:
+        conn.execute("UPDATE runner_jobs SET state='cancelled'")
+    step = durable.journal_record(
+        ctx,
+        BOARD,
+        ROLE,
+        epoch,
+        token,
+        "s1",
+        "failed",
+        evidence={"type": "runner_job", "job": job},
+        now=at(8),
+    )
+    assert step["state"] == "failed" and step["evidence"]["job_state"] == "cancelled"
+
+
+def test_runner_job_evidence_id_is_bounded(env):
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env)
+    card = env.card()
+    _start_step(env, epoch=epoch, token=token, step_key="s1", card=card, job=None)
+    with pytest.raises(ToolError) as exc:
+        durable.journal_record(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "s1",
+            "done",
+            evidence={"type": "runner_job", "job": "j" * (durable.MAX_JOB_ID + 1)},
+            now=at(6),
+        )
+    assert code_of(exc) == "invalid_evidence" and exc.value.status == 400
 
 
 # ---------------------------------------------------------------------- R19
