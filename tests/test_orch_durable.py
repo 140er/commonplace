@@ -282,6 +282,28 @@ def test_resume_refused_while_restore_flag_is_set(env):
     assert code_of(exc) == "restore_pending"
 
 
+def test_restore_drops_leases_so_resume_after_the_ack_claims_a_new_epoch(env):
+    """A converted restore marker releases every lease in the flag's transaction: after
+    the ack a successor claims epoch+1 at once (not 'held' until the old expiry) and
+    the old token stays fenced."""
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env, env.a)
+    directory = env.hub.gateway.workspace_dir(env.ws)
+    marker = {"version": 1, "backup_created_at": T0, "id": "d" * 32}
+    with open(f"{directory}/{orch_store.RESTORE_MARKER}", "w") as handle:
+        json.dump(marker, handle)
+    st = orch_store.open_store(env.hub.gateway, env.ws)
+    with env.runner_db() as conn:
+        row = conn.execute("SELECT token_hash, released_by FROM orch_leases").fetchone()
+    assert (row["token_hash"], row["released_by"]) == (None, "restore")
+    st.restore_ack(env.owner, st.restore_state().ack_text)
+    claim = env.resume(env.b, now=at(60))
+    assert claim["epoch"] == epoch + 1
+    with pytest.raises(ToolError) as exc:
+        durable.heartbeat(ctx, BOARD, ROLE, epoch, token, now=at(61))
+    assert code_of(exc) == "fenced"
+
+
 # ---------------------------------------------------------------------- R23
 
 
@@ -665,6 +687,70 @@ def test_runner_start_steps_follow_their_job_on_resume(env):
     assert durable.job_step_state("cancelled") == "failed"
 
 
+def test_runner_start_fails_only_with_its_failed_job_as_evidence(env):
+    """A holder cannot mark a runner start failed while its job may still run: failed
+    needs runner_job evidence of a failed, cancelled or uncertain job."""
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env)
+    card = env.card()
+    job = "job_eeeeeeeeeeeeeeee"
+    _orch_job(env, job=job, card=card, role=ROLE, step_key="s1", state="queued")
+    _start_step(env, epoch=epoch, token=token, step_key="s1", card=card, job=job)
+    for evidence in (None, {"type": "holder_attested", "note": "gave up"}):
+        with pytest.raises(ToolError) as exc:
+            durable.journal_record(
+                ctx, BOARD, ROLE, epoch, token, "s1", "failed", evidence=evidence, now=at(6)
+            )
+        assert code_of(exc) == "evidence_required"
+    with pytest.raises(ToolError) as exc:
+        durable.journal_record(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "s1",
+            "failed",
+            evidence={"type": "runner_job", "job": job},
+            now=at(7),
+        )
+    assert code_of(exc) == "evidence_mismatch"
+    with env.runner_db() as conn:
+        conn.execute("UPDATE runner_jobs SET state='cancelled'")
+    step = durable.journal_record(
+        ctx,
+        BOARD,
+        ROLE,
+        epoch,
+        token,
+        "s1",
+        "failed",
+        evidence={"type": "runner_job", "job": job},
+        now=at(8),
+    )
+    assert step["state"] == "failed" and step["evidence"]["job_state"] == "cancelled"
+
+
+def test_runner_job_evidence_id_is_bounded(env):
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env)
+    card = env.card()
+    _start_step(env, epoch=epoch, token=token, step_key="s1", card=card, job=None)
+    with pytest.raises(ToolError) as exc:
+        durable.journal_record(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "s1",
+            "done",
+            evidence={"type": "runner_job", "job": "j" * 65},  # MAX_JOB_ID is 64
+            now=at(6),
+        )
+    assert code_of(exc) == "invalid_evidence" and exc.value.status == 400
+
+
 # ---------------------------------------------------------------------- R19
 
 
@@ -804,6 +890,32 @@ def test_unstarted_boundary_is_the_firing_event_not_any_todo_row(env):
         env, card, at(300), kind="edit", from_status="todo", to_status="todo", choice="approve plan"
     )
     assert card in _unstarted(env)
+
+
+@pytest.mark.parametrize("event_first", [True, False], ids=["event-then-start", "start-then-event"])
+def test_unstarted_lists_a_same_second_tie_in_either_order(env, event_first):
+    # Both stores stamp whole seconds: a start and a firing event in one second cannot be
+    # ordered, so the tie stays listed (conservative), whichever was written first.
+    card = env.card()
+    if event_first:
+        _event(env, card, at(300), from_status="backlog", to_status="todo")
+        _job(env, card, "started", created=at(250), started=at(300))
+    else:
+        _job(env, card, "started", created=at(250), started=at(300))
+        _event(env, card, at(300), from_status="backlog", to_status="todo")
+    assert card in _unstarted(env)
+
+
+def test_unstarted_different_seconds_order_start_and_event(env):
+    # A start one second after the firing event hides the card; one second before lists it.
+    after, before = env.card(), env.card()
+    _event(env, after, at(300), from_status="backlog", to_status="todo")
+    _job(env, after, "started", created=at(250), started=at(301))
+    _event(env, before, at(300), from_status="backlog", to_status="todo")
+    _job(env, before, "started", created=at(250), started=at(299))
+    listed = _unstarted(env)
+    assert after not in listed
+    assert before in listed
 
 
 def test_unstarted_cancelled_plan_pending_job_never_hides(env):
