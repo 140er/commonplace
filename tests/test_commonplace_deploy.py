@@ -306,8 +306,8 @@ def write_snapshot(destination):
         # minus the hook's own staging; published by one rename like the child.
         from commonplace import backup as module
         inventory = module._inventory
-        def without_staging(root):
-            files, dirs = inventory(root)
+        def without_staging(root, *args, **kwargs):
+            files, dirs = inventory(root, *args, **kwargs)
             keep = lambda p: p.relative_to(root).parts[0] not in (
                 ".backup-staging", ".commonplace-fence.lock")
             return [p for p in files if keep(p)], [p for p in dirs if keep(p)]
