@@ -228,7 +228,8 @@ entry was written.
 
 ### Opt-in blockers, waiting reasons and split delivery
 
-Card schemas advertise blocker arguments only while the workspace switch is on;
+Split completion markers obey the same MCP and REST rules-freshness checks as
+other card decisions. Card schemas advertise blocker arguments only while the workspace switch is on;
 properties are derived per request without changing shared extension schemas.
 Split labels cannot be added to roots or removed from keyed children through
 label edits. REST marker references must be bounded positive integers. Only

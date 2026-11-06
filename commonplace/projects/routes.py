@@ -10,6 +10,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, read_json, require_principal, send_json
 from commonplace.projects import connect, limits, models, orchestration, seats, wing
 from commonplace.projects.types import ProjectDenied
+from commonplace.rules.enforce import RulesRefresh, rest_write
 from commonplace.runner import registry
 
 
@@ -98,6 +99,7 @@ def _split_route(gateway, h, principal, parts, *, inboxing):
             payload = split.inbox(gateway, principal, parts[0])
         else:
             body = read_json(h)
+            body.pop("rules_seq", None)
             if (
                 set(body) != {"task", "state"}
                 or type(body["task"]) is not int
@@ -113,10 +115,14 @@ def _split_route(gateway, h, principal, parts, *, inboxing):
                 ).fetchone()
                 if row is None or row[0] != parts[0]:
                     raise CardRefused("card_not_found", status=404)
-            payload = split.mark(gateway, principal, body["task"], body["state"])
+            with rest_write(ToolContext(principal, gateway), h, "card_split_done", body):
+                payload = split.mark(gateway, principal, body["task"], body["state"])
     except sqlite3.OperationalError as exc:
         orchestration.require_lock_timeout(exc)
         send_json(h, 409, {"error": "busy", "code": "busy"})
+        return
+    except RulesRefresh as exc:
+        send_json(h, 428, exc.payload)
         return
     except CardRefused as exc:
         send_json(
