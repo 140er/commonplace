@@ -168,7 +168,15 @@ if (globalThis.document?.adoptedStyleSheets) {
 }
 // One tab stop per column (the selected card, else the first); arrows move inside and across columns.
 const stopIn = (list, selected) => (list.find((c) => c.number === selected) || list[0])?.number;
+// A hidden Done card (past the first four) opens the Done list before it takes the tab stop or focus.
+function reveal(card) {
+  const col = card.closest?.('.col');
+  if (!col || col.hasAttribute('data-all') || [...col.querySelectorAll(ITEM)].indexOf(card) < DONE_SHOWN) return;
+  col.setAttribute('data-all', '');
+  col.querySelector('[data-board-more]')?.remove();
+}
 export function roveTo(card) {
+  reveal(card);
   card.closest('.cards')?.querySelectorAll(ITEM).forEach((item) => { item.tabIndex = item === card ? 0 : -1; });
 }
 export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], column = 'todo', sheet = true, doneAll = false }) {
@@ -177,9 +185,10 @@ export function boardView({ board, cards = [], me, filter = 'all', selected, mes
   const form = adding ? addCardForm({ people, sheet }) : '';
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the orchestrator.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The orchestrator turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
   return `<div class="workbench-board">${steps}<div class="board-tools"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div></div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
-    const list = visible.filter((c) => c.status === s), done = s === 'done', more = done && !doneAll ? list.length - DONE_SHOWN : 0;
+    // The selected card is never one of the hidden Done cards: its column opens instead.
+    const list = visible.filter((c) => c.status === s), done = s === 'done', all = done && (doneAll || list.findIndex((c) => c.number === selected) >= DONE_SHOWN), more = done && !all ? list.length - DONE_SHOWN : 0;
     const body = list.length ? list.map((c) => (done ? doneView : cardView)(c, options, c.number === stopIn(list, selected))).join('') : s === 'todo' ? `<button type="button" class="add-ghost" data-action="new-card">${icon(PLUS)}Add card</button>` : '<p class="empty-col">Nothing yet</p>';
-    return `<section class="col" id="col-${s}" data-status="${s}" data-active="${column === s}"${doneAll && done ? ' data-all' : ''} aria-label="${heading(s)}, ${list.length} cards"><div class="col-h"><h2>${heading(s)}</h2><span class="n">${list.length}</span>${s === 'todo' ? `<button class="iconbtn" data-action="new-card" aria-label="Add card to Todo">${icon(PLUS)}</button>` : ''}</div>${list.length ? '' : `<p class="col-hint">${hints[s]}</p>`}<div class="cards">${s === 'todo' && !sheet ? form : ''}${body}</div>${more > 0 ? `<button type="button" class="link show-more" data-board-more>Show ${more} more</button>` : ''}</section>`;
+    return `<section class="col" id="col-${s}" data-status="${s}" data-active="${column === s}"${all ? ' data-all' : ''} aria-label="${heading(s)}, ${list.length} cards"><div class="col-h"><h2>${heading(s)}</h2><span class="n">${list.length}</span>${s === 'todo' ? `<button class="iconbtn" data-action="new-card" aria-label="Add card to Todo">${icon(PLUS)}</button>` : ''}</div>${list.length ? '' : `<p class="col-hint">${hints[s]}</p>`}<div class="cards">${s === 'todo' && !sheet ? form : ''}${body}</div>${more > 0 ? `<button type="button" class="link show-more" data-board-more>Show ${more} more</button>` : ''}</section>`;
   }).join('')}</div>${backlog.length ? `<details class="backlog"><summary>Backlog (${backlog.length})</summary><div class="cards">${backlog.map((c) => cardView(c, options, c.number === stopIn(backlog, selected))).join('')}</div></details>` : ''}${sheet ? form : ''}</div>`;
 }
 // The composer opens at the top of Todo (05); on a phone it is a full-screen modal sheet (m4).
@@ -190,7 +199,7 @@ export async function submitCard({ api, board, values }) {
   return api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, { method:'POST', body:{ title:values.title, body:values.body || '', assignee:values.assignee || null, labels:values.label ? [values.label] : [] } });
 }
 export function bindBoard(root, { api, board, onAdded = () => {}, onFilter = () => {}, onSelect = () => {}, onOpen = () => {}, onCancel = () => {} }) {
-  const click = (event) => { const more = event.target.closest('[data-board-more]'); if (more) { more.closest('.col')?.setAttribute('data-all', ''); more.remove(); return; } const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
+  const click = (event) => { const more = event.target.closest('[data-board-more]'); if (more) { const col = more.closest('.col'); col?.setAttribute('data-all', ''); more.remove(); const next = col?.querySelectorAll(ITEM)[DONE_SHOWN]; if (next) { roveTo(next); next.focus(); } return; } const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
   const submit = async (event) => {
     if (!event.target.matches('[data-board-add]')) return;
     event.preventDefault();
