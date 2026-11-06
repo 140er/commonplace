@@ -194,15 +194,18 @@ failed after commit is still found.
 - **Resume.** `orch_resume` claims the lease (never cards) and returns a
   checkpoint: open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses,
   and the unstarted `todo` cards of each configured board (a `todo` card with no
-  active job and no job started since it last entered `todo`). Cards are
+  active job and no job started after it last entered `todo`; a start in the
+  same second as that entry cannot be ordered, so the card is listed). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
 
 ## Restore
 
-A restore made with `commonplace restore` leaves a marker. On first open it
-becomes a flag in `runner.sqlite3` with a new incarnation, and every lease is
-dropped. While the flag is set, lease claims, config-driven starts and the
+A restore made with `commonplace restore` leaves a marker. The first open of
+the orchestrator store by a surface, the CLI, a lease call or a start turns it
+into a flag in `runner.sqlite3` with a new incarnation, and every lease is
+dropped. The trigger sweep never converts the marker; it skips the workspace
+while one is pending. While the flag is set, lease claims, config-driven starts and the
 sweep are refused; unconfigured boards are unaffected. Only the owner clears it,
 with the exact text:
 
