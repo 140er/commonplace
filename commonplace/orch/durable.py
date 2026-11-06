@@ -782,7 +782,10 @@ def journal_record(
             elif evidence["type"] == "card_state":
                 if state == "done" and card_snapshot["status"] != "done":
                     raise DurableError(
-                        "card_not_done", 409, "card is not done", status=card_snapshot["status"]
+                        "card_not_done",
+                        409,
+                        "card is not done",
+                        card_status=card_snapshot["status"],
                     )
                 stored = {
                     "type": "card_state",
