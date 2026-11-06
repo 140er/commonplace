@@ -89,6 +89,7 @@ SOCKET_NAME = "gateway.sock"
 MAX_LINE_BYTES = 64 * 1024
 # AF_UNIX sun_path on Linux, including the terminating NUL.
 _MAX_SOCKET_PATH = 107
+COUNTER_CHECK_S = 1.0
 
 # Run states.
 ACTIVE = "ACTIVE"
@@ -398,6 +399,7 @@ class PauseServer:
         self._threads: list = []
         self._conns: set = set()
         self._registry_error: Optional[str] = None
+        self._next_counter_check = 0.0
 
     @property
     def serving(self) -> bool:
@@ -518,11 +520,15 @@ class PauseServer:
             run = self._run
             if run is None or run.state in (COMMITTED, INVALID):
                 return
-            if not self._counter_ok(run):
-                return
+            now = self.clock()
+            # Every op checks the launch counter; between ops, once a second
+            # (it reads the persisted registry).
+            if now >= self._next_counter_check:
+                self._next_counter_check = now + COUNTER_CHECK_S
+                if not self._counter_ok(run):
+                    return
             if run.state != PAUSED:
                 return
-            now = self.clock()
             if run.frozen and now >= run.freeze_deadline:
                 self._invalidate(run, R_FREEZE_LEASE)
             elif now >= run.lease_deadline:
