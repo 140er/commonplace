@@ -272,7 +272,7 @@ def _log(conn, board, role, step_key, epoch, event, actor, now, state=None, code
     )
 
 
-# ---------------------------------------------- connection-level helpers (U4 et al.)
+# ------------------------------------------------- connection-level helpers
 # Callers hold a connection on runner.sqlite3, usually inside BEGIN IMMEDIATE.
 
 
