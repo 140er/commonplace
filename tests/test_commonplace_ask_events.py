@@ -151,7 +151,9 @@ def test_existing_event_logs_gain_the_options_column(tmp_path):
 
 def test_app_renders_asks_inline_with_one_live_place():
     app = (Path(STATIC) / "app.js").read_text()
-    assert "function askCard(card, ask" in app and "conversation(card)" in app
+    # The card panel still renders the open ask through conversation(); since the
+    # #220 visual round it filters the log to the ask waiting on this person (m10).
+    assert "function askCard(card, ask" in app and "${conversation(" in app
     # The panel header no longer repeats the open ask: the conversation holds it.
     assert '<p class="stamp">${e(actor(card.return_to))}</p>' not in app
     assert 'data-ask="${card.number}"' in app

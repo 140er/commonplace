@@ -69,6 +69,7 @@ const styles = `
 .needs-me .row-item { display:grid; grid-template-columns:92px minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 12px; min-height:56px; border:1px solid var(--line); border-radius:var(--r); background:var(--surface); margin-bottom:6px; }
 .needs-me .row-item h3 { font-size:14px; line-height:19px; font-weight:600; overflow-wrap:anywhere; }
 .needs-me .row-item h3 a { color:inherit; text-decoration:none; }
+.needs-me .row-item .ago { font-size:12px; color:var(--text-3); white-space:nowrap; }
 .needs-me .sub { font-size:12.5px; color:var(--text-3); line-height:17px; }
 .needs-me .is-selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
 .needs-me .is-pending { background:var(--wait-bg); border-color:var(--wait-line); }
@@ -133,7 +134,7 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
     const board = boardFor(boards, card), state = holdState(hold, now);
     const opening = detailsContext(card).author || card.return_to || card.created_by;
     const status = hold ? ["waiting", "sending"].includes(state.state) ? "Waiting" : state.state === "released" ? "Released" : state.state === "stopped" ? "Stopped" : "Failed" : labels[kind];
-    return `<article class="row-item${card.number === selected ? " is-selected" : ""}${hold ? active(hold) && state.state !== "released" ? " is-pending" : " is-done" : ""}" data-row="${e(card.number)}"><span class="typ ${hold ? "pending" : kind}">${status}</span><div><h3><a href="#/card/${e(card.number)}" data-needs-select="${e(card.number)}"${card.number === selected ? ' aria-current="true"' : ""}>${kind === "review" ? `<span class="cid">${e(cardId(board, card.number))}</span> ` : ""}${e(card.title)}</a></h3><div class="sub">${e(board.name || board.slug)}${hold ? ` · ${holdCopy(hold, now)}` : opening ? ` · ${e(detailsAuthor(opening, board))}` : ""}</div></div>${hold ? stopButton(hold, now) : ""}</article>`;
+    return `<article class="row-item${card.number === selected ? " is-selected" : ""}${hold ? active(hold) && state.state !== "released" ? " is-pending" : " is-done" : ""}" data-row="${e(card.number)}"><span class="typ ${hold ? "pending" : kind}">${status}</span><div><h3><a href="#/card/${e(card.number)}" data-needs-select="${e(card.number)}"${card.number === selected ? ' aria-current="true"' : ""}>${kind === "review" ? `<span class="cid">${e(cardId(board, card.number))}</span> ` : ""}${e(card.title)}</a></h3><div class="sub">${e(board.name || board.slug)}${hold ? ` · ${holdCopy(hold, now)}` : opening ? ` · ${e(detailsAuthor(opening, board))}` : ""}</div></div>${hold ? stopButton(hold, now) : ago(card.updated_at, now)}</article>`;
   };
   const groups = new Map();
   for (const item of items) {
@@ -161,7 +162,7 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const ask = `<button class="btn" data-needs-ask aria-keyshortcuts="R" aria-controls="chat" aria-expanded="${chatOpen}">${hold?.tooLate || hold?.state === "released" ? "Ask the orchestrator" : "Ask a question"} <kbd>R</kbd></button>`;
   const disabled = busy ? " disabled" : "";
   const confirmTag = phone ? "dialog" : "div";
-  const noteBox = canAnswer && (proposal || allowed("answer")) ? `<label class="lbl">Note to the orchestrator <span class="help">Optional. Sent with your answer.</span><textarea data-needs-note rows="1"${proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
+  const noteBox = canAnswer && (proposal || allowed("answer")) ? `<label class="lbl">Note to the orchestrator <span class="help">Optional. Sent with your answer.</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
   const decisions = !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
   // The shell's existing handlers carry these: Accept, and recovery for a card whose claim ran out.
   const shellButton = (action, label, tone = "") => allowed(action) ? `<button class="btn${tone}" data-action="need-${action}" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>${label}</button>` : "";
@@ -171,10 +172,22 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const direct = proposal ? "" : plan + shellButton("accept", "Accept", " primary") + recovery;
   const open = recovery ? `<a class="btn" href="#/card/${e(card.number)}">Answer</a>` : `<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>`;
   const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
-  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${labels[kind]}</span><span>${e(board.name || board.slug)}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${actions}</footer></section>`;
+  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${labels[kind]}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${actions}</footer></section>`;
 }
 
 // The shell owns routing, sheet modality and chat. All requests use the shared JSON api.
+// Row age as the design writes it ("12 min", "3 h"); the detail names the local time of the ask.
+function ago(at, now) {
+  const minutes = Math.floor((now - Date.parse(at)) / 60000);
+  if (!Number.isFinite(minutes) || minutes < 0) return "";
+  const text = minutes < 1 ? "now" : minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} h` : `${Math.floor(minutes / 1440)} d`;
+  return `<time class="ago" datetime="${e(at)}">${text}</time>`;
+}
+function asked(card) {
+  const at = [...(card.events || [])].reverse().find((ev) => ev.options || ev.kind === "ask" || ev.kind === "add")?.at || (card.ask ? card.updated_at : null);
+  const date = new Date(at);
+  return at && Number.isFinite(date.getTime()) ? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}` : "";
+}
 export function createNeeds({ mount, detailMount, api = request, onAction, onAsk = () => {}, onSelect = () => {}, onClose = () => {}, onChange = () => {}, onError = () => {}, onRender = () => {}, singleKeys = () => true,
   isPhone = () => globalThis.matchMedia?.("(max-width:699px)").matches || false, now = Date.now, document: doc = globalThis.document, setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval } = {}) {
   let data = { needs: {}, boards: [] }, holds = [], selected = null, filter = "all", current = null;
