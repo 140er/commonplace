@@ -1,8 +1,9 @@
 """Online snapshot of a serving data directory: the cut.
 
-``commonplace backup --online DEST`` runs :func:`run_online` in the snapshot
-child while ``serve`` keeps running. The child talks to the gateway over the
-admin socket (:mod:`commonplace.backup_pause`): pause the memory workers,
+``commonplace backup --online DEST`` runs :func:`backup_online` in the
+snapshot child (:mod:`commonplace.backup_supervisor`) while ``serve`` keeps
+running. The child talks to the gateway over the admin socket
+(:mod:`commonplace.backup_pause`, relayed by the supervisor): pause the memory workers,
 freeze file creation, take one instant L across every database and file,
 thaw, copy the paused worker files, resume, copy everything else as of L,
 verify, ask the gateway to ``commit`` (the run stayed valid), then publish.
@@ -11,19 +12,19 @@ The snapshot format, :func:`~commonplace.backup.restore` and
 version 1).
 
 Locks
-    The fence (:func:`~commonplace.backup.fence_lock`) is held exclusive for
-    the whole run; one-shot CLI commands hold it shared, so the run waits at
-    most ``FENCE_WAIT_S`` for them. ``data_lock`` is never taken while a
-    gateway answers on the admin socket. With no gateway answering, the run
-    takes ``data_lock`` exclusive for the whole snapshot, so a serve start is
-    refused mid-run, or fails at once when the lock is busy.
+    This module takes no lock. Its caller, the supervised snapshot child, holds
+    ``<stamp>.lock`` and the fence (:func:`~commonplace.backup.fence_lock`)
+    exclusive for the whole run; one-shot CLI commands hold the fence shared.
+    With a gateway (``client`` given), ``data_lock`` is never touched. With no
+    gateway (``client=None``), the caller holds ``data_lock`` exclusive for the
+    whole snapshot, so a serve start is refused mid-run. :func:`backup_online`
+    refuses to start unless those locks are held.
 
 Staging
     DEST is ``<data>/.backup-staging/<stamp>`` (stamp ``[0-9TZ.]+-[0-9]+``) and
-    must not exist. The run flocks ``<stamp>.lock`` (the file stays, the lock
-    goes with the process), builds ``<stamp>.partial/`` and renames it to
+    must not exist. The run builds ``<stamp>.partial/`` and renames it to
     ``<stamp>`` only after ``commit`` returned OK; nothing else ever creates
-    ``<stamp>``. A failed run removes its partial; :func:`cleanup_staging`
+    ``<stamp>``. A failed run removes its partial; ``backup --online-cleanup``
     removes what a killed run left, once its lock is free.
 
 The cut
@@ -88,7 +89,6 @@ import sqlite3
 import stat
 import sys
 import time
-from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,18 +97,15 @@ from typing import Callable, Optional
 from .backup import (
     _SQLITE_HEADER,
     FENCE_NAME,
+    LOCK_NAME,
     STAGING_NAME,
     BackupError,
-    DataDirInUse,
-    FenceBusy,
     _encrypted_database,
     _file_entry,
     _inside,
     _inventory,
     _is_sqlite,
     _verify_offline,
-    data_lock,
-    fence_lock,
     verify_backup,
 )
 
@@ -118,7 +115,6 @@ PROBE_BYTES = 256 * 1024 * 1024
 PROBE_MIN_BYTES = 4 * 1024 * 1024
 ROLLBACK_MAX_BYTES = 64 * 1024 * 1024
 WAL_MAX_BYTES = 2 * 1024**3
-FENCE_WAIT_S = 60.0
 BARRIER_S = 5.0
 PAUSE_TRIES = 3
 RENEW_EVERY_S = 10.0
@@ -143,10 +139,6 @@ class OnlineBackupError(BackupError):
 
 
 # ── staging layout ──
-
-
-def staging_dir(data_dir) -> Path:
-    return Path(os.path.realpath(Path(data_dir).expanduser())) / STAGING_NAME
 
 
 def _resolve_dest(root: Path, dest) -> tuple[Path, str]:
@@ -176,88 +168,27 @@ def _ensure_staging(staging: Path) -> None:
         raise OnlineBackupError("destination", f"{STAGING_NAME} belongs to another user")
 
 
-def _flock_nb(fd: int) -> bool:
+def _lock_held(path: Path, *, exclusive: bool = False) -> bool:
+    """True when another open file holds a flock on ``path``.
+
+    ``exclusive``: only an exclusive holder counts (a shared probe is refused).
+    """
     import fcntl
 
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        if exc.errno in _BUSY_ERRNOS:
-            return False
-        raise
-    return True
-
-
-def _lock_held(path: Path) -> bool:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except FileNotFoundError:
         return False
     try:
-        return not _flock_nb(fd)
+        mode = fcntl.LOCK_SH if exclusive else fcntl.LOCK_EX
+        fcntl.flock(fd, mode | fcntl.LOCK_NB)
+    except OSError as exc:
+        if exc.errno in _BUSY_ERRNOS:
+            return True
+        raise
     finally:
         os.close(fd)
-
-
-def _stamp_of(name: str) -> Optional[str]:
-    for suffix in (".partial", ".lock", ".hb"):
-        if name.endswith(suffix):
-            name = name[: -len(suffix)]
-            break
-    return name if STAMP_RE.fullmatch(name) else None
-
-
-def _tree_bytes(path: Path) -> int:
-    if path.is_symlink() or not path.is_dir():
-        return path.lstat().st_size
-    total = 0
-    for directory, _subdirs, files in os.walk(path):
-        for name in files:
-            try:
-                total += os.lstat(os.path.join(directory, name)).st_size
-            except OSError:
-                pass
-    return total
-
-
-def cleanup_staging(data_dir, stamp: Optional[str] = None) -> list:
-    """Remove ``<stamp>{,.partial,.lock,.hb}`` of runs whose lock is free.
-
-    With ``stamp`` only that run, else every run in the staging directory. A
-    held lock raises (the run is alive); nothing is ever signalled. Returns
-    ``[{"name", "bytes"}]`` of what was removed.
-    """
-    staging = staging_dir(data_dir)
-    if not staging.is_dir() or staging.is_symlink():
-        return []
-    if stamp is not None and not STAMP_RE.fullmatch(stamp):
-        raise OnlineBackupError("cleanup", "invalid stamp")
-    stamps = {stamp} if stamp else {s for s in map(_stamp_of, os.listdir(staging)) if s}
-    removed = []
-    for name in sorted(stamps):
-        lock = staging / f"{name}.lock"
-        fd = None
-        try:
-            if lock.exists():
-                fd = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-                if not _flock_nb(fd):
-                    raise OnlineBackupError("cleanup", "a backup run still holds its lock")
-            for path in (staging / name, staging / f"{name}.partial", staging / f"{name}.hb"):
-                if not os.path.lexists(path):
-                    continue
-                size = _tree_bytes(path)
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-                removed.append({"name": path.name, "bytes": size})
-            if fd is not None:
-                lock.unlink()
-                removed.append({"name": lock.name, "bytes": 0})
-        finally:
-            if fd is not None:
-                os.close(fd)
-    return removed
+    return False
 
 
 # ── gateway side ──
@@ -380,19 +311,11 @@ class _Gateway:
 
 
 class _NoGateway:
-    """No gateway answers: hold ``data_lock`` exclusive for the whole snapshot."""
+    """No gateway answers; the caller holds ``data_lock`` exclusive for the whole run."""
 
     online = False
     lease_s = float("inf")
     pause_max_s = float("inf")
-
-    def __init__(self, root: Path, stack: ExitStack):
-        try:
-            stack.enter_context(data_lock(root, exclusive=True))
-        except DataDirInUse as exc:
-            raise OnlineBackupError(
-                "data lock", "no gateway answers on the admin socket and the data lock is held"
-            ) from exc
 
     def hello(self) -> dict:
         return {}
@@ -420,26 +343,6 @@ class _NoGateway:
 
     def abort(self) -> None:
         pass
-
-
-def _connect(root: Path, stack: ExitStack, knobs, socket_path=None):
-    from . import backup_pause
-
-    if not backup_pause.supported():
-        raise OnlineBackupError("gateway", "online backup needs Linux")
-    path = Path(socket_path) if socket_path is not None else backup_pause.socket_path()
-    try:
-        backup_pause.check_socket_path(path, root)
-    except ValueError as exc:
-        raise OnlineBackupError("gateway", str(exc)) from exc
-    try:
-        client = backup_pause.PauseClient(path)
-    except (FileNotFoundError, ConnectionRefusedError):
-        return _NoGateway(root, stack)
-    except OSError as exc:
-        raise OnlineBackupError("gateway", f"admin socket unusable ({type(exc).__name__})") from exc
-    stack.callback(client.close)
-    return _Gateway(client, root, knobs)
 
 
 # ── the cut ──
@@ -1071,22 +974,26 @@ def _raise_nofile() -> None:
         pass
 
 
-def run_online(
+def backup_online(
     data_dir,
     dest,
     *,
+    client,
     deadline: Optional[float] = None,
     knobs=None,
-    socket_path=None,
     log: Optional[Callable[..., None]] = None,
     progress: Optional[Callable[[], None]] = None,
 ) -> dict:
     """Take an online snapshot of ``data_dir`` into DEST and return its manifest.
 
-    ``deadline`` is an epoch second (``--deadline``); default now +
-    ``COMMONPLACE_BACKUP_DEADLINE``. ``log(stage, **counts)`` receives the
-    stage lines; ``progress()`` is called at most once a second while the run
-    makes progress (a heartbeat for the supervisor). Raises
+    The supervised snapshot child calls this once, holding ``<stamp>.lock``
+    and the fence exclusive and, when ``client`` is None (no gateway answers),
+    ``data_lock`` exclusive; it refuses to run otherwise. ``client`` is the
+    gateway run (``call(op, **fields)``, as ``backup_pause.PauseClient`` or the
+    supervisor's relay) or None. ``deadline`` is an epoch second
+    (``--deadline``); default now + ``COMMONPLACE_BACKUP_DEADLINE``.
+    ``log(stage, **counts)`` receives the stage lines; ``progress()`` is called
+    at most once a second while the run makes progress. Raises
     :class:`OnlineBackupError` (or :class:`~commonplace.backup.BackupError`);
     then nothing is published and the gateway run is aborted.
     """
@@ -1102,48 +1009,41 @@ def run_online(
         deadline = time.time() + knobs.deadline_s
     dest, stamp = _resolve_dest(root, dest)
     staging = dest.parent
+    _ensure_staging(staging)
+    held = {
+        "run lock": _lock_held(staging / f"{stamp}.lock"),
+        "fence": _lock_held(root / FENCE_NAME, exclusive=True),
+    }
+    if client is None:
+        held["data lock"] = _lock_held(root / LOCK_NAME, exclusive=True)
+    for stage, ok in held.items():
+        if not ok:
+            raise OnlineBackupError(stage, "the snapshot caller does not hold this lock")
+    for name in os.listdir(staging):
+        if name.endswith(".lock") and name != f"{stamp}.lock" and _lock_held(staging / name):
+            raise OnlineBackupError("previous run", "previous backup still running")
     _raise_nofile()
-    with ExitStack() as stack:
+    partial = staging / f"{stamp}.partial"
+    os.mkdir(partial, 0o700)
+    control = _Gateway(client, root, knobs) if client is not None else _NoGateway()
+    try:
+        cut = _Cut(root, partial, control, knobs, deadline, log, progress)
         try:
-            stack.enter_context(fence_lock(root, exclusive=True, wait_s=FENCE_WAIT_S))
-        except FenceBusy as exc:
-            raise OnlineBackupError("fence", "a command still holds the data directory") from exc
-        _ensure_staging(staging)
-        lock_fd = os.open(
-            staging / f"{stamp}.lock",
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-        )
-        stack.callback(os.close, lock_fd)
-        if not _flock_nb(lock_fd):
-            raise OnlineBackupError("run lock", "this stamp is already running")
-        for name in os.listdir(staging):
-            if name.endswith(".lock") and name != f"{stamp}.lock" and _lock_held(staging / name):
-                raise OnlineBackupError("previous run", "previous backup still running")
-        partial = staging / f"{stamp}.partial"
-        os.mkdir(partial, 0o700)
-        control = None
-        cut = None
-        try:
-            control = _connect(root, stack, knobs, socket_path)
-            cut = _Cut(root, partial, control, knobs, deadline, log, progress)
-            try:
-                manifest = cut.run()
-            finally:
-                cut.close()
-            if os.path.lexists(dest):
-                raise OnlineBackupError("publish", "the destination appeared during the run")
-            os.rename(partial, dest)
-            partial = None
-            _fsync_path(staging)
-            log("publish", files=len(manifest["files"]))
-            return manifest
-        except BaseException as exc:
-            if control is not None:
-                control.abort()
-            if isinstance(exc, OnlineBackupError):
-                log("failed", at=exc.stage)
-            raise
+            manifest = cut.run()
         finally:
-            if partial is not None:
-                shutil.rmtree(partial, ignore_errors=True)
+            cut.close()
+        if os.path.lexists(dest):
+            raise OnlineBackupError("publish", "the destination appeared during the run")
+        os.rename(partial, dest)
+        partial = None
+        _fsync_path(staging)
+        log("publish", files=len(manifest["files"]))
+        return manifest
+    except BaseException as exc:
+        control.abort()
+        if isinstance(exc, OnlineBackupError):
+            log("failed", at=exc.stage)
+        raise
+    finally:
+        if partial is not None:
+            shutil.rmtree(partial, ignore_errors=True)

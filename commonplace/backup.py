@@ -94,14 +94,17 @@ def data_lock(data_dir, *, exclusive=False):
 
 
 @contextmanager
-def fence_lock(data_dir, *, exclusive=False, wait_s=0.0):
+def fence_lock(data_dir, *, exclusive=False, wait_s=0.0, busy_message=None):
     """Hold the data-directory fence; never remove the lock file.
 
     The fence is a different file from ``data_lock``: ``serve`` holds
     ``data_lock`` shared and never the fence, so an online backup can take the
     fence exclusive while serve runs, and one-shot CLI commands (shared) wait
     for it. Polls for at most ``wait_s`` seconds, then raises
-    :class:`FenceBusy`. Windows has no online backup; the fence is a no-op.
+    :class:`FenceBusy` (with ``busy_message`` when given). The lock is released
+    only by closing its descriptor (never ``LOCK_UN``), so a forked child that
+    inherited it keeps the fence until it exits too. Windows has no online
+    backup; the fence is a no-op.
     """
     root = Path(data_dir).expanduser()
     if os.name == "nt":
@@ -112,27 +115,24 @@ def fence_lock(data_dir, *, exclusive=False, wait_s=0.0):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(root / FENCE_NAME, flags, 0o600)
-    acquired = False
     try:
         mode = (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB
         deadline = time.monotonic() + max(0.0, float(wait_s))
         while True:
             try:
                 fcntl.flock(fd, mode)
-                acquired = True
                 break
             except OSError as exc:
                 if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                     raise
                 if time.monotonic() >= deadline:
                     raise FenceBusy(
-                        "the data directory fence is held by a backup or maintenance command"
+                        busy_message
+                        or "the data directory fence is held by a backup or maintenance command"
                     ) from exc
                 time.sleep(0.05)
         yield
     finally:
-        if acquired:
-            fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
 
