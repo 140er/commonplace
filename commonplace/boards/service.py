@@ -290,7 +290,7 @@ def _stuck(row, cutoff):
 
 
 def needs_me(
-    store, principal, *, release=None, names=None, supervisors=None, coordinated=()
+    store, principal, *, release=None, names=None, supervisors=None, coordinated=(), ask_owner=None
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
     owner_queue = True
@@ -336,7 +336,11 @@ def needs_me(
             if not owner_queue and not own_ask:
                 continue
             kind = None
-            addressed = row["ask_to"] in (None, f"user:{principal.user_id}") or own_ask
+            addressed = (
+                row["ask_to"] in (None, f"user:{principal.user_id}")
+                or own_ask
+                or (ask_owner is not None and ask_owner(row) == f"user:{principal.user_id}")
+            )
             if row["status"] == "review" and addressed:
                 kind = (
                     "done_review"
@@ -495,6 +499,20 @@ class BoardService:
             and q.policy.tool_visible("needs_me")
         ):
             return q
+        return None
+
+    def _ask_owner(self, row):
+        """Recover a routed question when its addressed coordinator stops being available."""
+        if (
+            row["status"] == "review"
+            and row["review_kind"] == "decision"
+            and (row["ask_to"] or "").startswith("conn:")
+        ):
+            q = self._ask_coordinator(
+                {"coordinator": row["board_coordinator"], "wing": row["board_wing"]}
+            )
+            if q is None or q.actor != row["ask_to"]:
+                return self._owner_actor()
         return None
 
     def coordinated_ask_boards(self):
@@ -2306,7 +2324,8 @@ class BoardService:
             old == "review"
             and not self.principal.person
             and (
-                not (row["ask_to"] or "").startswith("conn:")
+                row["review_kind"] == "decision"
+                or not (row["ask_to"] or "").startswith("conn:")
                 or any((row[key] or "").startswith("user:") for key in ("assignee", "return_to"))
             )
         ):
@@ -2921,6 +2940,7 @@ class BoardService:
                 names=lambda text: people(self.ctx, text),
                 supervisors=self._supervisors,
                 coordinated=self.coordinated_ask_boards(),
+                ask_owner=self._ask_owner,
             )
             approvals = (
                 self.approvals_for_me()

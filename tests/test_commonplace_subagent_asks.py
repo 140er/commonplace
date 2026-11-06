@@ -72,17 +72,12 @@ def test_orchestrator_can_escalate_with_a_reason_and_preserve_question(fresh):
     assert answered["assignee"] == sub.principal.actor
 
 
-@pytest.mark.parametrize(
-    "unavailable",
-    ["unset", "revoked", "expired", "idle", "readonly", "hidden", "restricted", "no-decide"],
-)
-def test_no_live_coordinator_keeps_owner_route(hub, fresh, unavailable):
-    orch = seat(fresh)
-    sub = fresh.connect("sub", parent=orch.id)
-    card = fresh.owner.task_add(board="work", title="Sub work", assignee=sub.principal.actor)
-    sub.work.task_take_next(task=card["number"])
+def make_coordinator_unavailable(hub, fresh, orch, unavailable):
     if unavailable == "unset":
         fresh.owner.board_set("work", None)
+    elif unavailable == "replaced":
+        replacement = fresh.connect("replacement", trust="standard")
+        fresh.owner.board_set("work", replacement.principal.actor)
     elif unavailable == "revoked":
         hub.db.revoke(orch.id, actor=fresh.user, workspace_ref=fresh.workspace)
     elif unavailable == "expired":
@@ -92,12 +87,15 @@ def test_no_live_coordinator_keeps_owner_route(hub, fresh, unavailable):
             "UPDATE connections SET client='commonplace-orchestrator',last_used_at='2000-01-01T00:00:00Z' WHERE id=?",
             (orch.id,),
         )
+    elif unavailable == "hidden":
+        hub.db.set_connection_read_wings(
+            orch.id, ["elsewhere"], actor=fresh.user, workspace_ref=fresh.workspace
+        )
     else:
+        # No public helper changes scope, trust or tool allowlists in place.
         policy = json.loads(hub.db.connection(orch.id, fresh.workspace)["policy"])
         if unavailable == "readonly":
             policy["scopes"] = ["memory:read"]
-        elif unavailable == "hidden":
-            policy["read_wings"] = ["elsewhere"]
         elif unavailable == "restricted":
             policy["trust"] = "untrusted"
         else:
@@ -105,11 +103,50 @@ def test_no_live_coordinator_keeps_owner_route(hub, fresh, unavailable):
         hub.db._conn.execute(
             "UPDATE connections SET policy=? WHERE id=?", (json.dumps(policy), orch.id)
         )
-    asked = sub.work.ask(
-        REVIEW_QUESTION, options=REVIEW_OPTIONS, task=card["number"], context=REVIEW_CONTEXT
-    )
-    assert asked["ask_to"] == fresh.owner.principal.actor
+
+
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize(
+    "unavailable",
+    [
+        "unset",
+        "revoked",
+        "expired",
+        "idle",
+        "readonly",
+        "hidden",
+        "restricted",
+        "no-decide",
+        "replaced",
+    ],
+)
+def test_no_live_coordinator_keeps_owner_route(hub, fresh, unavailable, when):
+    orch = seat(fresh)
+    sub = fresh.connect("sub", parent=orch.id)
+    card = fresh.owner.task_add(board="work", title="Sub work", assignee=sub.principal.actor)
+    sub.work.task_take_next(task=card["number"])
+    if when == "after":
+        asked = sub.work.ask(
+            REVIEW_QUESTION, options=REVIEW_OPTIONS, task=card["number"], context=REVIEW_CONTEXT
+        )
+        assert asked["ask_to"] == orch.principal.actor
+        assert asked["number"] not in {c["number"] for c in fresh.owner.needs_me()["asks"]}
+    make_coordinator_unavailable(hub, fresh, orch, unavailable)
+    if when == "before":
+        asked = sub.work.ask(
+            REVIEW_QUESTION, options=REVIEW_OPTIONS, task=card["number"], context=REVIEW_CONTEXT
+        )
+        expected = "conn:replacement" if unavailable == "replaced" else fresh.owner.principal.actor
+        assert asked["ask_to"] == expected
+        if unavailable == "replaced":
+            assert asked["number"] not in {c["number"] for c in fresh.owner.needs_me()["asks"]}
+            return
+    before = fresh.owner.task_show(asked["number"])
     assert asked["number"] in {c["number"] for c in fresh.owner.needs_me()["asks"]}
+    # Falling back is a projection; reading the queue never rewrites the question or audit.
+    assert fresh.owner.task_show(asked["number"]) == before
+    answered = fresh.owner.decide(asked["number"], choice=REVIEW_OPTIONS[0])
+    assert answered["assignee"] == sub.principal.actor
 
 
 def test_owner_and_top_level_asks_keep_owner_route(fresh):
@@ -158,11 +195,25 @@ def test_standard_coordinator_can_answer_via_mcp(hub, fresh):
     )
 
 
-def test_subagent_can_ask_without_an_existing_card(fresh):
+def test_subagent_requires_released_card_before_asking(fresh):
     orch = seat(fresh)
     sub = fresh.connect("sub", parent=orch.id)
+    with pytest.raises(ToolError, match="proposal"):
+        sub.work.ask(
+            REVIEW_QUESTION, options=REVIEW_OPTIONS, board="work", context=REVIEW_CONTEXT
+        )
+    proposal = sub.work.task_add(board="work", title="Sub work")
+    assert proposal["status"] == "backlog"
+    assert proposal["proposal_status"] == "pending"
+    with pytest.raises(ToolError):
+        sub.work.ask(
+            REVIEW_QUESTION, options=REVIEW_OPTIONS, task=proposal["number"], context=REVIEW_CONTEXT
+        )
+    released = orch.work.task_approve(proposal["number"], reason="Proceed with this work.")
+    assert released["status"] == "todo"
+    sub.work.task_take_next(task=proposal["number"])
     asked = sub.work.ask(
-        REVIEW_QUESTION, options=REVIEW_OPTIONS, board="work", context=REVIEW_CONTEXT
+        REVIEW_QUESTION, options=REVIEW_OPTIONS, task=proposal["number"], context=REVIEW_CONTEXT
     )
     assert asked["ask_to"] == orch.principal.actor
     assert asked["number"] not in {c["number"] for c in fresh.owner.needs_me()["asks"]}

@@ -106,6 +106,8 @@ to send the unchanged question, options, context and return recipient to the own
 an empty reason is refused. Owner and top-level asks, completion reviews and
 explicit person handoffs retain their existing route. When no coordinator is
 available, existing owner routing and proposal requirements remain in effect.
+If a routed coordinator becomes unavailable or is replaced, the pending ask
+appears in the owner queue again without changing its stored words or audit log.
 
 
 ### Restricted-origin card content

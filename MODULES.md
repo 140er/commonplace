@@ -210,6 +210,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Shared fixtures and harnesses and every test file not listed in another block.
 
+  - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
+
 - **Promises:**
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
@@ -335,7 +337,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Holders may annotate an inactive status line without activation.
 
-  - Subagent asks on released cards reach the live board coordinator, which may answer or escalate with a reason; absent a live coordinator the owner route remains.
+  - Subagent asks on released cards reach the live board coordinator, which may answer or escalate with a reason; absent a live coordinator the owner route remains, including asks already routed before a coordinator becomes unavailable or is replaced.
 
 - **How it fails:**
 
