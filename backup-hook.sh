@@ -145,6 +145,21 @@ if [[ -n "$reserve" && ! "$reserve" =~ ^[0-9]{1,18}$ ]]; then
     stage="configuration: COMMONPLACE_BACKUP_RESERVE_BYTES must be whole bytes"
     exit 2
 fi
+# Extra free space on top of the size estimate and the reserve (default 2 GB).
+margin=${COMMONPLACE_BACKUP_MARGIN_BYTES:-2000000000}
+if [[ ! "$margin" =~ ^[0-9]{1,18}$ ]]; then
+    stage="configuration: COMMONPLACE_BACKUP_MARGIN_BYTES must be whole bytes"
+    exit 2
+fi
+# The heartbeat is touched every 10 s, or every third of a shorter stale limit.
+stale_s=${COMMONPLACE_BACKUP_HEARTBEAT_STALE_S:-60}
+if [[ ! "$stale_s" =~ ^[1-9][0-9]{0,6}$ ]]; then
+    stage="configuration: COMMONPLACE_BACKUP_HEARTBEAT_STALE_S must be positive whole seconds"
+    exit 2
+fi
+hb_every=$(( stale_s / 3 ))
+(( hb_every <= 10 )) || hb_every=10
+(( hb_every >= 1 )) || hb_every=1
 # This hook never reads the env file itself; Compose does.
 compose=(docker compose --env-file "$env_file" -f "$compose_file")
 
@@ -240,9 +255,10 @@ run_backup() {
     fi
     estimate=$({ du -sb --exclude=.backup-staging -- "$data_host" 2>/dev/null || true; } | cut -f1)
     [[ "$estimate" =~ ^[0-9]+$ ]] || fail "disk precheck: cannot estimate data size"
-    need=$(( estimate + 2000000000 + 10#$reserve ))
-    printf 'disk: estimate %s bytes, free %s bytes, reserve %s bytes\n' "$estimate" "$avail" "$reserve"
-    (( avail >= need )) || fail "disk precheck: free space below estimate + 2 GB + reserve"
+    need=$(( estimate + 10#$margin + 10#$reserve ))
+    printf 'disk: estimate %s bytes, free %s bytes, margin %s bytes, reserve %s bytes\n' \
+        "$estimate" "$avail" "$margin" "$reserve"
+    (( avail >= need )) || fail "disk precheck: free space below estimate + margin + reserve"
 
     stamp=$(date -u +%Y%m%dT%H%M%S.%NZ)-$$
     [[ "$stamp" =~ $stamp_re ]] || fail "stamp"
@@ -262,7 +278,7 @@ run_backup() {
     touch "$hb"
     # The snapshot supervisor aborts when this heartbeat goes stale, so a killed
     # hook ends the in-container snapshot without any signal crossing into it.
-    ( set +e; while kill -0 $$ 2>/dev/null; do touch -- "$hb"; sleep 10; done ) 9>&- 3>&- </dev/null & hb_pid=$!
+    ( set +e; while kill -0 $$ 2>/dev/null; do touch -- "$hb"; sleep "$hb_every"; done ) 9>&- 3>&- </dev/null & hb_pid=$!
     t=$(( deadline - $(date +%s) + 120 ))
     snapshot_started=1
     printf 'snapshot %s started\n' "$stamp"

@@ -145,9 +145,14 @@ seconds, enforced inside the container as well). If the hook is killed, its
 heartbeat file goes stale and the in-container snapshot stops itself within
 about a minute; nothing is published. Other `COMMONPLACE_BACKUP_*` knobs (lease,
 pause limit, bandwidth cap, disk reserve) are read from the service's own
-environment; the hook reads only `COMMONPLACE_BACKUP_DEADLINE` and
+environment; the hook reads only `COMMONPLACE_BACKUP_DEADLINE`,
 `COMMONPLACE_BACKUP_RESERVE_BYTES` (free space kept on the data filesystem,
-default the larger of 10 GB and 5 percent). It never reads the env file itself.
+default the larger of 10 GB and 5 percent), `COMMONPLACE_BACKUP_MARGIN_BYTES`
+(extra free space on top of the size estimate and the reserve, default 2 GB;
+tests on small filesystems lower it) and `COMMONPLACE_BACKUP_HEARTBEAT_STALE_S`
+(default 60; the hook touches the heartbeat every 10 s, or every third of a
+shorter limit; set the same value in the service's environment). It never reads
+the env file itself.
 
 If you wrap the hook in your own host job instead of `nightly-backup.sh`, make
 that job remove `commonplace-*` and `.commonplace-staging` from its staging
