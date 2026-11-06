@@ -322,6 +322,13 @@ def resolve_in(conn, board: str, config_ref: str | None = None) -> Version:
 
 
 def restore_state_in(conn) -> RestoreState:
+    """The restore flag; read-only. A store that was never opened (its tables come from
+    an external seed, so ``orch_state`` or its row is missing) never converted a marker,
+    so it is not flagged; a pending marker is the caller's check (``marker_pending``)."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_state'"
+    ).fetchone():
+        return RestoreState("", False, None, None, None, None, None)
     row = conn.execute("SELECT * FROM orch_state WHERE id=1").fetchone()
     if row is None:  # tables created by an external seed, store never opened
         return RestoreState("", False, None, None, None, None, None)
