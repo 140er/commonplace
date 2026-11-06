@@ -168,10 +168,12 @@ def _ensure_staging(staging: Path) -> None:
         raise OnlineBackupError("destination", f"{STAGING_NAME} belongs to another user")
 
 
-def _lock_held(path: Path, *, exclusive: bool = False) -> bool:
+def _lock_held(path: Path, *, only_exclusive: bool = False) -> bool:
     """True when another open file holds a flock on ``path``.
 
-    ``exclusive``: only an exclusive holder counts (a shared probe is refused).
+    By default any holder counts (the probe asks for an exclusive lock). With
+    ``only_exclusive`` only an exclusive holder counts: the probe asks for a
+    shared lock, which shared holders do not block.
     """
     import fcntl
 
@@ -180,7 +182,7 @@ def _lock_held(path: Path, *, exclusive: bool = False) -> bool:
     except FileNotFoundError:
         return False
     try:
-        mode = fcntl.LOCK_SH if exclusive else fcntl.LOCK_EX
+        mode = fcntl.LOCK_SH if only_exclusive else fcntl.LOCK_EX
         fcntl.flock(fd, mode | fcntl.LOCK_NB)
     except OSError as exc:
         if exc.errno in _BUSY_ERRNOS:
@@ -910,6 +912,13 @@ class _Cut:
         copy_started = time.monotonic()
         for path in sorted(tree.wal):
             self._copy_pinned(path)
+        # Every other file is copied from the descriptor opened at L, up to its
+        # size at L. That is a consistent cut only because no gateway or worker
+        # path rewrites an existing non-SQLite file in place: they append (logs),
+        # create exclusively, or write a temporary file and rename it over the
+        # old one (the descriptor keeps the old inode). Worker files are copied
+        # above while their workers are paused. A new in-place writer must be
+        # paused or gated for the run like the workers.
         for path in sorted(self.fds):
             fd, size = self.fds.pop(path)
             try:
@@ -1012,10 +1021,10 @@ def backup_online(
     _ensure_staging(staging)
     held = {
         "run lock": _lock_held(staging / f"{stamp}.lock"),
-        "fence": _lock_held(root / FENCE_NAME, exclusive=True),
+        "fence": _lock_held(root / FENCE_NAME, only_exclusive=True),
     }
     if client is None:
-        held["data lock"] = _lock_held(root / LOCK_NAME, exclusive=True)
+        held["data lock"] = _lock_held(root / LOCK_NAME, only_exclusive=True)
     for stage, ok in held.items():
         if not ok:
             raise OnlineBackupError(stage, "the snapshot caller does not hold this lock")
