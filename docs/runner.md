@@ -257,3 +257,20 @@ config and 5 for a hub failure in `--once` mode.
 3. [ ] T3 provider instance and topic mapping set up by the owner; T3 grant scoping known, or its absence accepted.
 4. [ ] Only then: a real `POST /api/runners` enrollment and `attest` in the owner's own session.
 5. [ ] Runner config written by the owner (0600), with `shared_checkout_ack` for each project only after the owner accepts that agents work in that project's checkout (or points the project at a dedicated clone, OD-B); `runner check` exit 0. Any service install or activation is a separate approval.
+
+### Optional workspace admission
+
+When agent orchestration is enabled, claims, start creation and configured starts
+share a runner `BEGIN IMMEDIATE` lock and a deduplicated project count. Claims hold
+that lock until their card transaction commits or rolls back, including before any
+machine is enrolled. Control settings and worker identities are read before waiting
+on board or runner locks. Runner paths read committed card state under that lock.
+A settings-read failure refuses admission with `settings_unavailable`.
+
+Queued starts reserve capacity at creation; lease checks exclude queued jobs and
+admit the oldest eligible job below the active cap. A started job counts for one
+hour only while its card is todo or doing. Review/done releases the project slot;
+the existing per-machine one-hour fence still applies independently. An ordinary
+agent's doing card overlaps its runner job only once; an existing agent or a card's
+own worker may proceed at cap. A coordinator change is rechecked before starting.
+See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.

@@ -101,3 +101,39 @@ may invoke the equivalent MCP `board_own_wing` if they can read and write both
 wings. A seat minted by Connect lacks access to the target wing and cannot do
 this itself. Restricted connections are refused.
 The operator connects the project's seat afterwards.
+
+## Opt-in agent orchestration
+
+Workspace owners can enable **Orchestrators manage agent starts** in Settings
+(`GET`/`PUT /api/settings/orchestration`, body `{"enabled":true}`). It defaults
+to off. With it on, only the board coordinator's active PAT or a signed-in owner
+can request starts on boards without runner config. Configured boards keep their
+accepted config and `orch_card_start` rules.
+
+Projects default to three slots; a project limit overrides that default. Runner
+config uses the smaller of its cap and the project row. Ordinary agents count
+once even with several doing cards; runner workers count per card. Queued starts
+reserve slots at creation. Leases admit the oldest eligible queued start using
+active slots, so a full queue cannot block its own first lease. Board lists expose
+`max_agents` and active `used` only while the switch is on. A person cannot reserve
+another card for an agent already doing work on that board (`agent_busy`).
+
+Connect still creates a standard-trust seat. Owners separately approve permissions
+in Project settings, choosing machines and confirming trust. The API is
+`POST /api/projects/<slug>/orchestrator/trust` with
+`{"confirm":true,"machines":["<machine-id>"]}`. Trust allows the seat to request
+starts, inspect status, cancel its own starts, read permitted project data and
+repository rules, release/approve and annotate cards, and stamp trusted submissions.
+It does not allow board creation or handoff launch. Invalid grants return 400,
+unknown machines 404, and revoked/disabled machines or conflicting authority 409;
+the whole change rolls back. Only signed-in workspace owners may use this route.
+
+`{"trusted":false}` demotes the seat and removes only its requester id from
+machines, preserving other entries even when stale. Switching orchestration off
+atomically demotes all project seats and removes their requester ids. Other
+requesters retain the existing behavior. A settings read failure refuses admission
+with `settings_unavailable`; an absent table means off.
+
+With orchestration on, Connect suggests `space_message,card.created` subscriptions.
+Without a runner or a subscribed card webhook, new work waits for the seat's next
+session; this switch does not run the orchestrator continuously.

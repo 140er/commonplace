@@ -1,6 +1,7 @@
 """Machine-only HTTP endpoints; no launch commands or user content cross this API."""
 
 import json
+from contextlib import nullcontext
 from urllib.parse import parse_qs, urlsplit
 
 from commonplace.boards._http import HTTPError, send_json
@@ -80,6 +81,12 @@ def _config_job_check(store, card, row):
 
 
 def _starting_check(gateway, machine, row, store=None):
+    from commonplace.projects import orchestration as orch
+
+    try:
+        on = orch.enabled(gateway.db, machine["workspace_id"])
+    except orch.SettingsUnavailable:
+        return "settings_unavailable"
     if not machine["enabled"] or machine["revoked_at"]:
         return "machine_disabled"
     if machine["binding_state"] != "owner_attested":
@@ -109,6 +116,10 @@ def _starting_check(gateway, machine, row, store=None):
             card = task_row(conn, row["task_number"])
             require_visible(card, principal)
             board = service._board(conn, card["board"])
+            if on and row["config_version"] is None:
+                refusal = orch.requester_refusal(gateway, principal, board)
+                if refusal:
+                    return refusal
             if row["config_version"] is not None:
                 refusal = _config_job_check(store, card, row)
                 if refusal is not None:
@@ -150,8 +161,14 @@ def _listing(store, machine, query):
 def register(gateway):
     def route(h):
         try:
-            # The control lock keeps the grant stable through the guarded transition.
-            with gateway.db._lock:
+            from commonplace.projects import orchestration as orch
+
+            principal = gateway.principal_for(h)
+            if principal is None:
+                raise HTTPError(404, "not found")
+            on = orch.enabled(gateway.db, principal.workspace_id)
+            # With opt-in, no control lock may wait on a runner or board lock.
+            with nullcontext() if on else gateway.db._lock:
                 principal = gateway.principal_for(h)
                 machine = _machine(gateway, principal)
                 if machine is None:
@@ -181,11 +198,23 @@ def register(gateway):
                     elif action == "renew":
                         row = jobs.renew(store, machine, **body)
                     elif action == "starting":
+                        if on:
+                            with store.connection() as conn:
+                                candidate = jobs._fenced(conn, machine["id"], body["lease_token"])
+                            refusal = _starting_check(gateway, machine, candidate, store)
+
+                            def validate(row):
+                                return refusal
+                        else:
+
+                            def validate(row):
+                                return _starting_check(gateway, machine, row, store)
+
                         row = jobs.starting(
                             store,
                             machine,
                             **body,
-                            validate=lambda row: _starting_check(gateway, machine, row, store),
+                            validate=validate,
                         )
                     else:
                         row = jobs.result(store, machine, **body)
@@ -203,7 +232,11 @@ def register(gateway):
             send_json(h, 409, {"error": str(exc)})
         except ToolError as exc:
             message = str(exc).removeprefix("no: ")
-            send_json(h, 404 if message == "start not found" else 403, {"error": message})
+            send_json(
+                h,
+                getattr(exc, "status", 404 if message == "start not found" else 403),
+                {"error": message},
+            )
         except ValueError as exc:
             send_json(h, 400, {"error": str(exc)})
 
