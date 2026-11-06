@@ -149,10 +149,13 @@ RUNNER = textwrap.dedent(
             deadline=deadline,
         )
         mode = cfg.get("snapshot", "ok")
+        if mode == "drop_hb":
+            # The caller's cleanup removed the heartbeat before the supervisor saw it.
+            os.unlink(dest + ".hb")
         if client is not None:
             client.hello()
             client.pause()
-        if mode == "sleep":
+        if mode in ("sleep", "drop_hb"):
             while True:
                 time.sleep(0.05)
         if mode == "ignore_term":
@@ -273,6 +276,9 @@ def env(tmp_path):
         "procs": [],
         "gateway": None,
     }
+    # As the backup hook does: the heartbeat exists before every online run.
+    box["staging"].mkdir(mode=0o700)
+    (box["staging"] / f"{STAMP}.hb").touch()
     yield box
     for proc in box["procs"]:
         if proc.poll() is None:
@@ -493,7 +499,7 @@ def test_backup_waits_for_cli_fence_then_fails(env):
 def test_stale_heartbeat_stops_child_and_invalidates_run(env):
     gw = gateway(env)
     hb = env["staging"] / f"{STAMP}.hb"
-    env["staging"].mkdir(mode=0o700)
+    env["staging"].mkdir(mode=0o700, exist_ok=True)
     hb.touch()
     started = time.monotonic()
     result = run_cli(
@@ -513,9 +519,57 @@ def test_stale_heartbeat_stops_child_and_invalidates_run(env):
     assert_nothing_published(env)
 
 
+def test_online_refuses_without_heartbeat_before_fork(env):
+    gw = gateway(env)
+    (env["staging"] / f"{STAMP}.hb").unlink()
+    result = run_cli(env, "--online", str(env["dest"]))
+    assert result.returncode == 2, result.stderr
+    assert "(stage: heartbeat missing)" in result.stderr
+    assert records(env["probe"]) == [], "a snapshot child ran without a heartbeat"
+    assert "hello" not in gw.ops and "pause" not in gw.ops
+    assert not Path(str(env["dest"]) + ".lock").exists()
+    assert lock_free(env["data"] / FENCE_NAME)
+    assert_nothing_published(env)
+
+
+def test_heartbeat_removed_before_first_tick_aborts_within_a_tick(env):
+    """With the default stale limit (60 s) a tick is 5 s; the heartbeat is gone
+    before the supervisor first looks, so it is never "seen". The run must still
+    abort at once instead of running to its deadline."""
+    gw = gateway(env)
+    started = time.monotonic()
+    result = run_cli(
+        env,
+        "--online",
+        "--deadline",
+        str(time.time() + 25),
+        str(env["dest"]),
+        snapshot="drop_hb",
+    )
+    elapsed = time.monotonic() - started
+    assert result.returncode == 2, result.stderr
+    assert "(stage: heartbeat gone)" in result.stderr, result.stderr
+    assert elapsed < 15, f"abort took {elapsed:.1f} s"
+    (snap,) = records(env["probe"])
+    assert not alive(snap["pid"])
+    assert "abort" in gw.ops or gw.eof_states
+    assert lock_free(Path(str(env["dest"]) + ".lock"))
+    assert lock_free(env["data"] / FENCE_NAME)
+    assert_nothing_published(env)
+
+
+def test_bad_cli_fence_knob_is_an_error_not_a_traceback(tmp_path, monkeypatch, capsys):
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("COMMONPLACE_FENCE_WAIT_S", "soon")
+    assert cli.main(["--data", str(data), "user", "list"]) == 2
+    err = capsys.readouterr().err
+    assert "COMMONPLACE_FENCE_WAIT_S" in err and "Traceback" not in err
+
+
 def test_term_ignored_escalates_to_kill(env):
     gateway(env)
-    env["staging"].mkdir(mode=0o700)
+    env["staging"].mkdir(mode=0o700, exist_ok=True)
     (env["staging"] / f"{STAMP}.hb").touch()
     result = run_cli(
         env,
@@ -626,7 +680,7 @@ def test_check_online(env):
 
 
 def test_online_cleanup_is_lock_checked_and_never_signals(env):
-    env["staging"].mkdir(mode=0o700)
+    env["staging"].mkdir(mode=0o700, exist_ok=True)
     partial = Path(str(env["dest"]) + ".partial")
     partial.mkdir()
     (partial / "control.sqlite3").write_bytes(b"x" * 10)
@@ -665,7 +719,7 @@ def test_online_cleanup_is_lock_checked_and_never_signals(env):
 )
 def test_online_dest_rules(env, dest):
     gateway(env)
-    env["staging"].mkdir(mode=0o700)
+    env["staging"].mkdir(mode=0o700, exist_ok=True)
     target = {
         "outside": env["data"].parent / STAMP,
         "bad-stamp": env["staging"] / "not a stamp",

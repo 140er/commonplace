@@ -23,7 +23,9 @@ exactly once, by the process that writes the snapshot, and a stuck child keeps
 every lock until it is gone. Every gateway request of the child goes through
 the supervisor (the relay). The supervisor watches the hook's heartbeat file
 ``<stamp>.hb``, the run deadline and the socket; on any of them it aborts the
-run, then stops the child's process group (TERM, wait, KILL, wait). The child
+run, then stops the child's process group (TERM, wait, KILL, wait). The caller
+creates ``<stamp>.hb`` before the run and keeps touching it: a run refuses to
+start without it, and a missing heartbeat is "heartbeat gone". The child
 also exits on its own when the supervisor's lifeline pipe closes or its
 deadline passes. Nothing is published unless the gateway committed the run.
 """
@@ -88,10 +90,14 @@ def cli_fence(data_dir):
 
     Waits ``COMMONPLACE_FENCE_WAIT_S`` (default 30 s) for a running backup.
     """
+    try:
+        wait_s = _pause_module().Knobs.read("cli_fence_wait_s")
+    except ValueError as exc:
+        raise BackupError(f"COMMONPLACE_FENCE_WAIT_S: {exc}") from None
     return fence_lock(
         data_dir,
         exclusive=False,
-        wait_s=_pause_module().Knobs.read("cli_fence_wait_s"),
+        wait_s=wait_s,
         busy_message="a backup is running; try again when it has finished",
     )
 
@@ -260,6 +266,13 @@ def run_online(data_dir, dest, *, deadline=None) -> Path:
     # No lock here: the child takes the fence (and, with no gateway, data_lock).
     _ensure_staging(target.parent)
     _check_fresh(target)
+    # The caller (the backup hook) creates the heartbeat before the run; without
+    # it nothing could ever stop a run whose caller is gone.
+    if not _sidecar(target, ".hb").is_file():
+        raise OnlineBackupError(
+            "heartbeat missing",
+            f"create {target.name}.hb next to DEST and keep touching it during the run",
+        )
     if _answering(data) is not None:
         client = _pause_module().PauseClient()
         try:
@@ -496,7 +509,7 @@ class _Supervisor:
         self.state = None
         self.result = None
         self.abort_reason = None
-        self._hb_seen = False
+        self._reaped = False
         self._peek = None
 
     def run(self) -> Path:
@@ -573,7 +586,8 @@ class _Supervisor:
                 signal.signal(sig, handler)
         if self.abort_reason is not None:
             self._abort_gateway()
-            if self._stop(pid):
+            # A reaped pid may already belong to another process: never signal it.
+            if not self._reaped and self._stop(pid):
                 raise OnlineBackupError(
                     "uninterruptible IO",
                     f"the backup child survived KILL after {self.abort_reason}; staging stays locked",
@@ -606,6 +620,7 @@ class _Supervisor:
         while True:
             done, status = os.waitpid(pid, os.WNOHANG)
             if done:
+                self._reaped = True
                 if req_open:
                     buffer = self._drain(req_r, buffer, channel)
                 return status
@@ -688,8 +703,8 @@ class _Supervisor:
         try:
             age = time.time() - os.stat(self.hb).st_mtime
         except FileNotFoundError:
-            return "heartbeat gone" if self._hb_seen else None
-        self._hb_seen = True
+            # run_online refused a run without it, so it was removed during the run.
+            return "heartbeat gone"
         if age > float(self.knobs.heartbeat_stale_s):
             return "heartbeat stale"
         return None
