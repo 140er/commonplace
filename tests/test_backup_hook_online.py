@@ -346,6 +346,49 @@ def no_leftovers(stack: Stack) -> bool:
     return not found["oneoffs"] and not found["container processes"]
 
 
+def fd_holders(path: Path) -> list:
+    """Live processes with an open descriptor on ``path``."""
+    target = str(path)
+    holders = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            fds = list((entry / "fd").iterdir())
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(fd) == target:
+                    holders.append({"pid": int(entry.name), "argv": [a.decode() for a in argv[:6]]})
+                    break
+            except OSError:
+                continue
+    return holders
+
+
+def lock_free(path: Path) -> bool:
+    with open(path, "rb") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+    return True
+
+
+def kill_session(sid: int) -> None:
+    """SIGKILL every process left in a killed hook's session (timeout runs its own group)."""
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if int((entry / "stat").read_text().rsplit(")", 1)[1].split()[3]) == sid:
+                os.kill(int(entry.name), signal.SIGKILL)
+        except (OSError, ValueError, IndexError):
+            continue
+
+
 # --------------------------------------------------------------------------- H1
 
 
@@ -420,6 +463,30 @@ def test_hook_kill_leaves_serve_and_no_oneoff(make_stack, signame):
         f"RED238: locks still held after the kill: {held_locks(stack)}"
     )
     assert stack.engine.healthz() == 200, "RED238: serve stopped answering /healthz"
+
+
+def test_hook_kill_frees_run_lock_at_once(make_stack):
+    """A KILLed hook's exec clients hold no descriptor on the per-run lock.
+
+    The heartbeat stale value is the production default (60 s), so the in-container
+    snapshot outlives the hook for a minute; the next run must not be locked out
+    for that window by an inherited lock descriptor.
+    """
+    stack = make_stack(knobs={"COMMONPLACE_BACKUP_DEADLINE": "300"}, hang=True)
+    lock = stack.backups / ".commonplace-backup.lock"
+    run = start_hook(stack)
+    try:
+        wait_for_snapshot_call(run)
+        wait_until(stack.engine.hang_engaged, 10)
+        run.capture_logs()
+        os.kill(run.proc.pid, signal.SIGKILL)
+        run.proc.wait(timeout=10)
+        wait_until(lambda: not fd_holders(lock) and lock_free(lock), 3)
+        holders = fd_holders(lock)
+        assert not holders, f"RED238: processes still hold the run lock fd: {holders}"
+        assert lock_free(lock), "RED238: the run lock is still held after the hook was killed"
+    finally:
+        kill_session(run.proc.pid)
 
 
 # --------------------------------------------------------------------------- H4
