@@ -39,7 +39,7 @@ from mempalace.tool_capabilities import classify_tool
 
 from . import events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
-from .control_db import ControlDB, Principal
+from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
 from .workers import SupervisorClosed, Worker, WorkersPaused, WorkerSupervisor
@@ -1341,20 +1341,30 @@ class Gateway:
         return server
 
     def serve(self, host: str, port: int, idle_check_s: float = 60.0) -> None:
-        from commonplace.backup_pause import PauseServer
+        from commonplace.backup_pause import PauseServer, supported
         from commonplace.rules.checks import deploy
 
-        deploy(self)
-        server = self.build_server(host, port)
-        self._http_server = server
-        stop = threading.Event()
-        # The online-backup socket lives as long as serve. If it cannot start,
-        # serve still runs and online backups fail closed.
+        # One gateway per data directory. The online-backup socket is bound
+        # first, before any write: an online backup pauses and fences only the
+        # gateway that answers it, so a second gateway on the same data
+        # directory (or any gateway without its socket) would write unseen
+        # during the copy. Where the socket is supported, serve refuses to run
+        # without it.
         self.pause_server = None
         root = getattr(self.supervisor, "root", None)
         if root is not None:
             self.pause_server = PauseServer(self.supervisor, str(root.parent))
-            self.pause_server.start()
+            if not self.pause_server.start() and supported():
+                raise ControlError(_pause_refusal(self.pause_server))
+        try:
+            deploy(self)
+            server = self.build_server(host, port)
+        except BaseException:
+            if self.pause_server is not None:
+                self.pause_server.stop()
+            raise
+        self._http_server = server
+        stop = threading.Event()
 
         def reap():
             while not stop.wait(idle_check_s):
@@ -1391,6 +1401,21 @@ class Gateway:
         server = getattr(self, "_http_server", None)
         if server is not None:
             server.shutdown()
+
+
+def _pause_refusal(pause_server) -> str:
+    from commonplace.backup_pause import answering
+
+    hello = answering(pause_server.path) if pause_server.path is not None else None
+    if hello and os.path.realpath(str(hello.get("data_dir") or "")) == pause_server.data_dir:
+        return (
+            f"another gateway (pid {hello.get('gateway_pid')}) already serves this data "
+            "directory; run one gateway per data directory"
+        )
+    return (
+        f"the online backup socket did not start ({pause_server.start_error}); "
+        "serve refuses to run without it"
+    )
 
 
 class _GatewayHandler(BaseHTTPRequestHandler):

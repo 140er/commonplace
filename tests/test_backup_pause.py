@@ -450,6 +450,18 @@ def test_thaw_after_gate_lapse_is_invalid(env):
         assert refused["error"] == bp.E_INVALID and refused["reason"] == bp.R_FREEZE_LEASE
 
 
+def test_resume_after_gate_lapse_is_invalid(env):
+    server, sup, adm = env(freeze_lease_s=30, lease_s=30)
+    with _client(server) as client:
+        client.hello()
+        client.pause()
+        client.freeze()
+        adm.frozen = False  # lapsed inside the gate, callback not yet delivered
+        refused = client.call("resume")
+        assert refused["error"] == bp.E_INVALID and refused["reason"] == bp.R_FREEZE_LEASE
+        assert not sup.paused
+
+
 def test_pause_max_invalidates(env):
     server, sup, _adm = env(pause_max_s=0.4, lease_s=5)
     with _client(server) as client:
@@ -736,6 +748,79 @@ def test_gateway_serve_owns_the_socket(tmp_path, short_dir, monkeypatch):
         t.join(10)
         db.close()
     assert not t.is_alive()
+    assert not path.exists()
+
+
+def test_second_gateway_on_the_same_data_dir_refuses_to_serve(tmp_path, short_dir, monkeypatch):
+    import sys
+
+    from commonplace.control_db import ControlDB, ControlError
+    from commonplace.gateway import Gateway
+
+    path = short_dir / "gw" / "gateway.sock"
+    monkeypatch.setenv(bp.SOCKET_ENV, str(path))
+    data = tmp_path / "data"
+    data.mkdir()
+    db = ControlDB(str(data / "control.sqlite3"))
+    db.create_user("owner@example.com", is_admin=True)
+    first = Gateway(db, WorkerSupervisor(str(data), launcher=ProcLauncher()))
+    t = threading.Thread(target=first.serve, args=("127.0.0.1", 0), daemon=True)
+    t.start()
+    built, errors = [], []
+
+    class Second(Gateway):
+        def build_server(self, host, port):
+            built.append(True)
+            return super().build_server(host, port)
+
+    second = Second(db, WorkerSupervisor(str(data), launcher=ProcLauncher()))
+
+    def serve_second():
+        try:
+            second.serve("127.0.0.1", 0)
+        except BaseException as exc:
+            errors.append(exc)
+
+    t2 = threading.Thread(target=serve_second, daemon=True)
+    cli = None
+    try:
+        assert _until(lambda: bp.answering(path) is not None, 10)
+        t2.start()
+        t2.join(10)
+        assert not t2.is_alive() and not built, "a second gateway serves the same data dir"
+        assert isinstance(errors[0], ControlError), errors
+        assert "one gateway per data directory" in str(errors[0])
+        # The real command: a second `commonplace serve` exits non-zero without serving.
+        root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "PYTHONPATH": str(root), bp.SOCKET_ENV: str(path)}
+        env.pop("COMMONPLACE_DATA", None)
+        cli = subprocess.Popen(
+            [sys.executable, "-m", "commonplace", "--data", str(data), "serve", "--port", "0"],
+            env=env,
+            cwd=str(tmp_path),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            out, _ = cli.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("a second `commonplace serve` kept serving") from None
+        assert cli.returncode == 2, out
+        assert "one gateway per data directory" in out, out
+        hello = bp.answering(path)
+        assert hello["gateway_pid"] == os.getpid() and first.pause_server.serving
+    finally:
+        if cli is not None and cli.poll() is None:
+            cli.kill()
+            cli.wait()
+        if t2.is_alive():
+            second.shutdown()
+            t2.join(10)
+        first.shutdown()
+        t.join(10)
+        db.close()
     assert not path.exists()
 
 

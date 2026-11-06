@@ -10,8 +10,9 @@ Socket
     The directory is ``0700`` and must be owned by the gateway's uid; the
     socket is ``0600``; every peer's uid is checked with ``SO_PEERCRED``. A
     path inside the data directory is refused. The gateway binds it in
-    ``Gateway.serve`` (stale socket unlinked first, a live one is left alone)
-    and removes it when serve ends. Linux only.
+    ``Gateway.serve`` (stale socket unlinked first, a live one is left alone,
+    and serve refuses to start while another gateway answers on it) and
+    removes it when serve ends. Linux only.
 
 Protocol (version 1)
     JSON lines, UTF-8, one request object per line, one response per request,
@@ -402,8 +403,10 @@ class PauseServer:
     """The gateway side: binds the admin socket and runs the fence.
 
     ``supervisor`` is the gateway's :class:`~commonplace.workers.WorkerSupervisor`
-    (``pause``/``resume``/``worker_pids``). ``start`` never raises: when the socket
-    cannot be bound, the gateway keeps serving and online backups fail closed.
+    (``pause``/``resume``/``worker_pids``). ``start`` never raises: it returns
+    False and sets ``start_error`` when the socket cannot be bound (for example
+    another gateway answers on it). ``Gateway.serve`` then refuses to run on a
+    supported platform: one gateway per data directory.
     """
 
     def __init__(
@@ -434,6 +437,7 @@ class PauseServer:
         self._conns: set = set()
         self._registry_error: Optional[str] = None
         self._next_counter_check = 0.0
+        self.start_error: Optional[str] = None
 
     @property
     def serving(self) -> bool:
@@ -443,6 +447,7 @@ class PauseServer:
     def start(self) -> bool:
         global _ACTIVE_SERVER
         if not supported():
+            self.start_error = "not supported on this platform"
             logger.warning("online backup socket is not supported on this platform")
             return False
         try:
@@ -461,6 +466,7 @@ class PauseServer:
             prepare_socket_dir(self.path.parent, self._uid)
             self._sock = self._bind(self.path)
         except Exception as exc:
+            self.start_error = str(exc) or type(exc).__name__
             logger.error("online backup socket not started: %s", exc)
             return False
         _ACTIVE_SERVER = self
@@ -861,6 +867,11 @@ class PauseServer:
             if refused:
                 return refused
             paused_s = self.clock() - run.pause_started
+            if run.frozen:
+                run.frozen = False
+                if self.admission.thaw() is False:  # the gate's own lease lapsed first
+                    self._invalidate(run, R_FREEZE_LEASE)
+                    return self._refuse("resume", run, E_INVALID)
             self._undo(run)
             run.state = RESUMED_OK
             return self._ok("resume", run, paused_s=paused_s)
