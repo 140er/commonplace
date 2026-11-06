@@ -71,6 +71,9 @@ entry was written.
   first statement inside its fenced transaction; the job or the coded miss and
   the cursor advance commit together. Only infrastructure errors leave the
   cursor where it was.
+- Before the fenced transaction the sweep's only `runner.sqlite3` write is the
+  arming update of an unset cursor: it opens the orchestrator store without
+  creating tables or converting a restore marker.
 - The actor is rebuilt from the event stamps and must pass `requester_ok`;
   a member's move does not start work.
 
@@ -85,7 +88,8 @@ entry was written.
 - One gate per `(board, repo, PR, head)` across roles unless the owner voids it.
 - `orch_resume` returns a checkpoint (open steps, `in_doubt`, `needs_person`,
   holds, next, jobs, misses) plus the unstarted `todo` cards of each configured
-  board.
+  board: no active job and no job started strictly after the card's latest
+  firing event (a start in the same second as the event does not count).
 
 ### Design before code
 
@@ -150,7 +154,9 @@ marker there.
    on copies of the same data.
 2. Restore into a new directory (`commonplace restore BACKUP NEW_DIR`); the
    destination must not exist. Keep the old directory unchanged and read-only.
-3. Start the service on the restored directory. On first open, each
+3. Start the service on the restored directory. On the first explicit open of
+   the orchestrator store (a surface, the CLI, a lease call or a start; never
+   the trigger sweep, which skips the workspace while a marker is pending), each
    workspace's restore marker becomes a durable flag in `runner.sqlite3` (new
    incarnation, all orchestrator leases dropped); the marker file is removed
    only after that commit.
@@ -184,6 +190,10 @@ still wrong.
   requester revocation that commits between that snapshot and the in-lock
   insert is not re-read; the start can still be inserted. The runner re-checks
   the requester and grants at `starting`, so the job is refused before launch.
+- **Same-second ties are listed.** Job starts and board events are stamped
+  in whole seconds, so a start in the same second as a card's latest firing
+  event cannot be ordered against it. Resume lists such a card as unstarted;
+  it may be a false positive.
 - **Skipped events.** Board events committed between a configuring accept (or
   a restore acknowledgement) and arming are skipped, not replayed. Resume lists
   the affected `todo` cards as unstarted.
