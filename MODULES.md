@@ -335,6 +335,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Holders may annotate an inactive status line without activation.
 
+  - Subagent asks on released cards reach the live board coordinator, which may answer or escalate with a reason; absent a live coordinator the owner route remains.
+
 - **How it fails:**
 
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
@@ -346,6 +348,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
+
+  - `tests/test_commonplace_subagent_asks.py` checks question routing and recipient authority.
 
 
 ## runner
