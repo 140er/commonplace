@@ -69,6 +69,7 @@ __all__ = [
     "AdmissionError",
     "AdmissionGate",
     "FreezeTimeout",
+    "GateBusy",
     "RegistryError",
     "SuccessorRegistry",
     "admin_dir",
@@ -91,6 +92,10 @@ class AdmissionError(RuntimeError):
 
 class FreezeTimeout(AdmissionError):
     """Running creators did not drain before the freeze timeout."""
+
+
+class GateBusy(AdmissionError, TimeoutError):
+    """``creating(timeout=...)`` could not enter before its timeout."""
 
 
 class RegistryError(AdmissionError):
@@ -122,6 +127,7 @@ class AdmissionGate:
         self._epoch = 0
         self._timer: Optional[threading.Timer] = None
         self._lapsed = False
+        self._busy = 0
 
     @property
     def frozen(self) -> bool:
@@ -135,8 +141,17 @@ class AdmissionGate:
         with self._cond:
             return self._active
 
+    @property
+    def busy(self) -> int:
+        """How many ``creating(timeout=...)`` calls gave up (``GateBusy``) so far.
+
+        Monotonic; a backup reads it before and after its cut to report drops.
+        """
+        with self._cond:
+            return self._busy
+
     @contextmanager
-    def creating(self, *paths) -> Iterator[None]:
+    def creating(self, *paths, timeout: Optional[float] = None) -> Iterator[None]:
         """Run a create/delete/rename block under the shared side of the gate.
 
         Waits while a freeze is draining or holds the gate (bounded by the
@@ -147,6 +162,10 @@ class AdmissionGate:
         frozen and every one of them already exists, the block cannot create
         anything (deletes are gated too), so it runs without waiting. This keeps
         plain opens of existing databases from stalling behind a freeze.
+
+        ``timeout``: give up waiting after this many seconds and raise
+        :class:`GateBusy` (for callers that would rather drop than wait, such as
+        the console activity log). ``None`` waits until the gate opens.
         """
         depth = getattr(self._local, "depth", 0)
         if depth:
@@ -157,12 +176,20 @@ class AdmissionGate:
                 self._local.depth -= 1
             return
         counted = True
+        deadline = None if timeout is None else time.monotonic() + max(0.0, float(timeout))
         with self._cond:
             while self._pending or self._frozen:
                 if self._frozen and not self._pending and paths and _all_exist(paths):
                     counted = False
                     break
-                self._cond.wait()
+                if deadline is None:
+                    self._cond.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._busy += 1
+                    raise GateBusy("admission gate is frozen for a backup")
+                self._cond.wait(remaining)
             if counted:
                 self._active += 1
                 self._local.depth = 1
@@ -484,6 +511,8 @@ class SuccessorRegistry:
         self._update(change, only_if_changed=True)
         return live
 
+    live = active  # alias
+
     def hello_fields(self) -> dict:
         """Fields for the admin ``hello`` reply (prunes first).
 
@@ -647,7 +676,9 @@ class SuccessorRegistry:
                 json.dump(data, stream, sort_keys=True)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            # rename, not os.replace: same atomic swap on POSIX, and callers' tests
+            # that patch os.replace for their own files never see the registry.
+            (os.rename if os.name == "posix" else os.replace)(temporary, path)
         except OSError as error:
             raise RegistryError(f"successor registry not writable: {error.strerror}") from None
         finally:
