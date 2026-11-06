@@ -432,7 +432,7 @@ def _(ui, seed):
     after = modal_snapshot(p)
     ok(
         initial and kept and after["focus"] == "m-chat-tab" and after["inert"] == 0,
-        "m10 chat sheet: composer focus (plan §2), trap, Esc to the tab",
+        "m10 chat sheet: composer focus (workbench plan), trap, Esc to the tab",
         {"composer": initial, "trapped": kept, **after},
     )
 
@@ -1651,7 +1651,7 @@ def _(ui, seed):
     )
 
 
-# ---- New e2e for the adopted defaults (§8): kept as cases so the SKIPS stay explicit ------
+# ---- New e2e for the adopted owner defaults: kept as cases so the SKIPS stay explicit ------
 
 for _key in SKIPS:
     if _key not in CASES:

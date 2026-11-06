@@ -5,7 +5,7 @@ import os
 import re
 from pathlib import Path
 
-# Every case that may skip, with the plan's reason (§7, §8). Any other skip fails.
+# Every case that may skip, with the plan's reason (documented SKIPS). Any other skip fails.
 SKIPS = {
     "06c.row-outline.A-118": "8.3 no 'Linked in chat': A-118 has no chat row",
     "06c.pointer-outline.hover-A-118": "8.3 no 'Linked in chat': A-118 has no chat row",
