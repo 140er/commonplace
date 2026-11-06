@@ -567,6 +567,81 @@ def test_bad_cli_fence_knob_is_an_error_not_a_traceback(tmp_path, monkeypatch, c
     assert "COMMONPLACE_FENCE_WAIT_S" in err and "Traceback" not in err
 
 
+REAPED_RUNNER = textwrap.dedent(
+    r"""
+    import json, os, sys, time, types
+    from pathlib import Path
+
+    from commonplace import backup_supervisor as bs
+
+    calls = []
+    looked = set()
+    real_waitpid = os.waitpid
+
+    def child(data, target, channel, *rest):
+        os.write(channel._w, b"not json\n")  # a protocol error, then a clean exit
+        return 0
+
+    def waitpid(pid, options):
+        if options == os.WNOHANG and pid not in looked:
+            looked.add(pid)
+            return real_waitpid(pid, 0)  # the child is gone before the first look
+        return real_waitpid(pid, options)
+
+    def recorder(name):
+        def kill(pid, sig):
+            calls.append([name, pid, int(sig)])
+            raise ProcessLookupError(pid)  # never signal for real: the pid is free
+        return kill
+
+    bs._child_main = child
+    os.waitpid = waitpid
+    os.killpg, os.kill = recorder("killpg"), recorder("kill")
+
+    root = Path(sys.argv[1])
+    target = root / "staging" / "20261107T030253.123456789Z-4242"
+    target.parent.mkdir(parents=True)
+    bs._sidecar(target, ".hb").touch()
+    knobs = types.SimpleNamespace(heartbeat_stale_s=60)
+    supervisor = bs._Supervisor(root, target, None, time.time() + 60, knobs)
+    out = {"stage": None, "reaped_pid": None}
+    try:
+        supervisor.run()
+    except bs.OnlineBackupError as exc:
+        out["stage"] = exc.stage
+    out["reaped_pid"] = sorted(looked)
+    out["calls"] = calls
+    print(json.dumps(out))
+    """
+)
+
+
+def test_supervisor_never_signals_a_reaped_child(tmp_path):
+    """A child reaped by the watch loop is never signalled: its pid may be reused.
+
+    The child writes one non-JSON request and exits; the supervisor reaps it
+    before it reads the request, so the abort reason is set by the drain after
+    the reap ("relay protocol error"). Stopping the child then must not call
+    ``killpg``/``kill`` on that pid.
+    """
+    runner = tmp_path / "reaped_runner.py"
+    runner.write_text(REAPED_RUNNER)
+    run_env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    result = subprocess.run(
+        [sys.executable, str(runner), str(tmp_path)],
+        cwd=ROOT,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert out["stage"] == "relay protocol error", out
+    assert len(out["reaped_pid"]) == 1, out
+    assert out["calls"] == [], f"signals sent to the reaped child pid: {out['calls']}"
+
+
 def test_term_ignored_escalates_to_kill(env):
     gateway(env)
     env["staging"].mkdir(mode=0o700, exist_ok=True)
