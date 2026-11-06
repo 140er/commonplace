@@ -33,7 +33,9 @@ entry was written.
   `skills` and `mcps` are advisory: rendered for sessions to read.
 - **Boards without an accepted live `[runner]` config behave exactly as
   before.** No new columns change their digest, no sweep scans them, no lease
-  exists for them.
+  exists for them. The tool list does change: the `orch_*` tools are listed on
+  every workspace, so a config can be proposed before one exists (see
+  Residuals).
 
 ### Starts on a configured board
 
@@ -185,6 +187,19 @@ still wrong.
 - **Skipped events.** Board events committed between a configuring accept (or
   a restore acknowledgement) and arming are skipped, not replayed. Resume lists
   the affected `todo` cards as unstarted.
+- **Refused triggers are not retried.** A `todo` card whose trigger start is
+  refused (`busy`, `at_cap`, `started_recently` or any other code) is a final
+  miss: the cursor moves past it and nothing re-fires it, even after the queue
+  drains or a slot frees up. It shows in the checkpoint's unstarted list and
+  as a miss; move the card out of `todo` and back to retry.
+- **Orchestrator tools on every workspace.** The `orch_*` tools appear in the
+  tool list on every workspace, also where no board has a config (runner
+  children never see them; owner-only tools are listed for owners only).
+  Without a config only proposing and reading do anything.
+- **Docs-check checks change, not accuracy.** It refuses a touched module
+  whose block did not change and a change without a `SYSTEM.md` edit
+  (whitespace-only edits do not count); it never judges whether the new text
+  is right.
 - **Cap overshoot.** The cap reads card state from `boards.sqlite3` as a
   snapshot, so a concurrent claim outside the runner can overshoot it. The 1 h
   started hold is conservative.
@@ -214,9 +229,10 @@ checklists"). Until each is closed, the residual above stands.
 
 `commonplace orch docs-check --base <ref> --head <ref>` exits non-zero on a
 changed path no `MODULES.md` block owns, a touched module whose block did not
-change, no change to this file, an empty or missing block, a bad ref or any
-error. The test suite runs it against the merge base with the development
-branch and fails closed when the base is missing. The only exception is a
+change, no change to this file (a whitespace-only edit is no change), an
+empty or missing block, a bad ref or any error. The test suite runs it
+against the merge base with the development branch and fails closed when the
+base is missing. The only exception is a
 commit trailer `Docs-waiver: W<n>` whose id is listed below **in the base
 commit**; an id added in the same change does not count.
 
