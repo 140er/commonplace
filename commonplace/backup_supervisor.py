@@ -9,15 +9,19 @@ Two locks are involved and never confused:
     the admin socket. With no gateway answering it takes it exclusive for the
     whole run, so a serve start is refused until the run ends.
 
-Fence (``.commonplace-fence.lock``, this module)
+Fence (``.commonplace-fence.lock``, :func:`commonplace.backup.fence_lock`)
     One-shot CLIs take it shared for their lifetime; ``backup --online`` takes
     it exclusive, which also serializes backups. ``serve`` never takes it.
 
-The supervisor owns the gateway connection (one connection is one run). It
-forks one child from its main thread; the child sets ``PR_SET_PDEATHSIG``,
-checks its parent, starts its own session, locks ``<stamp>.lock`` and runs the
-snapshot. Every gateway request of the child goes through the supervisor
-(the relay). The supervisor watches the hook's heartbeat file
+The supervisor owns the gateway connection (one connection is one run) and
+holds no lock. It forks one child from its main thread; the child sets
+``PR_SET_PDEATHSIG``, checks its parent, starts its own session, locks
+``<stamp>.lock``, takes the fence exclusive (and, with no gateway answering,
+``data_lock`` exclusive) and runs the snapshot
+(:func:`commonplace.backup_online.backup_online`). So the fence is taken
+exactly once, by the process that writes the snapshot, and a stuck child keeps
+every lock until it is gone. Every gateway request of the child goes through
+the supervisor (the relay). The supervisor watches the hook's heartbeat file
 ``<stamp>.hb``, the run deadline and the socket; on any of them it aborts the
 run, then stops the child's process group (TERM, wait, KILL, wait). The child
 also exits on its own when the supervisor's lifeline pipe closes or its
@@ -38,18 +42,12 @@ import stat
 import sys
 import threading
 import time
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 from pathlib import Path
 
-from .backup import BackupError
+from .backup import STAGING_NAME, BackupError, DataDirInUse, FenceBusy, fence_lock
 
-FENCE_NAME = ".commonplace-fence.lock"
-STAGING_NAME = ".backup-staging"
 STAMP_RE = re.compile(r"[0-9TZ.]+-[0-9]+")
-FENCE_WAIT_ENV = "COMMONPLACE_BACKUP_FENCE_WAIT_S"  # backup side, default 60 s
-CLI_FENCE_WAIT_ENV = "COMMONPLACE_FENCE_WAIT_S"  # one-shot CLI side, default 30 s
-BACKUP_FENCE_WAIT_S = 60.0
-CLI_FENCE_WAIT_S = 30.0
 TERM_GRACE_S = 10.0
 KILL_GRACE_S = 10.0
 TICK_MAX_S = 5.0
@@ -67,6 +65,7 @@ class OnlineBackupError(BackupError):
 
     def __init__(self, stage: str, detail: str | None = None):
         self.stage = stage
+        self.detail = detail
         message = f"online backup failed (stage: {stage})"
         super().__init__(message + (f": {detail}" if detail else ""))
 
@@ -83,72 +82,17 @@ def _linux() -> bool:
     return sys.platform.startswith("linux")
 
 
-def _env_seconds(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return default
-    value = float(raw)
-    if not 0 <= value < float("inf"):
-        raise ValueError(f"{name} must be a non-negative number of seconds")
-    return value
-
-
 # ── fence ──
-@contextmanager
-def fence(data_dir, *, exclusive: bool, wait_s: float, busy_message: str):
-    """Hold the data-directory fence, waiting up to ``wait_s`` for it.
-
-    The fence is only released by closing its descriptor (never ``LOCK_UN``),
-    so a forked backup child that inherited it keeps it until it exits.
-    Windows: no fence; ``data_lock`` is exclusive there for every command.
-    """
-    if os.name == "nt":
-        yield None
-        return
-    import fcntl
-
-    root = Path(data_dir).expanduser()
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(root / FENCE_NAME, flags, 0o600)
-    try:
-        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        end = time.monotonic() + wait_s
-        while True:
-            try:
-                fcntl.flock(fd, mode | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in _LOCK_BUSY:
-                    raise
-                left = end - time.monotonic()
-                if left <= 0:
-                    raise BackupError(busy_message) from exc
-                time.sleep(min(0.1, left))
-        yield fd
-    finally:
-        os.close(fd)
-
-
 def cli_fence(data_dir):
-    """The shared fence a one-shot CLI holds for its lifetime (never ``serve``)."""
-    return fence(
+    """The shared fence a one-shot CLI holds for its lifetime (never ``serve``).
+
+    Waits ``COMMONPLACE_FENCE_WAIT_S`` (default 30 s) for a running backup.
+    """
+    return fence_lock(
         data_dir,
         exclusive=False,
-        wait_s=_env_seconds(CLI_FENCE_WAIT_ENV, CLI_FENCE_WAIT_S),
+        wait_s=_pause_module().Knobs.read("cli_fence_wait_s"),
         busy_message="a backup is running; try again when it has finished",
-    )
-
-
-def _backup_fence(data_dir):
-    return fence(
-        data_dir,
-        exclusive=True,
-        wait_s=_env_seconds(FENCE_WAIT_ENV, BACKUP_FENCE_WAIT_S),
-        busy_message=(
-            "online backup failed (stage: fence busy): another command or backup "
-            "is using the data directory"
-        ),
     )
 
 
@@ -222,7 +166,9 @@ def _answering(data: Path):
 
 
 def lock_busy(exc: BaseException) -> bool:
-    """True when ``exc`` is ``data_lock`` refusing because another holder has it."""
+    """True when ``exc`` is the offline backup refusing a data directory in use."""
+    if isinstance(exc, DataDirInUse):
+        return True
     cause = exc.__cause__
     return isinstance(cause, OSError) and cause.errno in _LOCK_BUSY
 
@@ -311,27 +257,16 @@ def run_online(data_dir, dest, *, deadline=None) -> Path:
     deadline = float(deadline) if deadline is not None else now + knobs.deadline_s
     if deadline <= now:
         raise OnlineBackupError("deadline", "the deadline has already passed")
-    with _backup_fence(data):
-        _ensure_staging(target.parent)
-        _check_fresh(target)
-        if _answering(data) is not None:
-            client = _pause_module().PauseClient()
-            try:
-                return _Supervisor(data, target, client, deadline, knobs).run()
-            finally:
-                _quiet_close(client)
-        from . import backup as _backup
-
-        stack = ExitStack()
+    # No lock here: the child takes the fence (and, with no gateway, data_lock).
+    _ensure_staging(target.parent)
+    _check_fresh(target)
+    if _answering(data) is not None:
+        client = _pause_module().PauseClient()
         try:
-            stack.enter_context(_backup.data_lock(data, exclusive=True))
-        except BackupError as exc:
-            raise OnlineBackupError(
-                "gateway not answering",
-                "no gateway answers on the admin socket and the data directory is in use",
-            ) from exc
-        with stack:
-            return _Supervisor(data, target, None, deadline, knobs).run()
+            return _Supervisor(data, target, client, deadline, knobs).run()
+        finally:
+            _quiet_close(client)
+    return _Supervisor(data, target, None, deadline, knobs).run()
 
 
 def backup_auto(data_dir, dest, *, deadline=None) -> Path:
@@ -502,9 +437,29 @@ def _child_main(data, target, channel, lifeline_fd, has_client, deadline, knobs)
 
     threading.Thread(target=watch, name="backup-lifeline", daemon=True).start()
     try:
-        _lock_stamp(target)  # held until this process exits
-        relay = RelayClient(channel) if has_client else None
-        result = _default_snapshot(data, target, client=relay, deadline=deadline, knobs=knobs)
+        _lock_stamp(target)  # never closed: held until this process exits
+        with ExitStack() as locks:
+            # The only fence holder of the run; a stuck snapshot keeps it.
+            try:
+                locks.enter_context(
+                    fence_lock(data, exclusive=True, wait_s=float(knobs.fence_wait_s))
+                )
+            except FenceBusy as exc:
+                raise OnlineBackupError(
+                    "fence busy", "another command or backup is using the data directory"
+                ) from exc
+            if not has_client:
+                from . import backup as _backup
+
+                try:
+                    locks.enter_context(_backup.data_lock(data, exclusive=True))
+                except BackupError as exc:
+                    raise OnlineBackupError(
+                        "gateway not answering",
+                        "no gateway answers on the admin socket and the data directory is in use",
+                    ) from exc
+            relay = RelayClient(channel) if has_client else None
+            result = _default_snapshot(data, target, client=relay, deadline=deadline, knobs=knobs)
         summary = {"files": len(result.get("files", []))} if isinstance(result, dict) else {}
         _send_quiet(channel, {"op": "_result", "ok": True, **summary})
         return 0
@@ -513,7 +468,11 @@ def _child_main(data, target, channel, lifeline_fd, has_client, deadline, knobs)
         return _EXIT_FAILED
     except Exception as exc:  # noqa: BLE001 - every failure is reported, nothing published
         stage = getattr(exc, "stage", None) or "snapshot"
-        _send_quiet(channel, {"op": "_result", "ok": False, "stage": str(stage), "error": str(exc)})
+        detail = getattr(exc, "detail", None) if hasattr(exc, "stage") else None
+        _send_quiet(
+            channel,
+            {"op": "_result", "ok": False, "stage": str(stage), "error": detail or str(exc)},
+        )
         return _EXIT_FAILED
 
 

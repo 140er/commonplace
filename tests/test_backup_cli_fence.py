@@ -26,8 +26,7 @@ from pathlib import Path
 import pytest
 
 from commonplace import cli
-from commonplace.backup import LOCK_NAME
-from commonplace.backup_supervisor import FENCE_NAME, STAGING_NAME
+from commonplace.backup import FENCE_NAME, LOCK_NAME, STAGING_NAME
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only")
 
@@ -43,6 +42,17 @@ RUNNER = textwrap.dedent(
     def note(**fields):
         with open(cfg["probe"], "a", encoding="utf-8") as f:
             f.write(json.dumps(fields) + "\n")
+
+    def fence_fds(pid):
+        """Descriptors of ``pid`` open on the fence file."""
+        found = 0
+        for fd in os.listdir(f"/proc/{pid}/fd"):
+            try:
+                target = os.readlink(f"/proc/{pid}/fd/{fd}")
+            except OSError:
+                continue
+            found += target.endswith("/.commonplace-fence.lock")
+        return found
 
     def held(path, exclusive_probe=False):
         """True if another holder blocks a new lock on ``path`` (new open file)."""
@@ -75,10 +85,16 @@ RUNNER = textwrap.dedent(
             env = os.environ
             self.heartbeat_stale_s = float(env.get("COMMONPLACE_BACKUP_HEARTBEAT_STALE_S", 60))
             self.deadline_s = float(env.get("COMMONPLACE_BACKUP_DEADLINE", 4500))
+            self.fence_wait_s = float(env.get("COMMONPLACE_BACKUP_FENCE_WAIT_S", 60))
 
         @classmethod
         def from_env(cls):
             return cls()
+
+        @staticmethod
+        def read(name):
+            assert name == "cli_fence_wait_s", name
+            return float(os.environ.get("COMMONPLACE_FENCE_WAIT_S", 30))
 
     class PauseClient:
         def __init__(self, path=None, timeout=30.0):
@@ -126,6 +142,8 @@ RUNNER = textwrap.dedent(
             pgid=os.getpgid(0),
             client=type(client).__name__ if client is not None else None,
             fence_exclusive=held(os.path.join(data_dir, ".commonplace-fence.lock")),
+            fence_fds=fence_fds(os.getpid()),
+            supervisor_fence_fds=fence_fds(os.getppid()),
             data_lock_exclusive=held(os.path.join(data_dir, ".commonplace.lock")),
             stamp_locked=held(dest + ".lock", exclusive_probe=True),
             deadline=deadline,
@@ -361,6 +379,8 @@ def test_online_backup_beside_serve_takes_fence_and_never_data_lock(env):
     assert records(env["spy"]) == [], "online backup requested data_lock while a gateway answered"
     (snap,) = [r for r in records(env["probe"]) if r["event"] == "snapshot"]
     assert snap["fence_exclusive"], "fence not held exclusive during the snapshot"
+    assert snap["fence_fds"] == 1, "the snapshot child must take the fence exactly once"
+    assert snap["supervisor_fence_fds"] == 0, "the supervisor parent must not hold the fence"
     assert not snap["data_lock_exclusive"]
     assert snap["stamp_locked"]
     assert snap["client"] == "RelayClient"
