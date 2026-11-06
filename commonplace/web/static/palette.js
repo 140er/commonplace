@@ -67,11 +67,12 @@ const styles = `
   dialog.workbench-palette::backdrop { background:rgba(23,24,28,.42); }
   .workbench-palette .pin { display:flex; align-items:center; gap:10px; padding:0 16px; min-height:52px; border-bottom:1px solid var(--line); }
   .workbench-palette .pin:focus-within { box-shadow:inset 0 0 0 3px var(--accent); border-radius:12px 12px 0 0; }
-  .workbench-palette .pin input { flex:1; width:100%; min-width:0; min-height:44px; border:0; outline:none; background:transparent; font-size:15px; }
+  .workbench-palette .pin input { flex:1; width:100%; min-width:0; min-height:44px; padding:0; border:0; box-shadow:none; outline:none; background:transparent; font-size:15px; }
   .workbench-palette .scope { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--well); color:var(--text-2); }
   .workbench-palette .pl { list-style:none; margin:0; padding:6px; max-height:min(470px,60dvh); overflow:auto; }
   .workbench-palette .gh { font-size:11.5px; font-weight:650; color:var(--text-3); letter-spacing:.04em; text-transform:uppercase; padding:10px 10px 4px; }
-  .workbench-palette .opt { display:flex; align-items:center; gap:10px; min-height:38px; padding:6px 10px; border-radius:6px; font-size:14px; cursor:pointer; }
+  .workbench-palette .opt { display:flex; align-items:center; gap:10px; width:100%; min-height:38px; padding:6px 10px; border:0; border-radius:6px; box-shadow:none; background:transparent; color:var(--text); font-weight:400; font-size:14px; text-align:left; cursor:pointer; }
+  .workbench-palette .opt:hover { box-shadow:none; background:var(--pane); }
   .workbench-palette .i { width:16px; height:16px; flex:none; color:var(--text-2); }
   .workbench-palette .opt[aria-selected="true"] .i { color:var(--accent); }
   .workbench-palette .opt .label { min-width:0; overflow-wrap:anywhere; }
@@ -80,7 +81,10 @@ const styles = `
   .workbench-palette .empty { padding:12px; color:var(--text-2); }
   .workbench-palette .pfoot { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:8px 14px; border-top:1px solid var(--line); background:var(--pane); font-size:12px; color:var(--text-3); }
   .workbench-palette .pfoot .note { flex:1; }
-  .workbench-palette .shortcut-body { padding:24px; }
+  .workbench-palette .shortcut-body { display:flex; flex-direction:column; max-height:calc(100dvh - 112px); padding:0; }
+  .workbench-palette .shortcut-head { flex:none; padding:24px 24px 0; }
+  .workbench-palette .shortcut-scroll { flex:1; min-height:0; overflow:auto; padding:0 24px; }
+  .workbench-palette .shortcut-body .acts { flex:none; margin:0; padding:12px 24px 16px; border-top:1px solid var(--line); background:var(--surface); }
   .workbench-palette h2 { font-size:20px; margin:0 0 16px; }
   .workbench-palette .key-setting { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border-radius:8px; background:var(--pane); border:1px solid var(--line); }
   .workbench-palette .key-help, .workbench-palette .key-note { font-size:13px; color:var(--text-2); }
@@ -95,10 +99,15 @@ const styles = `
   .workbench-palette .kt th { text-align:left; font-size:12px; color:var(--text-3); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); }
   .workbench-palette .kt td { padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
   .workbench-palette .acts { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+  .workbench-palette .kt .always { text-align:right; color:var(--text-3); white-space:nowrap; }
+  .workbench-palette .kt td:first-child { white-space:nowrap; }
   @media (max-width:699px) {
     dialog.workbench-palette, #shell-dialog.workbench-palette { margin:16px auto 0; max-height:calc(100dvh - 32px); }
     .workbench-palette .opt, .workbench-palette .switch, .workbench-palette .btn { min-height:44px; }
-    .workbench-palette .shortcut-body { padding:16px; }
+    .workbench-palette .shortcut-body { max-height:calc(100dvh - 32px); }
+    .workbench-palette .shortcut-head { padding:16px 16px 0; }
+    .workbench-palette .shortcut-scroll { padding:0 16px; }
+    .workbench-palette .shortcut-body .acts { padding:12px 16px; }
     .workbench-palette .scope { display:none; }
     .workbench-palette .kt td { padding:8px 4px; }
   }
@@ -130,14 +139,14 @@ function itemIcon(item) {
 }
 
 const shortcutRows = [
-  ['⌘K / Ctrl K', 'Search or do (palette) · Always on'],
+  ['⌘K / Ctrl K', 'Search or do (palette)', true],
   ['C', 'New card'], ['/', 'Open the chat and put the cursor in it'],
   ['G then B / N / M', 'Go to board / Needs me / memory'],
   ['J / K', 'Next / previous item'], ['Enter', 'Open selected card'],
   ['E', 'Edit the selected field'], ['M', 'Move card to…'],
   ['R', 'Ask a question (Needs me)'], ['Y / L', 'Copy exact words / link to card (memory notes)'],
   ['Z', 'Stop a pending send (while shown)'], [']', 'Close the chat, or hide the side panel'],
-  ['?', 'Keyboard shortcuts'], ['Esc', 'Close a dialog, the palette, or the chat · Always on'],
+  ['?', 'Keyboard shortcuts'], ['Esc', 'Close a dialog, the palette, or the chat', true],
 ];
 
 export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}, storage } = {}) {
@@ -199,7 +208,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
   function shortcuts() {
     mode = 'shortcuts'; show('Keyboard shortcuts');
     const enabled = singleKeys();
-    dialog.innerHTML = `<section class="shortcut-body"><h2>Keyboard shortcuts</h2><div class="key-setting"><span><b id="palette-single-label">Single-key shortcuts</b><br><span class="key-help">Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</span></span><button class="switch" data-palette-action="single-keys" role="switch" aria-checked="${enabled}" aria-labelledby="palette-single-label"><span class="track" aria-hidden="true"></span><span class="state">${enabled ? 'On' : 'Off'}</span></button></div><p class="key-note">Single keys never fire while you type in a field. <b>Approve and Decline have no shortcut</b>; they always need the button.</p><table class="kt"><caption class="sr">Shortcuts</caption><thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead><tbody>${shortcutRows.map(([key, action]) => `<tr><td><kbd>${e(key)}</kbd></td><td>${e(action)}</td></tr>`).join('')}</tbody></table><div class="acts"><button class="btn" data-palette-action="reset">Reset to defaults</button><button class="btn primary" data-palette-action="done">Done <kbd>Esc</kbd></button></div></section>`;
+    dialog.innerHTML = `<section class="shortcut-body"><div class="shortcut-head"><h2>Keyboard shortcuts</h2></div><div class="shortcut-scroll"><div class="key-setting"><span><b id="palette-single-label">Single-key shortcuts</b><br><span class="key-help">Turn off if you use voice control or a screen reader that sends letters. ⌘K / Ctrl K and Esc keep working.</span></span><button class="switch" data-palette-action="single-keys" role="switch" aria-checked="${enabled}" aria-labelledby="palette-single-label"><span class="track" aria-hidden="true"></span><span class="state">${enabled ? 'On' : 'Off'}</span></button></div><p class="key-note">Single keys never fire while you type in a field. <b>Approve and Decline have no shortcut</b>; they always need the button.</p><table class="kt"><caption class="sr">Shortcuts</caption><thead><tr><th scope="col">Key</th><th scope="col">Action</th><th scope="col"><span class="sr">Setting</span></th></tr></thead><tbody>${shortcutRows.map(([key, action, always]) => `<tr><td><kbd>${e(key)}</kbd></td><td>${e(action)}</td><td class="always">${always ? 'Always on' : ''}</td></tr>`).join('')}</tbody></table></div><div class="acts"><button class="btn" data-palette-action="reset">Reset to defaults</button><button class="btn primary" data-palette-action="done">Done <kbd>Esc</kbd></button></div></section>`;
     dialog.querySelector('[role="switch"]').focus();
   }
   function run(index) {

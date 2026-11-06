@@ -176,7 +176,8 @@ function chooseSharedWing(payload, e, options) {
 export function mainHTML(project, e, { notAnswering = "" } = {}) {
   const main = project.main;
   const status = main.connected ? (main.seen ? main.status || PROJECT_COPY.statusPrivate : PROJECT_COPY.waiting) : "";
-  return `<div class="setting-row" data-project-main data-project-seat="${e(main.name)}"><span>${e(project.name)} orchestrator · ${e(main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected)}${status ? ` · ${e(status)}` : ""}</span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>${notAnswering ? `<p class="set-note" data-project-not-answering>${e(notAnswering)}</p>` : ""}`;
+  const initial = String(project.name || "?").trim().charAt(0).toUpperCase() || "?";
+  return `<div class="setting-row orch-row" data-project-main data-project-seat="${e(main.name)}"><span class="av" aria-hidden="true">${e(initial)}</span><span class="orch-text"><b>${e(project.name)} orchestrator</b>${main.connected ? ' <span class="tag ok">Connected</span>' : ""}<small>${e(main.connected ? PROJECT_COPY.connected : PROJECT_COPY.disconnected)}${status ? ` · ${e(status)}` : ""}${main.connected ? " · reads chat, makes cards" : ""}</small></span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>${notAnswering ? `<p class="set-note" data-project-not-answering>${e(notAnswering)}</p>` : ""}`;
 }
 
 const clockTime = (value) => {
@@ -383,6 +384,7 @@ export function openConnectDialog({ slug, api, e, opener, current = () => true, 
 export async function mountProject(host, { slug, api, e, settings = false, current = () => true, notice = "", origin = globalThis.location?.hash || "", restart = origin.endsWith("/chat"), onBack }) {
   const path = `/api/projects/${encodeURIComponent(slug)}`;
   const active = () => current() && host.isConnected && !host.closest("[hidden]");
+  const markSaved = () => { const saved = host.querySelector("[data-project-saved]"); if (saved) saved.textContent = `Changes save automatically · ${savedAt()}`; };
   host.innerHTML = '<p role="status">Loading project…</p>';
   let project, connecting = false, notAnswering = "";
   try { project = await api(path); }
@@ -469,7 +471,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     bindSettingsNavigation(host, {slug, origin, onBack, current: active});
     const root = host.querySelector(".workbench-project");
     if (globalThis.matchMedia?.("(max-width: 699px)").matches) { root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); }
-    mountAgentLimit(host.querySelector("[data-project-limit]"), {project, api, e, current: active});
+    mountAgentLimit(host.querySelector("[data-project-limit]"), {project, api, e, current: active, onSaved: markSaved});
     const check = host.querySelector("[data-project-check]");
     if (check) check.onclick = async () => {
       if (check.disabled || !active()) return;
@@ -484,7 +486,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       finally { check.disabled = false; }
     };
     await Promise.all([
-      mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active}),
+      mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active, onSaved: markSaved}),
       mountProjectAgents(host.querySelector("[data-project-agents]"), {project, api, e, current: active, onUpdate: latest => { project = latest; renderMain(); }}),
       restart && loadNotAnswering(),
     ]);
@@ -511,6 +513,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       if (!active()) return;
       project = saved;
       status.textContent = PROJECT_COPY.saved;
+      markSaved();
       renderMain();
     } catch {
       if (active()) status.textContent = PROJECT_COPY.saveError;
@@ -521,6 +524,16 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
 const LOCAL_URL = "http://127.0.0.1:11434";
 const CHAT_SAVE_ERROR = "Could not save chat settings";
 const savedAt = () => `saved ${new Date().toTimeString().slice(0, 5)}`;
+
+export function lastActive(value, now = Date.now()) {
+  const at = Date.parse(value);
+  if (!value || Number.isNaN(at)) return "Not seen yet";
+  const minutes = Math.floor(Math.max(0, now - at) / 60000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const date = new Date(at), clock = date.toTimeString().slice(0, 5);
+  return date.toDateString() === new Date(now).toDateString() ? `today, ${clock}` : `${date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${clock}`;
+}
 
 function loopbackURL(value) {
   try {
@@ -534,7 +547,7 @@ function answerMode(front) {
 }
 
 // Selecting Hosted changes only the panel. The Turn on handler owns its sole write.
-export async function mountChatAnswers(host, { project, api, e, current = () => true }) {
+export async function mountChatAnswers(host, { project, api, e, current = () => true, onSaved = () => {} }) {
   const active = () => current() && host.isConnected;
   const owner = project.can_configure;
   const scope = project.board;
@@ -605,7 +618,7 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
     try {
       const saved = await api("/api/chat-settings", {method: "PUT", body});
       if (!active()) return;
-      front = saved.front; status = savedAt();
+      front = saved.front; status = savedAt(); onSaved();
       if (mode === "local") localURL = front.base_url || localURL;
     } catch (failure) {
       if (!active()) return;
@@ -617,7 +630,7 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
   render();
 }
 
-export function mountAgentLimit(host, { project, api, e, current = () => true }) {
+export function mountAgentLimit(host, { project, api, e, current = () => true, onSaved = () => {} }) {
   let value = project.limits?.max_agents ?? null, busy = false, status = "";
   const active = () => current() && host.isConnected;
   function render() {
@@ -634,7 +647,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true })
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/limits`, {method: "PUT", body: {max_agents: next}});
-      if (active()) { value = result.limits.max_agents; status = savedAt(); }
+      if (active()) { value = result.limits.max_agents; status = savedAt(); onSaved(); }
     } catch { if (active()) status = "Could not save maximum agents"; }
     finally { busy = false; render(); }
   }
@@ -704,7 +717,16 @@ const settingsStyle = `
 .workbench-project .orch-card {background:var(--ok-bg);padding:12px;border-radius:var(--r)}.workbench-project .restart-box,.workbench-project .callout {padding:12px 14px;margin-top:10px;border:1px solid var(--wait-line);border-radius:8px;background:var(--wait-bg)}
 .workbench-project .agents-t {width:100%;border-collapse:collapse;font-size:13px}.workbench-project th,.workbench-project td {text-align:left;padding:8px;border-bottom:1px solid var(--line)}
 .workbench-project .phone-note {display:none}.workbench-project :focus-visible {outline:3px solid var(--accent);outline-offset:2px}
-.workbench-project .orch-card.warn {background:var(--wait-bg);border:1px solid var(--wait-line)}.workbench-project [data-project-not-answering] {margin:6px 0 0;color:var(--wait);font-weight:600}
+.workbench-project .orch-card.warn {background:var(--wait-bg);border:1px solid var(--wait-line)}
+.workbench-project .project-top h1 .title-sub {font-size:15px;font-weight:400;color:var(--text-2);margin-left:6px}
+.workbench-project .project-top .saved {margin-left:auto;font-size:12.5px;font-weight:600;color:var(--ok)}.workbench-project .project-top .saved::before {content:"✓ "}
+.workbench-project .project-top .back {display:inline-flex;align-items:center;gap:8px}.workbench-project .project-top .back::before {content:"←";font-size:15px}
+.workbench-project .project-top .back[data-keys]::after {content:attr(data-keys);font:11px/1 var(--mono,monospace);color:var(--text-2);border:1px solid var(--line-strong);border-radius:4px;padding:2px 4px;word-spacing:4px}
+/* The shared .setting-row span rule (flex:1; min-width:180px) must not stretch the avatar or the tag. */
+.workbench-project .orch-row {display:flex;align-items:center;gap:12px;flex-wrap:nowrap;padding:0;border-bottom:0}.workbench-project .orch-row span {flex:none;min-width:0}.workbench-project .orch-row .orch-text {flex:1;min-width:0}.workbench-project .orch-row .av {flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:6px;background:var(--accent);color:var(--surface);font-weight:700}
+.workbench-project .orch-text {flex:1;min-width:0}.workbench-project .orch-text b {font-weight:650}.workbench-project .orch-text small {display:block;margin-top:2px}
+.workbench-project .tag.ok {display:inline-flex;align-items:center;height:auto;margin-left:8px;padding:0;box-shadow:none;font-size:12px;font-weight:600;color:var(--ok)}
+.workbench-project .radio small.phone-note {display:none}.workbench-project .tag.ok::before {content:"✓ "}.workbench-project [data-project-not-answering] {margin:6px 0 0;color:var(--wait);font-weight:600}
 .project-dialog {width:min(600px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid var(--line);border-radius:10px;padding:22px 24px;background:var(--surface);color:var(--text);font-family:var(--font);box-shadow:0 16px 40px rgba(23,24,28,.18)}
 .project-dialog::backdrop {background:rgba(23,24,28,.42)}
 .project-dialog h2 {font-size:17px;margin:0 0 12px}.project-dialog .form-tile {padding:0;background:transparent;box-shadow:none;border:0}
@@ -716,7 +738,7 @@ const settingsStyle = `
 @media(max-width:699px) {.project-dialog .btn {min-height:44px}}
 @media(min-width:700px) {#card-panel:has(.workbench-project) {position:fixed;inset:0 0 0 236px;display:block;width:auto;height:100%;box-shadow:none;max-width:none;z-index:30;padding:0;background:var(--bg)}#card-panel:has(.workbench-project)>.form-tile {padding:0;background:transparent}#card-panel:has(.workbench-project)>.form-tile>.close {display:none}}
 @media(min-width:700px) and (max-width:1099px) {#card-panel:has(.workbench-project) {left:220px}}
-@media(max-width:699px) {.workbench-project {position:fixed;inset:0;z-index:80;overflow:auto;background:var(--surface)}.workbench-project .project-top {padding:8px 12px;gap:8px}.workbench-project .project-top a {order:-1}.workbench-project .project-top h1 {order:1;flex-basis:100%}.workbench-project .settings {padding:12px}.workbench-project .set-sec {padding:14px 0;border:0;border-top:1px solid var(--line);border-radius:0}.workbench-project .settings-inner {gap:0}.workbench-project .radio .sub-fields,.workbench-project .radio .mode-note,.workbench-project [data-project-chat]>.lead,.workbench-project [data-project-chat]>details,.workbench-project .radio .callout {display:none}.workbench-project .radio label {display:flex;align-items:center;gap:10px}.workbench-project .radio label small {margin-left:auto;text-align:right}.workbench-project .radio.on {outline:0;background:var(--surface);border-color:var(--line)}.workbench-project .sub-fields {grid-template-columns:1fr}.workbench-project .btn,.workbench-project input,.workbench-project select,.workbench-project .stepper button {min-height:44px}.workbench-project .radio {min-height:48px}.workbench-project input[type=radio] {min-height:0}.workbench-project .desktop-agent {display:none}.workbench-project .phone-note {display:block}.workbench-project .agents-t th:nth-child(n+3),.workbench-project .agents-t td:nth-child(n+3) {display:none}}
+@media(max-width:699px) {.workbench-project {position:fixed;inset:0;z-index:80;overflow:auto;background:var(--surface)}.workbench-project .project-top {padding:8px 12px;gap:8px}.workbench-project .project-top a {order:-1}.workbench-project .project-top h1 {order:1;flex-basis:100%}.workbench-project .settings {padding:12px}.workbench-project .set-sec {padding:14px 0;border:0;border-top:1px solid var(--line);border-radius:0}.workbench-project .settings-inner {gap:0}.workbench-project .radio .sub-fields,.workbench-project .radio .mode-note,.workbench-project [data-project-chat]>.lead,.workbench-project [data-project-chat]>details,.workbench-project .radio .callout {display:none}.workbench-project .radio label {display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:10px;text-align:left}.workbench-project .radio small.phone-note {display:block}.workbench-project .project-top h1 .title-sub {font-size:inherit;font-weight:inherit;color:inherit;margin-left:0}.workbench-project .radio label b {flex:none;text-align:left}.workbench-project .radio label small {margin-left:auto;text-align:right}.workbench-project .desk-only {display:none}.workbench-project .project-top .back[data-keys]::after {display:none}.workbench-project .project-top .saved {order:0}.workbench-project .radio.on {outline:0;background:var(--surface);border-color:var(--line)}.workbench-project .sub-fields {grid-template-columns:1fr}.workbench-project .btn,.workbench-project input,.workbench-project select,.workbench-project .stepper button {min-height:44px}.workbench-project .radio {min-height:48px}.workbench-project input[type=radio] {min-height:0}.workbench-project .desktop-agent {display:none}.workbench-project .phone-note {display:block}.workbench-project .agents-t th:nth-child(n+3),.workbench-project .agents-t td:nth-child(n+3) {display:none}}
 `;
 
 let projectSheet;
@@ -730,7 +752,7 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)} settings</h1><span class="set-note">Changes save automatically</span><a class="btn" data-project-back href="${e(back.href)}">${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
 }
 
 export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
@@ -751,7 +773,7 @@ export async function mountProjectAgents(host, {project, api, e, current, onUpda
     if (project.main.connected) assigned.add(name(project.main.name));
     const rows = connections.filter(c => !c.revoked_at && (!c.expires_at || Date.parse(c.expires_at) > Date.now()) && assigned.has(c.name));
     const main = name(project.main.name);
-    host.innerHTML = `<p class="set-note">Orchestrator and agents assigned to this project's cards.</p><table class="agents-t"><caption class="sr">Project agents</caption><thead><tr><th>Agent</th><th>Role</th><th>Last active</th><th>Actions</th></tr></thead><tbody>${project.main.connected && !rows.some(c => c.name === main) ? `<tr><td>${e(project.name)} orchestrator</td><td>Orchestrator</td><td>—</td><td>Manage in workspace Settings</td></tr>` : ""}${rows.map(c => `<tr><td>${e(c.name === main ? project.name + " orchestrator" : c.name)} (agent)</td><td>${c.name === main ? "Orchestrator" : "Works on cards"}</td><td>${e(c.last_used_at ? new Date(c.last_used_at).toLocaleString() : "Not seen yet")}</td><td>${project.can_configure ? `<button type="button" class="btn ghost sm desktop-agent" data-project-disconnect="${e(c.id)}" ${busy ? "disabled" : ""} aria-label="Disconnect ${e(c.name)}">Disconnect…</button>` : ""}</td></tr>`).join("")}</tbody></table>${!assigned.size ? '<p>No agents connected</p>' : ""}<p role="status">${e(error)}</p>`;
+    host.innerHTML = `<p class="set-note">Orchestrator and agents assigned to this project's cards.</p><table class="agents-t"><caption class="sr">Project agents</caption><thead><tr><th>Agent</th><th>Role</th><th>Last active</th><th>Actions</th></tr></thead><tbody>${project.main.connected && !rows.some(c => c.name === main) ? `<tr><td>${e(project.name)} orchestrator</td><td>Orchestrator</td><td>—</td><td>Manage in workspace Settings</td></tr>` : ""}${rows.map(c => `<tr><td>${e(c.name === main ? project.name + " orchestrator" : c.name)} (agent)</td><td>${c.name === main ? "Orchestrator" : "Works on cards"}</td><td>${e(lastActive(c.last_used_at))}</td><td>${project.can_configure ? `<button type="button" class="btn ghost sm desktop-agent" data-project-disconnect="${e(c.id)}" ${busy ? "disabled" : ""} aria-label="Disconnect ${e(c.name)}">Disconnect…</button>` : ""}</td></tr>`).join("")}</tbody></table>${!assigned.size ? '<p>No agents connected</p>' : ""}<p role="status">${e(error)}</p>`;
     host.querySelectorAll("[data-project-disconnect]").forEach(button => {
       button.onclick = async () => {
         if (busy || !active()) return;
