@@ -504,3 +504,20 @@ def test_restore_writes_no_marker_without_workspaces(data_dir, tmp_path):
     backup(data, tmp_path / "snap")
     restore(tmp_path / "snap", tmp_path / "back")
     assert not list((tmp_path / "back").rglob(RESTORE_MARKER))
+
+
+def test_marker_kept_when_the_flag_commit_fails(tmp_path, monkeypatch):
+    """The marker is deleted only after the flag commit, so a failed open retries."""
+    directory = tmp_path / "ws"
+    Store(directory)
+    (directory / RESTORE_MARKER).write_text(json.dumps({"version": 1, "id": "cd" * 16}))
+
+    def broken(self):
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "transaction", broken)
+        with pytest.raises(sqlite3.OperationalError):
+            Store(directory)
+    assert (directory / RESTORE_MARKER).exists()
+    assert Store(directory).restore_state().flagged
