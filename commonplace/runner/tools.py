@@ -87,6 +87,7 @@ def card_start(
         raise ToolError("no: invalid config_ref")
     from commonplace.projects import orchestration as orch
 
+    # Fail closed on a settings read error before resolving the start.
     orch.enabled(ctx.db, ctx.principal.workspace_id)
     machine = registry.get_machine(ctx.db, ctx.principal.workspace_id, machine)
     if machine is None or not machine["enabled"] or machine["revoked_at"]:

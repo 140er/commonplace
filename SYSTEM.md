@@ -27,7 +27,7 @@ activation, reservation or other update permissions.
   existing claim/start behavior and board JSON shape.
 - **One project count.** Claims, queued starts, leases and configured starts share
   a runner transaction. Ordinary agents count by connection, workers by card;
-  card/job overlaps count once. Default cap is 3 (**G**); project rows override it,
+  card/job overlaps count once. Default cap is 3; project rows override it,
   configured boards use the smaller config/row cap. Board `used` shows active slots,
   excluding the queued reservations counted at start creation.
 - **Authority.** Unconfigured starts require the active board coordinator PAT or

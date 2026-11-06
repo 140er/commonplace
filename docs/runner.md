@@ -263,14 +263,20 @@ config and 5 for a hub failure in `--once` mode.
 When agent orchestration is enabled, claims, start creation and configured starts
 share a runner `BEGIN IMMEDIATE` lock and a deduplicated project count. Claims hold
 that lock until their card transaction commits or rolls back, including before any
-machine is enrolled. Control settings and worker identities are read before waiting
-on board or runner locks. Runner paths read committed card state under that lock.
-A settings-read failure refuses admission with `settings_unavailable`.
+machine is enrolled. Admission reads control settings and worker identities before
+waiting on board or runner locks. Starting rechecks current requester and machine
+authority inside its runner transaction, briefly taking the control lock there.
+Control-lock holders on the enabled path never wait for the runner lock. Runner
+paths read committed card state under that lock. A settings-read failure returns
+`settings_unavailable` on runner actions, including renew, result and listing.
 
 Queued starts reserve capacity at creation; lease checks exclude queued jobs and
-admit the oldest eligible job below the active cap. A started job counts for one
-hour only while its card is todo or doing. Review/done releases the project slot;
+scan in queue order, skipping capped projects, and admit the oldest eligible job
+below the active cap. A started job counts for one hour only while its card is
+todo or doing. Review/done releases the project slot;
 the existing per-machine one-hour fence still applies independently. An ordinary
 agent's doing card overlaps its runner job only once; an existing agent or a card's
-own worker may proceed at cap. A coordinator change is rechecked before starting.
+own worker may proceed at cap. Manual person claims are exempt from the agent cap.
+Coordinator, requester and machine changes committed before the in-transaction
+starting check prevent a start.
 See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.

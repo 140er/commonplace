@@ -64,7 +64,8 @@ def check(conn, board, actor, *, service=None, card_id=None):
                 workers=service._workers,
                 now=jobs._now(),
             )
-            orch.admit(used, actor, card_id)
+            if actor and actor.startswith("conn:"):
+                orch.admit(used, actor, card_id)
             return
     if not actor or not actor.startswith("conn:"):
         return

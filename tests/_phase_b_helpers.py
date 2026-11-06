@@ -34,6 +34,8 @@ def cap(w, value):
 def call(fn, *args, **kwargs):
     try:
         result = fn(*args, **kwargs)
+        if result is None:
+            return 204, None
         return result if isinstance(result, tuple) else (200, result)
     except (ToolError, ValueError) as exc:
         return getattr(exc, "status", 409), {

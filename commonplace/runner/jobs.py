@@ -421,44 +421,40 @@ def lease(store, machine):
         if len(in_flight) >= machine["max_in_flight"]:
             return None
         projects = {r["project"] for r in in_flight}
-        row = next(
-            (
-                r
-                for r in conn.execute(
-                    "SELECT * FROM runner_jobs WHERE machine_id=? AND state='queued' ORDER BY created_at,rowid",
-                    (machine["id"],),
-                )
-                if r["project"] not in projects
-            ),
-            None,
-        )
-        if row is None:
-            return None
-        if on:
-            try:
-                orch.check_start(
-                    store.gateway,
-                    store.workspace_id,
-                    conn,
-                    row["board_slug"],
-                    row["task_number"],
-                    workers,
-                    now,
-                    lease=True,
-                )
-            except orch.AdmissionRefused:
-                return None
-        return _update(
-            conn,
-            row,
-            dict(
-                state="leased",
-                lease_token=secrets.token_urlsafe(32),
-                lease_until=_after(now, 60),
-                attempt=row["attempt"] + 1,
-                updated_at=now,
-            ),
-        )
+        for row in conn.execute(
+            "SELECT * FROM runner_jobs WHERE machine_id=? AND state='queued' ORDER BY created_at,rowid",
+            (machine["id"],),
+        ):
+            if row["project"] in projects:
+                continue
+            if on:
+                try:
+                    orch.check_start(
+                        store.gateway,
+                        store.workspace_id,
+                        conn,
+                        row["board_slug"],
+                        row["task_number"],
+                        workers,
+                        now,
+                        lease=True,
+                    )
+                except orch.AdmissionRefused as exc:
+                    if exc.code != "project_limit":
+                        raise
+                    continue
+            return _update(
+                conn,
+                row,
+                dict(
+                    state="leased",
+                    lease_token=secrets.token_urlsafe(32),
+                    lease_until=_after(now, 60),
+                    attempt=row["attempt"] + 1,
+                    updated_at=now,
+                ),
+            )
+        return None
 
 
 def renew(store, machine, lease_token):

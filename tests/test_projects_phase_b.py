@@ -34,6 +34,10 @@ def test_r1_settings(projects_hub):
     status, payload, _ = h.request(h.owner, "PUT", "/api/settings/orchestration", {"enabled": True})
     assert (status, payload) == (200, {"enabled": True})  # RED
     assert h.get(h.owner, "/api/settings/orchestration")[1] == {"enabled": True}
+    audit = [r for r in h.db.audit_entries(h.workspace) if r["action"] == "workspace.orchestration"]
+    assert len(audit) == 1
+    assert audit[0]["decision"] == "allow" and audit[0]["user_id"] == h.admin
+    assert audit[0]["workspace_id"] == h.workspace
 
 
 def test_r1b_authority_and_workspace(projects_hub):
@@ -172,12 +176,14 @@ def test_r8_cap_refuses_idle_machine(world, monkeypatch):
     )
 
 
+# R8 carries the behavioral RED on develop. These lifecycle checks already
+# lease correctly there; their used-field assertions additionally pin accounting.
 def test_r8a_done_frees_project_slot(world, monkeypatch):
     w = world
     a, b, m2 = lifecycle(w, monkeypatch)
     raw_state(w, a, "done")
     result = jobs.lease(w.js, m2)
-    assert result is not None and result["task_number"] == b and count(w) == 1  # RED
+    assert result is not None and result["task_number"] == b and count(w) == 1
 
 
 def test_r8b_machine_fence(world, monkeypatch):
@@ -187,7 +193,7 @@ def test_r8b_machine_fence(world, monkeypatch):
     early = jobs.lease(w.js, m)
     monkeypatch.setattr(jobs, "_now", lambda: "2030-01-01T01:00:01Z")
     later = jobs.lease(w.js, m)
-    assert early is None and later["task_number"] == b and count(w) == 1  # RED
+    assert early is None and later["task_number"] == b and count(w) == 1
 
 
 def trust(h, body, auth=None):
@@ -233,6 +239,12 @@ def test_r9_trust(projects_hub):
     assert (
         result[0] == 200 and policy == "trusted" and seat in json.loads(machine["requesters"])
     )  # RED
+    audit = [
+        r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
+    ]
+    assert len(audit) == 1 and audit[0]["decision"] == "allow"
+    assert audit[0]["user_id"] == h.admin and audit[0]["connection_id"] == seat
+    assert audit[0]["workspace_id"] == h.workspace
     h.request(h.owner, "POST", "/api/boards/work/cards", {"title": "Start me"})
     seat_token = h.connect(h.owner, "work")[1]["token"]
     status, cards, _ = h.get(h.owner, "/api/boards/work/cards")
@@ -289,6 +301,7 @@ def test_r9d_demote_keeps_stale_requester(projects_hub):
     assert result[0] == 200 and json.loads(
         registry.get_machine(h.db, h.workspace, m["machine_id"])["requesters"]
     ) == ["stale-requester"]  # RED
+    assert seat_start(h, m)[0] == 403
 
 
 @pytest.mark.parametrize("implicit", [False, True])
@@ -309,19 +322,22 @@ def test_r9f_off_demotes(projects_hub):
     h = projects_hub
     m = trust_setup(h)
     seat = h.seats()[0]["connection_id"]
+    other = h.gateway.authenticate("Bearer " + h.a1).connection_id
     trust(h, {"confirm": True, "machines": [m["machine_id"]]})
     with h.db._lock:
         h.db._conn.execute(
             "UPDATE runner_machines SET requesters=? WHERE id=?",
-            (json.dumps([seat, "unrelated"]), m["machine_id"]),
+            (json.dumps([seat, other]), m["machine_id"]),
         )
     result = h.request(h.owner, "PUT", "/api/settings/orchestration", {"enabled": False})
     assert (
         result[0] == 200
         and h.db.authenticate_connection(seat).policy.trust == "standard"
         and json.loads(registry.get_machine(h.db, h.workspace, m["machine_id"])["requesters"])
-        == ["unrelated"]
+        == [other]
     )  # RED
+    assert seat_start(h, m)[0] == 403
+    assert seat_start(h, m, h.a1)[0] == 201
 
 
 def test_r10_configured_dedupe(world):
@@ -379,7 +395,32 @@ def test_g6_no_public_routes(projects_hub):
 def test_g7_private_hygiene():
     from pathlib import Path
 
-    paths = [Path("commonplace/projects/orchestration.py")]
+    paths = [
+        Path(p)
+        for p in (
+            "MODULES.md",
+            "SYSTEM.md",
+            "commonplace/boards/service.py",
+            "commonplace/orch/runner_bridge.py",
+            "commonplace/projects/__init__.py",
+            "commonplace/projects/connect.py",
+            "commonplace/projects/limits.py",
+            "commonplace/projects/orchestration.py",
+            "commonplace/projects/routes.py",
+            "commonplace/runner/jobs.py",
+            "commonplace/runner/registry.py",
+            "commonplace/runner/runner_api.py",
+            "commonplace/runner/tools.py",
+            "commonplace/web/static/app.js",
+            "commonplace/web/static/projects.js",
+            "docs/projects.md",
+            "docs/runner.md",
+            "tests/_phase_b_helpers.py",
+            "tests/test_commonplace_public_surface.py",
+            "tests/test_projects_admission.py",
+            "tests/test_projects_phase_b.py",
+        )
+    ]
     forbidden = [
         "jeff" + "rey",
         "edge" + "1",
@@ -609,3 +650,86 @@ def test_head_admission_busy_is_bounded(world, monkeypatch):
     with pytest.raises(orchestration.AdmissionRefused, match="busy"):
         with orchestration.admission(world.gw, world.ws, store=world.js):
             pytest.fail("a locked store must not admit")
+
+
+def seat_start(h, machine, auth=None):
+    token = auth or h.connect(h.owner, "work")[1]["token"]
+    _, card, _ = h.request(h.owner, "POST", "/api/boards/work/cards", {"title": "Start me"})
+    return h.request(
+        token,
+        "POST",
+        "/api/card-starts",
+        {
+            "task": card["number"],
+            "machine": machine["machine_id"],
+            "project": "demo",
+            "topic": "worker",
+        },
+    )[:2]
+
+
+def test_person_claim_exempt_at_project_cap(world):
+    w = world
+    seed(w)
+    cap(w, 1)
+    doing(w, w.card(), "conn:orch-a")
+    card = w.card()
+    result = claim(w, card, w.owner)
+    assert result[0] == 200 and result[1]["number"] == card
+    with w.boards.store.connection() as conn:
+        row = conn.execute("SELECT status,assignee FROM tasks WHERE id=?", (card,)).fetchone()
+        assert tuple(row) == ("doing", w.owner.actor)
+    assert count(w) == 1
+
+
+def test_lease_skips_capped_project(world):
+    w = world
+    seed(w)
+    registry.patch(w.db, w.owner, w.machine_id, {"projects": ["demo", "other"]})
+    a, b = w.card(), w.card(board="plain")
+    w.person_start(a)
+    tools.card_start(w.ctx(w.owner), b, w.machine_id, "other", "worker")
+    cap(w, 1)
+    doing(w, w.card(), "conn:orch-a")
+    before = w.jobs_for(a)[0]
+    result = jobs.lease(w.js, w.machine())
+    assert result is not None and result["task_number"] == b
+    assert result["project"] == "other" and result["state"] == "leased"
+    assert w.jobs_for(a)[0] == before
+
+
+def test_member_can_get_orchestration(projects_hub):
+    h = projects_hub
+    assert h.request(h.owner, "PUT", "/api/settings/orchestration", {"enabled": True})[0] == 200
+    assert h.get(h.member, "/api/settings/orchestration")[:2] == (200, {"enabled": True})
+    assert h.request(h.member, "PUT", "/api/settings/orchestration", {"enabled": False})[0] == 403
+    assert h.get(h.member, "/api/settings/orchestration")[1] == {"enabled": True}
+
+
+def test_trust_lock_timeout_is_busy_and_atomic(projects_hub, monkeypatch):
+    import sqlite3
+    from time import monotonic
+
+    h = projects_hub
+    m = trust_setup(h)
+    seat = h.seats()[0]["connection_id"]
+    before_machine = dict(registry.get_machine(h.db, h.workspace, m["machine_id"]))
+    before_policy = h.db.authenticate_connection(seat).policy
+    before_audit = [
+        r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
+    ]
+
+    def locked(*args, **kwargs):
+        # Fail after the seat policy write, proving the transaction rolls it back.
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(registry, "patch_in", locked)
+    started = monotonic()
+    result = trust(h, {"confirm": True, "machines": [m["machine_id"]]})
+    assert result == (409, {"error": "busy", "code": "busy"})
+    assert monotonic() - started < 2
+    assert h.db.authenticate_connection(seat).policy == before_policy
+    assert dict(registry.get_machine(h.db, h.workspace, m["machine_id"])) == before_machine
+    assert [
+        r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
+    ] == before_audit

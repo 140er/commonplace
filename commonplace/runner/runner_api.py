@@ -198,17 +198,13 @@ def register(gateway):
                     elif action == "renew":
                         row = jobs.renew(store, machine, **body)
                     elif action == "starting":
-                        if on:
-                            with store.connection() as conn:
-                                candidate = jobs._fenced(conn, machine["id"], body["lease_token"])
-                            refusal = _starting_check(gateway, machine, candidate, store)
 
-                            def validate(row):
-                                return refusal
-                        else:
-
-                            def validate(row):
-                                return _starting_check(gateway, machine, row, store)
+                        def validate(row):
+                            with gateway.db._lock:
+                                current = registry.get_machine(
+                                    gateway.db, principal.workspace_id, machine["id"]
+                                )
+                                return _starting_check(gateway, current, row, store)
 
                         row = jobs.starting(
                             store,

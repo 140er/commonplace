@@ -1,5 +1,7 @@
 """Person-session routes for project orchestrators and model preferences."""
 
+import sqlite3
+
 from commonplace import redact
 from commonplace.boards.service import BoardService, WingRefused, project_wing, shared_wing
 from commonplace.control_db import ControlError
@@ -61,7 +63,7 @@ def orchestration_route(gateway, h):
     principal = _person(gateway, h)
     if principal is None:
         return
-    if principal.role != "owner":
+    if h.command != "GET" and principal.role != "owner":
         send_json(h, 403, {"error": "Only workspace owners can configure orchestration"})
         return
     try:
@@ -82,6 +84,13 @@ def orchestration_route(gateway, h):
         send_json(h, 400, {"error": "Invalid orchestration settings"})
         return
     send_json(h, 200, payload)
+
+
+def _trust(gateway, principal, slug, body):
+    try:
+        return connect.trust(gateway, principal, slug, body)
+    except sqlite3.OperationalError:
+        raise orchestration.AdmissionRefused("busy") from None
 
 
 def install(gateway) -> None:
@@ -142,7 +151,7 @@ def install(gateway) -> None:
                     allow_shared=body.get("allow_shared", False),
                 )
             elif trusting:
-                status, payload = 200, connect.trust(gateway, principal, slug, body)
+                status, payload = 200, _trust(gateway, principal, slug, body)
             elif owning:
                 result = wing.own_wing(gateway, principal, slug)
                 with service.store.connection() as conn:

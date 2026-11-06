@@ -23,9 +23,9 @@ def world(hub, monkeypatch):
     return w
 
 
-def race(world, monkeypatch, module, name, first, second):
+def race(world, monkeypatch, module, name, first, second, *, outside=False):
     """Pause after the first path's in-lock operation, start its contender, resume."""
-    paused, entered = Event(), Event()
+    paused, entered, finished = Event(), Event(), Event()
     original = getattr(module, name)
     once = False
     lock_held = False
@@ -49,7 +49,7 @@ def race(world, monkeypatch, module, name, first, second):
                 probe.rollback()
                 probe.close()
             paused.set()
-            if not entered.wait(10):
+            if not (finished if outside else entered).wait(10):
                 raise RuntimeError("contender did not enter")
         return result
 
@@ -61,11 +61,15 @@ def race(world, monkeypatch, module, name, first, second):
 
         def contend():
             entered.set()
-            return second()
+            try:
+                return second()
+            finally:
+                finished.set()
 
         b = pool.submit(contend)
         results = a.result(timeout=15), b.result(timeout=15)
-    assert lock_held, "admission lock must be held until the operation commits"
+    if not outside:
+        assert lock_held, "admission lock must be held until the operation commits"
     return results
 
 
@@ -112,6 +116,8 @@ def test_r24_lease_then_claim(world, monkeypatch):
         lambda: claim(w, b),
     )
     assert_one(results)
+    assert results[0][0] == 200 and results[0][1]["state"] == "leased"
+    assert w.all_jobs()[0]["state"] == "leased"
 
 
 def test_r25_configured_start_then_claim(world, monkeypatch):
@@ -182,13 +188,60 @@ def test_r8c_lease_claim_race(world, monkeypatch):
     a, b = w.card(), w.card()
     w.person_start(a)
     cap(w, 1)
-    assert_one(
-        race(
-            w,
-            monkeypatch,
-            jobs,
-            "_update",
-            lambda: call(jobs.lease, w.js, w.machine()),
-            lambda: claim(w, b),
-        )
+    results = race(
+        w,
+        monkeypatch,
+        jobs,
+        "_update",
+        lambda: call(jobs.lease, w.js, w.machine()),
+        lambda: claim(w, b),
     )
+    assert_one(results)
+    assert results[0][0] == 200 and results[0][1]["state"] == "leased"
+    assert w.all_jobs()[0]["state"] == "leased"
+
+
+@pytest.mark.parametrize("change", ["demote", "off", "revoke"])
+def test_starting_rechecks_authority_in_transaction(world, monkeypatch, change):
+    from commonplace.projects import connect, orchestration
+    from commonplace.runner import registry
+
+    w = world
+    seed(w)
+    _, connected = connect.connect(w.gw, w.owner, "acme", allow_shared=True)
+    seat = w.gw.authenticate("Bearer " + connected["token"])
+    connect.trust(w.gw, w.owner, "acme", {"confirm": True, "machines": [w.machine_id]})
+    card = w.card()
+    tools.card_start(w.ctx(seat), card, w.machine_id, "demo", "worker")
+    payload = w.lease()
+    with w.boards.store.connection() as conn:
+        before = dict(conn.execute("SELECT * FROM tasks WHERE id=?", (card,)).fetchone())
+
+    def change_authority():
+        if change == "demote":
+            connect.trust(w.gw, w.owner, "acme", {"trusted": False})
+        elif change == "off":
+            orchestration.set_enabled(w.db, w.owner, False)
+        else:
+            registry.revoke(w.db, w.owner, w.machine_id)
+
+    result, _ = race(
+        w,
+        monkeypatch,
+        jobs,
+        "_sweep",
+        lambda: w.machine_call("starting", {"lease_token": payload["lease_token"]}),
+        change_authority,
+        outside=True,
+    )
+    expected = "machine_disabled" if change == "revoke" else "requester_invalid"
+    assert result == (409, {"error": expected})
+    job = w.all_jobs()[0]
+    assert job["state"] == "cancelled" and job["outcome_code"] == expected
+    assert job["starting_at"] is None and job["thread_id"] is None
+    with w.boards.store.connection() as conn:
+        assert dict(conn.execute("SELECT * FROM tasks WHERE id=?", (card,)).fetchone()) == before
+    assert w.db.authenticate_connection(seat.connection_id).policy.trust == (
+        "trusted" if change == "revoke" else "standard"
+    )
+    assert bool(w.machine()["revoked_at"]) == (change == "revoke")
