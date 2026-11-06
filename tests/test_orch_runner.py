@@ -609,13 +609,17 @@ def test_r18_refused_candidates_are_misses_and_the_cursor_moves_past_them(world,
 
 
 def test_r18b_assigned_todo_card_is_a_miss(world):
-    """R18b: an assigned todo card -> miss assigned; the cursor moves past it."""
+    """R18b: an assigned todo card -> miss assigned; the cursor moves past it; an edit
+    of a todo card that stays in todo does not fire."""
     world.configure()
     card = world.card(assignee="conn:orch-b")
     world.sweep()
     assert [(m["card"], m["code"]) for m in world.misses()] == [(card, "assigned")]
     assert world.jobs_for(card) == []
     assert world.cursor()[0] == world.max_event()
+    world.update(card, title="Renamed while in todo")  # todo -> todo: not a firing event
+    world.sweep()
+    assert len(world.misses()) == 1 and world.jobs_for(card) == []
 
 
 def test_r18c_card_started_recently_is_a_miss(world):
