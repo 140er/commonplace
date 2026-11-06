@@ -75,6 +75,20 @@ def check_key(conn, parent: int, labels) -> int | None:
     return None
 
 
+def check_label_update(conn, board, principal, row, labels):
+    previous = [label for label in json.loads(row["labels"] or "[]") if label.startswith("split:")]
+    current = [label for label in labels if label.startswith("split:")]
+    if previous == current:
+        return
+    if set(previous) - set(current):
+        raise CardRefused("split_key_immutable", status=400)
+    parent = parent_for(conn, board, principal, row["parent_number"], labels)
+    if parent is not None:
+        existing = check_key(conn, parent, labels)
+        if existing is not None and existing != row["id"]:
+            raise CardRefused("split_key_exists", number=existing)
+
+
 def eligible(conn, board, seat_actor):
     marked = {r[0] for r in conn.execute("SELECT task_id FROM card_splits")}
     return [

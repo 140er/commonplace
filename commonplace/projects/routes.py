@@ -98,7 +98,11 @@ def _split_route(gateway, h, principal, parts, *, inboxing):
             payload = split.inbox(gateway, principal, parts[0])
         else:
             body = read_json(h)
-            if set(body) != {"task", "state"}:
+            if (
+                set(body) != {"task", "state"}
+                or type(body["task"]) is not int
+                or not 1 <= body["task"] < 2**63
+            ):
                 raise CardRefused("invalid_arguments", status=400)
             # Bind the task reference to this authorized board before mutation.
             split.inbox(gateway, principal, parts[0])
@@ -121,6 +125,9 @@ def _split_route(gateway, h, principal, parts, *, inboxing):
         return
     except (ValueError, TypeError):
         send_json(h, 400, {"error": "invalid_arguments"})
+        return
+    except orchestration.SettingsUnavailable as exc:
+        send_json(h, exc.status, {"error": exc.code, "code": exc.code})
         return
     except ToolError:
         send_json(h, 403, {"error": "not_allowed"})

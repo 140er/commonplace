@@ -188,3 +188,8 @@ inbox on the next session. Without either a runner or a webhook, a new card
 waits until that session; an always-running coordinator is separate work.
 Turning the switch off preserves configured todo triggers and the prior card
 shapes; the new blocker arguments and inbox tools are unavailable.
+
+An unavailable inbox snapshot does not discard a committed runner lease: the
+response keeps the pinned role instructions and asks the agent to read the inbox
+before acting. Checkpoint inbox context is best effort. Label edits cannot remove
+or replace a stable split-child key or make a root disappear into a split label.

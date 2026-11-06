@@ -817,12 +817,12 @@ class BoardService:
             # Projection stays usable; admission still raises the captured failure.
             return False
 
-    def _waiting(self, conn, row, usage=None):
+    def _waiting(self, conn, row, usage=None, *, runner=None):
         from commonplace.boards import why
         from commonplace.boards.store import active_blockers
         from commonplace.projects import split
 
-        runner = getattr(self, "_admission_conn", None)
+        runner = runner or getattr(self, "_admission_conn", None)
         if runner is not None:
             usage = usage or self._usage(conn, runner, row)
             stuck = split.stuck(runner, row["id"])
@@ -1476,18 +1476,31 @@ class BoardService:
                             lease=True,
                         )
                         result[-1].update(max_agents=used.cap, used=used.used)
-                    from commonplace.boards import why
+                        waiting_usage = orch.usage(
+                            conn,
+                            runner,
+                            board_id=board["id"],
+                            board_slug=board["slug"],
+                            workers=self._workers,
+                            now=jobs._now(),
+                        )
+                        from commonplace.boards import why
 
-                    summary = dict.fromkeys(why.CODES, 0)
-                    for found in conn.execute(
-                        "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
-                        + ("AND parent_number IS NULL" if top_level else ""),
-                        (board["id"],),
-                    ).fetchall():
-                        reason = self._waiting(conn, task_row(conn, found["id"]))
-                        if reason:
-                            summary[reason["code"]] += 1
-                    result[-1]["waiting"] = summary
+                        summary = dict.fromkeys(why.CODES, 0)
+                        for found in conn.execute(
+                            "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
+                            + ("AND parent_number IS NULL" if top_level else ""),
+                            (board["id"],),
+                        ).fetchall():
+                            reason = self._waiting(
+                                conn,
+                                task_row(conn, found["id"]),
+                                usage=waiting_usage,
+                                runner=runner,
+                            )
+                            if reason:
+                                summary[reason["code"]] += 1
+                        result[-1]["waiting"] = summary
             return result
 
     def board_add(self, slug, name=None, wing=None, repo=None):
@@ -2766,6 +2779,12 @@ class BoardService:
         if args.get("status") == "doing":
             self._refuse_waiting(conn, row)
 
+    def _check_split_labels(self, conn, board, row, labels):
+        if self._orchestration_on is True:
+            from commonplace.projects import split
+
+            split.check_label_update(conn, board, self.principal, row, labels)
+
     def task_update(self, task, *, version=None, **args):
         permitted = {
             "title",
@@ -2855,6 +2874,7 @@ class BoardService:
                     validate_text(label, "label", required=True, limit=200) for label in labels
                 ]
                 self._plan_label_check(conn, row, labels)
+                self._check_split_labels(conn, board, row, labels)
                 updates["labels"] = json.dumps(labels)
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:

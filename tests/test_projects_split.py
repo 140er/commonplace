@@ -125,7 +125,17 @@ def test_guard_g9_off_shape_and_arguments(hub):
     a = w.card()
     view = w.boards.task_show(a)
     assert not {"waiting", "blocked_by", "blocks"} & view.keys()
-    assert invoke(w.boards.task_add, "Refused", board="acme", blocked_by=[a])[0] >= 400
+    from commonplace.boards import tools
+
+    assert (
+        invoke(
+            tools.run,
+            w.ctx(w.owner),
+            "task_add",
+            {"title": "Refused", "board": "acme", "blocked_by": [a]},
+        )[0]
+        >= 400
+    )
     assert tool(w, "orchestrator_inbox", board="acme")[0] >= 400
 
 
@@ -180,7 +190,6 @@ def test_guard_g7_no_private_or_outbound_dependencies():
 def test_busy_routes_bounded_and_unchanged(hub, monkeypatch, operation):
     import sqlite3
 
-    from commonplace.projects import split
     from tests.runner_harness import http
 
     w = world(hub)
@@ -193,6 +202,9 @@ def test_busy_routes_bounded_and_unchanged(hub, monkeypatch, operation):
         raise sqlite3.OperationalError("database is locked")
 
     if operation in ("inbox", "split"):
+        assert tool(w, "orchestrator_inbox", board="acme")[0] == 200
+        from commonplace.projects import split
+
         monkeypatch.setattr(split, "inbox", busy)
         method = "GET" if operation == "inbox" else "POST"
         path = "/api/projects/acme/orchestrator/" + operation
@@ -239,10 +251,10 @@ def test_rest_inbox_and_split_real_effects(hub):
 def test_split_key_rejects_wrong_parent_and_access(hub):
     w = world(hub)
     a, b = w.card(), w.card()
-    status, _ = invoke(
+    status, result = invoke(
         w.boards.task_add, "Bad parent", board="acme", parent=a, labels=[f"split:{b}:build"]
     )
-    assert status == 400
+    assert status == 400 and result.get("code") == "split_parent_mismatch"
     status, _ = invoke(
         BoardService(w.ctx(w.a)).task_add,
         "No authority",

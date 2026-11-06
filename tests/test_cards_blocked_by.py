@@ -11,8 +11,15 @@ from tests.runner_harness import http
 def test_r11_rest_and_mcp(hub):
     w = world(hub)
     a = w.card(title="Prerequisite")
-    status, b = invoke(w.boards.task_add, "Dependent", board="acme", blocked_by=[a])
-    assert status == 200 and b.get("blocked_by") == [a]  # RED
+    token = hub.owner_token("dependency-writer")
+    status, b = http(
+        hub.port,
+        "POST",
+        "/api/boards/acme/cards",
+        token=token,
+        body={"title": "Dependent", "blocked_by": [a]},
+    )
+    assert status == 201 and b.get("blocked_by") == [a]  # RED
     assert w.boards.task_show(a)["blocks"] == [b["number"]]
     assert f"blocks: #{b['number']}" in tools.run(w.ctx(w.owner), "task_show", {"task": a})
     assert f"blocked_by: #{a}" in tools.run(w.ctx(w.owner), "task_show", {"task": b["number"]})
@@ -56,7 +63,8 @@ def test_r12_sql_skip_and_done_only(hub):
     )
     assert take(w) == (200, None)
     w.boards.decide(a, choice="Yes", then="done")
-    assert take(w)[1]["number"] == b
+    status, picked = take(w)
+    assert status == 200 and isinstance(picked, dict) and picked.get("number") == b
 
 
 @pytest.mark.parametrize("kind", ["cycle", "self", "other_board"])
@@ -93,8 +101,8 @@ def test_blocker_input_bounds_and_rollback(hub, values):
     w = world(hub)
     a = w.card()
     before = w.boards.task_show(a)
-    status, _ = invoke(w.boards.task_update, a, blocked_by=values)
-    assert status == 400
+    status, result = invoke(w.boards.task_update, a, blocked_by=values)
+    assert status == 400 and result.get("code") == "invalid_blockers"
     assert w.boards.task_show(a) == before
     assert invoke(w.boards.task_add, "Rollback", board="acme", blocked_by=values)[0] == 400
     with w.boards.store.connection() as conn:
@@ -105,7 +113,8 @@ def test_blockers_update_is_versioned_and_audited(hub):
     w = world(hub)
     a, b = w.card(), w.card()
     before = w.boards.task_show(b)
-    after = w.boards.task_update(b, version=before["version"], blocked_by=[a, a])
+    status, after = invoke(w.boards.task_update, b, version=before["version"], blocked_by=[a, a])
+    assert status == 200, after
     assert after["version"] == before["version"] + 1 and after["blocked_by"] == [a]
     assert invoke(w.boards.task_update, b, version=before["version"], blocked_by=[])[0] >= 400
     shown = w.boards.task_show(b)

@@ -30,7 +30,7 @@ def world(hub, *, on=True, runner=False):
 def invoke(fn, *args, **kwargs):
     try:
         return 200, fn(*args, **kwargs)
-    except (ToolError, TypeError, ValueError) as exc:
+    except (ToolError, ValueError) as exc:
         return getattr(exc, "status", 400), {
             "error": str(exc).removeprefix("no: "),
             "code": getattr(exc, "code", "invalid_arguments"),

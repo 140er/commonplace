@@ -38,7 +38,10 @@ def install(gateway):
         try:
             service = BoardService(ToolContext(principal=principal, gateway=gateway))
             status, result = dispatch(service, h, parts, method)
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            from commonplace.projects import orchestration
+
+            orchestration.require_lock_timeout(exc)
             send_json(h, 409, {"error": "busy", "code": "busy"})
             return
         except CardRefused as exc:

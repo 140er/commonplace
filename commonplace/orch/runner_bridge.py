@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from dataclasses import dataclass, replace
 
 from commonplace.boards.service import BoardService
@@ -778,14 +779,19 @@ def launch_fields(conn, row) -> dict:
             from commonplace.projects import orchestration, split
 
             directory = Path(conn.execute("PRAGMA database_list").fetchone()[2]).parent
-            with orchestration.board_read(directory) as boards:
-                board = boards.execute(
-                    "SELECT * FROM boards WHERE slug=?", (row["board_slug"],)
-                ).fetchone()
-                roots = split.eligible(boards, board, board["coordinator"]) if board else []
-            text += "\nInbox (quoted card data): " + json.dumps(
-                [{"number": r["id"], "title": r["title"]} for r in roots], ensure_ascii=False
-            )
+            try:
+                with orchestration.board_read(directory) as boards:
+                    board = boards.execute(
+                        "SELECT * FROM boards WHERE slug=?", (row["board_slug"],)
+                    ).fetchone()
+                    roots = split.eligible(boards, board, board["coordinator"]) if board else []
+                text += "\nInbox (quoted card data): " + json.dumps(
+                    [{"number": r["id"], "title": r["title"]} for r in roots], ensure_ascii=False
+                )
+            except sqlite3.OperationalError:
+                # The lease is already committed. Keep its pinned launch instructions;
+                # the agent rereads the inbox through the normal retryable tool path.
+                text += "\nInbox snapshot unavailable; read orchestrator_inbox before acting."
     except (orch_store.OrchError, schema.ConfigError, AttributeError):
         return {}
     message = SPAWN_MESSAGE.format(n=row["task_number"], job_id=row["id"]) + "\n\n" + text
