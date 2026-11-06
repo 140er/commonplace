@@ -239,6 +239,68 @@ def test_non_socket_file_is_not_removed(tmp_path, short_dir):
     assert path.read_text() == "keep"
 
 
+def test_concurrent_binds_over_a_stale_socket_one_wins(tmp_path, short_dir, monkeypatch):
+    """Two gateways starting at once over a stale socket: exactly one binds.
+
+    The race is forced: each starter that found the socket stale waits (up to
+    2 s) until the other one has probed too, and the second one unlinks only
+    after the first has bound. Without serialization both pass the probe, the
+    second unlinks the first's live socket and both serve.
+    """
+    path = short_dir / "g.sock"
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(path))
+    stale.close()  # file stays, nobody listens
+    probed = threading.Barrier(2, timeout=2.0)
+    bound = threading.Event()
+    real_unlink, real_chmod = os.unlink, os.chmod
+
+    def unlink(target, *args, **kwargs):
+        if os.fspath(target) == str(path):
+            try:
+                second = probed.wait() == 0
+            except threading.BrokenBarrierError:
+                second = False  # the other starter never got past the probe
+            if second:
+                bound.wait(5)
+        return real_unlink(target, *args, **kwargs)
+
+    def chmod(target, *args, **kwargs):
+        result = real_chmod(target, *args, **kwargs)
+        if os.fspath(target) == str(path):
+            bound.set()
+        return result
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "chmod", chmod)
+    sup = WorkerSupervisor(str(tmp_path / "data"), launcher=ProcLauncher())
+    servers = [bp.PauseServer(sup, tmp_path / "data", path=path) for _ in range(2)]
+    results = [None, None]
+
+    def start(i):
+        try:
+            results[i] = servers[i]._bind(path)
+        except Exception as exc:  # noqa: BLE001 - the loser's refusal is the result
+            results[i] = exc
+
+    threads = [threading.Thread(target=start, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(15)
+    try:
+        assert not any(t.is_alive() for t in threads)
+        won = [r for r in results if isinstance(r, socket.socket)]
+        lost = [r for r in results if not isinstance(r, socket.socket)]
+        assert len(won) == 1, f"both starters bound the admin socket: {results}"
+        assert isinstance(lost[0], bp.UnsafeSocketPath), lost
+        assert "already answers" in str(lost[0])
+    finally:
+        for r in results:
+            if isinstance(r, socket.socket):
+                r.close()
+
+
 def test_peer_with_other_uid_gets_nothing(env):
     server, _sup, _adm = env()
     server._uid = os.getuid() + 1
@@ -397,12 +459,16 @@ def test_pause_request_can_only_shorten_lease_and_pause_max(env):
         assert client.renew()["lease_s"] == 0.3
         assert _until(lambda: not sup.paused, 3), "the requested shorter lease was ignored"
         assert client.call("resume")["reason"] == bp.R_LEASE
+    # The server ends the run when it sees the closed connection; wait for that.
+    assert _until(lambda: bp.answering(server.path)["busy"] is False)
     with _client(server) as client:
         client.hello()
         paused = client.request("pause", lease_s=60, pause_max_s=0.3)
         assert paused["lease_s"] == 5 and paused["pause_max_s"] == 0.3
         assert _until(lambda: not sup.paused, 3), "the requested shorter pause max was ignored"
         assert client.call("resume")["reason"] == bp.R_PAUSE_MAX
+    # The server ends the run when it sees the closed connection; wait for that.
+    assert _until(lambda: bp.answering(server.path)["busy"] is False)
     with _client(server) as client:
         client.hello()
         paused = client.request("pause", lease_s="x", pause_max_s=-1)

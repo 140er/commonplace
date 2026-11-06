@@ -1345,11 +1345,13 @@ class Gateway:
         from commonplace.rules.checks import deploy
 
         # One gateway per data directory. The online-backup socket is bound
-        # first, before any write: an online backup pauses and fences only the
-        # gateway that answers it, so a second gateway on the same data
-        # directory (or any gateway without its socket) would write unseen
-        # during the copy. Where the socket is supported, serve refuses to run
-        # without it.
+        # first in serve, before deploy checks, workers or HTTP: an online
+        # backup pauses and fences only the gateway that answers it, so a
+        # second gateway on the same data directory (or any gateway without
+        # its socket) would write unseen during the copy. Where the socket is
+        # supported, serve refuses to run without it. Opening the control
+        # database (and its idempotent schema setup) happens before this, in
+        # the caller and in Gateway.__init__.
         self.pause_server = None
         root = getattr(self.supervisor, "root", None)
         if root is not None:

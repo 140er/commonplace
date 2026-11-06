@@ -478,6 +478,24 @@ class PauseServer:
         return True
 
     def _bind(self, path: Path) -> socket.socket:
+        # Probe, unlink and bind under one exclusive lock in the socket's own
+        # (private) directory: two gateways starting at once over a stale socket
+        # must not both pass the probe and then unlink each other's socket.
+        # The lock file is never removed, so every starter locks the same inode.
+        lock_fd = os.open(
+            path.parent / f"{path.name}.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        try:
+            import fcntl  # Linux only, like the socket itself (see supported())
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            return self._bind_locked(path)
+        finally:
+            os.close(lock_fd)  # also releases the lock
+
+    def _bind_locked(self, path: Path) -> socket.socket:
         try:
             st = os.lstat(path)
         except FileNotFoundError:
