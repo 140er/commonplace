@@ -2379,6 +2379,7 @@ class BoardService:
             content_edit = (
                 bool(args)
                 and set(args) <= {"title", "body"}
+                and row["restricted_origin"] == 1
                 and row["status"] == "todo"
                 and row["assignee"] is None
                 and (_trusted_agent(self.principal) or self._coordinates(self.principal, row))
