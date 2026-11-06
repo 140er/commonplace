@@ -219,6 +219,12 @@ def add(
     write=False,
     available=None,
 ):
+    input_schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
     register(
         LocalTool(
             name=name,
@@ -248,12 +254,12 @@ def add(
                 "decide": "Only a signed-in workspace owner may answer a review and return, release, close or park the card. An agent cannot relay approval. Pass the version you read to reject decisions on an edited card.",
                 "needs_me": "Read the visible decision queue (owners or trusted, unrestricted member connections; read only).",
             }[name],
-            input_schema={
-                "type": "object",
-                "properties": properties,
-                "required": list(required),
-                "additionalProperties": False,
-            },
+            input_schema=input_schema,
+            input_schema_for=(
+                lambda principal, gateway: _card_schema(input_schema, principal, gateway)
+            )
+            if name in ("task_add", "task_update")
+            else None,
             handler=lambda ctx, args: run(ctx, name, args),
             scope="memory:write" if write else "memory:read",
             kind="write" if write else "read",
@@ -263,6 +269,19 @@ def add(
             available=available,
         )
     )
+
+
+def _card_schema(schema, principal, gateway):
+    from commonplace.projects import orchestration
+
+    try:
+        on = gateway is not None and orchestration.enabled(gateway.db, principal.workspace_id)
+    except orchestration.SettingsUnavailable:
+        on = False
+    properties = dict(schema["properties"])
+    if not on:
+        properties.pop("blocked_by", None)
+    return {**schema, "properties": properties}
 
 
 def _orchestration_available(principal, gateway):

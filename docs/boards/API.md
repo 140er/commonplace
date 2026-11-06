@@ -632,7 +632,8 @@ count by code. A blocked-card wait alone does not appear in `needs_me`.
 Explicit claims use the same waiting text for blocker and project-cap refusals;
 existing-agent admission exemptions still apply. Board tags show the blocker
 title or occupied-slot count instead of advertising a waiting card as available.
-With orchestration off these fields are absent and `blocked_by` is refused.
+With orchestration off these fields and the `blocked_by` schema properties are absent,
+and `blocked_by` is refused. `not_released` applies only to Todo/Backlog cards.
 
 `orchestrator_inbox(board)` and `card_split_done(task,state)` are coordinator or
 signed-in-owner tools available only with the switch on. Their REST equivalents
@@ -641,3 +642,10 @@ are `GET /api/projects/<board>/orchestrator/inbox` and
 `{"task":N,"state":"split"}` or `{"task":N,"state":"kept"}`. The first marker
 wins; invalid input or a refused key inserts nothing. Database lock timeout
 returns bounded `409` with `{"error":"busy","code":"busy"}`.
+
+Split child keys remain attached to their original child when labels are edited.
+Removing or replacing a key is refused with `split_key_immutable`; adding split
+labels to roots or using a different parent is refused. The marker REST endpoint
+accepts only positive integer task numbers below the SQLite integer bound.
+Unreadable orchestration settings return `503 settings_unavailable`. Only actual
+SQLite lock timeouts return `409 busy`; other database errors retain their failure.

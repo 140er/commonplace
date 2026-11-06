@@ -171,6 +171,8 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
             board_row = dict(board_row)
             events = boards.execute(_EVENTS, (cursor, board_row["id"], BATCH)).fetchall()
             cards = {row["task_id"]: dict(task_row(boards, row["task_id"])) for row in events}
+        if not events and not on:
+            return results
         version = orch_store.resolve_in(conn, board)
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         for event in events:

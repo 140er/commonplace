@@ -28,7 +28,7 @@ def waiting(row, *, blockers, released: bool, usage) -> dict | None:
         reason = {"code": "blocked_by", "blockers": list(blockers)}
     elif _waiting_on_person(row):
         reason = {"code": "waits_on_person"}
-    elif not released:
+    elif not released and row["status"] in ("todo", "backlog"):
         reason = {"code": "not_released"}
         if row.get("split_stuck"):
             reason["split_stuck"] = True
