@@ -688,6 +688,18 @@ def test_r18d_unconfigured_board_is_never_scanned(world):
     assert world.cursor(PLAIN) is None
 
 
+def test_unconfigured_workspace_check_creates_no_orchestrator_tables(hub):
+    """The configured() check on a workspace that never stored a config is read-only:
+    it answers False and leaves runner.sqlite3 without orchestrator tables."""
+    js = jobs.open_store(hub.gateway, hub.workspace)
+    assert runner_bridge.configured(hub.gateway, hub.workspace, PLAIN) is False
+    with js.connection() as conn:
+        names = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert not {name for name in names if name.startswith("orch_")}
+
+
 def test_trigger_actor_is_rebuilt_and_requester_unknown_when_revoked(world):
     """A trigger runs as the event's actor: a listed PAT's event starts a job requested
     by that PAT; an event whose PAT is revoked before the sweep is requester_unknown."""
