@@ -129,8 +129,9 @@ HELLO_FIELDS = (
     "data_dir",  # realpath of the gateway's data directory; a client must match it
     "worker_pids",  # pids of live workers, sorted
     "successors",  # live registry entries after prune (dicts, see Admission.successors)
-    "successor_pids",  # sorted pids of those entries (starting entries have none)
+    "successor_pids",  # sorted live pids of running entries (leaders and session members)
     "successor_sids",  # sorted sids of those entries
+    "successors_starting",  # handoff ids of entries still in their pre-spawn ``starting`` state
     "successor_active",  # bool: any live entry, or the registry could not be read
     "successor_error",  # None, or why the registry could not be read (fail closed)
     "successor_counter",  # registry launch counter; commit needs it unchanged
@@ -267,23 +268,26 @@ def supported() -> bool:
 class Admission(Protocol):
     """What the pause server needs from the admission gate and successor registry."""
 
-    def freeze(self, timeout: float) -> None:
-        """Block new creators, wait <= timeout for running ones; raise on timeout."""
+    def freeze(self, timeout: float, lease_s: float, on_lapse: Callable[[], None]) -> object:
+        """Block new creators, drain running ones within ``timeout`` (raise if not).
 
-    def thaw(self) -> None:
-        """Let creators run again. Idempotent; safe when not frozen."""
+        The freeze holds until :meth:`thaw` or until ``lease_s`` lapses; a lapse
+        thaws by itself and calls ``on_lapse``.
+        """
+
+    def thaw(self) -> Optional[bool]:
+        """Reopen the gate. ``False`` when the freeze had already lapsed."""
 
     def successors(self) -> list:
-        """Live registry entries after prune-on-empty, in this pid namespace.
+        """Live registry entries after prune-on-empty, in this pid namespace."""
 
-        Each entry is a dict: ``{"pid", "starttime", "sid", "sid_leader_starttime"}``
-        or ``{"state": "starting", "handoff_id"}``.
-        """
+    def hello_fields(self) -> dict:
+        """``successor_pids``, ``successor_sids``, ``successors_starting``, ``successor_counter``."""
 
     def successor_counter(self) -> int:
         """Launch counter, bumped before every registered successor spawn."""
 
-    def rehydrate(self) -> None:
+    def rehydrate(self) -> object:
         """Load the persisted registry at gateway start and prune dead entries."""
 
 
@@ -293,20 +297,23 @@ class _ModuleAdmission:
     def __init__(self, module):
         self._m = module
 
-    def freeze(self, timeout: float) -> None:
-        self._m.GATE.freeze(timeout=timeout)
+    def freeze(self, timeout: float, lease_s: float, on_lapse: Callable[[], None]) -> object:
+        return self._m.GATE.freeze(timeout=timeout, lease_s=lease_s, on_lapse=on_lapse)
 
-    def thaw(self) -> None:
-        self._m.GATE.thaw()
+    def thaw(self) -> Optional[bool]:
+        return self._m.GATE.thaw()
 
     def successors(self) -> list:
-        return [dict(e) for e in self._m.REGISTRY.live()]
+        return [dict(e) for e in self._m.REGISTRY.active()]
+
+    def hello_fields(self) -> dict:
+        return dict(self._m.REGISTRY.hello_fields())
 
     def successor_counter(self) -> int:
         return int(self._m.REGISTRY.counter())
 
-    def rehydrate(self) -> None:
-        self._m.REGISTRY.rehydrate()
+    def rehydrate(self) -> object:
+        return self._m.REGISTRY.rehydrate()
 
 
 def bind_admission() -> Admission:
@@ -649,29 +656,35 @@ class PauseServer:
     # ops
     def _info(self) -> dict:
         try:
-            pids = sorted(self.supervisor.worker_pids())
+            worker_pids = sorted(self.supervisor.worker_pids())
         except Exception:
-            pids = []
+            worker_pids = []
         error = self._registry_error
         successors: list = []
-        counter = None
+        report = {}
         if error is None:
             try:
                 successors = list(self.admission.successors())
-                counter = int(self.admission.successor_counter())
+                report = self.admission.hello_fields()
+                report["successor_counter"] = int(report["successor_counter"])
             except Exception as exc:
                 error = type(exc).__name__
+                report = {}
+        pids = report.get("successor_pids", [])
+        sids = report.get("successor_sids", [])
+        starting = report.get("successors_starting", [])
         return {
             "proto": PROTOCOL_VERSION,
             "gateway_pid": os.getpid(),
             "data_dir": self.data_dir,
-            "worker_pids": pids,
+            "worker_pids": worker_pids,
             "successors": successors,
-            "successor_pids": sorted(e["pid"] for e in successors if e.get("pid") is not None),
-            "successor_sids": sorted(e["sid"] for e in successors if e.get("sid") is not None),
-            "successor_active": bool(successors) or error is not None,
+            "successor_pids": pids,
+            "successor_sids": sids,
+            "successors_starting": starting,
+            "successor_active": bool(successors or pids or sids or starting) or error is not None,
             "successor_error": error,
-            "successor_counter": counter,
+            "successor_counter": report.get("successor_counter"),
             "busy": self._run is not None,
             "knobs": self.knobs.server_view(),
         }
@@ -762,7 +775,11 @@ class PauseServer:
             if run.frozen:
                 return self._refuse("freeze", run, E_BAD_STATE)
         try:
-            self.admission.freeze(timeout=self.knobs.creator_drain_s)
+            self.admission.freeze(
+                timeout=self.knobs.creator_drain_s,
+                lease_s=self.knobs.freeze_lease_s,
+                on_lapse=lambda: self.invalidate(R_FREEZE_LEASE),
+            )
         except Exception:
             with self._lock:
                 self._invalidate(run, R_CREATOR_DRAIN)
@@ -786,7 +803,9 @@ class PauseServer:
             if not run.frozen:
                 return self._refuse("thaw", run, E_BAD_STATE)
             run.frozen = False
-            self.admission.thaw()
+            if self.admission.thaw() is False:  # the gate's own lease lapsed first
+                self._invalidate(run, R_FREEZE_LEASE)
+                return self._refuse("thaw", run, E_INVALID)
             return self._ok("thaw", run, frozen=False)
 
     def _op_resume(self, run: _Run) -> dict:

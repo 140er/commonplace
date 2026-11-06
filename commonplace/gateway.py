@@ -16,6 +16,7 @@ Every write and every refusal goes to the audit log (ids only, never text).
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import http.client
@@ -41,7 +42,7 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
-from .workers import Worker, WorkerSupervisor
+from .workers import SupervisorClosed, Worker, WorkersPaused, WorkerSupervisor
 
 logger = logging.getLogger("commonplace.gateway")
 
@@ -76,8 +77,11 @@ def _with_search_facts(result, facts, facts_error=None):
     return out
 
 
-def _rpc_error(req_id, code: int, message: str) -> dict:
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> dict:
+    error = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": req_id, "error": error}
 
 
 def _tool_response(req_id, result: dict, *, is_error: bool = False) -> dict:
@@ -120,6 +124,14 @@ class WorkerUnavailable(Exception):
     pass
 
 
+class WorkerPaused(WorkerUnavailable):
+    """Memory is paused for an online backup; the caller may retry later."""
+
+    def __init__(self, retry_after_s: int):
+        super().__init__("memory is paused for a backup")
+        self.retry_after_s = retry_after_s
+
+
 def _startup_pointer(principal):
     """Keep a small canonical follow-up even when optional context is unavailable."""
     policy = principal.policy
@@ -142,12 +154,21 @@ class WorkerClient:
         self.supervisor = supervisor
 
     def post(self, principal: Principal, request: dict) -> Optional[dict]:
+        # One in-flight slot covers the worker start and the whole call, so
+        # an online backup's pause drains it and never cuts it.
+        slot = getattr(self.supervisor, "call", None)
         try:
-            worker = self.supervisor.get(principal.workspace_id)
-        except Exception as exc:
-            log_failure(logger, "worker start failed", exc)
+            with slot() if slot is not None else contextlib.nullcontext():
+                try:
+                    worker = self.supervisor.get(principal.workspace_id)
+                except Exception as exc:
+                    log_failure(logger, "worker start failed", exc)
+                    raise WorkerUnavailable() from exc
+                return self._post(worker, principal, request)
+        except WorkersPaused as exc:
+            raise WorkerPaused(exc.retry_after_s) from None
+        except SupervisorClosed as exc:
             raise WorkerUnavailable() from exc
-        return self._post(worker, principal, request)
 
     def _post(self, worker: Worker, principal: Principal, request: dict) -> Optional[dict]:
         from .rules.checks import remaining
@@ -235,6 +256,7 @@ class Mediator:
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
+        self._tools_cache: dict = {}
         self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
@@ -264,6 +286,13 @@ class Mediator:
                     return response
                 finally:
                     _observe_console(self, principal, request, response, started)
+        except WorkerPaused as exc:
+            return _rpc_error(
+                req_id,
+                -32603,
+                "This workspace's memory is unavailable right now",
+                {"retry_after_s": exc.retry_after_s},
+            )
         except WorkerUnavailable:
             return _rpc_error(req_id, -32603, "This workspace's memory is unavailable right now")
         if req_id is None:
@@ -314,8 +343,25 @@ class Mediator:
     def _tools_list(self, principal: Principal, request: dict) -> dict:
         try:
             response = self.workers.post(principal, request)
+        except WorkerPaused:
+            # In a backup pause: the last list this workspace's worker gave,
+            # else the paused error (handle() adds the retry hint), never [].
+            cached = self._tools_cache.get(principal.workspace_id)
+            if cached is None:
+                raise
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {"tools": copy.deepcopy(cached)},
+            }
         except WorkerUnavailable:
             response = {"jsonrpc": "2.0", "id": request.get("id"), "result": {"tools": []}}
+        else:
+            tools = (
+                (response.get("result") or {}).get("tools") if isinstance(response, dict) else None
+            )
+            if isinstance(tools, list):
+                self._tools_cache[principal.workspace_id] = copy.deepcopy(tools)
         policy = principal.policy
         try:
             tools = response["result"]["tools"]
@@ -1219,8 +1265,11 @@ class Gateway:
         return None
 
     def workspace_dir(self, workspace_id: str) -> str:
+        from .admission import GATE
+
         path = self.supervisor.workspace_dir(workspace_id)
-        path.mkdir(parents=True, exist_ok=True)
+        with GATE.creating():
+            path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
     def principal_for(self, handler) -> Optional[Principal]:
@@ -1248,6 +1297,10 @@ class Gateway:
 
             with internal_call():
                 response = self.mediator._tools_call(principal, request)
+        except WorkerPaused as exc:
+            raise extensions.ToolError(
+                f"Memory is paused for a backup; retry in {exc.retry_after_s} s"
+            ) from None
         except WorkerUnavailable:
             raise extensions.ToolError("Memory is unavailable right now") from None
         if "error" in response:
@@ -1288,11 +1341,20 @@ class Gateway:
         return server
 
     def serve(self, host: str, port: int, idle_check_s: float = 60.0) -> None:
+        from commonplace.backup_pause import PauseServer
         from commonplace.rules.checks import deploy
 
         deploy(self)
         server = self.build_server(host, port)
+        self._http_server = server
         stop = threading.Event()
+        # The online-backup socket lives as long as serve. If it cannot start,
+        # serve still runs and online backups fail closed.
+        self.pause_server = None
+        root = getattr(self.supervisor, "root", None)
+        if root is not None:
+            self.pause_server = PauseServer(self.supervisor, str(root.parent))
+            self.pause_server.start()
 
         def reap():
             while not stop.wait(idle_check_s):
@@ -1312,13 +1374,23 @@ class Gateway:
             server.serve_forever()
         finally:
             stop.set()
-            server.server_close()
+            try:
+                if self.pause_server is not None:
+                    self.pause_server.stop()
+            finally:
+                server.server_close()
             try:
                 handoff = getattr(self, "handoff", None)
                 if handoff is not None:
                     handoff.close()
             finally:
                 self.supervisor.close()
+
+    def shutdown(self) -> None:
+        """Stop a running ``serve`` (from another thread); it then cleans up."""
+        server = getattr(self, "_http_server", None)
+        if server is not None:
+            server.shutdown()
 
 
 class _GatewayHandler(BaseHTTPRequestHandler):
