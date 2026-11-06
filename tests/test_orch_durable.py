@@ -892,6 +892,32 @@ def test_unstarted_boundary_is_the_firing_event_not_any_todo_row(env):
     assert card in _unstarted(env)
 
 
+@pytest.mark.parametrize("event_first", [True, False], ids=["event-then-start", "start-then-event"])
+def test_unstarted_lists_a_same_second_tie_in_either_order(env, event_first):
+    # Both stores stamp whole seconds: a start and a firing event in one second cannot be
+    # ordered, so the tie stays listed (conservative), whichever was written first.
+    card = env.card()
+    if event_first:
+        _event(env, card, at(300), from_status="backlog", to_status="todo")
+        _job(env, card, "started", created=at(250), started=at(300))
+    else:
+        _job(env, card, "started", created=at(250), started=at(300))
+        _event(env, card, at(300), from_status="backlog", to_status="todo")
+    assert card in _unstarted(env)
+
+
+def test_unstarted_different_seconds_order_start_and_event(env):
+    # A start one second after the firing event hides the card; one second before lists it.
+    after, before = env.card(), env.card()
+    _event(env, after, at(300), from_status="backlog", to_status="todo")
+    _job(env, after, "started", created=at(250), started=at(301))
+    _event(env, before, at(300), from_status="backlog", to_status="todo")
+    _job(env, before, "started", created=at(250), started=at(299))
+    listed = _unstarted(env)
+    assert after not in listed
+    assert before in listed
+
+
 def test_unstarted_cancelled_plan_pending_job_never_hides(env):
     # A17: a cancelled plan_pending job after the todo entry keeps the card listed.
     card = env.card()

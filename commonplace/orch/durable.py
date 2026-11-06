@@ -1133,8 +1133,12 @@ FIRING_EVENT = (
 def unstarted_todo(ctx, st, board_row) -> list[dict]:
     """Cards in ``todo`` with no start for their current todo occurrence: no job in
     ``queued|leased|starting|uncertain`` and no ``started`` job whose ``started_at`` is
-    at or after the card's latest firing event (todo entry or plan approval).
-    ``cancelled`` and ``failed`` jobs never hide a card."""
+    strictly after the card's latest firing event (todo entry or plan approval).
+    ``cancelled`` and ``failed`` jobs never hide a card.
+
+    Both stores stamp whole seconds, so a start and a firing event in the same second
+    cannot be ordered; such a tie stays listed (a possible false positive, never a
+    hidden unstarted card)."""
     with BoardStore(ctx.workspace_dir()).connection() as conn:
         cards = conn.execute(
             "SELECT t.id, t.title, (SELECT e.created_at FROM task_events e WHERE e.task_id=t.id "
@@ -1163,7 +1167,7 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
             if job["state"] in ACTIVE_JOB_STATES:
                 hidden = True
             elif job["state"] == "started" and (
-                row["boundary"] is None or (job["started_at"] or "") >= row["boundary"]
+                row["boundary"] is None or (job["started_at"] or "") > row["boundary"]
             ):
                 hidden = True
         if not hidden:

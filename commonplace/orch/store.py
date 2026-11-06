@@ -17,7 +17,9 @@ not touch the cursor. Arming (reading ``boards.sqlite3``) and the sweep belong t
 triggers module.
 
 Restore: ``commonplace.backup.restore()`` leaves ``RESTORE_MARKER`` in every restored
-workspace directory. The first ``Store`` open converts it into ``orch_state.restore_flag=1``
+workspace directory. The first explicit ``Store`` open (a surface, the CLI, a lease call or
+a start; never the trigger sweep, which opens ``Store.existing`` and skips while a marker
+is pending) converts it into ``orch_state.restore_flag=1``
 with a new incarnation (old lease tokens, bound to the incarnation, die) and drops every
 orchestrator lease in the same transaction, and deletes the marker only after that commit. While the flag is set, lease claims, every config-driven
 start and the sweep refuse (``check_restore_in``). Only ``restore_ack`` with the exact
@@ -80,6 +82,8 @@ __all__ = [
     "cursor_in",
     "drop_cursor_in",
     "incarnation_in",
+    "marker_pending",
+    "open_existing",
     "open_store",
     "orch_owner",
     "require_owner",
@@ -425,7 +429,8 @@ def _read_marker(path: Path) -> tuple[str, str]:
 class Store:
     """``runner.sqlite3`` in ``directory`` (a resolved workspace directory).
 
-    Opening creates the tables (idempotent) and converts a restore marker.
+    Opening creates the tables (idempotent) and converts a restore marker; both write.
+    ``Store.existing`` opens without running any statement.
     ``now`` returns ``"YYYY-MM-DDTHH:MM:SSZ"`` (injected in tests)."""
 
     def __init__(self, directory, *, now: Callable[[], str] | None = None):
@@ -442,9 +447,23 @@ class Store:
             )
         self._convert_marker()
 
+    @classmethod
+    def existing(cls, directory, *, now: Callable[[], str] | None = None) -> Store:
+        """A store over an already initialized ``runner.sqlite3`` that opens without a
+        statement: no schema script, no ``orch_state`` insert, no marker conversion.
+
+        For the trigger sweep, whose only ``runner.sqlite3`` writes are the arming
+        ``UPDATE`` and ``fenced_start``. The caller checks first that the tables exist and
+        that no restore marker is pending (``marker_pending``)."""
+        st = cls.__new__(cls)
+        st.directory = Path(directory)
+        st.path = str(st.directory / DB_NAME)
+        st._now = now or _utcnow
+        return st
+
     def _convert_marker(self) -> None:
         marker = self.directory / RESTORE_MARKER
-        if not (marker.exists() or marker.is_symlink()):
+        if not marker_pending(self.directory):
             return
         after, marker_id = _read_marker(marker)
         with self.transaction() as conn:
@@ -843,3 +862,14 @@ class Store:
 def open_store(gateway, workspace_id: str, **kwargs) -> Store:
     """``Store(gateway.workspace_dir(workspace_id))``, the runner job store's directory."""
     return Store(gateway.workspace_dir(workspace_id), **kwargs)
+
+
+def open_existing(gateway, workspace_id: str, **kwargs) -> Store:
+    """``Store.existing`` over the workspace's ``runner.sqlite3`` (no statement on open)."""
+    return Store.existing(gateway.workspace_dir(workspace_id), **kwargs)
+
+
+def marker_pending(directory) -> bool:
+    """True while ``directory`` holds a restore marker not yet converted to the flag."""
+    marker = Path(directory) / RESTORE_MARKER
+    return marker.exists() or marker.is_symlink()
