@@ -245,3 +245,101 @@ def test_starting_rechecks_authority_in_transaction(world, monkeypatch, change):
         "trusted" if change == "revoke" else "standard"
     )
     assert bool(w.machine()["revoked_at"]) == (change == "revoke")
+
+
+@pytest.mark.parametrize("constructor", ["service", "store"])
+def test_starting_never_constructs_boards_in_runner_transaction(hub, monkeypatch, constructor):
+    from contextlib import contextmanager
+    from threading import local
+
+    from commonplace.boards.service import BoardService
+    from commonplace.boards.store import BoardStore
+
+    w = World(hub)
+    seed(w)
+    card = w.card()
+    w.person_start(card)
+    payload = w.lease()
+    state = local()
+    violations = []
+    transaction = jobs.JobStore.transaction
+    target = BoardService if constructor == "service" else BoardStore
+    initialize = target.__init__
+
+    @contextmanager
+    def tracked(store):
+        with transaction(store) as conn:
+            state.in_runner_transaction = True
+            try:
+                yield conn
+            finally:
+                state.in_runner_transaction = False
+
+    def guarded(self, *args, **kwargs):
+        if getattr(state, "in_runner_transaction", False):
+            violations.append(constructor)
+            raise AssertionError("board construction inside runner transaction")
+        initialize(self, *args, **kwargs)
+
+    monkeypatch.setattr(jobs.JobStore, "transaction", tracked)
+    monkeypatch.setattr(target, "__init__", guarded)
+    result = w.machine_call("starting", {"lease_token": payload["lease_token"]})
+    assert result[0] == 200 and violations == [], (result, violations)
+    assert w.all_jobs()[0]["state"] == "starting"
+
+
+def test_claim_during_start_authority_check_is_fast(hub, monkeypatch):
+    from time import monotonic
+
+    from commonplace.projects import connect
+
+    # Use real constructors: the shared world fixture's open_store patch would
+    # hide BoardStore's schema write lock and the reverse lock order.
+    w = World(hub)
+    seed(w)
+    _, connected = connect.connect(w.gw, w.owner, "acme", allow_shared=True)
+    seat = w.gw.authenticate("Bearer " + connected["token"])
+    connect.trust(w.gw, w.owner, "acme", {"confirm": True, "machines": [w.machine_id]})
+    started = w.card()
+    tools.card_start(w.ctx(seat), started, w.machine_id, "demo", "worker")
+    payload = w.lease()
+    claimed = w.card()
+    paused, in_claim, release = Event(), Event(), Event()
+    fenced, check = jobs._fenced, limits.check
+
+    def pause(conn, *args, **kwargs):
+        row = fenced(conn, *args, **kwargs)
+        if conn.in_transaction and not paused.is_set():
+            paused.set()
+            if not release.wait(10):
+                raise RuntimeError("claim did not reach its admission check")
+        return row
+
+    def entering(*args, **kwargs):
+        if kwargs.get("card_id") == claimed:
+            in_claim.set()
+        return check(*args, **kwargs)
+
+    def claiming():
+        began = monotonic()
+        result = claim(w, claimed)
+        return result, monotonic() - began
+
+    monkeypatch.setattr(jobs, "_fenced", pause)
+    monkeypatch.setattr(limits, "check", entering)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        start = pool.submit(w.machine_call, "starting", {"lease_token": payload["lease_token"]})
+        try:
+            assert paused.wait(10), "start did not reach its transaction"
+            contender = pool.submit(claiming)
+            assert in_claim.wait(10), "claim did not reach admission"
+        finally:
+            release.set()
+        result, elapsed = contender.result(timeout=15)
+        start_result = start.result(timeout=15)
+    assert result[0] == 200 and elapsed < 2, (result, elapsed)
+    assert start_result[0] == 200, start_result
+    assert w.jobs_for(started)[0]["state"] == "starting"
+    with w.boards.store.connection() as conn:
+        row = conn.execute("SELECT status,assignee FROM tasks WHERE id=?", (claimed,)).fetchone()
+        assert tuple(row) == ("doing", w.a.actor)

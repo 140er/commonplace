@@ -733,3 +733,102 @@ def test_trust_lock_timeout_is_busy_and_atomic(projects_hub, monkeypatch):
     assert [
         r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
     ] == before_audit
+
+
+def test_off_runner_lock_timeout_returns_busy(world, monkeypatch):
+    import sqlite3
+    from contextlib import contextmanager
+    from time import monotonic
+
+    w = world
+    seed(w, False)
+    card = w.card()
+    w.person_start(card)
+    payload = w.lease()
+    before = w.all_jobs()
+
+    @contextmanager
+    def locked(store):
+        # Simulate SQLite's bounded BEGIN IMMEDIATE lock timeout.
+        raise sqlite3.OperationalError("database is locked")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(jobs.JobStore, "transaction", locked)
+    began = monotonic()
+    result = w.machine_call("starting", {"lease_token": payload["lease_token"]})
+    assert result == (409, {"error": "busy"})
+    assert monotonic() - began < 2
+    assert w.all_jobs() == before
+    with w.boards.store.connection() as conn:
+        assert conn.execute("SELECT status FROM tasks WHERE id=?", (card,)).fetchone()[0] == "todo"
+
+
+def test_non_cap_lease_refusal_returns_no_content(world, monkeypatch):
+    from commonplace.projects import orchestration
+
+    w = world
+    seed(w)
+    w.person_start(w.card())
+    before = w.all_jobs()
+
+    def refused(*args, **kwargs):
+        raise orchestration.AdmissionRefused("board_not_found")
+
+    monkeypatch.setattr(orchestration, "check_start", refused)
+    assert w.machine_call("lease") == (204, "")
+    assert w.all_jobs() == before
+
+
+def test_trust_initial_seat_lock_timeout_returns_busy(projects_hub, monkeypatch):
+    import sqlite3
+    from time import monotonic
+
+    from commonplace.projects import seats
+
+    h = projects_hub
+    m = trust_setup(h)
+    seat = h.seats()[0]["connection_id"]
+    before_machine = dict(registry.get_machine(h.db, h.workspace, m["machine_id"]))
+    before_policy = h.db.authenticate_connection(seat).policy
+    before_audit = [
+        r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
+    ]
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(seats, "ensure_main", locked)
+    began = monotonic()
+    result = trust(h, {"confirm": True, "machines": [m["machine_id"]]})
+    assert result == (409, {"error": "busy", "code": "busy"})
+    assert monotonic() - began < 2
+    assert h.db.authenticate_connection(seat).policy == before_policy
+    assert dict(registry.get_machine(h.db, h.workspace, m["machine_id"])) == before_machine
+    assert [
+        r for r in h.db.audit_entries(h.workspace) if r["action"] == "project.orchestrator.trust"
+    ] == before_audit
+
+
+def test_lease_checks_capped_project_once(world, monkeypatch):
+    from commonplace.projects import orchestration
+
+    w = world
+    seed(w)
+    registry.patch(w.db, w.owner, w.machine_id, {"projects": ["demo", "other"]})
+    for _ in range(2):
+        w.person_start(w.card())
+    eligible = w.card(board="plain")
+    tools.card_start(w.ctx(w.owner), eligible, w.machine_id, "other", "worker")
+    cap(w, 1)
+    doing(w, w.card(), "conn:orch-a")
+    checked = []
+    check = orchestration.check_start
+
+    def counted(gateway, ws, conn, slug, *args, **kwargs):
+        checked.append(slug)
+        return check(gateway, ws, conn, slug, *args, **kwargs)
+
+    monkeypatch.setattr(orchestration, "check_start", counted)
+    result = jobs.lease(w.js, w.machine())
+    assert result is not None and result["task_number"] == eligible
+    assert checked == ["acme", "plain"]

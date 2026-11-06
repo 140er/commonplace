@@ -441,7 +441,8 @@ def lease(store, machine):
                     )
                 except orch.AdmissionRefused as exc:
                     if exc.code != "project_limit":
-                        raise
+                        return None
+                    projects.add(row["project"])
                     continue
             return _update(
                 conn,

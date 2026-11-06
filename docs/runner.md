@@ -264,19 +264,29 @@ When agent orchestration is enabled, claims, start creation and configured start
 share a runner `BEGIN IMMEDIATE` lock and a deduplicated project count. Claims hold
 that lock until their card transaction commits or rolls back, including before any
 machine is enrolled. Admission reads control settings and worker identities before
-waiting on board or runner locks. Starting rechecks current requester and machine
-authority inside its runner transaction, briefly taking the control lock there.
-Control-lock holders on the enabled path never wait for the runner lock. Runner
-paths read committed card state under that lock. A settings-read failure returns
+waiting on board or runner locks. Starting constructs board services and checks
+card/board visibility, coordinator authority and startability before its runner
+transaction. Inside that transaction it rechecks only live control authority:
+the switch, requester trust and machine grants/binding. It constructs no board
+service or store while holding the runner transaction.
+
+The enabled path takes the control lock briefly for that authority check. A
+concurrent switch-off can put another request on the legacy off path, which holds
+control while waiting for runner. That switch-flip window can stall for the
+SQLite busy timeout, bounded at 10 seconds. The timed-out request returns 409
+`busy`; its transaction rolls back, nothing is corrupted, and the in-flight start
+can continue. Retrying the refused request is safe. A settings-read failure returns
 `settings_unavailable` on runner actions, including renew, result and listing.
 
 Queued starts reserve capacity at creation; lease checks exclude queued jobs and
 scan in queue order, skipping capped projects, and admit the oldest eligible job
-below the active cap. A started job counts for one hour only while its card is
-todo or doing. Review/done releases the project slot;
-the existing per-machine one-hour fence still applies independently. An ordinary
+below the active cap. Other lease refusals return 204 without changing the queue.
+A started job counts for one hour only while its card is todo or doing.
+Review/done releases the project slot; the existing per-machine one-hour fence
+still applies independently. An ordinary
 agent's doing card overlaps its runner job only once; an existing agent or a card's
 own worker may proceed at cap. Manual person claims are exempt from the agent cap.
-Coordinator, requester and machine changes committed before the in-transaction
-starting check prevent a start.
+Coordinator and card checks are a pre-transaction snapshot. Requester and machine
+changes committed before the in-transaction control check prevent a start;
+changes after that check do not stop an already-admitted transition.
 See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.

@@ -136,9 +136,10 @@ A database lock timeout returns 409 `busy`. The whole change rolls back. Only si
 `{"trusted":false}` demotes the seat and removes only its requester id from
 machines, preserving other entries even when stale. Switching orchestration off
 atomically demotes all project seats and removes their requester ids. Other
-requesters retain the existing behavior. Before a leased job becomes starting, its
-requester and current machine authority are rechecked inside the start transaction.
-A demotion, switch-off or revocation committed before that check prevents the start.
+requesters retain the existing behavior. Card/board and coordinator checks run
+before the start transaction. Requester and current machine authority are then
+rechecked inside it. A demotion, switch-off or revocation committed before that
+control check prevents the start.
 A settings read failure refuses admission with `settings_unavailable`; an absent
 table means off.
 

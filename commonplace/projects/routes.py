@@ -86,13 +86,6 @@ def orchestration_route(gateway, h):
     send_json(h, 200, payload)
 
 
-def _trust(gateway, principal, slug, body):
-    try:
-        return connect.trust(gateway, principal, slug, body)
-    except sqlite3.OperationalError:
-        raise orchestration.AdmissionRefused("busy") from None
-
-
 def install(gateway) -> None:
     for method in ("GET", "PUT"):
         gateway.add_route(
@@ -151,7 +144,7 @@ def install(gateway) -> None:
                     allow_shared=body.get("allow_shared", False),
                 )
             elif trusting:
-                status, payload = 200, _trust(gateway, principal, slug, body)
+                status, payload = 200, connect.trust(gateway, principal, slug, body)
             elif owning:
                 result = wing.own_wing(gateway, principal, slug)
                 with service.store.connection() as conn:
@@ -172,6 +165,9 @@ def install(gateway) -> None:
             return
         except registry.NotFound:
             send_json(h, 404, {"error": "Machine not found"})
+            return
+        except sqlite3.OperationalError:
+            send_json(h, 409, {"error": "busy", "code": "busy"})
             return
         except ControlError:
             send_json(h, 409, {"error": "Trust settings conflict"})
