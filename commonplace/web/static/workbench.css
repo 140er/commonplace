@@ -242,4 +242,6 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 
 /* Memory: the header's one-line promise (09); its own line on a phone. */
 .shell .head .head-sub { font-size: 13px; color: var(--text-3); white-space: normal; }
+/* The short "Memory" title never yields its width to the promise (N5, 700-1099 px). */
+.shell[data-view="memory"] .head h1#title { flex: 0 0 auto; }
 @media (max-width: 699px) { .shell .head .head-sub { flex-basis: 100%; order: 5; } }
