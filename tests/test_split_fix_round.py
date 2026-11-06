@@ -253,8 +253,15 @@ def test_checkpoint_survives_inbox_failure(hub, monkeypatch):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(split, "context", broken)
-    result = durable.checkpoint(w.ctx(w.owner), "acme", "main")
-    assert result["board"] == "acme" and a in {row["card"] for row in result["unstarted"]}
+    try:
+        result = durable.checkpoint(w.ctx(w.owner), "acme", "main")
+    except sqlite3.OperationalError:
+        result = None
+    assert (
+        isinstance(result, dict)
+        and result.get("board") == "acme"
+        and a in {row["card"] for row in result["unstarted"]}
+    )
 
 
 def test_board_summary_reuses_usage_and_runner_read(hub, monkeypatch):
