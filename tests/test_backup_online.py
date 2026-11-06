@@ -1366,3 +1366,60 @@ def test_backup_succeeds_while_real_serve_runs(harness):
     _verify(run.dest)
     assert serve.poll() is None, "RED238: the backup stopped commonplace serve"
     assert harness.healthz() == 200, "RED238: serve stopped answering"
+
+
+# ── backup through cli.main(): exempt from main()'s shared fence and data lock ──
+
+
+def test_backup_commands_run_through_cli_main(harness, capsys):
+    """``backup DEST`` with nothing serving, then ``backup --online`` beside a gateway.
+
+    ``cli.main`` runs one-shot commands under a shared fence and data lock;
+    ``backup`` is exempt because the offline copy takes the data lock exclusive
+    and the snapshot child takes the fence exclusive. Holding either shared in
+    main() would refuse both runs.
+    """
+    from commonplace import cli
+
+    offline = harness.tmp / "offline-snapshot"
+    code = cli.main(["--data", str(harness.data), "backup", str(offline)])
+    err = capsys.readouterr().err
+    assert code == 0, f"offline `backup DEST` through cli.main failed: {err}"
+    _verify(offline)
+
+    harness.start()
+    stamp = harness.stamp()
+    dest = harness.staging / stamp
+    (harness.staging / f"{stamp}.hb").touch()  # as the hook does
+    result = subprocess.run(
+        [sys.executable, "-m", "commonplace", "--data", str(harness.data), "backup"]
+        + ["--online", "--deadline", str(time.time() + 600), str(dest)],
+        env=harness.cli_env(),
+        cwd=str(harness.tmp),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, f"`backup --online` failed: {result.stderr[-2000:]}"
+    assert result.stdout.strip() == str(dest / "manifest.json")
+    _verify(dest)
+    assert _lock_free(harness.data / ".commonplace-fence.lock")
+    assert harness.healthz() == 200
+
+
+def test_lock_held_probe_modes(tmp_path):
+    from commonplace.backup_online import _lock_held
+
+    path = tmp_path / "probe.lock"
+    path.touch()
+    assert not _lock_held(path) and not _lock_held(path, only_exclusive=True)
+    fd = os.open(path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        assert _lock_held(path), "a shared holder counts by default"
+        assert not _lock_held(path, only_exclusive=True), "a shared holder is not exclusive"
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        assert _lock_held(path) and _lock_held(path, only_exclusive=True)
+    finally:
+        os.close(fd)
