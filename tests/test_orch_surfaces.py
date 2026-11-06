@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +22,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.orch import rest, store as orch_store, tools
 from commonplace.policy import Policy
 from commonplace.runner import registry
+from commonplace.workspace_store import workspace_path
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.runner_harness import http
 
@@ -457,6 +459,43 @@ def test_restore_status_and_ack_rearm_configured_boards(env):
     assert [e["kind"] for e in env.events()] == ["orch.restore.acked"]
     status, body = env.person("POST", "restore/ack", {"text": expected})
     assert (status, body["code"]) == (409, "restore_not_pending")
+
+
+def test_cli_accept_and_restore_ack_arm_so_the_next_todo_card_starts(hub, tmp_path, capsys):
+    """CLI ``orch accept`` and ``orch restore-ack`` arm the cursor at once: a todo card
+    added after either (before any sweep) starts exactly one job on the next sweep."""
+    from commonplace.cli import main as cli_main
+    from tests import test_orch_runner as runner_tests
+
+    world = runner_tests.World(hub)
+    data = str(tmp_path / "data")
+    assert hub.gateway.workspace_dir(hub.workspace) == str(
+        Path(workspace_path(data, hub.workspace))
+    )
+    path = tmp_path / "orchestrator.toml"
+    path.write_text(runner_tests.config_text(world.machine_id), encoding="utf-8")
+    ws, board = ("--workspace", hub.workspace), ("--board", runner_tests.BOARD)
+
+    def cli(*args):
+        capsys.readouterr()
+        code = cli_main(["--data", data, "orch", *args])
+        out = capsys.readouterr()
+        assert code == 0, out.err
+        return json.loads(out.out)
+
+    proposed = cli("submit", str(path), *ws)
+    accepted = cli("accept", *ws, *board, proposed["ref"], "--sha256", proposed["sha256"])
+    first = world.card(title="Added after the CLI accept")
+    world.sweep()
+    assert [job["task_number"] for job in world.all_jobs()] == [first]
+    assert accepted["cursor"] == "armed"
+
+    state = world.flag_restore()
+    acked = cli("restore-ack", *ws, "--text", state.ack_text)
+    second = world.card(title="Added after the CLI restore ack")
+    world.sweep()
+    assert [job["task_number"] for job in world.all_jobs()] == [first, second]
+    assert [(a["board"], a["armed"]) for a in acked["arming"]] == [(runner_tests.BOARD, True)]
 
 
 # ------------------------------------------------- lease, journal, gates
