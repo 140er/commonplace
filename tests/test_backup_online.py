@@ -415,6 +415,8 @@ class Harness:
     def cli_env(self) -> dict:
         env = {k: v for k, v in os.environ.items() if not k.startswith("COMMONPLACE_")}
         env[SOCKET_ENV] = str(self.socket)
+        # A tiny disk reserve: the preflight must not depend on the test host's free space.
+        env["COMMONPLACE_BACKUP_RESERVE_BYTES"] = str(1 << 20)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(ROOT), *filter(None, [os.environ.get("PYTHONPATH")])]
         )
