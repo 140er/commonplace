@@ -248,6 +248,7 @@ class AdmissionGate:
             self._pending = False
             self._frozen = True
             self._lapsed = False
+            self._cond.notify_all()  # waiters on existing paths may now pass
             self._epoch += 1
             epoch = self._epoch
             timer = threading.Timer(lease, self._lapse, args=(epoch, on_lapse))

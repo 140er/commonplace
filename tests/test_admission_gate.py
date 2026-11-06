@@ -209,6 +209,30 @@ def test_frozen_open_of_existing_paths_does_not_wait(tmp_path):
     assert slow.done.wait(JOIN_S)
 
 
+def test_existing_path_waiter_passes_once_the_drain_completes(tmp_path):
+    gate = AdmissionGate()
+    existing = tmp_path / "rules.sqlite3"
+    existing.write_bytes(b"")
+    entered, release = threading.Event(), threading.Event()
+
+    def creator():
+        with gate.creating():
+            entered.set()
+            release.wait(JOIN_S)
+
+    _in_thread(creator)
+    assert entered.wait(JOIN_S)
+    freezer = _in_thread(lambda: gate.freeze(timeout=JOIN_S, lease_s=30))
+    assert _wait_for(lambda: gate._pending)
+    opener = _in_thread(lambda: gate.creating(existing).__enter__())
+    assert not opener.done.wait(BLOCK_S)  # still draining: wait
+    release.set()
+    assert freezer.done.wait(JOIN_S) and gate.frozen
+    assert opener.done.wait(JOIN_S), "existing-path open stayed blocked while frozen"
+    assert gate.frozen
+    gate.thaw()
+
+
 def test_creating_timeout_raises_gate_busy():
     gate = AdmissionGate()
     gate.freeze(timeout=1, lease_s=30)
