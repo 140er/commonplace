@@ -506,29 +506,35 @@ def test_term_ignored_escalates_to_kill(env):
         extra_env={"COMMONPLACE_BACKUP_HEARTBEAT_STALE_S": "1"},
     )
     assert result.returncode == 2
-    assert "heartbeat stale" in result.stderr
+    assert "(stage: heartbeat stale)" in result.stderr
+    assert "uninterruptible IO" not in result.stderr, "KILL never reached the child"
     (snap,) = records(env["probe"])
     assert not alive(snap["pid"])
     assert_nothing_published(env)
 
 
-def test_killed_supervisor_takes_child_down(env):
-    gw = gateway(env)
+@pytest.mark.parametrize("with_gateway", [True, False], ids=["relay", "no_gateway"])
+def test_killed_supervisor_takes_child_down(env, with_gateway):
+    """``no_gateway``: the child sleeps outside any relay read, so only the
+    parent-death signal or the lifeline pipe can stop it."""
+    gw = gateway(env) if with_gateway else None
     argv, run_env = _cmd(env, "--online", str(env["dest"]), snapshot="sleep")
     proc = subprocess.Popen(
         argv, cwd=ROOT, env=run_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     env["procs"].append(proc)
-    assert wait_for(lambda: records(env["probe"]) and "pause" in gw.ops)
+    assert wait_for(lambda: records(env["probe"]) and (gw is None or "pause" in gw.ops))
     (snap,) = records(env["probe"])
     assert snap["ppid"] == proc.pid
     proc.send_signal(signal.SIGKILL)
     proc.wait()
     assert wait_for(lambda: not alive(snap["pid"]), timeout=10), "child outlived its supervisor"
-    assert wait_for(lambda: gw.eof_states == ["PAUSED"]), "gateway never saw the run end"
+    if gw is not None:
+        assert wait_for(lambda: gw.eof_states == ["PAUSED"]), "gateway never saw the run end"
     # A dying multi-threaded child shows Z before its last thread drops the files.
     assert wait_for(lambda: lock_free(Path(str(env["dest"]) + ".lock")), timeout=5)
     assert wait_for(lambda: lock_free(env["data"] / FENCE_NAME), timeout=5)
+    assert wait_for(lambda: lock_free(env["data"] / LOCK_NAME), timeout=5)
     assert_nothing_published(env)
 
 
