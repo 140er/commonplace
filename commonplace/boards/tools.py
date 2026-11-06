@@ -65,6 +65,9 @@ def tree(stack):
 
 def show(c):
     rows = [f"{line(c)}  board {c['board']}", f"body: {quoted(c['body'])}"]
+    for key in ("blocked_by", "blocks"):
+        if key in c:
+            rows.append(f"{key}: " + (", ".join(f"#{n}" for n in c[key]) or "none"))
     if c.get("agent_parent"):
         rows.append(f"agent parent: {c['agent_parent']}")
     if c["message_id"] is not None:
