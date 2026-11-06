@@ -33,8 +33,11 @@ from tests.backup_fakes import DISPLACING_VERBS, ROOT, FakeEngine, pid_alive
 
 HOOK = ROOT / "backup-hook.sh"
 VERBATIM = b"Exact words, kept verbatim.\n\x00\xff"
-# A tiny reserve so the disk preflight never depends on the test host's free space.
-BASE_KNOBS = {"COMMONPLACE_BACKUP_RESERVE_BYTES": str(1 << 20)}
+# A tiny reserve and margin so the disk preflight never depends on the test host's free space.
+BASE_KNOBS = {
+    "COMMONPLACE_BACKUP_RESERVE_BYTES": str(1 << 20),
+    "COMMONPLACE_BACKUP_MARGIN_BYTES": str(1 << 20),
+}
 HOOK_TIMEOUT = 120.0
 # Kill tests: a stale heartbeat, a short lease and a near deadline end the run quickly.
 KILL_KNOBS = {
