@@ -58,7 +58,7 @@ def test_r19i_retry_after_cap_and_marker(hub):
     assert len(w.jobs_for(a)) == 1
 
 
-def test_r19i2_two_sweeps_one_retry(hub):
+def test_r19i2_two_sweeps_one_retry(hub, monkeypatch):
     w = world(hub, runner=True)
     a = w.card()
     age(w, a)
@@ -68,10 +68,23 @@ def test_r19i2_two_sweeps_one_retry(hub):
     doing(w, held, w.a.actor)
     triggers.run(w.js, now=T0)
     w.update(held, status="done")
+    from threading import Barrier
+
+    both_ready = Barrier(2)
+    start = runner_bridge.fenced_start
+
+    def together(*args, **kwargs):
+        if kwargs.get("trigger") and kwargs["trigger"].retry:
+            both_ready.wait(timeout=8)
+        return start(*args, **kwargs)
+
+    monkeypatch.setattr(runner_bridge, "fenced_start", together)
     with ThreadPoolExecutor(2) as pool:
         reports = list(pool.map(lambda _: triggers.run(w.js, now="2030-01-01T00:10:00Z"), range(2)))
     assert len(w.jobs_for(a)) == 1  # RED
     assert all(r["acme"] is not None for r in reports)
+    retries = [r for r in w.misses() if r["event_id"] < 0 and r["card"] == a]
+    assert len(retries) == 1 and retries[0]["code"] == "split_started"
 
 
 def test_r19k_three_refusals_no_fourth(hub):
