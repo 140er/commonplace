@@ -221,8 +221,9 @@ def run_nightly(tmp_path, data, fail="", **overrides):
         "FAKE_SNAPSHOT": "real",
         "FAKE_RESTORED": str(recovered),
         "FAKE_FAIL": fail,
-        # The test filesystem is small; the disk reserve is the operator's.
+        # The test filesystem is small; the disk reserve and margin are the operator's.
         "COMMONPLACE_BACKUP_RESERVE_BYTES": "0",
+        "COMMONPLACE_BACKUP_MARGIN_BYTES": "0",
         "RESTIC_REPOSITORY": "sftp:backup@backup.example.test:/backups",
         "COMMONPLACE_BACKUP_ID": "test-deployment",
         "COMMONPLACE_BACKUP_ALERT": str(bin_dir / "alert"),

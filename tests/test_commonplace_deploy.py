@@ -417,8 +417,9 @@ def run_hook(tmp_path, fail="", env_overrides=None):
         FAKE_FAIL=fail,
         FAKE_DATA=str(data),
         FAKE_STATE=str(fake_state),
-        # The test filesystem is small; the disk reserve is the operator's.
+        # The test filesystem is small; the disk reserve and margin are the operator's.
         COMMONPLACE_BACKUP_RESERVE_BYTES="0",
+        COMMONPLACE_BACKUP_MARGIN_BYTES="0",
     )
     env.update(env_overrides or {})
     result = subprocess.run(
