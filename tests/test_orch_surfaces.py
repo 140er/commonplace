@@ -634,3 +634,30 @@ def test_extension_module_is_registered_after_the_runner():
     assert modules.index("commonplace.orch") > modules.index("commonplace.runner")
     loaded = {module.__name__ for module in extensions.load_modules()}
     assert "commonplace.orch" in loaded
+
+
+def test_rest_writes_run_the_rules_check_and_are_audited_by_name(env, monkeypatch):
+    from commonplace.rules import enforce
+
+    text = config_text(prompt="Audited synthetic proposal.")
+    status, body = env.rest(
+        "POST", f"boards/{BOARD}/configs", {"text": text, "rules_seq": "ignored"}, env.a_token
+    )
+    assert status == 201, body
+    with env.hub.db._lock:
+        rows = env.hub.db._conn.execute(
+            "SELECT decision, reason FROM audit_log WHERE tool='orch_config_propose'"
+        ).fetchall()
+    assert [(r["decision"], r["reason"]) for r in rows] == [("ok", "transport=rest")]
+    seen = []
+
+    def stale(ctx, tool, supplied):
+        seen.append(tool)
+        return enforce.Check("rules_seq stale", "no: synthetic refresh notice", True)
+
+    monkeypatch.setattr(enforce, "check", stale)
+    status, body = env.rest("POST", f"boards/{BOARD}/configs", {"text": text}, env.a_token)
+    assert (status, body) == (428, {"error": "no: synthetic refresh notice", "rules_refresh": True})
+    assert seen == ["orch_config_propose"]
+    status, _body = env.rest("GET", f"boards/{BOARD}/configs", token=env.a_token)
+    assert status == 200 and seen == ["orch_config_propose"]

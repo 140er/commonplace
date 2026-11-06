@@ -4,7 +4,8 @@ Each route maps to one tool of ``tools.OPERATIONS`` and runs through ``tools.dis
 so arguments, authority and refusals match MCP. Agent tokens pass the same tool
 visibility gate as on MCP (tool list, scope, ``trusted_only``, ``owner_only``,
 ``available``); signed-in people skip it as on every other REST alias, and the stores
-still check ownership and wing access. Writes are audited by tool name only.
+still check ownership and wing access. POST routes run inside ``rules.enforce.rest_write``
+(the rules freshness check and the audit by tool name, as on every other REST write).
 
 Routes (``<b>`` board slug, ``<r>`` role, ``<v>`` version number, ``<k>`` step key):
 
@@ -117,14 +118,15 @@ def visible(principal, gateway, name: str) -> bool:
     return principal.policy.refusal(name) is None and tool.usable_by(principal, gateway)
 
 
-def _arguments(handler, name: str, path_args: dict) -> dict:
-    if handler.command == "GET":
-        supplied = dict(query(handler))
-        for key in _INTEGER_QUERY:
-            if key in supplied:
-                supplied[key] = _number(supplied[key], key)
-    else:
-        supplied = read_json(handler)
+def _query(handler) -> dict:
+    supplied = dict(query(handler))
+    for key in _INTEGER_QUERY:
+        if key in supplied:
+            supplied[key] = _number(supplied[key], key)
+    return supplied
+
+
+def _merge(supplied: dict, path_args: dict) -> dict:
     if supplied.keys() & path_args.keys():
         raise tools.SurfaceError("invalid_argument", "unexpected arguments", 400)
     return {**supplied, **path_args}
@@ -153,8 +155,7 @@ def _refusal(exc: ToolError) -> tuple[int, dict]:
 
 
 def install(gateway) -> None:
-    from commonplace import extensions
-    from commonplace.rules.enforce import audit
+    from commonplace.rules.enforce import RulesRefresh, rest_write
 
     def route(handler):
         principal = gateway.principal_for(handler)
@@ -162,23 +163,22 @@ def install(gateway) -> None:
             send_json(handler, 401, {"error": "unauthorized"})
             return
         ctx = ToolContext(principal, gateway)
-        name = None
         try:
             name, path_args = resolve(handler.command, path_parts(handler, PREFIX))
             if not visible(principal, gateway, name):
                 handler.close_connection = True
                 send_json(handler, 403, {"error": "tool not allowed for this connection"})
                 return
-            write = extensions.get(name).kind == "write"
-            try:
-                result = tools.dispatch(ctx, name, _arguments(handler, name, path_args))
-            except ToolError as exc:
-                if write:
-                    audit(ctx.db, principal, name, "deny", str(exc)[:200], transport="rest")
-                raise
-            if write:
-                audit(ctx.db, principal, name, "ok", transport="rest")
+            if handler.command == "GET":
+                result = tools.dispatch(ctx, name, _merge(_query(handler), path_args))
+            else:
+                body = read_json(handler)
+                # Same rules freshness check and audit as every other REST write alias.
+                with rest_write(ctx, handler, name, body):
+                    result = tools.dispatch(ctx, name, _merge(body, path_args))
             send_json(handler, *_status(name, result))
+        except RulesRefresh as exc:
+            send_json(handler, 428, exc.payload)
         except HTTPError as exc:
             send_json(handler, exc.status, {"error": str(exc)})
         except ToolError as exc:
