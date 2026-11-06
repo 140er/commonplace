@@ -269,9 +269,10 @@ run_backup() {
 
     stage="CLI preflight"
     # An image without online backup, or a gateway that does not answer, fails
-    # closed here. There is no stop-and-copy fallback.
-    output=$(timeout -k 5 120 "${compose[@]}" exec -T commonplace commonplace backup --check-online \
-        "/data/.backup-staging/$stamp" </dev/null 2>&1 3>&- 9>&-) || rc=$?
+    # closed here. There is no stop-and-copy fallback. The command substitution
+    # is its own bash process that waits for the client, so it closes fd 9 too.
+    output=$(exec 3>&- 9>&-; timeout -k 5 120 "${compose[@]}" exec -T commonplace commonplace \
+        backup --check-online "/data/.backup-staging/$stamp" </dev/null 2>&1) || rc=$?
     printf '%s\n' "$output"
     (( rc == 0 )) || fail "CLI preflight: $(summary "$output")"
 

@@ -55,9 +55,10 @@ write the data tree during the cut and nothing in the backup can detect that.
 Run exactly one gateway per data directory. The online backup pauses and
 fences only the gateway that answers on the admin socket, so a second gateway
 would write unseen during the copy. `commonplace serve` binds that socket
-before it serves or migrates anything and exits nonzero ("run one gateway per data
-directory") while another gateway answers on it, or when the socket cannot be
-bound at all. A second gateway configured with a different
+before it starts workers or serves requests, and exits nonzero ("run one gateway
+per data directory") while another gateway answers on it, or when the socket
+cannot be bound at all. Opening the control database, including its idempotent
+schema setup, runs before that check. A second gateway configured with a different
 `COMMONPLACE_ADMIN_SOCKET` is not detected; never start one.
 
 Files other than SQLite databases and worker files are copied up to their size
