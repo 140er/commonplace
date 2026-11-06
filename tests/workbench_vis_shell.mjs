@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 const load = (name) => import(new URL(`../commonplace/web/static/${name}`, import.meta.url));
 const board = { slug: 'atlas', name: 'Atlas' }, me = 'user:maya';
 const card = (number, status, extra = {}) => ({ number, title: `Card ${number}`, status, ...extra });
-const which = process.argv[2];
+// One case by name (the pytest wrapper), or every case when run bare (node --test).
+async function run(which) {
 if (which === 'empty-board') {
   const b = await load('board.js');
   assert.equal(typeof b.boardView, 'function');
@@ -59,3 +60,6 @@ if (which === 'empty-board') {
 } else {
   throw new Error(`unknown case ${which}`);
 }
+}
+const CASES = ['empty-board', 'columns', 'composer', 'activity', 'needs-meta'];
+for (const which of process.argv[2] ? [process.argv[2]] : CASES) await run(which);

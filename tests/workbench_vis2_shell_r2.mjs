@@ -11,7 +11,8 @@ function slice(start, end) {
   assert.ok(at >= 0 && stop > at, `Missing slice: ${start} → ${end}`);
   return app.slice(at, stop);
 }
-const which = process.argv[2];
+// One case by name (the pytest wrapper), or every case when run bare (node --test).
+async function run(which) {
 if (which === 'route-heading') {
   const attrs = {}, node = () => ({ innerHTML: '', outerHTML: '', setAttribute(n, v) { attrs[n] = v; } });
   const nodes = { '#board-nav': node(), '#phone-bar': node(), '#phone-tabs': node(), '.shell': node() };
@@ -54,3 +55,6 @@ if (which === 'route-heading') {
 } else {
   throw new Error(`unknown case ${which}`);
 }
+}
+const CASES = ['route-heading', 'memory-subtitle', 'memory-chips', 'handoff'];
+for (const which of process.argv[2] ? [process.argv[2]] : CASES) await run(which);

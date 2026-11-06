@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 const load = (name) => import(new URL(`../commonplace/web/static/${name}`, import.meta.url));
 const board = { slug: 'atlas', name: 'Atlas' };
-const which = process.argv[2];
+// One case by name (the pytest wrapper), or every case when run bare (node --test).
+async function run(which) {
 if (which === 'history') {
   const d = await load('details.js');
   assert.equal(typeof d.renderDetails, 'function');
@@ -72,3 +73,6 @@ if (which === 'history') {
 } else {
   throw new Error(`unknown case ${which}`);
 }
+}
+const CASES = ['history', 'open-ask', 'done-selected', 'done-reveal', 'show-more-focus'];
+for (const which of process.argv[2] ? [process.argv[2]] : CASES) await run(which);
