@@ -649,3 +649,7 @@ labels to roots or using a different parent is refused. The marker REST endpoint
 accepts only positive integer task numbers below the SQLite integer bound.
 Unreadable orchestration settings return `503 settings_unavailable`. Only actual
 SQLite lock timeouts return `409 busy`; other database errors retain their failure.
+
+`card_split_done` is a checked write: MCP callers supply the served `rules_seq`
+and REST callers supply the matching `Commonplace-Rules-Seq` header when rules
+freshness is enforced, just as for other card decisions.

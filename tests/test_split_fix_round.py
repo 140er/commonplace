@@ -286,3 +286,14 @@ def test_board_summary_reuses_usage_and_runner_read(hub, monkeypatch):
     monkeypatch.setattr(split, "runner_read", no_extra_read)
     board = next(b for b in w.boards.board_list() if b["slug"] == "acme")
     assert sum(board["waiting"].values()) == 0 and calls == [True, False]
+
+
+def test_split_mark_is_a_checked_write(hub):
+    w = world(hub)
+    assert tool(w, "orchestrator_inbox", board="acme") == (200, [])
+    from commonplace.rules import enforce
+
+    assert "card_split_done" in enforce.CHECKED_WRITES
+    assert any(
+        route.tool == "card_split_done" and route.kind == "checked" for route in enforce.REST_ROUTES
+    )
