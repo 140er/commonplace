@@ -13,6 +13,7 @@ import json
 import secrets
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -417,11 +418,45 @@ def _started_card_back_in_todo(world):
     return card
 
 
+def _ago(seconds):
+    return jobs._after(jobs._now(), -seconds)
+
+
+def _set_job(world, card, **values):
+    with world.js.connection() as conn:
+        conn.execute(
+            "UPDATE runner_jobs SET "
+            + ",".join(f"{key}=?" for key in values)
+            + " WHERE task_number=?",
+            (*values.values(), card),
+        )
+
+
+def _todo_entry(world, card):
+    with BoardStore(world.gw.workspace_dir(world.ws)).connection() as conn:
+        return conn.execute(
+            "SELECT MAX(created_at) FROM task_events WHERE task_id=? AND to_status='todo'",
+            (card,),
+        ).fetchone()[0]
+
+
+def _next_second(after):
+    while jobs._now() <= after:  # board events are append-only; wait out the 1 s clock
+        time.sleep(0.05)
+
+
 def test_r1g_reconfiguration_resets_the_cursor(world):
     """R1g: configured -> unconfigured -> todo cards -> configured again: 0 jobs for the
-    unconfigured interval (all listed as unstarted), then a new todo fires once."""
+    unconfigured interval (all listed as unstarted), then a new todo fires once. A card
+    launched after its todo entry and then only edited stays off the list."""
     world.configure()
     started = _started_card_back_in_todo(world)
+    kept = world.card()
+    world.sweep()
+    entry = _todo_entry(world, kept)
+    _set_job(world, kept, state="started", started_at=entry)
+    _next_second(entry)
+    world.update(kept, title="Edited while in todo")
     world.unconfigure()
     assert world.cursor() is None
     world.update(started, status="todo")
@@ -433,6 +468,7 @@ def test_r1g_reconfiguration_resets_the_cursor(world):
     assert len(world.jobs_for(started)) == 1
     assert world.misses() == []
     assert {*olds, started} <= world.unstarted()
+    assert kept not in world.unstarted()
     new = world.card()
     world.sweep()
     assert len(world.jobs_for(new)) == 1
@@ -440,11 +476,18 @@ def test_r1g_reconfiguration_resets_the_cursor(world):
 
 def test_r1h_events_before_arming_never_fire(world):
     """R1h: an event committed between the configuring accept and the arm (or a kill
-    before the arm) is never fired; the sweep arms the NULL cursor itself."""
+    before the arm) is never fired; the sweep arms the NULL cursor itself. A card whose
+    queued job launched after the card re-entered todo stays off the unstarted list."""
     world.configure()
     started = _started_card_back_in_todo(world)
+    relaunched = world.card()
+    world.sweep()
+    _set_job(world, relaunched, created_at=_ago(300))
     world.unconfigure()
     world.update(started, status="todo")
+    world.update(relaunched, status="backlog")
+    world.update(relaunched, status="todo")
+    _set_job(world, relaunched, state="started", started_at=jobs._now())
     world.configure(arm=False)
     assert world.cursor()[0] is None
     window = world.card()
@@ -452,6 +495,7 @@ def test_r1h_events_before_arming_never_fire(world):
     assert world.cursor() == (world.max_event(), world.cursor()[1])
     assert world.jobs_for(window) == [] and world.misses() == []
     assert {window, started} <= world.unstarted()
+    assert relaunched not in world.unstarted()  # its queued job launched after re-entry
     assert triggers.arm_cursor(world.gw, world.ws, BOARD) is False  # already armed
     after = world.card()
     world.sweep()

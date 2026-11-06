@@ -19,8 +19,9 @@ Cursor protocol (board events live in ``boards.sqlite3``, the cursor in
    ``cursor=MAX WHERE board=? AND gen=? AND cursor IS NULL``; a stale arm updates 0 rows.
    It runs right after the accept (the surface calls it) and at the start of every sweep
    for a NULL cursor, so a crash between 1 and 2 heals itself. Events committed before
-   the MAX read are never fired. ``task_events.id`` is an append-only ``INTEGER PRIMARY
-   KEY`` (``boards/schema.sql``); no code path deletes task events, so ids only grow.
+   the MAX read are never fired. ``task_events.id`` is an ``INTEGER PRIMARY KEY`` of an
+   append-only log (``boards/schema.sql`` triggers abort every UPDATE and DELETE), so ids
+   only grow.
 3. The sweep reads ``(cursor, gen)`` first, then the candidates, on an autocommit
    connection (no transaction). Each candidate goes through
    ``runner_bridge.fenced_start``, whose first statement inside its ``BEGIN IMMEDIATE`` is
