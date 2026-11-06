@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -377,6 +378,24 @@ def lock_free(path: Path) -> bool:
     return True
 
 
+def session_sleeps(sid: int) -> list:
+    """Live ``sleep`` processes still in the (exited) hook's session."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except (OSError, IndexError):
+            continue
+        if fields[0] == "Z" or int(fields[3]) != sid:
+            continue
+        if os.path.basename(argv[0].decode(errors="replace")) == "sleep":
+            found.append({"pid": int(entry.name), "argv": [a.decode() for a in argv if a]})
+    return found
+
+
 def kill_session(sid: int) -> None:
     """SIGKILL every process left in a killed hook's session (timeout runs its own group)."""
     for entry in Path("/proc").iterdir():
@@ -465,19 +484,32 @@ def test_hook_kill_leaves_serve_and_no_oneoff(make_stack, signame):
     assert stack.engine.healthz() == 200, "RED238: serve stopped answering /healthz"
 
 
-def test_hook_kill_frees_run_lock_at_once(make_stack):
+@pytest.mark.parametrize("stage", ["check-online", "snapshot", "cleanup"])
+def test_hook_kill_frees_run_lock_at_once(make_stack, stage):
     """A KILLed hook's exec clients hold no descriptor on the per-run lock.
 
-    The heartbeat stale value is the production default (60 s), so the in-container
-    snapshot outlives the hook for a minute; the next run must not be locked out
-    for that window by an inherited lock descriptor.
+    The hook is killed while one exec client hangs: the CLI preflight
+    (``--check-online``), the snapshot, or the cleanup after a failed snapshot
+    (``--online-cleanup``). The heartbeat stale value is the production default
+    (60 s), so a hung client outlives the hook for a minute or more; the next run
+    must not be locked out for that window by an inherited lock descriptor.
     """
-    stack = make_stack(knobs={"COMMONPLACE_BACKUP_DEADLINE": "300"}, hang=True)
+    stack = make_stack(knobs={"COMMONPLACE_BACKUP_DEADLINE": "300"}, hang=stage == "snapshot")
+    if stage == "check-online":
+        stack.engine.hang_exec("--check-online")
+    elif stage == "cleanup":
+        stack.engine.set_snapshot_exit(9)
+        stack.engine.hang_exec("--online-cleanup")
+    engaged = stack.engine.hang_engaged if stage == "snapshot" else stack.engine.exec_hang_engaged
     lock = stack.backups / ".commonplace-backup.lock"
     run = start_hook(stack)
     try:
-        wait_for_snapshot_call(run)
-        wait_until(stack.engine.hang_engaged, 10)
+        if not wait_until(engaged, 60):
+            run.kill_tree()
+            pytest.fail(
+                f"SETUP: the {stage} hang never engaged; rc={run.proc.returncode}\n"
+                f"{run.text()}\ncalls={stack.engine.docker_calls()}"
+            )
         run.capture_logs()
         os.kill(run.proc.pid, signal.SIGKILL)
         run.proc.wait(timeout=10)
@@ -485,6 +517,35 @@ def test_hook_kill_frees_run_lock_at_once(make_stack):
         holders = fd_holders(lock)
         assert not holders, f"RED238: processes still hold the run lock fd: {holders}"
         assert lock_free(lock), "RED238: the run lock is still held after the hook was killed"
+    finally:
+        kill_session(run.proc.pid)
+
+
+def test_hook_heartbeat_sleep_ends_with_the_hook(make_stack, tmp_path):
+    """The heartbeat's running ``sleep`` does not outlive a finished hook.
+
+    A ``sleep`` shim on PATH stretches the heartbeat interval to 30 s, so an
+    orphaned sleep would still be visible well after the hook exits instead of
+    expiring by chance inside the check window.
+    """
+    real_sleep = shutil.which("sleep", path=os.defpath)
+    assert real_sleep, "SETUP: no sleep binary on the default PATH"
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "sleep").write_text(f"#!/bin/sh\nexec {real_sleep} 30\n")
+    (shim / "sleep").chmod(0o755)
+    stack = make_stack()
+    path = f"{shim}{os.pathsep}{stack.engine.hook_env()['PATH']}"
+    run = start_hook(stack, env={"PATH": path})
+    try:
+        finished = wait_hook(run, HOOK_TIMEOUT)
+        if not finished:
+            run.kill_tree()
+        text = run.text()
+        assert finished and run.proc.returncode == 0, f"SETUP: hook failed:\n{text}"
+        wait_until(lambda: not session_sleeps(run.proc.pid), 2)
+        left = session_sleeps(run.proc.pid)
+        assert not left, f"RED238: the heartbeat sleep outlived the hook: {left}"
     finally:
         kill_session(run.proc.pid)
 

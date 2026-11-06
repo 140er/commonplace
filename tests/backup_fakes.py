@@ -26,6 +26,9 @@ a *hang* makes the snapshot command (``commonplace backup`` other than ``--help`
 ``--check-online`` and ``--online-cleanup``) block forever on its first write into the
 destination, or on opening a chosen source file, through a ``sitecustomize`` audit hook
 inherited by forked and spawned Python children. The process stays killable.
+``FakeEngine.hang_exec(flag)`` instead hangs the *client*: a ``compose exec`` whose
+command contains ``flag`` (``--check-online``, ``--online-cleanup``) blocks in the fake
+``docker`` process itself, like a client stuck on a daemon that never answers.
 
 Only the standard library is used here; nothing imports product code.
 """
@@ -697,6 +700,13 @@ def cmd_exec(state_obj: State, args: list, by_container=False) -> int:
     if c.get("paused"):
         sys.stderr.write(f"Error response from daemon: Container {c['Id']} is paused\n")
         return 1
+    hang_flag = state.get("exec_hang")
+    if hang_flag and hang_flag in command:
+        fd = os.open(Path(state["dir"]) / "exec_hang.mark", os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+        os.write(fd, f"{os.getpid()} {hang_flag}\n".encode())
+        os.close(fd)
+        while True:
+            time.sleep(0.2)
     snapshot = is_snapshot(command)
     if snapshot and state.get("snapshot_exit") is not None:
         return int(state["snapshot_exit"])
@@ -1317,6 +1327,14 @@ class FakeEngine:
     def set_snapshot_exit(self, code) -> None:
         with self.state.edit() as state:
             state["snapshot_exit"] = code
+
+    def hang_exec(self, flag) -> None:
+        """Hang the client of every later ``compose exec`` whose command has ``flag``."""
+        with self.state.edit() as state:
+            state["exec_hang"] = flag
+
+    def exec_hang_engaged(self) -> bool:
+        return (self.state_dir / "exec_hang.mark").exists()
 
     # -- observation ------------------------------------------------------------------
     def hook_env(self) -> dict:
