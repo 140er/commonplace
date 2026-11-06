@@ -208,6 +208,23 @@ def test_r21_missing_system_change_fails(repo):
     assert docs_check.check(repo, base, "HEAD") == ["SYSTEM.md did not change"]
 
 
+def test_r21_whitespace_only_doc_edits_do_not_count(repo):
+    """A block or SYSTEM.md edit that only changes whitespace is not a documented change."""
+    repo, base = repo
+    _commit(
+        repo,
+        {
+            "commonplace/core.py": "VALUE = 2\n",
+            "MODULES.md": MODULES.replace("It works.", "It  works.\n"),
+            "SYSTEM.md": SYSTEM + "\n\n   \n",
+        },
+    )
+    assert docs_check.check(repo, base, "HEAD") == [
+        "module 'core' changed ('commonplace/core.py') but its MODULES.md block did not",
+        "SYSTEM.md changed only in whitespace",
+    ]
+
+
 @pytest.mark.parametrize(
     "modules, expected",
     [
@@ -537,7 +554,7 @@ def test_orch_cli_submit_accept_render_diff_and_retire(data, tmp_path, capsys):
     )
     assert code == 0, err
     accepted = json.loads(out)
-    assert accepted["accepted"] == "v1" and accepted["cursor"] == "arming"
+    assert accepted["accepted"] == "v1" and accepted["cursor"] == "armed"
     assert "roles" in accepted["diff"] and accepted["previous"] is None
 
     second = tmp_path / "v2.toml"
@@ -628,6 +645,53 @@ def test_orch_cli_restore_status_and_ack(data, capsys):
     assert code == 0 and json.loads(out) == {"acknowledged": True, "arming": []}, err
     code, out, err = _cli(data, "orch", "restore-status", *ws, capsys=capsys)
     assert json.loads(out)["restore_pending"] is False
+
+
+def _cursor(data, board):
+    import sqlite3
+
+    from commonplace.control_db import ControlDB
+    from commonplace.workspace_store import workspace_path
+
+    db = ControlDB(str(data / "control.sqlite3"))
+    try:
+        workspace = db.workspace("personal")["id"]
+    finally:
+        db.close()
+    directory = Path(workspace_path(data, workspace))
+    conn = sqlite3.connect(str(directory / "runner.sqlite3"))
+    try:
+        row = conn.execute("SELECT cursor, gen FROM orch_cursor WHERE board=?", (board,)).fetchone()
+    finally:
+        conn.close()
+    return directory, row
+
+
+def test_orch_cli_accept_and_restore_ack_arm_the_trigger_cursor(data, tmp_path, capsys):
+    """The CLI arms the cursor right after a configuring accept and after a restore
+    acknowledgement, like the MCP and REST surfaces (no NULL-cursor window)."""
+    from commonplace.backup import RESTORE_MARKER
+
+    path = tmp_path / "c.toml"
+    path.write_text(config_toml(board="personal", machine="mach_0123456789abcdef"), "utf-8")
+    ws, board = ("--workspace", "personal"), ("--board", "personal")
+    code, out, err = _cli(data, "orch", "submit", str(path), *ws, capsys=capsys)
+    assert code == 0, err
+    digest = json.loads(out)["sha256"]
+    code, out, err = _cli(
+        data, "orch", "accept", *ws, *board, "v1", "--sha256", digest, capsys=capsys
+    )
+    assert code == 0, err
+    assert json.loads(out)["cursor"] == "armed"
+    directory, row = _cursor(data, "personal")
+    assert row == (0, 1)
+    marker = {"version": 1, "backup_created_at": "2026-01-02T03:04:05Z", "id": "b" * 32}
+    (directory / RESTORE_MARKER).write_text(json.dumps(marker), encoding="utf-8")
+    text = "effects after 2026-01-02T03:04:05Z may be unknown"
+    code, out, err = _cli(data, "orch", "restore-ack", *ws, "--text", text, capsys=capsys)
+    assert code == 0, err
+    assert json.loads(out)["arming"] == [{"board": "personal", "gen": 2, "armed": True}]
+    assert _cursor(data, "personal")[1] == (0, 2)
 
 
 def test_repo_checks_run_without_a_data_directory(tmp_path, monkeypatch, capsys):

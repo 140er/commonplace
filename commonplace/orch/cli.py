@@ -14,8 +14,9 @@ named by ``--by`` (default: the first admin) must own the workspace.
   ``docs_check``).
 
 Planner ``connections`` are checked against the workspace's live (not revoked) connection
-names at submit and accept. A configuring accept leaves the trigger cursor arming; the
-runner's next sweep arms it.
+names at submit and accept. A configuring accept and a restore acknowledgement arm the
+trigger cursor of each board they reset at once (``_arm``), like the MCP and REST surfaces;
+if that arm does not happen (a crash, a stale ``gen``), the runner's next sweep arms it.
 """
 
 from __future__ import annotations
@@ -155,11 +156,38 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def _arm(st, board: str) -> bool:
+    """Arm ``board``'s NULL trigger cursor at the current ``MAX(task_events.id)`` (0 if none).
+
+    The protocol of ``triggers.arm_cursor`` on the store's directory (the CLI has no
+    gateway): read ``gen``, then the MAX, then ``UPDATE ... WHERE gen=? AND cursor IS NULL``.
+    Returns False when there is nothing to arm or the arm was stale (``gen`` moved)."""
+    from commonplace.boards.store import BoardStore
+
+    from . import store
+
+    with st.connection() as conn:
+        pair = store.cursor_in(conn, board)
+        if pair is None or pair[0] is not None:
+            return False
+        gen = pair[1]
+        with BoardStore(st.directory).connection() as boards:
+            top = boards.execute("SELECT COALESCE(MAX(id), 0) FROM task_events").fetchone()[0]
+        changed = conn.execute(
+            "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor IS NULL",
+            (top, board, gen),
+        ).rowcount
+    return changed == 1
+
+
 def cmd_accept(args) -> int:
     from . import schema
 
     principal, st, names = _context(args, owner=True)
     result = st.accept(principal, args.board, args.version, sha256=args.sha256, connections=names)
+    cursor = result.cursor
+    if result.arm_needed and _arm(st, result.version.board):
+        cursor = "armed"
     _print(
         {
             "accepted": result.version.ref,
@@ -167,7 +195,7 @@ def cmd_accept(args) -> int:
             "channel": result.version.channel,
             "sha256": result.version.sha256,
             "previous": result.previous.ref if result.previous else None,
-            "cursor": result.cursor,
+            "cursor": cursor,
             "diff": schema.format_diff(result.changes),
         }
     )
@@ -206,7 +234,8 @@ def cmd_restore_status(args) -> int:
 def cmd_restore_ack(args) -> int:
     principal, st, _names = _context(args, owner=True)
     reset = st.restore_ack(principal, args.text)
-    _print({"acknowledged": True, "arming": [{"board": b, "gen": g} for b, g in reset]})
+    arming = [{"board": b, "gen": g, "armed": _arm(st, b)} for b, g in reset]
+    _print({"acknowledged": True, "arming": arming})
     return 0
 
 

@@ -9,7 +9,9 @@ base of ``base`` and ``head`` and exits 1 when:
   (``commonplace/`` itself is split into its entries), or a path is listed twice;
 - a changed path is owned by no block (longest listed path wins; a directory ends in
   ``/``);
-- a module whose paths changed kept its block unchanged, or ``SYSTEM.md`` did not change.
+- a module whose paths changed kept its block unchanged, or ``SYSTEM.md`` did not change
+  (a whitespace-only edit counts as unchanged; the check never judges whether the new
+  text is accurate).
 
 The last two obligations are waived by a commit trailer ``Docs-waiver: W<n>`` whose id is
 listed under ``## Waivers`` in ``SYSTEM.md`` **at the merge base**; any other waiver id
@@ -226,6 +228,11 @@ def waiver_list(system_text: str | None) -> set[str]:
 # ---------------------------------------------------------------- the check
 
 
+def _words(text: str | None) -> str | None:
+    """``text`` with every whitespace run collapsed: a whitespace-only edit is no change."""
+    return None if text is None else " ".join(text.split())
+
+
 def check(repo, base: str = DEFAULT_BASE, head: str = "HEAD") -> list[str]:
     """Problems for ``merge_base(base, head)..head``; raises ``DocsCheckError`` on git errors."""
     head_sha = resolve(repo, head)
@@ -266,10 +273,12 @@ def check(repo, base: str = DEFAULT_BASE, head: str = "HEAD") -> list[str]:
     for name, path in sorted(touched.items()):
         before = base_modules.blocks.get(name) if base_modules is not None else None
         after = modules.blocks.get(name)
-        if before is not None and after is not None and before.text == after.text:
+        if before is not None and after is not None and _words(before.text) == _words(after.text):
             problems.append(f"module '{name}' changed ('{path}') but its {MODULES} block did not")
     if SYSTEM not in paths:
         problems.append(f"{SYSTEM} did not change")
+    elif _words(show(repo, base_sha, SYSTEM)) == _words(show(repo, head_sha, SYSTEM)):
+        problems.append(f"{SYSTEM} changed only in whitespace")
     return problems
 
 
