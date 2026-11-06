@@ -87,6 +87,8 @@ PREFIX = {
     ("DELETE", "/api/runners/"): "authenticated",
     ("GET", "/api/runner/"): "authenticated",
     ("POST", "/api/runner/"): "authenticated",
+    ("GET", "/api/orch/"): "authenticated",
+    ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
     **{
