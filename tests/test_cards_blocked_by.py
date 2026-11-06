@@ -14,6 +14,8 @@ def test_r11_rest_and_mcp(hub):
     status, b = invoke(w.boards.task_add, "Dependent", board="acme", blocked_by=[a])
     assert status == 200 and b.get("blocked_by") == [a]  # RED
     assert w.boards.task_show(a)["blocks"] == [b["number"]]
+    assert f"blocks: #{b['number']}" in tools.run(w.ctx(w.owner), "task_show", {"task": a})
+    assert f"blocked_by: #{a}" in tools.run(w.ctx(w.owner), "task_show", {"task": b["number"]})
     assert "added" in tools.run(
         w.ctx(w.owner), "task_add", {"title": "MCP child", "board": "acme", "blocked_by": [a]}
     )

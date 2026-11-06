@@ -617,7 +617,8 @@ When workspace orchestration is enabled, `task_add` accepts `blocked_by` and
 `task_update` replaces it; REST uses the same field on card POST/PATCH.
 The list contains at most 16 same-board card numbers. Empty removes all edges.
 Self edges, cross-board references, cycles and traversals over 200 nodes are
-refused atomically. Card views include `blocked_by` and the inverse `blocks`.
+refused atomically. Card views include `blocked_by` and the inverse `blocks`;
+MCP `task_show` lists both directions, including satisfied dependencies.
 Only a blocker's Done status satisfies it; automatic claiming skips unresolved
 blockers, and runner starts refuse with `blocked_by`. Blocker changes increment
 the card version and append an edit history row. Existing card ownership,
