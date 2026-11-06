@@ -18,8 +18,8 @@ triggers module.
 
 Restore: ``commonplace.backup.restore()`` leaves ``RESTORE_MARKER`` in every restored
 workspace directory. The first ``Store`` open converts it into ``orch_state.restore_flag=1``
-with a new incarnation (old lease tokens, bound to the incarnation, die), and deletes the
-marker only after that commit. While the flag is set, lease claims, every config-driven
+with a new incarnation (old lease tokens, bound to the incarnation, die) and drops every
+orchestrator lease in the same transaction, and deletes the marker only after that commit. While the flag is set, lease claims, every config-driven
 start and the sweep refuse (``check_restore_in``). Only ``restore_ack`` with the exact
 text ``"effects after <T> may be unknown"`` clears it; it re-arms the cursor of every
 board configured at that moment.
@@ -457,6 +457,12 @@ class Store:
                     "updated_at=? WHERE id=1",
                     (secrets.token_hex(16), after, marker_id, now, now),
                 )
+                if conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_leases'"
+                ).fetchone():
+                    from . import durable  # durable imports this module
+
+                    durable.drop_leases_in(conn, now=now)
         # Only after the flag is committed: a crash before this line re-reads the same
         # marker id next time and leaves the committed flag and incarnation as they are.
         marker.unlink(missing_ok=True)

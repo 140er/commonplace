@@ -63,6 +63,7 @@ CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9._-]{1,100}\Z")
 HEAD = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 MAX_TEXT = 2000
+MAX_JOB_ID = 64  # runner job ids are ``job_`` + 16 hex digits
 MAX_LIST = 200
 
 STATES = ("intent", "started", "waiting", "done", "failed", "in_doubt", "needs_person")
@@ -694,8 +695,14 @@ def _parse_evidence(evidence):
     }
     if set(evidence) - allowed[kind]:
         raise DurableError("invalid_evidence", 400, "unknown evidence field")
-    if kind == "runner_job" and (not isinstance(evidence.get("job"), str) or not evidence["job"]):
-        raise DurableError("invalid_evidence", 400, "runner_job evidence needs a job id")
+    if kind == "runner_job" and (
+        not isinstance(evidence.get("job"), str)
+        or not evidence["job"]
+        or len(evidence["job"]) > MAX_JOB_ID
+    ):
+        raise DurableError(
+            "invalid_evidence", 400, f"runner_job evidence needs a job id of 1-{MAX_JOB_ID} chars"
+        )
     if kind == "holder_attested":
         _text(evidence.get("note"), "note")
     return dict(evidence)
@@ -745,7 +752,8 @@ def journal_record(
       ``done`` (``card_not_done``).
     - ``{"type": "holder_attested", "note": <text>}``: stored, never acted on.
 
-    ``done`` of a ``runner_start`` step needs ``runner_job``; of a ``card`` step
+    ``done`` or ``failed`` of a ``runner_start`` step needs ``runner_job`` (``failed``: a
+    job in ``failed``, ``cancelled`` or ``uncertain``); ``done`` of a ``card`` step
     ``card_state``; leaving ``needs_person`` needs ``runner_job`` or ``card_state``. Gate
     steps use ``gate_record``. Repeating the current state with the same evidence returns
     the stored step."""
@@ -807,12 +815,14 @@ def journal_record(
                 "evidence_required", 409, "needs_person ends only with hub-checked evidence"
             )
         if (
-            state == "done"
+            state in ("done", "failed")
             and step["kind"] == "runner_start"
             and (stored or {}).get("type") != "runner_job"
         ):
             raise DurableError(
-                "evidence_required", 409, "a runner start is done only with runner_job evidence"
+                "evidence_required",
+                409,
+                "a runner start is done or failed only with runner_job evidence",
             )
         if (
             state == "done"
