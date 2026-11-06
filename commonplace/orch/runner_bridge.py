@@ -141,9 +141,36 @@ def ensure_schema(conn) -> None:
         conn.execute(statement)
 
 
+def _has_configs(directory) -> bool:
+    """Read-only probe: does ``runner.sqlite3`` hold an ``orch_configs`` table? Never
+    creates the file or a table."""
+    from pathlib import Path
+
+    from mempalace.sqlite_crypto import connect
+
+    path = Path(directory) / orch_store.DB_NAME
+    if not path.is_file():
+        return False
+    conn = connect(str(path), timeout=10, isolation_level=None)
+    try:
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_configs'"
+            ).fetchone()
+            is not None
+        )
+    finally:
+        conn.close()
+
+
 def configured(gateway, workspace_id: str, board: str) -> bool:
     """True when ``board`` (slug) has an accepted live config with ``[runner]``.
-    Opening the store converts a pending restore marker."""
+
+    A workspace that never stored a config answers False from a read-only probe, so the
+    unconfigured path creates no orchestrator tables. Otherwise opening the store
+    converts a pending restore marker."""
+    if not _has_configs(gateway.workspace_dir(workspace_id)):
+        return False
     st = orch_store.open_store(gateway, workspace_id)
     with st.connection() as conn:
         return orch_store.configured_in(conn, board)
