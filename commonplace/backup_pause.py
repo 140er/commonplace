@@ -32,10 +32,13 @@ Protocol (version 1)
     pause        ACTIVE                        gate memory calls, drain in-flight calls
                                                (``drain_s``), stop workers (TERM, wait,
                                                KILL, wait, ``/proc`` gone) -> PAUSED;
-                                               ``stopped_worker_pids``, ``lease_s``.
+                                               ``stopped_worker_pids``, ``lease_s``,
+                                               ``pause_max_s``. The request may carry
+                                               ``lease_s`` / ``pause_max_s``; the run
+                                               uses ``min(server, request)`` for each.
                                                ``no_drain``: workers resumed, still
                                                ACTIVE, may be retried.
-    renew        PAUSED                        lease = now + ``lease_s``; ``paused_s``
+    renew        PAUSED                        lease = now + the run's ``lease_s``; ``paused_s``
     freeze       PAUSED, not frozen            admission gate frozen (creators drained
                                                within ``creator_drain_s``), freeze lease
                                                ``freeze_lease_s`` starts; ``frozen``
@@ -157,6 +160,8 @@ class Knobs:
     drain_s: float = 60.0  # DRAIN_S: in-flight memory calls to drain at pause
     creator_drain_s: float = 5.0  # CREATOR_DRAIN_S: GATE.freeze timeout
     memory_wait_s: float = 20.0  # MEMORY_WAIT_S: a memory call waits this long in a pause
+    fence_wait_s: float = 60.0  # FENCE_WAIT_S: the backup waits this long for one-shot CLIs
+    cli_fence_wait_s: float = 30.0  # COMMONPLACE_FENCE_WAIT_S: a one-shot CLI waits for a backup
 
     _ENV = {
         "lease_s": "LEASE_S",
@@ -170,25 +175,43 @@ class Knobs:
         "drain_s": "DRAIN_S",
         "creator_drain_s": "CREATOR_DRAIN_S",
         "memory_wait_s": "MEMORY_WAIT_S",
+        "fence_wait_s": "FENCE_WAIT_S",
+        "cli_fence_wait_s": None,  # COMMONPLACE_FENCE_WAIT_S (read by every one-shot CLI)
     }
+    #: Fence waits may be 0 (fail at once); every other knob must be positive.
+    _ZERO_OK = frozenset({"fence_wait_s", "cli_fence_wait_s"})
+
+    @staticmethod
+    def env_name(name: str) -> str:
+        suffix = Knobs._ENV[name]
+        return "COMMONPLACE_FENCE_WAIT_S" if suffix is None else "COMMONPLACE_BACKUP_" + suffix
+
+    @classmethod
+    def read(cls, name: str, environ=None):
+        """One knob from the environment (its default when unset); ValueError when bad."""
+        env = os.environ if environ is None else environ
+        default = {f.name: f.default for f in fields(cls)}[name]
+        key = cls.env_name(name)
+        raw = env.get(key)
+        if raw is None or raw == "":
+            return default
+        if name == "seam_dir":
+            return raw
+        number = int(raw) if name == "reserve_bytes" else float(raw)
+        low_ok = number >= 0 if name in cls._ZERO_OK else number > 0
+        if not (low_ok and number < float("inf")):
+            raise ValueError(
+                f"{key} must be {'non-negative' if name in cls._ZERO_OK else 'positive'}"
+            )
+        return number
 
     @classmethod
     def from_env(cls, environ=None) -> "Knobs":
-        """Read the knobs; an unparsable or non-positive value raises ValueError."""
-        env = os.environ if environ is None else environ
-        values = {}
-        for f in fields(cls):
-            raw = env.get("COMMONPLACE_BACKUP_" + cls._ENV[f.name])
-            if raw is None or raw == "":
-                continue
-            if f.name == "seam_dir":
-                values[f.name] = raw
-                continue
-            number = int(raw) if f.name == "reserve_bytes" else float(raw)
-            if not 0 < number < float("inf"):
-                raise ValueError(f"COMMONPLACE_BACKUP_{cls._ENV[f.name]} must be positive")
-            values[f.name] = number
-        return cls(**values)
+        """Read the knobs; an unparsable or non-positive value raises ValueError.
+
+        The two fence waits may be 0 (no wait).
+        """
+        return cls(**{f.name: cls.read(f.name, environ) for f in fields(cls)})
 
     def server_view(self) -> dict:
         return {
@@ -353,6 +376,17 @@ class _Run:
     lease_deadline: float = 0.0
     freeze_deadline: float = 0.0
     pause_deadline: float = 0.0
+    lease_s: Optional[float] = None  # min(server, request) at pause
+    pause_max_s: Optional[float] = None  # min(server, request) at pause
+
+
+def _requested(value, server: float) -> float:
+    """``min(server, request)``; a missing or unusable request keeps the server's value."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return server
+    if not 0 < value < float("inf"):
+        return server
+    return min(server, float(value))
 
 
 _ACTIVE_SERVER: Optional["PauseServer"] = None
@@ -564,7 +598,7 @@ class PauseServer:
                 elif run is None:
                     response = self._refuse(op, run, E_BAD_STATE)
                 else:
-                    response = self._dispatch(op, run)
+                    response = self._dispatch(op, run, request)
                 self._send(conn, response)
         except OSError:
             pass
@@ -582,8 +616,10 @@ class PauseServer:
             except OSError:
                 pass
 
-    def _dispatch(self, op: str, run: _Run) -> dict:
+    def _dispatch(self, op: str, run: _Run, request: Optional[dict] = None) -> dict:
         try:
+            if op == "pause":
+                return self._op_pause(run, request or {})
             return getattr(self, "_op_" + op)(run)
         except Exception as exc:
             logger.error("online backup %s failed: %s", op, type(exc).__name__)
@@ -722,14 +758,18 @@ class PauseServer:
             return self._refuse(op, run, E_INVALID)
         return None
 
-    def _op_pause(self, run: _Run) -> dict:
+    def _op_pause(self, run: _Run, request: Optional[dict] = None) -> dict:
         from .workers import DrainTimeout, WorkerStopFailed
 
+        request = request or {}
         with self._lock:
             refused = self._gate(run, "pause", ACTIVE)
             if refused:
                 return refused
             run.pause_started = self.clock()
+            # The client may only shorten the lease and the pause budget.
+            run.lease_s = _requested(request.get("lease_s"), self.knobs.lease_s)
+            run.pause_max_s = _requested(request.get("pause_max_s"), self.knobs.pause_max_s)
         started = self.clock()
         try:
             stopped = self.supervisor.pause(drain_s=self.knobs.drain_s)
@@ -750,14 +790,15 @@ class PauseServer:
                 return self._refuse("pause", run, E_INVALID)
             now = self.clock()
             run.state = PAUSED
-            run.lease_deadline = now + self.knobs.lease_s
-            run.pause_deadline = run.pause_started + self.knobs.pause_max_s
+            run.lease_deadline = now + run.lease_s
+            run.pause_deadline = run.pause_started + run.pause_max_s
             return self._ok(
                 "pause",
                 run,
                 stopped_worker_pids=sorted(p for p in stopped if p is not None),
                 drain_s=now - started,
-                lease_s=self.knobs.lease_s,
+                lease_s=run.lease_s,
+                pause_max_s=run.pause_max_s,
             )
 
     def _op_renew(self, run: _Run) -> dict:
@@ -767,10 +808,9 @@ class PauseServer:
             if refused:
                 return refused
             now = self.clock()
-            run.lease_deadline = now + self.knobs.lease_s
-            return self._ok(
-                "renew", run, lease_s=self.knobs.lease_s, paused_s=now - run.pause_started
-            )
+            lease_s = run.lease_s if run.lease_s is not None else self.knobs.lease_s
+            run.lease_deadline = now + lease_s
+            return self._ok("renew", run, lease_s=lease_s, paused_s=now - run.pause_started)
 
     def _op_freeze(self, run: _Run) -> dict:
         with self._lock:
@@ -909,6 +949,10 @@ class PauseClient:
 
     def abort(self) -> dict:
         return self.call("abort")
+
+    def fileno(self) -> int:
+        """The socket's descriptor (a supervisor watches it for EOF while idle)."""
+        return self._sock.fileno()
 
     def close(self) -> None:
         try:

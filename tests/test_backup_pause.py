@@ -388,6 +388,34 @@ def test_renew_keeps_the_pause(env):
         assert client.commit()["ok"]
 
 
+def test_pause_request_can_only_shorten_lease_and_pause_max(env):
+    server, sup, _adm = env(lease_s=5, pause_max_s=30)
+    with _client(server) as client:
+        client.hello()
+        paused = client.request("pause", lease_s=0.3, pause_max_s=600)
+        assert paused["lease_s"] == 0.3 and paused["pause_max_s"] == 30
+        assert client.renew()["lease_s"] == 0.3
+        assert _until(lambda: not sup.paused, 3), "the requested shorter lease was ignored"
+        assert client.call("resume")["reason"] == bp.R_LEASE
+    with _client(server) as client:
+        client.hello()
+        paused = client.request("pause", lease_s=60, pause_max_s=0.3)
+        assert paused["lease_s"] == 5 and paused["pause_max_s"] == 0.3
+        assert _until(lambda: not sup.paused, 3), "the requested shorter pause max was ignored"
+        assert client.call("resume")["reason"] == bp.R_PAUSE_MAX
+    with _client(server) as client:
+        client.hello()
+        paused = client.request("pause", lease_s="x", pause_max_s=-1)
+        assert paused["lease_s"] == 5 and paused["pause_max_s"] == 30
+        assert client.resume()["state"] == bp.RESUMED_OK
+
+
+def test_client_fileno_is_the_socket(env):
+    server, _sup, _adm = env()
+    with _client(server) as client:
+        assert client.fileno() == client._sock.fileno()
+
+
 def test_freeze_lease_lapse_thaws_and_invalidates(env):
     server, sup, adm = env(freeze_lease_s=0.3, lease_s=5)
     with _client(server) as client:
@@ -672,6 +700,15 @@ def test_knobs_from_env():
     assert bp.reserve_bytes(bp.Knobs(), 100 * 1000**3) == 10 * 1000**3
     assert bp.reserve_bytes(bp.Knobs(), 1000 * 1000**4) == 50 * 1000**4
     assert bp.reserve_bytes(knobs, 10**15) == 1000
+    assert knobs.fence_wait_s == 60 and knobs.cli_fence_wait_s == 30
+    waits = bp.Knobs.from_env(
+        {"COMMONPLACE_BACKUP_FENCE_WAIT_S": "0", "COMMONPLACE_FENCE_WAIT_S": "0.5"}
+    )
+    assert waits.fence_wait_s == 0 and waits.cli_fence_wait_s == 0.5
+    assert bp.Knobs.read("cli_fence_wait_s", {"COMMONPLACE_FENCE_WAIT_S": "2"}) == 2
+    for bad in ("-1", "nan", "inf", "x"):
+        with pytest.raises(ValueError):
+            bp.Knobs.from_env({"COMMONPLACE_FENCE_WAIT_S": bad})
 
 
 # ── gateway ──
