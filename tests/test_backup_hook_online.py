@@ -59,6 +59,7 @@ class Stack:
     engine: FakeEngine
     workspace: str
     knobs: dict = field(default_factory=dict)
+    runs: list = field(default_factory=list)
 
     @property
     def data_staging(self) -> Path:
@@ -102,6 +103,7 @@ def make_data(root: Path, *, encrypted: bool = False) -> str:
 @pytest.fixture
 def make_stack(tmp_path):
     engines = []
+    stacks = []
 
     def build(*, encrypted=False, knobs=None, hang=False) -> Stack:
         data = tmp_path / "data"
@@ -117,9 +119,17 @@ def make_stack(tmp_path):
             engine.up()
         except RuntimeError as exc:
             pytest.fail(f"SETUP: {exc}")
-        return Stack(tmp_path, data.resolve(), backups.resolve(), engine, workspace, env)
+        stack = Stack(tmp_path, data.resolve(), backups.resolve(), engine, workspace, env)
+        stacks.append(stack)
+        return stack
 
     yield build
+    for stack in stacks:
+        for run in stack.runs:
+            # A failed assertion can leave a hook running; never leak it or its logs.
+            if run.proc.poll() is None:
+                run.kill_tree()
+            run.text()
     for engine in engines:
         engine.close()
 
@@ -193,7 +203,9 @@ def start_hook(stack: Stack, env=None) -> HookRun:
             stderr=stderr,
             start_new_session=True,
         )
-    return HookRun(stack, proc, out, err, time.monotonic())
+    run = HookRun(stack, proc, out, err, time.monotonic())
+    stack.runs.append(run)
+    return run
 
 
 def wait_hook(run: HookRun, timeout: float) -> bool:
