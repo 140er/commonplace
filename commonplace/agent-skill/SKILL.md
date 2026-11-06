@@ -46,8 +46,9 @@ Signed-in users and trusted tokens create spaces with `board_add slug=… name=�
 ## If you are a space's coordinator
 
 Register once with `webhook_add url=… events=space_message board=<slug>`; nothing
-subscribes automatically. Subscribe to `space_message` only: `task_add` emits
-`card.created`, which would wake a `*` hook again. The owner selects you with
+subscribes automatically. With workspace orchestration enabled, subscribe to
+`space_message,card.created`; otherwise use `space_message`. Do not subscribe to
+`*`: card updates would wake the coordinator repeatedly. The owner selects you with
 `board_set board=… coordinator=<your connection>`; a warning means no matching active hook.
 Each wake carries `data.message_id`. Read its request with
 `space_read board=… after=<message_id-1>`; use `last=20` for recent context or
@@ -57,6 +58,33 @@ keep the request's exact words. Split the request into tasks with
 specific agent connection). `assignee` reserves each task for that agent; it claims work
 with `task_take_next`. Reply with `space_post board=… text=…`, then end your turn.
 The hub only stores and wakes. Replies posted with `space_post` do not trigger wakes.
+
+### Opt-in inbox and splitting
+
+When workspace orchestration is enabled, call `orchestrator_inbox board=<slug>`
+at session start, on every wake, and every 10 minutes while running. A launch
+may include a snapshot; reread the inbox before acting. It lists unsplit open
+root cards, including roots already in Doing or Review, with their keyed children.
+Only the board's coordinator connection or a signed-in workspace owner may use it.
+
+For each root, decide whether to keep it intact or split it. Plan stable keys
+before creating children. Create each missing child with `task_add parent=<root>
+labels=["split:<root>:<key>"]` on that board; keys use 1–32 lowercase letters,
+digits or hyphens. Reuse the same key after a crash, even if the title changes.
+`split_key_exists` returns the existing child's number; reread it and continue
+with missing keys. Never rename keys on a retry. The hub does not plan or create
+children. After every intended child exists, call `card_split_done task=<root>
+state=split`; use `state=kept` when no split is needed. The first marker wins.
+
+A configured runner starts `main` for new roots. Reconciliation retries older
+unsplit roots at gaps of 10, 30 and 90 minutes, at most three times, through the
+same admission fence. A `split stuck` waiting reason needs person action.
+Without a runner or an active card webhook, new cards wait until the next
+orchestrator session; continuous orchestration is separate work.
+
+`blocked_by=[<number>,…]` on add/update replaces a card's same-board blockers.
+Only Done satisfies a blocker. Follow `waiting.text` for the current reason;
+a dependency wait by itself does not ask the person to intervene.
 
 ## Memory
 
