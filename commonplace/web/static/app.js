@@ -372,7 +372,9 @@ function navigation() {
   const boardNav = root.querySelector("#board-nav");
   if (!boardNav) return;
   const board = currentBoard();
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.endsWith("/chat") ? "chat" : state.base.startsWith("#/space/") ? "space" : "board";
+  // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/space/") ? "space"
+    : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   const needsByBoard = {};
   for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
   boardNav.outerHTML = renderRail({ workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard, rulesWaiting: state.rulesWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
@@ -781,7 +783,7 @@ async function settingsView(epoch) {
 }
 
 async function memoryView(epoch, refresh = false) {
-  title("Memory", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button>');
+  title("Memory", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><span class="head-sub">Exact words from chats, cards and notes. Never summarised.</span>');
   const content = root.querySelector("#content");
   const query = new URLSearchParams(state.base.split("?")[1] || "").get("q") || "";
   if (state.memoryUI && content.querySelector("[data-memory-mount]") && (refresh || state.memoryQuery === query)) return;

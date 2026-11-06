@@ -131,6 +131,8 @@
   .memory-search .chip, .memory-panel .btn, .memory-panel select { min-height: 44px; }
   .memory-search .chip select { min-height: 40px; }
   .memory-search .memory-toolbar, .memory-search .memory-results { padding-left: 12px; padding-right: 12px; }
-  .memory-search .filters { align-items: center; }
-  .memory-search .memory-status { flex-basis: 100%; }
+  .memory-search .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; }
+  .memory-search .chip { min-width: 0; }
+  .memory-search .chip select { max-width: none; width: 100%; min-width: 0; }
+  .memory-search .memory-status { flex-basis: 100%; grid-column: 1 / -1; }
 }

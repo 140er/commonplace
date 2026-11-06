@@ -239,3 +239,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   .shell.panel-open:has(#card-panel [data-project-settings]) .tablet-scrim { display: none; }
   .shell.panel-open #card-panel:has(.workbench-project) { left: 220px; box-shadow: none; }
 }
+
+/* Memory: the header's one-line promise (09); its own line on a phone. */
+.shell .head .head-sub { font-size: 13px; color: var(--text-3); white-space: normal; }
+@media (max-width: 699px) { .shell .head .head-sub { flex-basis: 100%; order: 5; } }
