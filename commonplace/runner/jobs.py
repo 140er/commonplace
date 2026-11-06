@@ -421,11 +421,12 @@ def lease(store, machine):
         if len(in_flight) >= machine["max_in_flight"]:
             return None
         projects = {r["project"] for r in in_flight}
+        capped_boards = set()
         for row in conn.execute(
             "SELECT * FROM runner_jobs WHERE machine_id=? AND state='queued' ORDER BY created_at,rowid",
             (machine["id"],),
         ):
-            if row["project"] in projects:
+            if row["project"] in projects or row["board_slug"] in capped_boards:
                 continue
             if on:
                 try:
@@ -442,7 +443,7 @@ def lease(store, machine):
                 except orch.AdmissionRefused as exc:
                     if exc.code != "project_limit":
                         return None
-                    projects.add(row["project"])
+                    capped_boards.add(row["board_slug"])
                     continue
             return _update(
                 conn,

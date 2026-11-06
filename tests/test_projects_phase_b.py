@@ -832,3 +832,60 @@ def test_lease_checks_capped_project_once(world, monkeypatch):
     result = jobs.lease(w.js, w.machine())
     assert result is not None and result["task_number"] == eligible
     assert checked == ["acme", "plain"]
+
+
+def test_capped_board_does_not_block_shared_runner_project(world):
+    w = world
+    seed(w)
+    capped = [w.card(), w.card()]
+    for card in capped:
+        w.person_start(card)
+    eligible = w.card(board="plain")
+    w.person_start(eligible)
+    cap(w, 1)
+    doing(w, w.card(), "conn:orch-a")
+    before = [w.jobs_for(card)[0] for card in capped]
+    result = jobs.lease(w.js, w.machine())
+    assert result is not None and result["task_number"] == eligible
+    assert result["board_slug"] == "plain" and result["project"] == "demo"
+    assert [w.jobs_for(card)[0] for card in capped] == before
+
+
+def test_runner_non_lock_operational_error_stays_500(world, monkeypatch):
+    import sqlite3
+
+    w = world
+    seed(w, False)
+    w.person_start(w.card())
+    before = w.all_jobs()
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("no such column: missing")
+
+    monkeypatch.setattr(jobs, "lease", broken)
+    status, body = w.machine_call("lease")
+    assert status == 500 and body == {"error": "internal error"}
+    assert w.all_jobs() == before
+
+
+def test_project_non_lock_operational_error_stays_500(projects_hub, monkeypatch):
+    import sqlite3
+
+    from commonplace.projects import seats
+
+    h = projects_hub
+    machine = trust_setup(h)
+    seat = h.seats()[0]["connection_id"]
+    before = dict(registry.get_machine(h.db, h.workspace, machine["machine_id"]))
+    before_policy = h.db.authenticate_connection(seat).policy
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("no such table: missing")
+
+    monkeypatch.setattr(seats, "ensure_main", broken)
+    assert trust(h, {"confirm": True, "machines": [machine["machine_id"]]}) == (
+        500,
+        {"error": "internal error"},
+    )
+    assert dict(registry.get_machine(h.db, h.workspace, machine["machine_id"])) == before
+    assert h.db.authenticate_connection(seat).policy == before_policy

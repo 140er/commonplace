@@ -145,6 +145,12 @@ def usage(board_conn, runner_conn, *, board_id, board_slug, workers, now, lease=
     return Usage(frozenset(slots), effective_cap(board_conn, board_id, config_cap, on=True))
 
 
+def require_lock_timeout(exc):
+    """Let callers map lock timeouts, while preserving other database errors."""
+    if not any(word in str(exc).lower() for word in ("locked", "busy")):
+        raise exc
+
+
 @contextmanager
 def admission(gateway, ws, *, store=None):
     from commonplace.runner.jobs import open_store
@@ -153,9 +159,8 @@ def admission(gateway, ws, *, store=None):
         with (store or open_store(gateway, ws)).transaction() as conn:
             yield conn
     except sqlite3.OperationalError as exc:
-        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
-            raise AdmissionRefused("busy") from None
-        raise
+        require_lock_timeout(exc)
+        raise AdmissionRefused("busy") from None
 
 
 def admit(used, actor, card_id):

@@ -50,9 +50,10 @@ runner. Boards without one behave exactly as described above.
   channel, the step key and the resolved model provider and model. Its lease
   payload adds `message` (`SPAWN_MESSAGE`, then the role's prompt, then its
   workflow steps) and `modelSelection {instanceId: provider, model}`; the runner
-  sends both to `t3_thread_launch`. When the runner reports `starting`, a card
-  that has gained the `plan` label is refused and the job ends `cancelled` with
-  outcome `plan_pending`. Whether T3 honours `modelSelection` at runtime is part
+  sends both to `t3_thread_launch`. When the runner reports `starting`, its
+  pre-transaction card snapshot refuses an existing `plan` label with a cancelled
+  job and outcome `plan_pending`. A label added after that snapshot can miss this
+  check. Whether T3 honours `modelSelection` at runtime is part
   of D2; effort then comes from T3's defaults.
 - **Restore.** After a restore, config-driven starts and the trigger sweep stay
   blocked until the owner types the acknowledgement (`SYSTEM.md`, restore
@@ -288,5 +289,9 @@ agent's doing card overlaps its runner job only once; an existing agent or a car
 own worker may proceed at cap. Manual person claims are exempt from the agent cap.
 Coordinator and card checks are a pre-transaction snapshot. Requester and machine
 changes committed before the in-transaction control check prevent a start;
-changes after that check do not stop an already-admitted transition.
+changes after that check do not stop an already-admitted transition. The board
+snapshot precedes the sweep and runner-lock wait. Card/label, requester write-policy,
+coordinator or switch changes in that gap can therefore allow a launch that the
+worker later refuses when it tries to claim the card. A switch from off to on in
+the gap also uses the earlier snapshot for the coordinator check.
 See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.

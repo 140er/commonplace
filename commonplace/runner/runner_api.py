@@ -245,7 +245,8 @@ def register(gateway):
             send_json(h, 200, payload)
         except HTTPError as exc:
             send_json(h, exc.status, {"error": str(exc)})
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            orch.require_lock_timeout(exc)
             send_json(h, 409, {"error": "busy"})
         except jobs.Conflict as exc:
             send_json(h, 409, {"error": str(exc)})

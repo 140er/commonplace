@@ -166,7 +166,8 @@ def install(gateway) -> None:
         except registry.NotFound:
             send_json(h, 404, {"error": "Machine not found"})
             return
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            orchestration.require_lock_timeout(exc)
             send_json(h, 409, {"error": "busy", "code": "busy"})
             return
         except ControlError:
