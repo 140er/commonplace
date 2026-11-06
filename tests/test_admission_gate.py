@@ -328,6 +328,10 @@ def _tree(root):
     return sorted(str(p.relative_to(root)) for p in Path(root).rglob("*"))
 
 
+# Sites gated for consistency that create no path of their own (a control row).
+PATHLESS = {"control_db.create_workspace"}
+
+
 @pytest.mark.parametrize("site", SITES)
 def test_frozen_site_blocks_until_thaw(site, tmp_path, admin):
     call = _site_cases(tmp_path)[site]
@@ -335,12 +339,17 @@ def test_frozen_site_blocks_until_thaw(site, tmp_path, admin):
     GATE.freeze(timeout=1, lease_s=30)
     try:
         box = _in_thread(call)
+        # Every site: the call itself is held while frozen.
         assert not box.done.wait(BLOCK_S), f"{site} ran while the gate was frozen"
-        assert _tree(tmp_path) == before, f"{site} changed the tree while frozen"
+        if site not in PATHLESS:
+            assert _tree(tmp_path) == before, f"{site} changed the tree while frozen"
     finally:
         GATE.thaw()
     assert box.done.wait(JOIN_S) and box.error is None, box.error
-    assert _tree(tmp_path) != before or site == "control_db.create_workspace"
+    if site in PATHLESS:
+        assert box.value, f"{site} returned nothing after the thaw"
+    else:
+        assert _tree(tmp_path) != before, f"{site} created nothing after the thaw"
 
 
 def test_frozen_console_append_drops_instead_of_waiting(tmp_path):
@@ -594,6 +603,30 @@ def test_command_launch_registers_before_spawn(
     assert registry.counter() == 1
     fields = registry.hello_fields()
     assert fields["successor_sids"] == [pid] and fields["successor_pids"]
+
+
+def test_command_launch_retries_a_failed_registration_once(
+    admin, tmp_path, sessions, command_launchers, monkeypatch
+):
+    from commonplace.handoff import launchers
+    from commonplace.handoff.models import LauncherConfig
+
+    registry = admission.REGISTRY
+    real = registry.launched
+    calls = []
+
+    def flaky(token, pid):
+        calls.append(pid)
+        if len(calls) == 1:
+            sessions.append(pid)
+            raise admission.RegistryError("transient")
+        return real(token, pid)
+
+    monkeypatch.setattr(registry, "launched", flaky)
+    config = LauncherConfig(kind="command", argv=("sh", "-c", "sleep 60 & exit 0"))
+    launchers.launch(config, _handoff(), "prompt", prompt_dir=str(tmp_path / "p"))
+    assert len(calls) == 2
+    assert [e["state"] for e in registry.entries()] == ["running"], "a sticky starting entry"
 
 
 def test_command_spawn_failure_leaves_no_entry_and_bumps(admin, tmp_path, command_launchers):

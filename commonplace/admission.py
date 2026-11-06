@@ -159,9 +159,13 @@ class AdmissionGate:
         call never waits.
 
         ``paths``: optional files the block may create. While the gate is
-        frozen and every one of them already exists, the block cannot create
-        anything (deletes are gated too), so it runs without waiting. This keeps
-        plain opens of existing databases from stalling behind a freeze.
+        frozen and every one of them already exists, the block creates none of
+        the named paths (deletes are gated too), so it runs without waiting and
+        uncounted: a freeze does not drain it. This keeps plain opens of
+        existing databases from stalling behind a freeze. Such a block may
+        still create SQLite ``-wal``/``-shm``/``-journal`` sidecars of those
+        databases; the snapshot never copies sidecars, so "nothing is created
+        while frozen" holds for every path the snapshot reads.
 
         ``timeout``: give up waiting after this many seconds and raise
         :class:`GateBusy` (for callers that would rather drop than wait, such as

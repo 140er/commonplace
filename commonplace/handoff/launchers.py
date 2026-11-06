@@ -161,11 +161,14 @@ def _command(
                         stdout=log,
                         stderr=log,
                     )
-                    try:
-                        started(int(process.pid))
-                    except (RegistryError, AttributeError, TypeError, ValueError):
-                        # The starting entry stays and keeps backups refused (fail closed).
-                        pass
+                    for _attempt in (1, 2):
+                        try:
+                            started(int(process.pid))
+                            break
+                        except (RegistryError, AttributeError, TypeError, ValueError):
+                            # Retried once; then the starting entry stays and keeps
+                            # backups refused until the gateway restarts (fail closed).
+                            continue
     except RegistryError:
         raise LaunchError("Could not record the handoff command.") from None
     except (OSError, ValueError):
