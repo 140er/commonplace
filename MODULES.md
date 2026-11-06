@@ -196,11 +196,11 @@ Format (read by `commonplace orch docs-check`):
 
 ## backup-and-encryption
 
-- **Paths:** `commonplace/backup.py`, `commonplace/workspace_encryption.py`
-- **Owns:** Offline verified backups and restores of the data directory, the restore marker, and opt-in workspace SQLite encryption.
-- **Promises:** A backup copies every SQLite file with a manifest; a restore publishes a verified copy into a new directory and never overwrites; the restore marker blocks config-driven work until the owner acknowledges.
-- **How it fails:** A damaged backup is refused at verify time; a hand-copied restore carries no marker (residual in `SYSTEM.md`).
-- **Tests:** `tests/test_backups.py`, `tests/test_backup_snapshot_deadline.py`, `tests/test_commonplace_w5_backup.py`, `tests/test_orch_store.py`.
+- **Paths:** `commonplace/backup.py`, `commonplace/backup_online.py`, `commonplace/backup_supervisor.py`, `commonplace/backup_pause.py`, `commonplace/admission.py`, `commonplace/workspace_encryption.py`
+- **Owns:** Offline and online verified backups and restores of the data directory, the gateway pause socket and run fence, the admission gate for store/file creators and the successor registry, the restore marker, and opt-in workspace SQLite encryption.
+- **Promises:** A backup copies every SQLite file with a manifest; an online backup runs beside the serving gateway without stopping or replacing it and publishes only after the run is committed; a restore publishes a verified copy into a new directory and never overwrites; the restore marker blocks config-driven work until the owner acknowledges.
+- **How it fails:** A damaged backup is refused at verify time; an online run that loses its lease, heartbeat or fence ends invalid and publishes nothing; a live in-container successor refuses the run; a hand-copied restore carries no marker (residual in `SYSTEM.md`).
+- **Tests:** `tests/test_backups.py`, `tests/test_backup_snapshot_deadline.py`, `tests/test_commonplace_w5_backup.py`, `tests/test_backup_online.py`, `tests/test_backup_hook_online.py`, `tests/test_backup_pause.py`, `tests/test_backup_cli_fence.py`, `tests/test_admission_gate.py`, `tests/test_orch_store.py`.
 
 ## skills
 

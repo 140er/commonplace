@@ -157,14 +157,17 @@ failed after commit is still found.
   cursor as unset with a new generation; arming then sets it to the current
   highest event id if the generation is unchanged. Events before arming never
   fire. Removing `[runner]` deletes the cursor. A restore acknowledgement
-  re-arms every configured board.
+  re-arms every configured board. The CLI, MCP and REST accept and
+  acknowledgement arm right away; the next sweep arms any cursor left unset.
 - **Actor.** Rebuilt from the event's stamps; an unknown or revoked actor is a
   miss `requester_unknown`, one that fails `requester_ok` is
   `requester_not_allowed`. Members' moves do not start work.
 - **Misses.** Every refusal (`assigned`, `not_todo`, `started_recently`,
   `busy`, `plan_pending`, …) is recorded as a coded miss and shown on resume;
   the cursor moves past it. Only infrastructure errors leave the cursor for the
-  next sweep.
+  next sweep. A refused card is not retried automatically, even when the
+  refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
+  checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
 
 ## Durable orchestrator
 
