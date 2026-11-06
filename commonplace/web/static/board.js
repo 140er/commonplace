@@ -130,7 +130,7 @@ const styles = `
 .workbench-board .composer .ttl { font-size: 13.5px; font-weight: 550; }
 .workbench-board .composer input, .workbench-board .composer textarea, .workbench-board .composer select { flex: none; width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 4px; padding: 6px 8px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); }
 .workbench-board .composer textarea { height: 56px; resize: vertical; }
-.workbench-board .composer-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.workbench-board .composer-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 8px; }
 .workbench-board .composer-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .workbench-board .composer-foot .btn { padding: 0 10px; }
 .workbench-board .composer-hint, .workbench-board .composer [data-add-status] { margin: 0; font-size: 12px; color: var(--text-3); }
