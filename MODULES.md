@@ -31,6 +31,9 @@ Format (read by `commonplace orch docs-check`):
 
   - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map.
 
+  - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map, including thread-ranking invariants.
+
+
 - **Promises:**
   - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
 
@@ -131,6 +134,9 @@ Format (read by `commonplace orch docs-check`):
   - Scripts are run by hand or by the release process; none runs on import or ships in the package.
 
   - Benchmarks are informational and never gate a change.
+
+  - `benchmarks/thread_search.py` uses deterministic synthetic chunks, exports complete search lists for revision comparisons, and reports p50/p95 latency.
+
 
 - **How it fails:**
 
@@ -265,6 +271,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_commonplace_rules_inject.py::test_locked_store_uses_remaining_deadline` checks locked-store fallback and remaining connection/statement waits with a fake clock; the separate timing test retains the informational wall-clock budget.
 
   - `tests/test_chroma_client_lifecycle.py::test_session_evicts_dropped_system_before_opening_missing_database` checks eviction before client construction without depending on SQLite pool scheduling; the external-rebuild probe checks the replacement's exact drawer ids.
+  - Thread-search tests pin rank-before-fetch and score/thread/index ordering at the limit boundary, including shuffled rowids and ID batches.
 
 
 ## hub-core
@@ -474,6 +481,11 @@ Format (read by `commonplace orch docs-check`):
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
   - A handoff never loses the source thread; continuity is append-only and resumable.
+
+  - Verified thread FTS identities provide scope and tie keys before limiting rowids; only selected rows fetch canonical chunks.
+
+  - Scores, thread IDs and chunk indices determine stable ordering; index-drift repair and logical fallback remain in force.
+
 
 - **How it fails:**
 
