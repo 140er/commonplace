@@ -88,7 +88,7 @@ cleanup_failed_run() {
     local status=0
     # The CLI removes only what it can lock and never signals a process.
     if ! timeout -k 5 60 "${compose[@]}" exec -T commonplace commonplace backup --online-cleanup \
-        "/data/.backup-staging/$stamp" </dev/null 3>&-; then
+        "/data/.backup-staging/$stamp" </dev/null 3>&- 9>&-; then
         printf 'online cleanup in the container failed\n'
     fi
     rm -rf -- "$backup_dir/.commonplace-staging/$stamp" || status=1
@@ -198,6 +198,8 @@ run_backup() {
     # the per-stamp lock.
     exec 9>"$backup_dir/.commonplace-backup.lock"
     flock -n 9
+    # Every long-lived child closes fd 9 (`9>&-`): an exec client or heartbeat
+    # that outlives a killed hook must not keep the next run locked out.
 
     stage="serve inspect"
     local ids running data_host
@@ -269,7 +271,7 @@ run_backup() {
     # An image without online backup, or a gateway that does not answer, fails
     # closed here. There is no stop-and-copy fallback.
     output=$(timeout -k 5 120 "${compose[@]}" exec -T commonplace commonplace backup --check-online \
-        "/data/.backup-staging/$stamp" </dev/null 2>&1 3>&-) || rc=$?
+        "/data/.backup-staging/$stamp" </dev/null 2>&1 3>&- 9>&-) || rc=$?
     printf '%s\n' "$output"
     (( rc == 0 )) || fail "CLI preflight: $(summary "$output")"
 
@@ -278,12 +280,23 @@ run_backup() {
     touch "$hb"
     # The snapshot supervisor aborts when this heartbeat goes stale, so a killed
     # hook ends the in-container snapshot without any signal crossing into it.
-    ( set +e; while kill -0 $$ 2>/dev/null; do touch -- "$hb"; sleep "$hb_every"; done ) 9>&- 3>&- </dev/null & hb_pid=$!
+    # stop_heartbeat TERMs the subshell; its trap also ends the running sleep.
+    (
+        set +e
+        sleep_pid=""
+        trap '[[ -z "$sleep_pid" ]] || kill "$sleep_pid" 2>/dev/null; exit 0' TERM
+        while kill -0 $$ 2>/dev/null; do
+            touch -- "$hb"
+            sleep "$hb_every" & sleep_pid=$!
+            wait "$sleep_pid"
+            sleep_pid=""
+        done
+    ) 9>&- 3>&- </dev/null & hb_pid=$!
     t=$(( deadline - $(date +%s) + 120 ))
     snapshot_started=1
     printf 'snapshot %s started\n' "$stamp"
     SECONDS=0
-    timeout -k 10 "$t" "${compose[@]}" exec -T commonplace commonplace backup --online --deadline "$deadline" "/data/.backup-staging/$stamp" </dev/null 3>&- &
+    timeout -k 10 "$t" "${compose[@]}" exec -T commonplace commonplace backup --online --deadline "$deadline" "/data/.backup-staging/$stamp" </dev/null 3>&- 9>&- &
     snap_pid=$!
     rc=0
     wait "$snap_pid" || rc=$?

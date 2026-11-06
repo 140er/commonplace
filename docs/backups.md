@@ -52,6 +52,20 @@ paths (including handoff successor projects) inside the data directory, and do
 not run a gateway outside the container against it: an outside agent could
 write the data tree during the cut and nothing in the backup can detect that.
 
+Run exactly one gateway per data directory. The online backup pauses and
+fences only the gateway that answers on the admin socket, so a second gateway
+would write unseen during the copy. `commonplace serve` binds that socket
+before it serves or migrates anything and exits nonzero ("run one gateway per data
+directory") while another gateway answers on it, or when the socket cannot be
+bound at all. A second gateway configured with a different
+`COMMONPLACE_ADMIN_SOCKET` is not detected; never start one.
+
+Files other than SQLite databases and worker files are copied up to their size
+at the cut. That is consistent because the gateway never rewrites such a file
+in place: it appends (logs), creates new files, or writes a temporary file and
+renames it over the old one. Worker files are copied while their workers are
+paused.
+
 A manifest records each file's relative path, size and SHA256. Snapshot
 publication is atomic. Offline SQLCipher snapshots preserve encrypted bytes and
 can be restored without keys; hashes verify those bytes, not decrypted
@@ -151,8 +165,17 @@ default the larger of 10 GB and 5 percent), `COMMONPLACE_BACKUP_MARGIN_BYTES`
 (extra free space on top of the size estimate and the reserve, default 2 GB;
 tests on small filesystems lower it) and `COMMONPLACE_BACKUP_HEARTBEAT_STALE_S`
 (default 60; the hook touches the heartbeat every 10 s, or every third of a
-shorter limit; set the same value in the service's environment). It never reads
-the env file itself.
+shorter limit; set the same value in the service's environment). These host
+values bound the hook's own checks only: the in-container snapshot reads its
+knobs, including the reserve and the heartbeat limit, from the service's
+environment. It never reads the env file itself.
+
+The hook creates the heartbeat file `<stamp>.hb` next to the snapshot's
+staging before it starts the snapshot, and keeps touching it. An online
+backup refuses to start without that file, and a heartbeat that disappears
+during the run stops it, so a manual `commonplace backup --online` (or a plain
+`commonplace backup DEST` that goes online beside a serving gateway) needs the
+same file kept fresh by its caller.
 
 If you wrap the hook in your own host job instead of `nightly-backup.sh`, make
 that job remove `commonplace-*` and `.commonplace-staging` from its staging
