@@ -454,8 +454,8 @@ def test_r1g_reconfiguration_resets_the_cursor(world):
     kept = world.card()
     world.sweep()
     entry = _todo_entry(world, kept)
-    _set_job(world, kept, state="started", started_at=entry)
-    _next_second(entry)
+    _set_job(world, kept, state="started", started_at=jobs._after(entry, 1))
+    _next_second(jobs._after(entry, 1))
     world.update(kept, title="Edited while in todo")
     world.unconfigure()
     assert world.cursor() is None
@@ -487,6 +487,7 @@ def test_r1h_events_before_arming_never_fire(world):
     world.update(started, status="todo")
     world.update(relaunched, status="backlog")
     world.update(relaunched, status="todo")
+    _next_second(_todo_entry(world, relaunched))  # a same-second launch would be a listed tie
     _set_job(world, relaunched, state="started", started_at=jobs._now())
     world.configure(arm=False)
     assert world.cursor()[0] is None
@@ -630,6 +631,59 @@ def test_barrier_refuses_a_sweep_connection_inside_a_transaction(world):
             with pytest.raises(AssertionError, match="holds a transaction"):
                 triggers._barrier("sweep_after_pair", conn)
         conn.execute("ROLLBACK")
+
+
+_WRITES = {"INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "BEGIN"}
+
+
+def test_sweep_takes_no_runner_write_lock_before_fenced_start(world, monkeypatch):
+    """A21 N3(a): on an initialized, armed board with no candidates, the sweep runs no
+    write statement on runner.sqlite3 and completes while another connection holds
+    BEGIN IMMEDIATE there. Busy wait is 0, so any lock attempt would raise at once."""
+    world.configure()
+    world.sweep()
+    assert world.cursor()[0] is not None  # armed, nothing to start
+    statements = []
+    real = orch_store.connect
+
+    def traced(path, **kwargs):
+        conn = real(path, **{**kwargs, "timeout": 0})
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(orch_store, "connect", traced)
+    monkeypatch.setattr(jobs, "connect", traced)
+    holder = connect(world.js.path, timeout=0, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            report = world.sweep()
+        except sqlite3.OperationalError as exc:
+            pytest.fail(f"the sweep needed the runner.sqlite3 write lock: {exc}")
+    finally:
+        holder.rollback()
+        holder.close()
+    assert report == {BOARD: []}
+    assert statements, "the trace spy saw no runner.sqlite3 statement"
+    writes = [sql for sql in statements if sql.split(None, 1)[0].upper() in _WRITES]
+    assert writes == []
+
+
+def test_sweep_skips_a_pending_restore_marker_without_converting_it(world):
+    """The sweep never converts a restore marker: while one is pending it starts
+    nothing and leaves the marker; the next explicit store open converts it."""
+    world.configure()
+    marker = Path(world.gw.workspace_dir(world.ws)) / RESTORE_MARKER
+    marker.write_text(json.dumps({"version": 1, "id": secrets.token_hex(16)}))
+    card = world.card()
+    assert world.sweep() == {}
+    assert marker.exists() and world.jobs_for(card) == [] and world.misses() == []
+    with world.st.connection() as conn:
+        assert not orch_store.restore_state_in(conn).flagged
+    assert orch_store.open_store(world.gw, world.ws).restore_state().flagged
+    assert not marker.exists()
+    assert world.sweep() == {}
+    assert world.jobs_for(card) == []
 
 
 def test_r18_refused_candidates_are_misses_and_the_cursor_moves_past_them(world, monkeypatch):

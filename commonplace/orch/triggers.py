@@ -37,6 +37,13 @@ control snapshot: unrebuildable or revoked -> miss ``requester_unknown``; fails
 Triggers run from ``jobs._sweep`` after ``jobs.sweep`` returns (each runner lease call,
 start, renewal, result and status read), never inside its transaction.
 
+Locks: the sweep opens the orchestrator store with ``Store.existing`` (no schema script,
+no ``orch_state`` insert, no marker conversion), so up to ``fenced_start`` its only
+``runner.sqlite3`` write is the arming ``UPDATE`` of a NULL cursor. The store is created
+by the accept that configures a board; a pending restore marker is converted by the next
+explicit store open (surface, CLI, lease call or start), and until then the sweep skips
+the workspace as it does under the restore flag.
+
 Barrier hooks (``barrier(name, hook)``) exist for concurrency tests; a hook runs on the
 sweeping thread and fails loudly if the sweep's connection holds a transaction.
 """
@@ -205,8 +212,10 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
 def run(js, *, now=None) -> dict:
     """One trigger sweep of the workspace of ``js`` (a ``jobs.JobStore``).
 
-    Skips everything while the restore flag is set. Returns ``{board: [results]}``;
-    an infrastructure error on one board is logged and leaves that board's cursor."""
+    Skips everything while a restore marker is pending or the restore flag is set.
+    Returns ``{board: [results]}``; an infrastructure error on one board is logged and
+    leaves that board's cursor. Takes no ``runner.sqlite3`` write lock before
+    ``fenced_start`` except the arming ``UPDATE`` (see the module doc)."""
     with js.connection() as conn:
         if not conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_configs'"
@@ -215,12 +224,14 @@ def run(js, *, now=None) -> dict:
         if not orch_store.configured_boards_in(conn):
             return {}
     gateway, ws = js.gateway, js.workspace_id
-    st = orch_store.open_store(gateway, ws)  # converts a pending restore marker
+    directory = gateway.workspace_dir(ws)
+    if orch_store.marker_pending(directory):  # an explicit store open converts it
+        return {}
+    st = orch_store.open_existing(gateway, ws)  # no statement on open
     with st.connection() as conn:
         if orch_store.restore_state_in(conn).flagged:
             return {}
         boards = orch_store.configured_boards_in(conn)
-    directory = gateway.workspace_dir(ws)
     report: dict = {}
     for board in boards:
         try:
