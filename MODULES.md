@@ -41,6 +41,16 @@ Format (read by `commonplace orch docs-check`):
 
   - Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` changes with every change that `docs-check` covers, unless a base-listed waiver applies.
 
+  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary and unproven live OAuth behavior.
+
+  - **Connection lifecycle proof:** Records overlap fencing, process recovery proof and the deferred account-deletion integration boundary.
+
+  - **Mutation sensitivity:** Records independently observable security assertions and explicit deferred integration boundaries.
+
+  - **Connection recovery:** Documents expiry reconnect, revocation while disabled, explicit cleanup triggers and the enforced key-location boundary in the current documentation format.
+
+  - **Independent scope evidence:** Keeps mandatory token evidence separate from optional response-header cross-checking in the proof record.
+
 - **How it fails:**
 
   - A stale block passes the mechanical check while describing old behaviour; reviewers judge whether the text is true.
@@ -234,6 +244,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after real serve teardown.
+
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
@@ -262,6 +274,18 @@ Format (read by `commonplace orch docs-check`):
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
+  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
+
+  - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
+
+  - **Connection teardown boundary:** Adds own-person grant isolation and assertions that refresh material is discarded before encryption.
+
+  - **Mutation sensitivity:** The hidden-card assertion runs with no pending flow, so removing visibility cannot be masked by the one-flow guard.
+
+  - **Connection recovery:** Adds expired-grant reconnect, repeated scope-header, independent visibility/confirm fences, cleanup-failure, AAD swap and key-owner/location proofs; the scope-evidence tests assert before importing the new client.
+
+  - **Independent scope evidence:** Missing token-response scope is tested without an optional header, so header rejection cannot mask the mandatory-evidence guard.
+
 - **How it fails:**
 
   - A plan fixture that names a missing test file fails G7; a shared fixture change can break unrelated suites; slow or flaky tests waste every run.
@@ -270,6 +294,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - GitHub lifecycle rendering runs in Node with deferred replies and synthetic roots, including logout during an outstanding status read.
   - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
 
   - Release helper regressions simulate the old app disappearing before the signed-in board arrives and verify useful exception messages without credentials in JSON or Markdown reports.
@@ -307,6 +333,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Existing workspace directory lookups pass a backup freeze, so a writer holding a database transaction can finish; new directories remain gated.
 
+  - **Browser GitHub connection:** Workspace creation accepts the caller transaction so GitHub ownership, user creation and personal workspace provisioning roll back together.
+
 - **How it fails:**
 
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
@@ -331,6 +359,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Successful email verification expires an older host-only session before setting a configured shared-domain session, so the older cookie cannot shadow the new one.
 
+  - **Browser GitHub connection:** GitHub login reserves subject ownership, and connect-marked callbacks dispatch before login flow lookup without provisioning or replacing sessions.
+
+  - **Connection lifecycle proof:** Connect-marked POST callbacks are refused before login dispatch; a normal login remains independent of an outstanding connect flow.
 
 - **How it fails:**
 
@@ -349,6 +380,8 @@ Format (read by `commonplace orch docs-check`):
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - Serve always closes its control database on exit, including SIGTERM unwind, releasing owned resources through pre-close callbacks.
 
   - Imported-history consent: CLI token creation rejects the imported-history reader scope before issuing a credential; browser consent is required.
 
@@ -470,6 +503,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
+
+  - **Browser GitHub connection:** Signup plan assignment accepts the provisioning transaction to preserve atomic GitHub ownership reservation.
 
 - **How it fails:**
 
@@ -670,6 +705,14 @@ Format (read by `commonplace orch docs-check`):
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
+  - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
+
+  - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
+
+  - **Connection teardown boundary:** Stopping clears rendered GitHub details while preserving the established teardown contract for other Needs details.
+
+  - **Connection recovery:** Callbacks reopen the selected Needs item; GitHub-only status failures preserve card actions, and connections in another workspace show an explicit disconnect control.
+
 - **How it fails:**
 
   - Rendering errors surface in the browser; the server state is unaffected.
@@ -677,3 +720,26 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+## browser-github-grants
+
+- **Paths:** `commonplace/github/`
+- **Owns:**
+
+  - Explicit per-person GitHub browser grants, one-use connect flows, encrypted pending consent and direct bounded transport.
+- **Promises:**
+
+  - Never-owner workers retry claim and recovery on heartbeat ticks; former owners stay fenced. Shutdown deletes only the matching owner lease; standby and lost-lease logs explain readiness.
+
+  - Browser sessions use exact Origin and session-derived CSRF; scope evidence and expiry fail closed; GitHub login and connect share subject ownership.
+  - **Browser GitHub connection:** Default-off consent requests an empty scope, reads only the GitHub id/login and never creates login identities.
+  - **Connection lifecycle proof:** Durable remote-work accounting holds the reconnect fence until revocation and older token cleanup both settle; only HTTPS or loopback development may start consent.
+  - **Connection recovery:** Known expiry purges locally and reconnects without revocation acknowledgement; duplicate scope headers are all checked, and cleanup settles exchange counters even on failure. Own-person disconnect remains available across workspaces and while consent is disabled.
+
+- **How it fails:**
+
+  - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an absent or expired shared-database lease; a competing serve cannot write GitHub state until its periodic retry claims after release/expiry; live OAuth behavior and production ingress logging remain unproven.
+- **Tests:**
+
+  - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
+  - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; a shared-volume lease fences recovery across private temporary directories without any lifetime lock file. Heartbeats renew the 30-second lease every 5 seconds, and expired owners fail closed on state writes.
