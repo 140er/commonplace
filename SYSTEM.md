@@ -233,6 +233,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 ### Browser GitHub connection (experimental, default off)
 
+- Worker liveness locks live in a private per-user runtime directory outside the data tree, keyed by the canonical control database path. They retain the lifetime crash-recovery fence without entering control snapshots. The Node lifecycle harness exercises connected rendering, stale reads, card switches and logout without a browser installation.
+
 - Browser consent requires a person session, JSON, exact Origin and session-derived CSRF; agents and MCP receive no GitHub capability. Scope is exactly empty; inherited sign-in scopes require confirmation, every repeated scope header is cross-checked, and refresh material is discarded before encryption.
 
 - Expired grants purge locally, increment generation and permit a new Connect without acknowledgement or a GitHub request. The expired view links to GitHub app access. Only ambiguous revocation requires acknowledgement.

@@ -1128,3 +1128,25 @@ def test_token_scope_evidence_required_without_optional_header(setup, monkeypatc
     assert status(s)["state"] == "absent"
     deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
     assert len(deletes) == 1 and deletes[0][1].endswith("/token")
+
+
+def test_worker_liveness_is_outside_snapshot_and_still_fences_recovery(setup):
+    import fcntl
+    import os
+    from pathlib import Path
+
+    s = setup
+    assert hasattr(s.gateway, "github"), "GitHub lifecycle missing"
+    worker = s.gateway.github
+    lock = (
+        Path(worker._worker_lock.name)
+        if isinstance(worker._worker_lock.name, str)
+        else Path(os.readlink(f"/proc/self/fd/{worker._worker_lock.fileno()}"))
+    )
+    assert not lock.is_relative_to(Path(s.db.path).resolve().parent), (
+        "liveness lock enters snapshot"
+    )
+    with lock.open("rb") as probe:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert worker.ready

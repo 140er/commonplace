@@ -315,7 +315,7 @@ Format (read by `commonplace orch docs-check`):
 
   - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports.
 
-  - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, real Chrome DOM cache checks and direct transport bounds.
+  - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 
   - **Connection teardown boundary:** Adds own-person grant isolation and assertions that refresh material is discarded before encryption.
 
@@ -339,6 +339,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_card199_safety.py` and the sync test family retain transcript-byte/cursor and server-import compatibility checks.
   - Transcript selection tests observe the actual symlink/empty rejection; memory selections separately prove refusal before selection.
   - Token tests distinguish missing selected capture credentials during initialization from import-only feed credential rejection.
+  - GitHub lifecycle rendering runs in Node with deferred replies and synthetic roots, including logout during an outstanding status read.
   - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
 
   - Release helper regressions simulate the old app disappearing before the signed-in board arrives and verify useful exception messages without credentials in JSON or Markdown reports.
@@ -851,3 +852,4 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
+  - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; worker liveness stays outside snapshots while retaining the recovery fence.

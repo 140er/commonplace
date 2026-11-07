@@ -8,6 +8,7 @@ import math
 import os
 import re
 import secrets
+import stat
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -54,7 +55,18 @@ class GitHub:
         try:
             import fcntl
 
-            self._worker_lock = open(Path(self.db.path).with_suffix(".github-workers.lock"), "a+b")
+            # Process liveness is runtime state, never part of a control snapshot.
+            # Use literal /tmp so workers with different TMPDIRs share one inode.
+            runtime = Path("/tmp") / f"commonplace-github-{os.getuid()}"
+            runtime.mkdir(mode=0o700, exist_ok=True)
+            info = runtime.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise OSError("unsafe GitHub runtime directory")
+            identity = hashlib.sha256(os.fsencode(Path(self.db.path).resolve())).hexdigest()
+            fd = os.open(
+                runtime / f"{identity}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+            )
+            self._worker_lock = os.fdopen(fd, "a+b")
             self.db.add_pre_close_callback(self._worker_lock.close)
             try:
                 fcntl.flock(self._worker_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
