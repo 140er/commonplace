@@ -192,6 +192,11 @@ temporary failure from silently ending background delivery.
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
+Online enumeration permits only SQLite sidecars (`-wal`, `-shm`, `-journal`)
+to disappear between listing and metadata lookup: the live gateway may remove
+them even while file creation is frozen, and snapshots omit them. Missing user
+files, symlinks and special files still abort the backup; offline enumeration
+remains strict.
 `restore()` publishes a verified copy into a new directory and leaves a restore
 marker there.
 
