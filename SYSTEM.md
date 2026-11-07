@@ -68,15 +68,6 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
-### Board coordinator settings
-
-- Owners can read coordinator candidates through the board settings API; reads and writes share the same active PAT eligibility rule and never return tokens.
-
-- The signed-in owner's needs-me list includes one notice per visible board with restricted-origin backlog or todo cards awaiting release and no eligible live coordinator.
-
-- Released, rejected, completed and active work is excluded.
-
-- The settings selector and notice rendering in the web app remain follow-up work.
 
 ### Rules initialization deadline
 
@@ -548,6 +539,16 @@ appears in the owner queue again without changing its stored words or audit log.
   other probe failures propagate. Parser/access caches expire with a response.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
+
+### Board coordinator settings
+
+- Owners can read coordinator candidates through the board settings API; reads and writes share the same active PAT eligibility rule and never return tokens.
+
+- The signed-in owner's needs-me list includes one notice per visible board with restricted-origin backlog or todo cards awaiting release and no eligible live coordinator.
+
+- Released, rejected, completed and active work is excluded.
+
+- The settings selector and notice rendering in the web app remain follow-up work.
 
 ## Numbers
 
