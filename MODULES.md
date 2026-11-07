@@ -248,6 +248,9 @@ Format (read by `commonplace orch docs-check`):
 
   - A plan fixture that names a missing test file fails G7; a shared fixture change can break unrelated suites; slow or flaky tests waste every run.
 
+  - Email cookie-scope regressions use an HTTPS cookie jar over loopback, including an older host-only cookie; sign-in rendering checks cover the request confirmation.
+
+
 - **Tests:**
   - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
 
@@ -300,6 +303,9 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
+
+  - Successful email verification expires an older host-only session before setting a configured shared-domain session, so the older cookie cannot shadow the new one.
+
 
 - **How it fails:**
 
