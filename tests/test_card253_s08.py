@@ -349,9 +349,7 @@ def test_card253_s08_head_boundary(boundary):
         "captureu1\\other:codex:opaque7",
         "captureu1:co dex:opaque7",
         "capture-forku1:" + "a" * 31,
-        "capture-forku1:" + "a" * 33,
         "capture-forku1:" + "A" * 32,
-        "capture-forku1:" + "a" * 32 + "#sha256:a",
         "capture: u1:\u2009codex:opaque7",
         "capture\u0301u1:codex:opaque7",
         "Capture: Q3: Notes: Draft",
@@ -424,3 +422,85 @@ def test_card253_s08_head_nfkc_composition():
     from commonplace.handoff.provenance_refs import refs
 
     assert refs("capture: User:codex:Cafe\u0301").tokens == ("capture:User:codex:Café",)
+
+
+FORK_TRAILERS = [")", ".", "/", "z", "a", "#sha256:a"]
+FORK_SPELLINGS = ["space", "nbsp", "no_separator", "fullwidth", "encoded_fullwidth"]
+
+
+def fork_spelling(value, spelling):
+    if spelling == "canonical":
+        return value
+    if spelling in {"space", "nbsp"}:
+        return value.replace(":", ": " if spelling == "space" else ":\u00a0", 1)
+    if spelling == "no_separator":
+        return value.replace(":", "", 1)
+    fullwidth = "".join(chr(ord(char) + 0xFEE0) for char in value)
+    return quote(fullwidth, safe="") if spelling == "encoded_fullwidth" else fullwidth
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("spelling", FORK_SPELLINGS)
+@pytest.mark.parametrize("trailer", FORK_TRAILERS)
+def test_card253_s08_fix1_hidden_fork_trailer(case, write, spelling, trailer):
+    c = case
+    value = continuity_schema.fork_id("u2", "hidden-stream")
+    hidden = stored(c, value, capture.PRIVATE_WING)
+    assert not c.h.gateway.handoff.recall.can_read(c.member, hidden.id)
+    citation = navigable(fork_spelling(value, spelling) + trailer)
+    if write:
+        result = invoke(c, "member", "kg_add", **args(c, "source_url", citation))
+        assert result == {"success": False, "error": "Source not found"}, (
+            "protected fork with trailing character accepted",
+            result,
+        )
+        assert c.kg.query_entity("SpellingFact") == []
+        assert invoke(c, "member", "kg_query", entity="SpellingFact")["count"] == 0
+    else:
+        seed(c, args(c, "source_url", citation))
+        row = fact(c)
+        assert "origin_link" not in row, "protected fork with trailing character leaked"
+        assert all("origin_link" not in source for source in row["sources"])
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("spelling", FORK_SPELLINGS)
+@pytest.mark.parametrize("trailer", FORK_TRAILERS)
+def test_card253_s08_fix1_readable_fork_trailer(case, write, spelling, trailer):
+    c = case
+    value = continuity_schema.fork_id("u1", "readable-stream")
+    row = stored(c, value)
+    assert c.h.gateway.handoff.recall.can_read(c.member, row.id)
+    check_citation(c, "member", "source_file", fork_spelling(value, spelling) + trailer, write)
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("trailer", FORK_TRAILERS)
+def test_card253_s08_fix1_head_canonical_fork_trailer(case, write, trailer):
+    value = continuity_schema.fork_id("u1", "readable-stream")
+    stored(case, value)
+    check_citation(case, "member", "source_file", value + trailer, write)
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_url", "https://example.test/capturing-notes:codex:v2"),
+        ("source_file", "notes/capturing-notes:codex:v2"),
+        ("source_file", "Captured: Codex: session notes"),
+    ],
+)
+def test_card253_s08_fix1_ordinary_shape_preserved(case, write, field, value):
+    check_citation(case, "member", field, value, write)
+
+
+@pytest.mark.parametrize(
+    "trailer", [chr(i) for i in range(32, 127)] + ["\u00a0", "\u2009", "λ", "）"]
+)
+@pytest.mark.parametrize("spelling", ["canonical", *FORK_SPELLINGS])
+def test_card253_s08_fix1_head_fork_any_trailer(trailer, spelling):
+    from commonplace.handoff.provenance_refs import refs
+
+    value = continuity_schema.fork_id("u1", "readable-stream")
+    assert refs(fork_spelling(value, spelling) + trailer).tokens == (value,)

@@ -935,12 +935,19 @@ shapes: `capture:<actor>:<source>:<identity>`,
 `import-private:<user>:<source>:<identity>`, and
 `capture-fork:<user>:<32 lowercase hex characters>`. ASCII space or NBSP may follow
 structural colons; the namespace colon alone may be omitted when the actor starts
-with an ASCII letter or digit. New shadows begin only at the field start or after
+with an ASCII letter or digit and contains a digit or underscore (as production
+user/connection ids do). This excludes prose actors such as `ing-notes` in
+`capturing-notes:codex:v2`. New shadows begin only at the field start or after
 space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`. Internal separators stay
 mandatory; actor/source components exclude whitespace, colons, path separators and
 query delimiters. Identity suffixes retain internal colons and complete `#sha256:`
-qualifiers through the existing whitespace/`?` boundary. This does not detect
-arbitrary Unicode insertion.
+qualifiers through the existing whitespace/`?` boundary for capture/import ids.
+Fork identities end after exactly 32 lowercase hex characters; any following
+character (including another hex digit, punctuation, wrapper, text or a hash
+suffix) is citation context and cannot hide the protected digest. Both ordinary
+and spelled forks authorize that digest while preserving the complete citation
+bytes. Fewer than 32 lowercase hex characters and uppercase digests do not create
+new fork shadows. This does not detect arbitrary Unicode insertion.
 
 Capture source labels are exactly `claude-code` and `codex`. Private import labels
 are exactly `claude-code`, `codex`, `cursor`, `t3`, `grok-bot`, `chatgpt`, `claude-ai`
@@ -953,9 +960,12 @@ thread references are still independently authorized.
 
 Every recognized reference requires readable local proof in the caller's
 workspace. Missing and unreadable production-shaped shadows receive the same
-not-found write response as canonical citations; spelling alone never refuses a
-readable citation. Read projections omit unproved citation fields while retaining
-D1-readable fact text. Authorization does not rewrite stored/displayed citation
+not-found write response as canonical citations. Readable fork spellings remain
+readable with trailing citation context. Capture/import identities remain literal,
+including trailing punctuation: a spaced spelling with an appended wrapper can
+therefore fail closed when no such exact identity exists. Punctuation is not
+stripped from those variable-length ids, since it can be part of a real identity.
+Read projections omit unproved citation fields while retaining D1-readable fact text. Authorization does not rewrite stored/displayed citation
 bytes or subject, predicate, object and content. Ordinary URL/path citations such
 as `https://example.test/capturing-notes` and `capture-notes.md`, unshaped trigger
 words, and readable canonical fork citations remain compatible. A complete

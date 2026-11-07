@@ -68,7 +68,13 @@ _IMPORT_SOURCES = _CAPTURE_SOURCES | {
     "native-memory",
 }
 _BOUNDARY = r"(?<![^ /?&#=(<\"'])"
-_ACTOR = r"(?:: *|(?=[A-Za-z0-9]))(?P<actor>[^\s:/\\?]+): *"
+# Omitted separators need an id marker, so ordinary words such as
+# "capturing-notes:codex:v2" cannot invent an actor. Real usr_/conn_ ids and
+# compact fixture ids (u1) have an underscore or digit.
+_ACTOR = (
+    r"(?:: *|(?=[A-Za-z0-9])(?=[^\s:/\\?]*[0-9_]))"
+    r"(?P<actor>[^\s:/\\?]+): *"
+)
 _SHADOW_PRIVATE = re.compile(
     _BOUNDARY
     + r"(?P<namespace>import-private|capture)"
@@ -77,10 +83,14 @@ _SHADOW_PRIVATE = re.compile(
     re.IGNORECASE,
 )
 _SHADOW_FORK = re.compile(
-    _BOUNDARY + r"(?P<namespace>capture-fork)" + _ACTOR + r"(?P<identity>[^\s?]+)",
+    _BOUNDARY
+    + r"(?P<namespace>capture-fork)"
+    + _ACTOR
+    # A fork's identity is fixed length. Everything after its digest is citation
+    # context, even another hex digit; never discard the protected prefix.
+    + r"(?P<identity>(?-i:[0-9a-f]{32}))[^\s?]*",
     re.IGNORECASE,
 )
-_FORK_DIGEST = re.compile(r"[0-9a-f]{32}\Z")
 
 
 @dataclass(frozen=True)
@@ -111,8 +121,6 @@ def _shadows(text):
             namespace = match["namespace"].lower()
             actor, identity = match["actor"], match["identity"]
             if namespace == "capture-fork":
-                if not _FORK_DIGEST.fullmatch(identity):
-                    continue
                 token = f"{namespace}:{actor}:{identity}"
             else:
                 source = match["source"].lower()
@@ -130,14 +138,20 @@ def _tokens(text):
     shadows = list(_shadows(text))
     tokens = [match[0] for match in _THREAD.finditer(text)]
     for match in _PRIVATE.finditer(text):
-        # Structural spacing can split an ordinary scan at an internal colon.
-        # The complete shaped reference replaces only that incomplete prefix.
+        # Complete shadows replace incomplete structural prefixes. Fixed-length
+        # forks also replace the ordinary scan's trailing citation context, so a
+        # readable fork is proved by its digest without changing displayed bytes.
         if any(
             start == match.start()
-            and match.end() < end
-            and text[match.end()] in {" ", "\u00a0"}
-            and match[0].endswith(":")
-            for start, end, _ in shadows
+            and (
+                (
+                    match.end() < end
+                    and text[match.end()] in {" ", "\u00a0"}
+                    and match[0].endswith(":")
+                )
+                or (match.end() <= end and token.startswith("capture-fork:"))
+            )
+            for start, end, token in shadows
         ):
             continue
         tokens.append(match[0])
