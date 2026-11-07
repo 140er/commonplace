@@ -185,6 +185,11 @@ class GitHub:
         return result
 
     def start(self, h, principal, session, data):
+        origin = urlsplit(urls.APP_URL)
+        if origin.scheme != "https" and not (
+            origin.scheme == "http" and origin.hostname in ("localhost", "127.0.0.1", "::1")
+        ):
+            raise SignInError("github_https")
         self.visible(principal, data.get("card"))
         uid = principal.user_id
         # Expired confirmations are cleaned on the next consent write; GET stays local.
@@ -533,7 +538,7 @@ class GitHub:
             if grant and workspace is not None and grant["workspace_id"] != workspace:
                 raise SignInError("github_workspace")
             conn.execute(
-                "UPDATE github_lifecycle SET generation=generation+1,disconnect_pending=1,deleting=max(deleting,?) WHERE user_id=?",
+                "UPDATE github_lifecycle SET generation=generation+1,disconnect_pending=1,remote_work=remote_work+1,deleting=max(deleting,?) WHERE user_id=?",
                 (int(deleting), uid),
             )
             conn.execute("DELETE FROM github_connect_flows WHERE user_id=?", (uid,))
@@ -560,11 +565,11 @@ class GitHub:
         with self.db._lock, self.db._tx() as conn:
             conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
             conn.execute(
-                "UPDATE github_lifecycle SET unconfirmed=?,disconnect_pending=CASE WHEN active_exchanges>0 THEN 1 ELSE 0 END WHERE user_id=?",
+                "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
                 (int(not ok), uid),
             )
             life = self.store.lifecycle(conn, uid)
-            if deleting and not life["active_exchanges"]:
+            if deleting and not life["active_exchanges"] and not life["remote_work"]:
                 self.release_owner(conn, uid)
         return {
             "state": "absent",
@@ -580,6 +585,7 @@ class GitHub:
         conn.execute("DELETE FROM github_keys WHERE user_id=?", (uid,))
 
     def delete_user(self, uid):
+        """Fence and remove GitHub state; the caller owns account deletion in other stores."""
         return self.disconnect(uid, deleting=True)
 
     def finish_exchange(self, uid):
@@ -592,6 +598,7 @@ class GitHub:
             life = self.store.lifecycle(conn, uid)
             if (
                 not life["active_exchanges"]
+                and not life["remote_work"]
                 and not conn.execute(
                     "SELECT 1 FROM github_grants WHERE user_id=? AND disabled=1", (uid,)
                 ).fetchone()
@@ -620,12 +627,14 @@ class GitHub:
     def _recover_rows(self):
         with self.db._lock, self.db._tx() as conn:
             conn.execute(
-                "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0"
+                "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
             )
             conn.execute("DELETE FROM github_connect_flows")
             conn.execute("DELETE FROM github_confirmations")
             conn.execute("DELETE FROM github_grants WHERE disabled=1")
-            conn.execute("UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0")
+            conn.execute(
+                "UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0,remote_work=0"
+            )
 
 
 def install(gateway):
