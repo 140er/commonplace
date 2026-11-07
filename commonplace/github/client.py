@@ -49,6 +49,6 @@ def request(method, url, *, form=None, json_body=None, token=None, credentials=N
             if len(raw) > MAX_RESPONSE:
                 raise SignInError("github_response")
             body = json.loads(raw) if raw else {}
-            return status, dict(response.headers), body
+            return status, response.headers, body
     except (OSError, http.client.HTTPException, ValueError, UnicodeError, RecursionError):
         raise SignInError("github_transport") from None
