@@ -162,7 +162,7 @@ export function githubPrUrl(value) {
 }
 function githubControls(card, github, busy) {
   if (card.need !== "merge") return "";
-  const state = github?.state || "loading", disabled = busy || state === "loading" ? " disabled" : "";
+  const state = github?.state || "loading", disabled = busy || github?.pending || state === "loading" ? " disabled" : "";
   const access = '<a href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">Review GitHub app access</a>';
   if (state === "unconfigured") return '<p>GitHub connection setup is required.</p>';
   if (state === "loading") return '<button class="btn" disabled>Loading GitHub…</button>';
@@ -503,7 +503,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     paused: () => paused,
     stop() {
       stopped = true; github = null; revision++; unschedule(timer);
-      detailMount?.querySelector("dialog.confirm")?.close(); cards.clear(); notes.clear(); holds = []; current = null;
+      detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount) detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
       for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
       doc?.removeEventListener("visibilitychange", visibility);
     },

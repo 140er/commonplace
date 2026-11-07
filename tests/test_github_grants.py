@@ -221,11 +221,13 @@ def test_disconnect_callback(setup):
 def test_deletion_callback(setup):
     s = setup
     flow = begin(s)
+    accounts.reserve_github_owner(s.db._conn, "123", s.uid)
     s.remote.block = True
     with ThreadPoolExecutor(2) as pool:
         pending = pool.submit(finish, s, flow)
         assert s.remote.entered.wait(5)
         s.gateway.github.delete_user(s.uid)
+        assert rows(s, "github_account_owners")[0]["user_id"] == s.uid
         s.remote.release.set()
         assert pending.result()[0] == 303
     assert not rows(s, "github_grants")
@@ -480,3 +482,406 @@ def test_agent_and_bearer_cannot_use_browser_routes(setup, method, path):
     )
     assert response[0] == 403
     assert not s.remote.calls
+
+
+def test_cross_worker_login_and_connect_arbitrate_one_owner(setup):
+    from threading import Barrier
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
+
+    s = setup
+    status(s)
+    module = importlib.import_module("commonplace.github")
+    other = s.db.create_user("other@example.com")
+    db2 = ControlDB(s.db.path)
+    worker = module.GitHub(SimpleNamespace(db=db2, sign_in=s.gateway.sign_in))
+    barrier = Barrier(2)
+
+    def login():
+        barrier.wait(5)
+        try:
+            return accounts.resolve(
+                s.db,
+                "github",
+                providers.Profile("123", "Person", ("owner@example.com",)),
+                signup=False,
+            )
+        except providers.SignInError:
+            return None
+
+    def grant():
+        barrier.wait(5)
+        try:
+            with db2._lock, db2._tx() as conn:
+                worker.commit(
+                    conn,
+                    other,
+                    {"workspace_id": s.workspace},
+                    {
+                        "subject": "123",
+                        "login": "other",
+                        "token": "synthetic-other",
+                        "expires_at": 9999999999,
+                    },
+                )
+            return other
+        except providers.SignInError:
+            return None
+
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            a, b = pool.submit(login), pool.submit(grant)
+            outcomes = [a.result(), b.result()]
+        assert sum(value is not None for value in outcomes) == 1
+        owner = rows(s, "github_account_owners")
+        assert len(owner) == 1 and owner[0]["user_id"] in outcomes
+        for table in ("user_identities", "github_grants"):
+            assert all(row["user_id"] == owner[0]["user_id"] for row in rows(s, table))
+        assert len(rows(s, "users")) == 2
+    finally:
+        db2.close()
+
+
+@pytest.mark.parametrize("outcome", [204, 401, 422, 500, "network", "expired"])
+def test_disconnect_outcomes_purge_and_never_retry(setup, monkeypatch, outcome):
+    s = setup
+    connect(s)
+    original = s.remote.request
+
+    def remote(method, url, **kwargs):
+        if method == "DELETE" and outcome == "network":
+            s.remote.calls.append((method, url, kwargs))
+            raise providers.SignInError("github_transport")
+        return original(method, url, **kwargs)
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.client"), "request", remote)
+    if outcome == "expired":
+        s.db._conn.execute("UPDATE github_grants SET expires_at=0")
+    else:
+        s.remote.status = outcome
+    code, _, raw = write(s, "/api/github", "DELETE")
+    assert code == 200
+    assert not rows(s, "github_grants")
+    assert len([c for c in s.remote.calls if c[0] == "DELETE"]) == (
+        0 if outcome == "expired" else 1
+    )
+    assert ("unconfirmed" in raw.decode().lower()) == (outcome != 204)
+    assert status(s)["acknowledge_required"] == (outcome != 204)
+    assert write(s)[0] == (200 if outcome == 204 else 409)
+    if outcome != 204:
+        assert write(s, payload={"acknowledge": True})[0] == 200
+    assert len([c for c in s.remote.calls if c[0] == "DELETE"]) == (
+        0 if outcome == "expired" else 1
+    )
+
+
+@pytest.mark.parametrize("header", ["repo", "read:user", 42])
+def test_conflicting_header_evidence_revokes_only_issued_token(setup, monkeypatch, header):
+    s = setup
+    original = s.remote.request
+
+    def remote(method, url, **kwargs):
+        code, headers, data = original(method, url, **kwargs)
+        if url.endswith("/user"):
+            headers = {"X-OAuth-Scopes": header}
+        return code, headers, data
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.client"), "request", remote)
+    finish(s, begin(s))
+    assert status(s)["state"] == "absent"
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert len(deletes) == 1 and deletes[0][1].endswith("/token")
+
+
+@pytest.mark.parametrize(
+    "problem",
+    ["missing-cookie", "wrong-cookie", "expired", "denied", "purpose", "session", "state", "post"],
+)
+def test_callback_cookie_ttl_denial_and_binding(setup, problem):
+    s = setup
+    flow = begin(s)
+    before = rows(s, "users"), rows(s, "user_identities"), rows(s, "sessions")
+    state, cookie = flow
+    if problem == "missing-cookie":
+        cookie = ""
+    elif problem == "wrong-cookie":
+        cookie = "cmmn_github_connect=wrong"
+    elif problem == "expired":
+        s.db._conn.execute("UPDATE github_connect_flows SET expires_at=0")
+    elif problem == "purpose":
+        s.db._conn.execute("UPDATE github_connect_flows SET purpose='signin'")
+    elif problem == "session":
+        s.cookie = sessions.COOKIE + "=" + sessions.start_session(s.db, s.uid, s.workspace)
+        before = rows(s, "users"), rows(s, "user_identities"), rows(s, "sessions")
+    elif problem == "state":
+        state = "gc1_unknown"
+    parameters = {"state": state, "code": "synthetic-code"}
+    if problem == "denied":
+        parameters = {"state": state, "error": "access_denied"}
+    response = request(
+        s,
+        "/app/auth/github/callback?" + urlencode(parameters),
+        "POST" if problem == "post" else "GET",
+        cookie=s.cookie + "; " + cookie,
+    )
+    assert response[0] == (405 if problem == "post" else 303)
+    assert not s.remote.calls
+    assert before == (rows(s, "users"), rows(s, "user_identities"), rows(s, "sessions"))
+    assert not rows(s, "github_grants") and not rows(s, "github_confirmations")
+
+
+def test_expired_confirmation_has_one_token_delete(setup):
+    s = setup
+    finish(s, begin(s))
+    assert status(s)["state"] == "confirm"
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=0")
+    assert write(s)[0] == 200
+    assert not rows(s, "github_confirmations")
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert len(deletes) == 1 and deletes[0][1].endswith("/token")
+
+
+def test_normal_login_alongside_connect_does_not_dispatch_to_connect(setup, monkeypatch):
+    s = setup
+    connect_flow = begin(s)
+    original = s.gateway.sign_in.providers["github"]
+
+    # The sign-in profile is synthetic; the actual signin state/cookie/dispatch stays real.
+    class LoginProvider:
+        id = "github"
+        daily_cap = None
+
+        def authorize_url(self, *args):
+            return original.authorize_url(*args)
+
+        def profile(self, *args):
+            return providers.Profile("123", "Person", ("owner@example.com",))
+
+    monkeypatch.setitem(s.gateway.sign_in.providers, "github", LoginProvider())
+    code, headers, _ = request(s, "/app/auth/github", cookie=s.cookie + "; " + connect_flow[1])
+    assert code == 302
+    login_state = parse_qs(urlsplit(headers["Location"]).query)["state"][0]
+    login_cookie = headers["Set-Cookie"].split(";", 1)[0]
+    result = request(
+        s,
+        "/app/auth/github/callback?"
+        + urlencode({"state": login_state, "code": "synthetic-login-code"}),
+        cookie=s.cookie + "; " + connect_flow[1] + "; " + login_cookie,
+    )
+    assert result[0] == 303 and sessions.COOKIE in result[1]["Set-Cookie"]
+    assert len(rows(s, "github_connect_flows")) == 1
+    assert len(rows(s, "user_identities")) == 1
+    assert not s.remote.calls
+
+
+def test_held_grant_delete_and_late_token_cleanup_both_block_reconnect(setup, monkeypatch):
+    s = setup
+    connect(s)
+    # Model an exchange already accepted by an older worker before the current grant committed.
+    with s.db._lock:
+        s.db._conn.execute(
+            "UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,)
+        )
+        s.gateway.github._live = 1
+    entered, release = Event(), Event()
+    original = s.remote.request
+
+    def remote(method, url, **kwargs):
+        if method == "DELETE" and url.endswith("/grant"):
+            entered.set()
+            assert release.wait(5)
+        return original(method, url, **kwargs)
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.client"), "request", remote)
+    with ThreadPoolExecutor(2) as pool:
+        pending = pool.submit(write, s, "/api/github", "DELETE")
+        try:
+            assert entered.wait(5)
+            assert write(s)[0] == 409
+            assert s.gateway.github.revoke_token(s.uid, "synthetic-late-token")
+            s.gateway.github.finish_exchange(s.uid)
+            assert write(s)[0] == 409
+        finally:
+            release.set()
+        assert pending.result()[0] == 200
+    assert not rows(s, "github_grants")
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert sorted(c[1].rsplit("/", 1)[1] for c in deletes) == ["grant", "token"]
+    assert write(s)[0] == 200
+
+
+def test_process_crash_restart_purges_without_replaying_delete(setup):
+    import subprocess
+    import sys
+
+    s = setup
+    connect(s)
+    # Release this synthetic worker, then crash its replacement after disable-before-purge.
+    s.gateway.github._worker_lock.close()
+    program = """
+import os, sys, json
+from types import SimpleNamespace
+from commonplace.control_db import ControlDB
+from commonplace.social import accounts, providers
+from commonplace.github import GitHub, client
+client.request = lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected remote replay"))
+db = ControlDB(sys.argv[1])
+accounts.ensure_schema(db)
+g = GitHub(SimpleNamespace(db=db, sign_in=SimpleNamespace(providers={p.id:p for p in providers.configured()})))
+if sys.argv[2] == "crash":
+    with db._lock, db._tx() as conn:
+        conn.execute("UPDATE github_grants SET disabled=1")
+        conn.execute("UPDATE github_lifecycle SET disconnect_pending=1,remote_work=1,generation=generation+1")
+    os._exit(17)
+assert not db._conn.execute("SELECT 1 FROM github_grants").fetchall()
+assert not db._conn.execute("SELECT 1 FROM github_connect_flows").fetchall()
+assert not db._conn.execute("SELECT 1 FROM github_confirmations").fetchall()
+row=db._conn.execute("SELECT * FROM github_lifecycle").fetchone()
+assert row["unconfirmed"] == 1 and row["disconnect_pending"] == row["remote_work"] == row["active_exchanges"] == 0
+print(json.dumps({"recovered":True,"generation":row["generation"]}))
+db.close()
+"""
+    crash = subprocess.run(
+        [sys.executable, "-c", program, s.db.path, "crash"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert crash.returncode == 17, crash.stderr
+    restart = subprocess.run(
+        [sys.executable, "-c", program, s.db.path, "restart"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert restart.returncode == 0, restart.stdout + restart.stderr
+    assert json.loads(restart.stdout)["recovered"]
+    s.gateway.github = importlib.import_module("commonplace.github").GitHub(s.gateway)
+    assert write(s)[0] == 409
+    assert write(s, payload={"acknowledge": True})[0] == 200
+
+
+def test_connection_never_provisions_or_enables_login(setup):
+    s = setup
+    before = (
+        rows(s, "users"),
+        rows(s, "sessions"),
+        rows(s, "user_identities"),
+        rows(s, "memberships"),
+    )
+    connect(s)
+    assert before == (
+        rows(s, "users"),
+        rows(s, "sessions"),
+        rows(s, "user_identities"),
+        rows(s, "memberships"),
+    )
+    assert len(rows(s, "github_account_owners")) == 1
+
+
+def test_failed_grant_commit_rolls_back_owner_and_deletes_issued_token(setup):
+    s = setup
+    finish(s, begin(s))
+    assert status(s)["state"] == "confirm"
+    s.db._conn.execute(
+        "CREATE TRIGGER fail_grant BEFORE INSERT ON github_grants BEGIN SELECT RAISE(ABORT,'synthetic failure'); END"
+    )
+    assert write(s, "/api/github/confirm", payload={"accept": True})[0] == 500
+    assert not rows(s, "github_grants") and not rows(s, "github_account_owners")
+    assert not rows(s, "github_confirmations")
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert len(deletes) == 1 and deletes[0][1].endswith("/token")
+
+
+@pytest.mark.parametrize("secure", [False, True])
+def test_connect_cookie_is_callback_scoped_and_secure_when_required(setup, secure):
+    s = setup
+    s.gateway.secure_cookies = secure
+    code, headers, _ = write(s)
+    assert code == 200
+    cookie = headers["Set-Cookie"]
+    for part in ("Path=/app/auth/github/callback", "HttpOnly", "SameSite=Lax", "Max-Age=600"):
+        assert part in cookie
+    assert ("; Secure" in cookie) == secure
+
+
+def test_default_off_refuses_new_connect(setup, monkeypatch):
+    s = setup
+    assert status(s)["state"] == "absent"
+    monkeypatch.delenv("COMMONPLACE_GITHUB_CONNECT")
+    assert status(s)["state"] == "unconfigured"
+    assert write(s)[0] == 409
+    assert not rows(s, "github_connect_flows") and not s.remote.calls
+
+
+@pytest.mark.parametrize(
+    "origin,allowed", [("http://remote.example", False), ("http://127.0.0.1:8080", True)]
+)
+def test_connect_requires_https_except_loopback_development(setup, monkeypatch, origin, allowed):
+    s = setup
+    status(s)
+    monkeypatch.setattr(urls, "APP_URL", origin)
+    assert write(s)[0] == (200 if allowed else 409)
+
+
+@pytest.mark.parametrize("case", ["direct", "timeout", "size", "redirect"])
+def test_client_method_json_headers_bounds_no_proxy_or_redirect(setup, monkeypatch, case):
+    import io
+    from urllib.error import HTTPError
+
+    s = setup
+    status(s)
+    module = importlib.import_module("commonplace.github.client")
+    # The installed service uses the synthetic remote; exercise the actual transport separately.
+    spec = importlib.util.spec_from_file_location(
+        "commonplace.github._transport_test", module.__file__
+    )
+    transport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(transport)
+    actual = vars(transport)
+    seen = {}
+
+    class Response(io.BytesIO):
+        status = 204
+        headers = {"X-OAuth-Scopes": ""}
+
+    class Opener:
+        def open(self, request, timeout):
+            seen.update(request=request, timeout=timeout)
+            if case == "timeout":
+                raise TimeoutError("synthetic-private-body")
+            if case == "redirect":
+                raise HTTPError(request.full_url, 302, "synthetic-private-body", {}, None)
+            return Response(b"x" * (module.MAX_RESPONSE + 1) if case == "size" else b"")
+
+    def opener(*handlers):
+        seen["handlers"] = handlers
+        return Opener()
+
+    actual["request"].__globals__["build_opener"] = opener
+    if case in ("timeout", "size"):
+        with pytest.raises(providers.SignInError):
+            actual["request"](
+                "DELETE",
+                "https://api.github.com/applications/synthetic-client/token",
+                json_body={"access_token": "synthetic-issued-token"},
+                credentials=("synthetic-client", "synthetic-app-secret"),
+            )
+    else:
+        code, headers, data = actual["request"](
+            "DELETE",
+            "https://api.github.com/applications/synthetic-client/token",
+            json_body={"access_token": "synthetic-issued-token"},
+            credentials=("synthetic-client", "synthetic-app-secret"),
+        )
+        assert code == (302 if case == "redirect" else 204)
+        assert data == {}
+    assert seen["timeout"] == 10
+    assert seen["handlers"][0].proxies == {}
+    assert isinstance(seen["handlers"][1], providers._NoRedirect)
+    req = seen["request"]
+    assert req.method == "DELETE"
+    assert json.loads(req.data) == {"access_token": "synthetic-issued-token"}
+    assert req.get_header("Authorization").startswith("Basic ")
+    assert req.get_header("Content-type") == "application/json"

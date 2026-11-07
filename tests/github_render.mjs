@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { renderNeedDetail } from '../commonplace/web/static/needs.js';
-const card = {number: 7, board: 'work', title: 'Review', need: 'merge', actions: [], pr_url: 'https://github.com/example/project/pull/1', pr_state: 'open'};
+const card = {number: 7, version: 1, board: 'work', title: 'Review', need: 'merge', actions: [], pr_url: 'https://github.com/example/project/pull/1', pr_state: 'open'};
 const absent = renderNeedDetail(card, {github: {state: 'absent'}});
 assert.ok(absent.includes('Connect GitHub'), 'an unconnected person must connect their own account');
 const connected = renderNeedDetail(card, {github: {state: 'connected', login: 'test-person'}});
