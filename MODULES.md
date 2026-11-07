@@ -29,7 +29,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `SYSTEM.md`, `MODULES.md`
 - **Owns:**
 
-  - The canonical Space REST foundation and deferred product identity decision.
+  - The canonical Space REST foundation reuses board rows as Spaces, with Board, Memory and Chat views and Board as the default.
 
   - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map.
 
