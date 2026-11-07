@@ -381,6 +381,7 @@ appears in the owner queue again without changing its stored words or audit log.
 - The synthetic thread-search benchmark reports p50/p95 and exports full result lists for revision comparisons.
 
 - Timings are informational, never a gate.
+
 ### Owner-configured task types on cards (slice 1)
 
 - Cards default to an empty task type and retain existing selection, authority, reservations, capacity and text rendering; JSON includes `task_type: ''`. Only a signed-in workspace owner may supply, replace or clear the field; omission preserves it, null is invalid. Nonempty types are single lowercase slugs of at most 48 characters.
