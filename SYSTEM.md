@@ -809,8 +809,12 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Authenticated `list_wings` and `get_taxonomy` enumerate complete metadata
   pages, authorize each pair with the existing workspace-bound thread reader,
   and sum only identities revalidated against current metadata. Owners use
-  the same thread boundary. Import range consent does not authorize whole
-  holder-room counts. No stored content or authorization policy is changed.
+  the same thread boundary. Readable imported rooms retain their existing
+  presence/count behavior; message reads still require the consented range
+  proof. No stored content or authorization policy is changed.
+- The workspace store opens before deadline-bound pair authorization, so
+  cold and warm requests retain the same readable rooms. Ordinary room names
+  such as `thr_notes` use the existing thread-room predicate.
 - SQLite identity seeks and the generic metadata fallback read at most 500
   records per page or final batch, without document columns. Missing, null
   and question-mark wing/room values normalize to `unknown`; bookkeeping
@@ -830,6 +834,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   `wings_searched`, plus its normal facts attachment. No raw exception,
   partial count, hidden marker or cursor is published. One caller deadline
   bounds acquisition; this contract makes no timing or constant-time claim.
+- Imported holder-room counts can include rows outside a consented range,
+  as before this projection; content reads retain their separate range gate.
+  Search `total_before_filter` can include hidden candidates inside a visible
+  wing before the response gate filters them.
 - Hallway/tunnel reads, other overview and graph/KG page counts, legacy
   provenance and owner search-index progress remain separate residuals.
 

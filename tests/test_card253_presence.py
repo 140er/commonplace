@@ -616,3 +616,112 @@ def test_card253_g14_consumers_and_selection(world):
         assert reply["wings_searched"] == (
             [] if args.get("wings") == ["wing_hidden"] else ["wing_fixture"]
         )
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_r12_readable_native_room_cold_store(world, monkeypatch, tool):
+    """A first request after restart must retain the same readable room."""
+    w = world
+    seed(w, hidden_wings=("wing_hidden",))
+    calls = fanout_spy(monkeypatch) if tool == "mempalace_search" else None
+    ctx = w.h.gateway.handoff
+    # Close the setup connection: the next request must open the persisted
+    # workspace just as a gateway with indexing disabled does after startup.
+    ctx.close()
+    assert ctx._stores == {}
+    args = search_args() if tool == "mempalace_search" else {}
+    cold = result(w, tool, args, "F")
+    ctx.store_for(w.h.workspace)
+    warm = result(w, tool, args, "F")
+    expected = {
+        "mempalace_list_wings": {"wings": {"wing_fixture": 1}},
+        "mempalace_get_taxonomy": {"taxonomy": {"wing_fixture": {w.readable.id: 1}}},
+    }
+    if calls is not None:
+        assert len(calls) == 2
+        assert warm["wings_searched"] == ["wing_fixture"]
+        assert cold["wings_searched"] == ["wing_fixture"], "readable room missing from cold fan-out"
+    else:
+        assert warm == expected[tool]
+        assert cold == expected[tool], "readable room missing from cold overview"
+    assert cold == warm
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_r12_readable_import_room_presence(world, monkeypatch, tool):
+    """Explicit import consent keeps a readable grant room in the overview."""
+    w = world
+    ctx = w.h.gateway.handoff
+    store = ctx.store_for(w.h.workspace)
+    text = "verbatim imported archive\n"
+    thread = store.store(
+        w.h.workspace,
+        f"import-private:{w.h.admin}:claude-code:readable-archive",
+        [ThreadMessage(0, "system", "other", "", text, name="import.raw")],
+        actor=w.h.admin,
+        wing="private_chats",
+    )
+    w.tokens["F"] = w.h.token(
+        "consenting-import-reader",
+        tools=TOOLS,
+        scopes=["memory:read", "private:read", "memory:import:read"],
+        read_wings=["private_*", "wing_*"],
+        trust="trusted",
+    )
+    principal = w.h.db.authenticate_token(w.tokens["F"])
+    assert not principal.person and not principal.policy.sees_all_wings
+    assert ctx.recall.import_reader(principal)
+    assert ctx.recall.can_read(principal, thread.id)
+    assert not ctx.recall.ordinary_record(principal, thread.id)
+    view = ctx.recall._import_view(principal, thread)
+    assert view.proves(thread.id, 0, 0)
+    from mempalace.stored_text import KEYWORD_ONLY
+
+    w.col._inner.add(
+        ids=["consented-import-drawer"],
+        metadatas=[{"wing": "wing_import", "room": thread.id, KEYWORD_ONLY: True}],
+        documents=[text],
+    )
+    calls = []
+    original = Mediator._fan_out_search
+
+    def fanout(self, principal, name, args):
+        calls.append(dict(args))
+        assert not principal.policy.sees_all_wings
+        assert principal.policy.has_scope("memory:import:read")
+        assert "wing" not in args and "wings" not in args
+        return original(self, principal, name, args)
+
+    monkeypatch.setattr(Mediator, "_fan_out_search", fanout)
+    reply = result(w, tool, search_args() if tool == "mempalace_search" else {}, "F")
+    if tool == "mempalace_search":
+        assert len(calls) == 1
+        assert reply["wings_searched"] == ["wing_import"], (
+            "readable import room missing from fan-out"
+        )
+    elif tool == "mempalace_list_wings":
+        assert reply == {"wings": {"wing_import": 1}}, "readable import room missing from wings"
+    else:
+        assert reply == {"taxonomy": {"wing_import": {thread.id: 1}}}, (
+            "readable import room missing from taxonomy"
+        )
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_r12_ordinary_thr_prefix_room_stays_visible(world, tool):
+    """An ordinary room name must use the existing thread-id grammar."""
+    from mempalace.stored_text import KEYWORD_ONLY
+
+    w = world
+    w.col._inner.add(
+        ids=["ordinary-notes"],
+        metadatas=[{"wing": "wing_notes", "room": "thr_notes", KEYWORD_ONLY: True}],
+        documents=["ordinary notes"],
+    )
+    reply = result(w, tool, search_args() if tool == "mempalace_search" else {}, "F")
+    if tool == "mempalace_search":
+        assert reply["wings_searched"] == ["wing_notes"]
+    elif tool == "mempalace_list_wings":
+        assert reply == {"wings": {"wing_notes": 1}}
+    else:
+        assert reply == {"taxonomy": {"wing_notes": {"thr_notes": 1}}}

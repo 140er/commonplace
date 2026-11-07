@@ -66,6 +66,9 @@ def project(gateway, principal, workers, name, *, timeout=660.0):
     key = "wings" if wings else "taxonomy"
     empty = {key: {}}
     try:
+        # Deadline-bound readers only reuse an open store. Initialize the
+        # caller's workspace before constructing that request-local reader.
+        gateway.handoff.store_for(principal.workspace_id)
         with checks.deadline(timeout):
             access = reader(gateway, principal)
             decisions, seen, allowed = {}, set(), []
@@ -109,10 +112,6 @@ def project(gateway, principal, workers, name, *, timeout=660.0):
                         visible = principal.policy.can_read_wing(wing) and not unreadable_room(
                             access, wing, room
                         )
-                        if room.startswith("thr_"):
-                            # Counts require whole-thread authority. Import-only
-                            # range consent never authorizes a holder's whole room.
-                            visible = visible and access.ordinary_record({"room": room})
                         decisions[pair] = bool(visible)
                     if decisions[pair]:
                         allowed.append(row)

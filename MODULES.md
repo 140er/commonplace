@@ -53,6 +53,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Architecture describes exact-slug, workspace-local reads without implying lifecycle support.
 
+  - Cold-start readability, imported-room count compatibility and remaining search totals are documented separately from content range checks.
+
   - Visible overview and search fan-out boundaries are documented separately from the remaining hallway, tunnel, graph, provenance and progress residuals.
 
   - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
@@ -354,6 +356,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
   - Source initialization regressions hold the real report write transaction before the creator's WAL setup, require a successful BoardStore open, and verify next-pass recovery. Nonempty files missing either base table must also defer all report writes until initialization finishes.
+
+  - Cold and warm public overview/search responses retain readable native rooms; explicitly consenting import readers retain readable grant-room counts and fan-out membership.
 
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
@@ -827,6 +831,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Fixed-length fork shadows prove the digest with arbitrary trailing characters, replacing only its own ordinary trailing context while every overlapping protected spelling still requires proof; omitted separators distinguish ids from prose actors.
   - Overview pair authorization reuses the existing response reader in the authenticated workspace, including owners, with response-only memoization and no persisted authorization. Whole-holder counts require ordinary thread authority; import range consent grants no whole-room authority.
+  - Overview projection opens the authenticated workspace store before deadline-bound authorization and uses the existing room predicate without adding whole-thread authority requirements.
+
+  - Overview pair authorization reuses the existing response reader in the authenticated workspace, including owners, with response-only memoization and no persisted authorization. Readable imported rooms retain existing presence/count visibility; imported content keeps its separate range proof.
 
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
