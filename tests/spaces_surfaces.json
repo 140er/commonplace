@@ -1341,6 +1341,13 @@
                 ],
                 "type": "string"
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               }
@@ -1627,6 +1634,13 @@
                   "integer"
                 ]
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               },
@@ -1729,6 +1743,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_split_done",
       "card_start",
       "card_start_cancel",
       "card_start_resolve",
@@ -1781,6 +1796,7 @@
       "orch_restore_status",
       "orch_resume",
       "orch_void_step",
+      "orchestrator_inbox",
       "rules_changed",
       "rules_get",
       "rules_publish",
@@ -2276,6 +2292,13 @@
                 ],
                 "type": "string"
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               }
@@ -2562,6 +2585,13 @@
                   "integer"
                 ]
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               },
@@ -2583,6 +2613,7 @@
       "board_add",
       "board_list",
       "board_own_wing",
+      "card_split_done",
       "decide",
       "memory_get",
       "memory_link",
@@ -2595,6 +2626,7 @@
       "mempalace_kg_query",
       "mempalace_search",
       "needs_me",
+      "orchestrator_inbox",
       "rules_changed",
       "rules_get",
       "rules_publish",
@@ -3952,6 +3984,13 @@
                 ],
                 "type": "string"
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               }
@@ -4238,6 +4277,13 @@
                   "integer"
                 ]
               },
+              "task_type": {
+                "description": "Owner person only; empty string clears. Omit to preserve the type.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "title": {
                 "type": "string"
               },
@@ -4340,6 +4386,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_split_done",
       "card_start",
       "card_start_cancel",
       "card_start_resolve",
@@ -4389,6 +4436,7 @@
       "orch_restore_status",
       "orch_resume",
       "orch_void_step",
+      "orchestrator_inbox",
       "rules_changed",
       "rules_get",
       "rules_publish",
