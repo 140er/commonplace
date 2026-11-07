@@ -488,6 +488,7 @@ Format (read by `commonplace orch docs-check`):
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
   - Imported-history consent: Imported readers receive bounded immutable views, source-range proof and view-specific metadata; capture tails never inherit import authority.
+  - Combined read boundaries: One response access checker retains normalized provenance and private-source authorization alongside import range proof, including deadline-bound startup reads.
   - Ordinary transcript compatibility: Recall checks import identity fields only for imported threads; ordinary policy-only callers retain their read path.
   - Legacy import compatibility: Ordinary reads preserve three-part filer identities without rewriting stored data; reader views still require four-part identities.
 
