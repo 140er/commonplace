@@ -243,6 +243,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
 
+  - Shared fixtures and harnesses and every test file not listed in another block.
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.
 
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
@@ -256,6 +257,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The pinned handoff baseline adapts live tool availability and workspace schemas while retaining strict HTTP and audit equality; visibility mutations must fail.
   - Card task-type tests cover base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
+  - Integration tests combine typed owner assignment, configured starts, blocker filtering and existing-holder claim replay.
+
   - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
@@ -440,6 +443,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
   - Card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
+  - Owner todo assignments validate the target’s typed grant before claiming; repeat takes preserve an existing holder’s claim after grant removal.
+
   - Owner status changes preserve typed-card assignees and validate their grants; card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
@@ -474,6 +479,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
+  - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
 
 - **Promises:**
@@ -502,6 +508,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
 

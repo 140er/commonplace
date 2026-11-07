@@ -144,7 +144,10 @@ def test_owner_update_checks_resulting_holder(hub, env, holder):
     from tests.test_commonplace_task_types import configure
 
     assignee = person.actor if holder == "person" else agent.actor
-    card = owner.task_add("Reserved typed work", board="work", assignee=assignee, task_type="code")
+    card = owner.task_add("Reserved typed work", board="work", task_type="code")
+    # Legacy todo reservations predate immediate owner-assignment claims.
+    with owner.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET assignee=? WHERE id=?", (assignee, card["number"]))
     if holder == "granted-agent":
         configure(hub, cookie, agent, ["code"])
     if holder == "ungranted-agent":
@@ -155,3 +158,97 @@ def test_owner_update_checks_resulting_holder(hub, env, holder):
         result = owner.task_update(card["number"], status="doing")
         assert result["status"] == "doing" and result["assignee"] == assignee
         assert (result["claim_until"] is None) == (holder == "person")
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_owner_handoff_checks_typed_assignment_grant(hub, env, on):
+    from commonplace.projects import orchestration
+    from tests.test_commonplace_task_types import configure
+
+    _, agent, person, cookie, owner = env
+    orchestration.set_enabled(hub.db, person, on)
+    card = owner.task_add("Typed assignment", board="work", task_type="code")
+    before = owner.task_show(card["number"])
+    refuse(lambda: owner.task_handoff(card["number"], agent.actor, "Please do this"))
+    assert owner.task_show(card["number"]) == before
+    configure(hub, cookie, agent, ["code"])
+    held = owner.task_handoff(card["number"], agent.actor, "Please do this")
+    assert held["status"] == "doing" and held["assignee"] == agent.actor
+    assert held["claim_until"] and held["status_line"].startswith("Start blocked:")
+    assert any(event["kind"] == "claim" for event in owner.task_show(card["number"])["events"])
+
+
+def test_existing_typed_holder_take_preserves_claim_after_revocation(hub, env):
+    from tests.test_commonplace_task_types import configure
+
+    _, agent, _, cookie, owner = env
+    card = owner.task_add("Keep working", board="work", task_type="code")
+    configure(hub, cookie, agent, ["code"])
+    worker = service(hub, agent)
+    held = worker.task_take_next(task=card["number"])
+    configure(hub, cookie, agent, [])
+    try:
+        repeated = worker.task_take_next(task=card["number"])
+    except ToolError:
+        raise AssertionError("existing holders must keep their claim after grant removal") from None
+    assert repeated == held
+
+
+def test_automatic_take_combines_type_and_blocker_filters(hub, env):
+    from commonplace.projects import orchestration
+    from tests.test_commonplace_task_types import configure
+
+    _, agent, person, cookie, owner = env
+    orchestration.set_enabled(hub.db, person, True)
+    dependency = owner.task_add("Dependency", board="work", status="backlog")
+    owner.task_add("Wrong type", board="work", task_type="review")
+    blocked = owner.task_add(
+        "Blocked code", board="work", task_type="code", blocked_by=[dependency["number"]]
+    )
+    ready = owner.task_add("Ready code", board="work", task_type="code")
+    configure(hub, cookie, agent, ["code"])
+    worker = service(hub, agent)
+    assert worker.task_take_next(board="work")["number"] == ready["number"]
+    worker.task_update(ready["number"], status="done")
+    assert worker.task_take_next(board="work") is None
+    owner.task_update(blocked["number"], blocked_by=[])
+    assert worker.task_take_next(board="work")["number"] == blocked["number"]
+
+
+@pytest.mark.parametrize("route", ["create", "handoff"])
+@pytest.mark.parametrize("reset_binding", [False, True])
+def test_typed_assignment_configured_start_keeps_binding_fence(hub, env, route, reset_binding):
+    from commonplace.runner import registry
+    from tests._phase_b_helpers import World, cap, seed
+    from tests.test_commonplace_task_types import configure
+
+    _, _, _, cookie, _ = env
+    w = World(hub)
+    seed(w)
+    cap(w, 1)
+    w.configure(max_agents=1)
+    worker = w.db.authenticate_connection(w.machine()["worker_connection_id"])
+    configure(hub, cookie, worker, ["code"])
+    if route == "create":
+        assigned = w.boards.task_add(
+            "Typed configured work", board="acme", assignee=worker.actor, task_type="code"
+        )
+    else:
+        card = w.boards.task_add("Typed configured work", board="acme", task_type="code")
+        assigned = w.boards.task_handoff(card["number"], worker.actor, "Please do this")
+    assert assigned["status"] == "doing" and assigned["claim_until"]
+    assert assigned["status_line"].startswith("Start queued:")
+    (job,) = w.all_jobs()
+    assert job["state"] == "queued" and job["config_version"] is not None
+    assert job["binding_epoch"] == w.machine()["binding_epoch"]
+    leased = w.lease()
+    if reset_binding:
+        registry.patch(w.db, w.owner, w.machine_id, {"topics": ["other"]})
+        assert w.machine_call("starting", {"lease_token": leased["lease_token"]})[0] == 409
+        (stored,) = w.jobs_for(assigned["number"])
+        assert stored["state"] == "cancelled" and stored["starting_at"] is None
+    else:
+        assert w.machine_call("starting", {"lease_token": leased["lease_token"]})[0] == 200
+        assert (
+            service(hub, worker).task_take_next(task=assigned["number"])["assignee"] == worker.actor
+        )

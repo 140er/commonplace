@@ -2512,10 +2512,10 @@ class BoardService:
                 or (not self.principal.person and _waiting_on_person(row))
             ):
                 raise ToolError("no: card is not available to take")
-            task_types.require(conn, row["task_type"], type_holder, labels=type_labels)
             self._write(b, row=row, claiming=True)
             if held:
                 return self._card(conn, row, self.principal)
+            task_types.require(conn, row["task_type"], type_holder, labels=type_labels)
             from commonplace.projects import limits
 
             try:
@@ -2836,6 +2836,7 @@ class BoardService:
             from commonplace.projects import split
 
             split.check_label_update(conn, board, self.principal, row, labels)
+
     def _update_acquisition_actor(self, row, args):
         # Owner status changes start reserved typed work for its assigned holder.
         if (
@@ -3084,7 +3085,19 @@ class BoardService:
                 self._emit(conn, row["id"], "card.review_needed", return_to=self.principal.actor)
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
-    def _handoff(self, conn, row, board, to, note, options=None, context=None, *, ask_to=None):
+    def _handoff(
+        self,
+        conn,
+        row,
+        board,
+        to,
+        note,
+        options=None,
+        context=None,
+        *,
+        ask_to=None,
+        type_holder=None,
+    ):
         if row["proposal_status"] in ("pending", "rejected"):
             raise ToolError(
                 "no: proposal needs parent approval with task_approve before work starts"
@@ -3112,6 +3125,11 @@ class BoardService:
         status = "review" if person else "doing" if assigned else "todo"
         target = ask_to or target
         if assigned:
+            task_types.require(
+                conn,
+                row["task_type"],
+                type_holder if type_holder and type_holder.actor == target else None,
+            )
             from commonplace.projects import limits
 
             limits.check(conn, board, target, service=self, card_id=row["id"])
@@ -3168,10 +3186,17 @@ class BoardService:
         return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def task_handoff(self, task, to, note, options=None, version=None, context=None):
+        type_holder = (
+            self._type_holder(self._actor(to))
+            if self.principal.person and self.principal.role == "owner"
+            else None
+        )
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             self._version(conn, row, version)
-            result = self._handoff(conn, row, board, to, note, options, context)
+            result = self._handoff(
+                conn, row, board, to, note, options, context, type_holder=type_holder
+            )
         return self._start_assignment(result)
 
     def ask(self, question, options=None, board=None, task=None, context=""):

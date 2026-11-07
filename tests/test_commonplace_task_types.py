@@ -318,7 +318,9 @@ def test_rotation_new_id_and_reservation(hub, env):
     _, agent, _, cookie, owner = env
     configure(hub, cookie, agent, ["code"])
     card = create(hub, cookie, task_type="code", assignee=agent.actor)
-    assert card["status"] == "todo"  # Reserving does not acquire.
+    assert card["status"] == "doing"
+    card = owner.task_handoff(card["number"], agent.actor, "Return to the worker's queue")
+    assert card["status"] == "todo" and card["claim_until"] is None
     hub.db.rotate_token(agent.connection_id, actor=hub.admin, workspace_ref=hub.workspace)
     assert service(hub, agent).task_take_next(task=card["number"])["status"] == "doing"
     fresh = hub.gateway.authenticate(f"Bearer {hub.owner_token('new-agent')}")
@@ -382,12 +384,7 @@ def test_typed_creation_final_holder_on_off(hub, env, on, entry):
         fields["status"] = "doing"
     elif entry == "claim":
         fields["claim"] = True
-    else:
-        # A person filing a todo reservation must not turn it into acquisition.
-        reserved = owner.task_add("Reserved typed", board="work", task_type="code", **fields)
-        assert reserved["status"] == "todo"
-        denied(lambda: service(hub, agent).task_update(reserved["number"], status="doing"))
-        return
+    # Default todo assignments claim immediately, just like explicit doing/claim.
     denied(lambda: owner.task_add("Denied", board="work", task_type="code", **fields))
     configure(hub, cookie, agent, ["code"])
     held = owner.task_add("Allowed", board="work", task_type="code", **fields)

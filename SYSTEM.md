@@ -384,6 +384,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 ### Owner-configured task types on cards (slice 1)
 
+- Owner assignments that claim todo cards, including handoffs, validate the target connection’s type grant before committing a claim or requesting its configured start. Existing holders can repeat an explicit take after grant removal without renewing the lease. Automatic selection applies both task-type eligibility and enabled blocker filtering.
+
 - Cards default to an empty task type and retain existing selection, authority, reservations, capacity and text rendering; JSON includes `task_type: ''`. Only a signed-in workspace owner may supply, replace or clear the field; omission preserves it, null is invalid. Nonempty types are single lowercase slugs of at most 48 characters.
 - Each workspace’s boards store keeps exact stable connection IDs and their allowed labels, with at most 128 distinct labels per connection. GET/POST `/api/task-types/connections/<id>` require a person owner and an exact live workspace connection ID. POST accepts only `{allowed_types: [...]}`, atomically replaces the sorted unique list, and uses last-commit-wins semantics. A stale client can re-grant a removed label; there is no concurrency token. GET does not create a database. Non-object POST JSON is rejected with 400. Owner status changes to doing preserve a typed card’s assigned holder and check that holder’s grant; only person self-acquisition is exempt.
 - New typed doing entries require the final holding connection’s exact grant, with orchestration on or off; automatic take skips ineligible cards in the existing order. People acquiring for themselves bypass only type eligibility. Person-assigned connection work receives no person exemption. Missing mappings, malformed types and unreadable mappings refuse. Runner queue, configured owner starts and starting validation use the worker’s grant; starting retains `card_not_startable` translation.
@@ -652,6 +654,7 @@ appears in the owner queue again without changing its stored words or audit log.
 
   - A grant or requester revocation that commits between that snapshot and the in-lock insert is not re-read; the start can still be inserted.
 
+  - The runner re-checks the requester and grants at `starting`, so the job is refused before launch.
   - The runner re-checks requester, grants and binding epoch at `starting`, including idempotent retry. Each job snapshots the validated machine epoch; legacy jobs have NULL snapshots and are refused.
 
   - Topic/wing reset, worker rotation and revoke increment the machine epoch once. Same-provider confirmation and project-only edits preserve it; changing an attested provider returns 409 `provider_change_requires_reset` until explicit reset and owner review.
