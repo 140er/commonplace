@@ -150,7 +150,29 @@ def test_split_key_updates_preserve_identity(hub):
     assert status == 409 and error.get("number") == child["number"]
 
 
-def test_lease_payload_survives_inbox_read_failure(hub, monkeypatch):
+def test_label_edit_cannot_duplicate_a_sibling_split_key(hub):
+    w = world(hub)
+    parent = w.card()
+    key = f"split:{parent}:one"
+    status, keyed = invoke(
+        w.boards.task_add, "Keyed child", board="acme", parent=parent, labels=[key]
+    )
+    assert status == 200, keyed
+    unkeyed = w.card()
+    # Model an existing ordinary child, before any split key was assigned.
+    with w.boards.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET parent_number=? WHERE id=?", (parent, unkeyed))
+    before = w.boards.task_show(unkeyed)
+    status, error = invoke(w.boards.task_update, unkeyed, version=before["version"], labels=[key])
+    assert status == 409 and error.get("code") == "split_key_exists"
+    assert error.get("number") == keyed["number"]
+    after = w.boards.task_show(unkeyed)
+    assert after["labels"] == before["labels"]
+    assert after["version"] == before["version"] and after["events"] == before["events"]
+    assert w.boards.task_show(keyed["number"])["labels"] == [key]
+
+
+def test_lease_payload_survives_inbox_read_failure(hub, monkeypatch, caplog):
     w = world(hub, runner=True)
     a = w.card()
     triggers.run(w.js)
@@ -167,7 +189,7 @@ def test_lease_payload_survives_inbox_read_failure(hub, monkeypatch):
     @contextmanager
     def board_read(*args, **kwargs):
         if leased:
-            raise sqlite3.OperationalError("database is locked")
+            raise sqlite3.OperationalError("database is locked: private-failure-detail")
         with original_read(*args, **kwargs) as conn:
             yield conn
 
@@ -180,6 +202,12 @@ def test_lease_payload_survives_inbox_read_failure(hub, monkeypatch):
         and "Coordinate this project" in payload.get("message", "")
     )
     assert w.jobs_for(a)[0]["state"] == "leased"
+    assert any(
+        record.name == "commonplace.orch.runner_bridge"
+        and "lease inbox snapshot unavailable (OperationalError)" in record.getMessage()
+        for record in caplog.records
+    )
+    assert "private-failure-detail" not in caplog.text
 
 
 def test_existing_runner_database_migrates_launch_role(hub):

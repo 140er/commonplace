@@ -125,11 +125,7 @@ def test_r5_one_job_blocks_claim(world):
     w.person_start(w.card())
     result = claim(w, w.card())
     assert result[0] == 409 and result[1]["code"] == "project_limit"  # RED
-    from commonplace.boards import why
-
-    assert result[1]["error"].removeprefix("no: ") == why.text(
-        {"code": "project_limit", "used": 1, "cap": 1}
-    )
+    assert result[1]["error"].removeprefix("no: ") == "Waiting for a free slot: 1 of 1"
 
 
 def test_r6_busy_assignment(world):
@@ -150,11 +146,7 @@ def test_r7_workers_count_cards(world):
         doing(w, w.card(), "conn:" + worker)
     result = claim(w, w.card())
     assert result[0] == 409 and result[1]["code"] == "project_limit"  # RED
-    from commonplace.boards import why
-
-    assert result[1]["error"].removeprefix("no: ") == why.text(
-        {"code": "project_limit", "used": 2, "cap": 2}
-    )
+    assert result[1]["error"].removeprefix("no: ") == "Waiting for a free slot: 2 of 2"
 
 
 def lifecycle(w, monkeypatch, *, second=True):
