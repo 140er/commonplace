@@ -232,11 +232,13 @@ with status 201, and `GET /api/spaces/<slug>` reads metadata. A Space contains
 `/app/#/board/<encoded slug>`; only a signed-in workspace owner person has
 `can_configure:true`. Legacy board responses remain supported.
 
-Identity is the authenticated workspace and exact slug. Existing board rows provide
-this foundation; it does not decide the eventual product-wide Space identity.
+The existing board row is the Space. Board, Memory and Chat are views of that
+Space, with Board as the default view. Identity is the authenticated workspace and
+exact slug; no new identity object or identity migration is needed.
 List retains claim expiry; metadata is a plain active-row read without expiry,
-transactions, orchestration, seats, settings or credential creation. Create reuses
-board authorization, transaction and the `space_created` event with `data.board`.
+transactions, orchestration, seats, settings or credential creation.
+`POST /api/spaces` creates through `board_add`, preserving board authorization,
+the transaction and the `space_created` event with `data.board`.
 Non-person callers must pass the existing board tool visibility gate. Checked
 create accepts freshness only through `Commonplace-Rules-Seq`; refresh failures
 retain status 428 and their original payload. Optional null name/wing/repo use
@@ -254,5 +256,4 @@ An Idempotency-Key or include_deleted query is rejected with 400
 `unsupported_idempotency` or `unsupported_include_deleted`.
 
 Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
-new-user migration and desktop synchronization are deferred. The owner choice
-about the eventual Space object remains open; this foundation does not settle it.
+new-user migration and desktop synchronization are deferred.
