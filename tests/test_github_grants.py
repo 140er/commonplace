@@ -885,3 +885,32 @@ def test_client_method_json_headers_bounds_no_proxy_or_redirect(setup, monkeypat
     assert json.loads(req.data) == {"access_token": "synthetic-issued-token"}
     assert req.get_header("Authorization").startswith("Basic ")
     assert req.get_header("Content-type") == "application/json"
+
+
+def test_other_person_cannot_read_or_revoke_a_grant(setup):
+    s = setup
+    connect(s)
+    uid = s.db.create_user("other@example.com")
+    workspace = s.db.create_workspace("other", uid)
+    s.cookie = sessions.COOKIE + "=" + sessions.start_session(s.db, uid, workspace)
+    assert status(s)["state"] == "absent"
+    assert write(s, "/api/github", "DELETE")[0] == 200
+    assert not [call for call in s.remote.calls if call[0] == "DELETE"]
+    assert len(rows(s, "github_grants")) == 1
+    s.cookie = sessions.COOKIE + "=" + s.session
+    assert status(s)["state"] == "connected"
+
+
+def test_refresh_material_is_discarded_before_encryption(setup):
+    s = setup
+    finish(s, begin(s))
+    assert status(s)["state"] == "confirm"
+    pending = rows(s, "github_confirmations")[0]
+    candidate = s.gateway.github.store.decrypt(s.db._conn, s.uid, "confirmation", pending["secret"])
+    assert set(candidate) == {"token", "subject", "login", "scopes", "expires_at"}
+    assert "synthetic-refresh" not in repr(candidate)
+    assert write(s, "/api/github/confirm", payload={"accept": True})[0] == 200
+    grant = rows(s, "github_grants")[0]
+    assert s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"]) == {
+        "token": "synthetic-issued-token"
+    }
