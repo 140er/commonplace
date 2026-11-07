@@ -957,3 +957,19 @@ def test_release_only_standard_coordinator_queue_is_narrow(hub, fresh):
     assert ok and "Ordinary review decoy" not in text
     code, reply = api(hub, s.k.token, "GET", "/api/needs-me")
     assert code == 403 or (code == 200 and not set(decoys) & {c["number"] for c in items(reply)})
+
+
+def test_owner_origin_overflow_never_becomes_ordinary_proposal(hub, fresh):
+    s = setup(hub, fresh, status="backlog")
+    for i in range(12):
+        s.c.work.task_add(board="work", title=f"Origin overflow {i}")
+    fresh.owner.board_set("work", None)
+    groups = fresh.owner.needs_me()
+    assert len(groups["approvals"]) == 10
+    assert groups["approvals_truncated"]
+    assert not groups["backlog_from_agents"]
+    assert groups["count"] == 10
+    assert all(c.get("approval_kind") == "origin" for c in groups["approvals"])
+    digest = fresh.owner.needs_me(format="digest")
+    assert digest["count"] == 10 and digest["remaining"] == 5
+    assert groups["coordinator_waiting"][0]["count"] == 13
