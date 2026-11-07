@@ -94,7 +94,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
 - **Owns:** The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
-- **Promises:** Every request resolves to one principal or none; scopes, wings and trust are checked before any tool runs; tokens are stored hashed; writes are audited.
+- **Promises:** Every request resolves to one principal or none; scopes, wings and trust are checked before any tool runs; tokens are stored hashed; writes are audited. Existing workspace directory lookups pass a backup freeze, so a writer holding a database transaction can finish; new directories remain gated.
 - **How it fails:** A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 - **Tests:** `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
 

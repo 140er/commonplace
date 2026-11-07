@@ -197,6 +197,10 @@ to disappear between listing and metadata lookup: the live gateway may remove
 them even while file creation is frozen, and snapshots omit them. Missing user
 files, symlinks and special files still abort the backup; offline enumeration
 remains strict.
+The gateway names the workspace path when entering the creation gate: an
+existing directory lookup can finish inside a writer transaction while frozen,
+so it cannot deadlock against the backup's all-database barrier. Creating a new
+workspace directory still waits for thaw.
 `restore()` publishes a verified copy into a new directory and leaves a restore
 marker there.
 
