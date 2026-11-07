@@ -32,6 +32,8 @@ def line(c):
         result += f" proposal:{c['proposal_status']} parent:{c['proposed_to']}"
     if c["ask_to"]:
         result += f" asks {c['ask_to']}"
+    if c.get("waiting"):
+        result += "  " + c["waiting"]["text"]
     return result
 
 
@@ -63,6 +65,9 @@ def tree(stack):
 
 def show(c):
     rows = [f"{line(c)}  board {c['board']}", f"body: {quoted(c['body'])}"]
+    for key in ("blocked_by", "blocks"):
+        if key in c:
+            rows.append(f"{key}: " + (", ".join(f"#{n}" for n in c[key]) or "none"))
     if c.get("agent_parent"):
         rows.append(f"agent parent: {c['agent_parent']}")
     if c["message_id"] is not None:
@@ -127,7 +132,14 @@ def _run(ctx, name, args):
             )
             or "no boards"
         )
-    if name in ("space_read", "space_post", "board_set", "board_own_wing"):
+    if name in (
+        "space_read",
+        "space_post",
+        "board_set",
+        "board_own_wing",
+        "orchestrator_inbox",
+        "card_split_done",
+    ):
         return json.dumps(result, ensure_ascii=False)
     if name == "board_add":
         return f"added board {result['slug']}"
@@ -207,10 +219,18 @@ def add(
     write=False,
     available=None,
 ):
+    input_schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": False,
+    }
     register(
         LocalTool(
             name=name,
             description={
+                "orchestrator_inbox": "Read unsplit root cards and their stable keyed children (coordinator or owner, opt-in only).",
+                "card_split_done": "Mark a root split or kept after creating all planned keyed children (coordinator or owner, opt-in only).",
                 "board_list": "List visible boards.",
                 "board_add": "Create a board.",
                 "board_own_wing": "Give a shared board its own memory wing (owner only).",
@@ -234,12 +254,12 @@ def add(
                 "decide": "Only a signed-in workspace owner may answer a review and return, release, close or park the card. An agent cannot relay approval. Pass the version you read to reject decisions on an edited card.",
                 "needs_me": "Read the visible decision queue (owners or trusted, unrestricted member connections; read only).",
             }[name],
-            input_schema={
-                "type": "object",
-                "properties": properties,
-                "required": list(required),
-                "additionalProperties": False,
-            },
+            input_schema=input_schema,
+            input_schema_for=(
+                lambda principal, gateway: _card_schema(input_schema, principal, gateway)
+            )
+            if name in ("task_add", "task_update")
+            else None,
             handler=lambda ctx, args: run(ctx, name, args),
             scope="memory:write" if write else "memory:read",
             kind="write" if write else "read",
@@ -249,6 +269,25 @@ def add(
             available=available,
         )
     )
+
+
+def _card_schema(schema, principal, gateway):
+    from commonplace.projects import orchestration
+
+    try:
+        on = gateway is not None and orchestration.enabled(gateway.db, principal.workspace_id)
+    except orchestration.SettingsUnavailable:
+        on = False
+    properties = dict(schema["properties"])
+    if not on:
+        properties.pop("blocked_by", None)
+    return {**schema, "properties": properties}
+
+
+def _orchestration_available(principal, gateway):
+    from commonplace.projects import orchestration
+
+    return gateway is not None and orchestration.enabled(gateway.db, principal.workspace_id)
 
 
 def register_tools():
@@ -291,6 +330,14 @@ def register_tools():
     )
     add("task_list", {"board": STRING, "status": STATUS, "mine": {"type": "boolean"}})
     add("task_show", {"task": TASK}, ("task",))
+    add("orchestrator_inbox", {"board": STRING}, ("board",), available=_orchestration_available)
+    add(
+        "card_split_done",
+        {"task": TASK, "state": {"type": "string", "enum": ["split", "kept"]}},
+        ("task", "state"),
+        write=True,
+        available=_orchestration_available,
+    )
     add(
         "task_add",
         {
@@ -306,6 +353,11 @@ def register_tools():
                 "description": "Parent card on this board; only sub-actors can specify a card created by or assigned to their top-level actor.",
             },
             "labels": ARRAY,
+            "blocked_by": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 1},
+                "maxItems": 16,
+            },
         },
         ("title",),
         write=True,
@@ -343,6 +395,11 @@ def register_tools():
                 "description": "Full lowercase commit SHA for the reported PR head.",
             },
             "labels": ARRAY,
+            "blocked_by": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 1},
+                "maxItems": 16,
+            },
             "callstack": {"type": ["object", "null"]},
             "options": ARRAY,
             **{
