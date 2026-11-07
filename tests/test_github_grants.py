@@ -396,9 +396,9 @@ def test_workspace_separation_of_connection_state(setup):
     connect(s)
     wid = s.db.create_workspace("other", s.uid)
     s.cookie = sessions.COOKIE + "=" + sessions.start_session(s.db, s.uid, wid)
-    assert status(s)["state"] == "absent"
-    assert write(s, "/api/github", "DELETE")[0] == 409
-    assert len(rows(s, "github_grants")) == 1
+    assert status(s)["state"] == "other_workspace"
+    assert write(s, "/api/github", "DELETE")[0] == 200
+    assert len(rows(s, "github_grants")) == 0
 
 
 def test_disabled_callback_and_hidden_card_do_not_exchange(setup, monkeypatch):
@@ -581,6 +581,7 @@ def test_disconnect_outcomes_purge_and_never_retry(setup, monkeypatch, outcome):
 @pytest.mark.parametrize("header", ["repo", "read:user", 42])
 def test_conflicting_header_evidence_revokes_only_issued_token(setup, monkeypatch, header):
     s = setup
+    status(s)
     original = s.remote.request
 
     def remote(method, url, **kwargs):
@@ -916,3 +917,168 @@ def test_refresh_material_is_discarded_before_encryption(setup):
     assert s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"]) == {
         "token": "synthetic-issued-token"
     }
+
+
+def test_expired_grant_reconnects_without_disconnect_or_acknowledgement(setup):
+    s = setup
+    connect(s)
+    before_calls = list(s.remote.calls)
+    generation = rows(s, "github_lifecycle")[0]["generation"]
+    s.db._conn.execute("UPDATE github_grants SET expires_at=0")
+    assert status(s)["state"] == "expired"
+    assert status(s)["acknowledge_required"] is False
+    code, _, raw = write(s)
+    assert code == 200, raw
+    assert not rows(s, "github_grants")
+    assert len(rows(s, "github_connect_flows")) == 1
+    assert rows(s, "github_lifecycle")[0]["generation"] == generation + 1
+    assert status(s)["acknowledge_required"] is False
+    assert s.remote.calls == before_calls
+
+
+def test_repeated_scope_headers_all_cross_checked(setup, monkeypatch):
+    from email.parser import Parser
+
+    s = setup
+    status(s)
+    original = s.remote.request
+
+    def remote(method, url, **kwargs):
+        code, headers, value = original(method, url, **kwargs)
+        if url.endswith("/user"):
+            headers = Parser().parsestr("X-OAuth-Scopes: \nX-OAuth-Scopes: repo\n\n")
+        return code, headers, value
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.client"), "request", remote)
+    finish(s, begin(s))
+    assert status(s)["state"] == "absent"
+    assert len([c for c in s.remote.calls if c[0] == "DELETE"]) == 1
+
+
+def test_callback_card_recheck_with_live_membership(setup):
+    s = setup
+    flow = begin(s)
+    principal = sessions.session_principal(s.db, s.session)
+    assert principal is not None
+    # Model a stale reference after a board restore without changing session membership.
+    s.db._conn.execute("UPDATE github_connect_flows SET card=99999")
+    assert sessions.session_principal(s.db, s.session) is not None
+    finish(s, flow)
+    assert not s.remote.calls and not rows(s, "github_grants")
+
+
+def test_callback_returns_to_selected_needs_consent(setup):
+    s = setup
+    response = finish(s, begin(s))
+    location = urlsplit(response[1]["Location"])
+    assert location.fragment == "/needs"
+    assert parse_qs(location.query)["github_card"] == [str(s.card)]
+    assert status(s)["state"] == "confirm"
+
+
+def test_disabled_feature_keeps_existing_grant_revocable(setup, monkeypatch):
+    s = setup
+    connect(s)
+    monkeypatch.delenv("COMMONPLACE_GITHUB_CONNECT")
+    assert status(s)["state"] == "connected"
+    assert status(s)["connect_enabled"] is False
+    assert write(s, "/api/github", "DELETE")[0] == 200
+    assert not rows(s, "github_grants")
+    assert len([c for c in s.remote.calls if c[0] == "DELETE"]) == 1
+
+
+def test_unreadable_prior_grant_marks_revocation_unconfirmed(setup):
+    s = setup
+    connect(s)
+    s.db._conn.execute("UPDATE github_grants SET secret=?", (b"tampered",))
+    assert s.gateway.github.revoke_token(s.uid, "synthetic-late-token") is False
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+    assert not [c for c in s.remote.calls if c[0] == "DELETE"]
+
+
+@pytest.mark.parametrize("phase", ["callback", "confirm", "expiry"])
+def test_cleanup_failure_always_settles_exchange_counter(setup, monkeypatch, phase):
+    import sqlite3
+
+    s = setup
+    status(s)
+
+    def broken(*args):
+        raise sqlite3.OperationalError("synthetic cleanup failure")
+
+    if phase == "callback":
+        s.remote.scope = "repo"
+        flow = begin(s)
+        monkeypatch.setattr(s.gateway.github, "revoke_token", broken)
+        assert finish(s, flow)[0] == 500
+    else:
+        finish(s, begin(s))
+        assert status(s)["state"] == "confirm"
+        monkeypatch.setattr(s.gateway.github, "revoke_token", broken)
+        if phase == "confirm":
+            assert write(s, "/api/github/confirm", payload={"accept": False})[0] == 500
+        else:
+            s.db._conn.execute("UPDATE github_confirmations SET expires_at=0")
+            assert write(s)[0] == 500
+    assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 0
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+    assert s.gateway.github._live == 0
+
+
+def test_confirm_fence_rechecked_after_consumption(setup, monkeypatch):
+    s = setup
+    finish(s, begin(s))
+    assert status(s)["state"] == "confirm"
+    original_tx = s.db._tx
+    count = 0
+
+    def transaction():
+        nonlocal count
+        count += 1
+        if count == 2:
+            assert not rows(s, "github_confirmations")
+            s.gateway.github.disconnect(s.uid, s.workspace)
+        return original_tx()
+
+    monkeypatch.setattr(s.db, "_tx", transaction)
+    response = write(s, "/api/github/confirm", payload={"accept": True})
+    assert response[0] == 409
+    assert not rows(s, "github_grants")
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert len(deletes) == 1 and deletes[0][1].endswith("/token")
+
+
+@pytest.mark.parametrize("target", ["person", "kind"])
+def test_aad_binds_valid_ciphertext_with_same_key(setup, target):
+    s = setup
+    status(s)
+    module = importlib.import_module("commonplace.github.store")
+    key = b"k" * 32
+    raw = module.seal(key, s.uid, "grant", b"synthetic-payload")
+    assert module.open_secret(key, s.uid, "grant", raw) == b"synthetic-payload"
+    with pytest.raises(providers.SignInError):
+        module.open_secret(
+            key,
+            "other-person" if target == "person" else s.uid,
+            "confirmation" if target == "kind" else "grant",
+            raw,
+        )
+
+
+@pytest.mark.parametrize("problem", ["location", "owner"])
+def test_wrapping_key_location_and_owner_fail_closed(setup, monkeypatch, problem):
+    import os
+    from pathlib import Path
+
+    s = setup
+    status(s)
+    if problem == "location":
+        key = Path(s.db.path).parent / "synthetic.key"
+        key.write_bytes(b"k" * 32)
+        key.chmod(0o600)
+        monkeypatch.setenv("COMMONPLACE_GITHUB_KEY_FILE", str(key))
+    else:
+        uid = os.getuid()
+        monkeypatch.setattr(os, "getuid", lambda: uid + 1)
+    assert write(s)[0] == 409
+    assert not rows(s, "github_connect_flows")
