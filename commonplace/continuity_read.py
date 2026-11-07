@@ -131,7 +131,7 @@ class PrivateReader:
             stored.workspace_id != principal.workspace_id
             or stored.wing != "private_chats"
             or not stored.source_thread_id.startswith("import-private:")
-            or not _filer_matches(principal, stored)
+            or not _filer_matches(principal, stored, reader=True)
         ):
             missing()
         store = self._store_for(stored.workspace_id)
@@ -182,7 +182,7 @@ class PrivateReader:
                     or thread.wing != "private_chats"
                     or not (
                         thread.source_thread_id.startswith("import-private:")
-                        and _filer_matches(principal, thread)
+                        and _filer_matches(principal, thread, reader=True)
                         or filing_user(self._db, thread) == principal.user_id
                     )
                 ):
