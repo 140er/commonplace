@@ -29,12 +29,16 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `SYSTEM.md`, `MODULES.md`
 - **Owns:**
 
+  - The canonical Space REST foundation reuses board rows as Spaces, with Board, Memory and Chat views and Board as the default.
+
   - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map.
 
   - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map, including thread-ranking invariants.
 
 
 - **Promises:**
+
+  - Architecture describes exact-slug, workspace-local reads without implying lifecycle support.
   - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
 
   - Imported-history consent: Imported-history reader authority is recorded as an explicit consent boundary, with shared-holder and withdrawal residuals.
@@ -45,11 +49,15 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Later object migration requires an explicit compatibility decision.
+
   - A stale block passes the mechanical check while describing old behaviour; reviewers judge whether the text is true.
 
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - Space REST contract tests and documentation obligations.
 
   - `tests/test_docs_obligations.py` runs `docs-check` against the merge base; `tests/test_orch_checks.py` covers unowned paths, missing obligations, empty blocks and waivers.
 
@@ -60,12 +68,14 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
+  - Public Space endpoint and error documentation alongside legacy board routes.
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
 - **Promises:**
 
   - Live-sync setup makes no active memory-upload or completed-coverage claim.
+  - The three canonical endpoints retain the existing authority and verbatim chat contracts.
 
   - Imported-history consent: Imported-history documentation distinguishes write-only import from the independent reader scope and explains exclusions and revocation.
   - Project setup documentation also explains the recommended card-move webhook and explicit updates for existing subscriptions.
@@ -83,6 +93,7 @@ Format (read by `commonplace orch docs-check`):
 - **How it fails:**
 
   - Updating installed files alone leaves an old running process unaffected.
+  - Rename, archive, retries, deleted queries and desktop synchronization are deferred.
 
   - Text drifts from code silently; nothing executes most of it.
 
@@ -91,6 +102,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Live-sync behavior and privacy claims are exercised by `tests/test_card199_safety.py`.
+  - Space contract and retained board/project/chat regression tests.
 
   - `tests/test_commonplace_public_surface.py`, `tests/test_commonplace_legal_pages.py` and the documentation checks in `tests/test_commonplace_release_gate.py`.
 
@@ -240,6 +252,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Synthetic legacy safety-stop cases and explicitly classified transcript-only fixture updates.
+  - The canonical Space REST matrix and base-captured profile/tool schemas.
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
 
@@ -260,6 +273,8 @@ Format (read by `commonplace orch docs-check`):
   - Integration tests combine typed owner assignment, configured starts, blocker filtering and existing-holder claim replay.
 
   - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
+  - The same contract selection runs on pinned base and implementation head; transport regressions execute separately.
+  - Space profile/tool snapshots are captured from the development base, retaining its split and inbox visibility and card-schema additions.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -306,6 +321,7 @@ Format (read by `commonplace orch docs-check`):
 - **How it fails:**
 
   - Configuration refusal can hide a later guard unless that boundary is also exercised directly.
+  - Feature assertions fail before DTO inspection on the unregistered base route.
 
   - A plan fixture that names a missing test file fails G7; a shared fixture change can break unrelated suites; slow or flaky tests waste every run.
 
@@ -317,6 +333,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_card199_safety.py` and the sync test family retain transcript-byte/cursor and server-import compatibility checks.
   - Transcript selection tests observe the actual symlink/empty rejection; memory selections separately prove refusal before selection.
   - Token tests distinguish missing selected capture credentials during initialization from import-only feed credential rejection.
+  - `tests/test_spaces_contract.py`, `tests/spaces_surfaces.json` and the checked REST/public surface regressions.
   - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
 
   - Release helper regressions simulate the old app disappearing before the signed-in board arrives and verify useful exception messages without credentials in JSON or Markdown reports.
@@ -343,9 +360,13 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - Canonical Space REST aliases mapped to existing board tool authority.
+
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
 - **Promises:**
+
+  - Supported Space routes pass the existing non-person tool visibility gate.
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
 
   - Imported-history consent: Imported reader results bypass wing restrictions only after exact-view proof; ordinary scope, tool, wing and mutation gates remain in force.
@@ -358,9 +379,13 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Rejected methods have no tool alias; authentication and body transport refusals remain shared.
+
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - `tests/test_spaces_contract.py` and the installed public surface inventory.
 
   - `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
 
@@ -423,6 +448,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/callstack.py`
 - **Owns:**
 
+  - Canonical Space REST response projection and typed creation refusals.
+
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
 - **Promises:**
@@ -447,6 +474,7 @@ Format (read by `commonplace orch docs-check`):
   - Owner todo assignments validate the target’s typed grant before claiming; repeat takes preserve an existing holder’s claim after grant removal.
 
   - Owner status changes preserve typed-card assignees and validate their grants; card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
+  - Metadata uses an exact active slug on a plain store connection; list retains expiry and create retains rules enforcement.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
@@ -462,6 +490,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Hidden metadata is absent; hidden repo collisions are forbidden; unsupported shapes execute no domain method.
+
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
 
   - Each unexpected dispatcher-pass exception is contained and logged without its private message, then waits on the stop event for 5 s, doubling after consecutive errors up to 300 s, before continuing.
@@ -469,6 +499,8 @@ Format (read by `commonplace orch docs-check`):
   - A successful pass resets the backoff; stopping interrupts the wait, and a closed database still ends the dispatcher.
 
 - **Tests:**
+
+  - `tests/test_spaces_contract.py` covers DTOs, isolation, authority, collisions and side effects.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -584,19 +616,26 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/rules/`, `commonplace/guards/`, `commonplace/privacy.py`, `commonplace/redact.py`
 - **Owns:**
 
+  - Canonical Space create in the checked REST write inventory.
+
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
 - **Promises:**
 
   - Split completion markers are checked writes on MCP and REST.
+  - Canonical create uses header freshness while legacy routes retain body compatibility.
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
 
 - **How it fails:**
 
+  - Missing and stale served sequences retain the 428 refresh payload.
+
   - Redaction can miss a sensitive detail; flags are hints, not blocks.
 
 - **Tests:**
+
+  - Route-aware checked REST harness and Space freshness contract tests.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
 
