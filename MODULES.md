@@ -287,6 +287,7 @@ Format (read by `commonplace orch docs-check`):
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes.
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes. Unreadable-grant and confirmation regressions require local disconnect and unconfirmed revocation.
   - The same contract selection runs on pinned base and implementation head; transport regressions execute separately.
+  - Space profile/tool snapshots are captured from the development base, retaining its split and inbox visibility and card-schema additions.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
