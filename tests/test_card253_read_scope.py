@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from commonplace.gateway import WorkerClient, _replace_result, _tool_result
+from commonplace.gateway import Mediator, WorkerClient, _replace_result, _tool_result
 from commonplace.handoff.recall import Recall
 from mempalace.read_scope import PAGE_SIZE, descriptor, metadata_page
 from tests.test_card253_presence import (  # noqa: F401
@@ -104,6 +104,57 @@ def test_empty_allow_and_unscoped_compatibility(world):
         assert tool()[key]
     # Exercise the worker transport as well as direct private calls.
     assert result(w, "mempalace_list_wings") == {"wings": {"wing_fixture": 1}}
+
+
+@pytest.mark.parametrize("context", ["none", "absent", "no_handoff"])
+@pytest.mark.parametrize(
+    "tool", ["mempalace_list_wings", "mempalace_get_taxonomy", "mempalace_search"]
+)
+def test_r12_no_gateway_mediator_preserves_ordinary_rows_only(world, context, tool):
+    """No thread authority must hide thread presence without losing ordinary rows."""
+    from types import SimpleNamespace
+
+    from mempalace.stored_text import KEYWORD_ONLY
+
+    w = world
+    hidden_ids = seed(w)
+    w.col._inner.add(
+        ids=["ordinary"],
+        documents=["ordinary readable words"],
+        metadatas=[{"wing": "wing_fixture", "room": "notes", KEYWORD_ONLY: True}],
+    )
+    principal = w.h.db.authenticate_token(w.tokens["F"])
+    raw = w.h.gateway.mediator.workers.call_tool(principal, "mempalace_list_wings", {})
+    assert raw["wings"]["wing_fixture"] > 1 and "wing_hidden" in raw["wings"]
+    mediator = Mediator(w.h.db, w.h.gateway.mediator.workers)
+    if context == "absent":
+        del mediator.gateway
+    elif context == "no_handoff":
+        mediator.gateway = SimpleNamespace()
+
+    def read():
+        if tool == "mempalace_search":
+            return mediator._fan_out_search(principal, tool, {"query": "zznonmatchingfixture"})
+        return mediator._before_wing_list(principal, tool, {}, [])["respond"]
+
+    if tool == "mempalace_search":
+        expected = mediator.workers.call_tool(
+            principal, tool, {"query": "zznonmatchingfixture", "wings": ["wing_fixture"]}
+        )
+        assert expected["results"] == []
+        expected["wings_searched"] = ["wing_fixture"]
+    else:
+        expected = (
+            {"wings": {"wing_fixture": 1}}
+            if tool == "mempalace_list_wings"
+            else {"taxonomy": {"wing_fixture": {"notes": 1}}}
+        )
+    reply = read()
+    assert reply == expected
+    # Even a thread readable through the attached gateway is unresolved here.
+    w.col.delete(ids=hidden_ids + ["readable-0"])
+    w.mcp._invalidate_overview_caches()
+    assert read() == reply
 
 
 @pytest.mark.parametrize(

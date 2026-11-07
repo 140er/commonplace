@@ -253,6 +253,8 @@ def _observe_console(mediator, principal, request, response, started):
 class Mediator:
     """Applies a principal's policy to one JSON-RPC request."""
 
+    gateway = None  # Direct worker helpers may be constructed without __init__.
+
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
