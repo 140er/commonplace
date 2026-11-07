@@ -40,6 +40,15 @@ CONFIG = {
     "stamp": "Restricted-origin work has not been released. This card’s creator stamp cannot be verified. Clear the coordinator in board settings, then use the existing owner release path; owner release is blocked while this live record remains.",
 }
 
+NO_REVIEW = "no: only the direct parent, its top-level agent, the board coordinator or the signed-in workspace owner may approve proposals"
+NO_ORIGIN = "no: restricted-origin work needs parent or workspace owner release"
+LINEAGE_REFUSAL = "no: restricted-origin creator lineage cannot release this card"
+CONFIGURE_FIRST = "no: origin release is blocked; appoint an independent board coordinator first"
+CLEAR_FIRST = "no: origin release is blocked; clear the board coordinator first"
+COORDINATOR_FIRST = "no: the live board coordinator must release restricted-origin work"
+NEEDS_OWNER = "no: only a workspace owner can do that"
+NEEDS_ACCESS = "no: only a workspace owner or an authorized connection can read needs_me"
+
 
 def edit(work, number, **changes):
     if "status" in changes and changes["status"] != "doing":
@@ -76,12 +85,12 @@ def allowed(call):
         raise AssertionError(f"expected successful operation: {exc}") from exc
 
 
-def refused(work, number, call):
+def refused(work, number, call, *, reason):
     before = snapshot(work, number)
     try:
         call()
-    except ToolError:
-        pass
+    except ToolError as exc:
+        assert str(exc) == reason
     else:
         raise AssertionError("expected refusal")
     assert snapshot(work, number) == before
@@ -275,7 +284,7 @@ def no_origin(work, n):
     try:
         groups = work.needs_me()
     except ToolError as exc:
-        assert "owner" in str(exc) or "connection" in str(exc)
+        assert str(exc) in (NEEDS_OWNER, NEEDS_ACCESS)
         return
     assert not any(
         c["number"] == n and c.get("approval_kind", "").startswith("origin") for c in items(groups)
@@ -383,28 +392,43 @@ def test_self_holder_release_keeps_independent_review(hub, fresh, review):
     result = release(s.k.work, s.n)
     assert "separate review" in result.get("notice", ""), result
     preserved(before, raw(fresh.owner, s.n), pending=True)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="No self review"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="No self review"),
+        reason=NO_REVIEW,
+    )
 
 
 @pytest.mark.parametrize("relation,trust", [("child", "standard"), ("grandchild", "trusted")])
 def test_creator_descendant_pending_proposal_cannot_be_approved(hub, fresh, relation, trust):
     s = setup(hub, fresh, trust, relation=relation, status="backlog")
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Refused descendant"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="Refused descendant"),
+        reason=LINEAGE_REFUSAL,
+    )
 
 
 @pytest.mark.parametrize("trust", ["standard", "trusted"])
 def test_creator_descendant_nonholder_marker_does_not_release(hub, fresh, trust):
     s = setup(hub, fresh, trust, relation="child")
     edit(fresh.owner, s.n, assignee=s.c.principal.actor, approved_by=s.k.principal.actor)
-    refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n))
+    refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n), reason=NO_ORIGIN)
 
 
 @pytest.mark.parametrize("relation", ["child", "grandchild"])
 def test_creator_descendant_cannot_release_held_doing(hub, fresh, relation):
     s = setup(hub, fresh, relation=relation)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Refused descendant"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="Refused descendant"),
+        reason=LINEAGE_REFUSAL,
+    )
     edit(fresh.owner, s.n, approved_by=s.k.principal.actor)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n))
+    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n), reason=NO_ORIGIN)
     no_origin(s.k.work, s.n)
 
 
@@ -461,7 +485,12 @@ def test_owner_creator_conflict_contract(hub, fresh, relation):
     origin(fresh.owner, s.n, configuration=relation, notice=True)
     for work in (fresh.owner, s.k.work):
         refused(
-            fresh.owner, s.n, lambda work=work: work.task_approve(s.n, reason="Refused conflict")
+            fresh.owner,
+            s.n,
+            lambda work=work: work.task_approve(s.n, reason="Refused conflict"),
+            reason=CONFIGURE_FIRST
+            if work.principal.person
+            else (LINEAGE_REFUSAL if relation != "creator" else NO_REVIEW),
         )
     appoint(fresh, fresh.connect("independent"))
     no_origin(fresh.owner, s.n)
@@ -487,7 +516,12 @@ def test_live_creator_blocks_owner_even_with_missing_grants(hub, fresh, kind):
     appoint(fresh, s.c)
     if kind != "all-granted":
         remove(hub, fresh, s.c, kind)
-    refused(fresh.owner, s.n, lambda: fresh.owner.task_approve(s.n, reason="Refused conflict"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.task_approve(s.n, reason="Refused conflict"),
+        reason=CONFIGURE_FIRST,
+    )
 
 
 def test_owner_recovery_dedup_and_notice_per_board(hub, fresh):
@@ -547,7 +581,7 @@ def test_restricted_origin_predicate_agrees(hub, fresh, kind):
         agent_parent=None if kind == "legacy-null" else s.c.principal.parent_agent,
     )
     origin(s.k.work, s.n)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n))
+    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n), reason=NO_ORIGIN)
     fresh.owner.board_set("work", None)
     origin(fresh.owner, s.n, notice=True)
 
@@ -556,7 +590,14 @@ def test_restricted_origin_predicate_agrees(hub, fresh, kind):
 def test_self_holder_origin_cannot_reject_or_escalate(hub, fresh, negative):
     s = setup(hub, fresh)
     args = {"approve": False} if negative == "approve-false" else {"escalate": True}
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Refused negative", **args))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="Refused negative", **args),
+        reason="no: origin release requires affirmative approval"
+        if negative == "approve-false"
+        else "no: origin release cannot escalate",
+    )
 
 
 def test_release_board_does_not_authorize_decision_ask(hub, fresh):
@@ -574,7 +615,8 @@ def test_release_board_does_not_authorize_decision_ask(hub, fresh):
     )
     try:
         groups = s.k.work.needs_me()
-    except ToolError:
+    except ToolError as exc:
+        assert str(exc) == NEEDS_OWNER
         groups = {}
     assert not any(c["number"] == s.n for c in groups.get("asks", []))
     assert not mcp(hub, s.k.token, "decide", task=s.n, choice="A")[0]
@@ -590,7 +632,12 @@ def test_explicit_person_plan_review_survives_origin_routing(hub, fresh):
 
 def test_owner_cannot_release_with_independent_capable_coordinator(hub, fresh):
     s = setup(hub, fresh, status="backlog")
-    refused(fresh.owner, s.n, lambda: fresh.owner.task_approve(s.n, reason="Refused owner"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.task_approve(s.n, reason="Refused owner"),
+        reason=COORDINATOR_FIRST,
+    )
 
 
 @pytest.mark.parametrize("kind", ["unrestricted", "already-released"])
@@ -616,13 +663,16 @@ def test_untrusted_creator_cannot_self_release(hub, fresh, kind):
         "creator", trust="untrusted" if kind == "untrusted" else "trusted", write_wing="inbox"
     )
     n = c.work.task_add(board="work", title="Restricted creator")["number"]
-    for call in (
-        lambda: fresh.owner.board_set("work", c.principal.actor),
-        lambda: c.work.task_approve(n, reason="Refused self"),
-        lambda: c.work.task_take_next(task=n),
-        lambda: c.work.task_heartbeat(n),
+    for call, reason in (
+        (
+            lambda: fresh.owner.board_set("work", c.principal.actor),
+            "no: coordinator must be an active agent with access to this board",
+        ),
+        (lambda: c.work.task_approve(n, reason="Refused self"), NO_REVIEW),
+        (lambda: c.work.task_take_next(task=n), "no: card is not available to take"),
+        (lambda: c.work.task_heartbeat(n), NO_ORIGIN),
     ):
-        refused(fresh.owner, n, call)
+        refused(fresh.owner, n, call, reason=reason)
     no_origin(c.work, n)
 
 
@@ -640,7 +690,12 @@ def test_creator_later_promotion_cannot_grant_new_release(hub, fresh, kind):
         proposal_status="pending",
         assignee=s.c.principal.actor if kind == "held" else s.k.principal.actor,
     )
-    refused(fresh.owner, s.n, lambda: s.c.work.task_approve(s.n, reason="No new release"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.c.work.task_approve(s.n, reason="No new release"),
+        reason=NO_REVIEW,
+    )
 
 
 @pytest.mark.parametrize("kind", ["root", "holder", "sibling"])
@@ -655,7 +710,14 @@ def test_unrelated_noncoordinator_has_no_origin_authority(hub, fresh, kind):
         edit(fresh.owner, s.n, assignee=q.principal.actor)
     fresh.owner.board_set("work", None)
     no_origin(q.work, s.n)
-    refused(fresh.owner, s.n, lambda: q.work.task_approve(s.n, reason="No appointment"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: q.work.task_approve(s.n, reason="No appointment"),
+        reason="no: card is not a pending proposal or a plan awaiting review"
+        if kind == "root"
+        else NO_REVIEW,
+    )
 
 
 @pytest.mark.parametrize(
@@ -688,10 +750,33 @@ def test_same_holder_marker_revalidates_authority(hub, fresh, kind):
     principal = hub.db.authenticate_connection(s.k.id)
     if principal is not None and principal.workspace_id == fresh.workspace:
         work = service(hub, principal)
-        refused(fresh.owner, s.n, lambda: work.task_heartbeat(s.n))
+        refused(
+            fresh.owner,
+            s.n,
+            lambda: work.task_heartbeat(s.n),
+            reason="no: card not found"
+            if kind in ("no-board-read", "no-memory-read")
+            else "no: this connection cannot change this board"
+            if kind == "no-memory-write"
+            else NO_ORIGIN,
+        )
         no_origin(work, s.n)
-        code, reply = api(hub, s.k.token, "GET", "/api/needs-me")
-        assert code != 200 or not any(
+    code, reply = api(hub, s.k.token, "GET", "/api/needs-me")
+    if principal is None:
+        assert code == 401, reply
+    elif principal.workspace_id != fresh.workspace:
+        assert code == 200, reply
+        assert s.n not in {c["number"] for c in items(reply)}
+    elif kind == "hidden-needs_me":
+        assert code == 403 and reply["error"] == "tool not allowed for this connection"
+    elif code == 403:
+        assert reply["error"] in (
+            NEEDS_OWNER.removeprefix("no: "),
+            NEEDS_ACCESS.removeprefix("no: "),
+        )
+    else:
+        assert code == 200, reply
+        assert not any(
             c.get("approval_kind", "").startswith("origin") and c["number"] == s.n
             for c in items(reply)
         )
@@ -714,7 +799,12 @@ def test_person_and_terminal_origin_guards(hub, fresh, kind):
             status="review", ask="Which route?", ask_to=f"user:{fresh.user}", claim_until=None
         )
     edit(fresh.owner, s.n, **updates)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="No origin route"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="No origin route"),
+        reason="no: escalated to the owner, who decides" if kind == "escalated" else NO_REVIEW,
+    )
     no_origin(s.k.work, s.n)
 
 
@@ -785,13 +875,23 @@ def test_lineage_fails_closed(hub, fresh, lineage, path, trust):
         edit(fresh.owner, s.n, approved_by=s.k.principal.actor)
     corrupt_lineage(hub, fresh, s, lineage)
     if path == "approve":
-        refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Unsafe lineage"))
+        refused(
+            fresh.owner,
+            s.n,
+            lambda: s.k.work.task_approve(s.n, reason="Unsafe lineage"),
+            reason=LINEAGE_REFUSAL,
+        )
     elif path == "stored-marker":
-        refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n))
+        refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n), reason=NO_ORIGIN)
     else:
-        refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Unsafe lineage"))
+        refused(
+            fresh.owner,
+            s.n,
+            lambda: s.k.work.task_approve(s.n, reason="Unsafe lineage"),
+            reason=LINEAGE_REFUSAL,
+        )
         edit(fresh.owner, s.n, approved_by=s.k.principal.actor)
-        refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n))
+        refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n), reason=NO_ORIGIN)
         no_origin(s.k.work, s.n)
 
 
@@ -800,7 +900,12 @@ def test_unsafe_lineage_owner_configuration(hub, fresh, lineage):
     s = setup(hub, fresh, status="backlog")
     corrupt_lineage(hub, fresh, s, lineage)
     origin(fresh.owner, s.n, configuration="unsafe", pending=True, notice=True)
-    refused(fresh.owner, s.n, lambda: fresh.owner.task_approve(s.n, reason="Unsafe lineage"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.task_approve(s.n, reason="Unsafe lineage"),
+        reason=CONFIGURE_FIRST,
+    )
 
 
 STAMPS = ["name", "user", "created-at", "unresolvable"]
@@ -830,19 +935,29 @@ def test_unverifiable_creator_stamp_fails_closed(hub, fresh, stamp, path, trust)
     corrupt_stamp(fresh, s, stamp)
     edit(fresh.owner, s.n, assignee=s.c.principal.actor)
     if path == "approve":
-        refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Invalid stamp"))
+        refused(
+            fresh.owner,
+            s.n,
+            lambda: s.k.work.task_approve(s.n, reason="Invalid stamp"),
+            reason=LINEAGE_REFUSAL,
+        )
     else:
         edit(fresh.owner, s.n, approved_by=s.k.principal.actor)
-        refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n))
+        refused(fresh.owner, s.n, lambda: s.c.work.task_heartbeat(s.n), reason=NO_ORIGIN)
 
 
 @pytest.mark.parametrize("stamp", STAMPS)
 def test_unverifiable_creator_stamp_same_holder(hub, fresh, stamp):
     s = setup(hub, fresh, relation="child")
     corrupt_stamp(fresh, s, stamp)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_approve(s.n, reason="Invalid stamp"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: s.k.work.task_approve(s.n, reason="Invalid stamp"),
+        reason=LINEAGE_REFUSAL,
+    )
     edit(fresh.owner, s.n, approved_by=s.k.principal.actor)
-    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n))
+    refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n), reason=NO_ORIGIN)
     no_origin(s.k.work, s.n)
 
 
@@ -855,7 +970,12 @@ def test_unverifiable_creator_stamp_owner_configuration(hub, fresh, stamp, condi
     if condition != "live-capable":
         remove(hub, fresh, s.k, "no-memory-write")
     origin(fresh.owner, s.n, configuration="stamp", pending=True, notice=True)
-    refused(fresh.owner, s.n, lambda: fresh.owner.task_approve(s.n, reason="Invalid stamp"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.task_approve(s.n, reason="Invalid stamp"),
+        reason=CLEAR_FIRST,
+    )
 
 
 @pytest.mark.parametrize("stamp", STAMPS)
@@ -868,7 +988,12 @@ def test_unverifiable_creator_stamp_existing_owner_fallback(hub, fresh, stamp, c
     else:
         remove(hub, fresh, s.k, "revoked")
     token = fresh.connect("owner-token")
-    refused(fresh.owner, s.n, lambda: token.work.task_approve(s.n, reason="Token is not person"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: token.work.task_approve(s.n, reason="Token is not person"),
+        reason=LINEAGE_REFUSAL,
+    )
     origin(fresh.owner, s.n, pending=True, notice=True)
     before = raw(fresh.owner, s.n)
     release(fresh.owner, s.n)
@@ -884,6 +1009,7 @@ def test_owner_origin_only_cannot_reject_pending_proposal(hub, fresh):
         fresh.owner,
         s.n,
         lambda: fresh.owner.task_approve(s.n, approve=False, reason="Origin has no reject"),
+        reason="no: origin release requires affirmative approval",
     )
 
 
@@ -907,6 +1033,22 @@ def test_explicit_person_backlog_proposal_survives_origin_routing(hub, fresh):
         no_origin(fresh.owner, s.n)
 
 
+def test_owner_rejects_person_targeted_proposal_with_healthy_coordinator(hub, fresh):
+    s = setup(hub, fresh, status="backlog")
+    edit(fresh.owner, s.n, proposed_to=f"user:{fresh.user}")
+    before = raw(fresh.owner, s.n)
+    assert before["proposal_status"] == "pending"
+    assert fresh.owner._origin_authority(before)[0] == "coordinator"
+    rejected = allowed(
+        lambda: fresh.owner.task_approve(s.n, approve=False, reason="Proposal declined")
+    )
+    assert rejected["proposal_status"] == "rejected"
+    after = raw(fresh.owner, s.n)
+    for field in ("approved_by", "restricted_origin", "agent_parent", "created_by"):
+        assert after[field] == before[field]
+    assert not fresh.owner._origin_released(after)
+
+
 def test_descendant_coordinator_content_exception_is_removed(hub, fresh):
     s = setup(hub, fresh, relation="child", status="todo")
     edit(fresh.owner, s.n, assignee=None)
@@ -914,6 +1056,7 @@ def test_descendant_coordinator_content_exception_is_removed(hub, fresh):
         fresh.owner,
         s.n,
         lambda: s.k.work.task_update(s.n, title="Disallowed edit", body="Disallowed body"),
+        reason=NO_ORIGIN,
     )
 
 
@@ -921,7 +1064,12 @@ def test_owner_role_token_has_no_person_origin_fallback(hub, fresh):
     s = setup(hub, fresh)
     fresh.owner.board_set("work", None)
     token = fresh.connect("owner-token")
-    refused(fresh.owner, s.n, lambda: token.work.task_approve(s.n, reason="Token is not person"))
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: token.work.task_approve(s.n, reason="Token is not person"),
+        reason=NO_REVIEW,
+    )
     no_origin(token.work, s.n)
 
 
@@ -944,7 +1092,8 @@ def test_release_only_standard_coordinator_queue_is_narrow(hub, fresh):
     for fmt in ("list", "digest"):
         try:
             groups = s.k.work.needs_me(format=fmt)
-        except ToolError:
+        except ToolError as exc:
+            assert str(exc) == NEEDS_OWNER
             continue
         shown = groups["items"] if fmt == "digest" else items(groups)
         assert not set(decoys) & {c["number"] for c in shown}

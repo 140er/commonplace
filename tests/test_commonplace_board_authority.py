@@ -90,8 +90,10 @@ def test_authorized_approval_releases_restricted_work(fresh, approver):
         fresh.owner.board_set("work", parent.principal.actor)
     approved = authority.task_approve(proposal["number"], reason="synthetic reason")
     assert approved["approved_by"] == authority.principal.actor
-    if approved["proposal_status"] == "pending":
-        authority.task_approve(proposal["number"], reason="Separate proposal review")
+    if approver == "owner":
+        assert approved["proposal_status"] == "pending" and approved["status"] == "backlog"
+        approved = authority.task_approve(proposal["number"], reason="Separate proposal review")
+    assert approved["proposal_status"] == "approved" and approved["status"] == "todo"
     child.work.task_take_next(task=proposal["number"])
     child.work.task_handoff(proposal["number"], receiver.principal.actor, "Continue this work")
     assert receiver.work.task_take_next(task=proposal["number"])["status"] == "doing"
