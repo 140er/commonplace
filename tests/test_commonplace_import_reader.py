@@ -834,6 +834,23 @@ def test_g04_fail_closed(live, monkeypatch):
     with db._lock:
         db._conn.execute("UPDATE sync_streams SET offset=? WHERE own_stored_id=?", (offset, own.id))
     assert gate(j.client.gateway, p, "search", raw).get("results")
+    # Candidate-to-import lookup must not scan the account's unrelated history.
+    with db._lock:
+        db._conn.executemany(
+            "INSERT INTO sync_streams (workspace_id,stream_id,user_id,connection_id,kind,group_id,own_stored_id) "
+            "VALUES (?,?,?,'','import','synthetic-unrelated-group',?)",
+            [
+                (p.workspace_id, f"synthetic-unrelated-{i}", p.user_id, f"synthetic-stored-{i}")
+                for i in range(5000)
+            ],
+        )
+        steps = []
+        db._conn.set_progress_handler(lambda: steps.append(1) or 0, 100)
+        try:
+            assert ctx.recall._private.imports_for_source(p, "thr_0000000000000000") == []
+        finally:
+            db._conn.set_progress_handler(None, 0)
+    assert len(steps) < 20, "Import candidate lookup scanned unrelated history"
     assert j.request("/api/connections/" + p.connection_id, "DELETE", owner=j.owner)[0] == 200
     assert not gate(j.client.gateway, p, "search", raw).get("results")
 
