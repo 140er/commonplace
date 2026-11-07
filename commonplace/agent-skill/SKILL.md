@@ -61,30 +61,13 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 
 ### Opt-in inbox and splitting
 
-When workspace orchestration is enabled, call `orchestrator_inbox board=<slug>`
-at session start, on every wake, and every 10 minutes while running. A launch
-may include a snapshot; reread the inbox before acting. It lists unsplit open
-root cards, including roots already in Doing or Review, with their keyed children.
-Only the board's coordinator connection or a signed-in workspace owner may use it.
+When workspace orchestration is enabled, call `orchestrator_inbox board=<slug>` at session start, on every wake and every 10 minutes while running; reread launch snapshots before acting. Only the coordinator connection or signed-in owner may use it. It includes unsplit roots in Doing/Review and their keyed children.
 
-For each root, decide whether to keep it intact or split it. Plan stable keys
-before creating children. Create each missing child with `task_add parent=<root>
-labels=["split:<root>:<key>"]` on that board; keys use 1–32 lowercase letters,
-digits or hyphens. Reuse the same key after a crash, even if the title changes.
-`split_key_exists` returns the existing child's number; reread it and continue
-with missing keys. Never rename keys on a retry. The hub does not plan or create
-children. After every intended child exists, call `card_split_done task=<root>
-state=split`; use `state=kept` when no split is needed. The first marker wins.
+Plan stable keys, then create missing children with `task_add parent=<root> labels=["split:<root>:<key>"]` on the same board. Keys use 1–32 lowercase letters, digits or hyphens; never rename them after a crash or title change. On `split_key_exists`, reread the returned child number and continue with missing keys. The hub never plans or creates children.
 
-A configured runner starts `main` for new roots. Reconciliation retries older
-unsplit roots at gaps of 10, 30 and 90 minutes, at most three times, through the
-same admission fence. A `split stuck` waiting reason needs person action.
-Without a runner or an active card webhook, new cards wait until the next
-orchestrator session; continuous orchestration is separate work.
+After all children exist, call `card_split_done task=<root> state=split`; use `state=kept` for an intact root. First marker wins. A `split stuck` wait needs person action. Without runner or active card webhook, delivery waits for the next session; continuous orchestration is separate work.
 
-`blocked_by=[<number>,…]` on add/update replaces a card's same-board blockers.
-Only Done satisfies a blocker. Follow `waiting.text` for the current reason;
-a dependency wait by itself does not ask the person to intervene.
+`blocked_by=[<number>,…]` on add/update replaces same-board blockers; only Done satisfies them. Follow `waiting.text`; a dependency wait alone does not ask the person to intervene. See [the inbox and splitting guide](../../docs/projects.md#opt-in-card-inbox-and-splitting) for runner roles, retry timing and delivery details.
 
 ## Memory
 

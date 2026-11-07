@@ -211,6 +211,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The pinned handoff baseline adapts live tool availability and workspace schemas while retaining strict HTTP and audit equality; visibility mutations must fail.
+
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - Off-mode capacity regressions preserve legacy refusal text and card state, including a coded admission refusal.
 
@@ -313,6 +315,8 @@ Format (read by `commonplace orch docs-check`):
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - The agent skill stays below 120 lines and links to the full opt-in splitting guide for delivery details.
 
   - The agent playbook requires inbox reads at session start, on wakes and every 10 minutes, stable keys, and completion markers.
 
