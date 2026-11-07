@@ -131,7 +131,6 @@ def setup(
     elif relation in ("parent", "root"):
         if relation == "parent":
             c = fresh.connect("nested-creator", parent=c.id, trust="untrusted", write_wing="inbox")
-            k = member(hub, fresh, "unused")
             # Existing intermediate creator is promoted only after its restricted submission.
             k = SimpleNamespace(id=c.principal.parent_connection_id)
             k.principal = hub.db.authenticate_connection(k.id)
@@ -627,7 +626,15 @@ def test_explicit_person_plan_review_survives_origin_routing(hub, fresh):
     edit(fresh.owner, s.n, proposed_to=f"user:{fresh.user}", assignee=s.c.principal.actor)
     for marker in (None, s.k.principal.actor):
         edit(fresh.owner, s.n, approved_by=marker)
-        assert s.n in {c["number"] for c in fresh.owner.needs_me().get("plans", [])}
+        plans = fresh.owner.needs_me().get("plans", [])
+        assert s.n in {c["number"] for c in plans}
+        item = next(c for c in plans if c["number"] == s.n)
+        assert item["actions"] == (["reject"] if marker is None else ["approve", "reject"])
+        assert item["why"] == (
+            "Awaiting plan review. You may reject it; origin release is required before approval."
+            if marker is None
+            else "Awaiting plan review. Approve or reject it."
+        )
 
 
 def test_owner_cannot_release_with_independent_capable_coordinator(hub, fresh):
@@ -1029,8 +1036,68 @@ def test_explicit_person_backlog_proposal_survives_origin_routing(hub, fresh):
     edit(fresh.owner, s.n, proposed_to=f"user:{fresh.user}")
     for marker in (None, s.k.principal.actor):
         edit(fresh.owner, s.n, approved_by=marker)
-        assert s.n in {c["number"] for c in fresh.owner.needs_me().get("backlog_from_agents", [])}
+        proposals = fresh.owner.needs_me().get("backlog_from_agents", [])
+        assert s.n in {c["number"] for c in proposals}
+        item = next(c for c in proposals if c["number"] == s.n)
+        assert item["actions"] == (["reject"] if marker is None else ["approve", "reject"])
+        assert item["why"] == (
+            "creator proposed this to you. You may reject it; origin release is required before approval."
+            if marker is None
+            else "creator proposed this to you. Approve or reject it."
+        )
         no_origin(fresh.owner, s.n)
+
+
+@pytest.mark.parametrize("review", ["plan", "pending-proposal"])
+def test_origin_releasers_keep_approve_action(hub, fresh, review):
+    s = setup(hub, fresh, review=review)
+    assert origin(s.k.work, s.n, pending=True)["actions"] == ["approve"]
+    fresh.owner.board_set("work", None)
+    assert origin(fresh.owner, s.n, pending=True)["actions"] == ["approve"]
+
+
+@pytest.mark.parametrize("choice", ["Continue", None])
+def test_origin_release_preserves_return_routed_decision(hub, fresh, choice):
+    s = setup(hub, fresh, status="todo")
+    # Historical restricted work awaiting a person decision before its origin release.
+    edit(
+        fresh.owner,
+        s.n,
+        status="review",
+        review_kind="decision",
+        ask="How should this proceed?",
+        ask_to=f"user:{fresh.user}",
+        return_to=s.k.principal.actor,
+    )
+    allowed(lambda: fresh.owner.decide(s.n, choice=choice, reply="Use the reviewed approach."))
+    release(s.k.work, s.n)
+    claimed = allowed(lambda: s.k.work.task_take_next(task=s.n))
+    assert claimed.get("decision") == {
+        "actor": f"user:{fresh.user}",
+        "choice": choice,
+        "reply": "Use the reviewed approach.",
+    }
+    assert raw(fresh.owner, s.n)["return_to"] is None
+
+
+@pytest.mark.parametrize("configuration", ["creator", "child", "unsafe", "stamp"])
+def test_owner_rejects_pending_proposal_during_origin_configuration(hub, fresh, configuration):
+    relation = configuration if configuration in ("creator", "child") else "independent"
+    s = setup(hub, fresh, relation=relation, status="backlog")
+    if configuration == "unsafe":
+        corrupt_lineage(hub, fresh, s, "cycle")
+    elif configuration == "stamp":
+        corrupt_stamp(fresh, s, "name")
+    origin(fresh.owner, s.n, configuration=configuration, pending=True)
+    before = raw(fresh.owner, s.n)
+    rejected = allowed(
+        lambda: fresh.owner.task_approve(s.n, approve=False, reason="Proposal declined")
+    )
+    assert rejected["proposal_status"] == "rejected"
+    after = raw(fresh.owner, s.n)
+    for field in ("approved_by", "restricted_origin", "agent_parent", "created_by"):
+        assert after[field] == before[field]
+    assert not fresh.owner._origin_released(after)
 
 
 def test_owner_rejects_person_targeted_proposal_with_healthy_coordinator(hub, fresh):
@@ -1090,22 +1157,20 @@ def test_release_only_standard_coordinator_queue_is_narrow(hub, fresh):
         )
         decoys.append(n)
     for fmt in ("list", "digest"):
-        try:
-            groups = s.k.work.needs_me(format=fmt)
-        except ToolError as exc:
-            assert str(exc) == NEEDS_OWNER
-            continue
+        groups = allowed(lambda fmt=fmt: s.k.work.needs_me(format=fmt))
         shown = groups["items"] if fmt == "digest" else items(groups)
         assert not set(decoys) & {c["number"] for c in shown}
     assert not set(decoys) & {c["number"] for c in s.k.work.approvals_for_me()["items"]}
     for fmt in ("list", "digest"):
         ok, text = mcp(hub, s.k.token, "needs_me", format=fmt)
-        assert not ok or "Ordinary review decoy" not in text
+        assert ok, text
+        assert "Ordinary review decoy" not in text
     held = s.k.work.task_add(board="work", title="Independent heartbeat", claim=True)
     ok, text = mcp(hub, s.k.token, "task_heartbeat", task=held["number"])
     assert ok and "Ordinary review decoy" not in text
     code, reply = api(hub, s.k.token, "GET", "/api/needs-me")
-    assert code == 403 or (code == 200 and not set(decoys) & {c["number"] for c in items(reply)})
+    assert code == 200, reply
+    assert not set(decoys) & {c["number"] for c in items(reply)}
 
 
 def test_owner_origin_overflow_never_becomes_ordinary_proposal(hub, fresh):
