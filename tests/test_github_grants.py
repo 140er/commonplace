@@ -1111,3 +1111,20 @@ def test_transport_preserves_repeated_scope_evidence(setup):
     )
     assert hasattr(headers, "get_all")
     assert headers.get_all("X-OAuth-Scopes") == ["", "repo"]
+
+
+def test_token_scope_evidence_required_without_optional_header(setup, monkeypatch):
+    s = setup
+    status(s)
+    s.remote.scope = None
+    original = s.remote.request
+
+    def remote(method, url, **kwargs):
+        code, headers, data = original(method, url, **kwargs)
+        return code, {} if url.endswith("/user") else headers, data
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.client"), "request", remote)
+    finish(s, begin(s))
+    assert status(s)["state"] == "absent"
+    deletes = [c for c in s.remote.calls if c[0] == "DELETE"]
+    assert len(deletes) == 1 and deletes[0][1].endswith("/token")
