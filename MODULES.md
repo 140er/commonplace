@@ -330,6 +330,7 @@ Format (read by `commonplace orch docs-check`):
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes. Unreadable-grant and confirmation regressions require local disconnect and unconfirmed revocation.
   - The same contract selection runs on pinned base and implementation head; transport regressions execute separately.
   - Space profile/tool snapshots are captured from the development base, retaining its split and inbox visibility and card-schema additions.
+  - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -449,6 +450,7 @@ Format (read by `commonplace orch docs-check`):
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
+  - Gateway installation recovers project reports immediately; the webhook worker drives independent monotonic scan deadlines without adding authority or holding database locks during report HTTP.
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
 
   - Imported-history consent: Imported reader results bypass wing restrictions only after exact-view proof; ordinary scope, tool, wing and mutation gates remain in force.
@@ -572,6 +574,7 @@ Format (read by `commonplace orch docs-check`):
   - Owner coordinator settings list eligible active PAT connections; needs-me reports restricted cards waiting on a missing coordinator once per board.
   - Owner coordinator settings list eligible active PAT connections; needs-me reports restricted cards waiting on a missing coordinator once per board, with the waiting bucket omitted for non-owners.
   - Metadata uses an exact active slug on a plain store connection; list retains expiry and create retains rules enforcement.
+  - Non-done to done transitions capture metadata in the source transaction. Unavailable report settings reject before status or lesson writes; new boards without a coordinator remain history only. Raw events retain their existing matching and authorization.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
@@ -588,6 +591,7 @@ Format (read by `commonplace orch docs-check`):
 - **How it fails:**
 
   - Hidden metadata is absent; hidden repo collisions are forbidden; unsupported shapes execute no domain method.
+  - Report routing defers one event durably before advancing the global cursor; authorization retries indefinitely with fixed inspection code and persisted count/since, independent of HTTP attempts. Control persistence failures retain unacknowledged work.
 
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
 
@@ -598,6 +602,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_spaces_contract.py` covers DTOs, isolation, authority, collisions and side effects.
+  - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -696,6 +701,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/projects/`, `commonplace/plans.py`
 - **Owns:**
 
+  - Source outboxes and observed stuck episodes, internal seat bindings, publication receipts and reserved report dispatch.
+
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
 - **Promises:**
@@ -706,6 +713,7 @@ Format (read by `commonplace orch docs-check`):
   - The opt-in inbox excludes children and coordinator roots, exposes keyed children, and accepts first-wins split markers only from the coordinator or signed-in owner.
 
   - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
+  - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
 
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
@@ -713,9 +721,13 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Snapshot failures leave observation state untouched. Missing seats yield history only; changed bindings cancel old reports. Unknown authorization errors retain fixed-code retries without exposing exception text.
+
   - An unresolved model refuses a config-driven start before insert; a limit change does not stop work already started.
 
 - **Tests:**
+
+  - `tests/test_project_reports.py::test_done_writers`, `test_seed_done_new_board_history_only`, `test_idle_stuck_and_episode_resets`, `test_scan_budget_isolation_cleanup_recovery` and `test_publication_crashes_and_lock_order`.
 
   - The `tests/test_projects_` files, `tests/test_commonplace_plans.py`.
 
