@@ -114,3 +114,18 @@ def test_assignment_counts_queued_starts_at_admission(hub):
     with pytest.raises(orchestration.AdmissionRefused, match="project_limit"):
         w.boards.task_handoff(w.card(), w.a.actor, "Please do this")
     assert len(w.all_jobs()) == 1
+
+
+def test_reassign_claimed_card_returns_to_todo_without_start(hub):
+    w = World(hub)
+    seed(w)
+    w.configure()
+    worker = w.db.authenticate_connection(w.machine()["worker_connection_id"])
+    card = w.card()
+    BoardService(w.ctx(w.a)).task_take_next(task=card)
+    moved = w.boards.task_handoff(card, worker.actor, "Retry with another worker")
+    assert (moved["status"], moved["assignee"]) == ("todo", worker.actor)
+    assert moved["claim_until"] is None
+    assert not w.all_jobs()
+    claimed = BoardService(w.ctx(worker)).task_take_next(task=card)
+    assert claimed["status"] == "doing"

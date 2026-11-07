@@ -703,3 +703,7 @@ appears in the owner queue again without changing its stored words or audit log.
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### Reassigning active work
+
+- **Claim boundary.** Immediate owner-assignment claims apply only when handing off a todo card. Reassigning doing work, including a stuck card from needs-me, returns it to todo with no lease or automatic start so the receiver can explicitly claim it.

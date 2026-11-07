@@ -2833,7 +2833,7 @@ class BoardService:
             )
         if options and not person:
             raise ToolError("no: options require a person")
-        assigned = self._owner_assignment(target)
+        assigned = row["status"] == "todo" and self._owner_assignment(target)
         status = "review" if person else "doing" if assigned else "todo"
         target = ask_to or target
         if assigned:

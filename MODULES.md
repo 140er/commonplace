@@ -249,6 +249,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
+  - Reassignment regressions keep doing-card handoffs unclaimed and avoid queued replacement starts until the receiver takes the card.
+
   - Manual-assignment regressions cover the statechart claim replay, configured worker starts, visible blocked-start reasons, project admission, busy agents and restricted-origin release.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
@@ -394,6 +396,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
+
+  - Immediate assignment claims apply to todo cards; handoffs of doing cards return to todo without starting the replacement worker.
 
   - After commit they request the configured worker start, or persist a visible reason that it could not start; concurrent card updates are preserved.
 
