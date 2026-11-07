@@ -354,6 +354,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 ### Durable orchestrator
 
+- Card tool discovery defaults to the off schema when no control database is available or a settings read fails.
+
 - One lease per `(board, role)`; the token is returned once and stored as `sha256(token + incarnation)`.
 
 - Expiry only fences; it never moves cards.

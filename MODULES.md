@@ -248,6 +248,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Safety tests run identically on a pinned base and implementation; server import and low-level persistence remain covered.
+  - Card schema regressions cover missing gateways, missing control databases and unexpected settings read failures.
+
   - Gate regressions let unexpected capacity exceptions fail directly and avoid vacuous retry-report checks; the legacy fixture documents its shared-schema coverage boundary.
 
   - The pinned handoff baseline adapts live tool availability and workspace schemas while retaining strict HTTP and audit equality; visibility mutations must fail.
@@ -424,6 +426,8 @@ Format (read by `commonplace orch docs-check`):
   - After commit they request the configured worker start, or persist a visible reason that it could not start; concurrent card updates are preserved.
 
   - Explicit takes of an already held card return that claim without renewing it.
+  - Card schemas default to orchestration off when the control database is absent or settings reads fail.
+
   - Disabled orchestration preserves legacy capacity refusals and never rewrites coded limit errors through the enabled waiting projection.
 
   - Enabled blocker updates are versioned and audited; pure waiting reasons drive views and claims, and SQL skips unresolved edges.

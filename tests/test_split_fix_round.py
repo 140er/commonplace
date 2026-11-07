@@ -2,6 +2,7 @@
 
 import sqlite3
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -407,3 +408,23 @@ def test_off_capacity_refusal_keeps_legacy_text_and_state(hub, monkeypatch):
     after = w.boards.task_show(target)
     assert after["version"] == before["version"]
     assert after["events"] == before["events"]
+
+
+@pytest.mark.parametrize("operation", ["task_add", "task_update"])
+@pytest.mark.parametrize("failure", ["missing_db", "no_gateway", "read_error"])
+def test_card_schema_defaults_off_when_settings_unreadable(monkeypatch, operation, failure):
+    from commonplace import extensions
+
+    gateway = None if failure == "no_gateway" else SimpleNamespace()
+    if failure == "read_error":
+        gateway.db = object()
+
+        def unavailable(*args):
+            raise RuntimeError("settings read failed")
+
+        monkeypatch.setattr(orchestration, "enabled", unavailable)
+    try:
+        schema = extensions.get(operation).schema(SimpleNamespace(workspace_id="ws"), gateway)
+    except Exception as error:
+        raise AssertionError("Card schema must fall back to the default/off shape") from error
+    assert "blocked_by" not in schema["inputSchema"]["properties"]

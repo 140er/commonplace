@@ -294,8 +294,10 @@ def _card_schema(schema, principal, gateway):
     from commonplace.projects import orchestration
 
     try:
-        on = gateway is not None and orchestration.enabled(gateway.db, principal.workspace_id)
-    except orchestration.SettingsUnavailable:
+        db = getattr(gateway, "db", None)
+        on = db is not None and orchestration.enabled(db, principal.workspace_id)
+    except Exception:
+        # Tool discovery must remain available when control settings cannot be read.
         on = False
     properties = dict(schema["properties"])
     if not on:
