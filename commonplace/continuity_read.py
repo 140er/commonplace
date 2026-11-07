@@ -222,26 +222,34 @@ class PrivateReader:
             return ImportView(tuple(replace(m, seq=i) for i, m in enumerate(rows)), tuple(ranges))
 
     def imports_for_source(self, principal, source_id, *, limit=100):
-        """Indexed content-to-import lookup; captures are candidates, never authority."""
+        """Bounded point lookups; never scan the account's unrelated streams."""
         with _reader_locks(self._db._lock):
             rows = self._db._conn.execute(
-                "SELECT DISTINCT s.own_stored_id FROM sync_streams s "
-                "WHERE s.workspace_id=? AND s.user_id=? AND s.kind='import' AND "
-                "(s.own_stored_id=? OR s.fork_stored_id=? OR s.group_id IN "
-                "(SELECT group_id FROM sync_groups WHERE workspace_id=? AND user_id=? "
-                "AND holder_stored_id=?)) LIMIT ?",
+                "SELECT own_stored_id FROM sync_streams INDEXED BY sync_streams_own "
+                "WHERE own_stored_id=? AND workspace_id=? AND user_id=? AND kind='import' "
+                "UNION ALL "
+                "SELECT own_stored_id FROM sync_streams INDEXED BY sync_streams_fork "
+                "WHERE fork_stored_id=? AND workspace_id=? AND user_id=? AND kind='import' "
+                "UNION ALL "
+                "SELECT s.own_stored_id FROM sync_groups AS g INDEXED BY sync_groups_holder "
+                "JOIN sync_streams AS s INDEXED BY sync_streams_reader "
+                "ON s.workspace_id=g.workspace_id AND s.user_id=g.user_id "
+                "AND s.kind='import' AND s.group_id=g.group_id "
+                "WHERE g.workspace_id=? AND g.user_id=? AND g.holder_stored_id=? LIMIT ?",
                 (
+                    source_id,
                     principal.workspace_id,
                     principal.user_id,
                     source_id,
-                    source_id,
+                    principal.workspace_id,
+                    principal.user_id,
                     principal.workspace_id,
                     principal.user_id,
                     source_id,
                     limit,
                 ),
             ).fetchall()
-        return [row[0] for row in rows]
+        return list(dict.fromkeys(row[0] for row in rows))
 
     def view(self, stored) -> View | None:
         if stored.wing != "private_chats" or not stored.message_count:
