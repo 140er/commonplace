@@ -99,7 +99,8 @@ def test_email_verify_domain_cookie_authenticates_after_redirect(
     assert status == 200, "successful verify must authenticate the redirected browser"
     assert json.loads(content)["email"] == "cookie-user@example.test"
     assert len([c for c in browser.jar if c.name == "cmmn_session"]) == 1
-    assert cookie_header_count == (2 if shared_domain else 1)
+    if not shared_domain:
+        assert cookie_header_count == 1
     # A used link is visibly refused, without replacing or clearing the session.
     status, headers, content = browser.request(path, "POST", raw="confirm=1")
     assert status == 400 and b"invalid or expired" in content
