@@ -342,7 +342,8 @@ class _API:
 
     def _thread_row_readable(self, principal, record):
         return record.workspace_id == principal.workspace_id and (
-            principal.policy.can_read_wing(record.wing)
+            principal.policy.has_scope(SCOPE_THREADS_READ)
+            and principal.policy.can_read_wing(record.wing)
             or principal.policy.has_scope("memory:import:read")
             and self.ctx.recall.can_read(principal, record.id)
         )
