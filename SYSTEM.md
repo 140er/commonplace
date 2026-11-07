@@ -47,6 +47,15 @@ entry was written.
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
+### Chroma session rebuilds
+
+- If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
+
+- Closing only the session owner leaves a System retained by dropped clients; its SQLite pool still targets the renamed database and may fail when it opens a connection.
+
+- The reset uses the existing palace-scoped lifecycle path.
+
+- The collection configuration repair remains unchanged and still adds missing `_type` markers.
 
 ### Rules initialization deadline
 
