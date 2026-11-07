@@ -228,6 +228,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `tests/test_projects_phase_b.py::test_head_connect_hint_and_trust_failures` retains the enabled Connect recommendation contract including reports.
+
   - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
