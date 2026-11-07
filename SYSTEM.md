@@ -47,6 +47,11 @@ entry was written.
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
+
+### Rules initialization deadline
+
+- Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
+
 ### Chroma session rebuilds
 
 - If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
@@ -56,10 +61,6 @@ entry was written.
 - The reset uses the existing palace-scoped lifecycle path.
 
 - The collection configuration repair remains unchanged and still adds missing `_type` markers.
-
-### Rules initialization deadline
-
-- Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
 
 ### Release email login readiness
 
