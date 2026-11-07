@@ -616,6 +616,8 @@ def test_card228_g05_owner_deletes_thread_tunnel_and_hallway(case):
     assert call(case.w, case.owner, "delete_tunnel", tunnel_id=tid) == {"deleted": tid} and call(
         case.w, case.owner, "delete_hallway", hallway_id=hid
     ) == {"deleted": True}
+    assert all(t["id"] != tid for t in call(case.w, case.owner, "list_tunnels"))
+    assert all(h["id"] != hid for h in hallways.list_hallways())
 
 
 def test_card228_g06_owner_taxonomy_keeps_own_thread_room(case):
