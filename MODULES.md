@@ -38,6 +38,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
+
   - Documents both 16,384-character authorization caps, O(n + C²) bounds, over-limit readable citation refusal and verbatim fact/storage preservation.
 
   - Documents bounded authorization-only reference spellings, exact producer domains and citation compatibility.
@@ -144,6 +146,8 @@ Format (read by `commonplace orch docs-check`):
   - Python and Rust packaging, pinned dependencies, the coverage gate, lint and format settings, pre-commit hooks, repository metadata and the development container.
 
 - **Promises:**
+
+  - Plain pytest excludes the `timing` marker from behavior checks; explicit timing selection remains available for serial informational measurements.
 
   - `uv sync --extra dev` reproduces the locked environment; `ruff check` and `ruff format --check` define style; the coverage threshold in `pyproject.toml` is the gate.
 
@@ -293,7 +297,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Cap-sized and 1 MiB adversarial scans run in isolated processes with fixed time/memory limits; public read/write cases cover full-field refusal, long readable controls and non-boundary fork prefixes.
+  - Default provenance regressions assert zero candidate work above either cap and accurate write errors with unchanged verbatim storage. Cap-sized and 1 MiB scan measurements run separately under `timing`, reporting resource budgets without gating on them.
+
+  - Public read/write cases cover full-field refusal, long readable controls and non-boundary fork prefixes.
 
   - Public KG spelling regressions retain ordinary citations and all canonical producer formats on read/write, with separate grammar, owner and exact-hash isolation checks.
 
@@ -435,6 +441,8 @@ Format (read by `commonplace orch docs-check`):
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
 - **Promises:**
+
+  - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
@@ -748,6 +756,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Search-index polls authorize current metadata once per thread, revalidate descriptors in one snapshot and project per-thread successful units, activity and quota refusals.
   - Complete protected-reference shadows join ordinary authorization tokens; namespace/source case normalizes only in the authorization copy, and full identity/hash suffixes remain literal.
+  - Citation parsing optionally raises a specific decoded/NFKC length error for writes while retaining fail-closed read projection; token collection deduplicates thread ids on insertion in first-occurrence order.
+
   - Decoded and normalized reference scans are each capped at 16,384 characters and fail closed without partial proof; non-boundary run starts retain ordinary authorization, and only earlier runs admit overlapping shadows.
 
   - Complete protected-reference shadows join ordinary authorization tokens; namespace/source case normalizes only in the authorization copy, and full capture/import identity/hash suffixes remain literal.

@@ -102,6 +102,19 @@ class References:
     tokens: tuple[str, ...]
 
 
+class ReferenceLimitError(ValueError):
+    """A caller-supplied citation exceeds the authorization character limit."""
+
+
+def _over_limit(raise_on_limit):
+    if raise_on_limit:
+        raise ReferenceLimitError(
+            f"citation length limit of {_MAX_REFERENCE_CHARS} Unicode characters exceeded "
+            "(decoded or NFKC-normalized)"
+        )
+    return REFUSE
+
+
 def _controls(text):
     return any(unicodedata.category(char) in {"Cc", "Cf"} for char in text)
 
@@ -172,7 +185,7 @@ def _tokens(text):
     if copy is None:
         return None
     shadows = list(_shadows(*copy))
-    tokens = [match[0] for match in _THREAD.finditer(text)]
+    tokens = dict.fromkeys(match[0] for match in _THREAD.finditer(text))
     for match in _private_matches(text):
         # Complete shadows replace incomplete structural prefixes. Fixed-length
         # forks also replace the ordinary scan's trailing citation context, so a
@@ -191,15 +204,16 @@ def _tokens(text):
             for start, end, token in shadows
         ):
             continue
-        tokens.append(match[0])
+        tokens[match[0]] = None
     for _, _, token in shadows:
-        tokens.append(token)
-        tokens.extend(match[0] for match in _THREAD.finditer(token))
-    return tuple(dict.fromkeys(tokens))
+        tokens[token] = None
+        for match in _THREAD.finditer(token):
+            tokens[match[0]] = None
+    return tuple(tokens)
 
 
-def refs(value):
-    """Decode at most four rounds, refusing controls before trimming anything."""
+def refs(value, *, raise_on_limit=False):
+    """Decode four rounds; writes may distinguish length limits from other refusals."""
     if value is None:
         return References(None, ())
     if not isinstance(value, str) or _controls(value):
@@ -218,8 +232,8 @@ def refs(value):
     if _controls(text) or _PERCENT.search(text):
         return REFUSE
     if len(text) > _MAX_REFERENCE_CHARS:
-        return REFUSE
+        return _over_limit(raise_on_limit)
     text = text.strip()
     # Independent scans also catch thread ids embedded inside private source ids.
     tokens = _tokens(text)
-    return REFUSE if tokens is None else References(text, tokens)
+    return _over_limit(raise_on_limit) if tokens is None else References(text, tokens)
