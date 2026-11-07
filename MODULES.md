@@ -37,7 +37,11 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Promises:**
+
+  - Documents both 16,384-character authorization caps, O(n + C²) bounds, over-limit readable citation refusal and verbatim fact/storage preservation.
+
   - Documents bounded authorization-only reference spellings, exact producer domains and citation compatibility.
+
   - Fork proof uses the fixed digest before trailing context and independently proves overlapping embedded references; omitted namespace separators require an actor id marker, and capture/import punctuation remains literal.
 
 
@@ -288,7 +292,11 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Cap-sized and 1 MiB adversarial scans run in isolated processes with fixed time/memory limits; public read/write cases cover full-field refusal, long readable controls and non-boundary fork prefixes.
+
   - Public KG spelling regressions retain ordinary citations and all canonical producer formats on read/write, with separate grammar, owner and exact-hash isolation checks.
+
   - Trailing fork regressions cover hidden read scrubbing/write refusal, readable spelling preservation, every printable ASCII suffix and ordinary URL/path/prose collision guards; concatenated references have public read/write refusal and develop byte-preservation guards.
 
 
@@ -740,7 +748,10 @@ Format (read by `commonplace orch docs-check`):
 
   - Search-index polls authorize current metadata once per thread, revalidate descriptors in one snapshot and project per-thread successful units, activity and quota refusals.
   - Complete protected-reference shadows join ordinary authorization tokens; namespace/source case normalizes only in the authorization copy, and full identity/hash suffixes remain literal.
+  - Decoded and normalized reference scans are each capped at 16,384 characters and fail closed without partial proof; non-boundary run starts retain ordinary authorization, and only earlier runs admit overlapping shadows.
+
   - Complete protected-reference shadows join ordinary authorization tokens; namespace/source case normalizes only in the authorization copy, and full capture/import identity/hash suffixes remain literal.
+
   - Fixed-length fork shadows prove the digest with arbitrary trailing characters, replacing only its own ordinary trailing context while every overlapping protected spelling still requires proof; omitted separators distinguish ids from prose actors.
 
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.

@@ -52,6 +52,10 @@ READ_FIELDS = {
     "fact_status",
 }
 REFUSE = object()
+# Overlapping variable-length identities can require quadratic output. Never
+# truncate or partially prove a field: bound both decoded and NFKC scan copies.
+# Four decoding rounds remain O(input length); scanning is bounded by this cap.
+_MAX_REFERENCE_CHARS = 16_384
 _THREAD = re.compile(r"thr_[0-9a-f]+", re.IGNORECASE)
 _PRIVATE = re.compile(r"(?:capture-fork|capture|import-private):[^\s?]+", re.IGNORECASE)
 _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)
@@ -110,9 +114,10 @@ def _private_matches(text):
             yield match
 
 
-def _shadows(text):
-    """Return complete authorization candidates and their original text spans."""
+def _authorization_copy(text):
+    """Build a bounded NFKC copy and preserve original character offsets."""
     chars, offsets = [], []
+    length = 0
     for index, char in enumerate(text):
         # NFKC must not broaden the permitted structural space alphabet.
         normalized = (
@@ -120,18 +125,26 @@ def _shadows(text):
             if char.isspace() and char not in {" ", "\u00a0"}
             else unicodedata.normalize("NFKC", char)
         )
+        length += len(normalized)
+        if length > _MAX_REFERENCE_CHARS:
+            return None
         chars.append(normalized)
         offsets.extend([index] * len(normalized))
-    shadow = "".join(chars)
+    return "".join(chars), offsets
+
+
+def _shadows(shadow, offsets):
+    """Return complete authorization candidates and their original text spans."""
     reference_end = 0
     for start in _START.finditer(shadow):
         pos = start.start()
         # Legacy ordinary runs also contain protected spellings. Within a run,
         # no punctuation/word boundary is required for an embedded candidate.
+        inside_run = pos < reference_end
         ordinary = _PRIVATE.match(shadow, pos)
         if ordinary is not None:
             reference_end = max(reference_end, ordinary.end())
-        if pos >= reference_end and _BOUNDARY.match(shadow, pos) is None:
+        if not inside_run and _BOUNDARY.match(shadow, pos) is None:
             continue
         for pattern in (_SHADOW_FORK, _SHADOW_PRIVATE):
             match = pattern.match(shadow, pos)
@@ -155,7 +168,10 @@ def _shadows(text):
 
 
 def _tokens(text):
-    shadows = list(_shadows(text))
+    copy = _authorization_copy(text)
+    if copy is None:
+        return None
+    shadows = list(_shadows(*copy))
     tokens = [match[0] for match in _THREAD.finditer(text)]
     for match in _private_matches(text):
         # Complete shadows replace incomplete structural prefixes. Fixed-length
@@ -201,6 +217,9 @@ def refs(value):
         return REFUSE
     if _controls(text) or _PERCENT.search(text):
         return REFUSE
+    if len(text) > _MAX_REFERENCE_CHARS:
+        return REFUSE
     text = text.strip()
     # Independent scans also catch thread ids embedded inside private source ids.
-    return References(text, _tokens(text))
+    tokens = _tokens(text)
+    return REFUSE if tokens is None else References(text, tokens)

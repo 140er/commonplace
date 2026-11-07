@@ -1,6 +1,8 @@
 """Protected reference spellings never rewrite verbatim citations or fact text."""
 
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -589,3 +591,132 @@ def test_card253_s08_head_overlapping_candidates(separator, spelling, prefix_spe
         )
         tokens = refs(value).tokens
         assert first in tokens and second in tokens and last in tokens
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process resource budget")
+@pytest.mark.parametrize(
+    "pattern", ["capture:u1:codex:", "=capturea", "ｃａｐｔｕｒｅ：ｕ１：ｃｏｄｅｘ："]
+)
+@pytest.mark.parametrize("size", [16_384, 1_048_576])
+def test_card253_s08_fix3_scan_budget(pattern, size, request):
+    # Isolate the adversarial input: a broken scanner must fail this assertion,
+    # never exhaust the test runner. Limits include all parser allocations.
+    script = """
+import json, resource, sys, time
+from pathlib import Path
+from commonplace.handoff.provenance_refs import REFUSE, refs
+resource.setrlimit(resource.RLIMIT_AS, (256 * 1024**2, 256 * 1024**2))
+def peak_kib():
+    # /proc resets on exec; getrusage can inherit the pytest parent's high-water
+    # mark on Linux and would make the budget depend on test order.
+    fields = Path("/proc/self/status").read_text().splitlines()
+    return int(next(line for line in fields if line.startswith("VmHWM:")).split()[1])
+pattern, size = sys.argv[1], int(sys.argv[2])
+value = (pattern * (size // len(pattern) + 1))[:size]
+started = time.perf_counter()
+try:
+    result = refs(value)
+except MemoryError:
+    print(json.dumps({"failure": "memory budget exhausted", "seconds": time.perf_counter()-started,
+                      "peak_kib": peak_kib()}))
+    sys.exit(1)
+print(json.dumps({"seconds": time.perf_counter()-started,
+                  "peak_kib": peak_kib(),
+                  "refused": result is REFUSE}))
+"""
+    try:
+        run = subprocess.run(
+            [sys.executable, "-c", script, pattern, str(size)],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except subprocess.TimeoutExpired:
+        request.node.user_properties.append(("process_deadline_seconds", 8))
+        raise AssertionError("protected scan exceeded the 8 second process deadline") from None
+    assert run.stdout, run.stderr
+    measurement = json.loads(run.stdout)
+    request.node.user_properties.extend(measurement.items())
+    assert run.returncode == 0, measurement
+    assert measurement["seconds"] < 3, measurement
+    assert measurement["peak_kib"] < 128 * 1024, measurement
+    if size > 16_384:
+        assert measurement["refused"], "oversized provenance must fail closed"
+
+
+@pytest.mark.parametrize(
+    "write,field,kind",
+    [
+        pytest.param(write, field, kind, id=f"{kind}-{field}-{'write' if write else 'read'}")
+        for kind in ("oversize", "overlimit", "nonboundary")
+        for field in ("source_file", "source_url")
+        for write in (False, True)
+        # A token-free URL over 2048 characters is already an invalid write on
+        # the base. Its read and the file write independently prove the cap.
+        if not (kind == "overlimit" and field == "source_url" and write)
+    ],
+)
+def test_card253_s08_fix3_public_refusal(case, write, field, kind):
+    c = case
+    prefix = continuity_schema.fork_id("u1", "readable-stream")
+    readable = stored(c, prefix)
+    assert c.h.gateway.handoff.recall.can_read(c.member, readable.id)
+    if kind == "nonboundary":
+        value = "notes." + prefix + ")"
+    elif kind == "overlimit":
+        value = "notes/" + "x" * 16_385
+    else:
+        # Real hidden protected spelling beyond the cap must never be truncated
+        # away and accepted. Readable primary fact text remains available.
+        source = embedded_source(c, "capture")
+        hidden = stored(c, source, capture.PRIVATE_WING)
+        assert not c.h.gateway.handoff.recall.can_read(c.member, hidden.id)
+        value = "x" * 16_385 + "/" + source
+    citation = navigable(value) if field == "source_url" else value
+    if write:
+        result = invoke(c, "member", "kg_add", **args(c, field, citation))
+        assert result == {"success": False, "error": "Source not found"}
+        assert c.kg.query_entity("SpellingFact") == []
+        assert invoke(c, "member", "kg_query", entity="SpellingFact")["count"] == 0
+    else:
+        seed(c, args(c, field, citation))
+        row = fact(c)
+        public_field = "origin_link" if field == "source_url" else field
+        assert public_field not in row
+        assert all(public_field not in item for item in row["sources"])
+        with c.kg._lock:
+            # Authorization drops only the projected citation, never storage.
+            raw = c.kg._conn().execute("SELECT * FROM triples").fetchone()
+            assert raw[public_field] == citation
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_card253_s08_fix3_length_boundary(encoded):
+    from commonplace.handoff.provenance_refs import REFUSE, refs
+
+    for length in (16_383, 16_384):
+        value = "x" * length
+        citation = "%78" * length if encoded else value
+        assert refs(citation).text == value
+        assert refs(citation).tokens == ()
+    value = "x" * 16_385
+    assert refs("%78" * 16_385 if encoded else value) is REFUSE
+
+
+def test_card253_s08_fix3_normalized_limit():
+    from commonplace.handoff.provenance_refs import REFUSE, refs
+
+    # U+FB03 expands to three authorization characters. Bound that copy too,
+    # independently of the decoded-length limit (both raw inputs are shorter).
+    assert refs("ﬃ" * 5_461).tokens == ()
+    assert refs("ﬃ" * 5_462) is REFUSE
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("field", ["source_file", "source_url"])
+def test_card253_s08_fix3_readable_limit(case, write, field):
+    # A long ordinary citation at the exact cap is still byte-preserved.
+    value = "https://example.test/" if field == "source_url" else "notes/"
+    limit = 2_048 if field == "source_url" else 16_384
+    value += "x" * (limit - len(value))
+    check_citation(case, "member", field, value, write)

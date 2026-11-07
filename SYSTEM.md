@@ -940,8 +940,10 @@ user/connection ids do). This excludes prose actors such as `ing-notes` in
 `capturing-notes:codex:v2`. New shadows begin at the field start or after
 space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`, or inside an already
 recognized reference run. Every namespace start in a run is checked, including
-overlapping ordinary and spelled candidates with no intervening boundary. Internal separators stay
-mandatory; actor/source components exclude whitespace, colons, path separators and
+overlapping ordinary and spelled candidates with no intervening boundary. A run
+must begin before a candidate to waive its boundary check: a non-boundary
+`notes.capture-fork:<user>:<digest>)` retains ordinary whole-run proof rather than
+gaining a digest-only shadow. Internal separators stay mandatory; actor/source components exclude whitespace, colons, path separators and
 query delimiters. Identity suffixes retain internal colons and complete `#sha256:`
 qualifiers through the existing whitespace/`?` boundary for capture/import ids.
 Fork identities end after exactly 32 lowercase hex characters; any following
@@ -977,6 +979,21 @@ words, and readable canonical fork citations remain compatible. A complete
 protected reference embedded in a URL/path still requires proof. Existing
 navigable-URL validation applies to new `source_url` writes; KG exposes that
 citation as `origin_link`, and file citations in source observation rows.
+
+The decoded field and its NFKC authorization copy each have a hard cap of
+16,384 Unicode characters. An over-limit field is refused in full, never scanned
+as a truncated prefix: reads omit only the citation while retaining readable fact
+text and stored bytes; KG writes return the uniform source-not-found response.
+This deliberately also refuses over-limit readable citations, including token-free
+legacy files; citations within the cap retain their existing byte-preservation
+rules. New URL writes also retain their existing 2,048-character validation.
+The bound covers both overlapping suffix output and omitted-colon near misses.
+For input length n and fixed cap C = 16,384, four strict decoding/control passes
+cost O(n) time and memory; candidate scanning costs at most O(C²) time and memory.
+No per-start suffix work occurs above either cap, including NFKC expansion.
+Regression subprocesses exercise cap-sized and 1 MiB repeated namespace and
+omitted-colon near misses under a 3-second scan budget, 128 MiB peak RSS and
+256 MiB address-space limit, with an 8-second outer process deadline.
 
 This changes reference recognition only: typed associations, provenance aliases,
 plain-file association proof and search-index progress retain their existing
