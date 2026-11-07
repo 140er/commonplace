@@ -65,6 +65,14 @@ def test_owner_sets_and_clears_coordinator(hub, fresh):
         assert result["candidates"][0]["current"] is (actor is not None)
 
 
+def test_needs_me_coordinator_waiting_bucket_is_owner_only(hub, fresh):
+    assert fresh.owner.needs_me()["coordinator_waiting"] == []
+    user = hub.db.create_user("member@example.test")
+    hub.db.add_member(fresh.workspace, user, "member", actor=fresh.user)
+    member = fresh.connect("member", user_ref=user)
+    assert "coordinator_waiting" not in member.work.needs_me()
+
+
 @pytest.mark.parametrize("inactive", [False, True])
 def test_waiting_notice_requires_missing_live_coordinator(hub, fresh, inactive):
     assert fresh.owner.needs_me().get("coordinator_waiting", []) == []

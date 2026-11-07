@@ -277,6 +277,7 @@ Format (read by `commonplace orch docs-check`):
   - Pure-module guards check generic path/URL patterns and outbound imports without embedding deployment identifiers.
   - Deferred refresh regressions execute the production shell and Settings renderers in both completion orders, retain plan and account controls, and guard navigation away and background updates during rendering.
   - Coordinator settings regressions cover owner authority, current PAT eligibility, workspace isolation and missing-coordinator release notices.
+  - Coordinator settings regressions cover owner authority, current PAT eligibility, workspace isolation and missing-coordinator release notices; the waiting bucket remains present for owners and absent for members.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
 
@@ -449,6 +450,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner status changes preserve typed-card assignees and validate their grants; card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
   - Owner coordinator settings list eligible active PAT connections; needs-me reports restricted cards waiting on a missing coordinator once per board.
+  - Owner coordinator settings list eligible active PAT connections; needs-me reports restricted cards waiting on a missing coordinator once per board, with the waiting bucket omitted for non-owners.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 

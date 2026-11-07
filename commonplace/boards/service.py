@@ -3412,7 +3412,8 @@ class BoardService:
             if groups["approvals_truncated"]:
                 result["text"] += "\n" + APPROVALS_TRUNCATED
             return result
-        groups["coordinator_waiting"] = self._coordinator_waiting()
+        if self.principal.role == "owner":
+            groups["coordinator_waiting"] = self._coordinator_waiting()
         return groups
 
     def seed_card(

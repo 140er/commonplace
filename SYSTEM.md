@@ -546,6 +546,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 - The signed-in owner's needs-me list includes one notice per visible board with restricted-origin backlog or todo cards awaiting release and no eligible live coordinator.
 
+- Non-owner needs-me lists omit the `coordinator_waiting` bucket, preserving their existing response shape.
+
 - Released, rejected, completed and active work is excluded.
 
 - The settings selector and notice rendering in the web app remain follow-up work.
