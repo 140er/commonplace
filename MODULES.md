@@ -55,6 +55,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Documents enabled blockers, waiting payloads, stable split keys and bounded runner retry delivery.
+
   - Documentation describes shipped behaviour; design notes are marked as proposals.
 
   - Project documentation explains opt-in start authority, shared admission, seat consent and the card-webhook delivery residual.
@@ -210,6 +212,13 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
+  - Card contract tests cover paired RED assertions, off-path guards, atomic key races, bounded retries and route busy responses with unchanged state.
+
+  - All card requirement tests, including validation and error paths, have assertion-level RED evidence on the declared stack base; existing-database launch-role migration is checked directly.
+
+  - Claim text assertions avoid feature imports; duplicate-key label edits preserve labels, version and audit history on refusal.
+
+  - Pure-module guards check generic path/URL patterns and outbound imports without embedding deployment identifiers.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
 
@@ -257,6 +266,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Local extension schemas may derive workspace-gated properties per request without mutating shared schemas.
+
   - Every request resolves to one principal or none; scopes, wings and trust are checked before any tool runs; tokens are stored hashed; writes are audited.
 
   - Existing workspace directory lookups pass a backup freeze, so a writer holding a database transaction can finish; new directories remain gated.
@@ -279,6 +290,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Enabled coordinator startup context includes unsplit inbox counts, without migrating boards.
+
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
 
 - **How it fails:**
@@ -299,6 +312,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The agent playbook requires inbox reads at session start, on wakes and every 10 minutes, stable keys, and completion markers.
+
   - CLI commands act through the same services as the network routes; installers never change trust policy; hooks fail open.
 
 - **How it fails:**
@@ -318,6 +333,12 @@ Format (read by `commonplace orch docs-check`):
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
 - **Promises:**
+
+  - Enabled blocker updates are versioned and audited; pure waiting reasons drive views and claims, and SQL skips unresolved edges.
+
+  - Card lists share a runner read and per-board usage; a capacity refusal retains its original error when no display reason is available.
+
+  - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
@@ -351,6 +372,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Enabled starts reject unresolved same-board blockers through read-only board probes, without constructing a board store inside a runner transaction.
+
   - Started jobs retain machine in-flight capacity and per-machine project exclusion while their cards remain doing with the machine worker; a terminal job state or a changed card state or assignee releases capacity, using read-only boards access.
 
   - A start needs a person owner or a listed trusted PAT and a card the worker could claim; one active start per card; an uncertain launch is never re-queued; on a configured board `card_start` is person-owner only, starts are fenced and capped, and the lease payload carries the pinned message and model.
@@ -377,6 +400,12 @@ Format (read by `commonplace orch docs-check`):
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
 - **Promises:**
+
+  - Enabled root triggers pin main-role launches; reconciliation uses existing miss history and an in-lock eligibility recheck for at most three attempts.
+
+  - Empty disabled sweeps avoid config resolution, checkpoint inbox context is best effort, and failed inbox snapshots keep committed leases launchable using pinned instructions.
+
+  - Lease snapshot failures log sanitized diagnostics without exception messages.
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
@@ -412,6 +441,10 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The opt-in inbox excludes children and coordinator roots, exposes keyed children, and accepts first-wins split markers only from the coordinator or signed-in owner.
+
+  - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
+
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
 - **How it fails:**
@@ -431,6 +464,8 @@ Format (read by `commonplace orch docs-check`):
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
 - **Promises:**
+
+  - Split completion markers are checked writes on MCP and REST.
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
 
@@ -595,6 +630,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
