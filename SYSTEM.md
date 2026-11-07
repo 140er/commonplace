@@ -184,7 +184,7 @@ appears in the owner queue again without changing its stored words or audit log.
 
 - Message coordinator filtering and reply-loop suppression still apply.
 
-- With orchestration enabled, the recommendation also retains `card.created`.
+- With orchestration enabled, the list appends `card.created` and `project.report`.
 
 ### Restricted-origin card content
 
@@ -284,7 +284,8 @@ captured coordinator. No card words, exception contents or credentials are sent.
 Reports grant no start, split, claim or other authority.
 
 Connect the project seat again after enabling, then remove and re-add its webhook
-using Connect's returned event list (`space_message,card.created,project.report`).
+using Connect's returned event list
+(`["space_message", "card.moved", "card.created", "project.report"]`).
 Enabling alone never edits subscriptions. Setup gaps do not replay old reports.
 Raw subscriptions retain their behavior: a legacy completion hook still gets its
 raw wake; subscribing to both channels can deliver raw plus report. Cross-channel
