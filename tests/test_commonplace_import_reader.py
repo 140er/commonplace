@@ -783,6 +783,18 @@ def test_g04_fail_closed(live, monkeypatch):
     finally:
         ctx._stores.update(stores)
     safe = raw["results"][0]
+    # A public tunnel endpoint cannot authorize a private drawer's preview.
+    preview = {
+        "wing": "shared",
+        "room": "public",
+        "connected_wing": "shared",
+        "connected_room": "public-destination",
+        "drawer_id": "unproved-tail",
+        "drawer_wing": "private_threads",
+        "drawer_room": own.id,
+        "drawer_preview": "zqprooftail",
+    }
+    assert gate(j.client.gateway, p, "read_wing", [preview]) == []
     for change in (
         {"source_path": "handoff:thr_0000000000000000#v2:1-1:conversation:0"},
         {"source_path": f"handoff:{own.id}#v2:1-3:conversation:0"},
