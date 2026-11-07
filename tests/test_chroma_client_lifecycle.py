@@ -491,7 +491,7 @@ with chroma._CLIENT_REGISTRY_LOCK:
     )
 
 
-def test_pending_worker_failure_is_logged_and_later_closes_restart_it(tmp_path):
+def test_pending_worker_failure_is_logged_and_retries_without_another_close(tmp_path):
     _run_probe(
         tmp_path,
         """
@@ -521,6 +521,8 @@ if worker is not None:
 assert failed.is_set()
 assert chroma._pending_close_worker is None
 assert 'Pending Chroma client cleanup failed' in output.getvalue()
+assert closed == [first]
+assert not chroma._PENDING_CLIENT_CLOSES
 with chroma._CLIENT_REGISTRY_LOCK:
     chroma._PENDING_CLIENT_CLOSES[id(second)] = (paths[1], second)
 chroma._schedule_pending_closes()
