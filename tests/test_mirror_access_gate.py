@@ -59,7 +59,7 @@ def test_u5_b_grant_filer(world):
     w.store.threads[w.thread.id] = replace(w.thread, source_thread_id="import-private:other:source")
     assert search(w) == []
     w.store.threads[w.thread.id] = replace(
-        w.thread, source_thread_id=f"import-private:{w.principal.user_id}:source"
+        w.thread, source_thread_id=f"import-private:{w.principal.user_id}:source:identity"
     )
     assert search(w)
     w.private.view.assert_not_called()
