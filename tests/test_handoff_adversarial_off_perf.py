@@ -597,6 +597,9 @@ assert "commonplace.handoff.extension" not in extensions.MODULES
 
 # The pinned gateway predates live availability and workspace-derived schemas.
 # Adapt only that registry seam; keep its HTTP dispatch, bodies and audit intact.
+# Board schemas come from the overlaid definitions, so this fixture compares
+# visibility and transport compatibility, not independent task_add/task_update
+# schema stability. The focused card-schema tests cover the opt-in fields.
 legacy_tools_list = gateway.Mediator._tools_list
 
 def visible_tools_list(self, principal, request):
