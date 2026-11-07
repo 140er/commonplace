@@ -773,7 +773,7 @@ class BoardService:
         cache[key] = tuple(routes.items())
         return cache[key]
 
-    def _card(self, conn, row, principal=None, *, approval_role=None):
+    def _card(self, conn, row, principal=None, *, approval_role=None, runner=_UNSET, usage=None):
         q = principal or self.principal
         with self._projection():
             result = card(
@@ -804,7 +804,7 @@ class BoardService:
                             (row["id"],),
                         )
                     ],
-                    waiting=self._waiting(conn, row),
+                    waiting=self._waiting(conn, row, usage=usage, runner=runner),
                 )
             return result
 
@@ -817,19 +817,18 @@ class BoardService:
             # Projection stays usable; admission still raises the captured failure.
             return False
 
-    def _waiting(self, conn, row, usage=None, *, runner=None):
+    def _waiting(self, conn, row, usage=None, *, runner=_UNSET):
         from commonplace.boards import why
         from commonplace.boards.store import active_blockers
         from commonplace.projects import split
 
-        runner = runner or getattr(self, "_admission_conn", None)
-        if runner is not None:
-            usage = usage or self._usage(conn, runner, row)
-            stuck = split.stuck(runner, row["id"])
-        else:
-            with split.runner_read(self.ctx.workspace_dir()) as runner:
-                usage = usage or self._usage(conn, runner, row)
-                stuck = split.stuck(runner, row["id"])
+        if runner is _UNSET:
+            runner = getattr(self, "_admission_conn", None)
+            if runner is None:
+                with split.runner_read(self.ctx.workspace_dir()) as reader:
+                    return self._waiting(conn, row, usage=usage, runner=reader)
+        usage = usage or self._usage(conn, runner, row)
+        stuck = split.stuck(runner, row["id"])
         marked = conn.execute("SELECT 1 FROM card_splits WHERE task_id=?", (row["id"],)).fetchone()
         stuck = stuck and marked is None
         released = (
@@ -1756,13 +1755,23 @@ class BoardService:
         self, board=None, status=None, mine=False, *, all_statuses=False, top_level=False
     ):
         cutoff = stale_before()
-        with self._projection(), self.transaction() as conn:
+        with self._projection(), self.transaction() as conn, ExitStack() as reads:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
                 raise ToolError("no: invalid status")
             result = []
+            runner = _UNSET
+            if self._orchestration_on is True:
+                from commonplace.projects import split
+
+                runner = reads.enter_context(split.runner_read(self.ctx.workspace_dir()))
             for b in boards:
                 self._expire(conn, b)
+                usage = (
+                    self._usage(conn, runner, {"board_id": b["id"], "board": b["slug"]})
+                    if runner is not _UNSET
+                    else None
+                )
                 for row in conn.execute(
                     "SELECT id FROM tasks WHERE board_id=? "
                     + ("AND parent_number IS NULL " if top_level else "")
@@ -1794,7 +1803,9 @@ class BoardService:
                         )
                     ):
                         continue
-                    result.append(self._card(conn, task, self.principal))
+                    result.append(
+                        self._card(conn, task, self.principal, runner=runner, usage=usage)
+                    )
             return result
 
     def _history_link_visible(self, memory_id, visibility):
@@ -2474,7 +2485,8 @@ class BoardService:
                     from commonplace.boards.store import CardRefused
 
                     reason = self._waiting(conn, row)
-                    raise CardRefused("project_limit", reason["text"]) from None
+                    if reason is not None:
+                        raise CardRefused("project_limit", reason["text"]) from None
                 raise
             self._set(
                 conn,

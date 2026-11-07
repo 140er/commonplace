@@ -392,7 +392,9 @@ settings read errors retain their retryable status. Checkpoint inbox reads are
 best effort. A failed inbox snapshot after lease commit logs sanitized diagnostics without exception messages and retains the pinned
 launch instructions and asks the agent to read the inbox before acting.
 Board waiting summaries share one runner connection and count usage once for
-active slots and once for queued reservations. Release waiting applies only
+active slots and once for queued reservations. Card lists likewise share one read
+connection and one usage calculation per board. Capacity refusals retain the
+original error if a display waiting reason is unavailable. Release waiting applies only
 to todo/backlog cards. Existing runner rows migrate with a NULL launch role,
 which preserves their configured role and stored job fields.
 
@@ -419,6 +421,9 @@ which preserves their configured role and stored job fields.
   rechecked under `fenced_start` before inserting a job or miss. Three refused
   attempts show `not_released` / `split stuck` in waiting reasons and checkpoints.
   A completed marker stops reconciliation. The hub never creates children.
+  Retry keys share the caller key space, scoped by card and requester. Reusing
+  the same key and arguments returns the stored job; different arguments refuse
+  with `request_conflict` rather than launching another job.
 - Board reads inside runner transactions use the read-only connection path;
   no BoardService or BoardStore migration runs there. New route lock timeouts
   return `409 busy` without mutation. No external service is called.
