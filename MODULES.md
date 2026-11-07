@@ -33,6 +33,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Imported-history consent: Imported-history reader authority is recorded as an explicit consent boundary, with shared-holder and withdrawal residuals.
+
   - Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` changes with every change that `docs-check` covers, unless a base-listed waiver applies.
 
 - **How it fails:**
@@ -54,6 +56,8 @@ Format (read by `commonplace orch docs-check`):
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
 - **Promises:**
+
+  - Imported-history consent: Imported-history documentation distinguishes write-only import from the independent reader scope and explains exclusions and revocation.
 
   - Documentation describes shipped behaviour; design notes are marked as proposals.
 
@@ -239,6 +243,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Release helper regressions simulate the old app disappearing before the signed-in board arrives and verify useful exception messages without credentials in JSON or Markdown reports.
+  - Imported-history consent: Synthetic reader journeys check unticked consent, unchanged old credentials, bounded shared holders, not-found refusals and source-range proof.
 
   - The suite itself under the coverage gate; `tests/test_commonplace_webhooks.py::test_dispatcher_thread_survives_an_unexpected_pass_error` checks that an unexpected delivery-pass error is logged without its private message and the dispatcher retries while staying alive.
 
@@ -256,6 +261,8 @@ Format (read by `commonplace orch docs-check`):
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
 - **Promises:**
+
+  - Imported-history consent: Imported reader results bypass wing restrictions only after exact-view proof; ordinary scope, tool, wing and mutation gates remain in force.
 
   - Every request resolves to one principal or none; scopes, wings and trust are checked before any tool runs; tokens are stored hashed; writes are audited.
 
@@ -279,6 +286,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Imported-history consent: OAuth reader consent is separate and unticked; defaults and person policies exclude the reader, while refresh descendants cannot regain a dropped scope.
+
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
 
 - **How it fails:**
@@ -298,6 +307,8 @@ Format (read by `commonplace orch docs-check`):
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - Imported-history consent: CLI token creation rejects the imported-history reader scope before issuing a credential; browser consent is required.
 
   - CLI commands act through the same services as the network routes; installers never change trust policy; hooks fail open.
 
@@ -452,6 +463,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Imported-history consent: Imported readers receive bounded immutable views, source-range proof and view-specific metadata; capture tails never inherit import authority.
+  - Legacy import compatibility: Ordinary reads preserve three-part filer identities without rewriting stored data; reader views still require four-part identities.
+
   - A handoff never loses the source thread; continuity is append-only and resumable.
 
 - **How it fails:**
@@ -511,6 +525,8 @@ Format (read by `commonplace orch docs-check`):
   - Consented one-time imports of conversations and facts and the shared ingest cadence.
 
 - **Promises:**
+
+  - Imported-history consent: Reader listing uses literal account-prefix pagination and live Recall authorization; unconsented agents receive the missing-resource response.
 
   - Imports are verbatim, bounded and consented; no capture, model or external call is involved.
 
@@ -595,6 +611,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Imported-history consent: The owner form offers independent unticked import and reader checkboxes and displays reader authority beside Revoke.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
