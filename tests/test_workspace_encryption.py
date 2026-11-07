@@ -767,7 +767,7 @@ def test_unsupported_key_modes_refuse_backup_and_connect(workspace, tmp_path, mo
 
 
 @pytest.mark.parametrize("provider", ["wrap", "unwrap", "workspace"])
-def test_b3_direct_v1_providers_refuse_before_keys(workspace, provider):
+def test_b3_direct_v1_providers_refuse_before_keys(workspace, monkeypatch, provider):
     data, _, wid, server, _, slots = workspace
     enable(workspace)
     directory = workspace_path(data, wid)
@@ -778,6 +778,14 @@ def test_b3_direct_v1_providers_refuse_before_keys(workspace, provider):
     assert crypto.unwrap_key(record, wrapping, info, "server") == key
     assert crypto.wrap_key(key, wrapping, info, "server")
     marked = dict(info, key_mode="token-v2")
+    key_reads = []
+    protected_key = crypto.protected_key
+
+    def observe_key_read(path):
+        key_reads.append(path)
+        return protected_key(path)
+
+    monkeypatch.setattr(crypto, "protected_key", observe_key_read)
     blocked = False
     try:
         if provider == "wrap":
@@ -789,6 +797,7 @@ def test_b3_direct_v1_providers_refuse_before_keys(workspace, provider):
     except crypto.EncryptionError:
         blocked = True
     assert blocked, f"marked workspace reached direct B2 {provider}"
+    assert not key_reads, "marked provider read operator wrapping keys before refusing"
 
 
 def test_b3_settings_refuse_during_classification(encryption_metadata):
