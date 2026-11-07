@@ -36,6 +36,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Cold-start readability, imported-room count compatibility and remaining search totals are documented separately from content range checks.
+
   - Visible overview and search fan-out boundaries are documented separately from the remaining hallway, tunnel, graph, provenance and progress residuals.
 
   - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
@@ -278,6 +280,8 @@ Format (read by `commonplace orch docs-check`):
   - Integration tests combine typed owner assignment, configured starts, blocker filtering and existing-holder claim replay.
 
   - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
+  - Cold and warm public overview/search responses retain readable native rooms; explicitly consenting import readers retain readable grant-room counts and fan-out membership.
+
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
 
@@ -643,7 +647,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Overview pair authorization reuses the existing response reader in the authenticated workspace, including owners, with response-only memoization and no persisted authorization. Whole-holder counts require ordinary thread authority; import range consent grants no whole-room authority.
+  - Overview projection opens the authenticated workspace store before deadline-bound authorization and uses the existing room predicate without adding whole-thread authority requirements.
+
+  - Overview pair authorization reuses the existing response reader in the authenticated workspace, including owners, with response-only memoization and no persisted authorization. Readable imported rooms retain existing presence/count visibility; imported content keeps its separate range proof.
 
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
