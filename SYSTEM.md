@@ -937,14 +937,18 @@ shapes: `capture:<actor>:<source>:<identity>`,
 structural colons; the namespace colon alone may be omitted when the actor starts
 with an ASCII letter or digit and contains a digit or underscore (as production
 user/connection ids do). This excludes prose actors such as `ing-notes` in
-`capturing-notes:codex:v2`. New shadows begin only at the field start or after
-space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`. Internal separators stay
+`capturing-notes:codex:v2`. New shadows begin at the field start or after
+space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`, or inside an already
+recognized reference run. Every namespace start in a run is checked, including
+overlapping ordinary and spelled candidates with no intervening boundary. Internal separators stay
 mandatory; actor/source components exclude whitespace, colons, path separators and
 query delimiters. Identity suffixes retain internal colons and complete `#sha256:`
 qualifiers through the existing whitespace/`?` boundary for capture/import ids.
 Fork identities end after exactly 32 lowercase hex characters; any following
 character (including another hex digit, punctuation, wrapper, text or a hash
-suffix) is citation context and cannot hide the protected digest. Both ordinary
+suffix) is citation context and cannot hide the protected digest. Any protected
+reference embedded in that context requires its own readable proof; proving the
+leading fork never proves or suppresses a later candidate. Both ordinary
 and spelled forks authorize that digest while preserving the complete citation
 bytes. Fewer than 32 lowercase hex characters and uppercase digests do not create
 new fork shadows. This does not detect arbitrary Unicode insertion.
@@ -960,8 +964,9 @@ thread references are still independently authorized.
 
 Every recognized reference requires readable local proof in the caller's
 workspace. Missing and unreadable production-shaped shadows receive the same
-not-found write response as canonical citations. Readable fork spellings remain
-readable with trailing citation context. Capture/import identities remain literal,
+not-found write response as canonical citations. Readable fork spellings are
+readable with trailing citation context only when every embedded reference is
+also proved. Capture/import identities remain literal,
 including trailing punctuation: a spaced spelling with an appended wrapper can
 therefore fail closed when no such exact identity exists. Punctuation is not
 stripped from those variable-length ids, since it can be part of a real identity.

@@ -504,3 +504,88 @@ def test_card253_s08_fix1_head_fork_any_trailer(trailer, spelling):
 
     value = continuity_schema.fork_id("u1", "readable-stream")
     assert refs(fork_spelling(value, spelling) + trailer).tokens == (value,)
+
+
+def embedded_source(c, kind):
+    if kind == "fork":
+        return continuity_schema.fork_id("u2", "embedded-stream")
+    if kind == "capture":
+        return capture._identity(
+            replace(c.owner, user_id="u2"),
+            {"source": "codex", "thread_id": "opaque7"},
+        )[1]
+    return import_grant.grant_id("u2", "codex", "opaque7")
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("field", ["source_file", "source_url"])
+@pytest.mark.parametrize("separator", ["", ";"], ids=["adjacent", "semicolon"])
+@pytest.mark.parametrize("spelling", ["canonical", *FORK_SPELLINGS])
+@pytest.mark.parametrize("kind", ["capture", "fork", "import"])
+def test_card253_s08_fix2_hidden_overlap(case, write, field, separator, spelling, kind):
+    c = case
+    prefix = continuity_schema.fork_id("u1", "readable-stream")
+    readable = stored(c, prefix)
+    source = embedded_source(c, kind)
+    hidden = stored(c, source, capture.PRIVATE_WING)
+    assert c.h.gateway.handoff.recall.can_read(c.member, readable.id)
+    assert not c.h.gateway.handoff.recall.can_read(c.member, hidden.id)
+    value = prefix + separator + fork_spelling(source, spelling)
+    citation = navigable(value) if field == "source_url" else value
+    if write:
+        result = invoke(c, "member", "kg_add", **args(c, field, citation))
+        assert result == {"success": False, "error": "Source not found"}, (
+            "embedded protected reference accepted",
+            result,
+        )
+        assert c.kg.query_entity("SpellingFact") == []
+        assert invoke(c, "member", "kg_query", entity="SpellingFact")["count"] == 0
+    else:
+        seed(c, args(c, field, citation))
+        row = fact(c)
+        public_field = "origin_link" if field == "source_url" else field
+        assert public_field not in row, "embedded protected reference leaked"
+        assert all(public_field not in item for item in row["sources"])
+
+
+@pytest.mark.parametrize("write", [False, True], ids=["read", "write"])
+@pytest.mark.parametrize("field", ["source_file", "source_url"])
+@pytest.mark.parametrize("spelling", FORK_SPELLINGS)
+@pytest.mark.parametrize("kind", ["capture", "fork", "import"])
+def test_card253_s08_fix2_readable_overlap(case, write, field, spelling, kind):
+    c = case
+    prefix = continuity_schema.fork_id("u1", "readable-stream")
+    source = embedded_source(c, kind)
+    if kind == "import":
+        # Private imports use the real authenticated filer, as canonical guards
+        # do; a shared wing alone never grants another filer's import authority.
+        source = import_grant.grant_id(c.member.user_id, "codex", "opaque7")
+    for value in (prefix, source):
+        readable = stored(c, value)
+        assert c.h.gateway.handoff.recall.can_read(c.member, readable.id)
+    # Neither spelling generates an ordinary token on develop. These are exact
+    # public byte-preservation guards, including non-boundary embedded shadows.
+    value = fork_spelling(prefix, "fullwidth") + fork_spelling(source, spelling)
+    check_citation(c, "member", field, navigable(value) if field == "source_url" else value, write)
+
+
+@pytest.mark.parametrize("separator", ["", ";", ",", ".", ":", "-", "_", "z"])
+@pytest.mark.parametrize("spelling", ["canonical", *FORK_SPELLINGS])
+@pytest.mark.parametrize("prefix_spelling", ["canonical", "space", "fullwidth"])
+def test_card253_s08_head_overlapping_candidates(separator, spelling, prefix_spelling):
+    from commonplace.handoff.provenance_refs import refs
+
+    first = continuity_schema.fork_id("u1", "first-stream")
+    second = continuity_schema.fork_id("u2", "second-stream")
+    # Later candidates start inside earlier matches. All need proof, including
+    # starts after letters, punctuation and compatibility characters.
+    for last in ("capture:u3:codex:opaque7", "import-private:u4:codex:opaque8"):
+        value = (
+            fork_spelling(first, prefix_spelling)
+            + separator
+            + fork_spelling(second, spelling)
+            + separator
+            + fork_spelling(last, spelling)
+        )
+        tokens = refs(value).tokens
+        assert first in tokens and second in tokens and last in tokens

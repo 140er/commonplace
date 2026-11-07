@@ -67,7 +67,8 @@ _IMPORT_SOURCES = _CAPTURE_SOURCES | {
     "claude-ai",
     "native-memory",
 }
-_BOUNDARY = r"(?<![^ /?&#=(<\"'])"
+_BOUNDARY = re.compile(r"(?<![^ /?&#=(<\"'])")
+_START = re.compile(r"(?=capture-fork|capture|import-private)", re.IGNORECASE)
 # Omitted separators need an id marker, so ordinary words such as
 # "capturing-notes:codex:v2" cannot invent an actor. Real usr_/conn_ ids and
 # compact fixture ids (u1) have an underscore or digit.
@@ -76,18 +77,16 @@ _ACTOR = (
     r"(?P<actor>[^\s:/\\?]+): *"
 )
 _SHADOW_PRIVATE = re.compile(
-    _BOUNDARY
-    + r"(?P<namespace>import-private|capture)"
+    r"(?P<namespace>import-private|capture)"
     + _ACTOR
     + r"(?P<source>[^\s:/\\?]+): *(?P<identity>[^\s?]+)",
     re.IGNORECASE,
 )
 _SHADOW_FORK = re.compile(
-    _BOUNDARY
-    + r"(?P<namespace>capture-fork)"
+    r"(?P<namespace>capture-fork)"
     + _ACTOR
     # A fork's identity is fixed length. Everything after its digest is citation
-    # context, even another hex digit; never discard the protected prefix.
+    # context, even another hex digit; embedded references need their own proof.
     + r"(?P<identity>(?-i:[0-9a-f]{32}))[^\s?]*",
     re.IGNORECASE,
 )
@@ -103,6 +102,14 @@ def _controls(text):
     return any(unicodedata.category(char) in {"Cc", "Cf"} for char in text)
 
 
+def _private_matches(text):
+    # Advancing by the start, rather than the end, retains overlapping tokens.
+    for start in _START.finditer(text):
+        match = _PRIVATE.match(text, start.start())
+        if match is not None:
+            yield match
+
+
 def _shadows(text):
     """Return complete authorization candidates and their original text spans."""
     chars, offsets = [], []
@@ -116,8 +123,20 @@ def _shadows(text):
         chars.append(normalized)
         offsets.extend([index] * len(normalized))
     shadow = "".join(chars)
-    for pattern in (_SHADOW_FORK, _SHADOW_PRIVATE):
-        for match in pattern.finditer(shadow):
+    reference_end = 0
+    for start in _START.finditer(shadow):
+        pos = start.start()
+        # Legacy ordinary runs also contain protected spellings. Within a run,
+        # no punctuation/word boundary is required for an embedded candidate.
+        ordinary = _PRIVATE.match(shadow, pos)
+        if ordinary is not None:
+            reference_end = max(reference_end, ordinary.end())
+        if pos >= reference_end and _BOUNDARY.match(shadow, pos) is None:
+            continue
+        for pattern in (_SHADOW_FORK, _SHADOW_PRIVATE):
+            match = pattern.match(shadow, pos)
+            if match is None:
+                continue
             namespace = match["namespace"].lower()
             actor, identity = match["actor"], match["identity"]
             if namespace == "capture-fork":
@@ -131,16 +150,18 @@ def _shadows(text):
             # Compose compatibility characters across actor/identity boundaries
             # within the token too; per-character normalization above keeps spans.
             token = unicodedata.normalize("NFKC", token)
+            reference_end = max(reference_end, match.end())
             yield offsets[match.start()], offsets[match.end() - 1] + 1, token
 
 
 def _tokens(text):
     shadows = list(_shadows(text))
     tokens = [match[0] for match in _THREAD.finditer(text)]
-    for match in _PRIVATE.finditer(text):
+    for match in _private_matches(text):
         # Complete shadows replace incomplete structural prefixes. Fixed-length
         # forks also replace the ordinary scan's trailing citation context, so a
         # readable fork is proved by its digest without changing displayed bytes.
+        # Overlapping scans independently retain every embedded reference.
         if any(
             start == match.start()
             and (
