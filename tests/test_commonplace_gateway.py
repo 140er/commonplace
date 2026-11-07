@@ -11,6 +11,7 @@ from commonplace.gateway import _DROP, Gateway, _scrub
 from commonplace.policy import Policy, PolicyError
 from commonplace.workers import Worker, WorkerSupervisor
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._overview_helpers import overview_result
 
 INBOX_BOT = dict(
     profile="slim",
@@ -277,14 +278,8 @@ def test_search_fans_out_over_readable_wings_only(hub):
     assert denied["denied"]
 
 
-def test_multiwing_search_uses_one_joint_worker_ranking_before_limit(monkeypatch):
+def test_multiwing_search_uses_one_joint_worker_ranking_before_limit():
     from mempalace.searcher import _hybrid_rank
-
-    # This unit test isolates joint ranking after complete overview projection.
-    monkeypatch.setattr(
-        "commonplace.handoff.overview.project",
-        lambda *args: {"wings": {"shared": 1, "project_a": 1, "vault": 1}},
-    )
 
     results = {
         "shared": _hybrid_rank(
@@ -314,8 +309,12 @@ def test_multiwing_search_uses_one_joint_worker_ranking_before_limit(monkeypatch
     }
 
     def call_tool(principal, name, args):
-        if name == "mempalace_list_wings":
-            return {"wings": {"shared": {}, "project_a": {}, "vault": {}}}
+        assert principal.workspace_id == "fixture-workspace"
+        overview = overview_result(
+            name, args, dict.fromkeys(("shared", "project_a", "vault"), "notes")
+        )
+        if overview is not None:
+            return overview
         assert args["wings"] == ["project_a", "shared"]
         joint = [hit for wing in args["wings"] for hit in results[wing]]
         return {"results": _hybrid_rank(joint, args["query"])[: args["limit"]]}
@@ -325,7 +324,7 @@ def test_multiwing_search_uses_one_joint_worker_ranking_before_limit(monkeypatch
     gateway = object.__new__(Mediator)
     gateway.gateway = None
     gateway.workers = SimpleNamespace(call_tool=call_tool)
-    principal = SimpleNamespace(policy=Policy.build(**CODER))
+    principal = SimpleNamespace(workspace_id="fixture-workspace", policy=Policy.build(**CODER))
     result = gateway._fan_out_search(
         principal, "mempalace_search", {"query": "ZXQ739251", "limit": 1}
     )
@@ -333,17 +332,11 @@ def test_multiwing_search_uses_one_joint_worker_ranking_before_limit(monkeypatch
     assert [hit["drawer_id"] for hit in result["results"]] == ["lexical"]
 
 
-def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments(monkeypatch):
+def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments():
     from commonplace.gateway import Mediator
     from mempalace.searcher import _hybrid_rank
 
     query = "ZXQ739251 port"
-    # This unit test isolates joint ranking after complete overview projection.
-    monkeypatch.setattr(
-        "commonplace.handoff.overview.project",
-        lambda *args: {"wings": {"shared": 1, "project_a": 1, "vault": 1}},
-    )
-
     results = {
         "shared": _hybrid_rank(
             [
@@ -373,8 +366,10 @@ def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments(monk
     assert results["project_a"][0]["score"] > results["shared"][0]["score"]
 
     def call_tool(principal, name, args):
-        if name == "mempalace_list_wings":
-            return {"wings": {"shared": {}, "project_a": {}}}
+        assert principal.workspace_id == "fixture-workspace"
+        overview = overview_result(name, args, {"shared": "notes", "project_a": "notes"})
+        if overview is not None:
+            return overview
         assert args["wings"] == ["project_a", "shared"]
         joint = [hit for wing in args["wings"] for hit in results[wing]]
         return {"results": _hybrid_rank(joint, args["query"])[: args["limit"]]}
@@ -383,7 +378,7 @@ def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments(monk
     mediator.gateway = None
     mediator.workers = SimpleNamespace(call_tool=call_tool)
     result = mediator._fan_out_search(
-        SimpleNamespace(policy=Policy.build(**CODER)),
+        SimpleNamespace(workspace_id="fixture-workspace", policy=Policy.build(**CODER)),
         "mempalace_search",
         {"query": query, "limit": 1},
     )

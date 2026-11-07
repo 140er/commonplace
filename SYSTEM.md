@@ -817,10 +817,9 @@ playbooks and the original wider orchestration acceptance remain separate work.
   such as `thr_notes` use the existing thread-room predicate.
 - Standalone mediators with a workspace-bound principal keep metadata
   projection even without gateway or handoff context: ordinary readable pairs
-  remain visible, and unresolved thread pairs stay hidden. Policy-only local
-  helpers without an authenticated workspace retain their legacy worker
-  listing and wing-policy selection; authenticated principals always carry a
-  workspace and cannot enter that compatibility path.
+  remain visible, and unresolved thread pairs stay hidden. Principals without
+  workspace context receive empty wing lists, taxonomy and search fan-out;
+  no raw worker listing can bypass wing policy or thread authorization.
 - SQLite identity seeks and the generic metadata fallback read at most 500
   records per page or final batch, without document columns. Missing, null
   and question-mark wing/room values normalize to `unknown`; bookkeeping

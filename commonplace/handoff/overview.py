@@ -65,12 +65,9 @@ def project(gateway, principal, workers, name, *, timeout=660.0):
     wings = name == "mempalace_list_wings"
     key = "wings" if wings else "taxonomy"
     empty = {key: {}}
+    if not getattr(principal, "workspace_id", None):
+        return empty
     try:
-        # Policy-only local helpers have no authenticated workspace or thread
-        # reader. Preserve their legacy worker listing; real Principals always
-        # have workspace_id and must use the metadata projection below.
-        if gateway is None and not hasattr(principal, "workspace_id"):
-            return workers.call_tool(principal, name, {}) or empty
         # Deadline-bound readers only reuse an open store. Initialize the
         # caller's workspace before constructing that request-local reader.
         context = getattr(gateway, "handoff", None)

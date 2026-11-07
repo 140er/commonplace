@@ -57,6 +57,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Standalone mediator compatibility distinguishes policy-only local helpers from workspace-bound callers without thread authority.
 
+  - Workspace-less overview and fan-out callers fail closed; the previous legacy-listing exception is removed.
+
   - Visible overview and search fan-out boundaries are documented separately from the remaining hallway, tunnel, graph, provenance and progress residuals.
 
   - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
@@ -363,6 +365,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Standalone overview/search regressions retain ordinary rows while unresolved thread presence matches the absent-thread world, with missing, null or incomplete gateway context.
 
+  - Workspace-less direct tool calls return empty overview shapes; fan-out tests hide unreadable thread-only wings even at the visible-wing limit. Union privacy and joint-ranking fixtures use workspace-bound principals and metadata probe/revalidation replies.
+
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
 
@@ -494,7 +498,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
 
-  - Direct mediator helpers default to no gateway; workspace-bound callers still project metadata, and policy-only local helpers preserve their existing wing-filtered fan-out.
+  - Direct mediator helpers default to no gateway; workspace-bound callers still project metadata.
+
+  - Policy-only callers without workspace context receive empty overview and fan-out results through the shared projection boundary.
 
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
 
@@ -840,6 +846,8 @@ Format (read by `commonplace orch docs-check`):
   - Overview projection opens the authenticated workspace store before deadline-bound authorization and uses the existing room predicate without adding whole-thread authority requirements.
 
   - Missing gateway or handoff context does not discard ordinary readable pairs; workspace-bound projections deny unresolved thread pairs through the existing reader.
+
+  - A principal without workspace context gets an empty overview before worker acquisition, shared by direct lists, taxonomy and fan-out.
 
   - Overview pair authorization reuses the existing response reader in the authenticated workspace, including owners, with response-only memoization and no persisted authorization. Readable imported rooms retain existing presence/count visibility; imported content keeps its separate range proof.
 
