@@ -1051,6 +1051,7 @@ async function refresh({ background = false, events = [] } = {}) {
     return true;
   } catch (error) {
     if (!current() || !state.me) return;
+    state.renderPending = null;
     if (state.base === "#/rules") rulesUI.force = false;
     showError(error.message);
     if (!root.querySelector("#content").children.length) root.querySelector("#content").innerHTML = message(error.message, true);

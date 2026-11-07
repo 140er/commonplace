@@ -765,6 +765,8 @@ Format (read by `commonplace orch docs-check`):
   - The Connect checklist renders the supplied webhook event recommendation, including card moves and optional card creation, with escaped values.
 
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
+  - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
+
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
