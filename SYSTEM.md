@@ -235,7 +235,7 @@ Split labels cannot be added to roots or removed from keyed children through
 label edits. REST marker references must be bounded positive integers. Only
 lock timeouts become busy responses, through the shared admission classifier;
 settings read errors retain their retryable status. Checkpoint inbox reads are
-best effort. A failed inbox snapshot after lease commit retains the pinned
+best effort. A failed inbox snapshot after lease commit logs sanitized diagnostics without exception messages and retains the pinned
 launch instructions and asks the agent to read the inbox before acting.
 Board waiting summaries share one runner connection and count usage once for
 active slots and once for queued reservations. Release waiting applies only

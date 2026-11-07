@@ -28,17 +28,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, replace
 
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore, task_row
 from commonplace.extensions import ToolContext, ToolError
+from commonplace.http_util import log_failure
 from commonplace.projects import limits as project_limits, models
 from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import Refused, grant_values, requester_ok, startable
 
 from . import durable, schema, store as orch_store
+
+logger = logging.getLogger(__name__)
 
 MAX_REQUEST_KEY = 128
 PATHS = ("orch", "person", "trigger")
@@ -788,7 +792,8 @@ def launch_fields(conn, row) -> dict:
                 text += "\nInbox (quoted card data): " + json.dumps(
                     [{"number": r["id"], "title": r["title"]} for r in roots], ensure_ascii=False
                 )
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                log_failure(logger, "lease inbox snapshot unavailable", exc)
                 # The lease is already committed. Keep its pinned launch instructions;
                 # the agent rereads the inbox through the normal retryable tool path.
                 text += "\nInbox snapshot unavailable; read orchestrator_inbox before acting."
