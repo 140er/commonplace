@@ -924,3 +924,45 @@ An Idempotency-Key or include_deleted query is rejected with 400
 
 Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
 new-user migration and desktop synchronization are deferred.
+
+
+### Authorization-only provenance spelling recognition
+
+Provenance authorization keeps the existing ordinary thread/private reference scan
+and at most four strict percent-decoding rounds, refusing controls and undecodable
+citations. A separate NFKC authorization copy recognizes only complete protected
+shapes: `capture:<actor>:<source>:<identity>`,
+`import-private:<user>:<source>:<identity>`, and
+`capture-fork:<user>:<32 lowercase hex characters>`. ASCII space or NBSP may follow
+structural colons; the namespace colon alone may be omitted when the actor starts
+with an ASCII letter or digit. New shadows begin only at the field start or after
+space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`. Internal separators stay
+mandatory; actor/source components exclude whitespace, colons, path separators and
+query delimiters. Identity suffixes retain internal colons and complete `#sha256:`
+qualifiers through the existing whitespace/`?` boundary. This does not detect
+arbitrary Unicode insertion.
+
+Capture source labels are exactly `claude-code` and `codex`. Private import labels
+are exactly `claude-code`, `codex`, `cursor`, `t3`, `grok-bot`, `chatgpt`, `claude-ai`
+and the grant-only `native-memory`. New shadow namespace/source matching ignores
+case and forms lowercase producer labels before lookup; actor and identity case
+remain literal. Existing ordinary legacy tokens retain authorization outside these
+new domains. A complete shadow authorizes the entire spaced reference rather than
+an incomplete ordinary prefix split at an internal structural colon. Embedded
+thread references are still independently authorized.
+
+Every recognized reference requires readable local proof in the caller's
+workspace. Missing and unreadable production-shaped shadows receive the same
+not-found write response as canonical citations; spelling alone never refuses a
+readable citation. Read projections omit unproved citation fields while retaining
+D1-readable fact text. Authorization does not rewrite stored/displayed citation
+bytes or subject, predicate, object and content. Ordinary URL/path citations such
+as `https://example.test/capturing-notes` and `capture-notes.md`, unshaped trigger
+words, and readable canonical fork citations remain compatible. A complete
+protected reference embedded in a URL/path still requires proof. Existing
+navigable-URL validation applies to new `source_url` writes; KG exposes that
+citation as `origin_link`, and file citations in source observation rows.
+
+This changes reference recognition only: typed associations, provenance aliases,
+plain-file association proof and search-index progress retain their existing
+contracts.

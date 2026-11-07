@@ -37,6 +37,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Promises:**
+  - Documents bounded authorization-only reference spellings, exact producer domains and citation compatibility.
+
 
   - Records the strict owner-progress authority probe separately from ordinary Recall denial semantics.
 
@@ -285,6 +287,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+  - Public KG spelling regressions retain ordinary citations and all canonical producer formats on read/write, with separate grammar, owner and exact-hash isolation checks.
+
 
   - Console activity schema and query checks freeze the store clock so dated fixtures stay inside the retention window.
   - Owner progress fault regressions traverse the real wired Recall authority in paired hidden/absent worlds.
@@ -733,6 +737,7 @@ Format (read by `commonplace orch docs-check`):
   - A dedicated strict Recall callback propagates owner-progress lookup faults; extraction retains the ordinary deny-on-fault callback.
 
   - Search-index polls authorize current metadata once per thread, revalidate descriptors in one snapshot and project per-thread successful units, activity and quota refusals.
+  - Complete protected-reference shadows join ordinary authorization tokens; namespace/source case normalizes only in the authorization copy, and full identity/hash suffixes remain literal.
 
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 

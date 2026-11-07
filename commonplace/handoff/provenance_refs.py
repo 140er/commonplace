@@ -56,6 +56,32 @@ _THREAD = re.compile(r"thr_[0-9a-f]+", re.IGNORECASE)
 _PRIVATE = re.compile(r"(?:capture-fork|capture|import-private):[^\s?]+", re.IGNORECASE)
 _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)
 
+# These domains mirror capture.SOURCES and import_sources.SOURCES plus the
+# grant-only native-memory route. They constrain new shadows, never legacy ids.
+_CAPTURE_SOURCES = frozenset({"claude-code", "codex"})
+_IMPORT_SOURCES = _CAPTURE_SOURCES | {
+    "cursor",
+    "t3",
+    "grok-bot",
+    "chatgpt",
+    "claude-ai",
+    "native-memory",
+}
+_BOUNDARY = r"(?<![^ /?&#=(<\"'])"
+_ACTOR = r"(?:: *|(?=[A-Za-z0-9]))(?P<actor>[^\s:/\\?]+): *"
+_SHADOW_PRIVATE = re.compile(
+    _BOUNDARY
+    + r"(?P<namespace>import-private|capture)"
+    + _ACTOR
+    + r"(?P<source>[^\s:/\\?]+): *(?P<identity>[^\s?]+)",
+    re.IGNORECASE,
+)
+_SHADOW_FORK = re.compile(
+    _BOUNDARY + r"(?P<namespace>capture-fork)" + _ACTOR + r"(?P<identity>[^\s?]+)",
+    re.IGNORECASE,
+)
+_FORK_DIGEST = re.compile(r"[0-9a-f]{32}\Z")
+
 
 @dataclass(frozen=True)
 class References:
@@ -65,6 +91,60 @@ class References:
 
 def _controls(text):
     return any(unicodedata.category(char) in {"Cc", "Cf"} for char in text)
+
+
+def _shadows(text):
+    """Return complete authorization candidates and their original text spans."""
+    chars, offsets = [], []
+    for index, char in enumerate(text):
+        # NFKC must not broaden the permitted structural space alphabet.
+        normalized = (
+            char
+            if char.isspace() and char not in {" ", "\u00a0"}
+            else unicodedata.normalize("NFKC", char)
+        )
+        chars.append(normalized)
+        offsets.extend([index] * len(normalized))
+    shadow = "".join(chars)
+    for pattern in (_SHADOW_FORK, _SHADOW_PRIVATE):
+        for match in pattern.finditer(shadow):
+            namespace = match["namespace"].lower()
+            actor, identity = match["actor"], match["identity"]
+            if namespace == "capture-fork":
+                if not _FORK_DIGEST.fullmatch(identity):
+                    continue
+                token = f"{namespace}:{actor}:{identity}"
+            else:
+                source = match["source"].lower()
+                domain = _CAPTURE_SOURCES if namespace == "capture" else _IMPORT_SOURCES
+                if source not in domain:
+                    continue
+                token = f"{namespace}:{actor}:{source}:{identity}"
+            # Compose compatibility characters across actor/identity boundaries
+            # within the token too; per-character normalization above keeps spans.
+            token = unicodedata.normalize("NFKC", token)
+            yield offsets[match.start()], offsets[match.end() - 1] + 1, token
+
+
+def _tokens(text):
+    shadows = list(_shadows(text))
+    tokens = [match[0] for match in _THREAD.finditer(text)]
+    for match in _PRIVATE.finditer(text):
+        # Structural spacing can split an ordinary scan at an internal colon.
+        # The complete shaped reference replaces only that incomplete prefix.
+        if any(
+            start == match.start()
+            and match.end() < end
+            and text[match.end()] in {" ", "\u00a0"}
+            and match[0].endswith(":")
+            for start, end, _ in shadows
+        ):
+            continue
+        tokens.append(match[0])
+    for _, _, token in shadows:
+        tokens.append(token)
+        tokens.extend(match[0] for match in _THREAD.finditer(token))
+    return tuple(dict.fromkeys(tokens))
 
 
 def refs(value):
@@ -88,7 +168,4 @@ def refs(value):
         return REFUSE
     text = text.strip()
     # Independent scans also catch thread ids embedded inside private source ids.
-    tokens = tuple(
-        dict.fromkeys(m[0] for pattern in (_THREAD, _PRIVATE) for m in pattern.finditer(text))
-    )
-    return References(text, tokens)
+    return References(text, _tokens(text))
