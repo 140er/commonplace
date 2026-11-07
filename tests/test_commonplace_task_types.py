@@ -503,3 +503,21 @@ def test_legacy_schema_migration_preserves_hold(hub, env):
             "additive migration must restore the empty type default"
         )
         assert {key: after[key] for key in before} == before
+
+
+@pytest.mark.parametrize("body", ["null", "42", "[]", '["allowed_types"]'])
+def test_configuration_rejects_non_object_json(hub, env, body):
+    import http.client
+
+    _, agent, _, cookie, _ = env
+    configure(hub, cookie, agent, ["code"])
+    path = f"/api/task-types/connections/{agent.connection_id}"
+    conn = http.client.HTTPConnection("localhost", hub.port, timeout=10)
+    try:
+        conn.request("POST", path, body, {**cookie, "Content-Type": "application/json"})
+        response = conn.getresponse()
+        assert response.status == 400
+        response.read()
+    finally:
+        conn.close()
+    assert api(hub, cookie, "GET", path) == (200, {"allowed_types": ["code"]})

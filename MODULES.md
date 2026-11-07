@@ -256,6 +256,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The pinned handoff baseline adapts live tool availability and workspace schemas while retaining strict HTTP and audit equality; visibility mutations must fail.
   - Card task-type tests cover base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
+  - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -439,6 +440,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
   - Card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
+  - Owner status changes preserve typed-card assignees and validate their grants; card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
 
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
@@ -770,7 +772,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
 
-  - The person-owner task-type API replaces a connection’s sorted allowlist atomically; GET never creates a boards store.
+  - The person-owner task-type API rejects non-object JSON with 400 and replaces a connection’s sorted allowlist atomically; GET never creates a boards store.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 

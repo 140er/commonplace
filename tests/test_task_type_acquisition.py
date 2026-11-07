@@ -69,14 +69,7 @@ def test_legacy_corruption_refuses(hub, legacy, corruption):
         else:
             conn.execute("DROP TABLE connection_task_types")
     # Reuse already-open service: initialization must not repair the corruption fixture.
-    worker = (
-        service(hub, agent)
-        if corruption != "missing-table"
-        else service(
-            hub,
-            agent,
-        )
-    )
+    worker = service(hub, agent)
     if corruption == "missing-table":
         with owner.store.transaction() as conn:
             conn.execute("DROP TABLE IF EXISTS connection_task_types")
@@ -143,3 +136,22 @@ def test_legacy_rollback_expiry(hub, legacy):
     with owner.store.connection() as conn:
         assert [tuple(r) for r in conn.execute("SELECT * FROM tasks ORDER BY id")] == before
         assert [tuple(r) for r in conn.execute("SELECT * FROM task_events ORDER BY id")] == events
+
+
+@pytest.mark.parametrize("holder", ["ungranted-agent", "granted-agent", "person"])
+def test_owner_update_checks_resulting_holder(hub, env, holder):
+    _, agent, person, cookie, owner = env
+    from tests.test_commonplace_task_types import configure
+
+    assignee = person.actor if holder == "person" else agent.actor
+    card = owner.task_add("Reserved typed work", board="work", assignee=assignee, task_type="code")
+    if holder == "granted-agent":
+        configure(hub, cookie, agent, ["code"])
+    if holder == "ungranted-agent":
+        refuse(lambda: owner.task_update(card["number"], status="doing"))
+        current = owner.task_show(card["number"])
+        assert current["status"] == "todo" and current["assignee"] == agent.actor
+    else:
+        result = owner.task_update(card["number"], status="doing")
+        assert result["status"] == "doing" and result["assignee"] == assignee
+        assert (result["claim_until"] is None) == (holder == "person")

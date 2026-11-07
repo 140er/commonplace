@@ -2836,6 +2836,26 @@ class BoardService:
             from commonplace.projects import split
 
             split.check_label_update(conn, board, self.principal, row, labels)
+    def _update_acquisition_actor(self, row, args):
+        # Owner status changes start reserved typed work for its assigned holder.
+        if (
+            self.principal.person
+            and self.principal.role == "owner"
+            and args.get("task_type", row["task_type"])
+            and row["assignee"]
+        ):
+            return row["assignee"]
+        return self.principal.actor
+
+    def _update_type_holder(self, task, args):
+        if args.get("status") != "doing":
+            return None, None
+        # Resolve control identity before taking the board write transaction.
+        with self.store.connection() as conn:
+            prospective = task_row(conn, task)
+            require_visible(prospective, self.principal)
+            actor = self._update_acquisition_actor(prospective, args)
+        return actor, self._type_holder(actor)
 
     def task_update(self, task, *, version=None, **args):
         type_updates = {
@@ -2843,9 +2863,7 @@ class BoardService:
             for key, value in args.items()
             if key == "task_type"
         }
-        type_holder = (
-            self._type_holder(self.principal.actor) if args.get("status") == "doing" else None
-        )
+        prospective_actor, type_holder = self._update_type_holder(task, args)
         permitted = {
             "task_type",
             "title",
@@ -2950,7 +2968,7 @@ class BoardService:
             updates.update(
                 self._holder_pr_reset(
                     row,
-                    self.principal.actor
+                    self._update_acquisition_actor(row, args)
                     if args.get("status") == "doing" and row["status"] != "doing"
                     else row["assignee"],
                 )
@@ -2978,14 +2996,17 @@ class BoardService:
                         ask=None, ask_options=None, ask_to=None, return_to=None, review_context=None
                     )
                 if status == "doing":
-                    task_types.require(
-                        conn, updates.get("task_type", row["task_type"]), type_holder
-                    )
+                    holder_actor = self._update_acquisition_actor(row, args)
+                    # A concurrent reassignment must not inherit the resolved grant.
+                    holder = type_holder if holder_actor == prospective_actor else None
+                    task_types.require(conn, updates.get("task_type", row["task_type"]), holder)
                     from commonplace.projects import limits
 
-                    limits.check(conn, board, self.principal.actor, service=self, card_id=row["id"])
-                    updates["assignee"] = self.principal.actor
-                    updates["claim_until"] = None if self.principal.person else self._until(board)
+                    limits.check(conn, board, holder_actor, service=self, card_id=row["id"])
+                    updates["assignee"] = holder_actor
+                    updates["claim_until"] = (
+                        None if holder_actor.startswith("user:") else self._until(board)
+                    )
                 else:
                     updates["assignee"] = (
                         (self.principal.actor if row["status"] == "review" else row["assignee"])

@@ -34,7 +34,7 @@ def install(gateway):
             except ValueError:
                 return
             try:
-                if set(data) != {"allowed_types"}:
+                if not isinstance(data, dict) or set(data) != {"allowed_types"}:
                     raise ToolError("no: use allowed_types only")
                 values = task_types.canonical(data["allowed_types"])
             except ToolError as exc:
