@@ -90,6 +90,8 @@ def test_authorized_approval_releases_restricted_work(fresh, approver):
         fresh.owner.board_set("work", parent.principal.actor)
     approved = authority.task_approve(proposal["number"], reason="synthetic reason")
     assert approved["approved_by"] == authority.principal.actor
+    if approved["proposal_status"] == "pending":
+        authority.task_approve(proposal["number"], reason="Separate proposal review")
     child.work.task_take_next(task=proposal["number"])
     child.work.task_handoff(proposal["number"], receiver.principal.actor, "Continue this work")
     assert receiver.work.task_take_next(task=proposal["number"])["status"] == "doing"
@@ -117,6 +119,7 @@ def test_legacy_approval_marker_cannot_release_or_block_safe_queue(hub, fresh, k
             hub.db.revoke(old.id, actor=fresh.user, workspace_ref=fresh.workspace)
     legacy = creator.work.task_add(board="work", title="Legacy restricted work")
     fresh.owner.task_approve(legacy["number"], reason="synthetic reason")
+    fresh.owner.task_approve(legacy["number"], reason="Separate proposal review")
     creator.work.task_take_next(task=legacy["number"])
     creator.work.task_handoff(legacy["number"], receiver.principal.actor, "Continue this work")
     # Simulate an existing marker from an older server, never a live data repair.
@@ -154,6 +157,7 @@ def test_legacy_person_release_requires_an_active_workspace_owner(hub, fresh, ki
     receiver = fresh.connect("receiver")
     legacy = creator.work.task_add(board="work", title="Old release")
     fresh.owner.task_approve(legacy["number"], reason="synthetic reason")
+    fresh.owner.task_approve(legacy["number"], reason="Separate proposal review")
     creator.work.task_take_next(task=legacy["number"])
     creator.work.task_handoff(legacy["number"], receiver.principal.actor, "Continue this work")
     # Test-only historical person marker; never a live data repair.
@@ -242,11 +246,11 @@ def test_restricted_parent_can_assign_own_work_directly_to_child(fresh, route):
         )
     else:
         assigned = parent.work.task_add(board="work", title="Delegated work", claim=True)
-        fresh.owner.task_approve(assigned["number"])
+        fresh.owner.task_approve(assigned["number"], reason="Independent owner recovery")
         parent.work.task_take_next(task=assigned["number"])
         parent.work.task_handoff(assigned["number"], child.principal.actor, "Take this workstream")
     if route == "create":
-        fresh.owner.task_approve(assigned["number"])
+        fresh.owner.task_approve(assigned["number"], reason="Independent owner recovery")
     held = child.work.task_take_next(task=assigned["number"])
     assert held["status"] == "doing" and held["proposal_status"] is None
     assert child.work.task_update(assigned["number"], status="done")["status"] == "done"
