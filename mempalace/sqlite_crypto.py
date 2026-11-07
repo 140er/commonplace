@@ -68,6 +68,8 @@ def validate_database_paths(directory, paths):
 
 def _require_v1(info):
     """B3 has no production unlock path; never consult operator-held keys."""
+    if not isinstance(info, dict):
+        raise EncryptionError("Invalid workspace encryption metadata")
     if "key_mode" in info or info.get("version", 1) != 1:
         raise EncryptionError("Unsupported workspace key mode; B3 remains locked")
 
@@ -102,11 +104,11 @@ def encryption_settings(path):
                 or not Path(path).resolve().is_relative_to(directory.resolve())
             ):
                 raise ValueError
-            _require_v1(info)
             validate_database_paths(directory, info.get("database_paths"))
-            return directory, info
         except (OSError, ValueError, TypeError, KeyError):
             raise EncryptionError("Invalid workspace encryption settings") from None
+        _require_v1(info)
+        return directory, info
     return None
 
 

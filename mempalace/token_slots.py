@@ -50,7 +50,7 @@ def _hex(value, size):
 
 
 def validate_record(record):
-    """Reject unknown/mixed formats and all extra wraps, before any unwrap."""
+    """Reject unknown/mixed formats and server/recovery wraps before unwrap."""
     if (
         not isinstance(record, dict)
         or set(record) != _RECORD_FIELDS
