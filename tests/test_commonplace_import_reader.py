@@ -217,6 +217,7 @@ def test_r03_recall_boundary(journey, tmp_path):
     store = j.store()
     for identity in (
         "import-private:",
+        f"import-private:{p.user_id}:S",
         f"import-private:{p.user_id}::S",
         f"import-private:{p.user_id}:claude-code:",
         "import:claude-code:S",
@@ -269,6 +270,31 @@ def test_r04_continuity(live, monkeypatch, request):
             data={"read_wings": ["shared"]},
         )[0]
         == 200
+    )
+    # A readable wing never substitutes for ordinary transcript scope.
+    from commonplace.handoff.api import _API
+
+    ordinary = j.store().store(
+        j.owner.workspace,
+        "ordinary-shared-session",
+        parse_import("claude-code", native(), "auto"),
+        actor=j.owner.user,
+        wing="shared",
+    )
+    reader_principal = principal(j, reader)
+    assert reader_principal.policy.can_read_wing("shared")
+    assert not reader_principal.policy.has_scope("threads:read")
+    assert not _API(ctx)._thread_row_readable(reader_principal, ordinary)
+    assert not ctx.recall.can_read(reader_principal, ordinary.id)
+    with pytest.raises(ThreadNotFound):
+        ctx.recall.thread(reader_principal, ordinary.id)
+    for suffix in ("", "/messages", "/chain"):
+        assert j.request(f"/api/threads/{ordinary.id}{suffix}", token=reader)[0] == 404
+    assert (
+        j.request(
+            f"/api/threads/{ordinary.id}/recall", "POST", token=reader, data={"query": "café"}
+        )[0]
+        == 404
     )
     rows = listed(j, reader)["imports"]
     assert rows[0]["stored_thread_id"] == own.id and rows[0]["stored_messages"] == 1

@@ -540,9 +540,9 @@ class Mediator:
                         result["results"] = [*result.get("results", []), *candidates]
                         result.pop("total", None)
                         response = _replace_result(response, result)
-            except Exception:
+            except Exception as exc:
                 # Optional import search fails closed; preserve ordinary results.
-                pass
+                logger.error("Imported-history search failed (%s)", type(exc).__name__)
         from .handoff.mirror_access import gate
 
         committed_result = None
