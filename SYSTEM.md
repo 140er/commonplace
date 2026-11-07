@@ -233,7 +233,7 @@ appears in the owner queue again without changing its stored words or audit log.
 
 ### Browser GitHub connection (experimental, default off)
 
-- Worker liveness locks live in a private per-user runtime directory outside the data tree, keyed by the canonical control database path. They retain the lifetime crash-recovery fence without entering control snapshots. The Node lifecycle harness exercises connected rendering, stale reads, card switches and logout without a browser installation.
+- One GitHub worker owns a control-database lease shared by every serve on the same volume, including containers with private temporary directories or different mount paths. Claim and recovery occur in one short write transaction; no lifetime lock file is held in the data tree. The lease lasts 30 seconds and renews every 5 seconds. A second serve fails closed for GitHub writes and must restart after the owner closes or its lease expires. Restored backups may retain the lease until expiry. The Node lifecycle harness exercises connected rendering, stale reads, card switches and logout without a browser installation.
 
 - Browser consent requires a person session, JSON, exact Origin and session-derived CSRF; agents and MCP receive no GitHub capability. Scope is exactly empty; inherited sign-in scopes require confirmation, every repeated scope header is cross-checked, and refresh material is discarded before encryption.
 
@@ -247,7 +247,7 @@ appears in the owner queue again without changing its stored words or audit log.
 
 - Confirmation expiry cleanup runs on the person's next Connect, Confirm or Disconnect write. GET status remains local-only and never revokes remotely. Failed cleanup marks revocation unconfirmed and settles exchange counters in finally blocks.
 
-- Generation, remote-work and exchange counters fence disconnect, confirmation and late callbacks until all cleanup settles. Exclusive process-lifetime worker locking permits local crash recovery without replaying remote DELETE; platforms without the required locking fail closed.
+- Generation, remote-work and exchange counters fence disconnect, confirmation and late callbacks until all cleanup settles. Lease ownership and expiry are checked in each state-changing transaction, including late remote completions. An expired owner cannot renew itself or alter a successor’s counters. A new owner recovers after lease expiry without replaying remote DELETE; orderly close releases only its own lease. No writable temporary directory or platform-specific file locking is required.
 
 - AES-256-GCM encrypts tokens/verifiers before SQLite/WAL using per-user DEKs and user/provider/schema AAD. `COMMONPLACE_GITHUB_KEY_FILE` is a private, owner-held 32-byte key; code rejects it within the control database's parent directory. Operators must also exclude it from separately located workspace and backup trees, which this store does not inventory. Install the `commonplace` extra for cryptography.
 
