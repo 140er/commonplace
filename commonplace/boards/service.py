@@ -16,6 +16,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
+from . import task_types
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -957,6 +958,7 @@ class BoardService:
             "number": number,
             "parent": row["parent_number"],
             "title": row["title"],
+            "task_type": row["task_type"],
             "status": row["status"],
             "assignee": row["assignee"],
             "ask_to": row["ask_to"],
@@ -1342,6 +1344,18 @@ class BoardService:
         ):
             raise ToolError("no: recipient must be an active connection able to work on this board")
         return recipient.actor
+
+    def _type_holder(self, actor):
+        p = self.principal
+        if actor == p.actor and p.person:
+            return p
+        if not actor or not actor.startswith("conn:"):
+            return None
+        matches = [r for r in self.ctx.db.connections(p.workspace_id) if r["name"] == actor[5:]]
+        if len(matches) != 1:
+            return None
+        holder = self.ctx.db.authenticate_connection(matches[0]["id"])
+        return holder if holder and holder.workspace_id == p.workspace_id else None
 
     def _until(self, board):
         return (datetime.now(timezone.utc) + timedelta(minutes=board["claim_minutes"])).strftime(
@@ -2057,8 +2071,11 @@ class BoardService:
         message_id=None,
         parent=None,
         claim=False,
+        task_type=task_types.UNSET,
+        type_holder=None,
     ):
         p = self.principal
+        label = "" if task_type is task_types.UNSET else task_types.owner_value(p, task_type)
         if message_id is not None:
             if (
                 isinstance(message_id, bool)
@@ -2140,6 +2157,7 @@ class BoardService:
                 )
             status, assignee = "backlog", p.actor if proposal else assignee
         if status == "doing":
+            task_types.require(conn, label, type_holder)
             from commonplace.projects import limits
 
             limits.check(conn, board, assignee, service=self)
@@ -2187,7 +2205,7 @@ class BoardService:
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=? WHERE id=?",
             (
                 until,
                 at if until else None,
@@ -2195,6 +2213,7 @@ class BoardService:
                 "pending" if proposal else None,
                 p.parent_agent if proposal else None,
                 "decision" if ask is not None else None,
+                label,
                 number,
             ),
         )
@@ -2229,7 +2248,17 @@ class BoardService:
         parent=None,
         claim=False,
         blocked_by=_UNSET,
+        task_type=task_types.UNSET,
     ):
+        if task_type is not task_types.UNSET:
+            task_types.owner_value(self.principal, task_type)
+        type_holder = (
+            self._type_holder(
+                self._actor(assignee) if assignee is not None else self.principal.actor
+            )
+            if task_type is not task_types.UNSET and task_type != ""
+            else None
+        )
         with self.transaction() as conn:
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -2247,6 +2276,8 @@ class BoardService:
                 message_id=message_id,
                 parent=parent,
                 claim=claim,
+                task_type=task_type,
+                type_holder=type_holder,
             )
             if blocked_by is not _UNSET:
                 from commonplace.boards.store import CardRefused, set_blockers
@@ -2407,9 +2438,15 @@ class BoardService:
         )
 
     def task_take_next(self, board=None, task=None):
+        type_holder = self._type_holder(self.principal.actor)
         top = self._top_level_taker()
         narrow = _restricted(self.principal) and not top
         with self.transaction() as conn:
+            type_labels = (
+                task_types.allowed(conn, type_holder.connection_id)
+                if type_holder and not type_holder.person
+                else None
+            )
             if task is not None:
                 row, b = self._get(conn, task)
                 if board is not None and self._board(conn, board)["id"] != b["id"]:
@@ -2449,7 +2486,9 @@ class BoardService:
                 )
                 for found in candidates:
                     candidate = task_row(conn, found["id"])
-                    if self._claimable_origin(candidate):
+                    if self._claimable_origin(candidate) and task_types.eligible(
+                        conn, candidate["task_type"], type_holder, labels=type_labels
+                    ):
                         row = candidate
                         break
                 if row is None:
@@ -2473,6 +2512,7 @@ class BoardService:
                 or (not self.principal.person and _waiting_on_person(row))
             ):
                 raise ToolError("no: card is not available to take")
+            task_types.require(conn, row["task_type"], type_holder, labels=type_labels)
             self._write(b, row=row, claiming=True)
             if held:
                 return self._card(conn, row, self.principal)
@@ -2798,7 +2838,16 @@ class BoardService:
             split.check_label_update(conn, board, self.principal, row, labels)
 
     def task_update(self, task, *, version=None, **args):
+        type_updates = {
+            key: task_types.owner_value(self.principal, value)
+            for key, value in args.items()
+            if key == "task_type"
+        }
+        type_holder = (
+            self._type_holder(self.principal.actor) if args.get("status") == "doing" else None
+        )
         permitted = {
+            "task_type",
             "title",
             "body",
             "labels",
@@ -2847,7 +2896,7 @@ class BoardService:
             self._holder(
                 row,
                 completing=args.get("status") == "done",
-                editing=bool(set(args) & {"title", "body", "labels", "blocked_by"})
+                editing=bool(set(args) & {"title", "body", "labels", "blocked_by", "task_type"})
                 and not content_edit,
                 reopening=set(args) == {"status"} and args["status"] == "todo",
                 annotating=bool(set(args) - {"status"})
@@ -2876,7 +2925,7 @@ class BoardService:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
-            updates = {}
+            updates = dict(type_updates)
             self._update_waiting(conn, row, args)
             if "labels" in args:
                 labels = args["labels"]
@@ -2929,6 +2978,9 @@ class BoardService:
                         ask=None, ask_options=None, ask_to=None, return_to=None, review_context=None
                     )
                 if status == "doing":
+                    task_types.require(
+                        conn, updates.get("task_type", row["task_type"]), type_holder
+                    )
                     from commonplace.projects import limits
 
                     limits.check(conn, board, self.principal.actor, service=self, card_id=row["id"])
@@ -3275,6 +3327,7 @@ class BoardService:
         repo=None,
         branch=None,
         pr_url=None,
+        task_type=task_types.UNSET,
     ):
         """Owner's explicit import API; repeat (board, title) imports are no-ops."""
         _owner(self.principal)
@@ -3308,6 +3361,7 @@ class BoardService:
                 title=title,
                 body=body,
                 labels=labels,
+                task_type=task_type,
                 status="backlog" if status == "backlog" else "todo",
             )
             updates = {"status": status}
