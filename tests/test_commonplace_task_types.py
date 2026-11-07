@@ -1,4 +1,4 @@
-"""Card 61 slice 1: production card and owner configuration boundaries."""
+"""Task types slice 1: production card and owner configuration boundaries."""
 
 import pytest
 
