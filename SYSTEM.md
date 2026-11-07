@@ -432,6 +432,16 @@ appears in the owner queue again without changing its stored words or audit log.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
+### Board coordinator settings
+
+- Owners can read coordinator candidates through the board settings API; reads and writes share the same active PAT eligibility rule and never return tokens.
+
+- The signed-in owner's needs-me list includes one notice per visible board with restricted-origin backlog or todo cards awaiting release and no eligible live coordinator.
+
+- Released, rejected, completed and active work is excluded.
+
+- The settings selector and notice rendering in the web app remain follow-up work.
+
 ## Numbers
 
 | Label | Number | Source |
