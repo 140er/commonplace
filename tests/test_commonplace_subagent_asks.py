@@ -199,9 +199,7 @@ def test_subagent_requires_released_card_before_asking(fresh):
     orch = seat(fresh)
     sub = fresh.connect("sub", parent=orch.id)
     with pytest.raises(ToolError, match="proposal"):
-        sub.work.ask(
-            REVIEW_QUESTION, options=REVIEW_OPTIONS, board="work", context=REVIEW_CONTEXT
-        )
+        sub.work.ask(REVIEW_QUESTION, options=REVIEW_OPTIONS, board="work", context=REVIEW_CONTEXT)
     proposal = sub.work.task_add(board="work", title="Sub work")
     assert proposal["status"] == "backlog"
     assert proposal["proposal_status"] == "pending"

@@ -2324,7 +2324,7 @@ class BoardService:
             old == "review"
             and not self.principal.person
             and (
-                row["review_kind"] == "decision"
+                (row["review_kind"] == "decision" and self.principal.parent_agent)
                 or not (row["ask_to"] or "").startswith("conn:")
                 or any((row[key] or "").startswith("user:") for key in ("assignee", "return_to"))
             )

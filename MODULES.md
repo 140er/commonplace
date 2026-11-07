@@ -208,6 +208,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
+
   - Shared fixtures and harnesses and every test file not listed in another block.
 
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
