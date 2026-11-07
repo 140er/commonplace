@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import math
 import os
 import re
@@ -57,9 +58,18 @@ class GitHub:
         self._heartbeat_thread = None
         self._owns_lease = False
         self.db.add_pre_close_callback(self.close)
-        # Claim and recovery share a short write transaction visible on the
-        # shared volume, regardless of private /tmp or volume mount paths.
+        self._claim()
+        if not self._owns_lease:
+            logging.getLogger(__name__).warning("GitHub worker waiting for another serve's lease")
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _claim(self):
+        # Only a never-owner may recover: a former owner may have remote work
+        # still in flight and must remain fenced until the process restarts.
         with self.db._lock, self.db._tx() as conn:
+            if self._stopped.is_set():
+                return
             now = time.time()
             lease = conn.execute("SELECT expires_at FROM github_worker_lease WHERE id=1").fetchone()
             if lease is None or lease["expires_at"] <= now:
@@ -69,9 +79,6 @@ class GitHub:
                 )
                 self._recover_rows(conn)
                 self._owns_lease = True
-        if self._owns_lease:
-            self._heartbeat_thread = threading.Thread(target=self._heartbeat, daemon=True)
-            self._heartbeat_thread.start()
 
     @property
     def ready(self):
@@ -103,9 +110,13 @@ class GitHub:
     def _heartbeat(self):
         while not self._stopped.wait(WORKER_HEARTBEAT):
             try:
-                with self.db._lock, self.db._tx() as conn:
-                    self._fence(conn)
+                if not self._owns_lease:
+                    self._claim()
+                else:
+                    with self.db._lock, self.db._tx() as conn:
+                        self._fence(conn)
             except SignInError:
+                logging.getLogger(__name__).warning("GitHub worker lost its lease; writes fenced")
                 return
             except sqlite3.Error:
                 # Retry on the next tick; an expired lease still fails closed.
@@ -177,6 +188,8 @@ class GitHub:
                 data["csrf"], csrf(session)
             ):
                 raise OAuthError("csrf_required", status=403)
+            if not self.ready:
+                raise OAuthError("github_pending", status=409)
             if h.command != "DELETE" and (not enabled() or self.provider() is None):
                 raise OAuthError("github_unconfigured", status=409)
             path = urlsplit(h.path).path
@@ -680,9 +693,10 @@ class GitHub:
         return self.disconnect(uid, deleting=True)
 
     def finish_exchange(self, uid):
+        with self.db._lock:
+            self._live -= 1
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
-            self._live -= 1
             conn.execute(
                 "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
                 (uid,),
