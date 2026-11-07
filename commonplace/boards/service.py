@@ -1258,7 +1258,7 @@ class BoardService:
         return state == "owner" and q.person and q.role == "owner"
 
     def _origin_only(self, q, row, *, role=_UNSET):
-        """Review is separate unless an agent already has independent review rights."""
+        """Whether release must preserve a separate proposal or plan review."""
         return (
             q.person
             or not self._approval_visible(q, row)
@@ -2632,7 +2632,7 @@ class BoardService:
         self._log(
             conn,
             row["id"],
-            "release",
+            "decide",
             reason=reason,
             choice="release origin",
             flags=flags_for(reason),
@@ -2662,7 +2662,7 @@ class BoardService:
             if (
                 self._awaits_origin_release(row)
                 and self._origin_only(p, row)
-                and (self._can_release_origin(p, row) or (p.person and p.role == "owner"))
+                and self._can_release_origin(p, row)
             ):
                 return self._release_origin(conn, row, approve, reason, escalate)
             role = self._approval_role(p, row)
@@ -2678,9 +2678,15 @@ class BoardService:
             release = self._restricted_origin(row) and not self._origin_released(row)
             can_release = self._can_release_origin(p, row)
             if release and owner and not can_release and approve is not False and not escalate:
-                raise ToolError(
-                    "no: the live board coordinator must release restricted-origin work"
+                state = self._origin_authority(row)[0]
+                refusal = {
+                    "coordinator": "no: the live board coordinator must release restricted-origin work",
+                    "stamp": "no: origin release is blocked; clear the board coordinator first",
+                }.get(
+                    state,
+                    "no: origin release is blocked; appoint an independent board coordinator first",
                 )
+                raise ToolError(refusal)
             if not (
                 plan
                 or (can_release and self._awaits_origin_release(row))
