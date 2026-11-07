@@ -68,13 +68,6 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
-### Foreground refresh rendering
-
-- A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
-
-- Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
-
-- A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
 
 ### Rules initialization deadline
 
@@ -431,6 +424,13 @@ appears in the owner queue again without changing its stored words or audit log.
   keys after a crash can create additional children.
 
 - `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
+### Foreground refresh rendering
+
+- A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
+
+- Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
+
+- A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
 
 ### Webhook dispatcher recovery
 
