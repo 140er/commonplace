@@ -503,7 +503,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     paused: () => paused,
     stop() {
       stopped = true; github = null; revision++; unschedule(timer);
-      detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount) detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
+      detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount && current?.need === "merge") detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
       for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
       doc?.removeEventListener("visibilitychange", visibility);
     },
