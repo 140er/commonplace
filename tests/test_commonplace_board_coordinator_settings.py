@@ -217,6 +217,7 @@ def test_waiting_is_grouped_by_board_and_only_shown_to_people(hub, fresh):
         creator.work.task_add(board=board, title="Waiting work")
     notices = fresh.owner.needs_me().get("coordinator_waiting", [])
     assert [(n["board"], n["count"]) for n in notices] == [("second", 2), ("work", 1)]
+    # The owner origin-recovery item counts once; its board notice adds no card.
     assert snapshot(hub.gateway, fresh.owner.principal, "work")["needs_you"] == 1
     agent = fresh.connect("trusted")
     assert agent.work.needs_me().get("coordinator_waiting") == []

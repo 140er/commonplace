@@ -340,6 +340,7 @@ def needs_me(
     coordinated=(),
     release_boards=(),
     origin_pending=None,
+    origin_blocks_approval=None,
     ask_owner=None,
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
@@ -441,16 +442,30 @@ def needs_me(
                     why = f"{asker} asks {recipient}: {ask_line}"
                     actions = ["answer"]
             elif kind == "plans":
+                blocked = (
+                    principal.person
+                    and origin_blocks_approval is not None
+                    and origin_blocks_approval(row)
+                )
                 why = (
-                    "Awaiting plan review. Approve or reject it."
+                    "Awaiting plan review. You may reject it; origin release is required before approval."
+                    if blocked
+                    else "Awaiting plan review. Approve or reject it."
                     if principal.person
                     else "The owner must review this plan."
                 )
-                actions = ["approve", "reject"]
+                actions = ["reject"] if blocked else ["approve", "reject"]
             elif kind == "backlog_from_agents":
                 creator = actor(row["created_by"])
+                blocked = (
+                    principal.person
+                    and origin_blocks_approval is not None
+                    and origin_blocks_approval(row)
+                )
                 decision = (
-                    "Approve or reject it."
+                    "You may reject it; origin release is required before approval."
+                    if blocked
+                    else "Approve or reject it."
                     if principal.person
                     else "The owner must approve or reject it."
                 )
@@ -459,7 +474,7 @@ def needs_me(
                     if (row["proposed_to"] or "").startswith("user:")
                     else f"{creator} proposed this, and no agent can approve it any more. {decision}"
                 )
-                actions = ["approve", "reject"]
+                actions = ["reject"] if blocked else ["approve", "reject"]
             else:
                 holder = actor(row["assignee"])
                 at = row["claim_until"] or row["heartbeat_at"] or row["updated_at"]
@@ -2918,7 +2933,8 @@ class BoardService:
             self._emit(conn, row["id"], "card.claimed", **{"from": row["status"], "to": "doing"})
             result = self._card(conn, task_row(conn, row["id"]), self.principal)
             decision = conn.execute(
-                "SELECT * FROM task_events WHERE task_id=? AND kind='decide' ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM task_events WHERE task_id=? AND kind='decide' "
+                "AND (choice IS NULL OR choice!='release origin') ORDER BY id DESC LIMIT 1",
                 (row["id"],),
             ).fetchone()
             if row["return_to"] == self.principal.actor and decision:
@@ -3738,6 +3754,10 @@ class BoardService:
                 coordinated=self.coordinated_ask_boards(),
                 release_boards=self.release_boards(),
                 origin_pending=self._origin_pending,
+                origin_blocks_approval=lambda row: (
+                    self._awaits_origin_release(row)
+                    and not self._can_release_origin(self.principal, row)
+                ),
                 ask_owner=self._ask_owner,
             )
             approvals = self.approvals_for_me()
