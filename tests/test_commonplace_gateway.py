@@ -277,8 +277,14 @@ def test_search_fans_out_over_readable_wings_only(hub):
     assert denied["denied"]
 
 
-def test_multiwing_search_uses_one_joint_worker_ranking_before_limit():
+def test_multiwing_search_uses_one_joint_worker_ranking_before_limit(monkeypatch):
     from mempalace.searcher import _hybrid_rank
+
+    # This unit test isolates joint ranking after complete overview projection.
+    monkeypatch.setattr(
+        "commonplace.handoff.overview.project",
+        lambda *args: {"wings": {"shared": 1, "project_a": 1, "vault": 1}},
+    )
 
     results = {
         "shared": _hybrid_rank(
@@ -317,6 +323,7 @@ def test_multiwing_search_uses_one_joint_worker_ranking_before_limit():
     from commonplace.gateway import Mediator
 
     gateway = object.__new__(Mediator)
+    gateway.gateway = None
     gateway.workers = SimpleNamespace(call_tool=call_tool)
     principal = SimpleNamespace(policy=Policy.build(**CODER))
     result = gateway._fan_out_search(
@@ -326,11 +333,17 @@ def test_multiwing_search_uses_one_joint_worker_ranking_before_limit():
     assert [hit["drawer_id"] for hit in result["results"]] == ["lexical"]
 
 
-def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments():
+def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments(monkeypatch):
     from commonplace.gateway import Mediator
     from mempalace.searcher import _hybrid_rank
 
     query = "ZXQ739251 port"
+    # This unit test isolates joint ranking after complete overview projection.
+    monkeypatch.setattr(
+        "commonplace.handoff.overview.project",
+        lambda *args: {"wings": {"shared": 1, "project_a": 1, "vault": 1}},
+    )
+
     results = {
         "shared": _hybrid_rank(
             [
@@ -367,6 +380,7 @@ def test_multiwing_search_receives_one_pool_instead_of_normalized_fragments():
         return {"results": _hybrid_rank(joint, args["query"])[: args["limit"]]}
 
     mediator = object.__new__(Mediator)
+    mediator.gateway = None
     mediator.workers = SimpleNamespace(call_tool=call_tool)
     result = mediator._fan_out_search(
         SimpleNamespace(policy=Policy.build(**CODER)),
