@@ -751,3 +751,7 @@ appears in the owner queue again without changing its stored words or audit log.
 ### Reassigning active work
 
 - **Claim boundary.** Immediate owner-assignment claims apply only when handing off a todo card. Reassigning doing work, including a stuck card from needs-me, returns it to todo with no lease or automatic start so the receiver can explicitly claim it.
+### Legacy surface comparison and agent guidance
+
+- The pinned handoff baseline overlays current board definitions and applies their live availability and workspace schema seam before strict HTTP and audit comparison; disabled opt-in tools remain absent.
+- Agent instructions keep the existing size budget; the project guide holds runner retry and delivery details.

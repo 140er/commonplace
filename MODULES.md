@@ -248,6 +248,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Safety tests run identically on a pinned base and implementation; server import and low-level persistence remain covered.
+  - The pinned handoff baseline adapts live tool availability and workspace schemas while retaining strict HTTP and audit equality; visibility mutations must fail.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -389,6 +390,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Imported-history consent: CLI token creation rejects the imported-history reader scope before issuing a credential; browser consent is required.
+
+  - The agent skill stays below 120 lines and links to the full opt-in splitting guide for delivery details.
 
   - The agent playbook requires inbox reads at session start, on wakes and every 10 minutes, stable keys, and completion markers.
 
