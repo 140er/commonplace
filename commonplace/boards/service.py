@@ -198,12 +198,19 @@ def callstack_json(value):
     return stored
 
 
+def validate_choice(value, name):
+    value = validate_text(value, name, required=True, limit=120)
+    if value == "release origin":
+        raise ToolError("no: 'release origin' is a reserved choice")
+    return value
+
+
 def choices(value):
     if value is None:
         return []
     if not isinstance(value, list) or len(value) > 6:
         raise ToolError("no: options must contain up to six choices")
-    return [validate_text(v, "option", required=True, limit=120) for v in value]
+    return [validate_choice(v, "option") for v in value]
 
 
 def review_request(question, options, context):
@@ -3685,7 +3692,7 @@ class BoardService:
             if then not in ("return", "todo", "done", "backlog"):
                 raise ToolError("no: invalid decision destination")
             if choice is not None:
-                choice = validate_text(choice, "choice", required=True, limit=120)
+                choice = validate_choice(choice, "choice")
                 offered = json.loads(row["ask_options"] or "[]")
                 if offered and choice not in offered:
                     raise ToolError("no: choose one of the offered options")

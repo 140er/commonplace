@@ -1056,7 +1056,7 @@ def test_origin_releasers_keep_approve_action(hub, fresh, review):
     assert origin(fresh.owner, s.n, pending=True)["actions"] == ["approve"]
 
 
-@pytest.mark.parametrize("choice", ["Continue", None])
+@pytest.mark.parametrize("choice", ["Continue", None, "Release origin", " release origin "])
 def test_origin_release_preserves_return_routed_decision(hub, fresh, choice):
     s = setup(hub, fresh, status="todo")
     # Historical restricted work awaiting a person decision before its origin release.
@@ -1078,6 +1078,56 @@ def test_origin_release_preserves_return_routed_decision(hub, fresh, choice):
         "reply": "Use the reviewed approach.",
     }
     assert raw(fresh.owner, s.n)["return_to"] is None
+
+
+def test_reserved_origin_choice_cannot_swallow_owner_decision(hub, fresh):
+    s = setup(hub, fresh, status="todo")
+    edit(
+        fresh.owner,
+        s.n,
+        status="review",
+        review_kind="decision",
+        ask="How should this proceed?",
+        ask_options=None,
+        ask_to=f"user:{fresh.user}",
+        return_to=s.k.principal.actor,
+    )
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.decide(s.n, choice="release origin", reply="Stop; do not start."),
+        reason="no: 'release origin' is a reserved choice",
+    )
+    allowed(lambda: fresh.owner.decide(s.n, choice="Stop", reply="Stop; do not start."))
+    release(s.k.work, s.n)
+    claimed = allowed(lambda: s.k.work.task_take_next(task=s.n))
+    assert claimed.get("decision") == {
+        "actor": f"user:{fresh.user}",
+        "choice": "Stop",
+        "reply": "Stop; do not start.",
+    }
+    assert raw(fresh.owner, s.n)["return_to"] is None
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_reserved_origin_choice_cannot_be_offered(hub, fresh, existing):
+    s = setup(hub, fresh)
+    if existing:
+        release(s.k.work, s.n)
+    before = fresh.owner.task_list(board="work")
+    refused(
+        fresh.owner,
+        s.n,
+        lambda: fresh.owner.ask(
+            "Which approach should we use for this work?",
+            options=["Continue", "release origin"],
+            board="work",
+            task=s.n if existing else None,
+            context="Synthetic context for the owner's decision.",
+        ),
+        reason="no: 'release origin' is a reserved choice",
+    )
+    assert fresh.owner.task_list(board="work") == before
 
 
 @pytest.mark.parametrize("configuration", ["creator", "child", "unsafe", "stamp"])
