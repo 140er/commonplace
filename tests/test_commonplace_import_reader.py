@@ -392,7 +392,11 @@ def test_r04_continuity(live, monkeypatch):
         == 0
     )
     hook_ms = (perf_counter() - start) * 1000
-    assert hook_ms < 500 and has_words(output.getvalue(), WORDS)
+    assert hook_ms < 500
+    wire = json.loads(output.getvalue())
+    assert (
+        wire["hookSpecificOutput"]["additionalContext"] == client_hooks.GUIDANCE + "\n\n" + context
+    )
     print("hook wire milliseconds:", hook_ms)
     exact = "  zqnativefile café\r\nExact file words.\t"
     identity = sync_protocol.memory_thread_id(
