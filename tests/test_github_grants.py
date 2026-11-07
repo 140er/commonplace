@@ -403,6 +403,8 @@ def test_workspace_separation_of_connection_state(setup):
 
 def test_disabled_callback_and_hidden_card_do_not_exchange(setup, monkeypatch):
     s = setup
+    assert write(s, payload={"card": 99999})[0] == 409
+    assert not rows(s, "github_connect_flows")
     flow = begin(s)
     monkeypatch.delenv("COMMONPLACE_GITHUB_CONNECT")
     finish(s, flow)
