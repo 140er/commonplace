@@ -376,7 +376,16 @@ def test_r04_continuity(live, monkeypatch):
     start = perf_counter()
     assert (
         client_hooks.main(
-            ["--event", "session-start", "--client", "claude"],
+            [
+                "--event",
+                "session-start",
+                "--client",
+                "claude",
+                "--url",
+                "https://hub.example/mcp",
+                "--token-env",
+                "SCOPED_TOKEN",
+            ],
             stdin=io.StringIO("{}"),
             stdout=output,
         )
