@@ -55,6 +55,8 @@ class GitHub:
         self._live = 0
         self._owner = secrets.token_hex(32)
         self._stopped = threading.Event()
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._heartbeat_thread = None
         self._owns_lease = False
         self.db.add_pre_close_callback(self.close)
@@ -123,11 +125,16 @@ class GitHub:
                 continue
 
     def close(self):
-        self._stopped.set()
-        if self._heartbeat_thread is not None:
-            self._heartbeat_thread.join()
-        with self.db._lock, self.db._tx() as conn:
-            conn.execute("DELETE FROM github_worker_lease WHERE owner=?", (self._owner,))
+        # Server and database teardown can both close us, including concurrently.
+        with self._close_lock:
+            if self._closed:
+                return
+            self._stopped.set()
+            if self._heartbeat_thread is not None:
+                self._heartbeat_thread.join()
+            with self.db._lock, self.db._tx() as conn:
+                conn.execute("DELETE FROM github_worker_lease WHERE owner=?", (self._owner,))
+            self._closed = True
 
     def provider(self):
         return self.gateway.sign_in.providers.get("github") if self.ready else None

@@ -1236,6 +1236,27 @@ def test_worker_heartbeat_renews_and_stale_completion_cannot_touch_successor(set
         db2.close()
 
 
+@pytest.mark.parametrize("entry", ["server", "worker"])
+def test_shutdown_releases_lease_once_before_database_close(setup, entry):
+    s = setup
+    worker = s.gateway.github
+    assert worker.ready
+    statements = []
+    s.db._conn.set_trace_callback(statements.append)
+    close = s.server.server_close if entry == "server" else worker.close
+    close()
+    assert worker._stopped.is_set()
+    assert not worker._heartbeat_thread.is_alive()
+    assert not s.db._conn.execute("SELECT 1 FROM github_worker_lease").fetchone()
+    worker.close()
+    assert sum(sql.startswith("DELETE FROM github_worker_lease") for sql in statements) == 1
+    s.db.close()
+    # A component already closed by the server must remain safe after SQLite closes.
+    worker.close()
+    s.server.server_close()
+    assert sum(sql.startswith("DELETE FROM github_worker_lease") for sql in statements) == 1
+
+
 def test_clean_serve_shutdown_allows_immediate_restart(setup, monkeypatch, tmp_path):
     import os
     import subprocess
