@@ -406,8 +406,10 @@ class HandoffService:
         except Exception:
             pass
 
-    def index_status(self, workspace_id):
-        """Return counts for the owner/operator progress surface."""
+    def index_status(self, workspace_id, *, principal=None):
+        """Project authenticated progress; local operators explicitly stay unscoped."""
+        if principal is not None:
+            return search_index.projected_status(self, workspace_id, principal)
         counts = self.store_for(workspace_id).index_counts(workspace_id)
         with self._mirror_lock:
             state = self._index_states.get(workspace_id, search_index.State())
