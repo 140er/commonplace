@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from commonplace import cli, sync_daemon, sync_service, sync_sources
+from commonplace import cli, sync_cli, sync_daemon, sync_service, sync_sources
 from commonplace.sync_protocol import TOKEN_ENV
 from commonplace.sync_state import open_state
 
@@ -397,10 +397,10 @@ def test_fix8_service_failure_is_generic_exit_two(tmp_path, monkeypatch, capsys)
     )
 
 
-@pytest.mark.parametrize(
-    "selection", ["default-parent", "default-root", "memory-parent", "memory-root", "empty"]
-)
-def test_fix2_install_refuses_symlinked_or_empty_selections(tmp_path, selection):
+@pytest.mark.parametrize("selection", ["default-parent", "default-root", "empty"])
+def test_fix2_install_refuses_symlinked_or_empty_transcript_selections(
+    tmp_path, monkeypatch, selection
+):
     home = tmp_path / "home"
     home.mkdir()
     target = tmp_path / "target"
@@ -422,16 +422,62 @@ def test_fix2_install_refuses_symlinked_or_empty_selections(tmp_path, selection)
         else:
             (home / ".claude").mkdir()
             (home / ".claude/projects").symlink_to(target, target_is_directory=True)
-    elif selection.startswith("memory"):
-        link = home / "notes"
-        link.symlink_to(target, target_is_directory=True)
-        root = link
-        if selection == "memory-parent":
-            (target / "nested").mkdir()
-            root = link / "nested"
-        args += ["--memory", "notes=" + str(root)]
+    errors = []
+    original = sync_cli._selections
+
+    def selections(*args):
+        try:
+            return original(*args)
+        except ValueError as error:
+            errors.append(str(error))
+            raise
+
+    monkeypatch.setattr(sync_cli, "_selections", selections)
     assert cli.main(args) == 2
+    assert errors == [
+        "Select at least one source"
+        if selection == "empty"
+        else "Symlinked transcript directory refused"
+    ]
     assert not (home / ".commonplace/sync/config.json").exists()
+
+
+@pytest.mark.parametrize("selection", ["memory-parent", "memory-root"])
+def test_fix2_memory_install_refused_before_selection(tmp_path, monkeypatch, capsys, selection):
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    link = home / "notes"
+    link.symlink_to(target, target_is_directory=True)
+    root = link
+    if selection == "memory-parent":
+        (target / "nested").mkdir()
+        root = link / "nested"
+    calls = []
+    monkeypatch.setattr(sync_cli, "_selections", lambda *args: (calls.append(1), ([], []))[1])
+    assert (
+        cli.main(
+            [
+                "sync",
+                "install",
+                "--enable",
+                "--no-service",
+                "--home",
+                str(home),
+                "--memory",
+                "notes=" + str(root),
+                "--hub",
+                "https://sync.example",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().out == (
+        "Legacy memory sync is disabled; memory-once is not available yet.\n"
+    )
+    assert calls == []
+    assert not (home / ".commonplace").exists()
 
 
 def test_fix2_free_sleep_handles_expired_deadlines(local, monkeypatch):
@@ -1134,7 +1180,12 @@ def test_card223_import_row_classification(local, code):
     _, state, _ = local
     ops = imports_seeded(local)
     active = active_session(local, [NOW], Hub())
-    body = sync_sources.body(ops[0])
+    body = {
+        "source": "native-memory",
+        "threads": [
+            {"thread_id": ops[0].native_id, "format": "file", "transcript": "Synthetic memory 1.\n"}
+        ],
+    }
     result = active._post_result(
         ops[0],
         TOKEN_ENV["native-memory"],

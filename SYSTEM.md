@@ -26,7 +26,10 @@ no-stream and capture-off semantics remain intact, and status inspection is read
 
 Consent binds the endpoint only. A changed workspace token at the same endpoint is
 still accepted; principal/rotation binding belongs to a later slice. Import credentials
-are not feed credentials. Stop old processes before update and explicitly reinstall
+are not feed credentials: feed selection accepts only Claude or Codex capture tokens.
+This safety refinement was selected from the plan review; missing selected-stream
+tokens still fail during initialization even when another capture token serves the feed.
+Stop old processes before update and explicitly reinstall
 transcript-only or uninstall: unchanged service restart policies retry old rejected
 configs. No deployment, replacement importer or memory-coverage completion is claimed.
 

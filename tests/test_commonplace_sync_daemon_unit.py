@@ -449,7 +449,10 @@ def test_install_inert_then_private_configuration(tmp_path, monkeypatch, capsys)
         == 0
     )
     assert list(home.rglob("*")) == before
-    assert "--enable" in capsys.readouterr().out
+    preview = capsys.readouterr().out
+    assert "--enable" in preview
+    assert str(home) not in preview
+    assert TOKEN not in preview
     env = tmp_path / "client.env"
     env.write_text(
         "COMMONPLACE_URL=https://sync.example\nCOMMONPLACE_CAPTURE_TOKEN_CLAUDE_CODE="
@@ -606,11 +609,53 @@ def test_private_config_mode_is_checked_before_opening_state(tmp_path, monkeypat
     assert not (config.parent / "state.db").exists()
 
 
-def test_missing_selected_token_is_a_configuration_error(setup):
+def test_missing_selected_token_is_a_configuration_error(setup, monkeypatch):
+    _, state, config, _ = setup
+    # A usable feed credential lets initialization reach the selected Claude stream.
+    config["tokens"] = {TOKEN_ENV["codex"]: TOKEN}
+    initialized = []
+    original = sync_daemon._Session.initialize
+
+    def initialize(session, *args, **kwargs):
+        initialized.append(session.feed_env)
+        return original(session, *args, **kwargs)
+
+    monkeypatch.setattr(sync_daemon._Session, "initialize", initialize)
+    hub = Hub()
+    error = None
+    try:
+        once(setup, hub)
+    except sync_daemon.ConfigError as exc:
+        error = str(exc)
+    assert error == "Missing capture token environment variable"
+    assert initialized == [TOKEN_ENV["codex"]]
+    assert all(
+        method == "GET" and route.startswith("/api/events?") for method, route, _ in hub.calls
+    )
+    assert hub.posts == []
+    assert not state.outbox_pending()
+
+
+def test_import_only_token_is_not_a_feed_credential(setup, monkeypatch):
     _, state, config, _ = setup
     config["tokens"] = {TOKEN_ENV["native-memory"]: TOKEN}
-    with pytest.raises(sync_daemon.ConfigError):
-        once(setup, Hub())
+    initialized = []
+    original = sync_daemon._Session.initialize
+
+    def initialize(session, *args, **kwargs):
+        initialized.append(session.feed_env)
+        return original(session, *args, **kwargs)
+
+    monkeypatch.setattr(sync_daemon._Session, "initialize", initialize)
+    hub = Hub()
+    error = None
+    try:
+        once(setup, hub)
+    except sync_daemon.ConfigError as exc:
+        error = str(exc)
+    assert error == "Set a sync token environment variable"
+    assert initialized == []
+    assert hub.calls == []
     assert not state.outbox_pending()
 
 

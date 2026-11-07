@@ -277,6 +277,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_card199_safety.py` and the sync test family retain transcript-byte/cursor and server-import compatibility checks.
+  - Transcript selection tests observe the actual symlink/empty rejection; memory selections separately prove refusal before selection.
+  - Token tests distinguish missing selected capture credentials during initialization from import-only feed credential rejection.
   - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
 
   - Release helper regressions simulate the old app disappearing before the signed-in board arrives and verify useful exception messages without credentials in JSON or Markdown reports.
