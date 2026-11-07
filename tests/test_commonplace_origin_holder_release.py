@@ -767,7 +767,7 @@ def test_same_holder_marker_revalidates_authority(hub, fresh, kind):
     elif principal.workspace_id != fresh.workspace:
         assert code == 200, reply
         assert s.n not in {c["number"] for c in items(reply)}
-    elif kind == "hidden-needs_me":
+    elif kind in ("hidden-needs_me", "no-memory-read"):
         assert code == 403 and reply["error"] == "tool not allowed for this connection"
     elif code == 403:
         assert reply["error"] in (
