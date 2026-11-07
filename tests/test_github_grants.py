@@ -1166,29 +1166,13 @@ def test_worker_lease_heartbeat_and_expired_owner_fail_closed(setup):
 
 
 def test_separate_runtime_roots_share_volume_recovery_fence(setup, monkeypatch, tmp_path):
-    from pathlib import Path
     from types import SimpleNamespace
 
     from commonplace.control_db import ControlDB
 
     s = setup
     module = importlib.import_module("commonplace.github")
-    first = s.gateway.github
-    if hasattr(first, "close"):
-        first.close()
-    else:
-        first._worker_lock.close()
-
-    # Model container-private /tmp as well as different TMPDIR values. The legacy
-    # implementation hard-coded /tmp; changing TMPDIR alone would miss the bug.
-    def runtime(root):
-        root.mkdir()
-        monkeypatch.setenv("TMPDIR", str(root))
-        monkeypatch.setattr(
-            module, "Path", lambda value: root if value == "/tmp" else Path(value), raising=False
-        )
-
-    runtime(tmp_path / "container-a")
+    s.gateway.github.close()
     module.install(s.gateway)
     begin(s)
     s.db._conn.execute(
@@ -1198,7 +1182,6 @@ def test_separate_runtime_roots_share_volume_recovery_fence(setup, monkeypatch, 
         table: rows(s, table)
         for table in ("github_connect_flows", "github_confirmations", "github_lifecycle")
     }
-    runtime(tmp_path / "container-b")
     db2 = ControlDB(s.db.path)
     try:
         second = module.GitHub(SimpleNamespace(db=db2, sign_in=s.gateway.sign_in))
@@ -1250,4 +1233,119 @@ def test_worker_heartbeat_renews_and_stale_completion_cannot_touch_successor(set
         old.close()
         assert successor.ready, "old close must not release a successor's lease"
     finally:
+        db2.close()
+
+
+def test_clean_serve_shutdown_allows_immediate_restart(setup, monkeypatch, tmp_path):
+    import os
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
+
+    s = setup
+    path = s.db.path
+    s.gateway.github.close()
+    # A real serve process takes SIGTERM through Gateway.serve's installed
+    # handler and cmd_serve's teardown; no test-side close releases its lease.
+    script = """
+import signal
+import sys
+from types import SimpleNamespace
+from commonplace import cli
+from commonplace.gateway import Gateway
+from commonplace.control_db import ControlDB
+from commonplace.rules import checks
+from commonplace.backup_pause import PauseServer
+checks.deploy = lambda gateway: None
+PauseServer.start = lambda self: True
+PauseServer.stop = lambda self: None
+class Server:
+    server_address = ('127.0.0.1', 0)
+    def serve_forever(self):
+        signal.raise_signal(signal.SIGTERM)
+    def server_close(self):
+        pass
+def build(gateway, *args):
+    assert gateway.github.ready
+    gateway.db._conn.execute('UPDATE github_lifecycle SET active_exchanges=1,unconfirmed=0')
+    return Server()
+Gateway.build_server = build
+cli._db = lambda args: ControlDB(sys.argv[1])
+cli.cmd_serve(SimpleNamespace(data=sys.argv[2],idle_minutes=1,host='127.0.0.1',port=0))
+"""
+    # Ensure there is state for startup recovery to reconcile after termination.
+    s.db._conn.execute("INSERT OR IGNORE INTO github_lifecycle(user_id) VALUES (?)", (s.uid,))
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(path), str(tmp_path)],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    db2 = ControlDB(path)
+    try:
+        worker = importlib.import_module("commonplace.github").GitHub(
+            SimpleNamespace(db=db2, sign_in=s.gateway.sign_in)
+        )
+        assert worker.ready, "clean serve shutdown retained its lease"
+        assert not db2._conn.execute("SELECT 1 FROM github_connect_flows").fetchone()
+        life = db2._conn.execute(
+            "SELECT * FROM github_lifecycle WHERE user_id=?", (s.uid,)
+        ).fetchone()
+        assert life["unconfirmed"] == 1
+        assert life["active_exchanges"] == life["remote_work"] == 0
+    finally:
+        db2.close()
+
+
+@pytest.mark.parametrize("release", ["close", "expiry"])
+def test_standby_heartbeat_retries_after_owner_release(setup, monkeypatch, release):
+    from threading import Thread
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
+
+    s = setup
+    module = importlib.import_module("commonplace.github")
+    now = module.time.time()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    begin(s)
+    first = s.gateway.github
+    first._stopped.set()
+    first._heartbeat_thread.join()
+    first._stopped.clear()
+    before = rows(s, "github_connect_flows")
+    db2 = ControlDB(s.db.path)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Thread, "start", lambda self: None)
+            second = module.GitHub(SimpleNamespace(db=db2, sign_in=s.gateway.sign_in))
+
+        # Drive actual heartbeat iterations without sleeps or background scheduling.
+        def tick():
+            turns = iter([False, True])
+            with monkeypatch.context() as patch:
+                patch.setattr(second._stopped, "wait", lambda timeout: next(turns))
+                second._heartbeat()
+
+        assert not second.ready
+        tick()
+        assert not second.ready
+        assert rows(s, "github_connect_flows") == before, "live owner must block recovery"
+        if release == "close":
+            first.close()
+        else:
+            now += module.WORKER_LEASE_TTL + 1
+        tick()
+        assert second.ready, "standby never retried lease acquisition"
+        assert not rows(s, "github_connect_flows")
+        assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+        first.close()
+        assert second.ready, "former owner must not delete successor lease"
+    finally:
+        # The synthetic heartbeat thread was deliberately never started.
+        second._heartbeat_thread = None
         db2.close()

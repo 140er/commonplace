@@ -270,6 +270,7 @@ Format (read by `commonplace orch docs-check`):
   - Integration tests combine typed owner assignment, configured starts, blocker filtering and existing-holder claim replay.
 
   - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
+  - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after real serve teardown.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -428,6 +429,8 @@ Format (read by `commonplace orch docs-check`):
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - Serve always closes its control database on exit, including SIGTERM unwind, releasing owned resources through pre-close callbacks.
 
   - Imported-history consent: CLI token creation rejects the imported-history reader scope before issuing a credential; browser consent is required.
 
@@ -841,6 +844,8 @@ Format (read by `commonplace orch docs-check`):
   - Explicit per-person GitHub browser grants, one-use connect flows, encrypted pending consent and direct bounded transport.
 - **Promises:**
 
+  - Never-owner workers retry claim and recovery on heartbeat ticks; former owners stay fenced. Shutdown deletes only the matching owner lease; standby and lost-lease logs explain readiness.
+
   - Browser sessions use exact Origin and session-derived CSRF; scope evidence and expiry fail closed; GitHub login and connect share subject ownership.
   - **Browser GitHub connection:** Default-off consent requests an empty scope, reads only the GitHub id/login and never creates login identities.
   - **Connection lifecycle proof:** Durable remote-work accounting holds the reconnect fence until revocation and older token cleanup both settle; only HTTPS or loopback development may start consent.
@@ -848,7 +853,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
-  - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an absent or expired shared-database lease; a competing serve cannot write GitHub state until restarted after release/expiry; live OAuth behavior and production ingress logging remain unproven.
+  - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an absent or expired shared-database lease; a competing serve cannot write GitHub state until its periodic retry claims after release/expiry; live OAuth behavior and production ingress logging remain unproven.
 - **Tests:**
 
   - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.

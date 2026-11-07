@@ -14,7 +14,7 @@ def test_needs_github_states():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_needs_real_dom_switch_and_logout_clear():
+def test_needs_switch_and_logout_clear():
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("github_lifecycle.mjs"))],
         capture_output=True,
