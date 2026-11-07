@@ -43,6 +43,8 @@ Format (read by `commonplace orch docs-check`):
 
   - **Connection recovery:** Documents expiry reconnect, revocation while disabled, explicit cleanup triggers and the enforced key-location boundary in the current documentation format.
 
+  - **Independent scope evidence:** Keeps mandatory token evidence separate from optional response-header cross-checking in the proof record.
+
 - **How it fails:**
 
   - A stale block passes the mechanical check while describing old behaviour; reviewers judge whether the text is true.
@@ -249,6 +251,8 @@ Format (read by `commonplace orch docs-check`):
   - **Mutation sensitivity:** The hidden-card assertion runs with no pending flow, so removing visibility cannot be masked by the one-flow guard.
 
   - **Connection recovery:** Adds expired-grant reconnect, repeated scope-header, independent visibility/confirm fences, cleanup-failure, AAD swap and key-owner/location proofs; the scope-evidence tests assert before importing the new client.
+
+  - **Independent scope evidence:** Missing token-response scope is tested without an optional header, so header rejection cannot mask the mandatory-evidence guard.
 
 - **How it fails:**
 
