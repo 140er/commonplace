@@ -27,6 +27,7 @@ Format (read by `commonplace orch docs-check`):
 ## system-docs
 
 - **Paths:** `SYSTEM.md`, `MODULES.md`
+<<<<<<< HEAD
 - **Owns:**
 
   - The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map.
@@ -45,6 +46,13 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_docs_obligations.py` runs `docs-check` against the merge base; `tests/test_orch_checks.py` covers unowned paths, missing obligations, empty blocks and waivers.
 
+=======
+- **Owns:** The system-wide decisions, numbers, stores, residuals and waiver list (`SYSTEM.md`) and this ownership map.
+- **Promises:** Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` changes with every change that `docs-check` covers, unless a base-listed waiver applies.
+  - Thread mutation rules and accepted provenance/read residuals are recorded below as separate additions.
+- **How it fails:** A stale block passes the mechanical check while describing old behaviour; reviewers judge whether the text is true. A path added without a block fails `docs-check`.
+- **Tests:** `tests/test_docs_obligations.py` runs `docs-check` against the merge base; `tests/test_orch_checks.py` covers unowned paths, missing obligations, empty blocks and waivers.
+>>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## project-docs
 
@@ -181,6 +189,7 @@ Format (read by `commonplace orch docs-check`):
 ## mempalace
 
 - **Paths:** `mempalace/`, `seed/`
+<<<<<<< HEAD
 - **Owns:**
 
   - The memory engine: verbatim drawers, mining, search, knowledge graph, storage backends and the MCP server; plus the reviewed seed card list.
@@ -197,10 +206,18 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_` files for mining, search, palace, knowledge graph, backends and the MCP server.
 
+=======
+- **Owns:** The memory engine: verbatim drawers, mining, search, knowledge graph, storage backends and the MCP server; plus the reviewed seed card list.
+- **Promises:** User content is stored verbatim; ingest is append-only; search returns original words; nothing leaves the machine unless the user configured a provider.
+  - Scoped KG writes recheck provenance snapshots in-lock; source/id deletes use authorized rooms and explicit ids, and missing optional closets count as zero.
+- **How it fails:** Backend lock or index damage degrades recall; repair tools rebuild indexes without touching drawers.
+- **Tests:** The `tests/test_` files for mining, search, palace, knowledge graph, backends and the MCP server.
+>>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## tests
 
 - **Paths:** `tests/`
+<<<<<<< HEAD
 - **Owns:**
 
   - Shared fixtures and harnesses and every test file not listed in another block.
@@ -238,10 +255,18 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_backup_online_enumeration.py` forces SQLite sidecar cleanup and the writer/workspace-lookup freeze interleaving, and checks that missing user files, unsafe paths and new directory creation remain guarded.
 
   - `tests/test_commonplace_rules_inject.py::test_locked_store_uses_remaining_deadline` checks locked-store fallback and remaining connection/statement waits with a fake clock; the separate timing test retains the informational wall-clock budget.
+=======
+- **Owns:** Shared fixtures and harnesses and every test file not listed in another block.
+- **Promises:** Tests use temporary directories, loopback servers and synthetic names; they make no external network calls. Deploy fakes discard inactive, unreferenced execution proof and cover synchronous fast exit, consecutive deploys and reference cleanup on failure, timeout and signals. Restricted-origin content-edit regressions verify audit attribution and unchanged release and claim state through both public routes.
+- **How it fails:** A plan fixture that names a missing test file fails G7; a shared fixture change can break unrelated suites; slow or flaky tests waste every run.
+- **Tests:** The suite itself under the coverage gate; `tests/test_commonplace_webhooks.py::test_dispatcher_thread_survives_an_unexpected_pass_error` checks that an unexpected delivery-pass error is logged without its private message and the dispatcher retries while staying alive. `tests/test_projects_phase_b.py` and `tests/test_projects_admission.py` keep paired pin/head assertions and independent runner-lock coverage. `tests/test_backup_online_enumeration.py` forces SQLite sidecar cleanup and the writer/workspace-lookup freeze interleaving, and checks that missing user files, unsafe paths and new directory creation remain guarded.
+  - Thread-boundary integration tests exercise real separate workspace workers; focused scope tests cover stale snapshots, optional collections, malformed probes, decoding and response caches.
+>>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## hub-core
 
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
+<<<<<<< HEAD
 - **Owns:**
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
@@ -260,6 +285,13 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
 
+=======
+- **Owns:** The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
+- **Promises:** Every request resolves to one principal or none; scopes, wings and trust are checked before any tool runs; tokens are stored hashed; writes are audited. Existing workspace directory lookups pass a backup freeze, so a writer holding a database transaction can finish; new directories remain gated.
+  - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
+- **How it fails:** A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
+- **Tests:** `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
+>>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## sessions-and-sign-in
 
@@ -424,6 +456,7 @@ Format (read by `commonplace orch docs-check`):
 ## handoff-and-continuity
 
 - **Paths:** `commonplace/handoff/`, `commonplace/continuity.py`, `commonplace/continuity_read.py`, `commonplace/continuity_schema.py`
+<<<<<<< HEAD
 - **Owns:**
 
   - Agent context handoff to a fresh agent and append-only native session continuity.
@@ -440,6 +473,13 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_handoff_` files, `tests/test_commonplace_continuity_unit.py`.
 
+=======
+- **Owns:** Agent context handoff to a fresh agent and append-only native session continuity.
+- **Promises:** A handoff never loses the source thread; continuity is append-only and resumable.
+  - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
+- **How it fails:** A failed launch of the successor leaves the source agent running; an interrupted archive adoption resumes from its last committed step.
+- **Tests:** The `tests/test_handoff_` files, `tests/test_commonplace_continuity_unit.py`.
+>>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## chat-and-voice
 
