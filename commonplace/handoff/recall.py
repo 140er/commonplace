@@ -46,10 +46,13 @@ def thread_provenance(stored: StoredThread) -> dict:
     }
 
 
-def _filer_matches(principal, stored: StoredThread) -> bool:
+def _filer_matches(principal, stored: StoredThread, *, reader=False) -> bool:
     if not stored.source_thread_id.startswith(_GRANT_PREFIX):
         return True
     parts = stored.source_thread_id.split(":", 3)
+    if len(parts) == 3 and not reader:
+        # Legacy owner reads retain their original filer binding; no storage rewrite.
+        return parts[1] != "" and parts[1] == principal.user_id
     return len(parts) == 4 and all(parts) and parts[1] == principal.user_id
 
 
@@ -139,7 +142,7 @@ class Recall:
             and stored.workspace_id == principal.workspace_id
             and stored.wing == "private_chats"
             and stored.source_thread_id.startswith(_GRANT_PREFIX)
-            and _filer_matches(principal, stored)
+            and _filer_matches(principal, stored, reader=True)
             and self._private is not None
         ):
             raise ThreadNotFound("thread not found")
@@ -464,15 +467,19 @@ class Recall:
         if not self.import_reader(principal):
             return []
         store = self._store_for(principal.workspace_id)
-        rows = store.list_source_range(
-            principal.workspace_id,
-            f"import-private:{principal.user_id}:",
-            limit=min(100, offset + limit),
+        # Filter and authorize before pagination. A room lookup must not depend
+        # on where that room falls in the account's bounded candidate window.
+        rows = (
+            [store.get(room)]
+            if room is not None
+            else store.list_source_range(
+                principal.workspace_id,
+                f"import-private:{principal.user_id}:",
+                limit=100,
+            )
         )
         results = []
         for stored in rows:
-            if room is not None and stored.id != room:
-                continue
             try:
                 results.append(self._view_drawer(stored, self._import_view(principal, stored)))
             except ThreadNotFound:

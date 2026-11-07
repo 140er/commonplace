@@ -365,7 +365,6 @@ def test_r04_continuity(live, monkeypatch, request):
     # The in-process palace fixture uses another physical directory. Supply
     # the same read-only startup marker used by the existing search journeys.
     import sqlite3
-    from time import perf_counter
 
     from commonplace import session, sync_protocol
     from commonplace.extensions import ToolContext
@@ -378,7 +377,6 @@ def test_r04_continuity(live, monkeypatch, request):
         conn.execute("CREATE TABLE IF NOT EXISTS embeddings(id TEXT)")
         conn.execute("INSERT INTO embeddings VALUES ('synthetic')")
     principal_reader = principal(j, reader)
-    measurements = []
     # Functional retrieval uses the same frozen logical clock as the existing
     # startup acceptance tests. Physical latency is measured separately on the
     # performance runner; G04 and the session suite exercise real deadlines.
@@ -387,13 +385,10 @@ def test_r04_continuity(live, monkeypatch, request):
     with monkeypatch.context() as clock:
         clock.setattr(checks, "monotonic", lambda: 0.0)
         for _ in range(2):
-            start = perf_counter()
             context = session.initialize_context(
                 ToolContext(principal_reader, j.client.gateway), budget=5000, query="café"
             )
-            measurements.append((perf_counter() - start) * 1000)
             assert has_words(context, WORDS)
-    print("startup cold/warm milliseconds:", measurements)
     import io
 
     from commonplace import client_hooks
@@ -407,7 +402,6 @@ def test_r04_continuity(live, monkeypatch, request):
 
     monkeypatch.setattr(client_hooks, "Client", HookClient)
     output = io.StringIO()
-    start = perf_counter()
     assert (
         client_hooks.main(
             [
@@ -425,13 +419,10 @@ def test_r04_continuity(live, monkeypatch, request):
         )
         == 0
     )
-    hook_ms = (perf_counter() - start) * 1000
-    assert hook_ms < 500
     wire = json.loads(output.getvalue())
     assert (
         wire["hookSpecificOutput"]["additionalContext"] == client_hooks.GUIDANCE + "\n\n" + context
     )
-    print("hook wire milliseconds:", hook_ms)
     exact = "  zqnativefile café\r\nExact file words.\t"
     identity = sync_protocol.memory_thread_id(
         "claude", "memory/notes.md", hashlib.sha256(exact.encode()).hexdigest()
@@ -606,7 +597,7 @@ def test_r07_range_gate(live, monkeypatch):
     p, own = proof_fixture(j)
     ctx = j.client.gateway.handoff
     monkeypatch.setattr(ctx.recall, "can_read", lambda *_: True)
-    ctx.recall._import_eligible = lambda _: True
+    monkeypatch.setattr(ctx.recall, "_import_eligible", lambda _: True)
     # The worker's real mirror rows have authoritative ranges and verified spans.
     raw = ctx.call_tool(
         sessions.person_principal(j.client.db, p.user_id, p.workspace_id),

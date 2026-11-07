@@ -280,6 +280,8 @@ entry was written.
 
 ### Explicit imported-history reader consent
 
+  - Legacy import compatibility: Existing three-part import identities retain ordinary filer-bound read access without data migration; consented reader views require complete four-part identities.
+
 - `memory:import` stays write-only.
 
 - New PAT and OAuth readers need a separate, unticked consent and `memory:read` plus `memory:import:read`.

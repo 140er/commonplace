@@ -464,6 +464,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Imported-history consent: Imported readers receive bounded immutable views, source-range proof and view-specific metadata; capture tails never inherit import authority.
+  - Legacy import compatibility: Ordinary reads preserve three-part filer identities without rewriting stored data; reader views still require four-part identities.
 
   - A handoff never loses the source thread; continuity is append-only and resumable.
 
