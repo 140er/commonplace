@@ -717,6 +717,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Search-index polls authorize current metadata once per thread, revalidate descriptors in one snapshot and project per-thread successful units, activity and quota refusals.
+
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
   - Imported-history consent: Imported readers receive bounded immutable views, source-range proof and view-specific metadata; capture tails never inherit import authority.
