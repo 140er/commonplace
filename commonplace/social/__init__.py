@@ -135,6 +135,9 @@ class SignIn:
             except OAuthError:
                 connect = False
             if connect:
+                if h.command != "GET":
+                    send_json(h, 405, {"error": "use GET"})
+                    return
                 gateway.github.callback(h)
                 return
         parts = path.removeprefix("/app/auth/").split("/")
