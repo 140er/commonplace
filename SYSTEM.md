@@ -130,6 +130,10 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rejected-proposal handoffs retain the proposal-approval guard before origin authorization.
 
+### Owner manual assignment starts
+
+- **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
+
 ### Privacy scanner timing checks
 
 - Large-input and delimiter-heavy near-miss correctness checks run in the behaviour suite without measuring time.
@@ -464,9 +468,6 @@ appears in the owner queue again without changing its stored words or audit log.
   other probe failures propagate. Parser/access caches expire with a response.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
-### Owner manual assignment starts
-
-- **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
 
 ## Numbers
 
