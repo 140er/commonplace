@@ -74,6 +74,16 @@ def check(e, **kw):
     return e.mediator._check_provenance(e.principal, "mempalace_kg_save", args(**kw))
 
 
+def refusal(e, **kw):
+    result = None
+    try:
+        check(e, **kw)
+    except Hidden as error:
+        result = error.result
+    assert result is not None, "Expected a hidden citation to be refused"
+    return result
+
+
 def test_u3_a_client_scope_is_removed(env, monkeypatch):
     seen = []
     monkeypatch.setattr(
@@ -196,9 +206,7 @@ def test_u3_h_hidden_equals_missing_citations(env, field):
     hidden = thread(env, user="other")
     replies = []
     for value in [hidden.id, "thr_ffff"]:
-        with pytest.raises(Hidden) as error:
-            check(env, **{field: value})
-        replies.append(error.value.result)
+        replies.append(refusal(env, **{field: value}))
     if field == "source_drawer_id":
         assert all(r["error"].startswith("Drawer not found:") for r in replies)
     else:
@@ -463,8 +471,7 @@ def test_u3_s_private_family_resolution(env):
     stored = thread(env, source=base + "/file.md")
     check(env, source_thread=stored.source_thread_id)
     env.workers.call_tool.return_value = {"cited": {"closet": ["private_threads", hidden.id]}}
-    with pytest.raises(Hidden):
-        check(env, source_closet="opaque-closet")
+    refusal(env, source_closet="opaque-closet")
 
 
 def test_u3_t_response_memoisation(env, monkeypatch):
@@ -543,5 +550,7 @@ def test_see_all_cannot_cite_opaque_hidden_drawer(env, monkeypatch):
         "_drawer_wings",
         Mock(side_effect=Hidden({"success": False, "error": "hidden"})),
     )
-    with pytest.raises(Hidden, match="Drawer not found: opaque-drawer"):
-        check(env, source_drawer_id="opaque-drawer")
+    assert refusal(env, source_drawer_id="opaque-drawer") == {
+        "success": False,
+        "error": "Drawer not found: opaque-drawer",
+    }

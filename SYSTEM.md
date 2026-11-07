@@ -267,7 +267,6 @@ entry was written.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
-
 ## Numbers
 
 | Label | Number | Source |
@@ -352,8 +351,28 @@ entry was written.
 
 - Accepted, known gaps.
 
-<<<<<<< HEAD
 - Each is a reason a check can pass while the system is still wrong.
+
+### Thread-boundary residuals
+
+- Read counts in `list_wings`, `kg_query.count`, `kg_timeline.count` and
+  `kg_timeline.total` can include hidden items. Non-mirror hallway room names
+  and labels and `list_tunnels` drawer endpoints retain existing read gaps.
+- Opaque legacy drawer/closet/file provenance without recognized tokens is
+  not resolved on read. An opaque citation can later move into a hidden room;
+  foreign identifiers already stored before this change are not purged.
+- Non-canonical spellings outside the token grammar remain possible, including
+  inserted characters that are neither Cc nor Cf (combining marks or Unicode
+  spaces), fullwidth letters, and missing underscores. Subject, predicate and
+  object text stays verbatim and is outside provenance parsing.
+- `add_drawer` source publication is outside KG citation checks. External
+  `ext-`, `mcp:` and `import:` ids hidden only by wing policy remain ungated.
+  Drawer update/id-delete closet cleanup still follows the complete source
+  across rooms; scoped replies omit its closet count.
+- An any-readable-source fact remains mutable despite other hidden sources.
+  A single-valued save leaves an unreadable rival open; a new racing row can
+  produce a duplicate. Scoped cleanup can leave stale unassociated legacy
+  index rows, while unscoped local cleanup retains its broader purge.
 
 - **Same OS user.**
 
@@ -438,76 +457,6 @@ entry was written.
 - **Waiver list.**
 
   - Approval of the waiver list below is a manual owner review.
-=======
-### Thread-boundary residuals
-
-- Read counts in `list_wings`, `kg_query.count`, `kg_timeline.count` and
-  `kg_timeline.total` can include hidden items. Non-mirror hallway room names
-  and labels and `list_tunnels` drawer endpoints retain existing read gaps.
-- Opaque legacy drawer/closet/file provenance without recognized tokens is
-  not resolved on read. An opaque citation can later move into a hidden room;
-  foreign identifiers already stored before this change are not purged.
-- Non-canonical spellings outside the token grammar remain possible, including
-  inserted characters that are neither Cc nor Cf (combining marks or Unicode
-  spaces), fullwidth letters, and missing underscores. Subject, predicate and
-  object text stays verbatim and is outside provenance parsing.
-- `add_drawer` source publication is outside KG citation checks. External
-  `ext-`, `mcp:` and `import:` ids hidden only by wing policy remain ungated.
-  Drawer update/id-delete closet cleanup still follows the complete source
-  across rooms; scoped replies omit its closet count.
-- An any-readable-source fact remains mutable despite other hidden sources.
-  A single-valued save leaves an unreadable rival open; a new racing row can
-  produce a duplicate. Scoped cleanup can leave stale unassociated legacy
-  index rows, while unscoped local cleanup retains its broader purge.
-
-
-- **Same OS user.** Anyone who runs as the service's OS user can use the CLI
-  (which is `orch_owner`) and read the data directory.
-- **Restore outside `restore()`.** A hand-copied data directory or a deleted
-  `runner.sqlite3` carries no restore marker: the journal resets and nothing is
-  blocked.
-- **Effects after T.** After a restore, effects made after the backup time are
-  unknown to the journal; the truth checks in step 5 are the only guard.
-- **Outside the journal.** External effects and gate runs started outside the
-  journal are invisible to resume.
-- **Revocation window on trigger starts.** The trigger's requester and grants
-  are read in a control snapshot before the fenced transaction. A grant or
-  requester revocation that commits between that snapshot and the in-lock
-  insert is not re-read; the start can still be inserted. The runner re-checks
-  the requester and grants at `starting`, so the job is refused before launch.
-- **Same-second ties are listed.** Job starts and board events are stamped
-  in whole seconds, so a start in the same second as a card's latest firing
-  event cannot be ordered against it. Resume lists such a card as unstarted;
-  it may be a false positive.
-- **Skipped events.** Board events committed between a configuring accept (or
-  a restore acknowledgement) and arming are skipped, not replayed. Resume lists
-  the affected `todo` cards as unstarted.
-- **Refused triggers are not retried.** A `todo` card whose trigger start is
-  refused (`busy`, `at_cap`, `started_recently` or any other code) is a final
-  miss: the cursor moves past it and nothing re-fires it, even after the queue
-  drains or a slot frees up. It shows in the checkpoint's unstarted list and
-  as a miss; move the card out of `todo` and back to retry.
-- **Orchestrator tools on every workspace.** The `orch_*` tools appear in the
-  tool list on every workspace, also where no board has a config (runner
-  children never see them; owner-only tools are listed for owners only).
-  Without a config only proposing and reading do anything.
-- **Docs-check checks change, not accuracy.** It refuses a touched module
-  whose block did not change and a change without a `SYSTEM.md` edit
-  (whitespace-only edits do not count); it never judges whether the new text
-  is right.
-- **Cap overshoot.** The cap reads card state from `boards.sqlite3` as a
-  snapshot, so a concurrent claim outside the runner can overshoot it. The 1 h
-  started hold is conservative.
-- **D1 shared worker PAT.** All runner children use the machine's worker PAT,
-  so per-child provenance and per-child limits are not available.
-- **D2 launch shape.** Whether T3 accepts `modelSelection` at runtime is
-  unverified; when it is given, effort comes from T3's defaults.
-- **D3 thread-list keys.** An empty thread list is no proof that a launch did
-  not happen; such steps go to `needs_person`.
-- **Plaintext job lease tokens.** The runner's job lease token is stored in
-  `runner_jobs` and in the machine journal (pre-existing).
-- **Waiver list.** Approval of the waiver list below is a manual owner review.
->>>>>>> ed351fab (fix: enforce thread read access on fact mutations and source deletes)
 
 ## Open dependencies (D1–D3)
 
