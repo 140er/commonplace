@@ -268,6 +268,7 @@ Format (read by `commonplace orch docs-check`):
   - Claim text assertions avoid feature imports; duplicate-key label edits preserve labels, version and audit history on refusal.
 
   - Pure-module guards check generic path/URL patterns and outbound imports without embedding deployment identifiers.
+  - Deferred refresh regressions execute the production shell and Settings renderers in both completion orders, retain plan and account controls, and guard navigation away and background updates during rendering.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
 
@@ -764,6 +765,7 @@ Format (read by `commonplace orch docs-check`):
   - The Connect checklist renders the supplied webhook event recommendation, including card moves and optional card creation, with escaped values.
 
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
+  - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 

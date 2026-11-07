@@ -68,6 +68,9 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
+### Foreground refresh rendering
+
+- A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen. Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
 
 ### Rules initialization deadline
 
