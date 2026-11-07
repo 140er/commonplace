@@ -21,6 +21,9 @@ coordinator is configured or live. `task_approve` supports both pending proposal
 and unreleased restricted submissions, with an audit entry and an `approved_by`
 release marker. Nonproposal releases leave `proposal_status` unset. Proposal approval
 by a parent alone does not activate the card without that release.
+An inactive card's holder may update only its status line without release;
+this does not activate, claim or approve the card. Rejected-proposal handoffs
+retain the proposal-approval guard before origin authorization.
 
 ### Restricted-origin card content
 

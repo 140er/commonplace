@@ -2485,7 +2485,10 @@ class BoardService:
                 and row["assignee"] is None
                 and (_trusted_agent(self.principal) or self._coordinates(self.principal, row))
             )
-            self._write(board, row=row, content_edit=content_edit)
+            inactive_annotation = (
+                set(args) == {"status_line"} and row["status"] == "backlog" and self._own_card(row)
+            )
+            self._write(board, row=row, content_edit=content_edit or inactive_annotation)
             self._version(conn, row, version)
             if set(args) - permitted or (
                 "reason" in args
@@ -2655,14 +2658,14 @@ class BoardService:
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def _handoff(self, conn, row, board, to, note, options=None, context=None):
-        self._write(board, row=row)
-        if row["status"] not in ("todo", "doing"):
-            raise ToolError("no: only todo or doing cards can be handed off")
-        self._holder(row)
         if row["proposal_status"] in ("pending", "rejected"):
             raise ToolError(
                 "no: proposal needs parent approval with task_approve before work starts"
             )
+        self._write(board, row=row)
+        if row["status"] not in ("todo", "doing"):
+            raise ToolError("no: only todo or doing cards can be handed off")
+        self._holder(row)
         if not self.principal.person and _waiting_on_person(row):
             raise ToolError("no: waiting on a person, they must answer via decide")
         target = self._work_actor(to, board)
