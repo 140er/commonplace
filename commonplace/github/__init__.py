@@ -126,7 +126,7 @@ class GitHub:
                 data["csrf"], csrf(session)
             ):
                 raise OAuthError("csrf_required", status=403)
-            if not enabled() or self.provider() is None:
+            if h.command != "DELETE" and (not enabled() or self.provider() is None):
                 raise OAuthError("github_unconfigured", status=409)
             path = urlsplit(h.path).path
             if path == "/api/github/connect":
@@ -143,13 +143,11 @@ class GitHub:
         uid = principal.user_id
         result = {
             "state": "absent",
+            "connect_enabled": enabled() and self.provider() is not None,
             "csrf": csrf(session),
             "app_access_url": ACCESS,
             "disclosure": "Disconnect revokes this app's GitHub login authorization too. Your current session survives; future login requires authorization again.",
         }
-        if not enabled() or self.provider() is None:
-            result["state"] = "unconfigured"
-            return result
         with self.db._lock:
             conn = self.db._conn
             life = self.store.lifecycle(conn, uid)
@@ -170,6 +168,14 @@ class GitHub:
                     state="expired",
                     message="Expired locally; review GitHub app access before reconnecting.",
                 )
+            if grant is None:
+                elsewhere = conn.execute(
+                    "SELECT workspace_id FROM github_grants WHERE user_id=?", (uid,)
+                ).fetchone()
+                if elsewhere:
+                    result.update(state="other_workspace", workspace=elsewhere["workspace_id"])
+            if result["state"] == "absent" and not result["connect_enabled"]:
+                result["state"] = "unconfigured"
             pending = conn.execute(
                 "SELECT * FROM github_confirmations WHERE user_id=? AND session_hash=? AND workspace_id=?",
                 (uid, digest(session), principal.workspace_id),
@@ -207,7 +213,7 @@ class GitHub:
             ):
                 conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
                 conn.execute(
-                    "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id=?",
+                    "UPDATE github_lifecycle SET generation=generation+1 WHERE user_id=?",
                     (uid,),
                 )
                 life = self.store.lifecycle(conn, uid)
@@ -240,7 +246,7 @@ class GitHub:
                     life["generation"],
                     time.time() + TTL,
                     secret,
-                    f"/app/#/card/{data['card']}",
+                    f"/app/?github_card={data['card']}#/needs",
                 ),
             )
             conn.execute("UPDATE github_lifecycle SET unconfirmed=0 WHERE user_id=?", (uid,))
@@ -346,8 +352,12 @@ class GitHub:
             status, headers, profile = client.request(
                 "GET", "https://api.github.com/user", token=token
             )
-            header = next((v for k, v in headers.items() if k.lower() == "x-oauth-scopes"), None)
-            if header is not None and scopes(header) != granted:
+            evidence = (
+                headers.get_all("X-OAuth-Scopes", [])
+                if hasattr(headers, "get_all")
+                else [v for k, v in headers.items() if k.lower() == "x-oauth-scopes"]
+            )
+            if any(scopes(value) != granted for value in evidence):
                 raise SignInError("github_scope")
             if (
                 status != 200
@@ -391,10 +401,12 @@ class GitHub:
         except (OAuthError, SignInError):
             pass
         finally:
-            if token:
-                self.revoke_token(uid, token)
-            if active:
-                self.finish_exchange(uid)
+            try:
+                if token:
+                    self.cleanup_token(uid, token)
+            finally:
+                if active:
+                    self.finish_exchange(uid)
         redirect(
             h,
             landing,
@@ -454,10 +466,22 @@ class GitHub:
                     accepted = True
         finally:
             if candidate:
-                if not accepted:
-                    self.revoke_token(uid, candidate["token"])
-                self.finish_exchange(uid)
+                try:
+                    if not accepted:
+                        self.cleanup_token(uid, candidate["token"])
+                finally:
+                    self.finish_exchange(uid)
         send_json(h, 200, {"state": "connected" if accepted else "absent"})
+
+    def cleanup_token(self, uid, token):
+        try:
+            return self.revoke_token(uid, token)
+        except Exception:
+            with self.db._lock:
+                self.db._conn.execute(
+                    "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
+                )
+            raise
 
     def revoke_token(self, uid, token):
         # Never revoke a token identical to the currently stored grant.
@@ -473,6 +497,9 @@ class GitHub:
                     ):
                         return False
                 except SignInError:
+                    self.db._conn.execute(
+                        "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
+                    )
                     return False
         ok = self.revoke(token, grant=False)
         if not ok:
@@ -519,8 +546,10 @@ class GitHub:
                 )
                 self._live += 1
         if candidate:
-            ok = self.revoke_token(uid, candidate["token"])
-            self.finish_exchange(uid)
+            try:
+                ok = self.cleanup_token(uid, candidate["token"])
+            finally:
+                self.finish_exchange(uid)
             if not ok:
                 with self.db._lock:
                     self.db._conn.execute(
@@ -535,8 +564,6 @@ class GitHub:
             if life["disconnect_pending"]:
                 raise SignInError("github_pending")
             grant = conn.execute("SELECT * FROM github_grants WHERE user_id=?", (uid,)).fetchone()
-            if grant and workspace is not None and grant["workspace_id"] != workspace:
-                raise SignInError("github_workspace")
             conn.execute(
                 "UPDATE github_lifecycle SET generation=generation+1,disconnect_pending=1,remote_work=remote_work+1,deleting=max(deleting,?) WHERE user_id=?",
                 (int(deleting), uid),

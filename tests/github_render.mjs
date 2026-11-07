@@ -42,3 +42,18 @@ ui.stop();
 const before = detailMount.innerHTML;
 await ui.select(7);
 assert.equal(detailMount.innerHTML, before, 'stopped controllers must ignore late session work');
+
+const elsewhere = renderNeedDetail(card, {github: {state:'other_workspace'}});
+assert.ok(elsewhere.includes('another workspace') && elsewhere.includes('Disconnect'));
+assert.ok(!elsewhere.includes('Open PR') && !elsewhere.includes('Connect GitHub'));
+const errorMount=root(), errorDetail=root();
+const failedStatus=createNeeds({mount:errorMount,detailMount:errorDetail,document:doc,setInterval:()=>1,clearInterval(){},api:async path=>{
+ if(path.startsWith('/api/cards/')) return {...card,proposal_status:'pending',can_approve:true};
+ if(path==='/api/github') throw new Error('synthetic status failure');
+ return {holds:[]};
+}});
+await failedStatus.show({needs:{approvals:[{...card,proposal_status:'pending',actions:['approve','reject']}]},selected:card.number});
+assert.ok(errorDetail.innerHTML.includes('GitHub connection unavailable'));
+assert.ok(errorDetail.innerHTML.includes('data-needs-approve') && errorDetail.innerHTML.includes('Review'));
+assert.ok(!errorDetail.innerHTML.includes('Could not load this card'));
+failedStatus.stop();

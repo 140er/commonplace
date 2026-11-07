@@ -164,6 +164,9 @@ function githubControls(card, github, busy) {
   if (card.need !== "merge") return "";
   const state = github?.state || "loading", disabled = busy || github?.pending || state === "loading" ? " disabled" : "";
   const access = '<a href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">Review GitHub app access</a>';
+  if (state === "error") return `<p role="alert">GitHub connection unavailable. ${access}</p>`;
+  if (state === "other_workspace") return `<p>This GitHub account is connected in another workspace. Disconnect it before connecting here.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
+  if (state === "confirm" && github.connect_enabled === false) return `<p>New GitHub connections are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
   if (state === "unconfigured") return '<p>GitHub connection setup is required.</p>';
   if (state === "loading") return '<button class="btn" disabled>Loading GitHub…</button>';
   if (state === "confirm") return `<p>Connect GitHub account ${e(github.login)} (${e(github.subject)})?${github.inherited_scopes?.length ? " This includes inherited sign-in permissions: " + e(github.inherited_scopes.join(", ")) : ""}</p><button class="btn" data-needs-github="confirm"${disabled}>Connect this account</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>`;
@@ -272,9 +275,15 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (stopped || token !== revision) return;
       current = withActions(card); cards.set(card.number, current); draw();
       if (card.need === "merge") {
-        const result = await api("/api/github");
-        if (stopped || token !== revision) return;
-        github = result; draw();
+        try {
+          const result = await api("/api/github");
+          if (stopped || token !== revision) return;
+          github = result;
+        } catch (failure) {
+          if (stopped || token !== revision) return;
+          github = { state: "error" }; onError(failure);
+        }
+        draw();
       }
       focus("[data-needs-title]"); onSelect(card);
     } catch (failure) {
