@@ -2481,7 +2481,7 @@ class BoardService:
             try:
                 limits.check(conn, b, self.principal.actor, service=self, card_id=row["id"])
             except ToolError as exc:
-                if getattr(exc, "code", None) == "project_limit":
+                if self._orchestration_on is True and getattr(exc, "code", None) == "project_limit":
                     from commonplace.boards.store import CardRefused
 
                     reason = self._waiting(conn, row)

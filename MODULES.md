@@ -254,6 +254,8 @@ Format (read by `commonplace orch docs-check`):
   - Reassignment regressions keep doing-card handoffs unclaimed and avoid queued replacement starts until the receiver takes the card.
 
   - Manual-assignment regressions cover the statechart claim replay, configured worker starts, visible blocked-start reasons, project admission, busy agents and restricted-origin release.
+  - Off-mode capacity regressions preserve legacy refusal text and card state, including a coded admission refusal.
+
   - Card contract tests cover paired RED assertions, off-path guards, atomic key races, bounded retries and route busy responses with unchanged state.
 
   - All card requirement tests, including validation and error paths, have assertion-level RED evidence on the declared stack base; existing-database launch-role migration is checked directly.
@@ -417,6 +419,8 @@ Format (read by `commonplace orch docs-check`):
   - After commit they request the configured worker start, or persist a visible reason that it could not start; concurrent card updates are preserved.
 
   - Explicit takes of an already held card return that claim without renewing it.
+  - Disabled orchestration preserves legacy capacity refusals and never rewrites coded limit errors through the enabled waiting projection.
+
   - Enabled blocker updates are versioned and audited; pure waiting reasons drive views and claims, and SQL skips unresolved edges.
 
   - Card lists share a runner read and per-board usage; a capacity refusal retains its original error when no display reason is available.

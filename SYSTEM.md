@@ -382,6 +382,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 ### Opt-in blockers, waiting reasons and split delivery
 
+- Disabled orchestration retains legacy capacity refusals; shared waiting text is applied only while the switch is enabled.
+
 - Split completion markers obey the same MCP and REST rules-freshness checks as other card decisions. Card schemas advertise blocker arguments only while the workspace switch is on; properties are derived per request without changing shared extension schemas. Split labels cannot be added to roots or removed from keyed children through label edits. REST marker references must be bounded positive integers. Only lock timeouts become busy responses, through the shared admission classifier; settings read errors retain their retryable status. Checkpoint inbox reads are best effort. A failed inbox snapshot after lease commit logs sanitized diagnostics without exception messages and retains the pinned launch instructions and asks the agent to read the inbox before acting. Board waiting summaries share one runner connection and count usage once for active slots and once for queued reservations. Card lists likewise share one read connection and one usage calculation per board. Capacity refusals retain the original error if a display waiting reason is unavailable. Release waiting applies only to todo/backlog cards. Existing runner rows migrate with a NULL launch role, which preserves their configured role and stored job fields.
 
 - The workspace switch defaults off. Enabled boards add same-board blocker
