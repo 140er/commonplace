@@ -810,14 +810,16 @@ class BoardService:
 
     @contextmanager
     def transaction(self):
-        from commonplace.projects import orchestration as orch
+        from commonplace.projects import orchestration as orch, reports
 
         self.pending = []
         conflict = None
         try:
-            self._orchestration_on = orch.enabled(self.ctx.db, self.principal.workspace_id)
+            self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
+            self._orchestration_on = self._report_snapshot.enabled
         except orch.SettingsUnavailable as exc:
             self._orchestration_on = exc
+            self._report_snapshot = exc
         self._workers = (
             orch.workers(self.ctx.db, self.principal.workspace_id)
             if self._orchestration_on is True
@@ -834,6 +836,7 @@ class BoardService:
         # Commit/rollback boards before releasing the admission lock.
         with ExitStack() as self._admissions:
             with self.store.transaction() as conn:
+                self._report_existing_boards = {r[0] for r in conn.execute("SELECT id FROM boards")}
                 try:
                     yield conn
                 except VersionClash as exc:
@@ -1253,6 +1256,15 @@ class BoardService:
         )
 
     def _set(self, conn, row, updates, *, release_origin=True):
+        from commonplace.projects import reports
+
+        reports.guard(
+            self._report_snapshot,
+            conn,
+            row,
+            updates.get("status", row["status"]),
+            self._report_existing_boards,
+        )
         if updates.get("status", row["status"]) != row["status"]:
             self._planner_card_check(
                 conn,
@@ -1294,6 +1306,9 @@ class BoardService:
                 updates["heartbeat_at"] = now()
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
+
+        if row["status"] != "done" and updates.get("status") == "done":
+            reports.capture(conn, task_row(conn, row["id"]), self._report_snapshot, "done")
 
     def _holder(self, row, *, editing=False, reopening=False, annotating=False, completing=False):
         if self.principal.person:
@@ -2662,6 +2677,15 @@ class BoardService:
                     self._open_review(row, args, updates, done_review)
             self._position(conn, row, updates, args.get("before"), args.get("after"))
             review_edit_text = self._review_edit_text(conn, row, args, updates)
+            from commonplace.projects import reports
+
+            reports.guard(
+                self._report_snapshot,
+                conn,
+                row,
+                updates.get("status", row["status"]),
+                self._report_existing_boards,
+            )
             if "lesson" in args:
                 lesson = validate_text(args["lesson"], "lesson", required=True)
                 saved = self.ctx.memory(

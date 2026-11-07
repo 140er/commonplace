@@ -234,6 +234,10 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `tests/test_projects_phase_b.py::test_head_connect_hint_and_trust_failures` retains the enabled Connect recommendation contract including reports.
+
+  - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
+
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
 
   - Lease regressions retain started jobs beyond an hour while their cards remain doing with the machine worker, and release capacity on completion, reassignment or a terminal job state without taking a boards write lock.
@@ -299,6 +303,8 @@ Format (read by `commonplace orch docs-check`):
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
 - **Promises:**
+
+  - Gateway installation recovers project reports immediately; the webhook worker drives independent monotonic scan deadlines without adding authority or holding database locks during report HTTP.
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
 
   - Imported-history consent: Imported reader results bypass wing restrictions only after exact-view proof; ordinary scope, tool, wing and mutation gates remain in force.
@@ -372,6 +378,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Non-done to done transitions capture metadata in the source transaction. Unavailable report settings reject before status or lesson writes; new boards without a coordinator remain history only. Raw events retain their existing matching and authorization.
+
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
   - Trusted agents and authorized board coordinators may edit only the title/body of unassigned restricted-origin todo cards without releasing the origin or changing claim authority.
@@ -386,6 +394,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Report routing defers one event durably before advancing the global cursor; authorization retries indefinitely with fixed inspection code and persisted count/since, independent of HTTP attempts. Control persistence failures retain unacknowledged work.
+
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
 
   - Each unexpected dispatcher-pass exception is contained and logged without its private message, then waits on the stop event for 5 s, doubling after consecutive errors up to 300 s, before continuing.
@@ -393,6 +403,8 @@ Format (read by `commonplace orch docs-check`):
   - A successful pass resets the backoff; stopping interrupts the wait, and a closed database still ends the dispatcher.
 
 - **Tests:**
+
+  - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -465,17 +477,25 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/projects/`, `commonplace/plans.py`
 - **Owns:**
 
+  - Source outboxes and observed stuck episodes, internal seat bindings, publication receipts and reserved report dispatch.
+
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
 - **Promises:**
+
+  - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
 
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
 - **How it fails:**
 
+  - Snapshot failures leave observation state untouched. Missing seats yield history only; changed bindings cancel old reports. Unknown authorization errors retain fixed-code retries without exposing exception text.
+
   - An unresolved model refuses a config-driven start before insert; a limit change does not stop work already started.
 
 - **Tests:**
+
+  - `tests/test_project_reports.py::test_done_writers`, `test_seed_done_new_board_history_only`, `test_idle_stuck_and_episode_resets`, `test_scan_budget_isolation_cleanup_recovery` and `test_publication_crashes_and_lock_order`.
 
   - The `tests/test_projects_` files, `tests/test_commonplace_plans.py`.
 
