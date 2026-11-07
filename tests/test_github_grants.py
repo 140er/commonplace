@@ -1082,3 +1082,32 @@ def test_wrapping_key_location_and_owner_fail_closed(setup, monkeypatch, problem
         monkeypatch.setattr(os, "getuid", lambda: uid + 1)
     assert write(s)[0] == 409
     assert not rows(s, "github_connect_flows")
+
+
+def test_transport_preserves_repeated_scope_evidence(setup):
+    import io
+    from email.parser import Parser
+
+    s = setup
+    status(s)
+    module = importlib.import_module("commonplace.github.client")
+    spec = importlib.util.spec_from_file_location(
+        "commonplace.github._header_test", module.__file__
+    )
+    transport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(transport)
+
+    class Response(io.BytesIO):
+        status = 200
+        headers = Parser().parsestr("X-OAuth-Scopes: \nX-OAuth-Scopes: repo\n\n")
+
+    class Opener:
+        def open(self, *args, **kwargs):
+            return Response(b"{}")
+
+    transport.build_opener = lambda *args: Opener()
+    _, headers, _ = transport.request(
+        "GET", "https://api.github.com/user", token="synthetic-issued-token"
+    )
+    assert hasattr(headers, "get_all")
+    assert headers.get_all("X-OAuth-Scopes") == ["", "repo"]
