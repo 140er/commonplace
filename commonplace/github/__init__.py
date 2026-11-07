@@ -641,6 +641,8 @@ class GitHub:
     def disconnect(self, uid, workspace=None, *, deleting=False):
         tokens = []
         grant = None
+        grant_token = None
+        readable = True
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             life = self.store.lifecycle(conn, uid)
@@ -656,19 +658,24 @@ class GitHub:
                 "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
             ).fetchone()
             if pending:
-                tokens.append(
-                    self.store.decrypt(conn, uid, "confirmation", pending["secret"])["token"]
-                )
+                try:
+                    tokens.append(
+                        self.store.decrypt(conn, uid, "confirmation", pending["secret"])["token"]
+                    )
+                except SignInError:
+                    readable = False
                 conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
             if grant:
                 conn.execute("UPDATE github_grants SET disabled=1 WHERE user_id=?", (uid,))
                 if grant["expires_at"] > time.time():
-                    grant_token = self.store.decrypt(conn, uid, "grant", grant["secret"])["token"]
-                else:
-                    grant_token = None
-            else:
-                grant_token = None
+                    try:
+                        grant_token = self.store.decrypt(conn, uid, "grant", grant["secret"])[
+                            "token"
+                        ]
+                    except SignInError:
+                        readable = False
         ok = self.revoke(grant_token, grant=True) if grant_token else grant is None
+        ok = ok and readable
         for token in tokens:
             if token != grant_token:
                 ok = self.revoke(token, grant=False) and ok

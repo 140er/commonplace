@@ -272,6 +272,7 @@ Format (read by `commonplace orch docs-check`):
   - Card task-type tests cover owner status changes for assigned holders, non-object JSON rejection, base/head acquisition, owner API boundaries, runner admission and fail-closed eligibility with legacy fixtures.
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after real serve teardown.
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes.
+  - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes. Unreadable-grant and confirmation regressions require local disconnect and unconfirmed revocation.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -849,6 +850,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Never-owner workers retry claim and recovery on heartbeat ticks; former owners stay fenced. Serialized, idempotent shutdown deletes only the matching owner lease once, before server teardown returns or SQLite closes; standby and lost-lease logs explain readiness.
 
+  - Disconnect purges grants and confirmations even when ciphertext or the wrapping key is unreadable, marking remote revocation unconfirmed without retrying unavailable credentials.
+
   - Browser sessions use exact Origin and session-derived CSRF; scope evidence and expiry fail closed; GitHub login and connect share subject ownership.
   - **Browser GitHub connection:** Default-off consent requests an empty scope, reads only the GitHub id/login and never creates login identities.
   - **Connection lifecycle proof:** Durable remote-work accounting holds the reconnect fence until revocation and older token cleanup both settle; only HTTPS or loopback development may start consent.
@@ -860,4 +863,5 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
+
   - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; a shared-volume lease fences recovery across private temporary directories without any lifetime lock file. Heartbeats renew the 30-second lease every 5 seconds, and expired owners fail closed on state writes.

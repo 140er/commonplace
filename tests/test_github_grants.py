@@ -1006,6 +1006,46 @@ def test_disabled_feature_keeps_existing_grant_revocable(setup, monkeypatch):
     assert len([c for c in s.remote.calls if c[0] == "DELETE"]) == 1
 
 
+@pytest.mark.parametrize("kind", ["grant", "confirmation"])
+@pytest.mark.parametrize("damage", ["tamper", "missing-key"])
+def test_disconnect_purges_unreadable_credentials(setup, monkeypatch, kind, damage):
+    s = setup
+    if kind == "grant":
+        connect(s)
+    else:
+        finish(s, begin(s))
+        assert status(s)["state"] == "confirm"
+    initial = status(s)
+    generation = rows(s, "github_lifecycle")[0]["generation"]
+    if damage == "tamper":
+        table = "github_grants" if kind == "grant" else "github_confirmations"
+        s.db._conn.execute(f"UPDATE {table} SET secret=?", (b"tampered",))
+    else:
+        monkeypatch.delenv("COMMONPLACE_GITHUB_KEY_FILE")
+
+    def disconnect():
+        return request(
+            s,
+            "/api/github",
+            "DELETE",
+            cookie=s.cookie,
+            raw=json.dumps({"csrf": initial["csrf"]}).encode(),
+            headers={"Content-Type": "application/json", "Origin": urls.APP_URL},
+        )
+
+    code, _, raw = disconnect()
+    assert code == 200, raw
+    assert "unconfirmed" in json.loads(raw)["message"].lower()
+    assert not rows(s, "github_grants") and not rows(s, "github_confirmations")
+    assert not rows(s, "github_connect_flows")
+    life = rows(s, "github_lifecycle")[0]
+    assert life["generation"] == generation + 1 and life["unconfirmed"] == 1
+    assert life["disconnect_pending"] == life["active_exchanges"] == life["remote_work"] == 0
+    assert status(s)["acknowledge_required"] is True
+    assert disconnect()[0] == 200
+    assert not [c for c in s.remote.calls if c[0] == "DELETE"]
+
+
 def test_unreadable_prior_grant_marks_revocation_unconfirmed(setup):
     s = setup
     connect(s)
