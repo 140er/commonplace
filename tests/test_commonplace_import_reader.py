@@ -16,6 +16,7 @@ from commonplace.continuity_read import PrivateReader
 from commonplace.handoff.recall import Recall, ThreadNotFound
 from commonplace.import_sources import parse_import
 from commonplace.policy import Policy
+from tests._commonplace_helpers import functional_worker_transport as functional_worker_transport
 from tests.test_commonplace_email_auth import fresh as fresh
 from tests.test_commonplace_import_grant import (
     IMPORT_SCOPES,
@@ -246,12 +247,13 @@ def test_r03_recall_boundary(journey, tmp_path):
     assert not readable(person, malformed)
 
 
-def test_r04_continuity(live, monkeypatch):
+def test_r04_continuity(live, monkeypatch, request):
     j = live
     reader = mint(j)["token"]
     writer = j.pat()["token"]
     assert j.upload(body(), token=writer)["accepted"] == 1
     drain(j)
+    request.getfixturevalue("functional_worker_transport")
     own = j.stored()
     ctx = j.client.gateway.handoff
     ctx.call_tool(
