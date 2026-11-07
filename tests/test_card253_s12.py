@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sqlite3
 import threading
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -290,7 +291,7 @@ def test_card253_s12_completed_block_no_longer_deferred(worlds):
 
 
 @pytest.mark.parametrize(
-    "fault", ["page", "reader", "deadline", "missing-reader", "wrong-workspace"]
+    "fault", ["page", "final-page", "reader", "deadline", "missing-reader", "wrong-workspace"]
 )
 def test_card253_s12_incomplete_fixed_unavailable(worlds, monkeypatch, fault):
     replies = []
@@ -300,21 +301,21 @@ def test_card253_s12_incomplete_fixed_unavailable(worlds, monkeypatch, fault):
         if label == "present":
             put(w, "hidden", hidden=True)
         monkeypatch.setattr(w.store, "index_counts", lambda *_: pytest.fail("no global fallback"))
-        if fault == "page":
+        if fault in ("page", "final-page"):
             original = w.store.index_descriptors
             calls = []
 
             def broken(*args, _original=original, _calls=calls, **kwargs):
                 _calls.append(1)
-                if len(_calls) > 1:
+                if len(_calls) == (2 if fault == "page" else 4):
                     raise RuntimeError("private failure details")
                 return _original(*args, **kwargs)
 
             monkeypatch.setattr(w.store, "index_descriptors", broken)
         elif fault == "reader":
-            monkeypatch.setattr(w.service, "can_read", lambda *_: 1 / 0)
+            monkeypatch.setattr(w.service, "progress_can_read", lambda *_: 1 / 0)
         elif fault == "missing-reader":
-            monkeypatch.setattr(w.service, "can_read", None)
+            monkeypatch.setattr(w.service, "progress_can_read", None)
         elif fault == "wrong-workspace":
             original = w.service.index_status
             monkeypatch.setattr(
@@ -332,13 +333,48 @@ def test_card253_s12_incomplete_fixed_unavailable(worlds, monkeypatch, fault):
     assert replies == [(503, {"error": "Progress unavailable"})] * 2
 
 
+@pytest.mark.parametrize("fault", ["store", "private-reader"])
+def test_card253_s12_authority_fault_fixed_unavailable(worlds, monkeypatch, fault):
+    replies = []
+    for label in ("absent", "present"):
+        w = worlds(label)
+        put(w, "healthy", indexed=True)
+        failing = put(w, "faulted", indexed=True)
+        if label == "present":
+            put(w, "hidden", hidden=True)
+        assert poll(w)["threads_indexed"] == 2
+        recall = w.gateway.handoff.recall
+        target = w.store if fault == "store" else recall._private
+        method = "get" if fault == "store" else "readable"
+        original = getattr(target, method)
+        calls = []
+
+        def broken(*args, _original=original, _id=failing.id, _calls=calls, **kwargs):
+            stored_id = args[0] if fault == "store" else args[1].id
+            if stored_id == _id:
+                _calls.append(stored_id)
+                raise sqlite3.OperationalError("private authority failure details")
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(target, method, broken)
+        # Ordinary consumers still get the established deny-on-fault behavior.
+        assert recall.can_read(w.principal, failing.id) is False
+        calls.clear()
+        monkeypatch.setattr(w.store, "index_counts", lambda *_: pytest.fail("no global fallback"))
+        status, headers, raw = w.client.request("/api/search-index", cookie=w.cookie)
+        assert calls == [failing.id], "owner poll must reach the real authority fault"
+        assert headers["Cache-Control"] == "no-store"
+        replies.append((status, json.loads(raw)))
+    assert replies == [(503, {"error": "Progress unavailable"})] * 2
+
+
 def test_card253_s12_final_snapshot_excludes_changed_descriptor(worlds, monkeypatch):
     w = worlds("changed")
     stored = put(w, "visible", indexed=True)
     state = search_index.State()
     state.units_by_thread[stored.id] = 5
     w.service._index_states[w.ws] = state
-    original = w.service.can_read
+    original = w.service.progress_can_read
 
     def change(principal, stored_id):
         allowed = original(principal, stored_id)
@@ -349,7 +385,7 @@ def test_card253_s12_final_snapshot_excludes_changed_descriptor(worlds, monkeypa
         )
         return allowed
 
-    monkeypatch.setattr(w.service, "can_read", change)
+    monkeypatch.setattr(w.service, "progress_can_read", change)
     assert poll(w) == dict(state="idle", threads_indexed=0, threads_pending=0, units_written=0)
 
 
@@ -416,7 +452,7 @@ def test_card253_s12_bounded_metadata_polling(worlds, monkeypatch, record_proper
     def no_words(*args, **kwargs):
         pytest.fail("progress must never load message or chunk content")
 
-    monkeypatch.setattr(w.service, "can_read", reader)
+    monkeypatch.setattr(w.service, "progress_can_read", reader)
     monkeypatch.setattr(w.store, "index_descriptors", page)
     monkeypatch.setattr(w.store, "messages", no_words)
     monkeypatch.setattr(w.store, "chunks", no_words)
