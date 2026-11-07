@@ -132,6 +132,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Release email login waits for the accessible signed-in Board region after identity checks; step failure details retain exception messages through the shared credential redactor.
 
+  - Import release checks retain owner listing and exact read-back and require the write-only bearer to receive the not-found response without metadata.
+
   - Scripts are run by hand or by the release process; none runs on import or ships in the package.
 
   - Benchmarks are informational and never gate a change.
@@ -259,6 +261,7 @@ Format (read by `commonplace orch docs-check`):
   - Marked backup classification and snapshots use live synthetic B2 controls; direct-provider and version guards have observed base AssertionError regressions.
 
   - Synthetic token-slot proofs bind every envelope context field, reject operator/recovery wraps and test marked-workspace connection and backup refusal with an unmarked SQLCipher control.
+  - Import boundary fixtures use the real Recall authorization dependency while retaining frozen continuity doubles and control-count assertions without holder reads.
   - Imported-history consent: Synthetic reader journeys check unticked consent, unchanged old credentials, bounded shared holders, not-found refusals and source-range proof.
 
   - The suite itself under the coverage gate; `tests/test_commonplace_webhooks.py::test_dispatcher_thread_survives_an_unexpected_pass_error` checks that an unexpected delivery-pass error is logged without its private message and the dispatcher retries while staying alive.
@@ -485,6 +488,7 @@ Format (read by `commonplace orch docs-check`):
   - Provenance uses one bounded decoder and response-local access caches; extraction by a non-reader leaves the source cursor untouched.
 
   - Imported-history consent: Imported readers receive bounded immutable views, source-range proof and view-specific metadata; capture tails never inherit import authority.
+  - Ordinary transcript compatibility: Recall checks import identity fields only for imported threads; ordinary policy-only callers retain their read path.
   - Legacy import compatibility: Ordinary reads preserve three-part filer identities without rewriting stored data; reader views still require four-part identities.
 
   - A handoff never loses the source thread; continuity is append-only and resumable.

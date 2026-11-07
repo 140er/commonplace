@@ -154,9 +154,9 @@ class Recall:
 
     def _uses_import_view(self, principal, stored):
         return (
-            not principal.person
+            stored.source_thread_id.startswith(_GRANT_PREFIX)
+            and not principal.person
             and principal.policy.has_scope("memory:import:read")
-            and stored.source_thread_id.startswith(_GRANT_PREFIX)
         )
 
     def can_read(self, principal, stored_id: str) -> bool:

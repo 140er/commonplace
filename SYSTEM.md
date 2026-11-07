@@ -224,6 +224,7 @@ entry was written.
 
 ### Explicit imported-history reader consent
 
+  - Ordinary recall checks imported identity fields only for imported threads; the release journey verifies owner read-back and the write-only bearer’s metadata-free not-found response.
   - Legacy import compatibility: Existing three-part import identities retain ordinary filer-bound read access without data migration; consented reader views require complete four-part identities.
 
 - `memory:import` stays write-only.

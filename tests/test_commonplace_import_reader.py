@@ -597,7 +597,7 @@ def test_r07_range_gate(live, monkeypatch):
     p, own = proof_fixture(j)
     ctx = j.client.gateway.handoff
     monkeypatch.setattr(ctx.recall, "can_read", lambda *_: True)
-    monkeypatch.setattr(ctx.recall, "_import_eligible", lambda _: True)
+    monkeypatch.setattr(ctx.recall, "_import_eligible", lambda _: True, raising=False)
     # The worker's real mirror rows have authoritative ranges and verified spans.
     raw = ctx.call_tool(
         sessions.person_principal(j.client.db, p.user_id, p.workspace_id),
