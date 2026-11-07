@@ -325,3 +325,56 @@ def test_split_mark_is_a_checked_write(hub):
     assert any(
         route.tool == "card_split_done" and route.kind == "checked" for route in enforce.REST_ROUTES
     )
+
+
+def test_capacity_refusal_survives_missing_waiting_reason(hub, monkeypatch):
+    from commonplace.boards.service import BoardService
+    from tests._phase_b_helpers import cap, doing
+    from tests._split_helpers import take
+
+    w = world(hub)
+    target = w.card()
+    assert "waiting" in w.boards.task_show(target)
+    cap(w, 1)
+    doing(w, w.card(), w.b.actor)
+    before = w.boards.task_show(target)
+    monkeypatch.setattr(BoardService, "_waiting", lambda *args, **kwargs: None)
+    try:
+        result = take(w, target)
+    except TypeError:
+        result = None
+    assert isinstance(result, tuple) and result[0] == 409
+    assert result[1]["code"] == "project_limit" and result[1]["error"] == "project_limit 1/1"
+    after = w.boards.task_show(target)
+    assert after["version"] == before["version"] and after["events"] == before["events"]
+
+
+def test_card_list_shares_one_runner_read_and_usage(hub, monkeypatch):
+    from commonplace.boards.service import BoardService
+
+    w = world(hub, runner=True)
+    expected = {w.card() for _ in range(5)}
+    assert "waiting" in w.boards.task_show(min(expected))
+    from commonplace.projects import split
+
+    reads, usages = [], []
+    original_read, original_usage = split.runner_read, BoardService._usage
+
+    @contextmanager
+    def counted_read(*args, **kwargs):
+        reads.append("open")
+        with original_read(*args, **kwargs) as runner:
+            try:
+                yield runner
+            finally:
+                reads.append("close")
+
+    def counted_usage(self, *args, **kwargs):
+        usages.append(1)
+        return original_usage(self, *args, **kwargs)
+
+    monkeypatch.setattr(split, "runner_read", counted_read)
+    monkeypatch.setattr(BoardService, "_usage", counted_usage)
+    cards = w.boards.task_list(board="acme")
+    assert {card["number"] for card in cards} == expected
+    assert reads == ["open", "close"] and usages == [1]

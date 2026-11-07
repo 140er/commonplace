@@ -163,6 +163,7 @@ def test_guard_g6_routes_require_auth(hub, route, method):
 
 def test_guard_g7_no_private_or_outbound_dependencies():
     import ast
+    import re
     from pathlib import Path
 
     for name in ("commonplace/boards/why.py", "commonplace/projects/split.py"):
@@ -170,9 +171,17 @@ def test_guard_g7_no_private_or_outbound_dependencies():
         if not path.exists():
             continue
         source = path.read_text()
-        forbidden = ("/" + "home/", "edge" + "1", "jeff" + "rey", "cmmn" + ".dev", "t3" + "code")
-        assert not any(value in source.lower() for value in forbidden)
         tree = ast.parse(source)
+        # Pure modules contain no deployment URLs or absolute filesystem paths.
+        literals = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        assert not any(
+            re.search(r"https?://|(?:^|\s)/(?:[^/\s]+/){2}|[A-Za-z]:\\", value)
+            for value in literals
+        )
         imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
         imports += [
             alias.name
