@@ -721,7 +721,7 @@ def test_process_crash_restart_purges_without_replaying_delete(setup):
     s = setup
     connect(s)
     # Release this synthetic worker, then crash its replacement after disable-before-purge.
-    s.gateway.github._worker_lock.close()
+    s.gateway.github.close()
     program = """
 import os, sys, json
 from types import SimpleNamespace
@@ -731,6 +731,12 @@ from commonplace.github import GitHub, client
 client.request = lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected remote replay"))
 db = ControlDB(sys.argv[1])
 accounts.ensure_schema(db)
+if sys.argv[2] == "restart":
+    import time
+    import commonplace.github as github
+    from types import SimpleNamespace as NS
+    now = time.time() + github.WORKER_LEASE_TTL + 1
+    github.time = NS(time=lambda: now)
 g = GitHub(SimpleNamespace(db=db, sign_in=SimpleNamespace(providers={p.id:p for p in providers.configured()})))
 if sys.argv[2] == "crash":
     with db._lock, db._tx() as conn:
@@ -752,6 +758,19 @@ db.close()
         timeout=10,
     )
     assert crash.returncode == 17, crash.stderr
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
+
+    db2 = ControlDB(s.db.path)
+    try:
+        blocked = importlib.import_module("commonplace.github").GitHub(
+            SimpleNamespace(db=db2, sign_in=s.gateway.sign_in)
+        )
+        assert not blocked.ready
+        assert rows(s, "github_grants")[0]["disabled"] == 1
+    finally:
+        db2.close()
     restart = subprocess.run(
         [sys.executable, "-c", program, s.db.path, "restart"],
         capture_output=True,
@@ -760,7 +779,7 @@ db.close()
     )
     assert restart.returncode == 0, restart.stdout + restart.stderr
     assert json.loads(restart.stdout)["recovered"]
-    s.gateway.github = importlib.import_module("commonplace.github").GitHub(s.gateway)
+    importlib.import_module("commonplace.github").install(s.gateway)
     assert write(s)[0] == 409
     assert write(s, payload={"acknowledge": True})[0] == 200
 
@@ -1130,23 +1149,105 @@ def test_token_scope_evidence_required_without_optional_header(setup, monkeypatc
     assert len(deletes) == 1 and deletes[0][1].endswith("/token")
 
 
-def test_worker_liveness_is_outside_snapshot_and_still_fences_recovery(setup):
-    import fcntl
-    import os
+def test_worker_lease_heartbeat_and_expired_owner_fail_closed(setup):
+    s = setup
+    worker = s.gateway.github
+    assert worker.ready
+    with s.db._lock, s.db._tx() as conn:
+        conn.execute("UPDATE github_worker_lease SET expires_at=expires_at-10")
+        before = conn.execute("SELECT expires_at FROM github_worker_lease").fetchone()[0]
+        worker._fence(conn)
+        assert conn.execute("SELECT expires_at FROM github_worker_lease").fetchone()[0] > before
+        conn.execute("UPDATE github_worker_lease SET expires_at=0")
+    assert not worker.ready
+    with pytest.raises(providers.SignInError, match="github_pending"):
+        worker.recover()
+    assert write(s, "/api/github", "DELETE")[0] == 409
+
+
+def test_separate_runtime_roots_share_volume_recovery_fence(setup, monkeypatch, tmp_path):
     from pathlib import Path
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
 
     s = setup
-    assert hasattr(s.gateway, "github"), "GitHub lifecycle missing"
-    worker = s.gateway.github
-    lock = (
-        Path(worker._worker_lock.name)
-        if isinstance(worker._worker_lock.name, str)
-        else Path(os.readlink(f"/proc/self/fd/{worker._worker_lock.fileno()}"))
+    module = importlib.import_module("commonplace.github")
+    first = s.gateway.github
+    if hasattr(first, "close"):
+        first.close()
+    else:
+        first._worker_lock.close()
+
+    # Model container-private /tmp as well as different TMPDIR values. The legacy
+    # implementation hard-coded /tmp; changing TMPDIR alone would miss the bug.
+    def runtime(root):
+        root.mkdir()
+        monkeypatch.setenv("TMPDIR", str(root))
+        monkeypatch.setattr(
+            module, "Path", lambda value: root if value == "/tmp" else Path(value), raising=False
+        )
+
+    runtime(tmp_path / "container-a")
+    module.install(s.gateway)
+    begin(s)
+    s.db._conn.execute(
+        "UPDATE github_lifecycle SET disconnect_pending=1,active_exchanges=1,remote_work=1"
     )
-    assert not lock.is_relative_to(Path(s.db.path).resolve().parent), (
-        "liveness lock enters snapshot"
-    )
-    with lock.open("rb") as probe:
-        with pytest.raises(BlockingIOError):
-            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    assert worker.ready
+    before = {
+        table: rows(s, table)
+        for table in ("github_connect_flows", "github_confirmations", "github_lifecycle")
+    }
+    runtime(tmp_path / "container-b")
+    db2 = ControlDB(s.db.path)
+    try:
+        second = module.GitHub(SimpleNamespace(db=db2, sign_in=s.gateway.sign_in))
+        assert before == {table: rows(s, table) for table in before}, "live state recovered"
+        assert not second.ready, "second serve must not claim exclusive ownership"
+        with pytest.raises(providers.SignInError, match="github_pending"):
+            second.recover()
+        assert s.gateway.github.ready
+    finally:
+        db2.close()
+
+
+def test_worker_heartbeat_renews_and_stale_completion_cannot_touch_successor(setup, monkeypatch):
+    from types import SimpleNamespace
+
+    from commonplace.control_db import ControlDB
+
+    s = setup
+    module = importlib.import_module("commonplace.github")
+    s.gateway.github.close()
+    monkeypatch.setattr(module, "WORKER_HEARTBEAT", 0.02)
+    renewed = Event()
+    fence = module.GitHub._fence
+
+    def observed_fence(worker, conn):
+        fence(worker, conn)
+        renewed.set()
+
+    monkeypatch.setattr(module.GitHub, "_fence", observed_fence)
+    module.install(s.gateway)
+    assert renewed.wait(3), "background heartbeat did not renew"
+    old = s.gateway.github
+    # Stop only the heartbeat to model a suspended holder, leaving its lease.
+    old._stopped.set()
+    old._heartbeat_thread.join()
+    s.db._conn.execute("UPDATE github_worker_lease SET expires_at=0")
+    db2 = ControlDB(s.db.path)
+    try:
+        successor = module.GitHub(SimpleNamespace(db=db2, sign_in=s.gateway.sign_in))
+        assert successor.ready and not old.ready
+        s.db._conn.execute(
+            "INSERT OR REPLACE INTO github_lifecycle(user_id,active_exchanges,remote_work) VALUES (?,2,1)",
+            (s.uid,),
+        )
+        before = rows(s, "github_lifecycle")
+        with pytest.raises(providers.SignInError, match="github_pending"):
+            old.finish_exchange(s.uid)
+        assert rows(s, "github_lifecycle") == before
+        old.close()
+        assert successor.ready, "old close must not release a successor's lease"
+    finally:
+        db2.close()

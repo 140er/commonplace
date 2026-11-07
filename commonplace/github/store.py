@@ -11,6 +11,9 @@ from mempalace.sqlite_crypto import EncryptionError, protected_key
 from ..social.providers import SignInError
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS github_worker_lease (
+ id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, expires_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS github_lifecycle (
  user_id TEXT PRIMARY KEY REFERENCES users(id), generation INTEGER NOT NULL DEFAULT 0,
  disconnect_pending INTEGER NOT NULL DEFAULT 0, deleting INTEGER NOT NULL DEFAULT 0,

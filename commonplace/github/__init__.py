@@ -8,10 +8,10 @@ import math
 import os
 import re
 import secrets
-import stat
+import sqlite3
+import threading
 import time
 from dataclasses import replace
-from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .. import sessions, urls
@@ -28,6 +28,8 @@ COOKIE = "cmmn_github_connect"
 CALLBACK = "/app/auth/github/callback"
 ACCESS = "https://github.com/settings/applications"
 TTL = 600
+WORKER_LEASE_TTL = 30
+WORKER_HEARTBEAT = 5
 
 
 def enabled():
@@ -50,34 +52,71 @@ class GitHub:
         self.db = gateway.db
         self.store = Store(self.db)
         self._live = 0
-        self._worker_lock = None
-        self.ready = False
-        try:
-            import fcntl
+        self._owner = secrets.token_hex(32)
+        self._stopped = threading.Event()
+        self._heartbeat_thread = None
+        self._owns_lease = False
+        self.db.add_pre_close_callback(self.close)
+        # Claim and recovery share a short write transaction visible on the
+        # shared volume, regardless of private /tmp or volume mount paths.
+        with self.db._lock, self.db._tx() as conn:
+            now = time.time()
+            lease = conn.execute("SELECT expires_at FROM github_worker_lease WHERE id=1").fetchone()
+            if lease is None or lease["expires_at"] <= now:
+                conn.execute(
+                    "INSERT OR REPLACE INTO github_worker_lease VALUES (1,?,?)",
+                    (self._owner, now + WORKER_LEASE_TTL),
+                )
+                self._recover_rows(conn)
+                self._owns_lease = True
+        if self._owns_lease:
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat, daemon=True)
+            self._heartbeat_thread.start()
 
-            # Process liveness is runtime state, never part of a control snapshot.
-            # Use literal /tmp so workers with different TMPDIRs share one inode.
-            runtime = Path("/tmp") / f"commonplace-github-{os.getuid()}"
-            runtime.mkdir(mode=0o700, exist_ok=True)
-            info = runtime.lstat()
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise OSError("unsafe GitHub runtime directory")
-            identity = hashlib.sha256(os.fsencode(Path(self.db.path).resolve())).hexdigest()
-            fd = os.open(
-                runtime / f"{identity}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+    @property
+    def ready(self):
+        if not self._owns_lease or self._stopped.is_set():
+            return False
+        with self.db._lock:
+            return (
+                self.db._conn.execute(
+                    "SELECT 1 FROM github_worker_lease WHERE id=1 AND owner=? AND expires_at>?",
+                    (self._owner, time.time()),
+                ).fetchone()
+                is not None
             )
-            self._worker_lock = os.fdopen(fd, "a+b")
-            self.db.add_pre_close_callback(self._worker_lock.close)
+
+    def _fence(self, conn):
+        # Check alongside each mutation: an expired owner must not renew itself
+        # or settle the counters of its successor after a delayed remote reply.
+        now = time.time()
+        if (
+            self._stopped.is_set()
+            or conn.execute(
+                "UPDATE github_worker_lease SET expires_at=? WHERE id=1 AND owner=? AND expires_at>?",
+                (now + WORKER_LEASE_TTL, self._owner, now),
+            ).rowcount
+            != 1
+        ):
+            raise SignInError("github_pending")
+
+    def _heartbeat(self):
+        while not self._stopped.wait(WORKER_HEARTBEAT):
             try:
-                fcntl.flock(self._worker_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                fcntl.flock(self._worker_lock, fcntl.LOCK_SH)
-            else:
-                self.recover()
-            self.ready = True
-        except (ImportError, OSError):
-            # Unsupported locking never weakens a connection's crash fencing.
-            self.ready = False
+                with self.db._lock, self.db._tx() as conn:
+                    self._fence(conn)
+            except SignInError:
+                return
+            except sqlite3.Error:
+                # Retry on the next tick; an expired lease still fails closed.
+                continue
+
+    def close(self):
+        self._stopped.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join()
+        with self.db._lock, self.db._tx() as conn:
+            conn.execute("DELETE FROM github_worker_lease WHERE owner=?", (self._owner,))
 
     def provider(self):
         return self.gateway.sign_in.providers.get("github") if self.ready else None
@@ -215,6 +254,7 @@ class GitHub:
         state = "gc1_" + secrets.token_urlsafe(32)
         browser, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             life = self.store.lifecycle(conn, uid)
             grant = conn.execute("SELECT * FROM github_grants WHERE user_id=?", (uid,)).fetchone()
             if (
@@ -289,6 +329,7 @@ class GitHub:
             principal, session = self.principal(h)
             uid = principal.user_id
             with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 row = conn.execute(
                     "SELECT * FROM github_connect_flows WHERE state_hash=?",
                     (digest(parameters.get("state", "")),),
@@ -300,6 +341,7 @@ class GitHub:
                     "DELETE FROM github_connect_flows WHERE state_hash=?", (row["state_hash"],)
                 )
             with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 browser = sessions.cookie_value(h.headers.get("Cookie"), COOKIE)
                 if (
                     not browser
@@ -388,6 +430,7 @@ class GitHub:
                 "expires_at": expires_at,
             }
             with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 self.binding(conn, row, session, principal)
                 known = conn.execute(
                     "SELECT subject FROM user_identities WHERE provider='github' AND user_id=? AND subject=?",
@@ -453,6 +496,7 @@ class GitHub:
         accepted = False
         try:
             with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 row = conn.execute(
                     "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
                 ).fetchone()
@@ -472,6 +516,7 @@ class GitHub:
                 )
                 self._live += 1
             with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 self.binding(conn, row, session, principal)
                 if data.get("accept") is True:
                     self.commit(conn, uid, row, candidate)
@@ -489,7 +534,8 @@ class GitHub:
         try:
             return self.revoke_token(uid, token)
         except Exception:
-            with self.db._lock:
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 self.db._conn.execute(
                     "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
                 )
@@ -497,7 +543,8 @@ class GitHub:
 
     def revoke_token(self, uid, token):
         # Never revoke a token identical to the currently stored grant.
-        with self.db._lock:
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             grant = self.db._conn.execute(
                 "SELECT * FROM github_grants WHERE user_id=?", (uid,)
             ).fetchone()
@@ -515,7 +562,8 @@ class GitHub:
                     return False
         ok = self.revoke(token, grant=False)
         if not ok:
-            with self.db._lock:
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
                 self.db._conn.execute(
                     "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
                 )
@@ -541,6 +589,7 @@ class GitHub:
     def expire(self, uid):
         candidate = None
         with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             conn.execute(
                 "DELETE FROM github_connect_flows WHERE user_id=? AND expires_at<=?",
                 (uid, time.time()),
@@ -563,8 +612,9 @@ class GitHub:
             finally:
                 self.finish_exchange(uid)
             if not ok:
-                with self.db._lock:
-                    self.db._conn.execute(
+                with self.db._lock, self.db._tx() as conn:
+                    self._fence(conn)
+                    conn.execute(
                         "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
                     )
 
@@ -572,6 +622,7 @@ class GitHub:
         tokens = []
         grant = None
         with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             life = self.store.lifecycle(conn, uid)
             if life["disconnect_pending"]:
                 raise SignInError("github_pending")
@@ -602,6 +653,7 @@ class GitHub:
             if token != grant_token:
                 ok = self.revoke(token, grant=False) and ok
         with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
             conn.execute(
                 "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
@@ -629,6 +681,7 @@ class GitHub:
 
     def finish_exchange(self, uid):
         with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
             self._live -= 1
             conn.execute(
                 "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
@@ -649,31 +702,22 @@ class GitHub:
                     self.release_owner(conn, uid)
 
     def recover(self):
-        # Only an exclusive startup lock proves all earlier local workers stopped.
-        import fcntl
-
-        if self._live or self._worker_lock is None:
+        if self._live:
             raise SignInError("github_pending")
-        try:
-            fcntl.flock(self._worker_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SignInError("github_pending") from None
-        try:
-            self._recover_rows()
-        finally:
-            fcntl.flock(self._worker_lock, fcntl.LOCK_SH)
-
-    def _recover_rows(self):
         with self.db._lock, self.db._tx() as conn:
-            conn.execute(
-                "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
-            )
-            conn.execute("DELETE FROM github_connect_flows")
-            conn.execute("DELETE FROM github_confirmations")
-            conn.execute("DELETE FROM github_grants WHERE disabled=1")
-            conn.execute(
-                "UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0,remote_work=0"
-            )
+            self._fence(conn)
+            self._recover_rows(conn)
+
+    def _recover_rows(self, conn):
+        conn.execute(
+            "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
+        )
+        conn.execute("DELETE FROM github_connect_flows")
+        conn.execute("DELETE FROM github_confirmations")
+        conn.execute("DELETE FROM github_grants WHERE disabled=1")
+        conn.execute(
+            "UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0,remote_work=0"
+        )
 
 
 def install(gateway):

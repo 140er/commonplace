@@ -272,7 +272,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
-  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports.
+  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
 
   - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 
@@ -732,8 +732,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
-  - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an exclusive worker lock; live OAuth behavior and production ingress logging remain unproven.
+  - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an absent or expired shared-database lease; a competing serve cannot write GitHub state until restarted after release/expiry; live OAuth behavior and production ingress logging remain unproven.
 - **Tests:**
 
   - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
-  - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; worker liveness stays outside snapshots while retaining the recovery fence.
+  - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; a shared-volume lease fences recovery across private temporary directories without any lifetime lock file. Heartbeats renew the 30-second lease every 5 seconds, and expired owners fail closed on state writes.
