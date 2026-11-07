@@ -540,7 +540,12 @@ def test_origin_release_does_not_renew_claim(hub, fresh, state):
 @pytest.mark.parametrize("kind", ["legacy-null", "zero-with-agent-parent"])
 def test_restricted_origin_predicate_agrees(hub, fresh, kind):
     s = setup(hub, fresh)
-    edit(fresh.owner, s.n, restricted_origin=None if kind == "legacy-null" else 0)
+    edit(
+        fresh.owner,
+        s.n,
+        restricted_origin=None if kind == "legacy-null" else 0,
+        agent_parent=None if kind == "legacy-null" else s.c.principal.parent_agent,
+    )
     origin(s.k.work, s.n)
     refused(fresh.owner, s.n, lambda: s.k.work.task_heartbeat(s.n))
     fresh.owner.board_set("work", None)
