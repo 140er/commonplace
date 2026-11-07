@@ -534,3 +534,7 @@ entry was written.
 
 - The pinned handoff baseline overlays current board definitions and applies their live availability and workspace schema seam before strict HTTP and audit comparison; disabled opt-in tools remain absent.
 - Agent instructions keep the existing size budget; the project guide holds runner retry and delivery details.
+
+### Compatibility fixture coverage boundary
+
+- The overlaid board definitions share schemas between baseline and current servers; the strict fixture protects visibility, HTTP and audit compatibility, while focused card tests cover opt-in schema fields.

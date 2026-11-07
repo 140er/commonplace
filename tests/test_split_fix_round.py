@@ -339,10 +339,7 @@ def test_capacity_refusal_survives_missing_waiting_reason(hub, monkeypatch):
     doing(w, w.card(), w.b.actor)
     before = w.boards.task_show(target)
     monkeypatch.setattr(BoardService, "_waiting", lambda *args, **kwargs: None)
-    try:
-        result = take(w, target)
-    except TypeError:
-        result = None
+    result = take(w, target)
     assert isinstance(result, tuple) and result[0] == 409
     assert result[1]["code"] == "project_limit" and result[1]["error"] == "project_limit 1/1"
     after = w.boards.task_show(target)
