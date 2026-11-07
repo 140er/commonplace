@@ -50,6 +50,18 @@ class _ResponseAccess:
         except Exception:
             return False
 
+    def preview_allowed(self, node):
+        """A readable endpoint never proves the preview drawer's source range."""
+        if "drawer_preview" not in node and not (
+            node.get("drawer_id") and "connected_wing" in node
+        ):
+            return True
+        wing, room = node.get("drawer_wing"), node.get("drawer_room")
+        sensitive = (
+            isinstance(wing, str) and canonical_wing(wing) in (MIRROR_WING, "private_chats")
+        ) or _thread_id(room)
+        return not sensitive or self.ordinary_record({"room": room})
+
     def import_allowed(self, node):
         key = id(node)
         if key not in self.records:
@@ -80,6 +92,8 @@ def gate(gateway, principal, rule, result):
     def scrub(node):
         if isinstance(node, dict):
             fact = _is_fact(node)
+            if reader_scope and not access.preview_allowed(node):
+                return _DROP
             import_row = False
             if (
                 reader_scope

@@ -289,6 +289,7 @@ def test_imported_search_r06_acl_import_mcp_session_start(world, monkeypatch):
     assert "Relevant memories" in "\n".join(strings(reply))
 
 
+@pytest.mark.usefixtures("functional_worker_transport")
 def test_imported_search_r07_acl_import_startup_injection(world, monkeypatch):
     w = world
     text = words("startup")
