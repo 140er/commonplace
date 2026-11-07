@@ -1,5 +1,10 @@
 # Changelog
 
+- Add separate, unticked reader consent for connection-route imported history.
+  Import remains write-only; existing tokens retain their scopes. Consented
+  reads are bounded to the exact filer's imports and exclude capture tails.
+
+
 All notable changes to [MemPalace](https://github.com/MemPalace/mempalace) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
