@@ -222,7 +222,7 @@ def projected_status(service, workspace_id, principal):
     from commonplace.rules import checks
 
     try:
-        if principal.workspace_id != workspace_id or service.can_read is None:
+        if principal.workspace_id != workspace_id or service.progress_can_read is None:
             raise ProgressUnavailable()
         with checks.deadline(PROGRESS_TIMEOUT):
             store = service.store_for(workspace_id)
@@ -241,7 +241,7 @@ def projected_status(service, workspace_id, principal):
                         if stored.id <= after or stored.workspace_id != workspace_id:
                             raise ProgressUnavailable()
                         after = stored.id
-                        if service.can_read(principal, stored.id):
+                        if service.progress_can_read(principal, stored.id):
                             allowed[stored.id] = stored
                 # Revalidate concrete descriptors in the aggregation snapshot.
                 indexed, pending, readable = set(), set(), set()
