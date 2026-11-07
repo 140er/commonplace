@@ -388,9 +388,11 @@ def test_activation_and_raw_boundaries(world, monkeypatch):
 
 def test_connect_setup_and_legacy_card_star(world):
     w = world
-    recommended_events = w.setup["setup"]["webhook_add"]["events"].split(",")
+    recommended_events = w.setup["setup"]["webhook_add"]["events"]
+    # The original base returned a comma string; both bases must reach the
+    # missing-report assertion before enforcing the reconciled list contract.
     assert "project.report" in recommended_events
-    assert {"space_message", "card.created"} <= set(recommended_events)
+    assert recommended_events == ["space_message", "card.moved", "card.created", "project.report"]
     witness(w)
     webhooks.remove(w.db, w.seat, w.hook["id"])
     raw = webhooks.add(w.db, w.seat, "http://127.0.0.1/raw", kinds=["card.*"])
