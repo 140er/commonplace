@@ -764,14 +764,16 @@ class BoardService:
             + "AND ((t.proposal_status='pending' OR (t.status IN ('todo','doing') AND t.labels LIKE '%\"plan\"%')) "
             f"AND (t.proposed_to=? OR t.created_by IN ({placeholders}) OR {coordinator}=?) "
             "OR ((COALESCE(t.restricted_origin,1)!=0 OR t.agent_parent IS NOT NULL) "
-            "AND t.status IN ('backlog','todo','doing'))) ORDER BY t.id LIMIT 50"
+            f"AND t.status IN ('backlog','todo','doing') AND (? OR {coordinator}=?))) ORDER BY t.id LIMIT 50"
         )
         cap = 60 if budget == "session" else 200
         checked, last = 0, 0
         started = monotonic()
         with self._projection():
             while True:
-                rows = conn.execute(sql, (last, p.actor, *actors, p.actor)).fetchall()
+                rows = conn.execute(
+                    sql, (last, p.actor, *actors, p.actor, p.person and p.role == "owner", p.actor)
+                ).fetchall()
                 if not rows:
                     break
                 for row in rows:
