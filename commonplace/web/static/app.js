@@ -1513,6 +1513,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "handoff") handoffForm(state.card);
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
+      state.needsUI?.stop(); state.needsUI = null;
       voice.stop();
       clearWorkbenchChat();
       await api("/app/logout", { method: "POST" }); state.me = null; state.drafts.clear(); signin();
@@ -1735,7 +1736,7 @@ async function poll() {
   }
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
-document.addEventListener("session-expired", () => { clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
+document.addEventListener("session-expired", () => { state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
 window.addEventListener("pagehide", () => { clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
