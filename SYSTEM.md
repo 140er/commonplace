@@ -82,17 +82,6 @@ entry was written.
 ### Release email login readiness
 
 - The disposable release journey considers email login ready only after authenticated identity checks and the signed-in Board region appears; step failure reports retain exception messages with shared credential redaction.
-### Project seat wake recommendations
-
-- Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
-
-- Setup is advisory: Connect and reconnect neither register nor modify subscriptions.
-
-- Existing users must explicitly update their webhooks to receive card moves.
-
-- Message coordinator filtering and reply-loop suppression still apply.
-
-- With orchestration enabled, the recommendation also retains `card.created`.
 
 ### Restricted-origin release
 
@@ -381,6 +370,18 @@ appears in the owner queue again without changing its stored words or audit log.
 | CLI acts as owner | Yes, through data-dir access. |
 | Members' moves fire triggers | No. |
 | Model slots | Two (`main`, `worker`). |
+
+### Project seat wake recommendations
+
+- Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
+
+- Setup is advisory: Connect and reconnect neither register nor modify subscriptions.
+
+- Existing users must explicitly update their webhooks to receive card moves.
+
+- Message coordinator filtering and reply-loop suppression still apply.
+
+- With orchestration enabled, the recommendation also retains `card.created`.
 
 ### Thread-derived mutations and citations
 
