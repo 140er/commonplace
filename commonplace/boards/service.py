@@ -339,6 +339,7 @@ def needs_me(
     supervisors=None,
     coordinated=(),
     release_boards=(),
+    origin_pending=None,
     ask_owner=None,
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
@@ -383,6 +384,8 @@ def needs_me(
                 and row["review_kind"] == "decision"
             )
             if not owner_queue and not own_ask:
+                continue
+            if origin_pending is not None and origin_pending(row):
                 continue
             kind = None
             addressed = (
@@ -1262,6 +1265,15 @@ class BoardService:
             or not (self._approval_role(q, row) if role is _UNSET else role)
             or not (_plan_waiting(row) or row["proposal_status"] == "pending")
         )
+
+    def _origin_pending(self, row):
+        """Origin work stays in approvals even beyond its bounded display page."""
+        if not self._awaits_origin_release(row):
+            return False
+        p = self.principal
+        if p.person and p.role == "owner":
+            return self._origin_authority(row)[0] != "coordinator"
+        return self._can_release_origin(p, row) and self._origin_only(p, row)
 
     def _origin_item(self, conn, row, *, review_role=_UNSET):
         p = self.principal
@@ -3719,6 +3731,7 @@ class BoardService:
                 supervisors=self._supervisors,
                 coordinated=self.coordinated_ask_boards(),
                 release_boards=self.release_boards(),
+                origin_pending=self._origin_pending,
                 ask_owner=self._ask_owner,
             )
             approvals = self.approvals_for_me()

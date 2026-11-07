@@ -371,6 +371,7 @@ Format (read by `commonplace orch docs-check`):
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
   - Space profile/tool snapshots retain split and inbox visibility and card-schema additions, with current origin-release descriptions. Legacy NULL-origin and untrusted-policy controls isolate each predicate independently.
+  - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Origin security controls preserve creator, descendant, token, person-decision, terminal, hidden-tool and standard-member boundaries. Named mutations exercise unsafe lineage, unverifiable stamps, grant fallback, stored-holder revalidation and review/ask queue separation; controls are distinct from base RED evidence.
 
