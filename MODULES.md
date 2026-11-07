@@ -212,6 +212,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
+  - Off-mode capacity regressions preserve legacy refusal text and card state, including a coded admission refusal.
+
   - Card contract tests cover paired RED assertions, off-path guards, atomic key races, bounded retries and route busy responses with unchanged state.
 
   - All card requirement tests, including validation and error paths, have assertion-level RED evidence on the declared stack base; existing-database launch-role migration is checked directly.
@@ -333,6 +335,8 @@ Format (read by `commonplace orch docs-check`):
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
 - **Promises:**
+
+  - Disabled orchestration preserves legacy capacity refusals and never rewrites coded limit errors through the enabled waiting projection.
 
   - Enabled blocker updates are versioned and audited; pure waiting reasons drive views and claims, and SQL skips unresolved edges.
 

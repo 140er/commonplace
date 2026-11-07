@@ -378,3 +378,35 @@ def test_card_list_shares_one_runner_read_and_usage(hub, monkeypatch):
     cards = w.boards.task_list(board="acme")
     assert {card["number"] for card in cards} == expected
     assert reads == ["open", "close"] and usages == [1]
+
+
+def test_off_capacity_refusal_keeps_legacy_text_and_state(hub, monkeypatch):
+    from tests._phase_b_helpers import cap, doing
+    from tests._split_helpers import take
+
+    w = world(hub, on=False)
+    cap(w, 1)
+    doing(w, w.card(), w.b.actor)
+    target = w.card()
+    before = w.boards.task_show(target)
+    result = take(w, target)
+    assert result[0] == 400
+    assert "already has its maximum of 1 agents working" in result[1]["error"]
+
+    # Preserve even a coded refusal without consulting the enabled projection.
+    from commonplace.extensions import ToolError
+    from commonplace.projects import limits
+
+    def refuse(*args, **kwargs):
+        error = ToolError("no: project_limit 1/1")
+        error.code = "project_limit"
+        error.status = 409
+        raise error
+
+    monkeypatch.setattr(limits, "check", refuse)
+    result = take(w, target)
+    assert result[0] == 409
+    assert result[1]["error"] == "project_limit 1/1"
+    after = w.boards.task_show(target)
+    assert after["version"] == before["version"]
+    assert after["events"] == before["events"]
