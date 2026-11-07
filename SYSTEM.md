@@ -47,9 +47,6 @@ entry was written.
 - Trigger keys (`trig:<event>`) and owner `card_start` are independent of step keys; the latter also bypasses the non-person 24-hour rule.
 
 - These limits predate void semantics.
-### Owner manual assignment starts
-
-- **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
 
 ### Rules initialization deadline
 
@@ -280,6 +277,10 @@ entry was written.
 | CLI acts as owner | Yes, through data-dir access. |
 | Members' moves fire triggers | No. |
 | Model slots | Two (`main`, `worker`). |
+
+### Owner manual assignment starts
+
+- **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
 
 ## Numbers
 
