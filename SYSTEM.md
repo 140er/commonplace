@@ -1685,3 +1685,26 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   semantics are unchanged, including omission of malformed scalar citations.
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
+
+## Person private-read containment
+
+Person sessions derive private read authority only from the exact current
+workspace owner role. A missing, omitted or unexpected role grants no private
+read scope. Membership alone is insufficient. The admin callback eligibility
+reader uses that same role-aware policy. No stored membership or data migration
+is involved; owner policies retain their existing scopes and behavior.
+
+Members temporarily cannot read any private wing, including their own private
+notes, private chats, thread mirrors and diaries. Workstation wing aliases that
+require every wing, private-sensitive facts, secret/unwinged facts and the map's
+people overlay are also unavailable. Existing input-authorized projections retain
+shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
+labels, ranks or counts. Wildcard policies can reach those projections without
+private scope; literal-wing policies keep their existing tool visibility.
+
+Unprojected whole-palace operations remain unavailable to members: mesh estate,
+duplicate detection, checkpoint, source-wide deletion, tunnel/hallway deletion,
+memories-filed-away, and low-level coordination event/artifact/patch operations.
+They have the same unknown-operation refusal as unavailable operations. Explicit
+private reads remain independent of private data presence. This containment does
+not define a restricted estate response or restore filer-specific private reads.

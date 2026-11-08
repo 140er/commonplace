@@ -47,6 +47,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
+
   - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
@@ -576,6 +578,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
+
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
@@ -874,6 +878,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
+
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
@@ -984,6 +990,8 @@ Format (read by `commonplace orch docs-check`):
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
 - **Promises:**
+
+  - Person private read scope requires the exact current workspace owner role. Omitted, missing and unexpected roles fail closed; members temporarily lose their own private wings too.
 
   - Imported-history consent: OAuth reader consent is separate and unticked; defaults and person policies exclude the reader, while refresh descendants cannot regain a dropped scope.
 
@@ -1610,6 +1618,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 

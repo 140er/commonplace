@@ -727,11 +727,13 @@ class Mediator:
         ):
             return self._before_import_listing(principal, name, args)
         if name == "mempalace_list_drawers":
+            # The existing projection filters physical identities before paging,
+            # so wildcard shared readers do not need private read authority.
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
-                if not policy.can_read_wing(wing):
+                if wing and not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
                 args["wing"] = wing
             from .handoff.drawer_pages import finish_page, project
@@ -743,10 +745,10 @@ class Mediator:
             wing = args.get("wing")
             if not wing:
                 wing = _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
                 args["wing"] = wing
-            if not policy.can_read_wing(wing):
+            if wing and not policy.can_read_wing(wing):
                 raise Denied(f"this connection can't read wing {wing!r}")
         if name == "mempalace_list_rooms":
             from .handoff.overview import summary
