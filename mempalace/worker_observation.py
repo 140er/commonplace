@@ -22,6 +22,7 @@ from pathlib import Path
 MAX_U = (1 << 63) - 1
 MAX_LINE = 4096
 MAX_FILE = 4 * 1024 * 1024
+BEGIN_WAIT_SECONDS = 0.005
 # Frozen built-in names from mcp_server/schemas.py, never a mutable plugin catalog.
 TOOL_NAMES = frozenset(
     """
@@ -331,6 +332,7 @@ class Observer:
         self.queue = queue.Queue(maxsize=128)
         self.lock = threading.Lock()
         self.delivery_lock = threading.Lock()
+        self.acknowledgments = {}
         self.slots = threading.BoundedSemaphore(64)
         self.seq = self.ids = self.active = self.lost = 0
         self.closed = False
@@ -349,10 +351,17 @@ class Observer:
             self.lost = min(MAX_U, self.lost + 1)
 
     def _write(self, line):
+        delivered = False
         try:
             self.sink(line)
+            delivered = True
         except Exception:
             self.loss()
+        finally:
+            acknowledgment = self.acknowledgments.pop(line, None)
+            if acknowledgment is not None:
+                acknowledgment[1] = delivered
+                acknowledgment[0].set()
 
     def tick(self):
         try:
@@ -377,12 +386,14 @@ class Observer:
         # producer's serialization or sampling work.
         if not self.delivery_lock.acquire(blocking=False):
             self.loss()
-            return
+            return None
+        acknowledgment = None
+        line = None
         try:
             with self.lock:
                 if self.seq == MAX_U:
                     self.lost = min(MAX_U, self.lost + 1)
-                    return
+                    return None
                 self.seq += 1
                 seq, active, lost = self.seq, self.active, self.lost
             row = dict.fromkeys(KEYS)
@@ -445,11 +456,26 @@ class Observer:
             if self.synchronous:
                 self._write(line)
             else:
+                if event in {"call_begin", "phase_begin"}:
+                    acknowledgment = [threading.Event(), False]
+                    self.acknowledgments[line] = acknowledgment
                 self.queue.put_nowait(line)
         except Exception:
+            if acknowledgment is not None:
+                self.acknowledgments.pop(line, None)
+                acknowledgment = None
             self.loss()
         finally:
             self.delivery_lock.release()
+        # FIFO delivery acknowledges the sink result after it returns. A stalled sink
+        # or writer must not hold up storage work beyond this small wait budget.
+        # Timeout is a known observation loss, not a promise of a breadcrumb.
+        if acknowledgment is not None:
+            if not acknowledgment[0].wait(BEGIN_WAIT_SECONDS):
+                self.acknowledgments.pop(line, None)
+                self.loss()
+                return False
+            return acknowledgment[1]
 
     @contextmanager
     def scope(self, tool=None, mode="stdio", phase=None):
