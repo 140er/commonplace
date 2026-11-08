@@ -918,7 +918,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   as before this projection; content reads retain their separate range gate.
   Search `total_before_filter` can include hidden candidates inside a visible
   wing before the response gate filters them.
-- Other overview and KG page counts, legacy
+- Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
 ### Visible logical drawer pagination
@@ -1000,8 +1000,6 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 ### Thread-boundary residuals
 
-- Read counts in `kg_query.count`, `kg_timeline.count` and
-  `kg_timeline.total` can include hidden items.
 - Token-free plain-file provenance still has no local association proof on read.
   Typed drawer/closet citations now resolve current local metadata as described
   below; foreign identifiers already stored before this change are not purged.
@@ -1474,3 +1472,11 @@ These measurements are informational, not a merge threshold or a guarantee of
 zero latency overhead. Concurrent producer contention and a full queue can drop
 records; coverage claims require loss counts and complete begin/end pairs for
 the exported interval, not only sequential scratch results.
+
+
+### D1-visible KG pages and aggregates
+
+- Authenticated entity queries and timelines authorize wing, sensitivity and original source sets before counts, entity resolution, candidates and pagination. Stats derive participating entities, predicates and wings from visible facts; orphan entities do not contribute.
+- Metadata-only descriptor pages contain at most 500 facts. Authorization uses the workspace reader, including owner and imported source-range rules, within one request deadline. The final read snapshot excludes new or changed descriptors before hydrating fact text.
+- Incomplete acquisition returns a fixed empty envelope, preserving timeline limit and offset without partial totals or raw errors. Fact text, temporal buckets and any-readable-source mixed facts remain intact; citation scrubbing follows eligibility. Reads do not create a missing graph or write an intent log.
+- These projections preserve local unscoped reads, O4 stored rows, O8 external-id limitations and the remaining provenance exceptions. D9.1 = A and D9.2 = A remain LOCKED, including accepted quota deferral caused by actually blocked readable work.
