@@ -217,11 +217,10 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       if (project && !board?.wing) throw new Error("Project memory unavailable");
       const notice = mount.querySelector("[data-map-notice]");
       notice.hidden = false;
-      try {
-        const viewer = await api("/api/me");
-        if (stopped || epoch !== searchEpoch) return;
-        notice.hidden = viewer.can_admin === true;
-      } catch { /* Unproved identity keeps the notice visible; the graph has its own read boundary. */ }
+      // Identity only controls the notice; its deadline never delays graph loading.
+      api("/api/me", { timeoutMs: 10000 }).then((viewer) => {
+        if (!stopped && epoch === searchEpoch) notice.hidden = viewer?.can_admin === true;
+      }, () => {});
       if (stopped || epoch !== searchEpoch) return;
       const graph = await api(`/api/memory/map${board ? `?${new URLSearchParams({ theme: board.wing })}` : ""}`);
       if (stopped || epoch !== searchEpoch) return;

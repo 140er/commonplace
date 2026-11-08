@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 const source = await readFile(new URL('../commonplace/web/static/memory.js', import.meta.url), 'utf8');
 const listeners = new Map();
-const notice = { hidden: true };
+let notice = { hidden: true };
 let canAdmin = false;
-const mount = { innerHTML: '', addEventListener(t, f) { listeners.set(t, f); }, removeEventListener() {}, querySelector(selector) { return selector === "[data-map-notice]" ? notice : this; }, querySelectorAll() { return []; } };
+const mount = { _html: '', get innerHTML() { return this._html; }, set innerHTML(value) { this._html = value; notice = { hidden: !value.includes('data-map-notice') }; }, addEventListener(t, f) { listeners.set(t, f); }, removeEventListener() {}, querySelector(selector) { return selector === "[data-map-notice]" ? notice : this; }, querySelectorAll() { return []; } };
 const panel = { ...mount };
 let mounted = 0, disposed = 0;
 const paths = [];
@@ -29,6 +29,47 @@ if (process.argv[2] === 'entry') {
   assert.deepEqual(paths, ['/api/me', '/api/memory/map?theme=project_atlas']);
   assert.equal(notice.hidden, false, 'Failed identity proof must keep the notice visible');
   assert.doesNotMatch(mount.innerHTML, /Map could not be loaded/);
+  ui.stop();
+} else if (['me_pending', 'me_null', 'me_stale', 'me_stopped'].includes(process.argv[2])) {
+  const mode = process.argv[2];
+  const identities = [], options = [];
+  const ui = createMemory({ mount, panel, boards: context.boards,
+    api: (path, opts) => {
+      paths.push(path);
+      if (path !== '/api/me') return Promise.resolve(graph);
+      options.push(opts);
+      return new Promise(resolve => identities.push(resolve));
+    },
+  });
+  const first = ui.showMap('atlas');
+  const oldNotice = notice;
+  await new Promise(resolve => setImmediate(resolve));
+  if (mode === 'me_pending') {
+    assert.equal(mounted, 1, 'Pending identity must not block the map');
+    assert.equal(notice.hidden, false);
+    assert.equal(options[0]?.timeoutMs, 10000, 'Identity must have a bounded deadline');
+  } else if (mode === 'me_null') {
+    identities[0](null);
+    await first;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(mounted, 1);
+    assert.equal(notice.hidden, false);
+  } else if (mode === 'me_stale') {
+    const second = ui.showMap();
+    const currentNotice = notice;
+    identities[1]({ can_admin: false });
+    identities[0]({ can_admin: true });
+    await Promise.all([first, second]);
+    assert.notEqual(oldNotice, currentNotice);
+    assert.equal(oldNotice.hidden, false);
+    assert.equal(currentNotice.hidden, false, 'Old owner proof must not clear the current notice');
+  } else {
+    ui.stop();
+    identities[0]({ can_admin: true });
+    await first;
+    assert.equal(oldNotice.hidden, false, 'Stopped identity proof must not mutate the notice');
+    assert.equal(mounted, disposed);
+  }
   ui.stop();
 } else {
   const ui = createMemory({ mount, panel, api: context.api, boards: context.boards });

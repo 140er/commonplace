@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("case", ["entry", "mount", "me_failure"])
+@pytest.mark.parametrize(
+    "case", ["entry", "mount", "me_failure", "me_pending", "me_null", "me_stale", "me_stopped"]
+)
 def test_memory_map_mode(case):
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("memory_map_restore.mjs")), case],

@@ -610,6 +610,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Map regressions include failed identity refresh, RuntimeError drawer lookups and private room/origin/approval references, with ordinary-reference controls.
 
+  - Map regressions include pending, failed, null and stale identity refreshes, RuntimeError drawer lookups, ordinary drawer rooms and public/private thread-link path controls; reference caching is request-local.
+
   - Map citation regressions cover member-owned private sources, fact_sources rows, thread topics, failed lookups, orphan people and wildcard theme refusal parity.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
@@ -1684,6 +1686,8 @@ Format (read by `commonplace orch docs-check`):
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - A failed map identity refresh retains the conservative notice while graph loading continues independently.
+
+  - Map identity refresh runs concurrently with graph loading under a 10-second deadline; pending, failed or null identity retains the notice and stale or stopped reads cannot clear it.
 
   - Map opening refreshes person identity for its shortened privacy notice; the list-mode entry stays compact.
 

@@ -446,6 +446,10 @@ def _map_private_reference(ctx, value, cache):
     """Only thread-naming derived fields take part in the map citation check."""
     from .handoff.provenance_refs import REFUSE, label_tokens, refs
 
+    # Separate reference decisions from thread lookups in this request's cache.
+    key = ("reference", value) if isinstance(value, str) else None
+    if key is not None and key in cache:
+        return cache[key]
     parsed = refs(value)
     if parsed is REFUSE:
         # Recognition failure alone must not hide an ordinary non-thread field.
@@ -455,17 +459,20 @@ def _map_private_reference(ctx, value, cache):
         threads = set(parsed.tokens)
         text = parsed.text or ""
     if text.startswith(("thr_", "mcp:")):
-        threads.add(text)
+        threads.add(text.split("/", 1)[0])
     try:
         link = urlsplit(text)
         if link.scheme == "t3-thread" and link.netloc == "v1":
-            threads.add(link.path.lstrip("/"))
+            threads.add(link.path.lstrip("/").split("/", 1)[0])
         elif link.path.startswith("/app/threads/"):
-            threads.add(link.path.removeprefix("/app/threads/"))
+            threads.add(link.path.removeprefix("/app/threads/").split("/", 1)[0])
     except ValueError:
         # An ordinary, malformed non-thread URL is not a citation.
         pass
-    return any(_map_private_thread(ctx, thread, cache) for thread in threads)
+    private = any(_map_private_thread(ctx, thread, cache) for thread in threads)
+    if key is not None:
+        cache[key] = private
+    return private
 
 
 def _recent(ctx, limit, theme=None, *, hide_private=False):
