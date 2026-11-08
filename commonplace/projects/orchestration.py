@@ -109,6 +109,7 @@ class Usage:
 
 
 def usage(board_conn, runner_conn, *, board_id, board_slug, workers, now, lease=False):
+    """Count current slots; absent runner input supplies no jobs/config override."""
     from commonplace.runner.jobs import _after
 
     cards = {
@@ -125,11 +126,17 @@ def usage(board_conn, runner_conn, *, board_id, board_slug, workers, now, lease=
     states = (
         "'leased','starting','uncertain'" if lease else "'queued','leased','starting','uncertain'"
     )
-    for job in runner_conn.execute(
-        "SELECT task_number,state FROM runner_jobs WHERE board_slug=? AND "
-        f"(state IN ({states}) OR (state='started' AND started_at>?))",
-        (board_slug, _after(now, -3600)),
-    ):
+    job_rows = (
+        runner_conn.execute(
+            "SELECT task_number,state FROM runner_jobs WHERE board_slug=? AND "
+            f"(state IN ({states}) OR (state='started' AND started_at>?))",
+            (board_slug, _after(now, -3600)),
+        )
+        if runner_conn is not None
+        and runner_conn.execute("SELECT 1 FROM sqlite_master WHERE name='runner_jobs'").fetchone()
+        else ()
+    )
+    for job in job_rows:
         card = cards.get(job["task_number"])
         if job["state"] == "started" and (card is None or card["status"] not in ("todo", "doing")):
             continue
@@ -143,7 +150,10 @@ def usage(board_conn, runner_conn, *, board_id, board_slug, workers, now, lease=
             continue
         slots.add(("card", job["task_number"]))
     config_cap = None
-    if runner_conn.execute("SELECT 1 FROM sqlite_master WHERE name='orch_configs'").fetchone():
+    if (
+        runner_conn is not None
+        and runner_conn.execute("SELECT 1 FROM sqlite_master WHERE name='orch_configs'").fetchone()
+    ):
         from commonplace.orch import store
 
         version = store.accepted_in(runner_conn, board_slug)
