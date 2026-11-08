@@ -356,6 +356,7 @@ def test_pat_cannot_approve_oauth_consent(client):
         "https://example.com/callback#",
         "https://user:pass@example.com/callback",
         "https://example.com:bad/callback",
+        "http://[::1]:5555/callback",
         "javascript:alert(1)",
         "/callback",
         "https://example.com/\r\nInjected:x",
@@ -380,7 +381,6 @@ def test_registration_rejects_unsafe_redirects(uri, tmp_path):
         "https://chatgpt.com/connector_platform/oauth/callback",
         "http://localhost:5555/callback",
         "http://127.0.0.1:5555/callback",
-        "http://[::1]:5555/callback",
     ],
 )
 def test_registration_accepts_https_or_loopback_only(uri):
@@ -742,7 +742,6 @@ def _form_action(headers):
     [
         ("https://MCP.example:8443/callback?fixed=1", "https://mcp.example:8443"),
         ("http://127.0.0.1:54321/callback", "http://127.0.0.1:54321"),
-        ("http://[::1]:54321/callback", "http://[::1]:54321"),
         ("https://client.example/callback;path='ok',?q=1", "https://client.example"),
     ],
 )
@@ -810,6 +809,7 @@ def test_invalid_authorization_never_renders_external_form_action(client, monkey
         "https://bad_label.example/callback",
         "https://client.example:/callback",
         "https://[2001:db8::1]/callback",
+        "http://[::1]:54321/callback",
     ],
 )
 def test_hostile_registered_redirect_fails_closed(client, uri):
@@ -830,13 +830,22 @@ def test_hostile_registered_redirect_fails_closed(client, uri):
     )
 
 
-@pytest.mark.parametrize("flow", ["consent", "login_retry", "consent_retry"])
-def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
+@pytest.mark.parametrize(
+    "flow,host",
+    [
+        ("consent", "127.0.0.1"),
+        ("login_retry", "127.0.0.1"),
+        ("consent_retry", "127.0.0.1"),
+        ("consent", "::1"),
+    ],
+)
+def test_consent_chromium_cross_origin_submit(client, flow, host, pytestconfig):
     """Run explicitly with heavy --browser and scripts/requirements-release.txt.
 
     Only synthetic credentials in an ephemeral DB; never log callback queries.
-    A CSP violation ends the wait too, so base RED is an assertion, not a timeout.
+    A bounded callback wait makes blocked base navigation fail by assertion.
     """
+    import socket
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -844,6 +853,7 @@ def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
 
     assert not pytestconfig.getoption("showlocals"), "Use --no-showlocals"
     received = []
+    callback_arrived = threading.Event()
 
     class Callback(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -851,20 +861,45 @@ def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
 
         def do_GET(self):
             received.append(parse_qs(urlsplit(self.path).query))
+            callback_arrived.set()
             payload = b"<title>callback-received</title>"
             self.send_response(200)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
 
-    target = ThreadingHTTPServer(("127.0.0.1", 0), Callback)
+    class CallbackServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+
+    target = CallbackServer((host, 0), Callback)
     thread = threading.Thread(target=target.serve_forever, kwargs={"poll_interval": 0.05})
     thread.start()
     origin = f"http://127.0.0.1:{client.hub.port}"
-    callback_origin = f"http://127.0.0.1:{target.server_port}"
+    authority = f"[{host}]" if host == "::1" else host
+    callback_origin = f"http://{authority}:{target.server_port}"
     console = []
+    violations = []
+
+    def sanitized(message):
+        return re.sub(
+            r"https?://[^\s'\"]+",
+            lambda m: m[0].split("?", 1)[0] + "?<redacted>",
+            message,
+        )
+
     try:
-        cid = client.register(redirect_uris=[callback_origin + "/callback"])
+        if host == "::1":
+            response = client.request(
+                "POST", "/oauth/register", {"redirect_uris": [callback_origin + "/callback"]}
+            )
+            if response[0] == 400:
+                assert_error(response, "invalid_redirect_uri")
+                print("Chromium IPv6 flow refused before consent: invalid_redirect_uri")
+                return
+            assert response[0] == 201
+            cid = json.loads(response[2])["client_id"]
+        else:
+            cid = client.register(redirect_uris=[callback_origin + "/callback"])
         path = client.authorize_path(
             cid, redirect_uri=callback_origin + "/callback", state="browser-test"
         )
@@ -873,7 +908,10 @@ def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
             try:
                 context = browser.new_context()
                 page = context.new_page()
-                page.on("console", lambda message: console.append(message.text))
+                page.on("console", lambda message: console.append(sanitized(message.text)))
+                page.expose_function(
+                    "recordViolation", lambda directive: violations.append(directive)
+                )
                 if flow == "consent":
                     client.login()
                     context.add_cookies(
@@ -912,29 +950,21 @@ def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
                         page.get_by_role("button", name="Sign in", exact=True).click()
                         assert page.get_by_role("button", name="Allow", exact=True).count() == 1
                 page.evaluate("""document.addEventListener('securitypolicyviolation', e => {
-                    if (e.effectiveDirective === 'form-action') document.title = 'csp-blocked';
+                    window.recordViolation(e.effectiveDirective);
                 });""")
-                with page.expect_response(lambda r: r.request.method == "POST") as submitted:
-                    page.get_by_role("button", name="Allow", exact=True).click(no_wait_after=True)
-                assert submitted.value.status == 303
-                page.wait_for_function(
-                    "['callback-received', 'csp-blocked'].includes(document.title)"
+                page.get_by_role("button", name="Allow", exact=True).click(no_wait_after=True)
+                arrived = callback_arrived.wait(timeout=5)
+                # Dispatch queued console/binding events after the server-side wait.
+                page.wait_for_timeout(100)
+                safe_console = [message for message in console if "form-action" in message]
+                evidence = f"Chromium {flow}/{host}: arrived={arrived}; CSP console={safe_console}; violations={violations}"
+                print(evidence)
+                assert arrived, evidence
+                assert host != "::1", "IPv6 redirects must be refused before consent"
+                correct_origin = urlsplit(page.url).netloc == urlsplit(callback_origin).netloc
+                assert correct_origin and len(received) == 1, (
+                    "Must reach the other origin exactly once"
                 )
-                blocked = page.title() == "csp-blocked"
-                # Chromium's blocked URL contains a code: remove all query text.
-                safe_console = [
-                    re.sub(
-                        r"https?://[^\s'\"]+",
-                        lambda m: m[0].split("?", 1)[0] + "?<redacted>",
-                        message,
-                    )
-                    for message in console
-                    if "form-action" in message
-                ]
-                print(f"Chromium {flow}: blocked={blocked}; CSP console={safe_console}")
-                assert not blocked, "Chromium blocked the real consent redirect via form-action CSP"
-                arrived = urlsplit(page.url).netloc == urlsplit(callback_origin).netloc
-                assert arrived and len(received) == 1, "Must reach the other origin exactly once"
                 valid_query = bool(received[0].get("code")) and received[0].get("state") == [
                     "browser-test"
                 ]

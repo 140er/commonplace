@@ -72,11 +72,9 @@ def _redirect_origin(uri) -> str | None:
         if parts.netloc.endswith(":"):
             return None
         host = host.lower()
-        if ":" in host:
-            if not re.fullmatch(r"[0-9a-f:]+", host) or not ipaddress.IPv6Address(host).is_loopback:
-                return None
-            host = f"[{host}]"
-        elif len(host) > 253 or not all(
+        # CSP host-source has no IPv6-literal syntax. Do not allow a redirect
+        # that would need a broader scheme source to complete browser consent.
+        if len(host) > 253 or not all(
             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
             for label in host.removesuffix(".").split(".")
         ):

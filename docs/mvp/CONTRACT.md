@@ -198,9 +198,9 @@ Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JS
 
 OAuth consent permits only `'self'` and the exact validated callback origin in
 CSP `form-action`, so browser form redirects to third-party clients work. Login
-and generic HTML/error pages remain self-only. Strict parsed DNS/loopback-IPv6
-host and numeric-port validation rejects unsafe new or legacy redirect URIs
-through the existing invalid-redirect path; HTTPS/loopback HTTP schemes and
+and generic HTML/error pages remain self-only. Strict parsed DNS
+host and numeric-port validation, including refusal of all IPv6 literals, rejects unsafe new or legacy redirect URIs
+through the existing invalid-redirect path (Chromium ignores IPv6 CSP host-sources); HTTPS/loopback HTTP schemes and
 exact registered-URI matching remain unchanged.
 
 
