@@ -459,7 +459,12 @@ def test_card253_s07_search_scope_unforgeable(kgworld, monkeypatch, scope):
     monkeypatch.setattr(WorkerClient, "post", observed)
     expected = call(w, TOOLS[0], entity="fixed_entity", search=True)
     reply = call(w, TOOLS[0], entity="fixed_entity", search=True, thread_scope=scope)
-    assert len(forwarded) == 2 and all("thread_scope" not in args for args in forwarded)
+    # Each public call discards client scope and issues its own probe/final read.
+    assert len(forwarded) == 4
+    assert forwarded[0] == forwarded[2] and forwarded[1] == forwarded[3]
+    assert forwarded[0]["thread_scope"] == {"probe": True, "after": None}
+    allowed = forwarded[1]["thread_scope"]["allow"]
+    assert allowed and all(w.hidden.id not in row["threads"] for row in allowed)
     assert reply == expected and "probe" not in reply
     assert w.hidden.id not in str(reply)
 
@@ -484,3 +489,117 @@ def test_card253_s07_invalid_pagination(world, args):
         "limit": 100,
         "offset": 0,
     }
+
+
+@pytest.fixture
+def fixed_search_clock(monkeypatch):
+    from datetime import datetime, timezone
+
+    from mempalace.searcher import facts
+
+    original = facts.search_facts
+    now = datetime.now(timezone.utc)
+
+    def frozen(*args, **kwargs):
+        return original(*args, now=now, **kwargs)
+
+    monkeypatch.setattr(facts, "search_facts", frozen)
+
+
+@pytest.mark.parametrize("flag", ["false", "no", "off", "0", " FALSE "])
+@pytest.mark.parametrize("entity", ["fixed_entity", "hidden_subject", "Hidden"])
+def test_card253_s07_r1_string_boolean(kgworld, flag, entity):
+    w = kgworld
+    named = w.kg.add_triple(
+        "Hidden Partner", "uses", "hidden_endpoint", wing="wing_hidden", source_thread=w.hidden.id
+    )
+    assert call(w, TOOLS[0], entity="fixed_entity", search=False)["count"] == 1
+    present = call(w, TOOLS[0], entity=entity, search=flag)
+    remove_hidden(w)
+    with w.kg._lock:
+        w.kg._conn().execute("DELETE FROM triples WHERE id=?", (named,))
+        w.kg._conn().commit()
+    absent = call(w, TOOLS[0], entity=entity, search=flag)
+    assert present == absent, "string boolean changed hidden counts or labels"
+    assert present.get("denied") and present.get("error") == "'search' must be true or false"
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3])
+@pytest.mark.parametrize("enrich", [False, True])
+def test_card253_s07_r1_search_page(kgworld, fixed_search_clock, limit, enrich):
+    w = kgworld
+    # Fill even the enrichment route's fourfold overfetch with H-only facts.
+    hidden = [
+        w.kg.add_triple(
+            "fixed_entity",
+            f"hidden{i}",
+            f"secret{i}",
+            wing="wing_fixture",
+            source_thread=w.hidden.id,
+        )
+        for i in range(13)
+    ]
+    with w.kg._lock:
+        for fact in hidden:
+            w.kg._conn().execute(
+                "UPDATE triples SET approval_status='approved' WHERE id=?", (fact,)
+            )
+        w.kg._conn().commit()
+    if enrich:
+        token = w.h.token(
+            "search-reader",
+            user=w.h.db.authenticate_token(w.tokens["A"]).user_id,
+            tools=[*TOOLS, "mempalace_search"],
+            scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+            read_wings=["*"],
+            trust="trusted",
+        )
+        w.tokens["A"] = token
+        tool, args = (
+            "mempalace_search",
+            {"query": "fixed entity", "limit": limit, "wing": "wing_fixture"},
+        )
+    else:
+        tool, args = TOOLS[0], {"entity": "fixed entity", "search": True, "limit": limit}
+    if enrich:
+        import shutil
+
+        palace = Path(w.mcp._config.palace_path)
+        shutil.copytree(palace, palace.with_name("control"), dirs_exist_ok=True)
+    present = call(w, tool, **args)
+    remove_hidden(w)
+    with w.kg._lock:
+        for fact in hidden:
+            w.kg._conn().execute("DELETE FROM triples WHERE id=?", (fact,))
+        w.kg._conn().commit()
+    absent = call(w, tool, **args)
+    assert present == absent, "hidden facts shifted search ranking or page"
+    assert [f["object"] for f in present["facts"]] == ["readable"]
+
+
+@pytest.mark.parametrize("limit,offset", [("1", "0"), (" +2 ", "1"), (3.0, 0.0)])
+def test_card253_s07_r1_numeric_page(kgworld, limit, offset):
+    w = kgworld
+    typed = call(w, TOOLS[1], wings=["wing_fixture"], limit=int(limit), offset=int(offset))
+    converted = call(w, TOOLS[1], wings=["wing_fixture"], limit=limit, offset=offset)
+    assert converted == typed, "protocol integer input lost the timeline"
+
+
+@pytest.mark.parametrize("flag", ["false", "no", "off", "0", " FALSE "])
+def test_card253_s07_r1_strict_worker_search(world, flag):
+    refused = False
+    try:
+        world.mcp.validate_tool_arguments(TOOLS[0], {"entity": "fixed_entity", "search": flag})
+    except ValueError:
+        refused = True
+    assert refused, "worker coerced a non-boolean search switch"
+
+
+def test_card253_s07_r1_search_statistics(kgworld, fixed_search_clock):
+    w = kgworld
+    w.kg.add_triple("fixed", "uses", "secondary", wing="wing_fixture", source_thread=w.readable.id)
+    present = call(w, TOOLS[0], entity="fixed entity", search=True, limit=100)
+    remove_hidden(w)
+    absent = call(w, TOOLS[0], entity="fixed entity", search=True, limit=100)
+    assert present == absent, "hidden corpus changed visible lexical scores"
+    assert len(present["facts"]) == 2

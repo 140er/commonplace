@@ -7,12 +7,33 @@ from .mirror_access import gate, reader
 
 
 def project(gateway, principal, workers, name, args):
+    from commonplace.gateway import WORKER_TIMEOUT_S
+    from mempalace import mcp_server as mcp
+
+    args = dict(args)
     suffix = name.removeprefix("mempalace_kg_")
-    offset, limit = args.get("offset", 0), args.get("limit", 100)
-    valid_page = type(offset) is int and type(limit) is int
-    if not valid_page:
-        offset, limit = 0, 100
+    if suffix == "query" and args.get("search") is True:
+        suffix = "search"
+    properties = mcp.TOOLS[name]["input_schema"]["properties"]
+    try:
+        limit = mcp._coerce_argument(
+            args.get("limit", 100),
+            properties.get("limit", {"type": "integer", "minimum": 1, "maximum": 100}),
+            "limit",
+        )
+        offset = mcp._coerce_argument(
+            args.get("offset", 0),
+            properties.get("offset", {"type": "integer", "minimum": 0}),
+            "offset",
+        )
+        valid_page = True
+        for key, value in (("limit", limit), ("offset", offset)):
+            if key in args:
+                args[key] = value
+    except (ValueError, TypeError):
+        valid_page, offset, limit = False, 0, 100
     empty = {
+        "search": {"facts": []},
         "query": {
             "entity": args.get("entity"),
             "as_of": args.get("as_of"),
@@ -44,7 +65,7 @@ def project(gateway, principal, workers, name, args):
         return empty
     try:
         gateway.handoff.store_for(principal.workspace_id)
-        with checks.deadline(660):
+        with checks.deadline(WORKER_TIMEOUT_S):
             access, after, allowed = reader(gateway, principal), None, []
             policy = principal.policy
             while True:
@@ -107,7 +128,12 @@ def project(gateway, principal, workers, name, args):
             result = workers.call_tool(
                 principal, name, {**args, "thread_scope": {"allow": allowed}}
             )
-            if not isinstance(result, dict) or "error" in result or not set(empty) <= set(result):
+            if (
+                not isinstance(result, dict)
+                or "error" in result
+                or result.get("facts_error")
+                or not set(empty) <= set(result)
+            ):
                 return empty
             cleaned = gate(gateway, principal, "kg_read", result, access=access)
             # The final citation scrub may not drop a fact after it contributed

@@ -1991,6 +1991,57 @@ class KnowledgeGraph:
         with self._lock:
             if not self._fact_index_ready:
                 raise RuntimeError("Fact search index unavailable")
+            if _read_ids.get() is not None:
+                # Global FTS vocabulary/BM25 and seed caps include hidden facts.
+                # Rank the complete authorized corpus using the existing lexical
+                # scorer; only these rows may affect frequencies or candidates.
+                from .searcher.facts import _words
+
+                rows = [
+                    dict(row)
+                    for row in self._conn().execute(
+                        "SELECT t.*, s.name AS subject_name, o.name AS object_name "
+                        "FROM triples t JOIN entities s ON s.id=t.subject "
+                        "JOIN entities o ON o.id=t.object WHERE 1"
+                        + visible_sql
+                        + temporal_sql
+                        + " ORDER BY t.id",
+                        [*params, *temporal_params],
+                    )
+                ]
+                frequencies = dict.fromkeys(tokens, 0)
+                matching = []
+                for row in rows:
+                    words = _words(
+                        " ".join((row["subject_name"], row["predicate"], row["object_name"]))
+                    )
+                    matched = tokens & words
+                    for word in matched:
+                        frequencies[word] += 1
+                    if matched:
+                        matching.append(row)
+                sources = self.sources([row["id"] for row in matching])
+                source_fields = (
+                    "source_thread",
+                    "source_seq_start",
+                    "source_seq_end",
+                    "source_drawer_id",
+                    "source_file",
+                    "added_at",
+                    *fact_provenance.COLUMNS,
+                )
+                return [
+                    {
+                        **row,
+                        "sources": [
+                            {**dict.fromkeys(source_fields), **source}
+                            for source in sources.get(row["id"], [])
+                        ],
+                        "frequencies": frequencies,
+                        "documents": len(rows),
+                    }
+                    for row in matching
+                ]
             return candidates(
                 self._conn(),
                 tokens,

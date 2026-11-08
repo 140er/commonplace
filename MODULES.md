@@ -49,7 +49,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
-  - KG entity queries, timeline pages and aggregates apply original-source visibility before counting, resolving labels or slicing. Only entities participating in visible facts contribute to stats.
+  - Documents original-source KG projection for both query modes, protocol pagination and the response-local authority window.
 
   - Documents citation omission and backend proof limits separately from fact eligibility.
 
@@ -117,7 +117,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
-  - Incomplete KG metadata acquisition yields a fixed empty operation envelope. The final snapshot excludes facts whose wing, sensitivity or source descriptor changed.
 
   - Keeps unavailable citation links absent without changing visible facts.
 
@@ -152,7 +151,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
@@ -376,7 +374,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Hallway probes return bounded metadata pages in storage order; final reads revalidate exact descriptors.
 
-  - KG entity queries, timeline pages and aggregates apply original-source visibility before counting, resolving labels or slicing. Only entities participating in visible facts contribute to stats.
+  - KG snapshots revalidate allowed facts before counts, labels, pages and ranking; scoped search derives frequencies from the authorized corpus rather than global FTS seeds.
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
   - Exact non-Chroma physical citation ids remain supported without document hydration.
@@ -399,7 +397,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Changed hallway associations are excluded without rewriting stored rows; unverified internal scope calls are refused, while local unscoped pages remain compatible.
 
-  - Incomplete KG metadata acquisition yields a fixed empty operation envelope. The final snapshot excludes facts whose wing, sensitivity or source descriptor changed.
 
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
   - Non-Chroma logical citations fail closed because the collection API cannot guarantee ordered snapshot enumeration.
@@ -419,7 +416,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Hallway snapshot tests cover SQLite and legacy JSON ordering and changed descriptors.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Presence and private read-scope tests exercise SQLite, compact, Chroma, facet and generic metadata paths, unknown values, batching and races.
   - Capped-backend tests place a hidden chunk beyond the first short metadata page.
@@ -458,7 +454,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
-  - KG entity queries, timeline pages and aggregates apply original-source visibility before counting, resolving labels or slicing. Only entities participating in visible facts contribute to stats.
 
   - Citation failure cases compare complete surviving facts with readable controls.
 
@@ -595,7 +590,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
-  - Incomplete KG metadata acquisition yields a fixed empty operation envelope. The final snapshot excludes facts whose wing, sensitivity or source descriptor changed.
 
   - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
 
@@ -632,7 +626,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
+  - `tests/test_card253_s07.py` covers KG count/page isolation, strict search switches, hidden-corpus ranking, protocol integers, original mixed sources and snapshot races.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -707,7 +701,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
-  - KG entity queries, timeline pages and aggregates apply original-source visibility before counting, resolving labels or slicing. Only entities participating in visible facts contribute to stats.
+  - KG query switches require real booleans; direct KG search and drawer-search fact enrichment share the authenticated projection and empty-on-failure policy.
 
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
@@ -745,7 +739,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
-  - Incomplete KG metadata acquisition yields a fixed empty operation envelope. The final snapshot excludes facts whose wing, sensitivity or source descriptor changed.
 
   - Worker failures remove only the affected citation, with no other-workspace fallback.
 
@@ -766,7 +759,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
 
@@ -1086,7 +1078,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
-  - KG entity queries, timeline pages and aggregates apply original-source visibility before counting, resolving labels or slicing. Only entities participating in visible facts contribute to stats.
+  - Bounded KG metadata authorization precedes every query mode; final snapshots exclude new or changed source descriptors, while authority caches last one response.
 
   - Outgoing typed citations require current wing and thread authority plus snapshot revalidation; raw source_file tokens are authorized before basename display.
   - Tunnel projection validates names before acquisition, pages by identity and preserves live readable associations across non-association updates.
@@ -1141,7 +1133,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
-  - Incomplete KG metadata acquisition yields a fixed empty operation envelope. The final snapshot excludes facts whose wing, sensitivity or source descriptor changed.
 
   - Association faults or revoked authority omit citations after original-source fact eligibility; words remain verbatim.
 
@@ -1167,7 +1158,6 @@ Format (read by `commonplace orch docs-check`):
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 
