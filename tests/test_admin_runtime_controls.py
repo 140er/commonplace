@@ -192,3 +192,88 @@ def test_missing_runner_tolerance_is_explicit(hub, runtime, present):
         assert orchestration.usage(bc, rc, **args, allow_missing_runner=True).used == 1
         with pytest.raises((sqlite3.OperationalError, AttributeError)):
             orchestration.usage(bc, rc, **args)
+
+
+@pytest.mark.parametrize("section,kind", [("runtime", "orchestrators"), ("limits", "projects")])
+def test_full_length_slug_paginates(hub, runtime, section, kind):
+    boundary = "p" * 100
+    with runtime[0].connection() as conn:
+        for number in range(4, 102):
+            conn.execute(
+                "INSERT INTO boards(id,slug,name,wing,stamp_user,stamp_trust,created_at) "
+                "VALUES (?,?, 'Project','notes','synthetic','trusted',?)",
+                (number, f"a-{number:03}", OLD),
+            )
+        conn.execute("UPDATE boards SET slug=? WHERE id=2", (boundary,))
+        conn.execute(
+            "INSERT INTO boards(id,slug,name,wing,stamp_user,stamp_trust,created_at) "
+            "VALUES (102,'z-last','Last','notes','synthetic','trusted',?)",
+            (OLD,),
+        )
+    headers = cookie(hub)
+    status, first, _ = get(hub, section, headers)
+    assert status == 200
+    items = first[kind]["items"] if section == "runtime" else first[kind]
+    pagination = first[kind] if section == "runtime" else first["pagination"][kind]
+    assert len(items) == 100 and items[-1]["slug"] == boundary
+    status, second, _ = get(hub, section, headers, query="?cursor=" + pagination["next_cursor"])
+    assert status == 200
+    items = second[kind]["items"] if section == "runtime" else second[kind]
+    assert [r["slug"] for r in items] == ["z-last"]
+
+
+def test_legacy_columns_are_read_without_migration(hub, runtime):
+    task(runtime, 1, claim=OLD)
+    with runtime[0].connection() as conn:
+        conn.execute("ALTER TABLE boards DROP COLUMN coordinator")
+        conn.execute("ALTER TABLE tasks DROP COLUMN heartbeat_at")
+    headers = cookie(hub)
+    before = logical(runtime, hub)
+    status, data, _ = get(hub, "runtime", headers)
+    assert status == 200 and data["orchestrators"]["state"] == "ready"
+    assert all(
+        not r["connected"] and r["coordinator"] is None for r in data["orchestrators"]["items"]
+    )
+    assert get(hub, "limits", headers)[0] == 200
+    status, data, _ = get(hub, "stuck", headers)
+    assert status == 200 and data["cards"][0]["heartbeat_at"] is None
+    assert logical(runtime, hub) == before
+
+
+def test_only_enabled_unrevoked_machine_grants(hub, runtime):
+    active, *_ = machine(hub)
+    machine(hub, 2, enabled=0)
+    machine(hub, 3, revoked_at=OLD)
+    headers = cookie(hub)
+    status, data, _ = get(hub, "limits", headers)
+    assert status == 200
+    assert [r["id"] for r in data["machines"]] == [active]
+    assert data["pagination"]["machines"]["count"] == 1
+    assert get(hub, "runtime", headers)[1]["machines"]["count"] == 3
+
+
+def test_invalid_runtime_metadata_is_not_exposed(hub, runtime):
+    from tests.test_admin_runtime_api import job, runner
+
+    mid, *_ = machine(hub)
+    hub.db._conn.execute("PRAGMA ignore_check_constraints=ON")
+    hub.db._conn.execute(
+        "UPDATE runner_machines SET id='invalid-machine',binding_state='invalid-binding' WHERE id=?",
+        (mid,),
+    )
+    with runtime[0].connection() as conn:
+        conn.execute("UPDATE boards SET slug='invalid/slug' WHERE id=2")
+    task(runtime, 1, claim=OLD)
+    rc = runner(runtime)
+    try:
+        job(rc, 1)
+        rc.execute("UPDATE runner_jobs SET id='invalid-job'")
+    finally:
+        rc.close()
+    headers = cookie(hub)
+    data = get(hub, "runtime", headers)[1]
+    assert data["machines"]["items"][0]["id"] is None
+    assert data["machines"]["items"][0]["binding_state"] is None
+    assert data["orchestrators"]["items"][1]["slug"] is None
+    assert get(hub, "limits", headers)[1]["projects"][1]["slug"] is None
+    assert get(hub, "stuck", headers)[1]["cards"][0]["expired_jobs"][0]["job_id"] is None

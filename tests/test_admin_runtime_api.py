@@ -89,13 +89,14 @@ def runner(runtime):
 
 
 def job(conn, number, state="leased", lease=OLD, started=None, board="alpha"):
+    states = ("leased", "starting", "uncertain", "queued", "started", "done", "failed", "cancelled")
     conn.execute(
         "INSERT INTO runner_jobs(id,task_number,board_slug,machine_id,project,topic,grant_version,"
         "runtime_mode,requested_by,state,lease_until,lease_token,started_at,created_at,updated_at) "
         "VALUES (?,?,?,'mach_0000000000000001','project','build',1,'approval-required','synthetic',"
         "?,?,?,?,?,?)",
         (
-            f"job-{number}-{state}",
+            f"job_{number * 16 + states.index(state):016x}",
             number,
             board,
             state,
@@ -299,20 +300,41 @@ def test_runtime_machines(hub, runtime):
         machine(hub),
         machine(hub, 2, enabled=0),
         machine(hub, 3, revoked_at=OLD),
-        machine(hub, 4, binding_state="owner_attested", label="<img> ghp_" + "X" * 36),
+        machine(
+            hub,
+            4,
+            binding_state="owner_attested",
+            label="<img> cmmn_session=synthetic-redaction-canary",
+        ),
     ]
     headers = cookie(hub)
     status, data, _ = get(hub, "runtime", headers)
     assert status == 200
     found = data["machines"]["items"]
     assert len(found) == 4
+    expected_keys = {
+        "id",
+        "label",
+        "enabled",
+        "revoked_at",
+        "binding_state",
+        "verified",
+        "machine_last_used_at",
+        "worker_last_used_at",
+        "activity",
+        "worker_activity",
+        "max_in_flight",
+        "max_starts_per_hour",
+        "created_at",
+    }
+    assert all(set(row) == expected_keys for row in found)
     assert all(r["verified"] is False for r in found)
     assert found[0]["machine_last_used_at"] == OLD
     assert found[0]["worker_last_used_at"] == "2026-11-07T11:59:00Z"
     assert found[0]["activity"] == "quiet" and found[0]["worker_activity"] == "working"
     assert [r["enabled"] for r in found] == [True, False, True, True]
     assert found[2]["revoked_at"] == OLD and found[3]["binding_state"] == "owner_attested"
-    assert "ghp_" not in json.dumps(data)
+    assert "synthetic-redaction-canary" not in json.dumps(data)
     assert all("token" not in k and "connection_id" not in k for r in found for k in r)
     # Machine credentials are not visible orchestrators.
     with runtime[0].connection() as conn:
@@ -415,7 +437,7 @@ def test_stuck_expired_lease(hub, runtime):
     assert [r["number"] for r in data["cards"]] == [1, 3]
     assert data["reason_counts"]["expired_lease"] == 2
     assert data["cards"][0]["expired_jobs"] == [
-        {"job_id": "job-1-leased", "state": "leased", "lease_until": OLD}
+        {"job_id": "job_0000000000000010", "state": "leased", "lease_until": OLD}
     ]
     assert data["cards"][1]["open_url"] == "#/card/3"
     assert "lease_token" not in json.dumps(data) and "synthetic-lease-canary" not in json.dumps(

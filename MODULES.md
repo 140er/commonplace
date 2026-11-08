@@ -80,6 +80,8 @@ Format (read by `commonplace orch docs-check`):
   - Records the strict owner-progress authority probe separately from ordinary Recall denial semantics.
 
   - Records authenticated owner progress, process-lifetime units, fixed unavailable responses and the accepted global-quota causality.
+  - Admin reads tolerate missing migration columns, accept full-length slugs and distinguish active grants from historical assignments.
+
   - Records workspace-scoped operational facts without inventing a workspace cap, runner liveness, queue count or backup success.
 
 
@@ -204,6 +206,8 @@ Format (read by `commonplace orch docs-check`):
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
 - **Promises:**
+
+  - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
 
   - Admin docs pin current-member connection listing, matching inventory counts, exact-route card navigation and cursor-preserving Retry.
 
@@ -502,6 +506,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Progress witnesses compare authenticated hidden-present and hidden-absent worlds through the real scheduler and successful-write path in both store formats.
   - `tests/test_settings_load.py` drives fixed timers through production Settings reads, Retry and saved-state reloads, including fetch/body stalls, HTTP/network/JSON failures and contended orchestration reads.
+  - Admin cleanup regressions exercise 100-character cursor boundaries, missing columns, inactive grants, typed metadata and next-page source errors.
+
   - Baseline-pass Admin controls remain distinct from RED regressions, and routing, disposal, escaping and redaction mutations must fail by assertion.
 
   - Pinned parent receives only new test/support files; all RED rows fail by assertion and the identical head selection passes. Synthetic clock and fake timers replace wall-clock assertions.
@@ -1384,6 +1390,8 @@ Format (read by `commonplace orch docs-check`):
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
+  - Admin validates runtime metadata, probes optional columns, filters inactive grants and preserves paginated rows with source-specific retry errors.
+
   - Only the exact Admin route bypasses shared refresh; leaving it disposes requests, card hashes load their requested card, joined counts match rows and Retry repeats the failed page.
 
   - Uses generation-aware encrypted RO board/runner reads and workspace-scoped control SELECTs only; injected UTC/monotonic clocks, query-only connections, short busy bounds and progress interrupts apply to all new sources. No store, seat or subscription initialization or application lock; pagination is list-bound and deduplicated.
