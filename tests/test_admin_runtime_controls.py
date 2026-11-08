@@ -2,6 +2,7 @@
 
 import base64
 import json
+import sqlite3
 from contextlib import contextmanager
 
 import pytest
@@ -172,3 +173,21 @@ def test_absent_optional_tables_never_initialized(hub, runtime):
     assert get(hub, "limits", headers)[0] == get(hub, "stuck", headers)[0] == 200
     assert logical(runtime, hub) == before
     assert snapshot(hub)[2] == before[1]
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_missing_runner_tolerance_is_explicit(hub, runtime, present):
+    from contextlib import nullcontext
+
+    from commonplace.projects import orchestration
+    from mempalace.sqlite_crypto import connect
+
+    task(runtime, 1)
+    runner_context = connect(str(runtime[1] / "runner.sqlite3")) if present else nullcontext(None)
+    with runtime[0].connection() as bc, runner_context as rc:
+        if rc is not None:
+            rc.execute("CREATE TABLE unrelated (id INTEGER)")
+        args = dict(board_id=1, board_slug="alpha", workers=set(), now="2026-11-07T12:00:00Z")
+        assert orchestration.usage(bc, rc, **args, allow_missing_runner=True).used == 1
+        with pytest.raises((sqlite3.OperationalError, AttributeError)):
+            orchestration.usage(bc, rc, **args)
