@@ -40,10 +40,12 @@ try {
     assert.match(section(host.innerHTML,'stuck'),/Load more/);
     const before=requests.length;click('stuck','more');assert.equal(requests.length,before+1);
     assert.match(find('stuck').path,/\/workspaces\/ws-one\/stuck\?cursor=opaque-stuck/);
+    const failedPage=find('stuck');failedPage.reject(new Error('page unavailable'));await flush();click('stuck');
+    assert.equal(find('stuck').path,failedPage.path,'Retry preserves the failed cursor');
     find('stuck').resolve(stuck([card(1),card(2)]));await flush();
     assert.equal((host.innerHTML.match(/href="#\/card\/1"/g)||[]).length,1);
     assert.match(host.innerHTML,/Card &lt;2&gt;/);
-    click('runtime');assert.equal(requests.length,before+2);
+    click('runtime');assert.equal(requests.length,before+3);
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:false},orchestrators:{state:'ready',items:[],count:0},machines:{state:'ready',items:[{id:'mach-1',label:'<Machine>',enabled:true,verified:false,binding_state:'owner_attested',activity:'working',worker_activity:'unused'}],count:1}});await flush();
     assert.match(host.innerHTML,/recent contact/);assert.match(host.innerHTML,/not verified/i);assert.match(host.innerHTML,/&lt;Machine&gt;/);
     assert.ok(requests.every(r=>!r.options.method||r.options.method==='GET'));
