@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from commonplace import webhooks
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_admin_api import agent, clock, cookie, get, snapshot
@@ -223,6 +224,10 @@ def test_full_length_slug_paginates(hub, runtime, section, kind):
 
 
 def test_legacy_columns_are_read_without_migration(hub, runtime):
+    # The report dispatcher independently migrates existing sources. Stop and
+    # join it before constructing a legacy schema for the Admin no-write check.
+    webhooks.stop(hub.gateway)
+    assert not hub.gateway.webhooks.thread.is_alive()
     task(runtime, 1, claim=OLD)
     with runtime[0].connection() as conn:
         # Legacy stores predate the report trigger that references heartbeat_at.
