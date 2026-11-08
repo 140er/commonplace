@@ -55,7 +55,8 @@ REFUSE = object()
 # Overlapping variable-length identities can require quadratic output. Never
 # truncate or partially prove a field: bound both decoded and NFKC scan copies.
 # Four decoding rounds remain O(input length); scanning is bounded by this cap.
-_MAX_REFERENCE_CHARS = 16_384
+MAX_REFERENCE_CHARS = 16_384
+_MAX_REFERENCE_CHARS = MAX_REFERENCE_CHARS
 _THREAD = re.compile(r"thr_[0-9a-f]+", re.IGNORECASE)
 _PRIVATE = re.compile(r"(?:capture-fork|capture|import-private):[^\s?]+", re.IGNORECASE)
 _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)

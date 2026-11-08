@@ -3,19 +3,8 @@
 from commonplace.rules import checks
 from mempalace.hallway_scope import PAGE_SIZE, descriptor
 
+from .hallway_fields import public_row
 from .mirror_access import hallway_visible, reader
-
-_PUBLIC_KEYS = (
-    "id",
-    "wing",
-    "rooms",
-    "label",
-    "entity_a",
-    "entity_b",
-    "co_occurrence_count",
-    "created_at",
-    "created_by",
-)
 
 
 def _strength(record):
@@ -100,7 +89,7 @@ def project(gateway, principal, workers, args, *, timeout=660.0):
                     ):
                         return empty
                 records.extend(
-                    {key: row[key] for key in _PUBLIC_KEYS if key in row}
+                    public_row(row)
                     for row in rows
                     if hallway_visible(row, access, principal.policy)
                 )

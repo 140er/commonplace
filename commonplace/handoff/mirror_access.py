@@ -1,5 +1,6 @@
 """Apply thread read boundaries to every outgoing mirror drawer."""
 
+import math
 import re
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from commonplace.policy import canonical_wing
 from commonplace.rules import checks
 
 from . import provenance_refs
+from .hallway_fields import NUMERIC_KEYS, public_row
 from .models import MIRROR_WING
 from .recall import Recall
 
@@ -264,10 +266,36 @@ def hallway_visible(node, access, policy):
         return False
     if any(unreadable_room(access, wing, room) for room in rooms):
         return False
-    label = node.get("label", "")
-    if not isinstance(label, str) or len(label) > provenance_refs._MAX_REFERENCE_CHARS:
+    for key, value in public_row(node).items():
+        if key in NUMERIC_KEYS:
+            if (
+                type(value) not in (int, float)
+                or isinstance(value, float)
+                and not math.isfinite(value)
+            ):
+                return False
+        elif key == "rooms":
+            if not all(_hallway_text_visible(room, access) for room in value):
+                return False
+        elif not _hallway_text_visible(value, access):
+            return False
+    return True
+
+
+def _hallway_text_visible(value, access):
+    """All hallway strings share the raw token scan and its character bound."""
+    if not isinstance(value, str) or len(value) > provenance_refs.MAX_REFERENCE_CHARS:
         return False
-    return all(access.reference(token) for token in provenance_refs.label_tokens(label))
+    try:
+        checks.remaining(0)
+        tokens = provenance_refs.label_tokens(value)
+        for token in tokens:
+            checks.remaining(0)
+            if not access.reference(token):
+                return False
+        return True
+    except TimeoutError:
+        return False
 
 
 def gate(gateway, principal, rule, result):
@@ -383,7 +411,7 @@ def gate(gateway, principal, rule, result):
             # A late revocation discards the page and its counts together.
             return {**result, "hallways": [], "count": 0, "total": 0}
         # Hallways prove plural rooms above; generic drawer scrub expects room.
-        return _filter_fact_links(result)
+        return _filter_fact_links({**result, "hallways": [public_row(row) for row in rows]})
     result = filter_room_keys(rule, result, can_read)
     cleaned = scrub(result)
     if cleaned is _DROP:

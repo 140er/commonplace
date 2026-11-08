@@ -440,8 +440,8 @@ def test_card253_s03_malformed_strength(world, monkeypatch, backend):
     ]
     install(w, monkeypatch, backend, rows, "strength")
     reply = public(w, limit=10)
-    assert reply["hallways"] == [rows[1], rows[0], rows[2]]
-    assert reply["total"] == reply["count"] == 3
+    assert reply["hallways"] == [rows[1], rows[2]]
+    assert reply["total"] == reply["count"] == 2
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "json"])
@@ -474,7 +474,7 @@ def test_card253_s03_label_scan_bound(world, monkeypatch, backend):
     from commonplace.handoff import provenance_refs
 
     w = world
-    cap = provenance_refs._MAX_REFERENCE_CHARS
+    cap = provenance_refs.MAX_REFERENCE_CHARS
     rows = [
         record(w, "at-limit", label="x" * cap),
         record(w, "over-limit", label="capture:" * (cap // 8 + 1)),
@@ -493,3 +493,89 @@ def test_card253_s03_label_scan_bound(world, monkeypatch, backend):
     assert reply == {"hallways": rows[:1], "total": 1, "count": 1, "offset": 0, "limit": 10}
     assert scanned and max(scanned) == cap
     assert w.hallways.list_hallways() == rows
+
+
+REVIEWED_VALUE_CHANGES = {
+    "rooms_embedded": lambda w: {"rooms": [f"legacy {w.hidden.id}"]},
+    "id_embedded": lambda w: {"id": f"legacy-{w.hidden.id}"},
+    "created_at": lambda w: {"created_at": f"legacy {w.hidden.id}"},
+    "count_text": lambda w: {"co_occurrence_count": f"n {w.hidden.id}"},
+    "entity_a": lambda w: {"entity_a": w.hidden.id},
+    "control_label": lambda w: {"label": f"plain {w.hidden.id}"},
+}
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+@pytest.mark.parametrize("case", sorted(REVIEWED_VALUE_CHANGES))
+def test_card253_s03_reviewed_values(world, monkeypatch, backend, case):
+    w = world
+    row = record(w, f"probe-{case}", **REVIEWED_VALUE_CHANGES[case](w))
+    install(w, monkeypatch, backend, [row], f"probe-{case}")
+    reply = public(w, limit=10)
+    assert w.hidden.id not in json.dumps(reply), f"probe {case} leaked hidden id"
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_dynamics_fields(world, monkeypatch, backend):
+    from mempalace.dynamics import initialize_dynamics_fields
+
+    w = world
+    row = initialize_dynamics_fields(record(w, "auto"))
+    install(w, monkeypatch, backend, [row], "probe-dynamics")
+    got = public(w, limit=10)["hallways"]
+    assert got == [row], f"probe dynamics missing keys {sorted(set(row) - set(got[0]))}"
+
+
+@pytest.mark.parametrize("field", ["strength", "stability", "access_count", "co_occurrence_count"])
+@pytest.mark.parametrize("value", ["2", True, None, float("inf")])
+def test_card253_s03_numeric_types(world, field, value):
+    from commonplace.handoff.mirror_access import hallway_visible, reader
+
+    w = world
+    access = reader(w.h.gateway, w.principal)
+    assert not hallway_visible(record(w, "bad", **{field: value}), access, w.principal.policy)
+    assert hallway_visible(record(w, "good", **{field: 2.5}), access, w.principal.policy)
+    assert public(w, limit=10)["count"] == 0
+
+
+def test_card253_s03_gate_projects_shared_fields(world):
+    from commonplace.handoff.hallway_fields import PUBLIC_KEYS
+    from commonplace.handoff.mirror_access import gate
+    from mempalace.dynamics import initialize_dynamics_fields
+
+    w = world
+    row = initialize_dynamics_fields(record(w, "kept", source_thread=w.hidden.id))
+    result = {"hallways": [row], "count": 1, "total": 1, "offset": 0, "limit": 10}
+    got = gate(w.h.gateway, w.principal, "all_wings", result)
+    assert got["hallways"] == [{key: row[key] for key in PUBLIC_KEYS if key in row}]
+    assert w.hidden.id not in json.dumps(got)
+    assert public(w, limit=10)["count"] == 0
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "id",
+        "wing",
+        "rooms",
+        "label",
+        "entity_a",
+        "entity_b",
+        "created_by",
+        "created_at",
+        "last_activated",
+    ],
+)
+def test_card253_s03_all_public_strings(world, monkeypatch, backend, field):
+    w = world
+    value = f"legacy {w.hidden.id}"
+    row = record(w, "public-string", **{field: [value] if field == "rooms" else value})
+    install(w, monkeypatch, backend, [row], "public-string")
+    assert public(w, wing=None, limit=10) == {
+        "hallways": [],
+        "total": 0,
+        "count": 0,
+        "offset": 0,
+        "limit": 10,
+    }
