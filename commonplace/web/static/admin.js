@@ -74,13 +74,13 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     workspace = null;
   }
 
-  function refreshSection(key, { more = false } = {}) {
+  function refreshSection(key, { more = false, cursor: requestedCursor } = {}) {
     if (!eligible()) { if (live) stop(); return; }
     if (!['users', 'connections'].includes(key) || requests.has(key)) return;
     const generation = (generations.get(key) || 0) + 1, pageEpoch = epoch;
     generations.set(key, generation);
     const controller = new AbortController(), item = sections.get(key);
-    const cursor = more ? item.data?.next_cursor : null;
+    const cursor = more ? requestedCursor ?? item.data?.next_cursor : null;
     if (more && !cursor) return;
     requests.set(key, controller);
     item.error = ''; item.restricted = false;
@@ -97,9 +97,10 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
         const field = key === 'users' ? 'members' : 'connections';
         data = { ...data, [field]: [...item.data[field], ...data[field]] };
       }
-      item.data = data;
+      item.data = data; item.retry = null;
     }).catch(error => {
       if (!valid()) return;
+      item.retry = { more, cursor };
       if (error.status === 401) { stop(); return; }
       if (error.status === 403) {
         item.data = null; item.restricted = true;
@@ -119,7 +120,9 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
 
   function click(event) {
     const button = event.target.closest('[data-admin-action]');
-    if (button) void refreshSection(button.dataset.adminSection, { more: button.dataset.adminAction === 'more' });
+    if (!button) return;
+    const { adminSection: key, adminAction: action } = button.dataset;
+    void refreshSection(key, action === 'retry' ? sections.get(key)?.retry : { more: action === 'more' });
   }
 
   function show() {

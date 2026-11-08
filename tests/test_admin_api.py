@@ -1,6 +1,7 @@
 """Owner-only Admin projections over synthetic workspace data."""
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,16 +206,8 @@ def test_projection_redaction(hub):
         assert status == 200
         text = json.dumps(data)
         assert canary not in text and link not in text and "/app/login" not in text
-        assert not {
-            "token_hash",
-            "token_hint",
-            "policy",
-            "cookie",
-            "access_token",
-            "lease_token",
-        } & set(text.replace('"', "").split())
-        for key in ("token_hash", "token_hint", "policy", "access_token", "lease_token"):
-            assert f'"{key}":' not in text
+        for key in ("token_hash", "token_hint", "policy", "cookie", "access_token", "lease_token"):
+            assert not re.search(rf'"{key}"\s*:', text)
     assert "Robin" in json.dumps(get(hub, "users", headers)[1])
     assert "benign" in json.dumps(get(hub, "connections", headers)[1])
 
@@ -283,3 +276,24 @@ def test_missing_policy_denies_and_source_error_is_safe(hub, monkeypatch):
     assert status == 503 and data == {"error": "Connections unavailable; try again"}
     assert "private-source-canary" not in json.dumps(data)
     assert get(hub, "users", headers)[0] == 200
+
+
+@pytest.mark.parametrize("section", ["users", "connections"])
+def test_inventory_counts_match_listed_members(hub, section):
+    headers = cookie(hub)
+    uid = member(hub, role="owner")
+    if section == "connections":
+        agent(hub, "current-member")
+        agent(hub, "former-member", user=uid)
+        hub.db._conn.execute("PRAGMA foreign_keys=OFF")
+        hub.db._conn.execute(
+            "DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (hub.workspace, uid)
+        )
+    else:
+        hub.db._conn.execute("PRAGMA foreign_keys=OFF")
+        hub.db._conn.execute("DELETE FROM users WHERE id=?", (uid,))
+    status, data, _ = get(hub, section, headers)
+    assert status == 200
+    field = "members" if section == "users" else "connections"
+    assert data["count"] == len(data[field]) == 1
+    assert not data["has_more"] and data["next_cursor"] is None

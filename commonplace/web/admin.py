@@ -92,7 +92,10 @@ def users(conn, workspace_id, context, after=None):
     if workspace is None:
         raise LookupError()
     count = select(
-        conn, context, "SELECT count(*) FROM memberships WHERE workspace_id=?", (workspace_id,)
+        conn,
+        context,
+        "SELECT count(*) FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=?",
+        (workspace_id,),
     ).fetchone()[0]
     rows = select(
         conn,
@@ -131,7 +134,11 @@ def users(conn, workspace_id, context, after=None):
 
 def connections(conn, workspace_id, context, after=None):
     count = select(
-        conn, context, "SELECT count(*) FROM connections WHERE workspace_id=?", (workspace_id,)
+        conn,
+        context,
+        "SELECT count(*) FROM connections c JOIN memberships m ON m.workspace_id=c.workspace_id "
+        "AND m.user_id=c.user_id JOIN users u ON u.id=m.user_id WHERE c.workspace_id=?",
+        (workspace_id,),
     ).fetchone()[0]
     rows = select(
         conn,

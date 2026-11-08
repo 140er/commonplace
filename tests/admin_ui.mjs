@@ -66,6 +66,62 @@ async function main() {
       assert.equal(shared,0);
       f.ui.stop();
     }
+  } else if(which==='card-route' || which==='route-disposal') {
+    const {resolveRoute}=await load('routes');
+    const f=fixture(createAdmin), calls=[], errors=[];
+    const state={me:{...me},screen:0,route:'#/',base:'#/',boards:[],needs:{},cards:[],drafts:new Map(),pending:new Set(),chatVisible:new Set(),refreshRequest:0,panelRequest:0};
+    const panel={hidden:true,innerHTML:'',querySelector:()=>null,querySelectorAll:()=>[]};
+    const nodes={'#content':f.mount,'#card-panel':panel,'#shell-dialog':{close(){}}};
+    f.mount.children=[];
+    let stops=0, shows=0;
+    const context={state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},restore(){},capture:()=>()=>{},markOpenCard(){},message:x=>x,showError(x){if(x) errors.push(x);},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,
+      adminUI:{show(){shows++;f.ui.show();},stop(){stops++;f.ui.stop();}},createAdmin,e:escapeHTML,enc:encodeURIComponent,title(){},navigation(){},currentBoard:()=>null,consoleScreen(){},needsView(){},boardsView(){},boardView(){},mountWorkbenchChat(){},callTree:()=>'',
+      createDetails:({mount})=>({show(card){mount.innerHTML=`Card ${card.number}: ${card.title}`;},stop(){}}),
+      api(path,options={}){calls.push({path,options}); if(path==='/api/boards') return Promise.resolve({boards:[]}); if(path==='/api/cards/5') return Promise.resolve({number:5,title:'Requested card',board:'demo'}); return Promise.resolve({});}};
+    runInNewContext(appSlice('async function cardPanel(', 'function newCardForm(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
+    await context.route(); await flush();
+    assert.equal(f.requests.length,2);
+    const pending=[...f.requests], before=f.requests.length;
+    if(which==='card-route') {
+      // Palette navigation and browser Back both dispatch the same card hash.
+      context.location.hash='#/card/5'; await context.route(); await flush();
+      assert.equal(calls.filter(r=>r.path==='/api/cards/5').length,1,'Admin to card must GET the requested card exactly once');
+      assert.equal(state.card?.number,5,'The requested card must replace any previous selection');
+      assert.equal(panel.hidden,false);assert.match(panel.innerHTML,/Card 5: Requested card/);
+      assert.notEqual(state.base,'#/admin','Card refresh must use a regular base view');
+      assert.equal(shows,1,'Card navigation must not remount Admin');
+      assert.equal(f.requests.length,before,'Card navigation must not issue another Admin GET');
+      assert.ok(calls.every(r=>!r.path.startsWith('/api/admin/')));
+    } else {
+      context.location.hash='#/needs'; await context.route(); await flush();
+      assert.equal(stops,1,'route() must stop Admin when leaving the page');
+    }
+    assert.deepEqual(errors,[],'Production route/refresh/cardPanel must complete without errors');
+    assert.ok(pending.every(r=>r.options.signal.aborted),'Route change must abort both Admin reads');
+    assert.equal(f.timers.size,0,'Route change must clear Admin deadlines');
+    pending[0].resolve(userData('LATE PRIVATE DATA'));await flush();
+    assert.doesNotMatch(f.mount.innerHTML,/LATE PRIVATE DATA/);
+    f.ui.stop();
+  } else if(which==='page-retry') {
+    const escaped=[];
+    const f=fixture(createAdmin,{e(value){escaped.push(value);return escapeHTML(value);}});f.ui.show();
+    const first={...userData('First'),count:2,has_more:true,next_cursor:'next/page?opaque'};
+    f.requests[0].resolve(first);f.requests[1].resolve(connectionData);await flush();
+    f.click('users','more');await flush();const failed=f.requests.at(-1);
+    assert.match(failed.path,/\?cursor=next%2Fpage%3Fopaque$/);
+    failed.reject(new Error('<img src=x>'));await flush();
+    assert.match(f.mount.innerHTML,/First/);assert.doesNotMatch(f.mount.innerHTML,/<img/);
+    assert.ok(escaped.includes('Users unavailable. Retry.'),'Section error text must pass through the HTML escaper');
+    f.click('users');await flush();const retry=f.requests.at(-1);
+    assert.equal(retry.path,failed.path,'Retry must repeat the failed cursor GET');
+    assert.ok(!retry.options.method || retry.options.method==='GET');
+    retry.resolve({...userData('Second'),members:[{...userData('Second').members[0],id:'u-two'}],count:2});await flush();
+    assert.match(f.mount.innerHTML,/First/,'Retrying Load more must retain earlier pages');assert.match(f.mount.innerHTML,/Second/);
+    f.click('users','refresh');await flush();const refresh=f.requests.at(-1);
+    assert.ok(refresh.path.endsWith('/users'));refresh.reject(new Error('failed refresh'));await flush();
+    f.click('users');await flush();assert.equal(f.requests.at(-1).path,refresh.path,'Retry must preserve replacement mode too');
+    f.requests.at(-1).resolve(userData('Replacement'));await flush();
+    assert.match(f.mount.innerHTML,/Replacement/);assert.doesNotMatch(f.mount.innerHTML,/First|Second/);f.ui.stop();
   } else if(which==='independent') {
     const f=fixture(createAdmin); f.ui.show();
     assert.equal(f.requests.length,2);

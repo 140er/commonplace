@@ -987,7 +987,7 @@ function consoleScreen() {
 }
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
-  if (state.base === "#/admin") return;
+  if (state.route === "#/admin") return;
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
@@ -1296,6 +1296,8 @@ async function route() {
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings|admin)$/.test(hash) ? hash : "#/");
     state.card = null;
+  } else if (state.base === "#/admin") {
+    state.base = resolveRoute("#/", { boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
@@ -1326,7 +1328,7 @@ async function route() {
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
-  if (state.base === "#/admin") { adminScreen(); return; }
+  if (hash === "#/admin") { adminScreen(); return; }
   await refresh();
 }
 // The current view's list first, so a write never sends a version left over from another view.

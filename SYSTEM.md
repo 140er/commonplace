@@ -35,6 +35,10 @@ entry was written.
   including initial identity/body decoding, settles within its 5,000 ms client
   deadline independently of other sections and the shared refresh fan-in. Abort,
   page epochs and request generations clear private state on disposal or expiry.
+  Only the exact Admin route bypasses shared refresh; card navigation restores a
+  regular base view and loads the requested card without new inventory requests.
+  Inventory counts share the row membership/user joins; Retry preserves the failed
+  cursor and append or replacement mode.
 
 
 ### Inert area configuration preview
