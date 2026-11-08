@@ -243,15 +243,14 @@ def test_dispatch_recovers_existing_source_without_creating_workspaces(world, mo
     assert len(failures) == 1
     assert failures[0].name == "commonplace.projects.reports"
     assert "RuntimeError" in failures[0].getMessage()
-    for record in caplog.records:
-        for private in (
-            "unavailable workspace",
-            broken_ws,
-            broken_name,
-            w.ws,
-            "Private card words",
-        ):
-            assert private not in record.getMessage()
+    for private in (
+        "unavailable workspace",
+        broken_ws,
+        broken_name,
+        w.ws,
+        "Private card words",
+    ):
+        assert private not in caplog.text
     pump(w)
     assert len(reports(w, "done")) == 1
     assert sql(w, "SELECT * FROM project_report_scan")
@@ -263,7 +262,36 @@ def test_dispatch_reinitializes_changed_source(world):
     pump(w)
     sql(w, "DROP TABLE project_report_scan")
     pump(w)
-    assert sql(w, "SELECT * FROM project_report_scan")
+    assert sql(w, "SELECT name FROM sqlite_master WHERE name='project_report_scan'")
+
+
+def test_dispatch_initializes_source_once_across_normal_passes(world, monkeypatch):
+    from commonplace.projects import reports as project_reports
+
+    card(world)
+    initialize = project_reports.ensure_source
+    calls = []
+
+    def counted(conn):
+        calls.append(None)
+        initialize(conn)
+
+    monkeypatch.setattr(project_reports, "ensure_source", counted)
+    for _ in range(3):
+        pump(world)
+    assert len(calls) == 1
+
+
+def test_dispatch_propagates_closed_control_database(world, monkeypatch, caplog):
+    from commonplace.projects import reports as project_reports
+
+    def closed(*args):
+        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+    monkeypatch.setattr(project_reports, "publish", closed)
+    with pytest.raises(sqlite3.ProgrammingError):
+        world.gw.project_reports.pass_once()
+    assert not caplog.records
 
 
 @pytest.mark.parametrize("writer", ["task_update", "decide", "seed_card"])
