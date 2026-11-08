@@ -55,6 +55,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
   - Outgoing provenance aliases and ranges document token-free compatibility, orphan-range removal and accepted endpoint proof limits.
+  - Gateway search omits closet previews without inventing a closet authorization descriptor.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
@@ -150,6 +151,7 @@ Format (read by `commonplace orch docs-check`):
   - Documented graph ordering depends on actual snapshot schema rather than backend name alone.
 
   - Distinguishes accepted non-string-label and existing follow-argument residuals from fixed graph regressions.
+  - Documents retained path-derived result identities and distinguishes citation omission from path anonymity.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
@@ -207,6 +209,7 @@ Format (read by `commonplace orch docs-check`):
   - The documentation obligation checks the updated graph parity contract.
 
   - Backend sibling, suggestion, cap and numeric-locus witnesses substantiate the compatibility topics.
+  - Closet-only and mixed-path member/owner regressions verify the outgoing preview boundary.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
@@ -650,6 +653,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
   - Outgoing alias tests cover token-free retry compatibility, short/flat alias proof, hidden storage equality, plain/chunked endpoints and orphan ranges. The focused set includes gateway thread scope and unchanged fact-save compatibility; drawer-search guards claim text preservation only.
+  - Reference-spelling guards follow locked plain-file proof: exact readable matches retain citations and unresolved files omit them.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
@@ -812,6 +816,7 @@ Format (read by `commonplace orch docs-check`):
   - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
 
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
+  - Storage-byte assertions remain in both retention and omission cases; missing proof never removes readable fact text.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
@@ -872,6 +877,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_worker_observation_fix.py` pins request survival, active-count cleanup, consistent RSS status, forward-only startup and counted constructor latching; pairing oracles also exercise unsupported RSS platforms.
 
   - `tests/test_worker_observation.py` independently enumerates the diagnostic schema and injects synchronous serving delivery, synthetic canaries and bounded-writer failures.
+  - S08 full-file checks cover all reconciled guards; local closet and hybrid search suites retain their preview assertions.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
@@ -1415,6 +1421,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Graph traversal and ranking preserve backend sibling order before caps; grouped stats preserve their distinct tie convention.
   - Outgoing source/source_kept bundles share provenance authority for short and source_ aliases, retaining token-free parents under wing policy. Non-null orphan ranges are removed; null keys remain. Source/target drawer endpoints require association proof. Non-Chroma chunked logical endpoints are an accepted residual under the exact-physical-id limit in SYSTEM.md, “Current typed provenance association proof”. Non-dict nested provenance and mixed private-primary/native-secondary KG projection remain residuals.
+  - The gateway strips closet_preview from search results, including readable closets; local search remains unchanged.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
@@ -1488,6 +1495,7 @@ Format (read by `commonplace orch docs-check`):
   - Malformed sort values or a changed snapshot descriptor discard projected graph output.
 
   - Incomplete proof still returns empty envelopes; accepted non-string tunnel-label and pre-existing follow-argument residuals remain.
+  - A shared source path cannot prove the closet text belongs to a readable wing and room.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
@@ -1531,6 +1539,7 @@ Format (read by `commonplace orch docs-check`):
   - Graph protocol fault, live-reader and legacy locus-order witnesses exercise mediation.
 
   - Sibling ties, fuzzy suggestions, cap membership and grouped statistics are compared to local readable outputs.
+  - Public search spies verify hidden closet text reaches the worker result but never the gateway result.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 

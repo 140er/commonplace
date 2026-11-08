@@ -463,6 +463,9 @@ def gate(gateway, principal, rule, result, *, access=None):
                 return _DROP
             out = {}
             for key, value in node.items():
+                if rule == "search" and key == "closet_preview":
+                    # Source-file agreement does not prove the closet's authority.
+                    continue
                 # Only the source_file alias constructed after exact import
                 # proof is exempt; other metadata still passes through the gate.
                 cleaned = scrub(value, import_file_alias=import_row and key == "metadata")

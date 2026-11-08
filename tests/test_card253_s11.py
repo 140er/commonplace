@@ -505,3 +505,38 @@ def test_card253_s11_import_alias_scope():
     assert cleaned == {"source_file": RAW}
     assert original == {"source_file": RAW, "source_thread": "thr_deadbeef"}
     assert mirror_access.scrub_provenance(dict(original), access) == {}
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("mode", ["closet_only", "closet_mixed"])
+def test_card253_s11_closet_preview(file_search, monkeypatch, role, mode):
+    import json
+
+    from mempalace import mcp_server as mcp
+    from mempalace.palace import get_closets_collection
+
+    c = file_search
+    matches(c, [c.primary.id] if mode == "closet_only" else [c.primary.id, c.hidden.id])
+    secret = "SECRET-TOPIC-ZQ"
+    closets = get_closets_collection(c.config.palace_path)
+    closets.add(
+        ids=["hidden-closet"],
+        documents=[f"topic:{secret}|entities:Mallory|→drawer_ids:file-0001 Exact stored words"],
+        metadatas=[{"wing": "shared", "room": c.hidden.id, "source_file": RAW}],
+    )
+    assert closets.get(ids=["hidden-closet"])["metadatas"][0]["room"] == c.hidden.id
+    original = mcp.search_memories
+    raw = []
+
+    def search(*args, **kwargs):
+        result = original(*args, **kwargs)
+        raw.append(result)
+        return result
+
+    monkeypatch.setattr(mcp, "search_memories", search)
+    reply = invoke(c, "search", role, query=f"Exact stored words {secret}")
+    assert raw and any(secret in h.get("closet_preview", "") for h in raw[0]["results"])
+    hits = reply["results"]
+    assert hits, reply
+    assert secret not in json.dumps(hits), "gateway search exposed hidden closet preview"
+    assert all("closet_preview" not in hit for hit in hits)

@@ -51,7 +51,7 @@ PRODUCERS = [
 
 
 @pytest.fixture
-def case(hub, kg, monkeypatch, functional_worker_transport):  # noqa: F811
+def case(hub, kg, collection, monkeypatch, functional_worker_transport):  # noqa: F811
     h = hub
     h.supervisor.get(h.workspace)
     user = h.db.create_user("reader@example.test")
@@ -89,6 +89,7 @@ def case(hub, kg, monkeypatch, functional_worker_transport):  # noqa: F811
     c = SimpleNamespace(
         h=h,
         kg=kg,
+        col=collection,
         member=member,
         owner=owner,
         token=token,
@@ -155,7 +156,20 @@ def args(c, field, value):
     )
 
 
-def check_citation(c, role, field, value, write):
+def check_citation(c, role, field, value, write, *, prove_plain=True):
+    from commonplace.handoff.provenance_refs import REFUSE, refs
+
+    parsed = refs(value)
+    plain_file = field == "source_file" and parsed is not REFUSE and not parsed.tokens
+    if plain_file and prove_plain:
+        # Recognition alone is not file authority under locked D9.1-A.
+        # Byte-preservation guards need an exact current readable local match.
+        c.col.add(
+            ids=["ordinary-file-proof"],
+            documents=["Exact local source words"],
+            metadatas=[{"wing": "shared", "room": c.primary.id, "source_file": value}],
+        )
+        assert c.col.get(ids=["ordinary-file-proof"])["metadatas"][0]["source_file"] == value
     if write:
         result = invoke(c, role, "kg_add", **args(c, field, value))
         assert result.get("success"), result
@@ -166,8 +180,13 @@ def check_citation(c, role, field, value, write):
     row = fact(c, role)
     public_field = "origin_link" if field == "source_url" else field
     public_row = row["sources"][0] if field == "source_file" else row
-    assert public_row.get(public_field) == value
-    assert row["sources"][0].get(public_field) == value
+    if plain_file and not prove_plain:
+        # Unproduced token-free files have no local proof: omit only the citation.
+        assert public_field not in public_row
+        assert all(public_field not in source for source in row["sources"])
+    else:
+        assert public_row.get(public_field) == value
+        assert row["sources"][0].get(public_field) == value
     with c.kg._lock:
         raw = c.kg._conn().execute("SELECT * FROM triples").fetchone()
         assert raw[public_field] == value
@@ -257,7 +276,7 @@ def test_card253_s08_producer_write(case, role, kind):
 @pytest.mark.parametrize("kind", UNPRODUCED)
 @pytest.mark.parametrize("field", ["source_file", "source_url"])
 def test_card253_s08_unproduced_citation(case, role, kind, field):
-    check_citation(case, role, field, UNPRODUCED[kind], write=False)
+    check_citation(case, role, field, UNPRODUCED[kind], write=False, prove_plain=False)
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
@@ -270,6 +289,7 @@ def test_card253_s08_unproduced_write(case, role, kind, field):
         field,
         navigable(UNPRODUCED[kind]) if field == "source_url" else UNPRODUCED[kind],
         write=True,
+        prove_plain=False,
     )
 
 
