@@ -1,6 +1,7 @@
 """Storage dispatch observations carry only reviewed primitive facts."""
 
 import json
+import sys
 
 import pytest
 
@@ -73,8 +74,13 @@ def test_default_paired_records_use_generated_ids(serving):
     assert [r["event"] for r in calls] == ["call_begin", "call_end"]
     assert calls[0]["call_id"] == calls[1]["call_id"] == 1
     assert calls[0]["worker_generation"] == calls[1]["worker_generation"]
-    assert calls[0]["rss_before_bytes"] > 0
-    assert calls[1]["rss_after_bytes"] > 0
+    if sys.platform.startswith("linux"):
+        assert calls[0]["rss_before_bytes"] > 0
+        assert calls[1]["rss_after_bytes"] > 0
+    else:
+        assert calls[0]["rss_before_bytes"] is None
+        assert calls[1]["rss_after_bytes"] is None
+        assert calls[0]["rss_status"] == calls[1]["rss_status"] == "unsupported"
     assert calls[1]["outcome"] == "returned"
 
 

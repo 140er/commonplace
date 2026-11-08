@@ -351,3 +351,12 @@ def test_failure_loss_and_saturation_do_not_escape(tmp_path):
         assert observer.active == 0
     finally:
         observer.close()
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_pairing_oracle_on_unsupported_rss_platform(serving, monkeypatch, platform):
+    from mempalace import worker_observation
+    from tests.test_worker_observation import test_default_paired_records_use_generated_ids
+
+    monkeypatch.setattr(worker_observation.sys, "platform", platform)
+    test_default_paired_records_use_generated_ids(serving)

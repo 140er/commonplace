@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from .. import worker_observation as _observation
 
 _worker_observer = None
+_worker_observer_failed = False
+_worker_observation_lost = 0
 _worker_observer_lock = threading.Lock()
 
 
@@ -17,14 +19,18 @@ def _worker_observer_factory(directory, **kwargs):
 
 
 def _activate_worker_observation():
-    global _worker_observer
+    global _worker_observer, _worker_observer_failed, _worker_observation_lost
     if os.environ.get("MEMPALACE_WORKER_MEMORY_OBSERVE") == "0":
         return None
     with _worker_observer_lock:
+        if _worker_observer_failed:
+            return None
         if _worker_observer is None:
             try:
                 _worker_observer = _worker_observer_factory(_config.config_dir)
             except Exception:
+                _worker_observer_failed = True
+                _worker_observation_lost = min(_observation.MAX_U, _worker_observation_lost + 1)
                 return None
     return _worker_observer
 
@@ -224,7 +230,6 @@ def _run_stdio_loop() -> None:
             except (AttributeError, OSError):
                 pass
 
-    _activate_worker_observation()
     logger.info("MemPalace MCP Server starting...")
 
     # Pre-flight in a background thread: PRAGMA quick_check reads every page
@@ -371,7 +376,6 @@ def _run_http_loop() -> None:
     # In HTTP mode there is no JSON-RPC stdio channel. Keeping the import-time
     # stdout->stderr guard in place means any accidental print from a dependency
     # still cannot masquerade as an HTTP response.
-    _activate_worker_observation()
     logger.info("MemPalace MCP HTTP server starting...")
 
     # A writable HTTP server is a long-lived storage client, so it must own the

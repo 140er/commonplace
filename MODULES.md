@@ -392,6 +392,8 @@ Format (read by `commonplace orch docs-check`):
   - Graph descriptors preserve literal placeholders and backend-specific hall/date values; page source determines readable tie ordering.
 
   - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
+  - Allocation observation activates only on first local dispatch; sampling construction failures release active state, construction failures latch with counted loss, and RSS status/source use the same read.
+
   - Storage-serving processes emit only a closed primitive allocation schema to a private two-file local diagnostic ring; forwarding and daemon jobs do not activate it. Contexts, queue, line size and retained files are bounded; observation failure never changes storage limits or restart behavior.
 
   - Tunnel keysets use stable ids; final lookup ignores traversal statistics and unrelated metadata while rechecking current endpoint associations.
@@ -680,6 +682,8 @@ Format (read by `commonplace orch docs-check`):
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
 
   - Numeric wing/room/hall cases and three ordering surfaces run on exact and default backends; Compact additionally covers native numerics and booleans.
+  - `tests/test_worker_observation_fix.py` pins request survival, active-count cleanup, consistent RSS status, forward-only startup and counted constructor latching; pairing oracles also exercise unsupported RSS platforms.
+
   - `tests/test_worker_observation.py` independently enumerates the diagnostic schema and injects synchronous serving delivery, synthetic canaries and bounded-writer failures.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.

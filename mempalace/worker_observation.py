@@ -218,6 +218,7 @@ class RingSink:
                     | os.O_CREAT
                     | getattr(os, "O_NOFOLLOW", 0)
                     | getattr(os, "O_NONBLOCK", 0)
+                    | getattr(os, "O_BINARY", 0)
                 )
                 if directory_fd is None:
                     path = self.directory / name
@@ -435,7 +436,7 @@ class Observer:
                         )
                     )
                     row["rss_source"] = source
-                    row["rss_status"] = status if token.status == "ok" else token.status
+                    row["rss_status"] = status
                     elapsed = self.clock() - token.started
                     row["elapsed_us"] = min(MAX_U, elapsed // 1000) if elapsed >= 0 else None
                     row["outcome"] = token.outcome
@@ -466,6 +467,7 @@ class Observer:
                 _LOCAL.suppressed = False
             return
         token = None
+        active_registered = False
         try:
             with self.lock:
                 if self.ids == MAX_U:
@@ -473,20 +475,35 @@ class Observer:
                 else:
                     self.ids += 1
                     token_id = self.ids
-                    self.active += phase is None
+                    active_registered = phase is None
+                    self.active += active_registered
             if self.ids == MAX_U and "token_id" not in locals():
                 yield None
                 return
-            token = Token(
-                token_id,
-                tool
-                if type(tool) is str and tool in TOOL_NAMES
-                else (None if phase else "unknown"),
-                mode,
-                phase,
-                self.rss(),
-                self.clock,
-            )
+            try:
+                token = Token(
+                    token_id,
+                    tool
+                    if type(tool) is str and tool in TOOL_NAMES
+                    else (None if phase else "unknown"),
+                    mode,
+                    phase,
+                    self.rss(),
+                    self.clock,
+                )
+            except Exception:
+                self.loss()
+            if token is None:
+                if active_registered:
+                    with self.lock:
+                        self.active -= 1
+                    active_registered = False
+                _LOCAL.suppressed = True
+                try:
+                    yield None
+                finally:
+                    _LOCAL.suppressed = False
+                return
             _LOCAL.token = token
             self._emit("phase_begin" if phase else "call_begin", token)
             try:
@@ -498,9 +515,9 @@ class Observer:
                 self._emit("phase_end" if phase else "call_end", token, end=True)
         finally:
             _LOCAL.token = None
-            if token is not None:
+            if active_registered:
                 with self.lock:
-                    self.active -= phase is None
+                    self.active -= 1
             self.slots.release()
 
     def close(self):
