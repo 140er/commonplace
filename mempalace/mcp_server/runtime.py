@@ -180,7 +180,11 @@ def _dispatch_stdio_request(request: dict):
         return _annotate_forwarded_update_status(request, hub.post(request))
     except FORWARD_ERRORS as exc:
         reached_hub = isinstance(exc, urllib.error.HTTPError)
-        if not reached_hub and not _request_is_mutating(request):
+        if (
+            not reached_hub
+            and not getattr(hub, "info", {}).get("managed")
+            and not _request_is_mutating(request)
+        ):
             logger.warning(
                 "Hub at %s unreachable (%s); handling request locally", hub.base_url, exc
             )
@@ -372,7 +376,26 @@ def _acquire_writer_lease_for_http_startup() -> tuple[bool, str]:
             return False, reason
 
 
+_http_coordinator = None
+
+
+def _http_supervisor_factory(**kwargs):
+    from ..mcp_http_supervisor import make_monitor
+
+    return make_monitor(**kwargs)
+
+
 def _run_http_loop() -> None:
+    global _http_coordinator
+    from ..worker_lifecycle import CHILD_ENV, child_coordinator
+
+    if os.environ.get(CHILD_ENV) != "1":
+        return _http_supervisor_factory(
+            palace_path=_config.palace_path, host=_args.host, port=_args.port
+        ).run()
+    _http_coordinator = child_coordinator(
+        cleanup=_exit_running_registered_cleanup, exit=lambda: None
+    )
     # In HTTP mode there is no JSON-RPC stdio channel. Keeping the import-time
     # stdout->stderr guard in place means any accidental print from a dependency
     # still cannot masquerade as an HTTP response.
@@ -441,7 +464,10 @@ def _install_shutdown_signal_handlers() -> None:
     import signal
 
     def _shutdown_handler(signum, frame):  # noqa: ARG001
-        raise SystemExit(0)
+        if _http_coordinator is not None:
+            _http_coordinator.drain("shutdown")
+        else:
+            raise SystemExit(0)
 
     for name in ("SIGTERM", "SIGHUP"):
         sig = getattr(signal, name, None)

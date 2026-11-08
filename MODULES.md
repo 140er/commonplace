@@ -434,9 +434,13 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `mempalace/`, `seed/`
 - **Owns:**
 
+  - HTTPMonitor owns one child, endpoint, startup/reap and cross-generation cooldown; Coordinator owns generation admission through response flush. Neither opens a palace in the monitor or retains request data there.
+
   - The memory engine: verbatim drawers, mining, search, knowledge graph, storage backends and the MCP server; plus the reviewed seed card list.
 
 - **Promises:**
+
+  - Full HTTP and proxy delegation supervise once; Commonplace passes internal child mode with two private inherited pipes. Registry markers survive child cleanup and prevent local fallback during restarting, cooldown and orphan draining. Count/RSS retirement and a transport-body concurrency limit remain disabled.
 
   - Graph snapshots use local SQL locus expressions, including native booleans and integers outside int64; descriptors also bind stored sort values.
 
@@ -482,6 +486,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Three startup failures, unexpected deaths or confirmed early RSS retirements latch for 60 monotonic seconds. The standalone monitor probes once per cooldown; live orphan PID/start identities block launch and are rechecked every 60 seconds. Accepted calls drain on parent EOF; a hung call stays unavailable rather than being force-killed.
+
   - Changed locus values or sort values invalidate authorization; unavailable snapshots expose no partial graph.
 
   - Unknown order keys fail closed; unrelated overview bookkeeping and tunnel compatibility exceptions remain unchanged.
@@ -509,6 +515,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Generation restart, private-pipe lifecycle, deterministic monitor circuit/orphan tests and short fixture-only real-process restart/EOF smoke cover containment, not production allocation attribution.
 
   - Exact and Compact numeric/boolean witnesses and locus-less ordering cases compare with unchanged local readers.
 
@@ -548,6 +556,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
+  - Deterministic HTTP restart and worker-generation fixtures inject clocks, launchers, marker publication and transport responses; only fixture PIDs/start identities are signalled by process smoke.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -575,6 +584,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - The entrypoint RED asserts a live monitor before any replacement barrier. Timer cooldown and orphan rechecks use injected time; event deadlines only guard broken harnesses and are never expected RED evidence.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
@@ -732,6 +743,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Process fixture initialization failures close owned processes and pipes. Restart timing and monitor RSS are measurements, with no performance pass threshold.
+
   - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
 
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
@@ -781,6 +794,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - test_http_generation_restart.py, test_worker_generation_contract.py, test_worker_restart_circuit.py, test_worker_lifecycle.py and test_http_monitor_process.py cover HTTP ownership and completion; forwarding/isolation fixtures include the coordinator and private handles.
 
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
 
@@ -866,6 +881,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - WorkerSupervisor retains restart failures per workspace across generations and pins each transport attempt until its response is consumed; launcher-owned fact handles belong to that generation.
+
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
@@ -873,6 +890,8 @@ Format (read by `commonplace orch docs-check`):
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
 - **Promises:**
+
+  - A matching authenticated no-dispatch recycling refusal permits at most one replacement retry after all old pins finish and the child is reaped. Successful DRAINING responses are final; busy, malformed contracts, body loss and transport errors never replay. Pause and close remain authoritative.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 
@@ -923,6 +942,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - The three-failure circuit refuses requests for 60 monotonic seconds; the next request probes through single-flight. A 30-second replacement wait returns unavailable while an old generation remains alive. Unknown child counts stay unknown; 16 observed successful storage completions reset failures.
+
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -949,6 +970,8 @@ Format (read by `commonplace orch docs-check`):
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - Worker generation-contract and restart-circuit tests cover deterministic base regressions; existing worker isolation, gateway and backup-drain suites preserve the ownership boundary.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 

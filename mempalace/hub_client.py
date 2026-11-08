@@ -160,6 +160,7 @@ def proxy_error_response(request: Mapping, base_url: str, exc: BaseException):
             "message": f"palace hub proxy failed: {exc}",
             "data": {
                 "hub": base_url,
+                "retryable": isinstance(exc, ManagedHubUnavailable),
                 "hint": (
                     "The palace hub did not complete this request. Mutating tools "
                     "are not replayed locally — the hub may still be executing the "
@@ -168,6 +169,13 @@ def proxy_error_response(request: Mapping, base_url: str, exc: BaseException):
             },
         },
     }
+
+
+class ManagedHubUnavailable(urllib.error.URLError):
+    """A known restart owner exists; local fallback would violate ownership."""
+
+    def __init__(self):
+        super().__init__("managed palace hub unavailable; retry later")
 
 
 class HubClient:
@@ -198,7 +206,11 @@ class HubClient:
             from . import server_registry
 
             info = server_registry.read_live_serverinfo(palace_path)
-            if not info or (not include_self and info.get("pid") == os.getpid()):
+            if not info or (
+                not include_self
+                and not info.get("hub_unavailable")
+                and info.get("pid") == os.getpid()
+            ):
                 return None
             return cls(palace_path, info)
         except Exception:
@@ -228,9 +240,26 @@ class HubClient:
 
     def post(self, request: Mapping, *, timeout: float = HUB_PROXY_TIMEOUT_S):
         """POST one JSON-RPC request to ``/mcp``; None for an empty body (a notification)."""
+        if self.info.get("hub_unavailable"):
+            raise ManagedHubUnavailable()
         body = dumps_internal(request).encode("utf-8")
-        with self._open(f"{self.base_url}/mcp", body, timeout) as response:
-            raw = response.read()
+        try:
+            with self._open(f"{self.base_url}/mcp", body, timeout) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            from .worker_lifecycle import proven_refusal
+
+            payload = None
+            if exc.code == 503:
+                try:
+                    payload = json.loads(exc.read())
+                except (ValueError, OSError):
+                    pass
+            fields = exc.headers or {}
+            if proven_refusal(exc.code, fields.get, payload, self.info.get("generation")):
+                exc.close()
+                raise ManagedHubUnavailable() from None
+            raise
         if not raw:
             return None
         return json.loads(raw.decode("utf-8"))

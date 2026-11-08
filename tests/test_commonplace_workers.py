@@ -76,6 +76,10 @@ def test_subprocess_worker_is_isolated_and_locked(tmp_path, monkeypatch):
                 "MEMPALACE_PALACE_PATH",
                 "MEMPALACE_MCP_HTTP_TOKEN",
                 "MEMPALACE_MCP_TRUSTED_IDENTITY",
+                "MEMPALACE_HTTP_CHILD",
+                "MEMPALACE_HTTP_GENERATION",
+                "MEMPALACE_HTTP_LIVENESS",
+                "MEMPALACE_HTTP_FACTS",
             }, names
         ws_dir = tmp_path / "data" / "workspaces" / "ws_1a2b"
         assert (ws_dir / "palace").is_dir() and (ws_dir / "home").is_dir()

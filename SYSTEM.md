@@ -10,6 +10,78 @@ Labels: **M** = measured (from code or a run), **T** = target, **G** = guess
 that rollout must measure. `file:line` references are to the tree in which the
 entry was written.
 
+## HTTP restart containment
+
+All HTTP command entrypoints use one monitor and a runtime child; Commonplace's
+workspace launcher is already a supervisor and selects internal child mode.
+The monitor opens no storage, model or client. Its allocation is fixed imports,
+one child and current generation facts; prior child objects and request records
+are discarded. This is a restart contract for containment. It does not establish
+the production memory-growth root cause; production attribution remains open.
+
+The child owns the HTTP listener and writer lease. A parent-owned atomic marker
+publishes starting, running, restarting, draining, cooldown or orphan_draining,
+with PID/start identities and no token. Local proxies return retryable unavailable
+immediately during gaps, including proxies first started during the gap; they
+never open local storage behind a live monitor. Configured local-only operation
+without a managed hub remains supported. Cleanup removes only the owner's record.
+An expired parent marker cannot authorize takeover of a live recorded child.
+A second monitor serializes startup and waits for an orphan's PID/start identity
+to disappear, rechecking every 60 monotonic seconds without adopting it.
+
+HTTP replies carry X-Mempalace-Generation, X-Mempalace-Admitted and
+X-Mempalace-State (RUNNING or DRAINING). A successful DRAINING reply is final.
+Refusals use HTTP 503, X-Mempalace-Dispatch: not-started,
+X-Mempalace-Reason: recycling or busy, and generation identity. The JSON-RPC
+error is -32071 with dispatch_started=false, generation and reason; a refusal
+before body read has a null id. Only authenticated matching-generation proof
+allows the gateway one retry after releasing its pin, draining other pins and
+reaping the old child. Busy refuses without restart. Missing/mismatched proof,
+connection loss, body loss and post-dispatch errors have uncertain outcome and
+never automatically replay mutations. No new public route is added.
+
+Each accepted transport holds a completion token through the final response
+write and flush, including lock-free handlers. Storage admission and completed
+successful storage calls are generation-local. Parent death closes a dedicated
+private liveness pipe: EOF closes admission, drains all accepted responses,
+runs registered cleanup and exits. Another private pipe sends at most three
+versioned facts per generation, each at most 512 bytes: ready, completed_16 and
+terminal retiring (admitted/completed, reason and RSS-source enum). Writes are
+nonblocking and best-effort; missing facts stay unknown. POSIX explicitly passes
+only child pipe ends; Windows explicitly inherits those handles. No request
+content, arguments, results, credentials or external telemetry enter the channel.
+
+The persistent restart owner counts launcher errors, before-ready exits, startup
+deadline expiry, unexpected death and confirmed RSS retirement after at most one
+storage admission. Three consecutive failures latch for 60 monotonic seconds.
+The standalone monitor then makes exactly one timer-driven probe; a failed probe
+latches for another 60 seconds. Commonplace instead probes on its next request
+through single-flight. At least 16 observed successful completions reset failures;
+count-budget retirement is not a failure. Restarting the supervisor clears this
+in-memory state. Backup pause and close override replacement. Replacement callers
+wait at most 30 seconds; accepted/hung calls are not force-killed to make room.
+Existing emergency write-stall exits still represent uncertain outcomes.
+
+No count/RSS retirement, RSS default or eight-body limit is enabled here. Soft
+RSS policy, uniform stdio admission/idle handling and host reconnect verification
+belong to the later policy change. Stdio clients receiving a final response must
+reconnect after clean worker EOF; no framing supervisor is introduced. Embedded
+library/daemon calls remain outside this serving-only lifecycle. No per-probe
+helper or startup-injection bookkeeping is added; existing bounded metadata and
+capacity-cache budgets remain unchanged.
+
+For reproducible scratch measurements, run the focused fixture-only process
+smoke and record the git revision, Python/dependency versions, fixture/config,
+PID/start identity, successful call count and monotonic child-kill-to-replacement
+ready interval. Sample monitor and worker /proc/<pid>/status separately at first
+ready, after identical cheap calls and after restart: VmRSS, RssAnon, RssFile and
+VmHWM; report end-minus-start and warm drift per replica. The stable monitor
+baseline is separate from worker storage/model RSS. Missing monitor measurements
+on a revision without a monitor are unavailable, never zero. Timing/RSS are
+informational and never test pass thresholds. The process smoke is reproducible
+with `uv run --extra dev pytest tests/test_http_monitor_process.py`; it uses
+isolated scratch homes, a fixed synthetic reply and no model/provider calls.
+
 ## Decisions
 
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when

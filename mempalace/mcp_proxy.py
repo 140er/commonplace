@@ -293,6 +293,11 @@ def _handle(request: dict, palace_path, local: _LocalServer, backend=None):
     if not isinstance(request, dict):
         # What the full server answers it with.
         return _json_rpc_error(None, -32600, "Invalid Request")
+    hub = HubClient.discover(palace_path)
+    if hub is not None and getattr(hub, "info", {}).get("hub_unavailable"):
+        from .hub_client import ManagedHubUnavailable
+
+        return _proxy_error(request, hub.base_url, ManagedHubUnavailable())
     if _search_stays_local(request, backend):
         # The hub is fine; this one search just runs with this session's settings.
         try:
@@ -301,12 +306,13 @@ def _handle(request: dict, palace_path, local: _LocalServer, backend=None):
             logger.error("Local server could not start: %s", exc)
             return _local_server_error(request, exc)
         return module._observed_local_request(request, "proxy_local")
-    hub = HubClient.discover(palace_path)
     if hub is not None:
         base_url = hub.base_url
         try:
             return _annotate_forwarded_update_status(request, hub.post(request))
         except FORWARD_ERRORS as exc:
+            if getattr(hub, "info", {}).get("managed"):
+                return _proxy_error(request, base_url, exc)
             # Reaching the hub and getting an HTTP error means it may have run
             # the call; so does any mid-flight failure on a mutating tool, an
             # answer that broke off (IncompleteRead, BadStatusLine) included.

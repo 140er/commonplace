@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,6 +136,13 @@ class Worker:
     pid: Optional[int] = None
     last_used: float = field(default_factory=time.monotonic)
     starttime: Optional[int] = None
+    generation: str = field(default_factory=lambda: str(uuid.uuid4()))
+    pins: int = 0
+    retiring: bool = False
+    admitted: Optional[int] = None
+    completed: Optional[int] = None
+    control: object = None
+    reap: object = None
 
     @property
     def host_header(self) -> str:
@@ -212,6 +220,9 @@ class SubprocessLauncher:
                 "MEMPALACE_MCP_TRUSTED_IDENTITY": "1",
             }
         )
+        from mempalace.worker_lifecycle import ControlPipes
+
+        control = ControlPipes()
         log = open(workspace_dir / "worker.log", "ab")
         try:
             proc = subprocess.Popen(
@@ -228,18 +239,23 @@ class SubprocessLauncher:
                     "--palace",
                     str(palace),
                 ],
-                env=env,
+                **control.launch_options(env),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=log,
             )
+        except BaseException:
+            control.close()
+            raise
         finally:
             log.close()  # The worker holds its own copy of the handle.
 
+        control.launched()
         starttime = _proc_starttime(proc.pid)
 
         def stop() -> None:
             stop_process(proc)
+            control.close()
 
         worker = Worker(
             workspace_id=workspace_id,
@@ -250,6 +266,9 @@ class SubprocessLauncher:
             alive=lambda: proc.poll() is None,
             pid=proc.pid,
             starttime=starttime,
+            generation=control.generation,
+            control=control,
+            reap=lambda timeout: proc.wait(timeout=timeout),
         )
         try:
             wait_until_ready(worker, self.startup_timeout_s)
@@ -286,6 +305,10 @@ class WorkerSupervisor:
         self.root = Path(data_dir) / "workspaces"
         self.launcher = launcher or SubprocessLauncher()
         self.idle_stop_s = idle_stop_s
+        from mempalace.worker_lifecycle import RestartCircuit
+
+        self._circuit_factory = lambda: RestartCircuit(lambda: time.monotonic())
+        self._circuits = {}
         self._workers: dict = {}
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
@@ -392,30 +415,96 @@ class WorkerSupervisor:
         with self.call():
             return self._get(workspace_id)
 
-    def _get(self, workspace_id: str) -> Worker:
+    @contextmanager
+    def pin(self, worker):
+        with self._cond:
+            if self._closed or self._paused or worker.retiring or not worker.alive():
+                raise SupervisorClosed("generation unavailable before dispatch")
+            worker.pins += 1
+        try:
+            yield worker
+        finally:
+            with self._cond:
+                worker.pins -= 1
+                self._cond.notify_all()
+
+    def retire(self, worker):
+        with self._cond:
+            worker.retiring = True
+            if worker.control is not None:
+                worker.control.drain()
+            self._cond.notify_all()
+
+    def replace(self, worker, timeout_s=30):
+        return self._get(worker.workspace_id, timeout_s=timeout_s)
+
+    def _get(self, workspace_id: str, timeout_s=30) -> Worker:
+        deadline = time.monotonic() + timeout_s
+        old = None
         while True:
-            with self._lock:
+            with self._cond:
                 if self._closed:
-                    raise RuntimeError("worker supervisor is closed")
+                    raise SupervisorClosed("worker supervisor is closed")
+                if self._paused:
+                    raise WorkersPaused()
+                circuit = self._circuits.setdefault(workspace_id, self._circuit_factory())
                 worker = self._workers.get(workspace_id)
-                if worker is not None and worker.alive():
-                    worker.last_used = time.monotonic()
-                    return worker
-                self._workers.pop(workspace_id, None)
+                if worker is not None:
+                    if worker.control is not None:
+                        circuit.healthy(worker.control.completed)
+                        if worker.control.terminal is not None:
+                            worker.retiring = True
+                    circuit.healthy(worker.completed)
+                    if worker.alive() and not worker.retiring:
+                        worker.last_used = time.monotonic()
+                        return worker
+                    if worker.pins:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise DrainTimeout("generation still pinned")
+                        self._cond.wait(remaining)
+                        continue
+                if not circuit.available():
+                    raise RuntimeError("worker restart circuit cooling down")
                 gate = self._starting.get(workspace_id)
                 if gate is None:
                     gate = self._starting[workspace_id] = threading.Event()
+                    old = self._workers.pop(workspace_id, None)
                     break
-            gate.wait()
+            if not gate.wait(max(0, deadline - time.monotonic())):
+                raise DrainTimeout("generation replacement still pending")
         try:
-            worker = self.launcher.start(workspace_id, self.workspace_dir(workspace_id))
-            with self._lock:
-                closed = self._closed
+            if old is not None:
+                if old.control is not None:
+                    old.control.drain()
+                if old.reap is not None:
+                    try:
+                        old.reap(max(0, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        with self._cond:
+                            self._workers[workspace_id] = old
+                        raise DrainTimeout("old generation is still draining") from None
+                    old.control.close()
+                else:
+                    old.stop()
+                terminal = old.control.terminal if old.control is not None else None
+                circuit.ended(
+                    terminal, old.completed if old.control is None else old.control.completed
+                )
+                if not circuit.available():
+                    raise RuntimeError("worker restart circuit cooling down")
+            try:
+                worker = self.launcher.start(workspace_id, self.workspace_dir(workspace_id))
+            except Exception:
+                circuit.failed()
+                raise
+            with self._cond:
+                closed = self._closed or self._paused
                 if not closed:
                     self._workers[workspace_id] = worker
             if closed:
                 worker.stop()
-                raise RuntimeError("worker supervisor is closed")
+                raise SupervisorClosed("worker supervisor closed or paused")
             return worker
         finally:
             with self._cond:
@@ -429,7 +518,7 @@ class WorkerSupervisor:
             idle = [
                 ws
                 for ws, w in self._workers.items()
-                if now - w.last_used > self.idle_stop_s or not w.alive()
+                if not w.pins and (now - w.last_used > self.idle_stop_s or not w.alive())
             ]
             stopped = [self._workers.pop(ws) for ws in idle]
         for worker in stopped:

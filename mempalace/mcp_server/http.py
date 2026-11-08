@@ -1336,6 +1336,196 @@ def _http_resolve_token(host: str) -> str:
     return token
 
 
+def _http_write_generation_headers(handler):
+    for name, value in handler.server.coordinator.headers().items():
+        handler.send_header(name, value)
+
+
+def _http_handler_class():
+    from http.server import BaseHTTPRequestHandler
+
+    class _Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        timeout = 10
+
+        def log_message(self, fmt, *args):
+            logger.info("HTTP %s - " + fmt, self.client_address[0], *args)
+
+        def send_error(self, code, message=None, explain=None):
+            self._record_request(code)
+            return super().send_error(code, message, explain)
+
+        def _record_request(self, status: int) -> None:
+            _http_record_request(self.server, self, status)
+
+        def _status_payload(self) -> dict:
+            return _http_status_payload(self.server)
+
+        def _send_bytes(self, status: int, body: bytes, content_type: str) -> None:
+            self._record_request(status)
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            if getattr(self, "_refusal", False):
+                self.send_header("X-Mempalace-Dispatch", "not-started")
+                self.send_header("X-Mempalace-Reason", "recycling")
+            self.end_headers()
+            self.wfile.write(body)
+            self._response_completed = status == 200
+            self.close_connection = True
+
+        def _send_json(self, status: int, payload: dict, *, exact: bool = False) -> None:
+            # MCP clients get stray source bytes as U+FFFD; peers replicating
+            # through /sync get them exact.
+            dumps = dumps_internal if exact else dumps_client
+            body = dumps(payload).encode("utf-8")
+            self._send_bytes(status, body, "application/json; charset=utf-8")
+
+        def _request_rejected(self, require_auth: bool) -> bool:
+            return _http_request_rejected(self, require_auth)
+
+        def do_GET(self):
+            _http_handle_get(self)
+
+        def end_headers(self):
+            _http_write_generation_headers(self)
+            super().end_headers()
+
+        def _refuse(self, req_id):
+            coordinator = self.server.coordinator
+            self._refusal = True
+            self._send_json(
+                503,
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32071,
+                        "message": "Hub unavailable; retry later",
+                        "data": {
+                            "dispatch_started": False,
+                            "generation": coordinator.generation,
+                            "reason": "recycling",
+                        },
+                    },
+                },
+            )
+
+        def do_POST(self):
+            if self._request_rejected(require_auth=True):
+                return
+            self._storage_call = False
+            self._response_completed = False
+            self._refusal = False
+            coordinator = self.server.coordinator
+            if not coordinator.acquire():
+                self._refuse(None)
+                return
+            try:
+                self._do_POST()
+            finally:
+                completed = False
+                try:
+                    self.wfile.flush()
+                    completed = self._response_completed
+                finally:
+                    coordinator.release(storage=self._storage_call, completed=completed)
+
+        def _do_POST(self):
+            path = urlparse(self.path).path
+            if path != "/mcp":
+                self.send_error(404, "Not Found")
+                return
+            # A browser can send text/plain cross-origin without a CORS preflight;
+            # it cannot send application/json, so only JSON reaches the dispatcher.
+            media_type = (self.headers.get("Content-Type") or "").split(";", 1)[0]
+            if media_type.strip().lower() != "application/json":
+                self.send_error(415, "Unsupported Media Type", "POST /mcp needs application/json")
+                return
+
+            try:
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+            except (TypeError, ValueError):
+                content_length = 0
+
+            if content_length < 0 or content_length > _HTTP_MAX_REQUEST_BYTES:
+                self._send_json(
+                    413,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32600, "message": "Request too large"},
+                    },
+                )
+                return
+
+            try:
+                raw = self.rfile.read(content_length)
+                request = json.loads(raw.decode("utf-8"))
+            except Exception as exc:
+                logger.warning("HTTP JSON-RPC read or parse error: %s", exc)
+                self._send_json(400, _json_rpc_parse_error())
+                return
+
+            method = _normalize_envelope(request)[0] if isinstance(request, dict) else None
+            self._storage_call = method == "tools/call" or method in {
+                "internal/write_mirror_units",
+                "internal/read_associations",
+            }
+            if self._storage_call and not self.server.coordinator.admit():
+                self._storage_call = False
+                self._refuse(request.get("id"))
+                return
+            with _worker_transport():
+                try:
+                    # Locking policy lives in _http_dispatch: global lock for
+                    # Chroma-touching tools, lock-free for logstream tools.
+                    try:
+                        with _provenance.verified(self.verified_identity):
+                            response = _http_dispatch(request)
+                    except Exception:
+                        # Without this the exception escaped into BaseHTTPRequestHandler,
+                        # which closes the connection with no reply at all -- the client
+                        # sees a dropped socket instead of a JSON-RPC error. Log with the
+                        # traceback: -32603 tells the client nothing diagnostic, so the
+                        # stack is the only record of what actually failed.
+                        logger.exception("HTTP JSON-RPC dispatch error")
+                        req_id = request.get("id") if isinstance(request, dict) else None
+                        if req_id is None:
+                            # A notification is owed no response body, failure included,
+                            # matching the 202 branch below and the stdio loop. The
+                            # status still reports the failure at the transport level.
+                            self._record_request(500)
+                            self.send_response(500)
+                            self.send_header("Content-Length", "0")
+                            self.send_header("Connection", "close")
+                            self.end_headers()
+                            self.close_connection = True
+                            return
+                        self._send_json(500, _json_rpc_internal_error(req_id))
+                        return
+
+                    if response is None:
+                        # JSON-RPC notifications intentionally have no response body.
+                        self._response_completed = True
+                        self._record_request(202)
+                        self.send_response(202)
+                        self.send_header("Content-Length", "0")
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        self.close_connection = True
+                        return
+
+                    # Another MemPalace process (proxy, hub client) asks for the exact
+                    # text; it shows the result to its own client the client's way.
+                    self._send_json(200, response, exact=self.headers.get(EXACT_WIRE_HEADER) == "1")
+                finally:
+                    raw = request = response = req_id = None
+
+    return _Handler
+
+
 def _build_http_server(host: str, port: int):
     """Construct (but do not start) the MCP HTTP server.
 
@@ -1345,7 +1535,7 @@ def _build_http_server(host: str, port: int):
     CI. Returns a bound ``ThreadingHTTPServer`` whose request policy (Host
     allowlist, Origin check, optional bearer token) is attached as attributes.
     """
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import ThreadingHTTPServer
 
     auth_token = _http_resolve_token(host)
     trust_identity = _http_trusts_identity(auth_token)
@@ -1395,133 +1585,10 @@ def _build_http_server(host: str, port: int):
                 return
             super().handle_error(request, client_address)
 
-    class _Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-        timeout = 10
+    from ..worker_lifecycle import Coordinator
 
-        def log_message(self, fmt, *args):
-            logger.info("HTTP %s - " + fmt, self.client_address[0], *args)
-
-        def send_error(self, code, message=None, explain=None):
-            self._record_request(code)
-            return super().send_error(code, message, explain)
-
-        def _record_request(self, status: int) -> None:
-            _http_record_request(self.server, self, status)
-
-        def _status_payload(self) -> dict:
-            return _http_status_payload(self.server)
-
-        def _send_bytes(self, status: int, body: bytes, content_type: str) -> None:
-            self._record_request(status)
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.wfile.write(body)
-            self.close_connection = True
-
-        def _send_json(self, status: int, payload: dict, *, exact: bool = False) -> None:
-            # MCP clients get stray source bytes as U+FFFD; peers replicating
-            # through /sync get them exact.
-            dumps = dumps_internal if exact else dumps_client
-            body = dumps(payload).encode("utf-8")
-            self._send_bytes(status, body, "application/json; charset=utf-8")
-
-        def _request_rejected(self, require_auth: bool) -> bool:
-            return _http_request_rejected(self, require_auth)
-
-        def do_GET(self):
-            _http_handle_get(self)
-
-        def do_POST(self):
-            if self._request_rejected(require_auth=True):
-                return
-            path = urlparse(self.path).path
-            if path != "/mcp":
-                self.send_error(404, "Not Found")
-                return
-            # A browser can send text/plain cross-origin without a CORS preflight;
-            # it cannot send application/json, so only JSON reaches the dispatcher.
-            media_type = (self.headers.get("Content-Type") or "").split(";", 1)[0]
-            if media_type.strip().lower() != "application/json":
-                self.send_error(415, "Unsupported Media Type", "POST /mcp needs application/json")
-                return
-
-            try:
-                content_length = int(self.headers.get("Content-Length", "0") or "0")
-            except (TypeError, ValueError):
-                content_length = 0
-
-            if content_length < 0 or content_length > _HTTP_MAX_REQUEST_BYTES:
-                self._send_json(
-                    413,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": None,
-                        "error": {"code": -32600, "message": "Request too large"},
-                    },
-                )
-                return
-
-            try:
-                raw = self.rfile.read(content_length)
-                request = json.loads(raw.decode("utf-8"))
-            except Exception as exc:
-                logger.warning("HTTP JSON-RPC read or parse error: %s", exc)
-                self._send_json(400, _json_rpc_parse_error())
-                return
-
-            with _worker_transport():
-                try:
-                    # Locking policy lives in _http_dispatch: global lock for
-                    # Chroma-touching tools, lock-free for logstream tools.
-                    try:
-                        with _provenance.verified(self.verified_identity):
-                            response = _http_dispatch(request)
-                    except Exception:
-                        # Without this the exception escaped into BaseHTTPRequestHandler,
-                        # which closes the connection with no reply at all -- the client
-                        # sees a dropped socket instead of a JSON-RPC error. Log with the
-                        # traceback: -32603 tells the client nothing diagnostic, so the
-                        # stack is the only record of what actually failed.
-                        logger.exception("HTTP JSON-RPC dispatch error")
-                        req_id = request.get("id") if isinstance(request, dict) else None
-                        if req_id is None:
-                            # A notification is owed no response body, failure included,
-                            # matching the 202 branch below and the stdio loop. The
-                            # status still reports the failure at the transport level.
-                            self._record_request(500)
-                            self.send_response(500)
-                            self.send_header("Content-Length", "0")
-                            self.send_header("Connection", "close")
-                            self.end_headers()
-                            self.close_connection = True
-                            return
-                        self._send_json(500, _json_rpc_internal_error(req_id))
-                        return
-
-                    if response is None:
-                        # JSON-RPC notifications intentionally have no response body.
-                        self._record_request(202)
-                        self.send_response(202)
-                        self.send_header("Content-Length", "0")
-                        self.send_header("Connection", "close")
-                        self.end_headers()
-                        self.close_connection = True
-                        return
-
-                    # Another MemPalace process (proxy, hub client) asks for the exact
-                    # text; it shows the result to its own client the client's way.
-                    self._send_json(200, response, exact=self.headers.get(EXACT_WIRE_HEADER) == "1")
-                finally:
-                    try:
-                        self.wfile.flush()
-                    finally:
-                        raw = request = response = req_id = None
-
-    httpd = _MCPHTTPServer((host, port), _Handler)
+    httpd = _MCPHTTPServer((host, port), _http_handler_class())
+    httpd.coordinator = _http_coordinator or Coordinator()
     bound_port = httpd.server_address[1]
     # Pin Host only on a loopback bind (the security-critical default). A
     # deliberately network-exposed bind is the operator's call and may sit
@@ -1612,6 +1679,8 @@ def _serve_http(host: str, port: int) -> None:
                 host,
                 _HTTP_ALLOW_INSECURE_NO_TOKEN_ENV,
             )
+
+    httpd.coordinator.ready()
 
     # RFC 004 step 0: converge with peer replicas when peers.json exists.
     _start_peer_sync_thread()
