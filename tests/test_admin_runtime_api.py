@@ -169,6 +169,12 @@ def logical(runtime, hub):
     return values, snapshot(hub)[2]
 
 
+def wrong_wing_policy():
+    from commonplace.policy import Policy
+
+    return Policy.build(scopes=["memory:read"], read_wings=["other"]).to_json()
+
+
 def test_runtime_orchestrators(hub, runtime, monkeypatch):
     lead, _ = agent(hub, "lead", expires_at=FUTURE, last_used_at="2026-11-07T11:59:00Z")
     webhook(hub, lead)
@@ -209,7 +215,18 @@ def test_runtime_orchestrators(hub, runtime, monkeypatch):
         def __exit__(self, *args):
             pass
 
+    resolver = hub.supervisor.workspace_dir
+    resolved = []
+
+    def existing_path(ws):
+        assert ws == hub.workspace
+        path = resolver(ws)
+        assert Path(path) == runtime[1]
+        resolved.append(ws)
+        return path
+
     with monkeypatch.context() as patch:
+        patch.setattr(hub.supervisor, "workspace_dir", existing_path)
         patch.setattr(hub.gateway, "principal_for", lambda h: principal)
         patch.setattr(hub.db, "_lock", NoLock())
         patch.setattr(hub.gateway, "workspace_dir", forbidden)
@@ -247,12 +264,13 @@ def test_runtime_orchestrators(hub, runtime, monkeypatch):
             with pytest.raises(Exception) as exc:
                 conn.execute("DELETE FROM boards")
             assert "readonly" in str(exc.value).lower() or "read-only" in str(exc.value).lower()
+    assert resolved, "The approved generation-aware resolver must be exercised"
     assert logical(runtime, hub) == before
     # Current subscription eligibility, not subscription existence, controls wakeability.
     for field, bad, good in (
         (
             "policy",
-            PolicyWrongWing(),
+            wrong_wing_policy(),
             hub.db._conn.execute("SELECT policy FROM connections WHERE id=?", (lead,)).fetchone()[
                 0
             ],
@@ -274,12 +292,6 @@ def test_runtime_orchestrators(hub, runtime, monkeypatch):
     hub.db._conn.execute("UPDATE connections SET user_id=? WHERE id=?", (uid, lead))
     hub.db._conn.execute("UPDATE users SET disabled_at=? WHERE id=?", (OLD, uid))
     assert get(hub, "runtime", headers)[1]["orchestrators"]["items"][0]["connected"] is False
-
-
-def PolicyWrongWing():
-    from commonplace.policy import Policy
-
-    return Policy.build(scopes=["memory:read"], read_wings=["other"]).to_json()
 
 
 def test_runtime_machines(hub, runtime):

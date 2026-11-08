@@ -547,6 +547,7 @@ def project_limits(gateway, workspace_id, context, after):
                     board_slug=board["slug"],
                     workers=workers,
                     now=control_db._iso(context.now),
+                    allow_missing_runner=True,
                 )
                 cap, count = used.cap, used.used
             else:
