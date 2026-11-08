@@ -224,7 +224,7 @@ def test_card253_s10_head_bundle_shapes(case, parent, shape):
     original = copy.deepcopy(payload)
     cleaned = gate(w.h.gateway, w.member, "drawer_read", payload)
     assert payload == original
-    if parent == "readable" or (shape == "flat" and parent == "invalid"):
+    if parent in {"readable", "invalid"}:
         assert cleaned == payload
     elif shape == "flat":
         assert start not in cleaned and end not in cleaned
@@ -529,3 +529,14 @@ def test_card253_s10_r4_guard_endpoint_compat(case, monkeypatch, tmp_path, role,
     palace_graph._save_tunnels([row])
     expected = [row] if kind == "plain" else [{k: v for k, v in row.items() if k != "target"}]
     assert invoke(w, "mempalace_list_tunnels", {}, role) == expected
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_card253_s10_r5_token_free_retry(case, role):
+    w = case
+    identifier = seed(
+        w, {"source_thread": "owner-chat", "source_seq_start": 0, "source_seq_end": 0}
+    )
+    reply = invoke(w, TOOLS[0], {"wing": "wing_fixture", "room": "notes", "content": TEXT}, role)
+    assert reply.get("source_kept") == {"thread": "owner-chat", "seq_start": 0, "seq_end": 0}
+    assert reply["success"] and reply["drawer_id"] == identifier

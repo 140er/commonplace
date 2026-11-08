@@ -334,9 +334,12 @@ def _proved_thread(value, access):
     parsed = access.parse(value)
     return (
         parsed is not provenance_refs.REFUSE
-        and bool(parsed.tokens)
-        and parsed.text in parsed.tokens
-        and all(access.reference(token) for token in parsed.tokens)
+        and bool(parsed.text)
+        and (
+            not parsed.tokens
+            or parsed.text in parsed.tokens
+            and all(access.reference(token) for token in parsed.tokens)
+        )
     )
 
 
