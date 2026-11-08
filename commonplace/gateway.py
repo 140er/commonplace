@@ -819,6 +819,8 @@ class Mediator:
                 return {"respond": {"drawers": drawers, "count": len(drawers)}}
         except PageArgumentError:
             raise
+        except WorkerPaused:
+            raise
         except Exception:
             return {"respond": empty}
 

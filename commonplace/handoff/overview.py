@@ -72,7 +72,8 @@ def project(gateway, principal, workers, name, *, timeout=660.0, worker_tool=Non
 
     No public gateway recursion and no process-wide authorization cache. Raw
     worker calls always carry the authenticated principal's workspace. A fault
-    anywhere discards all pages, including sums already revalidated.
+    anywhere discards all pages, including sums already revalidated. Backup
+    pauses propagate WorkerPaused so callers retain their retry contract.
     """
     from commonplace.gateway import WorkerPaused
 
