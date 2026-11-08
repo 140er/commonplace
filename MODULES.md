@@ -987,7 +987,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
 
-  - Only authenticated consent forms permit their exact validated redirect origin in form-action; login and generic pages remain self-only.
+  - Only authenticated consent forms permit their exact validated redirect origin in form-action; login and generic pages remain self-only. IPv6 redirects fail closed because Chromium ignores IPv6 CSP host-sources.
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
