@@ -38,6 +38,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
+
   - Documents citation omission and backend proof limits separately from fact eligibility.
 
   - Records current typed citation proof and raw path authorization before display conversion.
@@ -90,6 +92,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
+
   - Keeps unavailable citation links absent without changing visible facts.
 
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
@@ -110,6 +114,8 @@ Format (read by `commonplace orch docs-check`):
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
@@ -362,6 +368,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
+
   - Citation failure cases compare complete surviving facts with readable controls.
 
   - Typed citation fixtures use native stored threads and real public reads, with metadata and Recall spies.
@@ -481,6 +489,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
+
   - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
 
   - Only named public AssertionErrors count as base regressions; readable citations and plain-file display remain controls.
@@ -503,6 +513,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -556,6 +568,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
+
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
 
@@ -586,6 +600,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
+
   - Worker failures remove only the affected citation, with no other-workspace fallback.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -598,6 +614,8 @@ Format (read by `commonplace orch docs-check`):
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
 
@@ -913,6 +931,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
+
   - Outgoing typed citations require current wing and thread authority plus snapshot revalidation; raw source_file tokens are authorized before basename display.
   - Tunnel projection validates names before acquisition, pages by identity and preserves live readable associations across non-association updates.
 
@@ -956,6 +976,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
+
   - Association faults or revoked authority omit citations after original-source fact eligibility; words remain verbatim.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -969,6 +991,8 @@ Format (read by `commonplace orch docs-check`):
   - A failed launch of the successor leaves the source agent running; an interrupted archive adoption resumes from its last committed step.
 
 - **Tests:**
+
+  - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 

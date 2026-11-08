@@ -7,21 +7,76 @@ from .mirror_access import reader, unreadable_room
 from .overview import _taxonomy, _valid_cursor
 
 
+class PageArgumentError(ValueError):
+    """The worker rejected a public drawer-page argument."""
+
+    def __init__(self, error):
+        super().__init__(error["message"])
+        self.error = error
+
+
+def _prepare_page(principal, workers, args, timeout):
+    """Use the worker's normal validation without reading any drawer rows."""
+    from commonplace.gateway import _tool_result
+
+    response = workers.post(
+        principal,
+        {
+            "jsonrpc": "2.0",
+            "id": "commonplace-page-validation",
+            "method": "tools/call",
+            "params": {
+                "name": "mempalace_list_drawers",
+                "arguments": {**args, "thread_scope": {"allow": [], "timeout": timeout}},
+            },
+        },
+    )
+    error = response.get("error") if isinstance(response, dict) else None
+    if (
+        isinstance(error, dict)
+        and error.get("code") == -32602
+        and isinstance(error.get("message"), str)
+    ):
+        raise PageArgumentError(error)
+    return _tool_result(response)
+
+
 def project(gateway, principal, workers, args, *, timeout=660.0):
-    empty = {
-        "drawers": [],
-        "total": 0,
-        "count": 0,
-        "offset": max(0, int(args.get("offset", 0))),
-        "limit": max(1, min(100, int(args.get("limit", 20)))),
-    }
-    if not getattr(principal, "workspace_id", None):
-        return empty
+    empty = {"drawers": [], "total": 0, "count": 0, "offset": 0, "limit": 20}
     try:
-        context = getattr(gateway, "handoff", None)
-        if context is not None:
-            context.store_for(principal.workspace_id)
+        # Keep a safe envelope even if acquisition fails before validation.
+        for key, minimum, maximum in (("offset", 0, None), ("limit", 1, 100)):
+            value = args.get(key)
+            if type(value) is int:
+                empty[key] = (
+                    max(minimum, value) if maximum is None else max(minimum, min(maximum, value))
+                )
+        if not getattr(principal, "workspace_id", None):
+            return empty
         with checks.deadline(timeout):
+            prepared = _prepare_page(principal, workers, args, checks.remaining(timeout))
+            if (
+                isinstance(prepared, dict)
+                and set(prepared) == {"error"}
+                and isinstance(prepared["error"], str)
+            ):
+                return prepared
+            if (
+                not isinstance(prepared, dict)
+                or set(prepared) != set(empty)
+                or prepared["drawers"] != []
+                or prepared["count"] != 0
+                or prepared["total"] != 0
+                or type(prepared["offset"]) is not int
+                or prepared["offset"] < 0
+                or type(prepared["limit"]) is not int
+                or not 1 <= prepared["limit"] <= 100
+            ):
+                return empty
+            empty = prepared
+            context = getattr(gateway, "handoff", None)
+            if context is not None:
+                context.store_for(principal.workspace_id)
             access = reader(gateway, principal)
             after, seen, allowed, decisions = None, set(), [], {}
             while True:
@@ -77,9 +132,17 @@ def project(gateway, principal, workers, args, *, timeout=660.0):
                 },
             )
             checks.remaining(0)
+            if (
+                isinstance(result, dict)
+                and set(result) == {"error"}
+                and isinstance(result["error"], str)
+            ):
+                return result
             if not isinstance(result, dict) or set(result) != set(empty):
                 return empty
             return result
+    except PageArgumentError:
+        raise
     except Exception:
         return empty
 

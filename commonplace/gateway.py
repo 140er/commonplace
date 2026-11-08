@@ -433,6 +433,8 @@ class Mediator:
         args = params.get("arguments")
         from mempalace.stored_text import user_tool_arguments
 
+        from .handoff.drawer_pages import PageArgumentError
+
         args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
         supplied_rules_seq = args.pop("rules_seq", None)
         policy = principal.policy
@@ -481,6 +483,8 @@ class Mediator:
         try:
             _check_argument_types(args)
             plan = getattr(self, f"_before_{rule}")(principal, name, args, notes)
+        except PageArgumentError as exc:
+            return {"jsonrpc": "2.0", "id": req_id, "error": exc.error}
         except Hidden as exc:
             self._audit(
                 principal, name, "deny", "hidden drawer", target_ids=_target_ids(args, None)
@@ -670,14 +674,16 @@ class Mediator:
         if name == "mempalace_list_drawers":
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
-                if not wing or not policy.can_read_wing(wing):
-                    raise Denied("pass a wing you can read")
+                if not wing:
+                    raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
+                if not policy.can_read_wing(wing):
+                    raise Denied(f"this connection can't read wing {wing!r}")
                 args["wing"] = wing
-            from .handoff.drawer_pages import project
+            from .handoff.drawer_pages import finish_page, project
 
             result = project(self.gateway, principal, self.workers, args)
             response = self._after(principal, name, "read_wing", args, _tool_response(None, result))
-            return {"respond": _tool_result(response)}
+            return {"respond": finish_page(result, _tool_result(response))}
         if policy.sees_all_wings:
             return None
         wing = args.get("wing")

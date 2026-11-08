@@ -197,11 +197,20 @@ def test_card253_s06_changed_descriptor(page_world, monkeypatch, path):
 def test_card253_s06_incomplete_projection(fault):
     from types import SimpleNamespace
 
+    from commonplace.gateway import _tool_response
     from commonplace.handoff.drawer_pages import project
     from commonplace.rules import checks
 
+    calls = []
+
     class Workers:
+        def post(self, principal, request):
+            return _tool_response(
+                request["id"], {"drawers": [], "total": 0, "count": 0, "offset": 7, "limit": 2}
+            )
+
         def call_tool(self, *args):
+            calls.append(True)
             if fault == "raised":
                 raise RuntimeError("private failure")
             if fault == "deadline":
@@ -217,6 +226,7 @@ def test_card253_s06_incomplete_projection(fault):
         timeout=0 if fault == "deadline" else 1,
     )
     assert result == {"drawers": [], "total": 0, "count": 0, "offset": 7, "limit": 2}
+    assert calls == ([] if fault == "deadline" else [True])
 
 
 @pytest.mark.parametrize("incomplete", [False, True])
@@ -270,3 +280,124 @@ def test_card253_s06_provenance_scrub_keeps_visible_total(page_world):
     result = page(w)
     assert result.get("total") == 2 and result["count"] == 1
     assert "source_thread" not in result["drawers"][0]["metadata"]
+
+
+def literal_token(w, *, import_read=False, wings=None):
+    h, _, _, token, visible, hidden = w
+    member = h.db.authenticate_token(token)
+    scopes = ["memory:read", "private:read", "threads:read"]
+    if import_read:
+        scopes.append("memory:import:read")
+    token = h.token(
+        f"literal-page-reader-{import_read}",
+        user=member.user_id,
+        tools=["mempalace_list_drawers"],
+        scopes=scopes,
+        read_wings=wings or ["wing_fixture", "threads"],
+        trust="trusted",
+    )
+    principal = h.db.authenticate_token(token)
+    assert principal.role != "owner" and not principal.policy.sees_all_wings
+    assert principal.policy.refusal("mempalace_list_drawers") is None
+    assert h.gateway.handoff.recall.can_read(principal, visible)
+    assert not h.gateway.handoff.recall.can_read(principal, hidden)
+    reply, _ = h.call(token, "mempalace_list_drawers", wing="wing_fixture")
+    assert reply is not None and "error" not in reply
+    return token
+
+
+@pytest.mark.parametrize("path", ["sqlite", "sdk"])
+def test_card253_s06_r1_literal_import_total(page_world, monkeypatch, path):
+    w = page_world
+    h, mcp, col, _, _, _ = w
+    monkeypatch.setattr(mcp, "_is_chroma_backend", lambda: path == "sqlite")
+    seed(w)
+    col.update(
+        ids=["b-visible", "c-visible"], metadatas=[{"source_file": "/notes/readable.md"}] * 2
+    )
+    token = literal_token(w, import_read=True)
+    assert h.db.authenticate_token(token).policy.has_scope("memory:import:read")
+    present = [
+        h.call(token, "mempalace_list_drawers", wing="wing_fixture", limit=1, offset=n)[0]
+        for n in (0, 1)
+    ]
+    assert all(p.get("total") == 2 and p.get("count") == 1 for p in present), (
+        "s06 import reader lost visible total"
+    )
+    col.delete(ids=["a-hidden"])
+    mcp._invalidate_overview_caches()
+    control = [
+        h.call(token, "mempalace_list_drawers", wing="wing_fixture", limit=1, offset=n)[0]
+        for n in (0, 1)
+    ]
+    assert present == control
+    plain = literal_token(w)
+    assert [
+        h.call(plain, "mempalace_list_drawers", wing="wing_fixture", limit=1, offset=n)[0]
+        for n in (0, 1)
+    ] == control
+
+
+@pytest.mark.parametrize("case", ["since", "offset", "limit_null"])
+def test_card253_s06_r1_gateway_errors(page_world, case):
+    import json
+
+    from commonplace.gateway import _tool_result
+    from mempalace.date_window import parse_date_bound
+
+    w = page_world
+    h, _, _, _, _, _ = w
+    seed(w, hidden=False)
+    token = w[3]
+    assert h.call(token, "mempalace_list_drawers", wing="wing_fixture")[0]["total"] == 2
+    extra = {
+        "since": {"since": "not-a-date"},
+        "offset": {"offset": "abc"},
+        "limit_null": {"limit": None},
+    }[case]
+    body = {
+        "jsonrpc": "2.0",
+        "id": 123,
+        "method": "tools/call",
+        "params": {
+            "name": "mempalace_list_drawers",
+            "arguments": {"wing": "wing_fixture", **extra},
+        },
+    }
+    status, raw = h.raw(token, body)
+    assert status == 200, "s06 invalid pagination escaped as HTTP 500"
+    reply = json.loads(raw)
+    if case == "since":
+        try:
+            parse_date_bound("not-a-date", "since")
+        except ValueError as exc:
+            message = str(exc)
+        assert _tool_result(reply) == {"error": message}, "s06 invalid filter became empty success"
+    elif case == "offset":
+        assert reply == {
+            "jsonrpc": "2.0",
+            "id": 123,
+            "error": {
+                "code": -32602,
+                "message": "Invalid params for tool mempalace_list_drawers: 'offset' must be an integer",
+            },
+        }, "s06 invalid offset changed RPC error"
+    else:
+        result = _tool_result(reply)
+        assert result is not None and result.get("total") == 2 and result.get("limit") == 20
+        assert [d["drawer_id"] for d in result["drawers"]] == ["b-visible", "c-visible"]
+
+
+@pytest.mark.parametrize("case", ["missing_wing", "unreadable_wing"])
+def test_card253_s06_r1_denial_text(page_world, case):
+    w = page_world
+    h, _, _, _, _, _ = w
+    token = literal_token(w, wings=["wing_fixture", "wing_other", "threads"])
+    args = {} if case == "missing_wing" else {"wing": "denied"}
+    result, _ = h.call(token, "mempalace_list_drawers", **args)
+    message = (
+        "pass a wing: this connection reads wing_fixture, wing_other, threads"
+        if case == "missing_wing"
+        else "this connection can't read wing 'denied'"
+    )
+    assert result == {"error": message, "denied": True}, "s06 denial text changed"
