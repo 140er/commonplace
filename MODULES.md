@@ -286,6 +286,7 @@ Format (read by `commonplace orch docs-check`):
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
 
   - A private read-only metadata capability resolves physical and logical citation ids, including every legacy chunk, without document hydration or optional collection creation.
+
   - Scoped KG writes recheck provenance snapshots in-lock; source/id deletes use authorized rooms and explicit ids, and missing optional closets count as zero.
 
   - Direct B2 providers reject malformed metadata with encryption errors; marked-workspace refusals retain an explicit locked diagnostic.

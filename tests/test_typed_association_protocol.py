@@ -141,6 +141,7 @@ def test_metadata_only_pages_and_alignment(case, monkeypatch):
         ("b", c.hidden.id),
     ]
     assert any("substr(key, 1, 7) != 'chroma:'" in sql for sql in calls)
+    monkeypatch.setattr(chroma_sqlite, "_decoded_rows", original)
     # Exercise public transport as well as the private metadata seam.
     invoke(c, "get_drawer", drawer_id="a")
 
@@ -179,3 +180,48 @@ def test_logical_metadata_pages_no_truncation(case):
     assert (wal.read_bytes() if wal.exists() else None) == before
     seed(c, "source_drawer_id", "logical")
     assert "source_drawer_id" not in fact(c)["sources"][0]
+
+
+@pytest.mark.parametrize("value", [42, True])
+def test_malformed_raw_file_keeps_drawer(case, value):
+    c = case
+    c.col.add(
+        ids=["ordinary"],
+        documents=["Exact drawer words"],
+        metadatas=[{"wing": "shared", "room": c.primary.id, "source_file": value}],
+    )
+    row = invoke(c, "get_drawer", drawer_id="ordinary")
+    assert row["content"] == "Exact drawer words"
+    assert "source_file" not in row["metadata"]
+
+
+@pytest.mark.parametrize("fault", ["missing-wing", "missing-room", "empty-room", "lookup"])
+def test_closet_mutation_probe_unavailable(config, kg, monkeypatch, fault):
+    from tests._mcp_server_helpers import _patch_mcp_server
+
+    _patch_mcp_server(monkeypatch, config, kg)
+
+    def unavailable(*args, **kwargs):
+        if fault == "lookup":
+            raise ValueError("incomplete metadata")
+        row = {"wing": "shared", "room": "notes"}
+        if fault == "missing-wing":
+            row.pop("wing")
+        elif fault == "missing-room":
+            row.pop("room")
+        else:
+            row["room"] = ""
+        return {"associations": [row]}
+
+    monkeypatch.setattr(mcp, "read_associations", unavailable)
+    result = mcp.tool_kg_add(
+        subject="A",
+        predicate="keeps",
+        object="B",
+        wing="shared",
+        sensitivity="public",
+        source_closet="opaque",
+        thread_scope={"probe": True, "closet": "opaque"},
+    )
+    assert result["cited"] == {"closet": None}
+    assert kg.query_entity("A") == []

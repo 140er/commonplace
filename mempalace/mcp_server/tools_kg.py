@@ -191,8 +191,13 @@ def _kg_mutation_scope(
     )
     result = {"success": True, "probe": page}
     if "closet" in thread_scope:
-        found = read_associations("closet", thread_scope["closet"])["associations"]
-        pair = [found[0].get("wing"), found[0].get("room")] if found else None
+        try:
+            found = read_associations("closet", thread_scope["closet"])["associations"]
+            pair = [found[0].get("wing"), found[0].get("room")] if found else None
+            if pair is not None and not all(isinstance(x, str) and x.strip() for x in pair):
+                pair = None
+        except Exception:
+            pair = None
         result["cited"] = {"closet": pair}
 
     return None, result

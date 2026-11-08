@@ -231,7 +231,12 @@ def scrub_provenance(node, access):
     out = node
     for key in provenance_refs.PROVENANCE_FIELDS | provenance_refs.DERIVED_FIELDS:
         value = node.get(key)
+        if value is None:
+            continue
         if not isinstance(value, str):
+            if out is node:
+                out = dict(node)
+            out.pop(key, None)
             continue
         parsed = access.parse(value)
         allowed = parsed is not provenance_refs.REFUSE and all(
@@ -312,7 +317,11 @@ def gate(gateway, principal, rule, result):
                 cleaned = scrub(value)
                 if cleaned is _DROP:
                     return _DROP
-                if key == "metadata" and isinstance(cleaned, dict) and cleaned.get("source_file"):
+                if (
+                    key == "metadata"
+                    and isinstance(cleaned, dict)
+                    and isinstance(cleaned.get("source_file"), str)
+                ):
                     cleaned = {**cleaned, "source_file": Path(cleaned["source_file"]).name}
                 out[key] = cleaned
             out = _clean_related(node, out)
