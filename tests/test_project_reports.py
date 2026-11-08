@@ -1,6 +1,7 @@
 """Durable project reports: public transition witnesses and deterministic fault proofs."""
 
 import json
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -200,13 +201,14 @@ def restart(w):
     w.gw.webhooks = webhooks.Dispatcher(w.db, gateway=w.gw)
 
 
-def test_dispatch_recovers_existing_source_without_creating_workspaces(world, monkeypatch):
+def test_dispatch_recovers_existing_source_without_creating_workspaces(world, monkeypatch, caplog):
     w = world
     n = card(w)
     assert w.service.task_update(n, status="done")["status"] == "done"
     sql(w, "DROP TABLE project_report_scan")
     unused_ws = w.db.create_workspace("unopened", w.uid)
-    broken_ws = w.db.create_workspace("unavailable", w.uid)
+    broken_name = "private-unavailable-workspace"
+    broken_ws = w.db.create_workspace(broken_name, w.uid)
     supervisor = w.gw.supervisor
     resolve = supervisor.workspace_dir
     unused_path = Path(resolve(unused_ws))
@@ -226,17 +228,42 @@ def test_dispatch_recovers_existing_source_without_creating_workspaces(world, mo
 
     def resolve_existing(ws):
         if ws == broken_ws:
-            raise RuntimeError("unavailable workspace")
+            raise RuntimeError(
+                f"unavailable workspace {broken_ws}: {broken_name}; Private card words"
+            )
         return resolve(ws)
 
     monkeypatch.setattr(supervisor, "workspace_dir", resolve_existing)
     monkeypatch.setattr(gateway, "workspace_dir", forbidden)
     w.gw = gateway
-    w.gw.webhooks.scan_reports()
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="commonplace.projects.reports"):
+        w.gw.webhooks.scan_reports()
+    failures = [r for r in caplog.records if "project report pass failed" in r.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].name == "commonplace.projects.reports"
+    assert "RuntimeError" in failures[0].getMessage()
+    for record in caplog.records:
+        for private in (
+            "unavailable workspace",
+            broken_ws,
+            broken_name,
+            w.ws,
+            "Private card words",
+        ):
+            assert private not in record.getMessage()
     pump(w)
     assert len(reports(w, "done")) == 1
     assert sql(w, "SELECT * FROM project_report_scan")
     assert not unused_path.exists()
+
+
+def test_dispatch_reinitializes_changed_source(world):
+    w = world
+    pump(w)
+    sql(w, "DROP TABLE project_report_scan")
+    pump(w)
+    assert sql(w, "SELECT * FROM project_report_scan")
 
 
 @pytest.mark.parametrize("writer", ["task_update", "decide", "seed_card"])

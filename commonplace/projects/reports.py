@@ -6,6 +6,7 @@ still hold an old source row, so retaining its receipt is the safe retry boundar
 """
 
 import json
+import logging
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,8 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace import events
+from commonplace.http_util import log_failure
 from commonplace.projects import orchestration
 from mempalace.sqlite_crypto import connect, row_factory
+
+logger = logging.getLogger(__name__)
 
 BATCH = 100
 CONTROL_SCHEMA = (
@@ -324,14 +328,18 @@ class ReportPump:
                 ).resolve()
                 if not path.is_file():
                     continue
-                if path not in self._initialized:
+                stat = path.stat()
+                key = (path, stat.st_ino, stat.st_mtime_ns)
+                if key not in self._initialized:
                     with source_write(self.gateway, wid) as conn:
                         ensure_source(conn)
-                    self._initialized.add(path)
+                    self._initialized = {k for k in self._initialized if k[0] != path}
+                    stat = path.stat()
+                    self._initialized.add((path, stat.st_ino, stat.st_mtime_ns))
                 observe(self.gateway, wid)
                 publish(self.gateway, wid)
-            except Exception:
-                # Fixed code only; user data and exception contents stay private.
+            except Exception as exc:
+                log_failure(logger, "project report pass failed", exc)
                 continue
 
 
