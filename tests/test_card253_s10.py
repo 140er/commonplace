@@ -223,9 +223,82 @@ def test_card253_s10_head_bundle_shapes(case, parent, shape):
     original = copy.deepcopy(payload)
     cleaned = gate(w.h.gateway, w.member, "drawer_read", payload)
     assert payload == original
-    if parent == "readable":
+    if parent == "readable" or (shape == "flat" and parent == "invalid"):
         assert cleaned == payload
     elif shape == "flat":
         assert start not in cleaned and end not in cleaned
     else:
         assert shape not in cleaned
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("operation", ["get", "retry", "memory"])
+def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
+    from commonplace import memory_tools
+    from commonplace.handoff.models import ThreadMessage
+
+    w = case
+    principal = getattr(w, role)
+    source = f"capture:{principal.user_id}:native-readable-bundle"
+    thread = w.h.gateway.handoff.store_for(w.h.workspace).store(
+        w.h.workspace,
+        source,
+        [ThreadMessage(0, "user", "message", "readable", "readable")],
+        actor=principal.user_id,
+        wing="private_chats",
+    )
+    assert w.h.gateway.handoff.recall.can_read(principal, thread.id)
+    identifier = seed(w, {"source_thread": source, "source_seq_start": 0, "source_seq_end": 0})
+    if operation == "retry":
+        reply = invoke(
+            w, TOOLS[0], {"wing": "wing_fixture", "room": "notes", "content": TEXT}, role
+        )
+        assert reply.get("source_kept") == {"thread": source, "seq_start": 0, "seq_end": 0}
+    else:
+        drawer = invoke(w, TOOLS[1], {"drawer_id": identifier}, role)
+        if operation == "get":
+            assert drawer["metadata"].get("source_thread") == source
+            assert drawer["metadata"].get("source_seq_start") == 0
+            assert drawer["metadata"].get("source_seq_end") == 0
+        else:
+            monkeypatch.setattr(memory_tools, "_cards", lambda *args: [])
+            assert memory_tools._record(None, drawer)["source"] == {
+                "thread": source,
+                "seq_start": 0,
+                "seq_end": 0,
+            }
+
+
+@pytest.mark.parametrize("source", ["mcp:probe", "ext-probe", "import:probe"])
+def test_card253_s10_r1_token_free_flat(case, source):
+    w = case
+    identifier = seed(w, {"source_thread": source, "source_seq_start": 0, "source_seq_end": 0})
+    reply = invoke(w, TOOLS[1], {"drawer_id": identifier})
+    assert reply["metadata"].get("source_thread") == source
+    assert reply["metadata"].get("source_seq_start") == 0
+    assert reply["metadata"].get("source_seq_end") == 0
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_card253_s10_r1_native_memory_echo(case, role):
+    import json
+
+    from tests.test_commonplace_memory import _call, _http
+
+    w = case
+    source = {"thread": w.readable.id, "seq_start": 0, "seq_end": 0}
+    identifier = seed(
+        w, {"source_thread": source["thread"], "source_seq_start": 0, "source_seq_end": 0}
+    )
+    principal = getattr(w, role)
+    token = w.h.token(
+        "echo",
+        user=principal.user_id,
+        profile="full",
+        trust="trusted",
+        scopes=["memory:read", "private:read", "threads:read"],
+        read_wings=["*"],
+    )
+    got = _call(w.h, token, "memory_get", id=identifier)["content"][0]["text"]
+    assert f"source={json.dumps(source)}" in got.split("\nquoted data: ", 1)[0]
+    assert _http(w.h, token, f"/api/memory/{identifier}")[1]["source"] == source
