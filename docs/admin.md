@@ -72,7 +72,8 @@ Connections use the same envelope with `connections` instead of `workspace` and
 `members`. Each connection includes `id`, `name`, `client`, `auth`, `user_id`,
 `created_at`, `expires_at`, `revoked_at`, `last_used_at`, `parent_id`, `started_by`,
 `read_wings`, `import_read`, `trust`, sorted `scopes`, `activity`, `state`, and
-boolean `user_disabled`. State precedence is revoked, disabled user, expired, active.
+boolean `user_disabled`. Connections are listed only for current workspace members,
+and counts use the same membership and user joins as the listed rows. State precedence is revoked, disabled user, expired, active.
 Activity uses the existing `unused`, `working`, `idle`, `quiet` classifier. **Last
 used** measures credential contact, never runner liveness. All states preserve valid
 stored lifecycle timestamps. Malformed policy displays deny-all permissions.
@@ -88,11 +89,14 @@ Source failures return safe 503 constants: `Users unavailable; try again` or
 
 The page mounts before shared boards, needs-me or rules refreshes. Each section
 loads independently, with a 5,000 ms deadline covering transport and JSON decoding.
-A failed or timed-out section has its own Retry. Manual refresh retains ready data
+A failed or timed-out section has its own Retry, which repeats the failed GET
+with the same pagination cursor and append or replacement mode. Manual refresh retains ready data
 while loading; a 403 clears the affected data. Navigation, session expiry, sign-out
 or workspace replacement abort and discard pending reads. Event polling does not
 remount Admin or start shared refreshes on it. The initial `/api/me` request also
-has the bounded deadline. Every Admin load, refresh, retry and pagination is a GET.
+has the bounded deadline. Opening a card from Admin switches to the regular base
+view and loads that card without remounting Admin or repeating inventory requests.
+Every Admin load, refresh, retry and pagination is a GET.
 
 New projections open the existing control SQLite file with `mode=ro`, `query_only`,
 a 2 second monotonic budget, maximum 250 ms connection/busy timeout and progress

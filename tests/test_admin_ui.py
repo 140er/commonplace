@@ -49,3 +49,15 @@ def test_sections_settle_independently(hub):
 
 def test_retry_dispose_and_expiry(hub):
     run_ui(hub, "lifecycle")
+
+
+def test_admin_to_card_route(hub):
+    run_ui(hub, "card-route")
+
+
+def test_admin_route_change_disposes(hub):
+    run_ui(hub, "route-disposal")
+
+
+def test_retry_repeats_failed_page(hub):
+    run_ui(hub, "page-retry")
