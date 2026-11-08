@@ -73,7 +73,9 @@ def test_search_matches_scoped_kg_visibility_with_probe_and_final_read(hub, monk
     assert (
         sum(name == "mempalace_kg_query" and args.get("search", False) for name, args in calls) == 2
     )
-    assert sum(name in ("mempalace_kg_stats", "mempalace_kg_list_wings") for name, _ in calls) == 0
+    # Limited readers resolve stored wing spellings before the scoped search.
+    assert sum(name == "mempalace_kg_stats" for name, _ in calls) == 0
+    assert [args for name, args in calls if name == "mempalace_kg_list_wings"] == [{}]
     kg_calls = [args for name, args in calls if name == "mempalace_kg_query"]
     assert kg_calls[0]["thread_scope"]["probe"] is True
     assert "allow" in kg_calls[1]["thread_scope"]

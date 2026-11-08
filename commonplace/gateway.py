@@ -1008,6 +1008,19 @@ class Mediator:
             for wing in asked:
                 if not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
+        if not policy.sees_all_wings:
+            asked = None if asked is None else {canonical_wing(wing) for wing in asked}
+            result = self.workers.call_tool(principal, "mempalace_kg_list_wings", {})
+            known = result.get("wings") if isinstance(result, dict) else None
+            if not isinstance(known, list):
+                raise Denied("could not check which wings the facts are in")
+            args["wings"] = [
+                wing
+                for wing in known
+                if isinstance(wing, str)
+                and policy.can_read_wing(wing)
+                and (asked is None or canonical_wing(wing) in asked)
+            ]
         return {"respond": project(self.gateway, principal, self.workers, name, args)}
 
     def _before_kg_write(self, principal, name, args, notes):

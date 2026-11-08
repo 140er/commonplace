@@ -5,6 +5,7 @@ import time
 from commonplace.rules import checks
 from mempalace.knowledge_graph import valid_fact_entries
 
+from .drawer_pages import PageArgumentError
 from .mirror_access import gate, reader
 
 
@@ -21,14 +22,18 @@ def project(gateway, principal, workers, name, args):
         limit, offset = 100, 0
         for key in ("limit", "offset"):
             if key in args and key in properties:
-                args[key] = mcp._coerce_argument(args[key], properties[key], key)
+                if args[key] is None:
+                    args.pop(key)  # Protocol null selects the handler default.
+                else:
+                    args[key] = mcp._coerce_argument(args[key], properties[key], key)
         if "limit" in properties:
             limit = args.get("limit", 100)
         if "offset" in properties:
             offset = args.get("offset", 0)
-        valid_page = True
-    except (ValueError, TypeError):
-        valid_page, offset, limit = False, 0, 100
+    except (ValueError, TypeError) as exc:
+        raise PageArgumentError(
+            {"code": -32602, "message": f"Invalid params for tool {name}: {exc}"}
+        ) from exc
     empty = {
         "search": {"facts": []},
         "query": {
@@ -58,7 +63,7 @@ def project(gateway, principal, workers, name, args):
         },
         "list_wings": {"wings": []},
     }[suffix]
-    if not principal.workspace_id or not valid_page:
+    if not principal.workspace_id:
         return empty
     try:
         gateway.handoff.store_for(principal.workspace_id)

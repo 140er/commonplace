@@ -485,14 +485,23 @@ def test_card253_s07_scope_not_discovered(kgworld):
 
 @pytest.mark.parametrize("args", [{"limit": "invalid"}, {"offset": None}, {"limit": True}])
 def test_card253_s07_invalid_pagination(world, args):
-    assert call(world, TOOLS[1], **args) == {
-        "entity": "all",
-        "timeline": [],
-        "count": 0,
-        "total": 0,
-        "limit": 100,
-        "offset": 0,
-    }
+    reply = world.h.rpc(world.tokens["A"], "tools/call", {"name": TOOLS[1], "arguments": args})
+    if args.get("offset", 0) is None:
+        from commonplace.gateway import _tool_result
+
+        assert _tool_result(reply) == {
+            "entity": "all",
+            "timeline": [],
+            "count": 0,
+            "total": 0,
+            "limit": 100,
+            "offset": 0,
+        }
+    else:
+        assert reply.get("error") == {
+            "code": -32602,
+            "message": f"Invalid params for tool {TOOLS[1]}: 'limit' must be an integer",
+        }
 
 
 @pytest.fixture
@@ -805,3 +814,47 @@ def test_card253_s07_r3_hidden_parity_guard(parity_corpus, fixed_search_clock, q
     assert scoped == local, "hidden rows affected parity or the selective seed cap"
     if query == "needle":
         assert len(local["facts"]) == 50
+
+
+@pytest.mark.parametrize("tool,search", [(TOOLS[0], False), (TOOLS[1], False), (TOOLS[0], True)])
+@pytest.mark.parametrize("spelling", ["fixture", "wing_fixture"])
+def test_card253_s07_r4_literal_reader(kgworld, fixed_search_clock, tool, search, spelling):
+    w = kgworld
+    w.tokens["A"] = w.h.token(
+        "literal-fact-reader",
+        user=w.h.db.authenticate_token(w.tokens["A"]).user_id,
+        tools=TOOLS,
+        scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+        read_wings=["wing_fixture", "threads"],
+        trust="trusted",
+    )
+    principal = w.h.db.authenticate_token(w.tokens["A"])
+    assert not principal.policy.sees_all_wings
+    assert principal.policy.can_read_wing(spelling)
+    args = {"entity": "fixed_entity", "wings": [spelling]}
+    if tool == TOOLS[0]:
+        args["search"] = search
+    present = call(w, tool, **args)
+    rows = present["timeline" if tool == TOOLS[1] else "facts"]
+    assert rows, "non-owner shorthand discarded readable facts"
+    remove_hidden(w)
+    assert present == call(w, tool, **args), "hidden facts changed a literal-reader page"
+
+
+@pytest.mark.parametrize(
+    "tool,args,message",
+    [
+        (TOOLS[1], {"limit": "abc"}, "'limit' must be an integer"),
+        (TOOLS[1], {"limit": -1}, "'limit' must be at least 1"),
+        (TOOLS[1], {"offset": "x"}, "'offset' must be an integer"),
+        (TOOLS[0], {"entity": "fixed_entity", "limit": "abc"}, "'limit' must be an integer"),
+    ],
+)
+def test_card253_s07_r4_pagination_protocol(kgworld, tool, args, message):
+    w = kgworld
+    assert call(w, TOOLS[0], entity="fixed_entity")["facts"]
+    reply = w.h.rpc(w.tokens["A"], "tools/call", {"name": tool, "arguments": args})
+    assert reply.get("error") == {
+        "code": -32602,
+        "message": f"Invalid params for tool {tool}: {message}",
+    }, "malformed pagination became an empty successful result"
