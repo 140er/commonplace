@@ -549,9 +549,10 @@ class Mediator:
         rule = TOOL_RULES[name][1]
         import_filters = dict(args)
         notes: list = []
+        before_options = self._kg_access_options(principal, name)
         try:
             _check_argument_types(args, name=name)
-            plan = getattr(self, f"_before_{rule}")(principal, name, args, notes)
+            plan = getattr(self, f"_before_{rule}")(principal, name, args, notes, **before_options)
         except PageArgumentError as exc:
             return {"jsonrpc": "2.0", "id": req_id, "error": exc.error}
         except Hidden as exc:
@@ -634,6 +635,7 @@ class Mediator:
                 rule,
                 req_id,
                 response,
+                access=before_options.get("access"),
                 cli_args=(
                     import_filters
                     if name == "mempalace_search"
@@ -656,14 +658,29 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response, *, cli_args=None):
+    def _kg_access_options(self, principal, name):
+        if name not in (
+            "mempalace_kg_query",
+            "mempalace_kg_timeline",
+            "mempalace_kg_stats",
+            "mempalace_kg_list_wings",
+        ):
+            return {}
+        from .handoff.mirror_access import reader
+
+        return {"access": reader(self.gateway, principal)}
+
+    def _gate_response(
+        self, principal, name, rule, req_id, response, *, access=None, cli_args=None
+    ):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
         committed_result = None
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
-            cleaned = gate(self.gateway, principal, rule, result)
+            options = {} if access is None else {"access": access}
+            cleaned = gate(self.gateway, principal, rule, result, **options)
             if cli_args is not None and isinstance(cleaned, dict) and not cleaned.get("error"):
                 cleaned = _render_scoped_cli_search(cleaned, cli_args)
             if name == "mempalace_list_drawers":
@@ -696,7 +713,7 @@ class Mediator:
     def _before_none(self, principal, name, args, notes):
         return None
 
-    def _before_all_wings(self, principal, name, args, notes):
+    def _before_all_wings(self, principal, name, args, notes, *, access=None):
         if name in ("mempalace_traverse", "mempalace_find_tunnels", "mempalace_graph_stats"):
             from .handoff.graph import GraphArgumentError, empty_result, project, validate_arguments
             from .rules import checks
@@ -734,7 +751,9 @@ class Mediator:
         if name in ("mempalace_kg_stats", "mempalace_kg_list_wings"):
             from .handoff.kg_projection import project
 
-            return {"respond": project(self.gateway, principal, self.workers, name, args)}
+            return {
+                "respond": project(self.gateway, principal, self.workers, name, args, access=access)
+            }
 
         if name == "mempalace_status":
             from .handoff.overview import summary
@@ -1094,7 +1113,7 @@ class Mediator:
                 raise Denied(f"this connection can't link drawers in wing {wing!r}")
         return None
 
-    def _before_kg_read(self, principal, name, args, notes):
+    def _before_kg_read(self, principal, name, args, notes, *, access=None):
         policy = principal.policy
         assert name in ("mempalace_kg_query", "mempalace_kg_timeline")
         from .handoff.kg_projection import project
@@ -1121,7 +1140,9 @@ class Mediator:
                 and policy.can_read_wing(wing)
                 and (asked is None or canonical_wing(wing) in asked)
             ]
-        return {"respond": project(self.gateway, principal, self.workers, name, args)}
+        return {
+            "respond": project(self.gateway, principal, self.workers, name, args, access=access)
+        }
 
     def _before_kg_write(self, principal, name, args, notes):
         policy = principal.policy

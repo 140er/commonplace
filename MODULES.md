@@ -51,6 +51,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
 
+  - KG projection and final response gates share one call-local access object; separate gateway calls acquire fresh proof.
+
   - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
@@ -990,6 +992,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
+  - KG projection and final response gates share one call-local access object; separate gateway calls acquire fresh proof.
+
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
   - Import-consented drawer reads retain raw provenance through wing filtering and apply file proof only at the final response gate.
 
@@ -1428,6 +1432,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for restricted readers. Body text and arbitrary provenance labels are not scanned for private words.
+
+  - KG projection and final response gates share one call-local access object; separate gateway calls acquire fresh proof.
 
   - Graph mediation validates and rechecks the descriptor-bound SQLite sort values before traversal and ranking.
 

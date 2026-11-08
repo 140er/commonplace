@@ -39,7 +39,7 @@ def _arguments(mcp, name, args):
     return args
 
 
-def project(gateway, principal, workers, name, args):
+def project(gateway, principal, workers, name, args, *, access=None):
     from commonplace.gateway import WORKER_TIMEOUT_S
     from mempalace import mcp_server as mcp
 
@@ -85,7 +85,7 @@ def project(gateway, principal, workers, name, args):
     try:
         gateway.handoff.store_for(principal.workspace_id)
         with checks.deadline(WORKER_TIMEOUT_S):
-            access, after, allowed = reader(gateway, principal), None, []
+            access, after, allowed = access or reader(gateway, principal), None, []
             policy = principal.policy
             while True:
                 result = workers.call_tool(

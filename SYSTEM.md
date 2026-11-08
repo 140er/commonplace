@@ -1701,6 +1701,7 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   semantics are unchanged, including omission of malformed scalar citations.
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
+
 ### Plain-file citation proof and compatibility narrowing
 
 - Under locked D9.1=A, token-free source_file citations match the union of the stored literal
@@ -1724,6 +1725,7 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   No migration or deletion occurs. Provenance aliases and sequence bundles retain
   their existing behavior. Locked D9.2=A and its accepted global-quota effect on
   actually blocked readable work remain unchanged.
+
 - D9.1=A accepts a presence side-channel: adding a hidden drawer that shares a
   readable plain path changes a previously retained citation to an omitted one
   (mixed means omit). This is an explicit exception to hidden-present/absent
@@ -1732,6 +1734,10 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   through wing-policy filtering. The final response gate applies plain-file proof
   once before converting the path to its display basename, just as for readers
   without import consent.
+- Gateway KG projection and the final response gate share the same call-local
+  access object. Both gates still run; a new call creates fresh access, never
+  shared across principals or workspaces. Other routes retain their existing
+  gating, including the list_rooms/status respond bypass and backup-pause errors.
 - Proof results are memoized by kind and concrete selector within one response;
   already scrubbed rows are not scrubbed twice. A revocation after a selector's
   first proof is not observed by later citations with that selector in the same
@@ -1750,6 +1756,7 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   search and media records receive no exemption. Blank decoded drawer and closet
   selectors are refused before worker calls; the worker also refuses a decoded
   file selector containing only whitespace.
+
 ### Gateway search closet preview refusal
 
 - Authenticated gateway search removes closet_preview from every result, including
@@ -1767,13 +1774,12 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   without its citation. This identity residual is documented alongside the
   accepted shared-path presence residual; citation omission does not anonymize
   stable ids or grant additional content access.
+
 ### Drawer batch response scrubber
 
 - Batch drawer reads apply the same response-local scrubber through a shared
   internal helper. Input order, missing-drawer errors, counts and citation proof
   remain unchanged. Hallway responses retain their independent endpoint proof.
-  A later request obtains fresh proof. The union rule applies to token-free source_file values only; token-bearing
-  values retain their existing token authorization without proving the plain remainder.
 
 ## Person private-read containment
 
