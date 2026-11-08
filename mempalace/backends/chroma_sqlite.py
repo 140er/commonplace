@@ -1483,7 +1483,8 @@ def sqlite_drawer_rows(
     palace_path: str,
     collection_name: str,
     *,
-    drawer_id: str,
+    drawer_id: str = "",
+    source_file: Optional[str] = None,
     metadata_only: bool = False,
     logical: bool = True,
 ) -> Optional[tuple[bool, list[tuple[str, Optional[str], dict]]]]:
@@ -1509,8 +1510,16 @@ def sqlite_drawer_rows(
                 " WHERE segment_id = ? AND embedding_id = ? ORDER BY id",
                 (segment_id, drawer_id),
             ).fetchall()
+            if source_file is not None:
+                selected = conn.execute(
+                    "SELECT e.id, e.embedding_id FROM embedding_metadata p"
+                    " JOIN embeddings e ON e.id = p.id"
+                    " WHERE p.key = 'source_file' AND p.string_value = ?"
+                    " AND e.segment_id = ? ORDER BY e.id",
+                    (source_file, segment_id),
+                ).fetchall()
             direct = bool(selected)
-            if not direct and logical:
+            if not direct and logical and source_file is None:
                 # The composite key/string index drives the parent search;
                 # each row's internal id then seeks its embedding by PK.
                 selected = conn.execute(

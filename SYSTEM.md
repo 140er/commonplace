@@ -1087,7 +1087,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 ### Thread-boundary residuals
 
-- Token-free plain-file provenance still has no local association proof on read.
+- Token-free plain-file citations require complete exact local association proof on read.
   Typed drawer/closet citations now resolve current local metadata as described
   below; foreign identifiers already stored before this change are not purged.
 - Non-canonical spellings outside the token grammar remain possible, including
@@ -1378,9 +1378,8 @@ near misses, fullwidth spellings and mixed namespace/thread-id expansion against
 limit and 300-second hang guard contain bad measurements; budget misses, memory
 exhaustion and hang-guard results are recorded as information, not test failures.
 
-This changes reference recognition only: typed associations, provenance aliases,
-plain-file association proof and search-index progress retain their existing
-contracts.
+Reference recognition and local association proof remain separate checks;
+provenance aliases retain their existing contracts.
 
 
 ### Current typed provenance association proof
@@ -1399,8 +1398,8 @@ contracts.
 - Original source sets still decide any-readable-source fact eligibility before
   citation omission. Readable text and stored citations remain verbatim. Complete
   raw source_file tokens are checked before drawer metadata displays a basename;
-  readable citation spellings and token-free plain-file behavior stay compatible.
-- D9.1=A is locked: complete local plain-file proof is separate follow-up work.
+  readable proved citation spellings stay compatible.
+- D9.1=A is locked: plain-file citations require complete local proof.
   D9.2=A remains locked, including accepted global-quota deferral of actually
   blocked readable work. Neither decision grants new read authority. Imported
   history retains consent/range checks; unproved roomless derived rows stay stored.
@@ -1702,6 +1701,24 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   semantics are unchanged, including omission of malformed scalar citations.
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
+### Plain-file citation proof and compatibility narrowing
+
+- Under locked D9.1=A, token-free source_file citations match the complete decoded
+  raw path exactly against drawer metadata in the authenticated workspace. Every
+  match needs current wing and room authority, including for owners; a final
+  metadata snapshot revalidates the match set before publication. Chroma reads
+  metadata in batches of at most 500 without hydrating documents.
+- Zero matches, missing room proof, hidden matches, changed descriptors, expired
+  deadlines and unavailable snapshots omit only the citation. Generic backends
+  without a complete snapshot cannot supply proof. Basenames, prefixes, filesystem
+  inspection and other workspaces never supply proof. Drawer display still uses
+  the basename after raw-path authorization.
+- Original-source D1-readable fact text stays verbatim, external plain source_url
+  compatibility is preserved, and O4 roomless/unproved source rows stay stored.
+  No migration or deletion occurs. Provenance aliases and sequence bundles retain
+  their existing behavior. Locked D9.2=A and its accepted global-quota effect on
+  actually blocked readable work remain unchanged.
+
 
 ## Person private-read containment
 

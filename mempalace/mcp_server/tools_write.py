@@ -48,7 +48,11 @@ def read_associations(kind: str, identifier: str, expect=None):
     Other backends support exact physical ids only, failing closed for logical
     handles. A second request compares the concrete descriptors.
     """
-    if kind not in {"drawer", "closet"} or not isinstance(identifier, str) or not identifier:
+    if (
+        kind not in {"drawer", "closet", "source_file"}
+        or not isinstance(identifier, str)
+        or not identifier
+    ):
         return {"associations": None}
     if _is_chroma_backend():
         from ..backends.chroma_sqlite import sqlite_drawer_rows
@@ -56,7 +60,7 @@ def read_associations(kind: str, identifier: str, expect=None):
         found = sqlite_drawer_rows(
             _config.palace_path,
             "mempalace_closets" if kind == "closet" else _config.collection_name,
-            drawer_id=identifier,
+            **({"source_file": identifier} if kind == "source_file" else {"drawer_id": identifier}),
             metadata_only=True,
             logical=kind == "drawer",
         )
@@ -64,6 +68,9 @@ def read_associations(kind: str, identifier: str, expect=None):
             return {"associations": None}
         rows = [_association_descriptor(rid, meta) for rid, _, meta in found[1]]
     else:
+        if kind == "source_file":
+            # Generic offset paging cannot prove a complete stable match set.
+            return {"associations": None}
         from ..palace import get_closets_collection, get_collection
 
         if kind == "closet":
