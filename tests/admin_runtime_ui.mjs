@@ -31,6 +31,27 @@ try {
     assert.match(host.innerHTML,/Card &lt;8&gt;/);assert.doesNotMatch(host.innerHTML,/private-canary/);
     click('needs');find('needs-me').resolve({count:0});await flush();
     assert.match(host.innerHTML,/No cards waiting/);
+  } else if(process.argv[2]==='labels') {
+    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Alpha',source:'coordinator',connected:true,activity:'working'},{id:2,name:'Beta',source:'seat',connected:false},{id:3,name:'Gamma',source:'not_configured',connected:false}],count:3},machines:{state:'ready',items:[],count:0}});
+    find('limits').resolve({workspace_id:'ws-one',projects:[{id:1,name:'Alpha',counting_mode:'distinct_doing_agents'},{id:2,name:'Beta',counting_mode:'orchestration_slots'}],machines:[]});await flush();
+    const html=section(host.innerHTML,'runtime');
+    assert.match(html,/Not connected/);assert.match(html,/>Connected</);
+    assert.match(html,/Activity records token use, not a running process/);
+    assert.match(html,/Coordinator/);assert.match(html,/Stored seat/);assert.match(html,/Not configured/);
+    assert.doesNotMatch(host.innerHTML,/distinct_doing_agents|orchestration_slots|not_configured/);
+    assert.match(host.innerHTML,/Distinct doing agents/);assert.match(host.innerHTML,/Orchestration slots/);
+  } else if(process.argv[2]==='page-error') {
+    const payload={workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Existing project'}],count:101,has_more:true,next_cursor:'page-two'},machines:{state:'ready',items:[],count:0}};
+    find('runtime').resolve(payload);await flush();
+    click('runtime','more','orchestrators');const page=find('runtime');
+    page.resolve({...payload,orchestrators:{state:'error',error:'Orchestrators unavailable; try again'}});await flush();
+    let html=section(host.innerHTML,'runtime');
+    assert.match(html,/Existing project/);assert.match(html,/Orchestrators unavailable; try again/);
+    assert.doesNotMatch(html,/Runtime unavailable\. Retry/);
+    click('runtime');assert.equal(find('runtime').path,page.path);
+    find('runtime').resolve({...payload,orchestrators:{state:'ready',items:[{id:2,name:'Next project'}],count:101,has_more:false}});await flush();
+    html=section(host.innerHTML,'runtime');assert.match(html,/Existing project/);assert.match(html,/Next project/);
+    assert.doesNotMatch(html,/Orchestrators unavailable/);
   } else {
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0,has_more:false},machines:{state:'error',error:'Machines unavailable; try again'}});
     find('stuck').resolve(stuck([card(1)],true));await flush();

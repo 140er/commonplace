@@ -45,16 +45,18 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
   function runtimeContent(data) {
     const flag = data.orchestration, agents = data.orchestrators, machines = data.machines;
     let html = flag.state === 'ready' ? `<p>Orchestration ${flag.enabled ? 'enabled' : 'disabled'}</p>` : sourceError('runtime', 'Orchestration', flag);
-    html += '<h3>Orchestrators</h3>';
-    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, r.source, r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Orchestrators', agents);
+    html += '<h3>Orchestrators</h3><p>Activity records token use, not a running process.</p>';
+    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Orchestrators', agents);
+    if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Orchestrators', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
     html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Binding', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.enabled ? 'enabled' : 'disabled', `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
+    if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
     return html;
   }
 
   function limitsContent(data) {
     return '<p>Workspace concurrency cap: not configured. Project and machine limits apply separately.</p>' +
-      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, r.counting_mode])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
+      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Orchestration slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
       '<h3>Machine grants</h3>' + (data.machines.length ? rows(['Machine', 'In flight', 'Starts/hour'], data.machines.map(r => [r.id, r.max_in_flight, r.max_starts_per_hour])) : '<p>No machine grants configured.</p>') + moreButton('limits', 'machines', data.pagination?.machines);
   }
 
@@ -143,6 +145,11 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
       if (more) {
         const unique = (old, next, id) => [...new Map([...old, ...next].map(row => [row[id], row])).values()];
         if (key === 'runtime') {
+          if (data[list].state !== 'ready') {
+            item.data = {...item.data, [list]: {...item.data[list], error:data[list].error}};
+            item.retry = {more, cursor, list};
+            return;
+          }
           const merged = {...item.data, [list]: {...data[list], items:unique(item.data[list].items, data[list].items, 'id')}};
           data = merged;
         } else if (key === 'limits') {

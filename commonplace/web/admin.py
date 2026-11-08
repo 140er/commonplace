@@ -75,8 +75,12 @@ def display(value):
     return redact.redact_value(redact.redact(clean)[0])[0]
 
 
-def identifier(value):
-    return value if isinstance(value, str) and _ID.fullmatch(value) else None
+def identifier(value, pattern=_ID):
+    return value if isinstance(value, str) and re.fullmatch(pattern, value) else None
+
+
+def slug(value):
+    return identifier(value, r"[a-z0-9][a-z0-9_-]{0,99}")
 
 
 def timestamp(value):
@@ -280,11 +284,21 @@ def orchestration_setting(conn, workspace_id, context):
 def board_rows(conn, context):
     if conn is None:
         return []
+    coordinator = (
+        "coordinator"
+        if "coordinator" in columns(conn, context, "boards")
+        else "NULL AS coordinator"
+    )
     return select(
         conn,
         context,
-        "SELECT id,slug,name,wing,coordinator FROM boards WHERE archived=0 ORDER BY slug,id",
+        f"SELECT id,slug,name,wing,{coordinator} FROM boards WHERE archived=0 ORDER BY slug,id",
     ).fetchall()
+
+
+def columns(conn, context, table):
+    # Names are internal constants; no request input is interpolated.
+    return {row["name"] for row in select(conn, context, f'PRAGMA table_info("{table}")')}
 
 
 def current_connection(conn, workspace_id, context, *, cid=None, name=None):
@@ -387,7 +401,7 @@ def orchestrators(conn, board_conn, workspace_id, context):
         result.append(
             {
                 "id": board["id"],
-                "slug": board["slug"],
+                "slug": slug(board["slug"]),
                 "name": display(board["name"]),
                 "coordinator": display(actor) if actor else None,
                 "seat_name": display(seat["name"]) if seat else None,
@@ -403,7 +417,7 @@ def orchestrators(conn, board_conn, workspace_id, context):
     return result
 
 
-def machines(conn, workspace_id, context):
+def machines(conn, workspace_id, context, *, active_only=False):
     if not has_table(conn, context, "runner_machines"):
         return []
     rows = select(
@@ -414,7 +428,9 @@ def machines(conn, workspace_id, context):
         "wc.last_used_at AS worker_last_used_at FROM runner_machines m "
         "LEFT JOIN connections mc ON mc.id=m.machine_connection_id AND mc.workspace_id=m.workspace_id "
         "LEFT JOIN connections wc ON wc.id=m.worker_connection_id AND wc.workspace_id=m.workspace_id "
-        "WHERE m.workspace_id=? ORDER BY m.created_at,m.id",
+        "WHERE m.workspace_id=? "
+        + ("AND m.enabled=1 AND m.revoked_at IS NULL " if active_only else "")
+        + "ORDER BY m.created_at,m.id",
         (workspace_id,),
     ).fetchall()
     result = []
@@ -422,11 +438,13 @@ def machines(conn, workspace_id, context):
         context.remaining()
         result.append(
             {
-                "id": row["id"],
+                "id": identifier(row["id"], r"mach_[a-f0-9]{16}"),
                 "label": display(row["label"]),
                 "enabled": bool(row["enabled"]),
                 "revoked_at": timestamp(row["revoked_at"]),
-                "binding_state": row["binding_state"],
+                "binding_state": row["binding_state"]
+                if row["binding_state"] in ("unbound", "owner_attested")
+                else None,
                 "verified": False,
                 "machine_last_used_at": timestamp(row["machine_last_used_at"]),
                 "worker_last_used_at": timestamp(row["worker_last_used_at"]),
@@ -522,7 +540,7 @@ def project_limits(gateway, workspace_id, context, after):
         workers = worker_actors(conn, workspace_id, context) if on else frozenset()
         grants = [
             {k: row[k] for k in ("id", "max_in_flight", "max_starts_per_hour", "created_at")}
-            for row in machines(conn, workspace_id, context)
+            for row in machines(conn, workspace_id, context, active_only=True)
         ]
     projects = []
     with (
@@ -555,7 +573,7 @@ def project_limits(gateway, workspace_id, context, after):
             projects.append(
                 {
                     "id": board["id"],
-                    "slug": board["slug"],
+                    "slug": slug(board["slug"]),
                     "name": display(board["name"]),
                     "configured_max_agents": configured,
                     "accepted_config_max_agents": accepted,
@@ -609,16 +627,21 @@ def stuck(gateway, workspace_id, context, after):
                 if control_db._parse(row["lease_until"]) <= context.now:
                     expired.setdefault((row["board_slug"], row["task_number"]), []).append(
                         {
-                            "job_id": row["id"],
+                            "job_id": identifier(row["id"], r"job_[a-f0-9]{16}"),
                             "state": row["state"],
                             "lease_until": timestamp(row["lease_until"]),
                         }
                     )
+        heartbeat = (
+            "t.heartbeat_at"
+            if bc is not None and "heartbeat_at" in columns(bc, context, "tasks")
+            else "NULL AS heartbeat_at"
+        )
         rows = (
             select(
                 bc,
                 context,
-                "SELECT t.id,t.title,t.status,t.assignee,t.claim_until,t.heartbeat_at,t.updated_at,"
+                f"SELECT t.id,t.title,t.status,t.assignee,t.claim_until,{heartbeat},t.updated_at,"
                 "t.ask,t.ask_to,t.return_to,b.slug AS board FROM tasks t JOIN boards b ON b.id=t.board_id "
                 "WHERE b.archived=0 AND t.status!='done' ORDER BY t.id",
             ).fetchall()
@@ -649,7 +672,7 @@ def stuck(gateway, workspace_id, context, after):
             cards.append(
                 {
                     "number": row["id"],
-                    "board": row["board"],
+                    "board": slug(row["board"]),
                     "title": display(row["title"]),
                     "status": row["status"],
                     "assignee": display(row["assignee"]) if row["assignee"] else None,
@@ -705,7 +728,7 @@ def runtime_cursor_key(raw, workspace_id, section):
         valid = (
             len(key) == 2
             and isinstance(key[0], str)
-            and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", key[0])
+            and slug(key[0])
             and type(key[1]) is int
             and 0 < key[1] < 2**63
         )

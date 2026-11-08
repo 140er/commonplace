@@ -28,12 +28,15 @@ def test_admin_owner_cold_reload_retry_and_responsive_navigation(hub, chromium, 
         # Neither a board nor a shared refresh may be needed for the owner shell.
         for path in ("boards", "needs-me", "rules/count", "events?*"):
             page.route(f"**/api/{path}", lambda route: None)
+        page.on(
+            "request",
+            lambda request: reads.append(request.method) if "/api/" in request.url else None,
+        )
         connection_reads = 0
 
         def connections(route):
             nonlocal connection_reads
             connection_reads += 1
-            reads.append(route.request.method)
             if connection_reads == 1:
                 route.fulfill(status=503, json={"error": "Connections unavailable; try again"})
             else:

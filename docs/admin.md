@@ -95,11 +95,13 @@ Source failures return safe 503 constants: `Users unavailable; try again` or
 Each has `state: "ready"` or `state: "error"` with a safe error constant. A ready
 switch has `enabled`; ready lists have `items`, `count`, `has_more`, `next_cursor`.
 A failed machines source preserves the switch and orchestrator observations.
+Older stores without the optional coordinator or heartbeat columns are read as
+not configured/unknown without running migrations. Cursors accept slugs up to 100 characters.
 
 Orchestrators include `id`, `slug`, `name`, `coordinator`, `seat_name`, `source`,
 `connected`, `activity`, `last_used_at`, `wakeable`. Only unarchived projects appear.
 A configured coordinator takes precedence over a stored seat; an absent seat is
-`not_configured` and an unheld seat is configuration only. Current membership,
+`not_configured` and a seat without a coordinator is configuration only. Current membership,
 user state, credential expiry/revocation and runner kind determine connection
 visibility. Machine credentials never become orchestrators. Wakeability means
 current subscription eligibility for `space_message`, with wildcard/exact-board
@@ -122,7 +124,8 @@ agents, queued/leased/starting/uncertain jobs and recent started jobs. The effec
 cap uses accepted runner configuration and the project cap, or default 3. Proposals
 never override it. Existing doing worker cards still count after disabling a machine.
 Usage exceeding a cap stays visible. Machine grants contain only `id`,
-`max_in_flight`, `max_starts_per_hour`; they are not a workspace cap. Pagination
+`max_in_flight`, `max_starts_per_hour`; only enabled, unrevoked machines have active grants.
+Disabled/revoked machines remain in runtime inventory and slot accounting. Grants are not a workspace cap. Pagination
 metadata for each limits list is under `pagination.projects` / `pagination.machines`.
 
 For example, an empty limits result includes:

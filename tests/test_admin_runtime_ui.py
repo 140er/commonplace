@@ -32,3 +32,11 @@ def test_needs_me_projection(hub):
 
 def test_partial_sources_pagination_and_get_only(hub):
     run(hub, "partial")
+
+
+def test_runtime_labels_explain_connection_and_activity(hub):
+    run(hub, "labels")
+
+
+def test_next_page_source_error_keeps_rows_and_retry_cursor(hub):
+    run(hub, "page-error")

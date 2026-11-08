@@ -846,7 +846,13 @@ playbooks and the original wider orchestration acceptance remain separate work.
   Runtime/limits/stuck query unarchived boards through the generation-aware supervisor
   resolver, opening existing encrypted board/runner stores with mode=ro, query_only,
   a shared 2 second request budget, at most 250 ms connect/busy waits and a progress
-  handler. Missing optional files/tables remain absent; corrupt sources fail safely. Only Admin opts into missing runner input; normal admission retains its strict input contract.
+  handler. Missing coordinator and heartbeat columns read as unconfigured/unknown without migration.
+  Cursor slugs accept the creation limit of 100 characters. Only enabled, unrevoked
+  machines contribute active grants; historical assignments still count toward usage.
+  Runtime tables label connection state and token-use activity explicitly; next-page
+  source errors preserve earlier rows and retry the same cursor. Typed runtime
+  identifiers and enums reject malformed stored values.
+  Missing optional files/tables remain absent; corrupt sources fail safely. Only Admin opts into missing runner input; normal admission retains its strict input contract.
   No application/writer locks, store constructors, seat creation, project GET,
   lock-taking settings/registry methods or webhook/coordinator wrappers run on these
   paths. Parameterized workspace-scoped joins verify current membership, disabled
