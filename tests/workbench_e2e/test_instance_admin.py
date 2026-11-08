@@ -110,3 +110,33 @@ def test_instance_console_denied_direct_route_has_no_inventory(hub, chromium):
         assert page.locator('a[href="#/instance-admin"]').count() == 0
     finally:
         context.close()
+
+
+def test_instance_console_preserves_draft_on_section_settlement(hub, chromium):
+    from playwright.sync_api import expect
+
+    session = sessions.redeem_login_link(
+        hub.db, sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
+    )
+    origin = f"http://127.0.0.1:{hub.port}"
+    context = chromium.new_context(viewport={"width": 1440, "height": 1000})
+    context.add_cookies([{"name": sessions.COOKIE, "value": session, "url": origin}])
+    try:
+        page = context.new_page()
+        pending = []
+        for path in ("boards", "needs-me", "rules/count", "events?*"):
+            page.route(f"**/api/{path}", lambda route: None)
+        page.route("**/api/instance-admin/connections?*", lambda route: pending.append(route))
+        page.goto(origin + "/app/#/instance-admin", wait_until="domcontentloaded")
+        people = page.locator('[data-instance-panel="people"]')
+        expect(people.get_by_text("owner@example.com", exact=True)).to_be_visible()
+        connections = page.locator('[data-instance-panel="connections"]')
+        expect(connections).to_have_attribute("aria-busy", "true")
+        draft = page.locator('[data-instance-filter="people"] input[name="user_id"]')
+        draft.fill("unsubmitted-draft")
+        assert pending, "The independent section must still be pending"
+        pending[0].fulfill(json={"items": [], "count": 0, "has_more": False})
+        expect(connections).to_have_attribute("aria-busy", "false")
+        expect(draft).to_have_value("unsubmitted-draft")
+    finally:
+        context.close()

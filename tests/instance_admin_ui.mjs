@@ -28,6 +28,33 @@ try {
     const ui = createInstanceAdmin({mount:()=>mount,api,e:escape,current:()=>current,timers:time});
     return {ui,mount,calls,timers,current,listeners,time};
   }
+  if (sources.case === 'stale-submit') {
+  const stale=fixture();stale.ui.show();stale.current.can_manage_instance=false;
+  let prevented=false;
+  stale.listeners.get('submit')({target:{closest:()=>({dataset:{instanceFilter:'audit'}})},preventDefault(){prevented=true;}});
+  assert.ok(prevented,'Stale form must never navigate');
+  stale.ui.stop();
+  } else if (sources.case === 'expired-cursor') {
+  const paging=fixture();paging.ui.show();
+  for(const call of paging.calls) call.resolve(call.path.includes('/people?') ? {items:[],count:2,has_more:true,next_cursor:'old'} : payload(call.path));
+  await flush();paging.ui.refreshSection('people',{more:true});paging.calls.at(-1).reject({status:400});await flush();
+  assert.match(paging.mount.innerHTML,/Page expired. Refresh/);
+  const before=paging.calls.length;paging.ui.refreshSection('people',{more:true});assert.equal(paging.calls.length,before);
+  paging.ui.refreshSection('people');assert.ok(!paging.calls.at(-1).path.includes('cursor='));paging.ui.stop();
+  } else if (sources.case === 'settings-pagination') {
+    const settings=fixture();settings.ui.show();
+    for(const call of settings.calls) {
+      const data=payload(call.path);
+      if(call.path.includes('/workspaces/') && call.path.includes('/settings?')) Object.assign(data,{state:'ready',items:Array(20).fill({}),count:45,has_more:true,next_cursor:'next'});
+      call.resolve(data);
+    }
+    await flush();
+    const panel=settings.mount.innerHTML.split('data-instance-panel="workspace_settings"')[1].split('</section>')[0];
+    assert.doesNotMatch(panel,/20 of 45/,'Settings must not show counts for hidden project rows');
+    assert.doesNotMatch(panel,/Load more/,'Settings must not paginate hidden project rows');
+    assert.match(panel,/Refresh/);
+    settings.ui.stop();
+  } else {
   const f = fixture(); f.ui.show();
   assert.equal(f.calls.length,7);
   for(const call of f.calls) if(!call.path.includes('/connections?')) call.resolve(payload(call.path));
@@ -59,16 +86,6 @@ try {
   const out=fixture();out.ui.show();for (const fn of documentEvents.get('signout')) fn();await flush();assert.equal(out.mount.innerHTML,'');assert.equal(out.timers.size,0);
   no.ui.stop();
   const lost=fixture();lost.ui.show();lost.current.can_manage_instance=false;lost.calls[0].resolve(payload(lost.calls[0].path));await flush();assert.match(lost.mount.innerHTML,/Instance administrator access required/);assert.equal(lost.timers.size,0);
-  const stale=fixture();stale.ui.show();stale.current.can_manage_instance=false;
-  let prevented=false;
-  stale.listeners.get('submit')({target:{closest:()=>({dataset:{instanceFilter:'audit'}})},preventDefault(){prevented=true;}});
-  assert.ok(prevented,'Stale form must never navigate');
-  const paging=fixture();paging.ui.show();
-  for(const call of paging.calls) call.resolve(call.path.includes('/people?') ? {items:[],count:2,has_more:true,next_cursor:'old'} : payload(call.path));
-  await flush();paging.ui.refreshSection('people',{more:true});paging.calls.at(-1).reject({status:400});await flush();
-  assert.match(paging.mount.innerHTML,/Page expired. Refresh/);
-  const before=paging.calls.length;paging.ui.refreshSection('people',{more:true});assert.equal(paging.calls.length,before);
-  paging.ui.refreshSection('people');assert.ok(!paging.calls.at(-1).path.includes('cursor='));paging.ui.stop();
   const guard=fixture();guard.ui.show();
   guard.time.onClear=()=>{delete guard.time.onClear;guard.ui.selectWorkspace('ws_two');};
   guard.calls[0].resolve({items:[{id:'ws_old',name:'stale-response'}],count:1});await flush();
@@ -103,6 +120,7 @@ try {
   let shown=0,shared=0;
   const context={remember(){},state,location:{hash:'#/instance-admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute:x=>x,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},markOpenCard(){},message:x=>x,showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:null,instanceAdminUI:null,root:{querySelector:k=>k==='#content'?content:k==='#shell-dialog'?{close(){}}:{}},instanceAdminScreen(){shown++;},refresh(){shared++;}};
   runInNewContext(route,context);await context.route();assert.equal(shown,1);assert.equal(shared,0);assert.equal(state.base,'#/instance-admin');
+  }
 } catch(error) {
   process.stderr.write(error.stack || String(error));
   process.exitCode=error.code==='ERR_ASSERTION' ? 42 : 1;

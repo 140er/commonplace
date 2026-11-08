@@ -31,7 +31,7 @@ export function createInstanceAdmin({ mount, api, e, current, timers = globalThi
     const item = sections.get(key), busy = requests.has(key);
     if (!item) return '';
     const button = (action, text) => `<button type="button" class="btn" data-instance-section="${key}" data-instance-action="${action}"${busy ? ' disabled' : ''}>${e(text)}</button>`;
-    return `<div data-instance-panel="${key}" aria-busy="${busy}">${item.data ? content(key, item.data) : ''}${busy ? '<p role="status">Loading…</p>' : ''}${item.error ? `<p role="status">${e(item.error)}</p>${button('retry', 'Retry')}` : ''}${item.data ? `<p class="quiet">${item.data.count == null ? '' : `${e(item.data.items?.length || 0)} of ${e(item.data.count)} · `}Recorded ${value(item.data.recorded_at)}</p>${button('refresh', 'Refresh')}${item.data.has_more ? button('more', 'Load more') : ''}` : ''}</div>`;
+    return `<div data-instance-panel="${key}" aria-busy="${busy}">${item.data ? content(key, item.data) : ''}${busy ? '<p role="status">Loading…</p>' : ''}${item.error ? `<p role="status">${e(item.error)}</p>${button('retry', 'Retry')}` : ''}${item.data ? `<p class="quiet">${key === 'workspace_settings' || item.data.count == null ? '' : `${e(item.data.items?.length || 0)} of ${e(item.data.count)} · `}Recorded ${value(item.data.recorded_at)}</p>${button('refresh', 'Refresh')}${key !== 'workspace_settings' && item.data.has_more ? button('more', 'Load more') : ''}` : ''}</div>`;
   }
 
   function render() {

@@ -2078,6 +2078,14 @@ filters; validation refusals carry no target IDs. Draft filter text survives
 independent section settlement, stale form submissions prevent navigation, and
 expired pagination cursors require a refresh before more pages can load.
 
+### Workspace settings presentation
+
+The workspace settings panel renders its settings table and Refresh action only;
+project row counts and pagination controls belong to the spaces inventory. The
+API retains paginated project-cap metadata for workspace settings. Operator
+settings accept no query keys, list routes accept pagination, and workspace
+filters apply only to the global workspace, people, connection and audit lists.
+
 ## Person private-read containment
 
 Person sessions derive private read authority only from the exact current

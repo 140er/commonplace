@@ -34,10 +34,12 @@ Every path below is relative to `/api/instance-admin/` and accepts GET only:
 | `workspaces/{workspace_id}/settings` | Account-plan association, effective limits, orchestration and paginated project caps |
 | `audit` | `actor_user_id`, `actor_connection_id`, `action`, `decision`, `from`, `to` |
 
-All reads accept an exact `workspace_id` filter, `limit` (1–100, default 50)
-and an opaque `cursor` where pagination applies. Instance settings have no
-cursor. Filters are exact; duplicate or unsupported keys are rejected. Audit
-time bounds use UTC `YYYY-MM-DDTHH:MM:SSZ`. Actions are the delivered
+`workspaces`, `people`, `connections` and `audit` accept an exact `workspace_id`
+filter. Spaces and workspace settings take the workspace from the path. List
+routes accept `limit` (1–100, default 50) and an opaque `cursor`; workspace
+settings also return paginated project caps in the API, though the console shows
+only workspace settings there. Instance `settings` accepts no query keys. Filters
+are exact; duplicate or unsupported keys are rejected. Audit time bounds use UTC `YYYY-MM-DDTHH:MM:SSZ`. Actions are the delivered
 `instance_admin.read.*` actions and `instance_admin.denied`. Audit decisions
 use fixed categories; historic entries with unknown categories display `legacy`.
 Raw historic reasons and unrecognized target identifiers never reach clients.
