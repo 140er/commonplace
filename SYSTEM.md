@@ -1597,3 +1597,5 @@ Alias-only nested bundles use `source_thread` when `thread` is absent and requir
 Accepted endpoint residual: on non-Chroma backends, a readable chunked drawer's logical handle omits its endpoint because association proof supports exact physical ids only, even when get reconstructs the drawer. This inherits the limit in “Current typed provenance association proof” above (logical handles lack ordered snapshot enumeration); no broader proof is added here.
 
 Dependent non-null sequence values are omitted when their parent provenance is missing, hidden or unproved; earlier gateway expectations that retained orphan ranges are updated to this rule.
+
+Tunnel reads also inherit the earlier whole-record tunnel projection: malformed, unresolved or non-Chroma logical drawer descriptors can remove the entire tunnel before this final endpoint scrub.

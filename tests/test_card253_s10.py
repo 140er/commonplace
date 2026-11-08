@@ -442,16 +442,14 @@ def test_card253_s10_r3_head_endpoint_proof(case, monkeypatch, tmp_path, end, va
     }
     row[end]["drawer_id"] = value
     palace_graph._save_tunnels([row])
+    from commonplace.handoff.mirror_access import gate
+
+    expected = row if value == identifier else {k: v for k, v in row.items() if k != end}
+    assert gate(w.h.gateway, w.member, "all_wings", row) == expected
     reply = invoke(w, "mempalace_list_tunnels", {})
-    assert len(reply) == 1
-    if value == identifier:
-        assert reply == [row]
-    else:
-        assert end not in reply[0]
-        assert (
-            reply[0]["target" if end == "source" else "source"]
-            == row["target" if end == "source" else "source"]
-        )
+    # Develop's tunnel projection rejects malformed/unresolved drawer
+    # descriptors before the final endpoint scrub; None is not a descriptor.
+    assert reply == ([expected] if value is None or value == identifier else [])
 
 
 def test_card253_s10_r3_head_nested_flat_alias(case):
@@ -527,8 +525,12 @@ def test_card253_s10_r4_guard_endpoint_compat(case, monkeypatch, tmp_path, role,
         "target": {"wing": "wing_fixture", "room": "destination", "drawer_id": logical},
     }
     palace_graph._save_tunnels([row])
+    from commonplace.handoff.mirror_access import gate
+
     expected = [row] if kind == "plain" else [{k: v for k, v in row.items() if k != "target"}]
-    assert invoke(w, "mempalace_list_tunnels", {}, role) == expected
+    assert gate(w.h.gateway, getattr(w, role), "all_wings", [row]) == expected
+    # The upstream tunnel projection now omits the whole unproved tunnel.
+    assert invoke(w, "mempalace_list_tunnels", {}, role) == ([row] if kind == "plain" else [])
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
