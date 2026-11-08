@@ -20,7 +20,7 @@ from . import events
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
 from .extensions import LocalTool, ToolContext, ToolError, register
 from .http_util import log_failure
-from .policy import canonical_wing
+from .policy import canonical_wing, is_private_wing
 from .rules.enforce import RulesRefresh, rest_write
 
 logger = logging.getLogger(__name__)
@@ -312,9 +312,10 @@ def _save(ctx, args):
             raise ToolError(
                 f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
             ) from None
+    saved_wing = result.get("wing") or theme
     notice = (
         "Saved privately. You cannot read this note for now."
-        if not ctx.principal.policy.can_read_wing(theme)
+        if is_private_wing(saved_wing) and not ctx.principal.policy.can_read_wing(saved_wing)
         else ""
     )
     return memory_id, task, notice

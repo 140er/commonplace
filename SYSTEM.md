@@ -1735,4 +1735,5 @@ Health-flagged member notes are always saved privately when private writing is
 allowed; they are never redirected to shared storage. The successful HTTP save
 response includes a notice, and the MCP save text states: "Saved privately. You
 cannot read this note for now." This also applies to other saves into unreadable
-wings. Shared saves remain readable and do not carry that notice.
+private wings. The notice uses the actual filed destination after write-wing
+pinning; readable shared or inbox saves do not carry that notice.

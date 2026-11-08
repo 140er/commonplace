@@ -255,3 +255,15 @@ def test_private_health_save_returns_unreadable_notice(world, surface):
     )
     assert shared_status == 201 and "notice" not in plain
     assert SHARED in json.dumps(w.rpc(w.member, "memory_get", {"id": plain["id"]}))
+
+    # A configured inbox writer may request another wing; the gateway pins
+    # the actual destination. Its readable inbox must not be called private.
+    token = w.hub.token("inbox-writer", read_wings=["inbox"], write_wing="inbox", trust="untrusted")
+    pinned = w.rpc(
+        {"Authorization": f"Bearer {token}"},
+        "memory_save",
+        {"text": "pinned shared control", "theme": "shared"},
+    )
+    message = pinned[1]["result"]["content"][0]["text"]
+    assert not pinned[1]["result"].get("isError")
+    assert "saved privately" not in message.lower() and "cannot read" not in message.lower()
