@@ -225,6 +225,8 @@ def test_full_length_slug_paginates(hub, runtime, section, kind):
 def test_legacy_columns_are_read_without_migration(hub, runtime):
     task(runtime, 1, claim=OLD)
     with runtime[0].connection() as conn:
+        # Legacy stores predate the report trigger that references heartbeat_at.
+        conn.execute("DROP TRIGGER IF EXISTS project_report_reset")
         conn.execute("ALTER TABLE boards DROP COLUMN coordinator")
         conn.execute("ALTER TABLE tasks DROP COLUMN heartbeat_at")
     headers = cookie(hub)
