@@ -134,7 +134,7 @@ def process(db):
 
 
 def board_authority(gateway, ws, data, principal):
-    with orchestration.board_read(gateway.workspace_dir(ws)) as conn:
+    with orchestration.board_read(gateway.supervisor.workspace_dir(ws)) as conn:
         board = conn.execute(
             "SELECT wing,coordinator,archived FROM boards WHERE slug=?", (data["board"],)
         ).fetchone()
@@ -155,7 +155,7 @@ def filesystem_denied(gateway, ws, error):
         and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_CANTOPEN
     ):
         return False
-    path = Path(gateway.workspace_dir(ws)) / "boards.sqlite3"
+    path = Path(gateway.supervisor.workspace_dir(ws)) / "boards.sqlite3"
     try:
         path.stat()
     except OSError as exc:

@@ -303,8 +303,10 @@ unavailable snapshot still rejects a relevant done transition. This is fail-clos
 not a guarantee to undo arbitrary external memory side effects after a lesson.
 Existing raw event emission can still fail after the board commit.
 
-Recovery runs at installation, followed by monotonic 30-second scan deadlines,
-independent of requests and webhook traffic. Each workspace pass reads at most
+Installation registers recovery without resolving workspace directories. The first
+dispatcher scan recovers and migrates only existing board databases without creating
+workspace directories, followed by monotonic 30-second scan deadlines independent
+of requests and webhook traffic. Workspace lookup failures are isolated per pass. Each workspace pass reads at most
 100 cards, publishes at most 100 source rows separately and cleans at most 100
 deleted episode keys. Persisted pagination provides fair continuation; a cycle can
 take longer than 30 seconds. The first observation in a generation baselines

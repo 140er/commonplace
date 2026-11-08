@@ -5,6 +5,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -17,6 +18,38 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.gateway import Gateway
 from commonplace.projects import connect, orchestration
 from commonplace.workers import WorkerSupervisor
+
+
+@pytest.mark.parametrize("supervisor_kind", ["stub", "forbidden", "worker"])
+def test_gateway_install_does_not_resolve_or_create_workspaces(
+    tmp_path, monkeypatch, supervisor_kind
+):
+    monkeypatch.setattr(webhooks.Dispatcher, "start", lambda self: webhooks.ensure_schema(self.db))
+    monkeypatch.setenv("COMMONPLACE_CHAT_WORKER", "off")
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    uid = db.create_user("owner@example.com", is_admin=True)
+    db.create_workspace("unopened", uid, personal=True)
+    supervisor = SimpleNamespace(root=tmp_path / "workspaces")
+    if supervisor_kind == "forbidden":
+
+        def forbidden(ws):
+            raise AssertionError("workspace resolution during construction")
+
+        supervisor.workspace_dir = forbidden
+    elif supervisor_kind == "worker":
+        supervisor = WorkerSupervisor(str(tmp_path), launcher=None)
+    failure = None
+    try:
+        try:
+            Gateway(db, supervisor)
+        except Exception as exc:
+            failure = exc
+        assert failure is None, f"Gateway construction failed: {type(failure).__name__}"
+        assert not (tmp_path / "workspaces").exists()
+    finally:
+        if supervisor_kind == "worker":
+            supervisor.stop_all()
+        db.close()
 
 
 @pytest.fixture
@@ -165,6 +198,45 @@ def restart(w):
 
     w.gw.project_reports = ReportPump(w.gw)
     w.gw.webhooks = webhooks.Dispatcher(w.db, gateway=w.gw)
+
+
+def test_dispatch_recovers_existing_source_without_creating_workspaces(world, monkeypatch):
+    w = world
+    n = card(w)
+    assert w.service.task_update(n, status="done")["status"] == "done"
+    sql(w, "DROP TABLE project_report_scan")
+    unused_ws = w.db.create_workspace("unopened", w.uid)
+    broken_ws = w.db.create_workspace("unavailable", w.uid)
+    supervisor = w.gw.supervisor
+    resolve = supervisor.workspace_dir
+    unused_path = Path(resolve(unused_ws))
+    assert not unused_path.exists()
+
+    def forbidden(ws):
+        raise AssertionError("workspace resolution during construction")
+
+    monkeypatch.setattr(supervisor, "workspace_dir", forbidden)
+    failure = None
+    try:
+        gateway = Gateway(w.db, supervisor)
+    except Exception as exc:
+        failure = exc
+    assert failure is None, f"Gateway construction failed: {type(failure).__name__}"
+    assert not sql(w, "SELECT name FROM sqlite_master WHERE name='project_report_scan'")
+
+    def resolve_existing(ws):
+        if ws == broken_ws:
+            raise RuntimeError("unavailable workspace")
+        return resolve(ws)
+
+    monkeypatch.setattr(supervisor, "workspace_dir", resolve_existing)
+    monkeypatch.setattr(gateway, "workspace_dir", forbidden)
+    w.gw = gateway
+    w.gw.webhooks.scan_reports()
+    pump(w)
+    assert len(reports(w, "done")) == 1
+    assert sql(w, "SELECT * FROM project_report_scan")
+    assert not unused_path.exists()
 
 
 @pytest.mark.parametrize("writer", ["task_update", "decide", "seed_card"])

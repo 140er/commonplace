@@ -332,6 +332,8 @@ Format (read by `commonplace orch docs-check`):
   - Space profile/tool snapshots are captured from the development base, retaining its split and inbox visibility and card-schema additions.
   - `tests/test_projects_phase_b.py::test_head_connect_hint_and_trust_failures` asserts the Connect list contract: base message and move events, plus creation and report events when enabled.
 
+  - `tests/test_project_reports.py::test_gateway_install_does_not_resolve_or_create_workspaces` covers missing, forbidden and real supervisor lookups; `test_dispatch_recovers_existing_source_without_creating_workspaces` proves lazy migration, delivery and workspace isolation.
+
   - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
@@ -452,7 +454,7 @@ Format (read by `commonplace orch docs-check`):
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
-  - Gateway installation recovers project reports immediately; the webhook worker drives independent monotonic scan deadlines without adding authority or holding database locks during report HTTP.
+  - Gateway installation registers project reports without resolving workspace directories; the webhook worker recovers existing sources on its first scan and drives independent monotonic deadlines without adding authority or holding database locks during report HTTP.
   - Gateway mutation scopes and provenance lookups follow the principal workspace; hidden targets use absent replies, and client-supplied scopes cannot widen access.
 
   - Imported-history consent: Imported reader results bypass wing restrictions only after exact-view proof; ordinary scope, tool, wing and mutation gates remain in force.
@@ -704,6 +706,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Source outboxes and observed stuck episodes, internal seat bindings, publication receipts and reserved report dispatch.
+  - Report installation touches only control state; dispatcher passes resolve existing board databases without creating workspace directories, migrate each source lazily and isolate workspace lookup failures.
 
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
