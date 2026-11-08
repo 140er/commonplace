@@ -2098,8 +2098,6 @@ def _validate_list_batch(ids, documents, metadatas, embeddings) -> None:
 
 
 class ChromaCollection(BaseCollection):
-    overview_projection_bounded = True
-
     """Thin adapter translating ChromaDB dict returns into typed results.
 
     When ``palace_path`` is set, all write methods (``add``, ``upsert``,
@@ -2119,6 +2117,7 @@ class ChromaCollection(BaseCollection):
     directly without going through ``ChromaBackend``.
     """
 
+    overview_projection_bounded = True
     upsert_merges_metadata = True
 
     def __init__(self, collection, palace_path: Optional[str] = None, backend=None):

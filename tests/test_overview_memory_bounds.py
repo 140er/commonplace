@@ -7,11 +7,11 @@ import pytest
 
 class TrackingCollection:
     overview_projection_bounded = True
-    overview_page_bytes_bounded = True
 
     def __init__(self, rows):
         self.rows, self.full, self.gets, self.batches = rows, 0, [], []
         self.closed, self.fail_at = False, None
+        self.projected_calls = []
 
     def count(self):
         return len(self.rows)
@@ -46,6 +46,7 @@ class TrackingCollection:
         try:
             for i, row in enumerate(self.rows):
                 if i == self.fail_at:
+                    self.fail_at = None
                     raise MetadataRecoveryPending("synthetic recovery")
                 yield row
         finally:
@@ -54,6 +55,7 @@ class TrackingCollection:
     def iter_overview_metadata(self, where=None):
         from mempalace.overview import projected_batches
 
+        self.projected_calls.append(where)
         rows = self._rows()
         if where:
             rows = (r for r in rows if r and r.get("wing") in where["wing"]["$in"])
@@ -133,13 +135,13 @@ def test_projected_page_splits_by_encoded_bytes(overview):
     assert max(col.batches) <= 1048576
 
 
-def test_filtered_rooms_reduces_bounded_pages(overview, monkeypatch):
+def test_filtered_rooms_reduces_bounded_pages(overview):
     m, col = overview(
         [{"wing": "w", "room": "r"} for _ in range(501)] + [{"wing": "other", "room": "hidden"}]
     )
-    monkeypatch.setattr(m, "known_wings", lambda col: ["w"])
     result = m.tool_list_rooms(wing="w")
     assert result["rooms"] == {"r": 501}
+    assert col.projected_calls == [None]
     assert col.full == 0
     assert m._metadata_cache is None
 

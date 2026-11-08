@@ -1494,12 +1494,23 @@ the exported interval, not only sequential scratch results.
 The public search response deliberately omits `facts_error`, including on failed fact enrichment. A failure-only marker could distinguish hidden-present and hidden-absent worlds and break response equality. Failed enrichment therefore preserves drawers and returns the same empty facts shape as no eligible facts. The Unreleased changelog records this public-shape change, strict KG search booleans and restored argument/wing-filter compatibility; clients should no longer use `facts_error` as an availability signal.
 ### Bounded memory for overview reads
 
-Status, wing, room and taxonomy overviews use a presence-preserving projection
-of wing, room, is_sentinel and ingest_mode. Chroma reads these fields in one
-recovery-checked SQLite snapshot, including a drawer without any projected key.
-Room aliases use one deduplicated indexed wing scope. Unrelated metadata and
-documents never enter this acquisition. General keyed metadata iterators keep
-their previous semantics.
+Status, wing, room and taxonomy overviews retain backend facet aggregates when
+available, including pgvector, qdrant and exact/compact when their fast path is
+unavailable. Facet acquisitions have explicit distinct-key limits; bookkeeping
+subtraction uses equality-filtered aggregates, not raw metadata rows. If that
+backend cannot facet bookkeeping fields, the ordinary facet results remain
+available with `partial: true` and `bookkeeping_error: bookkeeping_unavailable`;
+they explicitly include unsubtracted bookkeeping, rather than claiming complete
+user-drawer counts. Other facet acquisition errors do not silently enter an
+unsupported raw reader.
+
+Non-facet raw fallback uses a presence-preserving projection of wing, room,
+is_sentinel and ingest_mode. Chroma reads these fields in one recovery-checked
+SQLite snapshot, including a drawer without any projected key. The reader also
+supports a deduplicated indexed wing scope. Room alias discovery and room counts
+reuse one bounded aggregate pass, avoiding a second projected scan. Unrelated
+metadata and documents never enter this acquisition. General keyed metadata
+iterators keep their previous semantics.
 
 Projected batches contain at most 500 rows and 1 MiB of canonical UTF-8 JSON
 (compact separators, ensure_ascii=False). Complete rows split a batch before its
@@ -1508,20 +1519,32 @@ byte limit. SQL checks cell lengths before decoding; a projected cell over
 8 MiB of deep sys.getsizeof container/key/value accounting, counting shared
 objects once. Conservative preflight may refuse earlier; one bounded dictionary
 insertion's allocation overhead can precede the final accounting check. These
-are allocation-structure bounds, not a whole-process RSS cap. Only one bounded
-taxonomy cache is retained, keyed by palace, collection and database fingerprint;
-writes and reconnects invalidate it. Raw overview metadata is never cached.
+are allocation-structure bounds, not a whole-process RSS cap. The primary grouped
+Chroma/exact/compact path also enforces these caps: over-cap palaces now receive
+an explicit diagnostic instead of an unlimited public overview. Facet result
+maps are checked under the same aggregate/key limits; they are backend
+aggregates, not the byte-bounded raw metadata acquisition contract.
 
-A lazy SQLite acquisition error closes the iterator and discards all partial
-counts before one restart from offset zero. Backend page adapters must explicitly
-guarantee acquisition bytes via overview_page_bytes_bounded=True: get returns
-only projected metadata, bounded to 500 rows and 1 MiB, with the same where on
-every page. Trimming an already acquired unbounded payload does not qualify.
-Backends without a bounded projection or acquisition guarantee return
-`overview_unavailable`; oversized projected cells or aggregates return
-`overview_too_large`. No partial tally is published as complete. Unbounded facet
-acquisition is not an alternative. Exact/compact grouped taxonomy also guards
-cell lengths and reduces its cursor under aggregate bounds.
+Only one bounded taxonomy cache is retained, keyed by palace, collection and
+database fingerprint, including too-large refusals. Writes, reconnects and a
+changed fingerprint invalidate successful and refused entries alike; the
+existing freshness TTL covers backends without a file fingerprint. Raw overview
+metadata is never cached.
+
+A lazy SQLite acquisition error closes the failed snapshot and discards its
+entire partial tally. The same byte-bounded projected reader is reopened once
+from the beginning with identical where. A second acquisition failure, including
+persistent MetadataRecoveryPending, returns explicit `overview_unavailable`.
+This read-only retry can recover a transient failure; it does not apply queued
+Chroma writes or call an unbounded SDK reader. There is no invented Chroma byte
+capability. Only backends without a projected reader use page adapters; those
+must genuinely guarantee acquisition bytes via overview_page_bytes_bounded=True:
+get returns projected metadata bounded to 500 rows and 1 MiB with the same where
+on each page. Trimming an already acquired unbounded payload does not qualify.
+Unsupported non-facet raw acquisition returns `overview_unavailable`; oversized
+cells/aggregates return `overview_too_large`. These refusals carry the normal
+empty aggregate keys and `partial: true`; status keeps its protocol/backend
+fields and uses a null total. No partial tally is published as complete.
 
 This fixes a measured fallback defect. Production worker memory attribution
 remains open. Other full metadata consumers, including delete-by-source and the

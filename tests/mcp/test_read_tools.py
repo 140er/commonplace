@@ -354,7 +354,14 @@ with mine_palace_lock(sys.argv[1]):
         from mempalace import mcp_server
 
         class _FakeQdrantCollection:
-            overview_page_bytes_bounded = True
+            _backend = type("Backend", (), {"capabilities": {"supports_metadata_facets"}})()
+
+            def facet_counts(self, field, where=None, limit=1000):
+                if where:
+                    return {}
+                if field == "wing":
+                    return {"project": 2}
+                return {"backend": 1, "api": 1} if field == "room" else {}
 
             def count(self):
                 return 2
@@ -827,20 +834,138 @@ class TestOverviewCaches:
 
 
 class TestMetadataFacets:
-    @pytest.mark.parametrize(
-        "tool", ["tool_status", "tool_list_wings", "tool_list_rooms", "tool_get_taxonomy"]
-    )
-    def test_unbounded_facets_fail_closed(self, monkeypatch, tool):
+    def test_tool_status_uses_metadata_facets(self, monkeypatch):
         import mempalace.mcp_server as mcp
 
         monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
         monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
+
         col = MagicMock()
-        monkeypatch.setattr(mcp, "_get_collection", lambda **kw: col)
-        result = getattr(mcp, tool)()
-        assert result["error"] == "overview_unavailable"
-        col.facet_counts.assert_not_called()
-        col.get.assert_not_called()
+        col.count.return_value = 5
+
+        def facets(field, where=None, limit=1000):
+            if where:
+                return {}
+            if field == "wing":
+                return {"wing_a": 2, "wing_b": 3}
+            return {"room_x": 4, "room_y": 1} if field == "room" else {}
+
+        col.facet_counts.side_effect = facets
+        monkeypatch.setattr(mcp, "_get_collection", lambda create=False: col)
+        result = mcp.tool_status()
+
+        assert result["wings"] == {
+            "wing_a": 2,
+            "wing_b": 3,
+        }
+
+        assert result["rooms"] == {
+            "room_x": 4,
+            "room_y": 1,
+        }
+        assert [c.args[0] for c in col.facet_counts.call_args_list[:2]] == ["wing", "room"]
+        assert all(c.kwargs["limit"] == 16385 for c in col.facet_counts.call_args_list)
+
+    def test_tool_list_wings_uses_metadata_facets(self, monkeypatch):
+        import mempalace.mcp_server as mcp
+
+        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
+        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
+
+        col = MagicMock()
+        col.count.return_value = 7
+        col.facet_counts.side_effect = lambda field, where=None, limit=1000: (
+            {"wing_a": 5, "wing_b": 2} if field == "wing" and not where else {}
+        )
+        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
+        result = mcp.tool_list_wings()
+
+        assert result == {
+            "wings": {
+                "wing_a": 5,
+                "wing_b": 2,
+            }
+        }
+        assert col.facet_counts.call_args_list[0].args == ("wing",)
+        assert col.facet_counts.call_args_list[0].kwargs["limit"] == 16385
+
+    def test_tool_list_rooms_uses_metadata_facets(self, monkeypatch):
+
+        import mempalace.mcp_server as mcp
+
+        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
+        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
+
+        col = MagicMock()
+
+        def facets(field, where=None, limit=1000):
+            if field == "wing" and (where is None or "wing" in where):
+                return {"engineering": 10}
+            if field == "room" and where and "wing" in where:
+                return {"room1": 7, "room2": 3}
+            return {}
+
+        col.facet_counts.side_effect = facets
+
+        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
+
+        result = mcp.tool_list_rooms("engineering")
+
+        assert result["rooms"] == {
+            "room1": 7,
+            "room2": 3,
+        }
+
+        from unittest.mock import call
+
+        wing = {"wing": {"$in": ["engineering", "wing_engineering"]}}
+        assert col.facet_counts.call_args_list[:3] == [
+            call("wing", where=None, limit=16385),
+            call("room", where=wing, limit=16385),
+            call("wing", where=wing, limit=16385),
+        ]
+
+    def test_tool_get_taxonomy_uses_metadata_facets(self, monkeypatch):
+        from unittest.mock import call
+
+        import mempalace.mcp_server as mcp
+
+        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
+        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
+
+        col = MagicMock()
+
+        def facet_counts_mock(field, where=None, limit=1000):
+            if field == "wing" and where is None:
+                return {"wing_a": 2, "wing_b": 1}
+            if field == "room" and where == {"wing": "wing_a"}:
+                return {"room1": 2}
+            if field == "room" and where == {"wing": "wing_b"}:
+                return {"room2": 1}
+            return {}
+
+        col.facet_counts.side_effect = facet_counts_mock
+
+        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
+
+        result = mcp.tool_get_taxonomy()
+        assert col.facet_counts.call_args_list[0] == call("wing", where=None, limit=16385)
+        # Per-wing room facets run concurrently (ThreadPoolExecutor), so order is
+        # non-deterministic. Compare order-independently without a set() — a
+        # ``call`` carrying a dict kwarg is unhashable, so membership (==) is used.
+        room_calls = [c for c in col.facet_counts.call_args_list[1:] if c.args == ("room",)]
+        assert len(room_calls) == 2
+        assert call("room", where={"wing": "wing_a"}, limit=16385) in room_calls
+        assert call("room", where={"wing": "wing_b"}, limit=16385) in room_calls
+
+        assert result["taxonomy"] == {
+            "wing_a": {
+                "room1": 2,
+            },
+            "wing_b": {
+                "room2": 1,
+            },
+        }
 
 
 class TestNoneMetadataSafety:
