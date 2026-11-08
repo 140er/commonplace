@@ -256,12 +256,14 @@ def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
         elif operation == "list":
             reply = invoke(w, TOOLS[3], {"wing": "wing_fixture", "room": "notes"}, role)
         else:
-            reply = invoke(
-                w,
-                TOOLS[4],
-                {"query": "bundle", "wing": "wing_fixture", "include_facts": False},
-                role,
-            )
+            args = {"query": "bundle", "wing": "wing_fixture", "include_facts": False}
+            raw = w.h.gateway.mediator.workers.call_tool(principal, TOOLS[4], args)
+            reply = invoke(w, TOOLS[4], args, role)
+            # Drawer search does not emit source_thread/ranges. Preserve the
+            # real worker's complete hit projection for this readable parent.
+            assert reply["results"] == raw["results"]
+            assert TEXT in str(reply)
+            return
 
         def rows(value):
             if isinstance(value, dict):
