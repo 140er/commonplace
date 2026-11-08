@@ -879,12 +879,17 @@ playbooks and the original wider orchestration acceptance remain separate work.
   worker ordering without loading the worker server in the gateway process.
   Non-owner wing refusals retain their existing messages. Incomplete membership
   proof still returns the empty envelope rather than a worker failure message.
-- Consented `private_chats` listings use the same worker validation before
+- Consented `private_chats` drawer listings use the same worker validation before
   reading imports, under one request deadline. Null defaults and integer/range
   errors match the worker route; invalid dates retain the worker error result.
   Import listing receives the validated limit and offset unchanged. Valid date
   windows still exclude imports without a proved date. Incomplete validation or
   import-listing faults yield the existing empty listing shape, with no raw error.
+- The import branch of `list_rooms` also validates through `list_drawers`, so
+  validation errors name `mempalace_list_drawers`. Its public schema declares only
+  `wing`; legacy extra filters are still accepted through drawer validation,
+  including the raw `room` filter passed to import listing. This is not parity
+  with the worker's own `list_rooms` argument validation.
 - Stored bytes, imported-history consent/range rules, provenance alias scrubbing
   and legacy source-file proof retain their separate contracts and residuals.
 

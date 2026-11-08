@@ -408,7 +408,7 @@ def test_card253_s06_r1_denial_text(page_world, case):
     assert result == {"error": message, "denied": True}, "s06 denial text changed"
 
 
-@pytest.mark.parametrize("case", ["limit_null", "offset_abc", "since_bad"])
+@pytest.mark.parametrize("case", ["limit_null", "offset_abc", "since_bad", "_private_chats"])
 def test_card253_s06_r2_private_page_args(page_world, monkeypatch, case):
     import json
 
@@ -446,6 +446,7 @@ def test_card253_s06_r2_private_page_args(page_world, monkeypatch, case):
         "limit_null": {"limit": None},
         "offset_abc": {"offset": "abc"},
         "since_bad": {"since": "not-a-date"},
+        "_private_chats": {},
     }[case]
     request = {
         "jsonrpc": "2.0",
@@ -453,14 +454,17 @@ def test_card253_s06_r2_private_page_args(page_world, monkeypatch, case):
         "method": "tools/call",
         "params": {
             "name": "mempalace_list_drawers",
-            "arguments": {"wing": "private_chats", **extra},
+            "arguments": {
+                "wing": "_private_chats" if case == "_private_chats" else "private_chats",
+                **extra,
+            },
         },
     }
     status, raw = h.raw(token, request)
     assert status == 200, "s06 private page args escaped as HTTP 500"
     reply = json.loads(raw)
-    if case == "limit_null":
-        assert _tool_result(reply) == control
+    if case in ("limit_null", "_private_chats"):
+        assert _tool_result(reply) == control, "s06 private listing changed"
         assert calls == [{"limit": 20, "offset": 0, "room": None}]
     elif case == "offset_abc":
         assert reply == {

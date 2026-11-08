@@ -38,7 +38,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+  - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
+  - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
@@ -374,7 +376,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+  - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
+  - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
@@ -580,7 +584,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+  - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
+  - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 

@@ -691,7 +691,12 @@ class Mediator:
         timeout = WORKER_TIMEOUT_S
         try:
             with checks.deadline(timeout):
-                prepared = _prepare_page(principal, self.workers, args, checks.remaining(timeout))
+                prepared = _prepare_page(
+                    principal,
+                    self.workers,
+                    {**args, "wing": "private_chats"},
+                    checks.remaining(timeout),
+                )
                 if (
                     isinstance(prepared, dict)
                     and set(prepared) == {"error"}
