@@ -30,7 +30,30 @@ if (process.argv[2] === 'entry') {
   assert.equal(notice.hidden, false, 'Failed identity proof must keep the notice visible');
   assert.doesNotMatch(mount.innerHTML, /Map could not be loaded/);
   ui.stop();
-} else if (['me_pending', 'me_null', 'me_stale', 'me_stopped'].includes(process.argv[2])) {
+} else if (process.argv[2] === 'me_deadline') {
+  const apiSource = await readFile(new URL('../commonplace/web/static/api.js', import.meta.url), 'utf8');
+  let deadline, identitySignal, cleared = false;
+  const realApi = runInNewContext(apiSource.replaceAll('export ', '') + '\n;api;', {
+    AbortController,
+    fetch: (path, options) => {
+      if (path === '/api/me') { identitySignal = options.signal; return new Promise(() => {}); }
+      return Promise.resolve({ ok: true, status: 200, json: async () => graph });
+    },
+    setTimeout(callback, ms) { assert.equal(ms, 10000); deadline = callback; return 1; },
+    clearTimeout() { cleared = true; },
+  });
+  const ui = createMemory({ mount, panel, boards: context.boards, api: realApi });
+  await ui.showMap('atlas');
+  assert.equal(mounted, 1);
+  assert.equal(notice.hidden, false);
+  assert.equal(identitySignal.aborted, false);
+  deadline();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(identitySignal.aborted, true, 'The real API deadline must abort pending identity');
+  assert.equal(cleared, true, 'The complete-read deadline must settle and clear its timer');
+  assert.equal(notice.hidden, false);
+  ui.stop();
+} else if (['me_pending', 'me_null', 'me_stale', 'me_stopped', 'me_owner_late'].includes(process.argv[2])) {
   const mode = process.argv[2];
   const identities = [], options = [];
   const ui = createMemory({ mount, panel, boards: context.boards,
@@ -48,6 +71,13 @@ if (process.argv[2] === 'entry') {
     assert.equal(mounted, 1, 'Pending identity must not block the map');
     assert.equal(notice.hidden, false);
     assert.equal(options[0]?.timeoutMs, 10000, 'Identity must have a bounded deadline');
+  } else if (mode === 'me_owner_late') {
+    await first;
+    assert.equal(mounted, 1);
+    assert.equal(notice.hidden, false);
+    identities[0]({ can_admin: true });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(notice.hidden, true, 'Current owner proof must clear the pending notice');
   } else if (mode === 'me_null') {
     identities[0](null);
     await first;

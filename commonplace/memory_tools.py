@@ -442,6 +442,12 @@ def _map_private_thread(ctx, thread, cache):
     return cache[thread]
 
 
+def _path_threads(path):
+    """The first segment is the citation; later thread-id forms stay checked."""
+    first, *rest = path.split("/")
+    return {first, *(part for part in rest if part.startswith(("thr_", "mcp:")))}
+
+
 def _map_private_reference(ctx, value, cache):
     """Only thread-naming derived fields take part in the map citation check."""
     from .handoff.provenance_refs import REFUSE, label_tokens, refs
@@ -459,13 +465,13 @@ def _map_private_reference(ctx, value, cache):
         threads = set(parsed.tokens)
         text = parsed.text or ""
     if text.startswith(("thr_", "mcp:")):
-        threads.add(text.split("/", 1)[0])
+        threads.update(_path_threads(text))
     try:
         link = urlsplit(text)
         if link.scheme == "t3-thread" and link.netloc == "v1":
-            threads.add(link.path.lstrip("/").split("/", 1)[0])
+            threads.update(_path_threads(link.path.lstrip("/")))
         elif link.path.startswith("/app/threads/"):
-            threads.add(link.path.removeprefix("/app/threads/").split("/", 1)[0])
+            threads.update(_path_threads(link.path.removeprefix("/app/threads/").lstrip("/")))
     except ValueError:
         # An ordinary, malformed non-thread URL is not a citation.
         pass

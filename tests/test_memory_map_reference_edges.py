@@ -74,8 +74,26 @@ def test_member_derived_reference_only_filters_threads(hub, field, kind):
         assert any(link["label"] == "derived_citation" for link in after["links"])
 
 
-@pytest.mark.parametrize("form", ["app_slash", "app_deep", "url_deep", "t3_slash", "bare_slash"])
-@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize(
+    "private,form",
+    [
+        (private, form)
+        for private in (False, True)
+        for form in ("app_slash", "app_deep", "url_deep", "t3_slash", "bare_slash")
+    ]
+    + [
+        (True, form)
+        for form in (
+            "app_mcp",
+            "url_mcp",
+            "t3_mcp",
+            "bare_mcp",
+            "app_pct_mcp",
+            "app_empty_mcp",
+            "t3_empty_mcp",
+        )
+    ],
+)
 def test_member_thread_reference_path_segment(hub, form, private):
     from commonplace.handoff.models import ThreadMessage
 
@@ -86,7 +104,7 @@ def test_member_thread_reference_path_segment(hub, form, private):
         f"capture:{uid}:reference-path",
         [ThreadMessage(0, "user", "message", "Exact words", "Exact words")],
         actor=uid,
-        wing="private_chats" if private else "shared",
+        wing="private_chats" if private and not form.endswith("mcp") else "shared",
     )
     before = graph(hub, headers)
     cited_fact(hub)
@@ -96,6 +114,13 @@ def test_member_thread_reference_path_segment(hub, form, private):
         "url_deep": f"https://example.test/app/threads/{thread.id}/messages/3",
         "t3_slash": f"t3-thread://v1/{thread.id}/",
         "bare_slash": f"{thread.id}/",
+        "app_mcp": f"/app/threads/{thread.id}/mcp:private-session",
+        "url_mcp": f"https://example.test/app/threads/{thread.id}/mcp:private-session",
+        "t3_mcp": f"t3-thread://v1/{thread.id}/mcp:private-session",
+        "bare_mcp": f"{thread.id}/mcp:private-session",
+        "app_pct_mcp": f"/app/threads/{thread.id}%2Fmcp:private-session",
+        "app_empty_mcp": "/app/threads//mcp:private-session",
+        "t3_empty_mcp": "t3-thread://v1//mcp:private-session",
     }[form]
     with sqlite3.connect(graph_path(hub)) as conn:
         conn.execute("UPDATE triples SET origin_link = ?, approval_link = ?", (value, value))

@@ -612,6 +612,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Map regressions include pending, failed, null and stale identity refreshes, RuntimeError drawer lookups, ordinary drawer rooms and public/private thread-link path controls; reference caching is request-local.
 
+  - Map regressions include pending, late-owner, real API deadline, failed, null and stale identity refreshes, RuntimeError drawer lookups, ordinary drawer rooms and public/private thread-link path controls; reference caching is request-local.
+
   - Map citation regressions cover member-owned private sources, fact_sources rows, thread topics, failed lookups, orphan people and wildcard theme refusal parity.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
