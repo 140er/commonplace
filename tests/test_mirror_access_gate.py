@@ -258,7 +258,7 @@ def test_private_endpoint_hides_connection_without_preview(world):
     )
 
 
-def test_gateway_returns_original_worker_response(world):
+def test_gateway_returns_original_worker_response(world, monkeypatch):
     from commonplace.gateway import Mediator, _tool_response, _tool_result
     from mempalace.read_scope import descriptor
 
@@ -280,7 +280,9 @@ def test_gateway_returns_original_worker_response(world):
     workers = Mock(post=Mock(return_value=response), call_tool=Mock(side_effect=call_tool))
     mediator = Mediator(Mock(), workers)
     mediator.gateway = world.gateway
-    world.gateway.handoff.store_for = Mock(return_value=world.store)
+    monkeypatch.setattr(
+        world.gateway.handoff, "store_for", Mock(return_value=world.store), raising=False
+    )
     assert (
         mediator._tools_call(
             world.principal,

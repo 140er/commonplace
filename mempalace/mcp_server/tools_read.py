@@ -544,9 +544,9 @@ def _tally_wings_rooms(all_meta, wings=None, rooms=None, taxonomy=None) -> int:
 
 def tool_status(thread_scope: dict = None):
     if thread_scope is not None:
-        if isinstance(thread_scope, dict) and (
-            thread_scope.get("probe") is True or thread_scope.get("allow")
-        ):
+        if not isinstance(thread_scope, dict):
+            raise ValueError("thread_scope must be an object")
+        if thread_scope.get("probe") is True or thread_scope.get("allow"):
             # Status remains callable when the integrity gate blocks ordinary
             # tools. Its private metadata-only pair path needs the same access.
             return _scoped_taxonomy(thread_scope)
@@ -573,7 +573,7 @@ def tool_status(thread_scope: dict = None):
             )
         _refresh_vector_disabled_flag()
         if _vector_disabled or _sqlite_integrity_errors:
-            result.update(vector_disabled=True, vector_disabled_reason=_vector_disabled_reason)
+            result["vector_disabled"] = True
         else:
             result["embedding_device"] = _describe_device_safe()
         return result

@@ -178,7 +178,9 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
 
     if wing is not None:
         try:
-            wing = sanitize_name(wing, "wing") if wing.strip() else None
+            wing = (
+                None if isinstance(wing, str) and not wing.strip() else sanitize_name(wing, "wing")
+            )
         except ValueError as exc:
             return {"error": str(exc)}
     status = name == "mempalace_status"
@@ -215,6 +217,7 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
                 name,
                 {"thread_scope": {"allow": [], "timeout": checks.remaining(timeout)}},
             )
+            diagnostics = _pair_payload(diagnostics, name)
             # Only a fixed diagnostic vocabulary crosses this boundary. Counts
             # come exclusively from the current authorized identity snapshot.
             keys = {
@@ -224,15 +227,17 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
                 "embedding_device",
                 "vector_disabled",
                 "vector_disabled_reason",
-                "sqlite_integrity",
                 "sqlite_integrity_failed",
                 "error",
                 "partial",
-                "library_versions",
-                "updates",
             }
             if not isinstance(diagnostics, dict) or set(diagnostics) - keys:
                 return empty
+            if diagnostics.get("vector_disabled") is True:
+                diagnostics = {
+                    **diagnostics,
+                    "vector_disabled_reason": "Vector index unavailable; repair required.",
+                }
             checks.remaining(0)
             return {
                 **diagnostics,

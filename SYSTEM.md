@@ -1035,9 +1035,19 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Metadata pages and final snapshot batches stay bounded to 500 under one
   request deadline. Changed descriptors are excluded. Incomplete acquisition
   returns zero counts/maps without partial global totals or raw failures.
-- Status retains non-count diagnostics for ordinary and damaged-index paths,
-  while authenticated responses suppress global `hnsw_capacity`. Local
-  operator status remains unscoped. Principal projections never enter raw caches.
+- Authenticated status suppresses global `hnsw_capacity` and raw capacity
+  probe messages. A disabled vector index reports `vector_disabled: true`
+  with the fixed reason `Vector index unavailable; repair required.`, including
+  after incomplete acquisition. Local operator status retains its raw diagnostics.
+- Authenticated diagnostics omit `sqlite_integrity`, `library_versions` and
+  `updates`, including embedded palace/database paths. Integrity failure still
+  reports `sqlite_integrity_failed`, the fixed error and `partial`. Unexpected
+  fields fail closed. Principal projections never enter raw caches.
+- The worker status schema retains the private scope property required by
+  internal argument whitelisting; authenticated discovery strips it and client
+  scopes are discarded. Non-object local scopes receive an argument error.
+  Invalid room-list wing types return the ordinary name-validation error;
+  whitespace-only wing filters retain the existing all-rooms convention.
 - Imported-history listing consent and source-range rules remain in force;
   these counts create no new read grant. Hallway, tunnel, graph and KG counts
   and legacy provenance remain separate residuals. Stored rows stay intact.

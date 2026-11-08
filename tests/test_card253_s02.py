@@ -278,6 +278,10 @@ def test_card253_s02_status(world, monkeypatch, path):
     )
     if path == "divergence":
         divergence(w, monkeypatch, hits)
+        local = w.mcp.tool_status()
+        assert "divergence" in hits
+        assert local["vector_disabled"] is True
+        assert local["vector_disabled_reason"] == "synthetic divergence"
     reply = result(w, "mempalace_status")
     assert "sqlite" in hits
     if path == "facet":
@@ -574,3 +578,113 @@ def test_card253_s02_protocol_decoration_validation(world, monkeypatch, phase, e
     assert hits
     assert reply["total_drawers"] == 0 and reply["wings"] == {} and reply["rooms"] == {}
     assert extra not in reply and "private data" not in json.dumps(reply)
+
+
+@pytest.mark.parametrize("mode", ["normal", "incomplete"])
+def test_card253_s02_r1_vector_reason(world, monkeypatch, mode):
+    from mempalace import read_scope
+
+    w = world
+    hidden = seed(w)
+    probes = []
+    monkeypatch.setattr(w.mcp, "_is_chroma_backend", lambda: True)
+    monkeypatch.setattr(w.mcp, "_vector_disabled", False)
+    monkeypatch.setattr(w.mcp, "_vector_disabled_reason", "")
+    monkeypatch.setattr(w.mcp, "_vector_capacity_status", None)
+
+    def capacity(palace, collection):
+        count = w.col.count()
+        message = f"HNSW index holds 0 elements but sqlite has {count} embeddings"
+        probes.append((palace, count, message))
+        return {"diverged": True, "message": message, "sqlite_count": count, "hnsw_count": 0}
+
+    monkeypatch.setattr(w.mcp, "hnsw_capacity_status", capacity)
+    acquired = []
+    if mode == "incomplete":
+        original = read_scope.metadata_page
+
+        def page(*args, **kwargs):
+            rows = original(*args, **kwargs)
+            acquired.append(bool(rows[0]))
+            raise RuntimeError("incomplete metadata acquisition")
+
+        monkeypatch.setattr(read_scope, "metadata_page", page)
+    reply = result(w, "mempalace_status")
+    assert probes and probes[-1][1] == 4
+    assert w.mcp._vector_disabled_reason == probes[-1][2]
+    control(w, hidden)
+    expected = result(w, "mempalace_status")
+    assert probes[-1][1] == 1
+    assert reply["vector_disabled"] is expected["vector_disabled"] is True
+    assert reply == expected, "authenticated vector reason depends on hidden rows"
+    assert "embeddings" not in reply["vector_disabled_reason"], "raw capacity probe text exposed"
+    assert reply["total_drawers"] == (0 if mode == "incomplete" else 1)
+    if mode == "incomplete":
+        assert acquired == [True, True]
+
+
+@pytest.mark.parametrize("mode", ["normal", "integrity"])
+def test_card253_s02_r1_diagnostics(world, monkeypatch, mode):
+    w = world
+    seed(w)
+    private_palace = "synthetic-private-palace-value"
+    private_sqlite = "synthetic-private-sqlite-value"
+    original = w.mcp._sqlite_integrity_payload
+
+    def diagnostic():
+        return {**original(), "palace": private_palace, "sqlite_path": private_sqlite}
+
+    monkeypatch.setattr(w.mcp, "_sqlite_integrity_payload", diagnostic)
+    if mode == "integrity":
+        monkeypatch.setattr(w.mcp, "_ensure_sqlite_integrity_status", lambda: None)
+        monkeypatch.setattr(w.mcp, "_sqlite_integrity_errors", ["synthetic integrity fault"])
+    reply = result(w, "mempalace_status")
+    assert reply["total_drawers"] == 1
+    assert not {"sqlite_integrity", "library_versions", "updates"}.intersection(reply), (
+        "authenticated transport diagnostics exposed"
+    )
+    assert private_palace not in json.dumps(reply) and private_sqlite not in json.dumps(reply)
+    assert '"palace"' not in json.dumps(reply) and '"sqlite_path"' not in json.dumps(reply)
+    if mode == "integrity":
+        assert reply["sqlite_integrity_failed"] is True
+        assert reply["error"] == "SQLite integrity check failed" and reply["partial"] is True
+
+
+@pytest.mark.parametrize("wing", [5, True, [], {}])
+def test_card253_s02_r1_invalid_wing(world, wing):
+    from commonplace.handoff.overview import summary
+
+    w = world
+    reply = result(w, "mempalace_list_rooms", {"wing": wing})
+    assert reply == {"error": "'wing' must be a string", "denied": True}
+    principal = w.h.db.authenticate_token(w.tokens["A"])
+    assert summary(
+        w.h.gateway, principal, w.h.gateway.mediator.workers, "mempalace_list_rooms", wing
+    ) == {"error": "wing must be a non-empty string"}
+    assert result(w, "mempalace_status")["total_drawers"] == 0
+
+
+def test_card253_s02_r1_no_palace(world, monkeypatch, tmp_path):
+    w = world
+    monkeypatch.setattr(w.mcp._config, "_palace_path_override", str(tmp_path / "absent"))
+    monkeypatch.setattr(w.mcp, "_get_collection", lambda **kwargs: None)
+    monkeypatch.setattr(w.mcp, "_collection_open_error", None)
+    w.mcp._invalidate_overview_caches()
+    local = w.mcp.tool_status()
+    assert local == w.mcp._no_palace()
+    reply = result(w, "mempalace_status")
+    assert reply["total_drawers"] == 0 and reply["wings"] == {} and reply["rooms"] == {}
+    assert not {"sqlite_integrity", "library_versions", "updates", "hnsw_capacity"}.intersection(
+        reply
+    )
+
+
+def test_card253_s02_r1_scope_guard(world):
+    w = world
+    listing = w.h.rpc(w.tokens["A"], "tools/list")["result"]["tools"]
+    status = next(tool for tool in listing if tool["name"] == "mempalace_status")
+    assert "thread_scope" not in status["inputSchema"]["properties"]
+    with pytest.raises(ValueError, match="thread_scope must be an object"):
+        w.mcp.tool_status(thread_scope=5)
+    # Keep the functional transport guard meaningful, beyond local validation.
+    assert result(w, "mempalace_status")["total_drawers"] == 0
