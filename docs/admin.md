@@ -207,8 +207,10 @@ backup-run, restore, runner control or new enforcement endpoint is present.
 The operational sections require a signed-in person who owns the active workspace
 and whose exact server user row has `is_admin = 1`. The server reads that flag on
 every request, including `/api/me`, through the bounded read-only control connection.
-A missing user denies; a flag-read failure returns safe 503 and reads no operational
-source. Flag changes apply on the next request regardless of cached capabilities.
+A missing user denies. On instance data routes a flag-read failure returns safe
+503 and reads no operational source. For `/api/me`, the same failure keeps the
+200 identity response with `can_admin_instance:false`, so navigation stays available.
+Flag changes apply on the next request regardless of cached capabilities.
 This grants operational metadata only; foreign-workspace personal data remains 404.
 
 | Caller | Instance response |
@@ -258,3 +260,7 @@ when a process is killed before reporting. Readers use fixed basenames, no-follo
 nonblocking opens, regular-file checks, a 16 KiB cap and strict schema validation.
 No request supplies a path. See [backup reporting](backups.md#optional-status-receipts)
 and the [deployment guide](../deploy/commonplace/DEPLOY.md#optional-backup-status).
+
+Receipt timestamps require `YYYY-MM-DDTHH:MM:SSZ`, optionally with one to six
+fractional-second digits before `Z`; shortened or space-separated forms are rejected.
+A parent receipts refresh supersedes older per-mode retries.

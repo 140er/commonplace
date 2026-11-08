@@ -20,6 +20,23 @@ async function main(){
  f.req('/api/admin/instance/deploy').resolve({...deploy,commonplace_version:'<img src=x>'});await flush();
  assert.doesNotMatch(f.mount.innerHTML,/<img/);assert.match(f.mount.innerHTML,/&lt;img/);
  assert.match(f.mount.innerHTML,/Running commit unknown/);assert.match(f.mount.innerHTML,/3\.12\.0/);
+ if(process.argv[2].startsWith('race-')){
+   const [,mode,outcome]=process.argv[2].split('-');
+   f.req('/api/admin/instance/backups').resolve({online:{state:'unknown',reason:'no_record'},offline:{state:'unknown',reason:'no_record'}});await flush();
+   void f.ui.refreshSection('backup-'+mode);const old=f.req('/api/admin/instance/backups');
+   void f.ui.refreshSection('backups');const parent=f.req('/api/admin/instance/backups');
+   const ready={state:'ready',result:'success',stage:'complete',started_at:'2026-11-07T12:00:00Z',finished_at:'2026-11-07T12:00:00Z'};
+   parent.resolve({online:ready,offline:ready});await flush();
+   if(outcome==='resolve')old.resolve({[mode]:{state:'error',error:'stale'}});
+   else old.reject({status:403});
+   await flush();
+   assert.doesNotMatch(f.mount.innerHTML,/Backup status unavailable|Instance administrator access required/,'Older mode completion must not replace newer parent data');
+   assert.equal((f.mount.innerHTML.match(/data-label="Result">success/g)||[]).length,2);
+   assert.ok(old.options.signal.aborted,'The parent refresh cancels the superseded mode request');
+   const before=f.requests.length;void f.ui.refreshSection('backup-'+mode);
+   assert.equal(f.requests.length,before+1,'The superseded request must not leave a busy mode');
+   f.ui.stop();await flush();return;
+ }
  if(process.argv[2]==='health'){
    f.req('/healthz').resolve({ok:false});await flush();
    assert.match(f.mount.innerHTML,/Health unavailable\. Retry\./);assert.match(f.mount.innerHTML,/3\.12\.0/);

@@ -183,6 +183,14 @@ if verb=='exec' and '--online' in args:
 
 
 def test_receipt_mount_and_cli_override(tmp_path, monkeypatch):
+    _receipt_mount_and_cli_override(tmp_path)
+
+
+def test_invalid_receipt_alias_rejected(tmp_path):
+    _receipt_mount_and_cli_override(tmp_path, invalid_alias=True)
+
+
+def _receipt_mount_and_cli_override(tmp_path, *, invalid_alias=False):
     example = ROOT / "deploy/compose.backup-status.yml.example"
     assert example.is_file(), "Opt-in dual-alias receipt mounts must be provided"
     # Render only synthetic interpolation; never read operator deployment files.
@@ -228,10 +236,14 @@ def test_receipt_mount_and_cli_override(tmp_path, monkeypatch):
         "COMMONPLACE_BACKUP_RESERVE_BYTES": "0",
         "COMMONPLACE_BACKUP_MARGIN_BYTES": "0",
     }
-    for opt_in in (False, True):
+    for opt_in in (True,) if invalid_alias else (False, True):
         calls.write_text("")
         if opt_in:
-            env["COMMONPLACE_BACKUP_STATUS_WRITE_DIR"] = "/run/commonplace-backup-status-rw"
+            env["COMMONPLACE_BACKUP_STATUS_WRITE_DIR"] = (
+                "/run/invalid-status-alias"
+                if invalid_alias
+                else "/run/commonplace-backup-status-rw"
+            )
         result = subprocess.run(
             ["bash", str(ROOT / "backup-hook.sh"), str(dest)],
             env=env,
@@ -239,6 +251,10 @@ def test_receipt_mount_and_cli_override(tmp_path, monkeypatch):
             text=True,
             timeout=20,
         )
+        if invalid_alias:
+            assert result.returncode == 2, result.stderr
+            assert not calls.exists() or "--online" not in calls.read_text()
+            return
         assert result.returncode == 0, result.stderr
         argv = [json.loads(line) for line in calls.read_text().splitlines()]
         compose = [a for a in argv if a[0] == "compose"]

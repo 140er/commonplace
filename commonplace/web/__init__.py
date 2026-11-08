@@ -104,8 +104,7 @@ def install(gateway):
                 )
             except Exception as exc:
                 log_failure(LOG, "Admin capability unavailable", exc)
-                send_json(h, 503, {"error": "Admin capability unavailable; try again"})
-                return
+                can_instance = False
             send_json(
                 h,
                 200,

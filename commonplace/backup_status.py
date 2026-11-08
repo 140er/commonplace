@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import sys
 from datetime import datetime, timezone
@@ -25,7 +26,9 @@ def _iso(value):
 
 
 def _timestamp(value):
-    if not isinstance(value, str) or len(value) > 40 or not value.endswith("Z"):
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z", value
+    ):
         raise ValueError()
     result = datetime.fromisoformat(value[:-1] + "+00:00")
     if result.utcoffset().total_seconds() != 0:
