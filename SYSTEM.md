@@ -1406,3 +1406,27 @@ are unchanged. Passive graph reads use the input projection described below.
 - The existing explicit-follow path predates graph projection: unknown arguments
   can still become an empty list instead of a JSON-RPC invalid-params error.
   This remains a separate follow-up; graph-tool validation does not change it.
+  the public follow schema does not expose that argument. Tunnel label reference
+  handling predates this change and remains follow-up work for graph traversal.
+
+
+### Local worker allocation observation
+
+Storage-serving MCP entrypoints enable metadata-only allocation observation by default;
+`MEMPALACE_WORKER_MEMORY_OBSERVE=0` opts out. Imports, durable jobs and forwarding-only
+proxies do not activate a storage observer. Each activation has a random generation;
+call ids are local counters, never client request ids. Fixed startup phases and actual
+cache, collection, restricted-pickle and native-session branches report only observed
+facts. Missing samples and untouched components stay null. No payload, result, content
+hash, identity, path, arbitrary name, exception text or configuration value is recorded.
+
+The resolved config directory owns private `diagnostics/worker-memory.jsonl` and one
+backup, each at most 4 MiB. A stable nonblocking cross-process lock serializes append
+and rotation; files are opened inside that lock. Symlink and nonregular destinations
+are refused. There is no per-call stderr or general-log copy. At most 64 primitive
+contexts and 128 serialized records of at most 4096 bytes are retained in memory.
+Failures drop observations and increase a saturating loss count; shutdown attempts
+only a bounded 50 ms flush. This adds no network destination, database write, memory
+limit change or restart policy. Whole-process RSS deltas during overlapping calls
+are not uniquely attributable. Rotation, losses and unmatched pairs leave unknown
+coverage: these observations alone do not establish or exclude a production cause.
