@@ -15,7 +15,7 @@ TOOL = "mempalace_list_hallways"
 
 @pytest.fixture
 def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F811
-    from mempalace import hallways, mcp_server
+    from mempalace import hallways
 
     monkeypatch.setenv("COMMONPLACE_RULES", "off")
     member = hub.db.create_user("reader@example.test")
@@ -62,15 +62,6 @@ def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F81
         return result
 
     monkeypatch.setattr(WorkerClient, "call_tool", call)
-    # Track the unprojected worker path too, for historical-base witnesses.
-    worker_hits = []
-    original_page = mcp_server.list_hallways_page
-
-    def page(*a, **kw):
-        worker_hits.append(True)
-        return original_page(*a, **kw)
-
-    monkeypatch.setattr(mcp_server, "list_hallways_page", page)
     w = SimpleNamespace(
         h=hub,
         principal=principal,
@@ -80,7 +71,6 @@ def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F81
         hallways=hallways,
         root=tmp_path,
         calls=calls,
-        worker_hits=worker_hits,
     )
     yield w
     hub.gateway.handoff.close()
@@ -138,7 +128,7 @@ def test_card253_s03_hallway(world, monkeypatch, backend, mode):
     )
     install(w, monkeypatch, backend, [visible, hidden], "present")
     reply = public(w, limit=10, offset=0)
-    assert w.worker_hits or w.calls
+    assert w.calls
     install(w, monkeypatch, backend, [visible], "absent")
     control = public(w, limit=10, offset=0)
     assert "hidden" not in [h["id"] for h in reply["hallways"]], "s03 hidden hallway retained"
@@ -152,7 +142,7 @@ def test_card253_s03_page(world, monkeypatch, backend):
     hidden = record(w, "hidden", rooms=[w.hidden.id], co_occurrence_count=99)
     install(w, monkeypatch, backend, [*visible, hidden], "present")
     replies = [public(w, limit=1, offset=i) for i in (0, 1)]
-    assert w.worker_hits or w.calls
+    assert w.calls
     install(w, monkeypatch, backend, visible, "absent")
     controls = [public(w, limit=1, offset=i) for i in (0, 1)]
     assert replies == controls, "s03 hidden hallway shifted page"
@@ -452,3 +442,54 @@ def test_card253_s03_malformed_strength(world, monkeypatch, backend):
     reply = public(w, limit=10)
     assert reply["hallways"] == [rows[1], rows[0], rows[2]]
     assert reply["total"] == reply["count"] == 3
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+@pytest.mark.parametrize("kind", ["provenance", "singular_room", "drawer_preview"])
+def test_card253_s03_unreviewed_keys(world, monkeypatch, backend, kind):
+    w = world
+    extra = {
+        "provenance": {"source_thread": w.hidden.id},
+        "singular_room": {"room": w.hidden.id},
+        "drawer_preview": {
+            "drawer_preview": f"secret {w.hidden.id}",
+            "drawer_wing": "private_threads",
+            "drawer_room": w.hidden.id,
+        },
+    }[kind]
+    row = record(w, "legacy-extra", **extra)
+    rows = [record(w, "visible"), row] if kind == "singular_room" else [row]
+    install(w, monkeypatch, backend, rows, "unreviewed")
+    reply = public(w, limit=10)
+    assert w.calls
+    assert w.hidden.id not in json.dumps(reply), f"s03 {kind} leaked hidden id"
+    expected = [{k: v for k, v in r.items() if k not in extra} for r in rows]
+    assert reply["hallways"] == expected
+    assert reply["count"] == reply["total"] == len(expected)
+    assert w.hallways.list_hallways() == rows
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_label_scan_bound(world, monkeypatch, backend):
+    from commonplace.handoff import provenance_refs
+
+    w = world
+    cap = provenance_refs._MAX_REFERENCE_CHARS
+    rows = [
+        record(w, "at-limit", label="x" * cap),
+        record(w, "over-limit", label="capture:" * (cap // 8 + 1)),
+    ]
+    install(w, monkeypatch, backend, rows, "label-bound")
+    scanned = []
+    original = provenance_refs.label_tokens
+
+    def scan(label):
+        assert len(label) <= cap, "over-limit label reached token scan"
+        scanned.append(len(label))
+        return original(label)
+
+    monkeypatch.setattr(provenance_refs, "label_tokens", scan)
+    reply = public(w, limit=10)
+    assert reply == {"hallways": rows[:1], "total": 1, "count": 1, "offset": 0, "limit": 10}
+    assert scanned and max(scanned) == cap
+    assert w.hallways.list_hallways() == rows

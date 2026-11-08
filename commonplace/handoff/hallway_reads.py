@@ -5,6 +5,18 @@ from mempalace.hallway_scope import PAGE_SIZE, descriptor
 
 from .mirror_access import hallway_visible, reader
 
+_PUBLIC_KEYS = (
+    "id",
+    "wing",
+    "rooms",
+    "label",
+    "entity_a",
+    "entity_b",
+    "co_occurrence_count",
+    "created_at",
+    "created_by",
+)
+
 
 def _strength(record):
     try:
@@ -87,7 +99,11 @@ def project(gateway, principal, workers, args, *, timeout=660.0):
                         item["record"] == descriptor(row) for item in remaining
                     ):
                         return empty
-                records.extend(rows)
+                records.extend(
+                    {key: row[key] for key in _PUBLIC_KEYS if key in row}
+                    for row in rows
+                    if hallway_visible(row, access, principal.policy)
+                )
             checks.remaining(0)
             records.sort(key=_strength)
             page = records[max(0, offset) : max(0, offset) + max(0, limit)]

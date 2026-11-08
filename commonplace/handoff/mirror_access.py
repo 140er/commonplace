@@ -265,7 +265,7 @@ def hallway_visible(node, access, policy):
     if any(unreadable_room(access, wing, room) for room in rooms):
         return False
     label = node.get("label", "")
-    if not isinstance(label, str):
+    if not isinstance(label, str) or len(label) > provenance_refs._MAX_REFERENCE_CHARS:
         return False
     return all(access.reference(token) for token in provenance_refs.label_tokens(label))
 

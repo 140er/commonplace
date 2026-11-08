@@ -58,6 +58,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - Hallway documentation names the reviewed public key set and the pre-scan label character cap.
+
   - Hallway documentation distinguishes plural-room final validation from drawer scrubbing.
 
   - Hallway read documentation distinguishes display-label token proof from citation parsing, visible counts from global storage and empty-on-incomplete behavior.
@@ -117,7 +119,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
-  - Legacy non-descriptor fields and distinct-token scan work are explicit hallway residuals.
+  - Unreviewed stored keys are not returned; only the three named entity/author strings remain an accepted unscanned residual.
+
+  - Only entity_a, entity_b and created_by remain unscanned strings in the reviewed hallway key set; unreviewed stored keys are excluded.
 
   - Hallway read failures expose an empty page, never global counts.
 
@@ -147,6 +151,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed association regressions and documentation obligations.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Hallway extra-key and scan-bound cases pin the documented failure policy.
 
   - Readable mirror pages, exact page boundaries and private-label guards pin the documented behavior.
 
@@ -445,6 +451,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - Six public hallway extra-key cases fail by hidden-id AssertionError on the preceding head.
+
   - Readable mirror hallway regressions fail on the prior head with count/row disagreement in both stores.
 
   - Hallway regression witnesses exercise public tools with real stored thread authority.
@@ -573,6 +581,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
+  - Pass-through worker calls prove acquisition; over-limit label guards reject any scan above the character cap.
+
   - A final gate that silently drops a readable mirror row fails the count equality and zero-drop assertions.
 
   - Hallway fault cases discard incomplete results and preserve the pagination envelope.
@@ -605,6 +615,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed association read and protocol suites cover public results and private snapshot failures.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Hallway tests verify reviewed-key output, unchanged stored rows, visible counts and exact label-limit behavior.
 
   - Hallway regressions additionally pin malformed-strength fallback, private-label bytes and exact metadata page boundaries.
 
@@ -1046,6 +1058,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - Hallway rows are projected to the nine reviewed keys before counting, preserving eligible mirror rows without exposing extra stored fields.
+
   - The hallway final gate preserves readable mirror-wing rows and their visible counts after plural-room validation.
 
   - Every hallway room and independently recognized label reference needs current read authority.
@@ -1092,7 +1106,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
-  - Malformed strength counts sort as zero, while failed hallway eligibility still empties the entire page.
+  - Labels above the reference character cap fail closed before the overlapping token scan.
+
+  - Unreviewed hallway keys never enter public rows or counts; failed eligibility still empties the entire page, and over-limit labels are excluded before scanning.
 
   - Malformed rooms and roomless mirror hallways fail closed; display labels stay verbatim.
 
@@ -1111,6 +1127,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Public hallway regressions cover extra provenance, singular-room and preview fields in both stores and prove the pre-scan cap.
 
   - Hallway eligibility tests require zero final-gate drops and count/total agreement for readable mirror rows.
 
