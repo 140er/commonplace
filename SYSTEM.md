@@ -345,7 +345,7 @@ exist and removes an existing incomplete trigger otherwise. For sources missing
 only `heartbeat_at`, this keeps raw status writes usable until BoardStore adds
 that column and installs the trigger. The other watched columns belong to the
 base schema; BoardStore does not add them during this migration. Until migration,
-no episodes are recorded, each report pass logs an error, and watched writes do
+no episodes are recorded, while reporting is enabled, a pass that reaches a coordinated task logs an error, and watched writes do
 not bump `report_reset_rev`. Product writers open BoardStore before writing.
 The first dispatcher scan recovers and migrates existing board databases without creating
 workspace directories, followed by monotonic 30-second scan deadlines independent
