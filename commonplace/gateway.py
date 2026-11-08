@@ -78,6 +78,24 @@ def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> 
     return {"jsonrpc": "2.0", "id": req_id, "error": error}
 
 
+def _kg_argument_error(req_id, name, args):
+    if name in (
+        "mempalace_kg_query",
+        "mempalace_kg_timeline",
+        "mempalace_kg_stats",
+        "mempalace_kg_list_wings",
+    ):
+        from mempalace import mcp_server as mcp
+
+        properties = mcp.TOOLS[name]["input_schema"]["properties"]
+        unknown = [key for key in args if key not in properties and key != "wait_for_previous"]
+        if unknown:
+            quoted = ", ".join(f"'{key}'" for key in unknown)
+            word = "parameter" if len(unknown) == 1 else "parameters"
+            return _rpc_error(req_id, -32602, f"Unknown {word} {quoted} for tool {name}")
+    return None
+
+
 def _tool_response(req_id, result: dict, *, is_error: bool = False) -> dict:
     body = {"content": [{"type": "text", "text": json.dumps(result, indent=2, ensure_ascii=False)}]}
     if is_error:
@@ -438,11 +456,14 @@ class Mediator:
 
         local = extensions.get(name)
         refusal = policy.refusal(name)
-        if local is not None and (local.available is not None or refusal is None):
-            # Visibility and owner gates precede freshness, so hidden tools
-            # keep the same refusal regardless of the supplied rules version.
-            if not local.usable_by(principal, self.gateway):
-                refusal = "unknown tool" if local.available is not None else "owner only"
+        # Visibility and owner gates precede freshness, so hidden tools
+        # keep the same refusal regardless of the supplied rules version.
+        if (
+            local is not None
+            and (local.available is not None or refusal is None)
+            and not local.usable_by(principal, self.gateway)
+        ):
+            refusal = "unknown tool" if local.available is not None else "owner only"
         if refusal is not None:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
@@ -474,6 +495,9 @@ class Mediator:
         # Discard client descriptors before every route, including KG search
         # pass-through. Only the authenticated mediator can issue probe/allow.
         args.pop("thread_scope", None)
+        argument_error = _kg_argument_error(req_id, name, args)
+        if argument_error is not None:
+            return argument_error
         rule = TOOL_RULES[name][1]
         import_filters = dict(args)
         notes: list = []

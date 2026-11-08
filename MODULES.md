@@ -118,7 +118,7 @@ Format (read by `commonplace orch docs-check`):
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
 
-  - Keeps unavailable citation links absent without changing visible facts.
+  - Keeps unavailable citation links absent without changing visible facts; documents scoped-search snapshot refusal and unknown-parameter protocol errors.
 
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
 
@@ -374,7 +374,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Hallway probes return bounded metadata pages in storage order; final reads revalidate exact descriptors.
 
-  - KG search reuses the local tokenizer, selective terms and 50-seed candidate rules on a detached authorized index; deadline checks stop copy, indexing and scoring work.
+  - KG search reuses the local tokenizer, selective terms and 50-seed candidate rules on a detached authorized index; deadline checks stop copy, indexing and scoring work. Scoped search requires its detached snapshot.
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
   - Exact non-Chroma physical citation ids remain supported without document hydration.
@@ -626,7 +626,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
-  - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards.
+  - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards; hidden-present parity guards and missing-snapshot/unknown-key regressions cover defensive reads.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -701,7 +701,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
-  - Only KG query enforces strict search booleans; other tools retain normal unknown-key handling. Fact enrichment and KG search share projection, worker expiry and fixed empty failures.
+  - Only KG query enforces strict search booleans; other tools retain normal unknown-key handling. KG reads reject undeclared parameters with the worker-compatible protocol error before projection. Fact enrichment and KG search share projection, worker expiry and fixed empty failures.
 
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
