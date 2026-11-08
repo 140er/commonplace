@@ -121,6 +121,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Board design also documents coordinator release of restricted-origin cards.
 
+  - Contributor test instructions state that the default run excludes the `timing` lane and that timing results are informational, never a merge gate.
+
 - **How it fails:**
 
   - Updating installed files alone leaves an old running process unaffected.
