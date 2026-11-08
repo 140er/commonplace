@@ -428,6 +428,7 @@ Format (read by `commonplace orch docs-check`):
   - Allocation observation activates only on first local dispatch; sampling construction failures release active state, construction failures latch with counted loss, and RSS status/source use the same read.
 
   - Storage-serving processes emit only a closed primitive allocation schema to a private two-file local diagnostic ring; forwarding and daemon jobs do not activate it. Contexts, queue, line size and retained files are bounded; observation failure never changes storage limits or restart behavior.
+  - Overview reads project only locus/bookkeeping keys, preserve metadata-less drawers, and refuse acquisition or aggregate bounds explicitly.
 
   - Tunnel keysets use stable ids; final lookup ignores traversal statistics and unrelated metadata while rechecking current endpoint associations.
 
@@ -486,6 +487,7 @@ Format (read by `commonplace orch docs-check`):
 
   - SQLite, Chroma and Compact ordering guards plus numeric zero/exponent cases compare with local graph readers.
   - `tests/test_worker_observation.py` covers generated call pairs, private-value rejection, actual leaf counters, opt-out, transport lifetime, bounded contexts and cross-process ring rotation.
+  - `tests/test_overview_memory_bounds.py` covers lazy recovery, byte splitting, pair/cell refusal, filtered rooms and raw-cache removal.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
@@ -509,6 +511,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Deterministic overview memory regressions exercise bounded projected acquisition and unchanged counts on synthetic fixtures.
 
   - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
   - The twelve runtime/limits/stuck/owner-queue RED rows, separate pagination/source/authority controls and updated earlier Admin lifecycle acceptance.

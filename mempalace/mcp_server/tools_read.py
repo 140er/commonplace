@@ -19,7 +19,12 @@ def _tool_status_via_sqlite() -> dict:
 
     if not os.path.isfile(os.path.join(_config.palace_path, "chroma.sqlite3")):
         return _no_palace()
-    counts = _sqlite_wing_room_counts(_config.palace_path, _config.collection_name)
+    from ..overview import OverviewError
+
+    try:
+        counts = _sqlite_wing_room_counts(_config.palace_path, _config.collection_name)
+    except OverviewError as exc:
+        return {"error": str(exc)}
     if counts is None:
         logger.error("tool_status sqlite fallback read failed")
     total, wing_rooms = counts or (0, {})
@@ -100,7 +105,11 @@ def _sqlite_taxonomy():
             counts = sqlite_wing_room_counts(_config.palace_path, _config.collection_name)
         else:
             return None
-    except Exception:
+    except Exception as exc:
+        from ..overview import OverviewError
+
+        if isinstance(exc, OverviewError):
+            return {"error": str(exc)}
         logger.debug("sqlite taxonomy fast path failed; falling back", exc_info=True)
         return None
     if counts is None:
@@ -122,7 +131,12 @@ def _sqlite_taxonomy():
             dest[rkey] = dest.get(rkey, 0) + n
     _observation.mark(metadata_fallback=False, fallback_kind="none")
     result = total, normalized
-    _taxonomy_cache = (cache_key, result, fingerprint)
+    from ..overview import AGGREGATE_BYTES, retained_size
+
+    entry = (cache_key, result, fingerprint)
+    if retained_size(entry) > AGGREGATE_BYTES:
+        return {"error": "overview_too_large"}
+    _taxonomy_cache = entry
     # Stamp once the query is done: stamped at the start, a query slower than
     # the TTL (a full GROUP BY on a multi-million-drawer palace) stored an
     # entry that had already expired, so every status call re-ran it.
@@ -263,23 +277,82 @@ def _chroma_room_wing_hall_counts():
     return rows
 
 
+def _overview_tally(col, where=None, bookkeeping=False):
+    """Reduce bounded projected batches; discard partial state on lazy SQL errors."""
+    import sqlite3
+
+    from ..overview import OverviewError, Tally, projected_batches
+
+    def pages():
+        # This flag is a backend acquisition guarantee, not a post-read check.
+        if getattr(col, "overview_page_bytes_bounded", False) is not True:
+            raise OverviewError("overview_unavailable")
+        offset = 0
+        while True:
+            got = col.get(limit=500, offset=offset, where=where, include=["metadatas"])
+            rows = got.get("metadatas") or []
+            if len(rows) > 500:
+                raise OverviewError("overview_unavailable")
+            yield from projected_batches(iter(rows))
+            size = len(rows)
+            del rows, got
+            if size < 500:
+                return
+            offset += size
+
+    factory = (
+        getattr(col, "iter_overview_metadata", None)
+        if getattr(col, "overview_projection_bounded", False) is True
+        else None
+    )
+    iterator = None
+    for attempt in range(2):
+        tally = Tally()
+        try:
+            iterator = factory(where=where) if attempt == 0 and callable(factory) else None
+            if iterator is None:
+                iterator = pages()
+            for batch in iterator:
+                for meta in batch:
+                    meta = meta or {}
+                    if is_bookkeeping(meta) != bookkeeping:
+                        continue
+                    tally.add(meta.get("wing", "unknown"), meta.get("room", "unknown"))
+                del batch
+            return tally.result()
+        except sqlite3.Error:
+            if attempt:
+                raise OverviewError("overview_unavailable") from None
+        finally:
+            close = getattr(iterator, "close", None)
+            if close:
+                close()
+    raise OverviewError("overview_unavailable")
+
+
+def _overview_metadata(col, where=None):
+    """Already-reduced rows for legacy reducers; never raw drawer metadata."""
+    total, taxonomy = _overview_tally(col, where)
+    # Return a weighted reducer input without expanding drawer counts.
+    return total, taxonomy
+
+
+def _apply_overview(col, wings=None, rooms=None, taxonomy=None, where=None):
+    total, counts = _overview_metadata(col, where)
+    if wings is not None:
+        wings.update({w: sum(rs.values()) for w, rs in counts.items()})
+    if rooms is not None:
+        for rs in counts.values():
+            for r, n in rs.items():
+                rooms[r] = rooms.get(r, 0) + n
+    if taxonomy is not None:
+        taxonomy.update(counts)
+    return total
+
+
 def _bookkeeping_taxonomy(col) -> dict:
-    """``{wing: {room: n}}`` of the registry rows and sentinels, to subtract
-    from facet counts. One metadata-only read; empty when it fails."""
-    try:
-        got = col.get(where=BOOKKEEPING_WHERE, include=["metadatas"])
-        metas = got.get("metadatas") if hasattr(got, "get") else None
-    except Exception:
-        logger.debug("bookkeeping row read failed", exc_info=True)
-        metas = None
-    taxonomy: dict = {}
-    for m in metas if isinstance(metas, list) else []:
-        m = m or {}
-        if is_bookkeeping(m):
-            dest = taxonomy.setdefault(m.get("wing", "unknown"), {})
-            room = m.get("room", "unknown")
-            dest[room] = dest.get(room, 0) + 1
-    return taxonomy
+    """Bookkeeping counts share overview projection and allocation bounds."""
+    return _overview_tally(col, bookkeeping=True)[1]
 
 
 def _subtract_counts(counts: dict, key, n: int) -> None:
@@ -359,6 +432,8 @@ def tool_status():
     # ``None`` (non-chroma backend / non-standard layout) falls through to the
     # client path below.
     fast = _sqlite_taxonomy()
+    if isinstance(fast, dict) and "error" in fast:
+        return fast
     if fast is not None:
         total, wing_rooms = fast
         wings = {}
@@ -396,43 +471,13 @@ def tool_status():
         "embedding_device": _describe_device_safe(),
     }
     try:
-        if _supports_metadata_facets(col):
-            try:
-                temp_wings = col.facet_counts("wing")
-                wings.update(temp_wings)
-                try:
-                    unknown_wings = count - sum(temp_wings.values())
-                    if unknown_wings > 0:
-                        wings["unknown"] = wings.get("unknown", 0) + unknown_wings
-                except (TypeError, ValueError):
-                    pass
-
-                temp_rooms = col.facet_counts("room")
-                rooms.update(temp_rooms)
-                try:
-                    unknown_rooms = count - sum(temp_rooms.values())
-                    if unknown_rooms > 0:
-                        rooms["unknown"] = rooms.get("unknown", 0) + unknown_rooms
-                except (TypeError, ValueError):
-                    pass
-                result["total_drawers"] = count - _drop_bookkeeping_facets(col, wings, rooms)
-                _observation.mark(metadata_fallback=False, fallback_kind="none")
-
-            except Exception as e:
-                logger.warning(
-                    "Failed to fetch metadata facets, falling back to client-side loop: %s", e
-                )
-                rooms.clear()
-                wings.clear()
-                _observation.mark(metadata_fallback=True)
-                result["total_drawers"] = _tally_wings_rooms(
-                    _get_cached_metadata(col), wings, rooms
-                )
-        else:
-            _observation.mark(metadata_fallback=True)
-            result["total_drawers"] = _tally_wings_rooms(_get_cached_metadata(col), wings, rooms)
+        _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
+        result["total_drawers"] = _apply_overview(col, wings, rooms)
     except Exception as e:
         logger.exception("tool_status metadata fetch failed")
+        wings.clear()
+        rooms.clear()
+        result.pop("total_drawers", None)
         result["error"] = str(e)
         result["partial"] = True
     return result
@@ -492,6 +537,8 @@ def _scoped_taxonomy(scope, *, wings=False):
         # raw maps are advisory only; identities determine every scoped sum.
         first_page = probe and scope["after"] is None
         fast = _sqlite_taxonomy() if first_page else None
+        if isinstance(fast, dict) and "error" in fast:
+            return fast
         fallback = False
         if first_page and fast is None:
             col = _get_collection()
@@ -542,6 +589,8 @@ def tool_list_wings(thread_scope: dict = None):
     if thread_scope is not None:
         return _scoped_taxonomy(thread_scope, wings=True)
     fast = _sqlite_taxonomy()
+    if isinstance(fast, dict) and "error" in fast:
+        return fast
     if fast is not None:
         _total, wing_rooms = fast
         wings = {}
@@ -554,29 +603,11 @@ def tool_list_wings(thread_scope: dict = None):
     wings = {}
     result = {"wings": wings}
     try:
-        try:
-            if not _supports_metadata_facets(col):
-                raise ValueError("facets not supported")
-            temp_wings = col.facet_counts("wing")
-            wings.update(temp_wings)
-            try:
-                unknown_wings = col.count() - sum(temp_wings.values())
-                if unknown_wings > 0:
-                    wings["unknown"] = wings.get("unknown", 0) + unknown_wings
-            except (TypeError, ValueError):
-                pass
-            _drop_bookkeeping_facets(col, wings=wings)
-            _observation.mark(metadata_fallback=False, fallback_kind="none")
-        except Exception as e:
-            if _supports_metadata_facets(col):
-                logger.warning(
-                    "Failed to fetch metadata facets, falling back to client-side loop: %s", e
-                )
-            wings.clear()
-            _observation.mark(metadata_fallback=True)
-            _tally_wings_rooms(_get_cached_metadata(col), wings=wings)
+        _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
+        _apply_overview(col, wings=wings)
     except Exception as e:
         logger.exception("tool_list_wings metadata fetch failed")
+        wings.clear()
         result["error"] = str(e)
         result["partial"] = True
     return result
@@ -589,6 +620,8 @@ def tool_list_rooms(wing: str = None):
         return {"error": str(e)}
     # A wing lists the rooms of every spelling its project was filed under.
     fast = _sqlite_taxonomy()
+    if isinstance(fast, dict) and "error" in fast:
+        return fast
     if fast is not None:
         _total, wing_rooms = fast
         wings = set(wing_aliases(wing, wing_rooms)) if wing else None
@@ -604,36 +637,14 @@ def tool_list_rooms(wing: str = None):
         return _collection_error_or_no_palace()
     rooms = {}
     result = {"wing": wing or "all", "rooms": rooms}
-    wings = wing_aliases(wing, known_wings(col)) if wing else None
-    where = {"wing": {"$in": wings}} if wing else None
     try:
-        try:
-            if not _supports_metadata_facets(col):
-                raise ValueError("facets not supported")
-            temp_rooms = col.facet_counts("room", where=where)
-            rooms.update(temp_rooms)
-            try:
-                if wing:
-                    wing_count = sum(col.facet_counts("wing", where=where).values())
-                    unknown_rooms = wing_count - sum(temp_rooms.values())
-                else:
-                    unknown_rooms = col.count() - sum(temp_rooms.values())
-                if unknown_rooms > 0:
-                    rooms["unknown"] = rooms.get("unknown", 0) + unknown_rooms
-            except (TypeError, ValueError):
-                pass
-            _drop_bookkeeping_facets(col, rooms=rooms, only=wings)
-            _observation.mark(metadata_fallback=False, fallback_kind="none")
-        except Exception as e:
-            if _supports_metadata_facets(col):
-                logger.warning(
-                    "Failed to fetch metadata facets, falling back to client-side loop: %s", e
-                )
-            rooms.clear()
-            _observation.mark(metadata_fallback=True)
-            _tally_wings_rooms(_fetch_all_metadata(col, where=where), rooms=rooms)
+        _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
+        wings = wing_aliases(wing, _overview_tally(col)[1]) if wing else None
+        where = {"wing": {"$in": wings}} if wing else None
+        _apply_overview(col, rooms=rooms, where=where)
     except Exception as e:
         logger.exception("tool_list_rooms metadata fetch failed")
+        rooms.clear()
         result["error"] = str(e)
         result["partial"] = True
     return result
@@ -643,6 +654,8 @@ def tool_get_taxonomy(thread_scope: dict = None):
     if thread_scope is not None:
         return _scoped_taxonomy(thread_scope)
     fast = _sqlite_taxonomy()
+    if isinstance(fast, dict) and "error" in fast:
+        return fast
     if fast is not None:
         _total, wing_rooms = fast
         return {"taxonomy": {w: dict(room_counts) for w, room_counts in wing_rooms.items()}}
@@ -652,40 +665,11 @@ def tool_get_taxonomy(thread_scope: dict = None):
     taxonomy = {}
     result = {"taxonomy": taxonomy}
     try:
-        try:
-            if not _supports_metadata_facets(col):
-                raise ValueError("facets not supported")
-            from concurrent.futures import ThreadPoolExecutor
-
-            wing_counts = col.facet_counts("wing")
-            wings = list(wing_counts.keys())
-            temp_taxonomy = {}
-            with ThreadPoolExecutor(max_workers=max(1, min(8, len(wings)))) as executor:
-                futures = {
-                    wing: executor.submit(col.facet_counts, "room", where={"wing": wing})
-                    for wing in wings
-                }
-                for wing, future in futures.items():
-                    room_counts = future.result()
-                    try:
-                        unknown_rooms = wing_counts[wing] - sum(room_counts.values())
-                        if unknown_rooms > 0:
-                            room_counts["unknown"] = room_counts.get("unknown", 0) + unknown_rooms
-                    except (TypeError, ValueError):
-                        pass
-                    temp_taxonomy[wing] = room_counts
-                taxonomy.update(temp_taxonomy)
-            _drop_bookkeeping_facets(col, taxonomy=taxonomy)
-            _observation.mark(metadata_fallback=False, fallback_kind="none")
-        except Exception as e:
-            if _supports_metadata_facets(col):
-                logger.warning(
-                    "Failed to fetch metadata facets, falling back to client-side loop: %s", e
-                )
-            _observation.mark(metadata_fallback=True)
-            _tally_wings_rooms(_get_cached_metadata(col), taxonomy=taxonomy)
+        _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
+        _apply_overview(col, taxonomy=taxonomy)
     except Exception as e:
         logger.exception("tool_get_taxonomy metadata fetch failed")
+        taxonomy.clear()
         result["error"] = str(e)
         result["partial"] = True
     return result
@@ -1037,6 +1021,8 @@ def tool_graph_stats(thread_scope: dict = None):
     # cold-loading HNSW via build_graph(), which times out on large palaces.
     # Falls through to the client path for non-chroma backends.
     fast = _sqlite_graph_stats()
+    if isinstance(fast, dict) and "error" in fast:
+        return fast
     if fast is not None:
         return fast
     col = _get_collection()

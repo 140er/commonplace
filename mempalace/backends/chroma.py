@@ -2098,6 +2098,8 @@ def _validate_list_batch(ids, documents, metadatas, embeddings) -> None:
 
 
 class ChromaCollection(BaseCollection):
+    overview_projection_bounded = True
+
     """Thin adapter translating ChromaDB dict returns into typed results.
 
     When ``palace_path`` is set, all write methods (``add``, ``upsert``,
@@ -2491,6 +2493,14 @@ class ChromaCollection(BaseCollection):
         return sqlite_iter_metadata(
             self._palace_path, self._collection.name, keys, require_key, equals
         )
+
+    def iter_overview_metadata(self, where=None):
+        """Bounded overview projection; no vector or unrelated metadata payloads."""
+        from .chroma_sqlite import sqlite_overview_metadata
+
+        if self._palace_path is None:
+            return None
+        return sqlite_overview_metadata(self._palace_path, self._collection.name, where)
 
     def get_all_metadata(self, where: Optional[dict] = None) -> list[dict]:
         """Every drawer's metadata in one pass over chroma.sqlite3.

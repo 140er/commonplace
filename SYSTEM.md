@@ -1492,3 +1492,38 @@ the exported interval, not only sequential scratch results.
 ### Search enrichment compatibility note
 
 The public search response deliberately omits `facts_error`, including on failed fact enrichment. A failure-only marker could distinguish hidden-present and hidden-absent worlds and break response equality. Failed enrichment therefore preserves drawers and returns the same empty facts shape as no eligible facts. The Unreleased changelog records this public-shape change, strict KG search booleans and restored argument/wing-filter compatibility; clients should no longer use `facts_error` as an availability signal.
+### Bounded memory for overview reads
+
+Status, wing, room and taxonomy overviews use a presence-preserving projection
+of wing, room, is_sentinel and ingest_mode. Chroma reads these fields in one
+recovery-checked SQLite snapshot, including a drawer without any projected key.
+Room aliases use one deduplicated indexed wing scope. Unrelated metadata and
+documents never enter this acquisition. General keyed metadata iterators keep
+their previous semantics.
+
+Projected batches contain at most 500 rows and 1 MiB of canonical UTF-8 JSON
+(compact separators, ensure_ascii=False). Complete rows split a batch before its
+byte limit. SQL checks cell lengths before decoding; a projected cell over
+64 KiB is refused. Aggregates have at most 16,384 distinct wing/room pairs and
+8 MiB of deep sys.getsizeof container/key/value accounting, counting shared
+objects once. Conservative preflight may refuse earlier; one bounded dictionary
+insertion's allocation overhead can precede the final accounting check. These
+are allocation-structure bounds, not a whole-process RSS cap. Only one bounded
+taxonomy cache is retained, keyed by palace, collection and database fingerprint;
+writes and reconnects invalidate it. Raw overview metadata is never cached.
+
+A lazy SQLite acquisition error closes the iterator and discards all partial
+counts before one restart from offset zero. Backend page adapters must explicitly
+guarantee acquisition bytes via overview_page_bytes_bounded=True: get returns
+only projected metadata, bounded to 500 rows and 1 MiB, with the same where on
+every page. Trimming an already acquired unbounded payload does not qualify.
+Backends without a bounded projection or acquisition guarantee return
+`overview_unavailable`; oversized projected cells or aggregates return
+`overview_too_large`. No partial tally is published as complete. Unbounded facet
+acquisition is not an alternative. Exact/compact grouped taxonomy also guards
+cell lengths and reduces its cursor under aggregate bounds.
+
+This fixes a measured fallback defect. Production worker memory attribution
+remains open. Other full metadata consumers, including delete-by-source and the
+palace-graph fallback, and model/vector allocations remain separate candidates.
+Storage format and verbatim drawer retrieval are unchanged.

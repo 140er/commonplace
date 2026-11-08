@@ -354,6 +354,8 @@ with mine_palace_lock(sys.argv[1]):
         from mempalace import mcp_server
 
         class _FakeQdrantCollection:
+            overview_page_bytes_bounded = True
+
             def count(self):
                 return 2
 
@@ -395,15 +397,21 @@ with mine_palace_lock(sys.argv[1]):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace.mcp_server import tool_status
 
-        # Inject a metadata cache where one entry is None
+        # A bounded projection preserves metadata-less drawer identities.
         with _patch("mempalace.mcp_server._get_collection") as mock_get_col:
-            fake_col = type("C", (), {"count": lambda self: 2})()
+            fake_col = type(
+                "C",
+                (),
+                {
+                    "count": lambda self: 2,
+                    "overview_projection_bounded": True,
+                    "iter_overview_metadata": lambda self, where=None: iter(
+                        [[{"wing": "proj", "room": "r"}, None]]
+                    ),
+                },
+            )()
             mock_get_col.return_value = fake_col
-            with _patch(
-                "mempalace.mcp_server._get_cached_metadata",
-                return_value=[{"wing": "proj", "room": "r"}, None],
-            ):
-                result = tool_status()
+            result = tool_status()
 
         # The None-metadata drawer falls under 'unknown/unknown' — no crash,
         # no partial flag.
@@ -819,126 +827,20 @@ class TestOverviewCaches:
 
 
 class TestMetadataFacets:
-    def test_tool_status_uses_metadata_facets(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "tool", ["tool_status", "tool_list_wings", "tool_list_rooms", "tool_get_taxonomy"]
+    )
+    def test_unbounded_facets_fail_closed(self, monkeypatch, tool):
         import mempalace.mcp_server as mcp
 
         monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
         monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
-
         col = MagicMock()
-        col.count.return_value = 5
-        col.facet_counts.side_effect = [
-            {"wing_a": 2, "wing_b": 3},
-            {"room_x": 4, "room_y": 1},
-        ]
-        monkeypatch.setattr(mcp, "_get_collection", lambda create=False: col)
-        result = mcp.tool_status()
-
-        assert result["wings"] == {
-            "wing_a": 2,
-            "wing_b": 3,
-        }
-
-        assert result["rooms"] == {
-            "room_x": 4,
-            "room_y": 1,
-        }
-        assert col.facet_counts.call_count == 2
-
-    def test_tool_list_wings_uses_metadata_facets(self, monkeypatch):
-        import mempalace.mcp_server as mcp
-
-        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
-        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
-
-        col = MagicMock()
-        col.facet_counts.return_value = {
-            "wing_a": 5,
-            "wing_b": 2,
-        }
-        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
-        result = mcp.tool_list_wings()
-
-        assert result == {
-            "wings": {
-                "wing_a": 5,
-                "wing_b": 2,
-            }
-        }
-        col.facet_counts.assert_called_once_with("wing")
-
-    def test_tool_list_rooms_uses_metadata_facets(self, monkeypatch):
-
-        import mempalace.mcp_server as mcp
-
-        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
-        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
-
-        col = MagicMock()
-
-        col.facet_counts.return_value = {
-            "room1": 7,
-            "room2": 3,
-        }
-
-        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
-
-        result = mcp.tool_list_rooms("engineering")
-
-        assert result["rooms"] == {
-            "room1": 7,
-            "room2": 3,
-        }
-
-        from unittest.mock import call
-
-        wing = {"wing": {"$in": ["engineering", "wing_engineering"]}}
-        assert col.facet_counts.call_args_list == [
-            call("room", where=wing),
-            call("wing", where=wing),
-        ]
-
-    def test_tool_get_taxonomy_uses_metadata_facets(self, monkeypatch):
-        from unittest.mock import call
-
-        import mempalace.mcp_server as mcp
-
-        monkeypatch.setattr(mcp, "_sqlite_taxonomy", lambda: None)
-        monkeypatch.setattr(mcp, "_supports_metadata_facets", lambda _: True)
-
-        col = MagicMock()
-
-        def facet_counts_mock(field, where=None):
-            if field == "wing":
-                return {"wing_a": 2, "wing_b": 1}
-            if field == "room" and where == {"wing": "wing_a"}:
-                return {"room1": 2}
-            if field == "room" and where == {"wing": "wing_b"}:
-                return {"room2": 1}
-            return {}
-
-        col.facet_counts.side_effect = facet_counts_mock
-
-        monkeypatch.setattr(mcp, "_get_collection", lambda: col)
-
-        result = mcp.tool_get_taxonomy()
-        assert col.facet_counts.call_args_list[0] == call("wing")
-        # Per-wing room facets run concurrently (ThreadPoolExecutor), so order is
-        # non-deterministic. Compare order-independently without a set() — a
-        # ``call`` carrying a dict kwarg is unhashable, so membership (==) is used.
-        room_calls = col.facet_counts.call_args_list[1:]
-        assert len(room_calls) == 2
-        assert call("room", where={"wing": "wing_a"}) in room_calls
-        assert call("room", where={"wing": "wing_b"}) in room_calls
-
-        assert result["taxonomy"] == {
-            "wing_a": {
-                "room1": 2,
-            },
-            "wing_b": {
-                "room2": 1,
-            },
-        }
+        monkeypatch.setattr(mcp, "_get_collection", lambda **kw: col)
+        result = getattr(mcp, tool)()
+        assert result["error"] == "overview_unavailable"
+        col.facet_counts.assert_not_called()
+        col.get.assert_not_called()
 
 
 class TestNoneMetadataSafety:
