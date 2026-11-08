@@ -1,6 +1,7 @@
 """Complete request-local overview projection, shared with search fan-out."""
 
 from commonplace.rules import checks
+from commonplace.vector_diagnostics import public_vector_diagnostics
 from mempalace.read_scope import PAGE_SIZE, valid_descriptors
 
 from .mirror_access import reader, unreadable_room
@@ -240,11 +241,7 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
             }
             if not isinstance(diagnostics, dict) or set(diagnostics) - keys:
                 return empty
-            if diagnostics.get("vector_disabled") is True:
-                diagnostics = {
-                    **diagnostics,
-                    "vector_disabled_reason": "Vector index unavailable; repair required.",
-                }
+            diagnostics = public_vector_diagnostics(diagnostics)
             checks.remaining(0)
             return {
                 **diagnostics,

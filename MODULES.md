@@ -51,6 +51,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
 
+  - Documents the shared count-free vector reason at the gateway worker boundary, including protocol errors and orphan reasons.
+
   - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
@@ -600,6 +602,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
+  - Gateway vector diagnostic tests exercise direct/fan-out search, duplicate detection, protocol refusal, reconnect denial, orphan reasons and local raw-detail compatibility.
+
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
@@ -889,7 +893,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## hub-core
 
-- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
+- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/vector_diagnostics.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/workers.py`
 - **Owns:**
 
   - Canonical Space REST aliases mapped to existing board tool authority.
@@ -905,6 +909,8 @@ Format (read by `commonplace orch docs-check`):
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
+
+  - Worker responses replace vector-disabled reasons with one fixed diagnostic and omit reasons without a true disabled flag; protocol error data and internal fan-out calls share this boundary.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 
@@ -1343,6 +1349,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for restricted readers. Body text and arbitrary provenance labels are not scanned for private words.
+
+  - Status uses the same public vector diagnostic normalization as other gateway worker responses.
 
   - Graph mediation validates and rechecks the descriptor-bound SQLite sort values before traversal and ranking.
 
