@@ -253,6 +253,25 @@ def scrub_provenance(node, access):
     return out
 
 
+def hallway_visible(node, access, policy):
+    """A label is display text: scan protected tokens without citation refusal."""
+    wing, rooms = node.get("wing"), node.get("rooms", [])
+    if not isinstance(wing, str) or not wing.strip() or not policy.can_read_wing(wing):
+        return False
+    if not isinstance(rooms, list) or any(not isinstance(r, str) or not r.strip() for r in rooms):
+        return False
+    if not rooms and canonical_wing(wing) == MIRROR_WING:
+        return False
+    if any(unreadable_room(access, wing, room) for room in rooms):
+        return False
+    label = node.get("label", "")
+    if not isinstance(label, str):
+        return False
+    tokens = [m[0] for m in provenance_refs._THREAD.finditer(label)]
+    tokens.extend(m[0] for m in provenance_refs._private_matches(label))
+    return all(access.reference(token) for token in tokens)
+
+
 def gate(gateway, principal, rule, result):
     """Scrub mirror words, caching access decisions only within this response."""
     access = reader(gateway, principal)
@@ -358,6 +377,13 @@ def gate(gateway, principal, rule, result):
         out = {**result, "results": items, "count": len(items), "errors": errors}
         out.pop("total", None)
         return _filter_fact_links(out)
+    if isinstance(result, dict) and isinstance(result.get("hallways"), list):
+        rows = result["hallways"]
+        if not all(
+            isinstance(row, dict) and hallway_visible(row, access, principal.policy) for row in rows
+        ):
+            # A late revocation discards the page and its counts together.
+            return {**result, "hallways": [], "count": 0, "total": 0}
     result = filter_room_keys(rule, result, can_read)
     cleaned = scrub(result)
     if cleaned is _DROP:

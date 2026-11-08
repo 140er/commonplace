@@ -889,7 +889,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   as before this projection; content reads retain their separate range gate.
   Search `total_before_filter` can include hidden candidates inside a visible
   wing before the response gate filters them.
-- Hallway/tunnel reads, other overview and graph/KG page counts, legacy
+- Tunnel reads, other overview and graph/KG page counts, legacy
   provenance and owner search-index progress remain separate residuals.
 
 ### Visible logical drawer pagination
@@ -935,11 +935,28 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Stored bytes, imported-history consent/range rules, provenance alias scrubbing
   and legacy source-file proof retain their separate contracts and residuals.
 
+### Hallway read eligibility and visible pagination
+
+- Authenticated hallway reads require readable wing policy, every room and every
+  independently recognized thread/private token in the label. Labels are display
+  text: emoji joiners and literal percent text remain byte-identical. Malformed
+  room lists and roomless mirror hallways fail closed, including for owners.
+- Metadata enumeration uses pages of at most 500 in SQLite rowid or JSON insertion
+  order. Request-local authority yields concrete descriptors; final snapshot reads
+  exclude changed/new associations. Only eligible records enter the stable strength
+  sort, visible total and offset/limit page. The final gate is a safety check.
+- Missing workspace context, incomplete acquisition, malformed protocol or expired
+  deadline returns a fixed empty pagination envelope, with no global totals or raw
+  errors. Local unscoped reads remain available. Reads never recompute labels,
+  remove stored legacy rows (O4), or extend imported-history consent.
+- Non-canonical label spellings outside the existing token patterns remain outside
+  this read proof. Other graph and provenance residuals below remain unchanged.
+
 ### Thread-boundary residuals
 
 - Read counts in `kg_query.count`, `kg_timeline.count` and
-  `kg_timeline.total` can include hidden items. Non-mirror hallway room names
-  and labels and `list_tunnels` drawer endpoints retain existing read gaps.
+  `kg_timeline.total` can include hidden items. `list_tunnels` drawer endpoints
+  retain existing read gaps.
 - Token-free plain-file provenance still has no local association proof on read.
   Typed drawer/closet citations now resolve current local metadata as described
   below; foreign identifiers already stored before this change are not purged.
