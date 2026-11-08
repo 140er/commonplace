@@ -303,12 +303,15 @@ unavailable snapshot still rejects a relevant done transition. This is fail-clos
 not a guarantee to undo arbitrary external memory side effects after a lesson.
 Existing raw event emission can still fail after the board commit.
 
-Installation registers recovery without resolving workspace directories. The first
-dispatcher scan recovers and migrates only existing board databases without creating
+Report installation registers recovery without resolving workspace directories.
+The first dispatcher scan recovers and migrates existing board databases without creating
 workspace directories, followed by monotonic 30-second scan deadlines independent
-of requests and webhook traffic. Workspace lookup failures are isolated per pass. Each workspace pass reads at most
-100 cards, publishes at most 100 source rows separately and cleans at most 100
-deleted episode keys. Persisted pagination provides fair continuation; a cycle can
+of requests and webhook traffic. Source initialization is cached by database path,
+inode and nanosecond modification time, so changed files are checked again.
+Workspace failures are isolated per pass and logged with exception type and stack
+locations, excluding exception text and local values. Each workspace pass reads
+at most 100 cards, publishes at most 100 source rows separately and cleans at most
+100 deleted episode keys. Persisted pagination provides fair continuation; a cycle can
 take longer than 30 seconds. The first observation in a generation baselines
 existing staleness without sending it. Heartbeat and leave/reclaim revisions
 separate later observed episodes, even at equal timestamps across restart.
