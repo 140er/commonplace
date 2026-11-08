@@ -45,6 +45,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Explicit tunnel read proof documents current drawer associations and proof before preview hydration or traversal recording.
 
+  - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
+
   - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
 
   - Documents both 16,384-character authorization caps, O(n + C²) bounds, over-limit readable citation refusal and verbatim fact/storage preservation.
@@ -92,6 +94,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
 
+  - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
+
   - An authority fault makes the complete progress response unavailable, even when other threads are readable.
 
   - A progress count is not a new thread read grant; other thread-boundary residuals remain documented.
@@ -110,6 +114,8 @@ Format (read by `commonplace orch docs-check`):
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
   - Typed association regressions and documentation obligations.
+
+  - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
   - Owner-route store/private-reader fault regressions and the documentation obligation.
 
@@ -297,6 +303,7 @@ Format (read by `commonplace orch docs-check`):
   - Tunnel keysets use stable ids; final lookup ignores traversal statistics and unrelated metadata while rechecking current endpoint associations.
 
   - Explicit tunnel probes page metadata without content, bind both endpoints and optional current drawer descriptors, and revalidate before follow hydration or recording.
+  - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
   - Exact non-Chroma physical citation ids remain supported without document hydration.
@@ -313,6 +320,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
+
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
   - Non-Chroma logical citations fail closed because the collection API cannot guarantee ordered snapshot enumeration.
 
@@ -324,6 +333,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
   - Presence and private read-scope tests exercise SQLite, compact, Chroma, facet and generic metadata paths, unknown values, batching and races.
   - Capped-backend tests place a hidden chunk beyond the first short metadata page.
@@ -357,6 +368,8 @@ Format (read by `commonplace orch docs-check`):
   - Tunnel concurrency witnesses, effective hydration spies and four authorization mutants cover the explicit-read contract alongside retained mirror and import suites.
 
   - Explicit tunnel regression witnesses and private protocol tests cover moved drawers, room-only compatibility, bounded pages and authorization races.
+
+  - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
   - Default provenance regressions assert zero candidate work above either cap and accurate write errors with unchanged verbatim storage. Cap-sized and 1 MiB scan measurements run separately under `timing`, reporting resource budgets without gating on them.
 
@@ -472,6 +485,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Only named public AssertionErrors count as base regressions; readable citations and plain-file display remain controls.
 
+  - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
+
   - Swallowing an authority fault must fail the fixed-503 assertion rather than silently reduce counters.
 
   - Guard-only tests do not substitute for base failures; metadata, authority, state and unit mutations must change public assertions.
@@ -492,6 +507,8 @@ Format (read by `commonplace orch docs-check`):
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
   - Typed association read and protocol suites cover public results and private snapshot failures.
+
+  - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
   - `tests/test_card253_s12.py` covers strict store/private-reader failures, ordinary deny-on-fault compatibility and second-pass enumeration failure.
 
@@ -542,6 +559,8 @@ Format (read by `commonplace orch docs-check`):
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
 
+  - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
+
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
@@ -569,6 +588,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Worker failures remove only the affected citation, with no other-workspace fallback.
 
+  - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
+
   - Rejected methods have no tool alias; authentication and body transport refusals remain shared.
 
   - Malformed, partial or timed-out overview acquisition yields the same empty successful shape as no visible data, before any sees-all shortcut. Client scopes are discarded and absent from discovery.
@@ -579,6 +600,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
+
+  - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
   - `tests/test_spaces_contract.py` and the installed public surface inventory.
 
@@ -895,6 +918,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Tunnel visibility combines wing policy with the workspace reader, renews authority after probing, and discards incomplete proof.
 
+  - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
+
   - A dedicated strict Recall callback propagates owner-progress lookup faults; extraction retains the ordinary deny-on-fault callback.
 
   - Search-index polls authorize current metadata once per thread, revalidate descriptors in one snapshot and project per-thread successful units, activity and quota refusals.
@@ -933,6 +958,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Association faults or revoked authority omit citations after original-source fact eligibility; words remain verbatim.
 
+  - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
+
   - Store or private-reader exceptions invalidate the entire owner progress proof without an unscoped fallback.
 
   - Incomplete progress proof fails unavailable without global counters; process restart drops unit attribution, and shared storage may block readable work.
@@ -944,6 +971,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
+
+  - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
   - `tests/test_card253_s12.py::test_card253_s12_authority_fault_fixed_unavailable` exercises real Recall faults in both store formats.
 

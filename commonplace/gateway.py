@@ -545,18 +545,7 @@ class Mediator:
             except Exception as exc:
                 # Optional import search fails closed; preserve ordinary results.
                 logger.error("Imported-history search failed (%s)", type(exc).__name__)
-        from .handoff.mirror_access import gate
-
-        committed_result = None
-        if isinstance(response, dict) and "result" in response:
-            result = committed_result = _tool_result(response)
-            cleaned = gate(self.gateway, principal, rule, result)
-            if cleaned is not result:
-                response = (
-                    _replace_result(response, cleaned)
-                    if isinstance(response.get("result"), dict)
-                    else _tool_response(req_id, cleaned)
-                )
+        response, committed_result = self._gate_response(principal, name, rule, req_id, response)
 
         if classify_tool(name) != "read":
             result = committed_result
@@ -570,6 +559,27 @@ class Mediator:
                 target_ids=_target_ids(args, result),
             )
         return response
+
+    def _gate_response(self, principal, name, rule, req_id, response):
+        """Apply the final read boundary while retaining the committed result for audit."""
+        from .handoff.mirror_access import gate
+
+        committed_result = None
+        if isinstance(response, dict) and "result" in response:
+            result = committed_result = _tool_result(response)
+            cleaned = gate(self.gateway, principal, rule, result)
+            if name == "mempalace_list_drawers":
+                from .handoff.drawer_pages import finish_page
+
+                cleaned = finish_page(result, cleaned)
+            if cleaned is not result:
+                response = (
+                    _replace_result(response, cleaned)
+                    if isinstance(response.get("result"), dict)
+                    else _tool_response(req_id, cleaned)
+                )
+
+        return response, committed_result
 
     def _audit(self, principal, tool, decision, reason="", wing=None, target_ids=()):
         from commonplace.rules.enforce import audit
@@ -657,6 +667,17 @@ class Mediator:
                     "respond": {"wing": "private_chats", "rooms": {d["room"]: 1 for d in drawers}}
                 }
             return {"respond": {"drawers": drawers, "count": len(drawers)}}
+        if name == "mempalace_list_drawers":
+            if not policy.sees_all_wings:
+                wing = args.get("wing") or _only_literal_wing(policy)
+                if not wing or not policy.can_read_wing(wing):
+                    raise Denied("pass a wing you can read")
+                args["wing"] = wing
+            from .handoff.drawer_pages import project
+
+            result = project(self.gateway, principal, self.workers, args)
+            response = self._after(principal, name, "read_wing", args, _tool_response(None, result))
+            return {"respond": _tool_result(response)}
         if policy.sees_all_wings:
             return None
         wing = args.get("wing")

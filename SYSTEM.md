@@ -850,6 +850,27 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Hallway/tunnel reads, other overview and graph/KG page counts, legacy
   provenance and owner search-index progress remain separate residuals.
 
+### Visible logical drawer pagination
+
+- Authenticated drawer listings enumerate metadata in bounded pages, authorize
+  current physical identities in the caller's workspace, and revalidate them
+  before logical grouping, date filtering, totals and slicing. Owners use the
+  same reader. An unreadable chunk cannot authorize readable siblings or
+  contribute to their preview, date or count. Wing aliases retain their meaning.
+- SQLite final membership and page hydration share one snapshot. SDK fallback
+  revalidates metadata and hydrates only visible page identities in batches of
+  at most 500, checking their metadata again with the fetched documents.
+  One request deadline bounds acquisition and final reads; no timing claim is made.
+- Missing workspace context, incomplete enumeration, malformed pages and read
+  faults return the normal empty pagination envelope with zero totals. No raw
+  exception, partial global total or private descriptor is published. Raw caches
+  contain no principal projection; local unscoped calls retain existing behavior.
+- The final response gate retains the proven visible total when it only scrubs
+  provenance metadata. If it removes a drawer after projection, the listing
+  fails closed to the same empty envelope rather than returning a page gap.
+- Stored bytes, imported-history consent/range rules, provenance alias scrubbing
+  and legacy source-file proof retain their separate contracts and residuals.
+
 ### Thread-boundary residuals
 
 - Read counts in `kg_query.count`, `kg_timeline.count` and
