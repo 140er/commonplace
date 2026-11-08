@@ -434,11 +434,15 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `mempalace/`, `seed/`
 - **Owns:**
 
+  - HTTP startup propagates initial bind/lease status, logs supervised recovery transitions, retains children across marker publication failures and treats live unknown-identity PIDs as orphans.
+
   - HTTPMonitor owns one child, endpoint, startup/reap and cross-generation cooldown; Coordinator owns generation admission through response flush. Neither opens a palace in the monitor or retains request data there.
 
   - The memory engine: verbatim drawers, mining, search, knowledge graph, storage backends and the MCP server; plus the reviewed seed card list.
 
 - **Promises:**
+
+  - CLI search/mine refuse managed gaps before capability or local routing. Older Windows runtimes retain the bounded fact channel without set_blocking. HTTP idle exits report idle and error replies do not advance successful-completion accounting.
 
   - Full HTTP and proxy delegation supervise once; Commonplace passes internal child mode with two private inherited pipes. Registry markers survive child cleanup and prevent local fallback during restarting, cooldown and orphan draining. Count/RSS retirement and a transport-body concurrency limit remain disabled.
 
@@ -516,6 +520,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - Restart review regressions cover actual pre-fix entrypoints, marker retries, nonlocking signal handlers, unknown identities and real startup exit statuses.
+
   - Generation restart, private-pipe lifecycle, deterministic monitor circuit/orphan tests and short fixture-only real-process restart/EOF smoke cover containment, not production allocation attribution.
 
   - Exact and Compact numeric/boolean witnesses and locus-less ordering cases compare with unchanged local readers.
@@ -584,6 +590,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - The original replay fake tolerates the pinned base Worker and asserts HTTP send occurred, so setup errors cannot masquerade as no-retry RED evidence.
 
   - The entrypoint RED asserts a live monitor before any replacement barrier. Timer cooldown and orphan rechecks use injected time; event deadlines only guard broken harnesses and are never expected RED evidence.
 
@@ -795,6 +803,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - test_http_restart_review.py supplies deterministic old-head RED cases; test_http_restart_startup.py verifies real user-entrypoint bind/lease/duplicate-monitor exit codes and logged post-ready recovery.
+
   - test_http_generation_restart.py, test_worker_generation_contract.py, test_worker_restart_circuit.py, test_worker_lifecycle.py and test_http_monitor_process.py cover HTTP ownership and completion; forwarding/isolation fixtures include the coordinator and private handles.
 
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
@@ -891,6 +901,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Paused generation pins preserve WorkersPaused retry hints; a worker reinserted after a reap timeout is retiring before it becomes visible again.
+
   - A matching authenticated no-dispatch recycling refusal permits at most one replacement retry after all old pins finish and the child is reaped. Successful DRAINING responses are final; busy, malformed contracts, body loss and transport errors never replay. Pause and close remain authoritative.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
@@ -970,6 +982,8 @@ Format (read by `commonplace orch docs-check`):
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - Paused-pin and timeout-reinsertion regressions exercise the real WorkerSupervisor and gateway boundary without transport replay.
 
   - Worker generation-contract and restart-circuit tests cover deterministic base regressions; existing worker isolation, gateway and backup-drain suites preserve the ownership boundary.
 

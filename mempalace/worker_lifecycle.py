@@ -7,12 +7,15 @@ been written. Private pipes carry liveness and at most three bounded facts.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 import threading
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 
 CHILD_ENV = "MEMPALACE_HTTP_CHILD"
 GENERATION_ENV = "MEMPALACE_HTTP_GENERATION"
@@ -37,6 +40,7 @@ class RestartCircuit:
         self.failures += 1
         if self.failures >= 3:
             self.until = self.clock() + 60.0
+            logger.warning("Worker restart circuit latched; cooldown is 60 seconds")
 
     def healthy(self, completed):
         if completed is not None and completed >= 16:
@@ -108,7 +112,13 @@ def process_identity(pid):
 
 
 def identity_alive(pid, identity):
-    return identity is not None and process_identity(pid) == identity
+    from ._proc import pid_alive
+
+    current = process_identity(pid)
+    if identity is None or current is None:
+        # An unreadable start identity is not proof that a live PID is gone.
+        return pid_alive(pid)
+    return current == identity
 
 
 def valid_generation(value):
@@ -330,10 +340,13 @@ def child_coordinator(*, cleanup, exit):
         fact_fd = int(fact_fd) if fact_fd is not None else None
     if fact_fd is not None:
         try:
-            os.set_blocking(fact_fd, False)
-        except OSError:
-            os.close(fact_fd)
-            fact_fd = None
+            set_blocking = getattr(os, "set_blocking", None)
+            if set_blocking is not None:
+                set_blocking(fact_fd, False)
+        except (AttributeError, NotImplementedError, OSError):
+            # Older Windows runtimes have no nonblocking pipe API. At most
+            # three <=512-byte facts fit in the private pipe's default buffer.
+            pass
 
     def fact(record):
         if fact_fd is None:

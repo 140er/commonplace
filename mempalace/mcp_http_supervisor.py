@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import socket
@@ -13,6 +14,8 @@ from functools import partial
 
 from . import server_registry
 from .worker_lifecycle import ControlPipes, RestartCircuit, process_identity
+
+logger = logging.getLogger(__name__)
 
 
 class Child:
@@ -85,11 +88,43 @@ class HTTPMonitor:
         self.wake = threading.Event()
         self.state = None
         self.startup_failed = False
+        self.ever_ready = False
+        self.marker_failed = False
 
     def publish(self, state):
-        if state != self.state:
-            self.state = state
+        if state == self.state:
+            return True
+        try:
             self.publish_marker(state, self.child)
+        except OSError:
+            if not self.marker_failed:
+                logger.warning("HTTP monitor marker unavailable; publication will retry")
+            self.marker_failed = True
+            return False
+        if self.marker_failed:
+            logger.info("HTTP monitor marker publication recovered")
+        self.marker_failed = False
+        if self.state == "cooldown" and state == "restarting":
+            logger.info("HTTP monitor recovery probe starting")
+        logger.info("HTTP monitor state: %s", state)
+        self.state = state
+        return True
+
+    def _reap_child(self, child):
+        status = child.wait()
+        # wait joins the fact reader before the final classification.
+        self.ever_ready = self.ever_ready or child.ready
+        self.child = None
+        self.deadline = None
+        if self.stopping:
+            return
+        if not self.ever_ready and status in (1, 2):
+            logger.error(
+                "HTTP first generation failed before ready; exiting with status %s", status
+            )
+            raise SystemExit(status)
+        if not self.startup_failed:
+            self.circuit.ended(child.terminal, child.completed)
 
     def step(self):
         now = self.clock()
@@ -97,12 +132,7 @@ class HTTPMonitor:
         if child is not None:
             self.circuit.healthy(child.completed)
             if child.poll() is not None:
-                child.wait()
-                # wait joins the fact reader before the final classification.
-                if not self.stopping and not self.startup_failed:
-                    self.circuit.ended(child.terminal, child.completed)
-                self.child = None
-                self.deadline = None
+                self._reap_child(child)
             else:
                 if self.stopping:
                     child.drain()
@@ -110,6 +140,7 @@ class HTTPMonitor:
                 elif child.terminal is not None:
                     self.publish("draining")
                 elif child.ready:
+                    self.ever_ready = True
                     self.deadline = None
                     self.publish("running")
                 elif self.deadline is not None and now >= self.deadline:
@@ -131,7 +162,8 @@ class HTTPMonitor:
         if not self.circuit.available():
             self.publish("cooldown")
             return
-        self.publish("restarting")
+        if not self.publish("restarting"):
+            return
         self.startup_failed = False
         try:
             self.child = self.launcher()
@@ -144,6 +176,7 @@ class HTTPMonitor:
         else:
             # Always republish with the current child's identity.
             self.state = None
+            self.ever_ready = self.ever_ready or self.child.ready
             self.publish("running" if self.child.ready else "starting")
 
     def stop(self):
@@ -152,19 +185,29 @@ class HTTPMonitor:
             self.child.drain()
         self.wake.set()
 
+    def _signal_stop(self, *_):
+        # A signal can interrupt the main thread while any lock is held.
+        # Even Event.set() takes a lock: only assign the flag here.
+        self.stopping = True
+
     def run(self):
-        from filelock import FileLock
+        from filelock import FileLock, Timeout
 
         directory = server_registry.server_state_dir(self.palace_path)
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         lock = FileLock(str(directory / "monitor.lock"))
-        with lock.acquire(timeout=0):
+        try:
+            lease = lock.acquire(timeout=0)
+        except Timeout:
+            logger.error("A palace HTTP monitor is already running; refusing a second monitor")
+            raise SystemExit(2) from None
+        with lease:
             previous = {}
             if threading.current_thread() is threading.main_thread():
                 for name in ("SIGTERM", "SIGINT", "SIGHUP"):
                     sig = getattr(signal, name, None)
                     if sig is not None:
-                        previous[sig] = signal.signal(sig, lambda *_: self.stop())
+                        previous[sig] = signal.signal(sig, self._signal_stop)
             try:
                 while not self.stopping or self.child is not None:
                     self.step()

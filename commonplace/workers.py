@@ -418,7 +418,11 @@ class WorkerSupervisor:
     @contextmanager
     def pin(self, worker):
         with self._cond:
-            if self._closed or self._paused or worker.retiring or not worker.alive():
+            if self._closed:
+                raise SupervisorClosed("worker supervisor is closed")
+            if self._paused:
+                raise WorkersPaused()
+            if worker.retiring or not worker.alive():
                 raise SupervisorClosed("generation unavailable before dispatch")
             worker.pins += 1
         try:
@@ -481,6 +485,7 @@ class WorkerSupervisor:
                     try:
                         old.reap(max(0, deadline - time.monotonic()))
                     except subprocess.TimeoutExpired:
+                        old.retiring = True
                         with self._cond:
                             self._workers[workspace_id] = old
                         raise DrainTimeout("old generation is still draining") from None

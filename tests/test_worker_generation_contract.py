@@ -27,7 +27,7 @@ class Supervisor:
 
     def get(self, _workspace):
         worker = self.workers[self.current]
-        return self.replace(worker) if worker.retiring else worker
+        return self.replace(worker) if getattr(worker, "retiring", False) else worker
 
     @contextlib.contextmanager
     def pin(self, worker):
@@ -147,6 +147,7 @@ def run_post(
 
 def test_proven_recycling_refusal_retries_once(monkeypatch):
     outcome, attempts, supervisor = run_post(monkeypatch)
+    assert attempts, "the pinned base must reach the real HTTP request path"
     assert outcome == {"result": "replacement"}, repr(outcome)
     assert attempts == [0, 1]
     assert supervisor.events[:4] == ["pin", "release", "retire", "reap"]

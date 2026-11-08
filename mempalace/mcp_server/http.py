@@ -1381,6 +1381,7 @@ def _http_handler_class():
             dumps = dumps_internal if exact else dumps_client
             body = dumps(payload).encode("utf-8")
             self._send_bytes(status, body, "application/json; charset=utf-8")
+            self._response_completed = status == 200 and "error" not in payload
 
         def _request_rejected(self, require_auth: bool) -> bool:
             return _http_request_rejected(self, require_auth)

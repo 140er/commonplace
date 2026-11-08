@@ -7,6 +7,7 @@ def cmd_search(args):
     from ..query_sanitizer import sanitize_query, sanitizer_report
 
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+    _check_hub_availability(palace_path)
     report = sanitizer_report(sanitize_query(args.query))
     if report:
         args.query = report["clean_query"]

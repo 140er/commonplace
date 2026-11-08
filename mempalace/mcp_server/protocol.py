@@ -1421,6 +1421,10 @@ def _start_idle_exit_watchdog() -> None:
                     idle / 3600,
                     timeout / 3600,
                 )
+                coordinator = globals().get("_http_coordinator")
+                if coordinator is not None:
+                    coordinator.drain("idle")
+                    return
                 _exit_running_registered_cleanup()
 
     t = threading.Thread(target=_watchdog, name="mcp-idle-watchdog", daemon=True)

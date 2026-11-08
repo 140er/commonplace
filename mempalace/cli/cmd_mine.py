@@ -7,6 +7,7 @@ from typing import Optional
 
 def cmd_mine(args):
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
+    _check_hub_availability(palace_path)
     mode = getattr(args, "mode", None) or "projects"
     source_adapter = getattr(args, "source", None)
     include_ignored = []
