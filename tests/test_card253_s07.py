@@ -858,3 +858,70 @@ def test_card253_s07_r4_pagination_protocol(kgworld, tool, args, message):
         "code": -32602,
         "message": f"Invalid params for tool {tool}: {message}",
     }, "malformed pagination became an empty successful result"
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        (TOOLS[0], {"entity": "fixed_entity", "as_of": "not-a-date"}),
+        (TOOLS[0], {"entity": "fixed_entity", "as_of": 5}),
+        (TOOLS[0], {"entity": "fixed_entity", "direction": "sideways"}),
+        (TOOLS[0], {"entity": "fixed_entity", "direction": 5}),
+        (TOOLS[0], {"entity": ""}),
+        (TOOLS[1], {"entity": ""}),
+    ],
+)
+def test_card253_s07_r5_handler_validation(kgworld, tool, args):
+    w = kgworld
+    typed = w.mcp.validate_tool_arguments(tool, args)
+    expected = w.mcp.TOOLS[tool]["handler"](**typed)
+    assert set(expected) == {"error"} and isinstance(expected["error"], str)
+    present = call(w, tool, **args)
+    assert present == expected, "invalid declared argument became a silent empty result"
+    remove_hidden(w)
+    assert call(w, tool, **args) == present, "hidden facts changed an argument error"
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        ({}, "Missing required parameter 'entity' for tool mempalace_kg_query"),
+        ({"entity": None}, "Missing required parameter 'entity' for tool mempalace_kg_query"),
+        (
+            {"entity": ["x"]},
+            "Invalid params for tool mempalace_kg_query: 'entity' must be a string",
+        ),
+        (
+            {"entity": "fixed_entity", "sensitivities": ["unknown"]},
+            "Invalid params for tool mempalace_kg_query: 'sensitivities[0]' must be one of 'public', 'internal', 'private', 'secret'",
+        ),
+    ],
+)
+def test_card253_s07_r5_protocol_validation(kgworld, args, message):
+    w = kgworld
+    assert call(w, TOOLS[0], entity="fixed_entity")["facts"]
+    expected = {"code": -32602, "message": message}
+
+    def request():
+        return w.h.rpc(w.tokens["A"], "tools/call", {"name": TOOLS[0], "arguments": args})
+
+    present = request()
+    assert present.get("error") == expected, "invalid declared argument lost its protocol error"
+    remove_hidden(w)
+    absent = request()
+    assert {key: value for key, value in absent.items() if key != "id"} == {
+        key: value for key, value in present.items() if key != "id"
+    }, "hidden facts changed a protocol error"
+
+
+def test_card253_s07_r5_sqlite_offset_error(kgworld):
+    w = kgworld
+    assert call(w, TOOLS[0], entity="fixed_entity")["facts"]
+    reply = w.h.rpc(
+        w.tokens["A"], "tools/call", {"name": TOOLS[1], "arguments": {"offset": 10**30}}
+    )
+    assert reply.get("error") == {
+        "code": -32000,
+        "message": "Internal tool error",
+        "data": {"error_class": "OverflowError"},
+    }, "unrepresentable SQLite offset became an empty success"

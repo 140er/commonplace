@@ -24,6 +24,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Commonplace gateway, milestone 1 (`commonplace/`): accounts, workspaces with owner/member roles, `cmmn_` personal access tokens stored as SHA-256, per-token policy (scopes, tool profiles, wing scopes, trust levels, fail closed), an append-only audit log, and one `mempalace` worker per workspace behind it. Workers started with `MEMPALACE_MCP_TRUSTED_IDENTITY=1` stamp the gateway's verified author (`hub_user`, `hub_connection`, `hub_client`, `hub_auth`, `hub_trust`, `hub_workspace`, `hub_written_at`) on drawers, diary entries and KG facts, keep the client's `added_by` as `claimed_by`, and return the stamp in search, get_drawer and kg_query results.
 - An optional `recall` command in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`) and `mempalace instructions recall`. Recall never needs it: the `mempalace-recall` skill fires on its own in Claude Code and in Codex, whose plugin loads the repo-root `skills/`. `scripts/evals/codex_auto_recall.sh` checks the Codex half against a real `codex exec`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
 
+### Changed
+
+- KG search requires a JSON boolean for `search`; string booleans are refused.
+  Search fact enrichment omits `facts_error` and uses empty facts on failure,
+  preserving the same public shape when no eligible facts exist.
+- KG reads retain explicit worker argument errors, including `-32602` for
+  malformed pagination; null pagination uses protocol defaults. Limited readers'
+  shorthand wing filters resolve to stored names as before, with visible-only
+  counts and pages.
+
 ### Fixed
 
 - Commonplace nightly backups no longer take the service down. `backup-hook.sh` used to stop the serve container and snapshot in a one-off container; it now runs `commonplace backup --online` inside the running container with `docker compose exec` and never stops, starts, recreates or replaces it. The gateway pauses memory workers for about a minute or two and briefly holds file creation while one consistent cut is taken; site, sign-in, boards and chat stay up, memory calls answer `-32603` with `retry_after_s` during the pause, and one-shot CLI commands are refused for the run. The snapshot format, `commonplace restore` and manifest checks are unchanged. A run fails closed, with the service untouched and nothing published, when the image lacks online backup, a workspace database is encrypted (back those up offline in a maintenance window), the backup directory is on another filesystem, or a launched successor agent is still alive. A failed run keeps its private log and removes its staging. Use a finite unit `TimeoutStartSec` below the deploy gate's `DEPLOY_BACKUP_TIMEOUT` (for example 3 h and 11400 s). `deploy/commonplace/backup-live-probe.sh` checks a real run against a live service ([backups](docs/backups.md), [deployment](deploy/commonplace/DEPLOY.md#backups)).

@@ -9,6 +9,36 @@ from .drawer_pages import PageArgumentError
 from .mirror_access import gate, reader
 
 
+def _arguments(mcp, name, args):
+    """Keep data-independent worker validation outside authorization failures."""
+    try:
+        args = mcp.validate_tool_arguments(name, args)
+    except (ValueError, TypeError) as exc:
+        raise PageArgumentError(
+            {"code": -32602, "message": f"Invalid params for tool {name}: {exc}"}
+        ) from exc
+    missing = [
+        key for key in mcp.TOOLS[name]["input_schema"].get("required", []) if key not in args
+    ]
+    if missing:
+        quoted = ", ".join(f"'{key}'" for key in missing)
+        word = "parameter" if len(missing) == 1 else "parameters"
+        raise PageArgumentError(
+            {"code": -32602, "message": f"Missing required {word} {quoted} for tool {name}"}
+        )
+    # SQLite binds offsets as signed 64-bit integers. Preserve its protocol
+    # error without acquiring facts or letting the allow-list mask overflow.
+    if args.get("offset", 0) > 2**63 - 1:
+        raise PageArgumentError(
+            {
+                "code": -32000,
+                "message": "Internal tool error",
+                "data": {"error_class": "OverflowError"},
+            }
+        )
+    return args
+
+
 def project(gateway, principal, workers, name, args):
     from commonplace.gateway import WORKER_TIMEOUT_S
     from mempalace import mcp_server as mcp
@@ -17,23 +47,10 @@ def project(gateway, principal, workers, name, args):
     suffix = name.removeprefix("mempalace_kg_")
     if suffix == "query" and args.get("search") is True:
         suffix = "search"
+    args = _arguments(mcp, name, args)
     properties = mcp.TOOLS[name]["input_schema"]["properties"]
-    try:
-        limit, offset = 100, 0
-        for key in ("limit", "offset"):
-            if key in args and key in properties:
-                if args[key] is None:
-                    args.pop(key)  # Protocol null selects the handler default.
-                else:
-                    args[key] = mcp._coerce_argument(args[key], properties[key], key)
-        if "limit" in properties:
-            limit = args.get("limit", 100)
-        if "offset" in properties:
-            offset = args.get("offset", 0)
-    except (ValueError, TypeError) as exc:
-        raise PageArgumentError(
-            {"code": -32602, "message": f"Invalid params for tool {name}: {exc}"}
-        ) from exc
+    limit = args.get("limit", 100) if "limit" in properties else 100
+    offset = args.get("offset", 0) if "offset" in properties else 0
     empty = {
         "search": {"facts": []},
         "query": {
@@ -147,6 +164,14 @@ def project(gateway, principal, workers, name, args):
                     },
                 },
             )
+            # These handlers return a lone error only for input validation,
+            # before reading facts. Preserve that data-independent refusal.
+            if (
+                isinstance(result, dict)
+                and set(result) == {"error"}
+                and isinstance(result["error"], str)
+            ):
+                return result
             if (
                 not isinstance(result, dict)
                 or "error" in result
