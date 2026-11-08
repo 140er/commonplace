@@ -1026,6 +1026,21 @@ playbooks and the original wider orchestration acceptance remain separate work.
   consent. Non-canonical spellings outside the raw token grammar (percent escapes,
   fullwidth/NFKC forms) remain the accepted limitation; no returned string field is
   exempt from scanning. Other graph/provenance residuals below remain unchanged.
+### Authenticated room and status counts
+
+- Authenticated `list_rooms` and `status` sum the complete authorized pair
+  projection, including wing aliases and unknown loci. Wing policy and the
+  current workspace thread reader both apply, including to actual owners.
+  Malformed private mirror rooms need readable association proof.
+- Metadata pages and final snapshot batches stay bounded to 500 under one
+  request deadline. Changed descriptors are excluded. Incomplete acquisition
+  returns zero counts/maps without partial global totals or raw failures.
+- Status retains non-count diagnostics for ordinary and damaged-index paths,
+  while authenticated responses suppress global `hnsw_capacity`. Local
+  operator status remains unscoped. Principal projections never enter raw caches.
+- Imported-history listing consent and source-range rules remain in force;
+  these counts create no new read grant. Hallway, tunnel, graph and KG counts
+  and legacy provenance remain separate residuals. Stored rows stay intact.
 
 ### Thread-boundary residuals
 

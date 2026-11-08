@@ -664,6 +664,11 @@ class Mediator:
             from .handoff.kg_projection import project
 
             return {"respond": project(self.gateway, principal, self.workers, name, args)}
+
+        if name == "mempalace_status":
+            from .handoff.overview import summary
+
+            return {"respond": summary(self.gateway, principal, self.workers, name)}
         if name == "mempalace_delete_by_source":
             return self._scope_delete_by_source(principal, name, args)
         if name == "mempalace_delete_tunnel":
@@ -724,16 +729,21 @@ class Mediator:
             result = project(self.gateway, principal, self.workers, args)
             response = self._after(principal, name, "read_wing", args, _tool_response(None, result))
             return {"respond": finish_page(result, _tool_result(response))}
-        if policy.sees_all_wings:
-            return None
-        wing = args.get("wing")
-        if not wing:
-            wing = _only_literal_wing(policy)
+        if not policy.sees_all_wings:
+            wing = args.get("wing")
             if not wing:
-                raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
-            args["wing"] = wing
-        if not policy.can_read_wing(wing):
-            raise Denied(f"this connection can't read wing {wing!r}")
+                wing = _only_literal_wing(policy)
+                if not wing:
+                    raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
+                args["wing"] = wing
+            if not policy.can_read_wing(wing):
+                raise Denied(f"this connection can't read wing {wing!r}")
+        if name == "mempalace_list_rooms":
+            from .handoff.overview import summary
+
+            return {
+                "respond": summary(self.gateway, principal, self.workers, name, args.get("wing"))
+            }
         return None
 
     def _before_import_listing(self, principal, name, args):
