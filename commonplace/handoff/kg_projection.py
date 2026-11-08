@@ -8,6 +8,10 @@ from .mirror_access import gate, reader
 
 def project(gateway, principal, workers, name, args):
     suffix = name.removeprefix("mempalace_kg_")
+    offset, limit = args.get("offset", 0), args.get("limit", 100)
+    valid_page = type(offset) is int and type(limit) is int
+    if not valid_page:
+        offset, limit = 0, 100
     empty = {
         "query": {
             "entity": args.get("entity"),
@@ -23,8 +27,8 @@ def project(gateway, principal, workers, name, args):
             "timeline": [],
             "count": 0,
             "total": 0,
-            "offset": max(0, args.get("offset", 0)),
-            "limit": max(1, min(100, args.get("limit", 100))),
+            "offset": max(0, offset),
+            "limit": max(1, min(100, limit)),
         },
         "stats": {
             "entities": 0,
@@ -36,7 +40,7 @@ def project(gateway, principal, workers, name, args):
         },
         "list_wings": {"wings": []},
     }[suffix]
-    if not principal.workspace_id:
+    if not principal.workspace_id or not valid_page:
         return empty
     try:
         gateway.handoff.store_for(principal.workspace_id)

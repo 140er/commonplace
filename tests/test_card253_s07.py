@@ -78,24 +78,23 @@ def world(hub, monkeypatch, tmp_path, request):
             return "<synthetic credentials>"
 
     tokens = Tokens()
-    for kind, wings in (("A", ["*"]),):
-        tokens[kind] = hub.token(
-            f"reader-{kind}",
-            user=member,
-            tools=TOOLS,
-            scopes=["memory:read", "private:read", "threads:read", "kg:read"],
-            read_wings=wings,
-            trust="trusted",
-        )
-        principal = hub.db.authenticate_token(tokens[kind])
-        assert principal.role != "owner" and principal.policy.has_scope("threads:read")
-        assert principal.policy.trust == "trusted" and principal.policy.has_scope("kg:read")
-        assert principal.policy.sees_all_wings is (kind == "A")
-        assert hub.gateway.handoff.recall.can_read(principal, readable.id)
-        assert not hub.gateway.handoff.recall.can_read(principal, hidden.id)
-        assert store.get(hidden.id) is not None
-        for tool in TOOLS:
-            assert principal.policy.refusal(tool) is None
+    tokens["A"] = hub.token(
+        "reader-A",
+        user=member,
+        tools=TOOLS,
+        scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+        read_wings=["*"],
+        trust="trusted",
+    )
+    principal = hub.db.authenticate_token(tokens["A"])
+    assert principal.role != "owner" and principal.policy.has_scope("threads:read")
+    assert principal.policy.trust == "trusted" and principal.policy.has_scope("kg:read")
+    assert principal.policy.sees_all_wings
+    assert hub.gateway.handoff.recall.can_read(principal, readable.id)
+    assert not hub.gateway.handoff.recall.can_read(principal, hidden.id)
+    assert store.get(hidden.id) is not None
+    for tool in TOOLS:
+        assert principal.policy.refusal(tool) is None
     mcp._invalidate_overview_caches()
     yield SimpleNamespace(
         h=hub,
@@ -430,3 +429,58 @@ def test_card253_s07_final_gate_keeps_pages(kgworld, monkeypatch):
     assert len(finals) == 1
     assert reply["count"] == reply["total"] == finals[0]["total"] == 1
     assert [r["id"] for r in reply["timeline"]] == [r["id"] for r in finals[0]["timeline"]]
+
+
+@pytest.mark.parametrize("scope", [{"probe": True}, {"allow": []}])
+def test_card253_s07_search_scope_unforgeable(kgworld, monkeypatch, scope):
+    from datetime import datetime, timezone
+
+    from commonplace.gateway import WorkerClient
+    from mempalace.searcher import facts
+
+    original_search = facts.search_facts
+    now = datetime.now(timezone.utc)
+
+    def frozen_search(*args, **kwargs):
+        return original_search(*args, now=now, **kwargs)
+
+    monkeypatch.setattr(facts, "search_facts", frozen_search)
+
+    w = kgworld
+    original = WorkerClient.post
+    forwarded = []
+
+    def observed(self, principal, request):
+        params = request.get("params", {})
+        if request.get("method") == "tools/call" and params.get("name") == TOOLS[0]:
+            forwarded.append(dict(params["arguments"]))
+        return original(self, principal, request)
+
+    monkeypatch.setattr(WorkerClient, "post", observed)
+    expected = call(w, TOOLS[0], entity="fixed_entity", search=True)
+    reply = call(w, TOOLS[0], entity="fixed_entity", search=True, thread_scope=scope)
+    assert len(forwarded) == 2 and all("thread_scope" not in args for args in forwarded)
+    assert reply == expected and "probe" not in reply
+    assert w.hidden.id not in str(reply)
+
+
+def test_card253_s07_scope_not_discovered(kgworld):
+    w = kgworld
+    listing = w.h.rpc(w.tokens["A"], "tools/list")["result"]["tools"]
+    selected = [tool for tool in listing if tool["name"] in TOOLS]
+    assert len(selected) == len(TOOLS)
+    for tool in selected:
+        for key in ("inputSchema", "input_schema"):
+            assert "thread_scope" not in tool.get(key, {}).get("properties", {})
+
+
+@pytest.mark.parametrize("args", [{"limit": "invalid"}, {"offset": None}, {"limit": True}])
+def test_card253_s07_invalid_pagination(world, args):
+    assert call(world, TOOLS[1], **args) == {
+        "entity": "all",
+        "timeline": [],
+        "count": 0,
+        "total": 0,
+        "limit": 100,
+        "offset": 0,
+    }

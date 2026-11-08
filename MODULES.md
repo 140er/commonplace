@@ -186,7 +186,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority and snapshot revalidation.
+  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
@@ -496,7 +496,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority and snapshot revalidation.
+  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Presence and private read-scope tests exercise SQLite, compact, Chroma, facet and generic metadata paths, unknown values, batching and races.
   - Capped-backend tests place a hidden chunk beyond the first short metadata page.
@@ -745,7 +745,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority and snapshot revalidation.
+  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -895,7 +895,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority and snapshot revalidation.
+  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
 
@@ -1341,7 +1341,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority and snapshot revalidation.
+  - `tests/test_card253_s07.py` exercises KG count/page/aggregate equality, mixed sources, readable semantics, owner authority, snapshot revalidation, forged client scopes and invalid pagination.
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 
