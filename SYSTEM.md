@@ -1728,6 +1728,10 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   readable plain path changes a previously retained citation to an omitted one
   (mixed means omit). This is an explicit exception to hidden-present/absent
   output equality, including literal-wing readers; it grants no read permission.
+- Import-consented single, batch and listing drawer reads keep raw provenance
+  through wing-policy filtering. The final response gate applies plain-file proof
+  once before converting the path to its display basename, just as for readers
+  without import consent.
 - Proof results are memoized by kind and concrete selector within one response;
   already scrubbed rows are not scrubbed twice. A revocation after a selector's
   first proof is not observed by later citations with that selector in the same

@@ -184,6 +184,11 @@ def check_citation(c, role, field, value, write, *, prove_plain=True):
         # Unproduced token-free files have no local proof: omit only the citation.
         assert public_field not in public_row
         assert all(public_field not in source for source in row["sources"])
+        assert (row["subject"], row["predicate"], row["object"]) == (
+            "SpellingFact",
+            "keeps",
+            "Exact  original words: capture: u1:codex:opaque7",
+        )
     else:
         assert public_row.get(public_field) == value
         assert row["sources"][0].get(public_field) == value

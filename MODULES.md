@@ -55,6 +55,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
   - Outgoing provenance aliases and ranges document token-free compatibility, orphan-range removal and accepted endpoint proof limits.
+  - Import-consented literal readers preserve raw provenance until the final gateway proof and display conversion.
+
   - Records the shared drawer-batch scrubber separately from hallway endpoint proof.
 
   - Gateway search omits closet previews without inventing a closet authorization descriptor.
@@ -293,6 +295,7 @@ Format (read by `commonplace orch docs-check`):
   - Unreleased notes record KG argument compatibility, wing aliases and intentional search response changes.
   - One Unreleased Changed section records KG argument compatibility, wing aliases and intentional search response changes.
   - One consistently spaced Unreleased Changed section records KG argument compatibility, wing aliases and intentional search response changes.
+  - Closet documentation distinguishes local previews from the authenticated gateway preview refusal.
 
   - Admin docs pin current-member connection listing, matching inventory counts, exact-route card navigation and cursor-preserving Retry.
 
@@ -659,6 +662,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
   - Outgoing alias tests cover token-free retry compatibility, short/flat alias proof, hidden storage equality, plain/chunked endpoints and orphan ranges. The focused set includes gateway thread scope and unchanged fact-save compatibility; drawer-search guards claim text preservation only.
+  - Import-consented single, batch and listing reads prove raw file identities once; omission guards preserve readable fact text.
+
   - Reference-spelling guards follow locked plain-file proof: exact readable matches retain citations and unresolved files omit them.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
@@ -986,6 +991,7 @@ Format (read by `commonplace orch docs-check`):
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+  - Import-consented drawer reads retain raw provenance through wing filtering and apply file proof only at the final response gate.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 

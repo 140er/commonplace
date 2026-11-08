@@ -1404,10 +1404,8 @@ class Mediator:
         import_allowed = None
         recall = self._reader_recall(principal)
         if recall is not None:
-            from .handoff.mirror_access import gate
-
-            result = gate(self.gateway, principal, rule, result)
-
+            # Every caller reaches _gate_response after this wing-policy pass.
+            # Keep raw provenance here: the final gate proves it before display.
             def import_allowed(node):
                 try:
                     return recall.import_record_allowed(principal, node)

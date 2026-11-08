@@ -38,6 +38,11 @@ def test_card253_s11_plain_file(case, mode):
     seed(c, "source_file", RAW)
     row = fact(c)
     assert "source_file" not in row["sources"][0], "s11 unproved plain file retained"
+    assert (row["subject"], row["predicate"], row["object"]) == (
+        "TypedFact",
+        "keeps",
+        "Exact  original words",
+    )
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
@@ -540,3 +545,42 @@ def test_card253_s11_closet_preview(file_search, monkeypatch, role, mode):
     assert hits, reply
     assert secret not in json.dumps(hits), "gateway search exposed hidden closet preview"
     assert all("closet_preview" not in hit for hit in hits)
+
+
+@pytest.mark.parametrize("tool", ["get_drawer", "get_drawers", "list_drawers"])
+def test_card253_s11_import_reader_raw_proof(case, tool):
+    from pathlib import Path
+
+    from tests.test_typed_association_reads import SCOPES
+
+    c = case
+    matches(c, [c.primary.id, c.primary.id])
+    args = {
+        "get_drawer": {"drawer_id": "file-0000"},
+        "get_drawers": {"drawer_ids": ["file-0000", "file-0001"]},
+        "list_drawers": {"wing": "shared", "limit": 10},
+    }[tool]
+    replies = []
+    for import_read in (False, True):
+        c.token = c.h.token(
+            f"literal-file-reader-{import_read}",
+            user=c.member.user_id,
+            tools=["mempalace_" + tool],
+            scopes=[*SCOPES, *(["memory:import:read"] if import_read else [])],
+            read_wings=["shared"],
+            write_wings=["shared"],
+            trust="trusted",
+        )
+        principal = c.h.db.authenticate_token(c.token)
+        assert not principal.policy.sees_all_wings
+        assert principal.policy.has_scope("memory:import:read") is import_read
+        assert principal.policy.refusal("mempalace_" + tool) is None
+        assert c.h.gateway.handoff.recall.can_read(principal, c.primary.id)
+        assert not c.h.gateway.handoff.recall.can_read(principal, c.hidden.id)
+        c.calls.clear()
+        replies.append(invoke(c, tool, **args))
+    assert replies[1] == replies[0], "import reader lost proven file citation"
+    rows = replies[1].get("results", replies[1].get("drawers", [replies[1]]))
+    assert rows and all(row["metadata"].get("source_file") == Path(RAW).name for row in rows)
+    proofs = [args for _, name, args in c.calls if name == "read_associations"]
+    assert len(proofs) == 2 and all(args["identifier"] == (RAW, RAW) for args in proofs)
