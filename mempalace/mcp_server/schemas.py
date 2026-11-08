@@ -57,6 +57,7 @@ TOOLS = {
                 },
                 "search": {
                     "type": "boolean",
+                    "x-mempalace-strict": True,
                     "description": "Rank whole-word matches across facts, using entity as search text (default false).",
                 },
                 "limit": {
@@ -1392,3 +1393,5 @@ for _kg_read_name in (
         "type": "object",
         "description": "Set by the Commonplace server",
     }
+
+del _kg_read_name

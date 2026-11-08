@@ -844,8 +844,8 @@ class Mediator:
                 call["wings"] = [args["wing"]]
             elif args.get("wings") is not None:
                 call["wings"] = args["wings"]
-            self._before_kg_read(principal, "mempalace_kg_query", call, [])
-            result = self.workers.call_tool(principal, "mempalace_kg_query", call)
+            plan = self._before_kg_read(principal, "mempalace_kg_query", call, [])
+            result = plan["respond"]
             if (
                 not isinstance(result, dict)
                 or result.get("error")
@@ -862,7 +862,7 @@ class Mediator:
             }
         except Exception:
             logger.warning("Fact search unavailable; preserving drawer search", exc_info=True)
-            return {"facts": [], "facts_error": "unavailable"}
+            return {"facts": []}
 
     def _before_drawer_read(self, principal, name, args, notes):
         ids = _drawer_ids(args)
@@ -986,7 +986,7 @@ class Mediator:
 
     def _before_kg_read(self, principal, name, args, notes):
         policy = principal.policy
-        if name in ("mempalace_kg_query", "mempalace_kg_timeline") and not args.get("search"):
+        if name in ("mempalace_kg_query", "mempalace_kg_timeline"):
             from .handoff.kg_projection import project
 
             asked = args.get("wings")
@@ -1449,6 +1449,8 @@ def _check_argument_types(args: dict) -> None:
     ``drawer_ids`` given as a JSON string is parsed here, once, and the
     parsed list is what gets checked and forwarded.
     """
+    if "search" in args and type(args["search"]) is not bool:
+        raise Denied("'search' must be true or false")
     for key in _WING_ARGS + _ID_ARGS:
         if key in args and args[key] is not None and not isinstance(args[key], str):
             raise Denied(f"'{key}' must be a string")
