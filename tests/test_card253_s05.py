@@ -35,10 +35,12 @@ def world(hub, monkeypatch, tmp_path, request):
     from mempalace.backends import PalaceRef
     from mempalace.backends.chroma import ChromaBackend
     from mempalace.backends.compact import CompactBackend
+    from mempalace.backends.rust_exact import RustExactBackend
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
     backend = {
         "sqlite_exact": SQLiteExactBackend,
+        "rust_exact": RustExactBackend,
         "chroma": ChromaBackend,
         "compact": CompactBackend,
     }[backend_name]()
@@ -160,6 +162,8 @@ def seed(w, rows):
         metadatas=rows,
         embeddings=[[1.0] + [0.0] * 383 for _ in rows],
     )
+    if hasattr(w, "after_seed"):
+        w.after_seed()
     graph.invalidate_graph_cache()
     w.mcp._invalidate_overview_caches()
 
@@ -634,3 +638,68 @@ def test_card253_s05_r2_numeric(world, functional_worker_transport, field, value
     assert call(w, "mempalace_traverse", {"start_room": "start"}) == w.mcp.tool_traverse_graph(
         "start"
     ), "numeric graph traversal changed"
+
+
+@pytest.mark.parametrize("world", ["sqlite_exact", "compact"], indirect=True)
+@pytest.mark.parametrize("field", ["wing", "room", "hall"])
+@pytest.mark.parametrize("value", [10**30, -(10**30), True, False, 7, 1e20])
+def test_card253_s05_r3_native_loci(world, functional_worker_transport, field, value):
+    w = world
+    rows = [{"wing": "wing_c", "room": "start", "hall": "h"}]
+    rows += [
+        {"wing": wing, "room": "number", "hall": "h", field: value} for wing in ("wing_a", "wing_c")
+    ]
+    seed(w, rows)
+    expected = w.mcp.tool_graph_stats()
+    assert expected["total_rooms"] >= 1
+    assert call(w, "mempalace_graph_stats", {}) == expected, "native locus statistics changed"
+    assert call(w, "mempalace_find_tunnels", {}) == w.mcp.tool_find_tunnels(), (
+        "native locus ranking changed"
+    )
+    assert call(w, "mempalace_traverse", {"start_room": "start"}) == w.mcp.tool_traverse_graph(
+        "start"
+    ), "native locus traversal changed"
+
+
+@pytest.mark.parametrize("operation", ["siblings", "suggestions", "cap"])
+def test_card253_s05_r3_locusless(world, functional_worker_transport, operation):
+    import sqlite3
+
+    from mempalace.backends.sqlite_exact import _documents_has_locus_columns
+
+    def remove_loci():
+        path = Path(world.mcp._config.palace_path) / "sqlite_exact.sqlite3"
+        with sqlite3.connect(path) as conn:
+            indexes = conn.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name='documents'"
+            ).fetchall()
+            for name, sql in indexes:
+                if sql and any(key in sql for key in ("wing", "room", "hall")):
+                    conn.execute('DROP INDEX "' + name.replace('"', '""') + '"')
+            for key in ("wing", "room", "hall"):
+                conn.execute(f"ALTER TABLE documents DROP COLUMN {key}")
+            assert not _documents_has_locus_columns(conn)
+
+    world.after_seed = remove_loci
+    test_card253_s05_r2_order(world, functional_worker_transport, operation)
+
+
+@pytest.mark.parametrize("world", ["rust_exact"], indirect=True)
+@pytest.mark.parametrize("field", ["wing", "room", "hall"])
+@pytest.mark.parametrize("value", [10**30, -(10**30)])
+def test_card253_s05_r3_rust_large(world, functional_worker_transport, field, value):
+    test_card253_s05_r3_native_loci(world, functional_worker_transport, field, value)
+
+
+@pytest.mark.parametrize("world", ["compact"], indirect=True)
+@pytest.mark.parametrize("field", ["wing", "room", "hall"])
+@pytest.mark.parametrize("value", [0, 0.0])
+def test_card253_s05_r3_compact_zero_guard(world, functional_worker_transport, field, value):
+    test_card253_s05_r3_native_loci(world, functional_worker_transport, field, value)
+
+
+@pytest.mark.parametrize("world", ["chroma"], indirect=True)
+@pytest.mark.parametrize("field", ["wing", "room", "hall"])
+@pytest.mark.parametrize("value", [True, False])
+def test_card253_s05_r3_chroma_bool_guard(world, functional_worker_transport, field, value):
+    test_card253_s05_r3_native_loci(world, functional_worker_transport, field, value)

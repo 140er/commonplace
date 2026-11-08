@@ -5,7 +5,7 @@ import re
 from commonplace.rules import checks
 from mempalace import palace_graph
 from mempalace.config import sanitize_name
-from mempalace.graph_scope import graph_descriptor
+from mempalace.graph_scope import graph_descriptor, valid_sort
 from mempalace.read_scope import PAGE_SIZE, valid_descriptors
 
 from .mirror_access import reader, unreadable_room
@@ -180,7 +180,9 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                 for item in page["rows"]:
                     if (
                         not isinstance(item, dict)
-                        or set(item) != {"descriptor", "metadata"}
+                        or set(item) != {"descriptor", "metadata", "sort"}
+                        or not valid_sort(item["sort"])
+                        or bool(order) != (item["sort"] is not None)
                         or item["descriptor"] not in batch
                         or item["descriptor"] in returned
                         or not isinstance(item["metadata"], dict)
@@ -192,12 +194,12 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                     ):
                         return empty
                     if (
-                        graph_descriptor(item["descriptor"]["id"], item["metadata"])
+                        graph_descriptor(item["descriptor"]["id"], item["metadata"], item["sort"])
                         != item["descriptor"]
                     ):
                         return empty
                     returned.append(item["descriptor"])
-                    rows.append(item["metadata"])
+                    rows.append({**item["metadata"], "_sort": item["sort"]})
             tunnels = []
             if name == "mempalace_graph_stats":
                 tunnels = project_tunnels(
@@ -215,7 +217,7 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
             access = reader(gateway, principal)
             rows = [row for row in rows if visible(access, row)]
             if order:
-                rows.sort(key=lambda m: tuple(m[key] for key in order))
+                rows.sort(key=lambda m: m["_sort"])
             result = _result(name, args, rows, tunnels, grouped=bool(order))
             checks.remaining(0)
             return result

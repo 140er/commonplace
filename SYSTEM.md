@@ -1380,15 +1380,19 @@ are unchanged. Passive graph reads use the input projection described below.
   and projection share one deadline. Worker/schema/projection faults still return
   the empty operation envelope, never a client-validation error.
 - Ordering follows the reader that actually served the metadata page. Grouped
-  Chroma uses room/wing/hall order; sqlite_exact and rust_exact use wing/room/hall,
-  as does Compact's grouped locus index. Collection fallback keeps enumeration
-  order. Sibling ties, suggestions and the 50-result cap follow that order;
-  grouped statistics retain their separate room-name tie break.
-- Grouped Chroma and exact readers preserve numeric wing/room/hall text casts,
-  including zero and exponent notation; their projected descriptors bind those
-  text values. Chroma grouped dates read the string column. Compact and collection
-  paths retain their existing metadata interpretation, including their own falsy
-  hall/date handling; the overview's bookkeeping rules remain separate.
+  Chroma uses room/wing/hall order. Exact and Compact readers use wing/room/hall
+  with generated locus columns, or room/wing/hall on older read-only databases
+  without them. Collection fallback keeps enumeration order. Sibling ties,
+  suggestions and the 50-result cap follow that order; grouped statistics retain
+  their separate room-name tie break.
+- Exact and Compact projections read the local graph's SQL expressions and schema
+  from one metadata-only snapshot. SQLite applies TEXT affinity on exact loci,
+  including booleans and integers beyond int64; Compact and locus-less readers
+  preserve native numeric values and their falsy-zero behavior before converting
+  to text. Descriptors bind both projected values and stored SQLite sort values.
+  Chroma preserves its grouped numeric text casts, ignores boolean locus columns,
+  and reads dates from the string column. Collection fallback retains its existing
+  metadata interpretation; overview bookkeeping rules remain separate.
 - Null and missing tunnel labels are empty only for protected-token scanning.
   Returned/stored nulls, missing keys and unrelated fields remain unchanged; other
   non-string labels still fail closed. No palace data is rewritten.

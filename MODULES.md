@@ -43,6 +43,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
+
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
@@ -117,6 +119,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Documented graph ordering depends on actual snapshot schema rather than backend name alone.
+
   - Distinguishes accepted non-string-label and existing follow-argument residuals from fixed graph regressions.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
@@ -155,6 +159,8 @@ Format (read by `commonplace orch docs-check`):
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - The documentation obligation checks the updated graph parity contract.
 
   - Backend sibling, suggestion, cap and numeric-locus witnesses substantiate the compatibility topics.
 
@@ -379,6 +385,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph snapshots use local SQL locus expressions, including native booleans and integers outside int64; descriptors also bind stored sort values.
+
   - Graph page descriptors carry their source order key; grouped Chroma and exact numeric loci retain SQLite text casts.
 
   - Graph descriptors preserve literal placeholders and backend-specific hall/date values; page source determines readable tie ordering.
@@ -409,6 +417,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Changed locus values or sort values invalidate authorization; unavailable snapshots expose no partial graph.
+
   - Unknown order keys fail closed; unrelated overview bookkeeping and tunnel compatibility exceptions remain unchanged.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -431,6 +441,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Exact and Compact numeric/boolean witnesses and locus-less ordering cases compare with unchanged local readers.
 
   - SQLite, Chroma and Compact ordering guards plus numeric zero/exponent cases compare with local graph readers.
 
@@ -473,6 +485,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
 
@@ -617,6 +631,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
+
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
@@ -658,7 +674,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
-  - Numeric wing/room/hall cases and three ordering surfaces run on exact and default backends, with Compact order controls.
+  - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
+
+  - Numeric wing/room/hall cases and three ordering surfaces run on exact and default backends; Compact additionally covers native numerics and booleans.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
@@ -1124,6 +1142,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph mediation validates and rechecks the descriptor-bound SQLite sort values before traversal and ranking.
+
   - Graph traversal and ranking preserve backend sibling order before caps; grouped stats preserve their distinct tie convention.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
@@ -1183,6 +1203,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Malformed sort values or a changed snapshot descriptor discard projected graph output.
+
   - Incomplete proof still returns empty envelopes; accepted non-string tunnel-label and pre-existing follow-argument residuals remain.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -1212,6 +1234,8 @@ Format (read by `commonplace orch docs-check`):
   - A failed launch of the successor leaves the source agent running; an interrupted archive adoption resumes from its last committed step.
 
 - **Tests:**
+
+  - Graph protocol fault, live-reader and legacy locus-order witnesses exercise mediation.
 
   - Sibling ties, fuzzy suggestions, cap membership and grouped statistics are compared to local readable outputs.
 
