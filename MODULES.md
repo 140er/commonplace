@@ -1140,6 +1140,7 @@ Format (read by `commonplace orch docs-check`):
   - **Connection recovery:** Callbacks reopen the selected Needs item; GitHub-only status failures preserve card actions, and connections in another workspace show an explicit disconnect control.
 
   - Needs me renders origin/configuration as approvals, requires a release reason and posts directly; coordinator configuration navigates to existing settings without mutating a card. Proposal Decline and plan Reject controls follow reject permission independently of approve permission and use the existing rejection handler.
+  - Shell needItems includes approvals when counting each project and retaining selected details on refresh; release ranks between person decisions and plan review.
 
 - **How it fails:**
 
