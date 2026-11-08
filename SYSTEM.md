@@ -38,7 +38,8 @@ entry was written.
   Only the exact Admin route bypasses shared refresh; card navigation restores a
   regular base view and loads the requested card without new inventory requests.
   Inventory counts share the row membership/user joins; Retry preserves the failed
-  cursor and append or replacement mode.
+  cursor and append or replacement mode. Sign-out teardown tolerates an absent Admin
+  controller and stops it when present, preserving chat cleanup and sign-in recovery.
 
 
 ### Inert area configuration preview

@@ -360,6 +360,8 @@ Format (read by `commonplace orch docs-check`):
 
 ## tests
 
+- Sign-out regression covers absent and active Admin controllers; the installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
+
 - **Paths:** `tests/`
 - **Owns:**
 
@@ -1155,6 +1157,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Sign-out and expiry stop an existing Admin controller and tolerate teardown before its binding is available.
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 

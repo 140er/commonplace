@@ -190,6 +190,10 @@ if (which === 'board_header') {
     assert.equal(typeof context.clearWorkbenchChat, 'function'); run('clearWorkbenchChat()');
     assert.equal(cleared, 1); assert.equal(storage.has('cmmn.chat.seen.maya.atlas'), false);
     assert.equal(storage.has('cmmn.chat.seen.leon.atlas'), true); assert.equal(state.workbenchChat, null);
+    let adminStops = 0;
+    context.adminUI = {stop() { adminStops++; }};
+    run('clearWorkbenchChat()');
+    assert.equal(adminStops, 1, 'sign-out stops an existing Admin controller');
     assert.match(app, /action === "logout"[\s\S]*?clearWorkbenchChat\(\)/);
     assert.match(source("async function signin(", "function currentBoard()"), /clearWorkbenchChat\(\)/);
   } else if (which === 'dispose') {
