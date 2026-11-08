@@ -136,3 +136,6 @@
   .memory-search .chip select { max-width: none; width: 100%; min-width: 0; }
   .memory-search .memory-status { flex-basis: 100%; grid-column: 1 / -1; }
 }
+
+.memory-view { display: flex; flex-direction: column; min-height: 65vh; gap: var(--gap); }
+.memory-view .stage { min-height: 55vh; }

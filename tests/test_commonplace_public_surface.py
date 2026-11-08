@@ -256,7 +256,7 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/needs-me"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
-        ("GET", "/api/memory/map"),
+        ("GET", "/api/memory/map?theme=shared"),
         ("GET", "/api/webhooks"),
         ("GET", "/api/webhooks/1/deliveries"),
         ("POST", "/api/webhooks/1/test"),
@@ -779,6 +779,7 @@ REST_TOOLS = [
     ("GET", "/api/memory/search", "memory_search"),
     ("GET", "/api/memory/map", "memory_search"),
     ("GET", "/api/memory/id", "memory_get"),
+    ("GET", "/api/memory/id?view=map", "memory_get"),
     ("POST", "/api/memory", "memory_save"),
     ("GET", "/api/webhooks", "webhook_list"),
     ("POST", "/api/webhooks", "webhook_add"),
@@ -796,7 +797,9 @@ REST_TOOLS = [
 def test_rest_requires_the_matching_visible_tool(surface, method, path, tool):
     from commonplace.http_util import send_json
 
-    surface.gateway.add_route(method, path, lambda h: send_json(h, 200, {"reached": True}))
+    surface.gateway.add_route(
+        method, path.split("?", 1)[0], lambda h: send_json(h, 200, {"reached": True})
+    )
     for index, allowed in enumerate(([], [tool])):
         policy = Policy.build(tools=allowed, trust="trusted", read_wings=["shared"])
         _cid, value = surface.db.create_token(

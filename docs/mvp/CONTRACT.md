@@ -119,11 +119,15 @@ GET  /api/memory/search?q=&theme=&limit=   -> {"results":[{"id","theme","topic",
 GET  /api/memory/<id>                      -> {"id","theme","topic","text","author","trust","at","cards":[…]}
 POST /api/memory                           {"text","theme?","topic?","task?"} -> {"id"}
 POST /api/facts                            {"subject","predicate","object","source","theme?","valid_from?","sensitivity?","single_valued?"} -> fact with provenance
-GET  /api/memory/map?limit=400             -> {"nodes":[{"id","kind":"memory|person|card","label","theme","at","weight"}],
+GET  /api/memory/map?limit=400&theme=shared             -> {"nodes":[{"id","kind":"memory|person|card","label","theme","at","weight"}],
                                                "links":[{"source","target","kind":"fact|card|theme","label"}],
                                                "themes":[{"id","label","count"}],
                                                "weeks":[{"week":"2026-W44","count":12}]}
 ```
+`theme` is optional on the map and scopes server-side acquisition before counts and limits. Map selection reads use `GET /api/memory/<id>?view=map&theme=<optional wing>` and apply the same boundary to source text and linked cards. The installed authenticated `/api/memory/` prefix serves both variants; no new route is installed.
+
+Person sessions need a current workspace-owner role from the control database to see private map data. Missing or failed ownership proof hides private wings, private drawer metadata, private/secret relationships and private linked cards before graph labels, counts or weekly totals are built. Hidden and absent data have identical response shapes. Members' own private memories are also hidden in the map until per-user ownership is available. Connection scopes and other Memory reads are unchanged.
+
 `POST /api/facts` uses the same required source and write policy as `fact_save`. Only a verified person session with a navigable source link approves a fact; agent bearer writes remain proposals.
 
 Map links are stored links only: knowledge-graph facts (person↔person, person↔memory via the fact's source), memory↔card links, and memory→theme. Weeks in Europe/Amsterdam.
@@ -154,7 +158,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
   - **Home** (default, nav count of what needs you): an "N things need you" box, one line per card (title + a reason from its `need`: asks, awaiting plan review, ready to merge, claim went stale, filed by an agent; Speak in its header; asks are answered in the card), one tile per space (worst need, open and waiting counts, Open), and a table of open tasks from `GET /api/cards` (Answer / Approve / Merge / Retake only where needed).
   - **Board**: columns backlog rail, todo, doing, review, done; task rows show status dot, title, assignee, branch, PR #, elapsed time, status line, claim bar; drag & drop with version.
   - **Card panel**: as in DESIGN.md + branch/PR/checks.
-  - **Memory**: search + the map (from memory-map-mix) on `/api/memory/map`, panel with verbatim text and linked cards.
+  - **Memory**: search + the map (the optional theme is checked server-side before selecting rows, counts and relationships) (from memory-map-mix) on `/api/memory/map`, panel with verbatim text and linked cards.
   - **Settings**: connections (read-only list, last used), webhooks (add/remove/deliveries).
 - Live: poll `/api/events` every 2 s visible, 30 s hidden; refetch what changed.
 - Phone 390 px works for Home and Card.

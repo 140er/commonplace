@@ -603,7 +603,7 @@ async function olderMessages() {
 function spaceView() {
   const slug = decodeURIComponent(state.base.slice("#/space/".length));
   const board = state.boards.find((b) => b.slug === slug);
-  title(board?.name || slug, `<a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
+  title(board?.name || slug, `<a class="opt" href="#/memory?project=${enc(slug)}">Memory</a><a class="opt" href="#/board/${enc(slug)}">Board</a>${board?.can_configure ? '<button class="opt" data-action="coordinator">Coordinator</button>' : ""}`);
   const content = root.querySelector("#content");
   if (content.querySelector(".space")?.dataset.board !== slug) {
     state.chatObserver?.disconnect(); state.chatVisible.clear();
@@ -792,17 +792,19 @@ async function memoryView(epoch, refresh = false) {
   title("Memory", '<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><span class="head-sub">Exact words from chats, cards and notes. Never summarised.</span>');
   const content = root.querySelector("#content");
   const query = new URLSearchParams(state.base.split("?")[1] || "").get("q") || "";
-  if (state.memoryUI && content.querySelector("[data-memory-mount]") && (refresh || state.memoryQuery === query)) return;
+  if (state.memoryUI && content.querySelector("[data-memory-mount]") && (refresh || state.memoryQuery === state.base)) return;
   state.memoryUI?.stop();
   content.innerHTML = "<div data-memory-mount></div>";
-  state.memoryQuery = query;
+  state.memoryQuery = state.base;
   // The dock is mounted after the view; the component reaches it through the shell's service.
   const dock = { open: (options) => state.workbenchChat?.dock.open(options), close: (options) => state.workbenchChat?.dock.close(options), isOpen: () => Boolean(state.workbenchChat?.dock.isOpen()) };
   const ui = state.memoryUI = createMemory({ mount: content.querySelector("[data-memory-mount]"), panel: root.querySelector("#card-panel"), api, boards: state.boards, me: state.me, dock, singleKeys: singleKeysEnabled,
     // The selected source's project becomes the chat destination named in the header.
     onSelect(result, board) { state.memoryBoard = board?.slug || result.board; mountWorkbenchChat(); },
   });
-  if (query && epoch === state.screen) await ui.search({ query });
+  const project = new URLSearchParams(state.base.split("?")[1] || "").get("project") || "";
+  if (project) ui.setProject(project);
+  if (query && epoch === state.screen) await ui.search({ query, project });
 }
 // The shell keeps one dock and one pane across header refreshes. Only the pane's
 // successful visible reads advance seen ids; closed polling merely accumulates rows.

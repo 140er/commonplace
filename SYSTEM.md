@@ -1810,3 +1810,9 @@ private wings. The notice uses the actual filed destination after write-wing
 pinning; readable shared or inbox saves do not carry that notice. A save that
 succeeds privately but fails to link to a card includes the same notice in its
 saved-but-not-linked error.
+
+### Memory map mode and private visibility
+
+Memory offers a Map mode from the workspace view or a Space's project-filtered Memory link. It reuses the existing canvas controller, theme/week filters, Map/Themes/People layouts and source side panel. A server-side theme parameter scopes acquisition before counts and limits. Navigation disposes the canvas and stale requests cannot reopen it.
+
+For person sessions, only a current workspace-owner role read from the control database permits private data in map graph or selection responses. Missing or failed role proof hides private wings, private drawer metadata, private/secret fact relationships and private linked cards. Hidden data yields the same graph as absent data. Members may lose their own private memories in the map until per-user ownership is available; a short non-owner notice states this. Connection scopes, policy objects and other Memory reads keep their existing behavior.

@@ -240,6 +240,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The Memory route contract documents server-side theme selection and the map-only person ownership boundary.
+
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -562,6 +564,8 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - Executable map reachability/mounting and person-session privacy regressions, with owner controls, current-role faults and hidden-versus-absent graph equality.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -1519,6 +1523,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Health-flagged notes remain private. HTTP and MCP saves explicitly tell an unreadable author that the note was saved privately and cannot be read for now.
 
+  - Map graph and selection reads exclude private wings, private drawer metadata, private/secret facts and private linked cards for person sessions without current control-database workspace-owner proof. Counts and limits follow exclusion; policies and other Memory reads are unchanged.
+
   - Owner memory maps retain readable person relationships when a citation cannot be proved.
 
   - Owner HTTP progress always forwards the authenticated principal, returns only readable progress and disables response caching.
@@ -1664,6 +1670,8 @@ Format (read by `commonplace orch docs-check`):
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
+
+  - Memory has one Map mode control, reached workspace-wide or from a Space. It reuses the seeded canvas, layouts, filters and side panel, disposes on navigation and warns non-owners that their own private memories are also hidden.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 

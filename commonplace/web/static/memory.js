@@ -1,3 +1,4 @@
+import { mountMap } from "./map.js";
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
 
@@ -138,7 +139,7 @@ export function renderMemory(state) {
   const options = (rows, selected) => rows.map(([value, label]) => `<option value="${e(value)}"${value === (selected || "") ? " selected" : ""}>${e(label)}</option>`).join("");
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";
   return `<section class="memory-search" aria-label="Memory">
-    <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="q" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
+    <button class="btn" data-memory-action="map">Map</button><form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="q" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
     <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} orchestrator`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
     ${state.errors?.length ? '<p class="memory-warning" role="alert">Some sources could not be searched. Try again for all results.</p>' : ""}
@@ -163,10 +164,11 @@ export function renderMemoryPanel({ result, destination, source, cards = [], me,
 // The shell supplies the two mounts and its dock. It owns route and header wiring.
 export function createMemory({ mount, panel, api = request, boards = [], me = {}, destination = null, dock, clipboard = globalThis.navigator?.clipboard, onSelect = () => {}, singleKeys = () => true } = {}) {
   const state = { boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
+  let mapDispose = null, mapOpen = null, mapMode = false;
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
-    if (stopped) return;
+    if (stopped || mapMode) return;
     const focused = mount.ownerDocument?.activeElement;
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
@@ -184,6 +186,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     restore?.();
   };
   async function search(filters = state.filters) {
+    mapMode = false; mapDispose?.(); mapDispose = null;
     const epoch = ++searchEpoch;
     ++sourceEpoch;
     state.filters = { ...filters };
@@ -200,6 +203,36 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       state.error = error.message;
     }
     if (!stopped && epoch === searchEpoch) { state.busy = false; draw(); }
+  }
+  async function showMap(project = state.filters.project || "") {
+    const epoch = ++searchEpoch;
+    ++sourceEpoch;
+    mapDispose?.(); mapDispose = null; mapMode = true;
+    state.filters.project = project;
+    state.selected = null;
+    if (panel) { panel.hidden = true; panel.innerHTML = ""; }
+    mount.innerHTML = `<section class="memory-view"><div class="memory-toolbar"><button class="btn" data-memory-action="list">Search</button><label class="chip">Project: <select data-map-project><option value="">All</option>${boards.map(b => `<option value="${e(b.slug)}"${b.slug === project ? " selected" : ""}>${e(name(b))}</option>`).join("")}</select></label><div class="views" role="tablist" aria-label="Layout">${["map", "themes", "people"].map((view) => `<button role="tab" data-view="${view}" aria-selected="${view === "map"}">${view[0].toUpperCase() + view.slice(1)}</button>`).join("")}</div></div>${me.can_admin === true ? "" : '<p class="memory-warning">Private memories, including your own, are hidden from this map for non-owners.</p>'}<section class="stage" id="stage" aria-label="Memory map"><canvas id="map" aria-label="Memory connections"></canvas><ul class="legend" id="legend" aria-label="Themes"></ul><div class="when" id="when"><div class="bars" id="bars"></div></div><div class="zoom"><button data-zoom="in" aria-label="Zoom in">+</button><span id="pct">100%</span><button data-zoom="out" aria-label="Zoom out">−</button><button data-zoom="fit">Fit</button></div><div class="tip" id="tip" hidden></div><p id="map-state" role="status">Loading memories…</p></section></section>`;
+    try {
+      const board = boards.find(b => b.slug === project);
+      if (project && !board?.wing) throw new Error("Project memory unavailable");
+      const graph = await api(`/api/memory/map${board ? `?${new URLSearchParams({ theme: board.wing })}` : ""}`);
+      if (stopped || epoch !== searchEpoch) return;
+      mount.querySelector("#map-state").textContent = graph.nodes.length ? "" : "No memories";
+      mapOpen = async (node) => {
+        const selectedEpoch = ++sourceEpoch;
+        if (panel) { panel.hidden = false; panel.innerHTML = `<p role="status">Loading…</p>`; }
+        try {
+          const memory = node.kind === "memory" ? await api(`/api/memory/${enc(node.id)}?${new URLSearchParams({ view: "map", ...(board ? { theme: board.wing } : {}) })}`) : null;
+          if (stopped || epoch !== searchEpoch || selectedEpoch !== sourceEpoch) return;
+          const linked = graph.links.filter(l => l.source === node.id || l.target === node.id);
+          const neighbours = graph.nodes.filter(n => n.id !== node.id && linked.some(l => l.source === n.id || l.target === n.id));
+          if (panel) panel.innerHTML = `<section class="memory-panel"><header class="ctx-head"><h2>${e(node.kind)}</h2><button class="btn" data-memory-action="map-hide">Hide</button></header><div class="ctx-body"><h3>${e(node.label)}</h3>${memory ? `<p class="msg-b">${exact(memory.text)}</p><p>${e(memory.author)} · ${e(memory.at)}</p>${memory.cards.map(c => `<p><a href="#/card/${c.number}">${e(c.title)}</a></p>`).join("")}` : `${linked.filter(l => l.kind === "fact").map(l => `<p>${e(l.label)}</p>`).join("")}${neighbours.map(n => `<p><button class="btn" data-memory-action="map-node" data-node="${e(n.id)}">${e(n.label)}</button></p>`).join("")}${node.kind === "card" ? `<a href="#/card/${Number(node.id.replace("card:", ""))}">Open card</a>` : ""}`}</div></section>`;
+        } catch { if (!stopped && epoch === searchEpoch && selectedEpoch === sourceEpoch && panel) panel.innerHTML = '<p role="alert">Memory could not be opened.</p>'; }
+      };
+      mapDispose = mountMap(mount, graph, mapOpen);
+    } catch {
+      if (!stopped && epoch === searchEpoch) mount.querySelector("#map-state").innerHTML = 'Map could not be loaded. <button class="btn" data-memory-action="map">Try again</button>';
+    }
   }
   async function select(result) {
     const epoch = ++sourceEpoch;
@@ -266,7 +299,11 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     if (!button) return;
     const kind = button.dataset.memoryAction;
     if (kind === "chat") { event.preventDefault(); event.stopPropagation(); }
-    if (kind === "retry") void search();
+    if (kind === "map") void showMap(mount.querySelector("[name=project]")?.value || state.filters.project || "");
+    else if (kind === "list") { ++searchEpoch; ++sourceEpoch; mapMode = false; mapDispose?.(); mapDispose = null; state.selected = null; draw(); }
+    else if (kind === "map-node") { const node = mapDispose?.graph.nodes.find(n => n.id === button.dataset.node); if (node) void mapOpen(node); }
+    else if (kind === "map-hide") { ++sourceEpoch; if (panel) panel.hidden = true; }
+    else if (kind === "retry") void search();
     else if (kind === "clear") void search({ query: state.filters.query });
     else void action(button.dataset.memoryPost ? "post" : kind, button.dataset.memoryPost);
   }
@@ -278,10 +315,12 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     } else if (form.matches("[data-memory-link]")) { event.preventDefault(); void action("link-note", new FormData(form).get("card")); }
   }
   function change(event) {
+    if (event.target.matches?.("[data-map-project]")) { void showMap(event.target.value); return; }
     const form = event.target.closest("[data-memory-search]");
     if (form && event.target.tagName === "SELECT" && form.elements.q.value.trim()) void search(Object.fromEntries(new FormData(form)));
   }
   function keydown(event) {
+    if (mapMode) return;
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.target.closest("input, textarea, select, [contenteditable]")) return;
     const letter = event.key.toLowerCase();
     if (letter.length === 1 && !singleKeys()) return;
@@ -299,11 +338,12 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   draw();
   return {
-    search, select, openInChat, backToSource,
+    search, select, openInChat, backToSource, showMap,
+    setProject(project) { state.filters.project = project; draw(); },
     setDestination(board) { state.destination = board; state.linking = false; draw(); },
     restoreSource() { if (state.selected && returnKey === key(state.selected)) backToSource(); },
     stop() {
-      stopped = true; ++searchEpoch; ++sourceEpoch;
+      stopped = true; ++searchEpoch; ++sourceEpoch; mapDispose?.(); mapDispose = null;
       for (const node of new Set([mount, panel].filter(Boolean))) {
         node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);
       }

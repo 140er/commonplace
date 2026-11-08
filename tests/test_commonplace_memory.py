@@ -748,3 +748,43 @@ def test_map_unproved_citation_keeps_visible_fact(case, state):  # noqa: F811
         c.col.delete(ids=[identifier])
         status, absent = c.h.raw(None, b"", method="GET", path="/api/memory/map", headers=headers)
         assert status == 200 and json.loads(absent) == body
+
+
+def test_map_theme_scope_filters_before_counts_and_limit(hub):
+    owner = hub.owner_token()
+    shared = _save(hub, owner, "visible atlas", theme="shared")
+    other = _save(hub, owner, "other project label", theme="project_other")
+    status, body = _http(hub, owner, "/api/memory/map?theme=shared&limit=1")
+    assert status == 200
+    assert [n["id"] for n in body["nodes"]] == [shared]
+    assert body["themes"] == [{"id": "shared", "label": "Shared", "count": 1}]
+    assert other not in json.dumps(body) and "other project" not in json.dumps(body)
+    scoped = _scoped(hub)
+    assert _http(hub, scoped, "/api/memory/map?theme=project_other")[0] == 403
+    assert _http(hub, scoped, "/api/memory/map?theme=shared")[1] == body
+
+
+def test_map_second_person_has_no_trace_of_private_source(case):  # noqa: F811
+    c = case
+    c.col.add(
+        ids=["visible-map", "opaque-map"],
+        documents=["Visible map words", "Opaque map label"],
+        metadatas=[
+            {"wing": "shared", "room": c.primary.id},
+            {"wing": "private_chats", "room": c.hidden.id},
+        ],
+    )
+    cookie = sessions.redeem_login_link(
+        c.h.db, sessions.create_login_link(c.h.db, "reader@example.test", c.h.workspace)
+    )
+    headers = {"Cookie": f"{sessions.COOKIE}={cookie}"}
+    status, raw = c.h.raw(None, b"", method="GET", path="/api/memory/map", headers=headers)
+    assert status == 200
+    body = json.loads(raw)
+    assert [n["id"] for n in body["nodes"]] == ["visible-map"]
+    assert body["themes"] == [{"id": "shared", "label": "Shared", "count": 1}]
+    for secret in ("opaque-map", "Opaque map label", "private_chats", c.hidden.id):
+        assert secret not in raw
+    c.col.delete(ids=["opaque-map"])
+    status, absent = c.h.raw(None, b"", method="GET", path="/api/memory/map", headers=headers)
+    assert status == 200 and json.loads(absent) == body
