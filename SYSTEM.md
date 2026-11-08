@@ -1029,6 +1029,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 ### Authenticated room and status counts
 
+- Backup pauses retain the gateway retry contract: JSON-RPC error -32603 with
+  `retry_after_s`, and an internal ToolError explaining the backup pause. Pair
+  acquisition and status diagnostics propagate that pause rather than returning
+  zero counts. Other acquisition faults retain the count-free empty response.
+
 - Authenticated `list_rooms` and `status` sum the complete authorized pair
   projection, including wing aliases and unknown loci. Wing policy and the
   current workspace thread reader both apply, including to actual owners.

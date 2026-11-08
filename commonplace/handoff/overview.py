@@ -74,6 +74,8 @@ def project(gateway, principal, workers, name, *, timeout=660.0, worker_tool=Non
     worker calls always carry the authenticated principal's workspace. A fault
     anywhere discards all pages, including sums already revalidated.
     """
+    from commonplace.gateway import WorkerPaused
+
     wings = name == "mempalace_list_wings"
     key = "wings" if wings else "taxonomy"
     empty = {key: {}}
@@ -168,12 +170,16 @@ def project(gateway, principal, workers, name, *, timeout=660.0, worker_tool=Non
                             dest[room] = dest.get(room, 0) + n
             checks.remaining(0)
             return {key: output}
+    except WorkerPaused:
+        # Preserve the gateway retry contract instead of reporting zero counts.
+        raise
     except Exception:
         return empty
 
 
 def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
     """Room/status consumers of the same complete authorized pair snapshot."""
+    from commonplace.gateway import WorkerPaused
     from mempalace.config import sanitize_name, wing_aliases
 
     if wing is not None:
@@ -245,5 +251,8 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
                 "wings": wings,
                 "rooms": rooms,
             }
+    except WorkerPaused:
+        # Preserve the gateway retry contract instead of reporting zero counts.
+        raise
     except Exception:
         return empty

@@ -82,7 +82,7 @@ Format (read by `commonplace orch docs-check`):
   - Hallway documentation distinguishes plural-room final validation from drawer scrubbing.
 
   - Hallway read documentation distinguishes display-label token proof from citation parsing, visible counts from global storage and empty-on-incomplete behavior.
-  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths.
+  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Backup pauses propagate the existing retry error rather than empty count results; pause tests cover RPC and internal status/room calls.
 
   - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
 
@@ -465,7 +465,7 @@ Format (read by `commonplace orch docs-check`):
 
   - KG search reuses the local tokenizer, selective terms and 50-seed candidate rules on a detached authorized index; deadline checks stop copy, indexing and scoring work. Scoped search requires its detached snapshot.
 
-  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths.
+  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Backup pauses propagate the existing retry error rather than empty count results; pause tests cover RPC and internal status/room calls.
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
   - Exact non-Chroma physical citation ids remain supported without document hydration.
@@ -608,7 +608,7 @@ Format (read by `commonplace orch docs-check`):
   - Readable mirror hallway regressions fail on the prior head with count/row disagreement in both stores.
 
   - Hallway regression witnesses exercise public tools with real stored thread authority.
-  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths.
+  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Backup pauses propagate the existing retry error rather than empty count results; pause tests cover RPC and internal status/room calls.
 
   - Default provenance regressions assert zero candidate work above either cap and accurate write errors with unchanged verbatim storage. Cap-sized and 1 MiB scan measurements run separately under `timing`, reporting resource budgets without gating on them.
 
@@ -893,7 +893,7 @@ Format (read by `commonplace orch docs-check`):
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
   - Hallway reads project authorized metadata before strength sorting and pagination.
-  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths.
+  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Backup pauses propagate the existing retry error rather than empty count results; pause tests cover RPC and internal status/room calls.
 
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
@@ -1326,7 +1326,7 @@ Format (read by `commonplace orch docs-check`):
   - The hallway final gate preserves readable mirror-wing rows and their visible counts after plural-room validation.
 
   - Every returned hallway string and room entry needs current authority for each independently recognized thread/private reference.
-  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths.
+  - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Backup pauses propagate the existing retry error rather than empty count results; pause tests cover RPC and internal status/room calls.
 
   - A dedicated strict Recall callback propagates owner-progress lookup faults; extraction retains the ordinary deny-on-fault callback.
 
