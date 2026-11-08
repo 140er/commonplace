@@ -307,7 +307,11 @@ Report installation registers recovery without resolving workspace directories.
 The first dispatcher scan recovers and migrates existing board databases without creating
 workspace directories, followed by monotonic 30-second scan deadlines independent
 of requests and webhook traffic. Source initialization is cached by database path,
-inode and SQLite schema version, read through a read-only connection each pass.
+inode and SQLite schema version. Zero-byte files are deferred without opening a
+connection; a read-only probe defers nonempty files without both base tables
+(`boards` and `tasks`). Neither case opens a write transaction or runs report
+migrations; a later pass picks up the source after its creator initializes it.
+Ready sources have their schema version read through the same read-only probe.
 Ordinary data writes preserve the cache; a new inode or a changed schema version
 triggers initialization again, including repair of dropped report tables.
 Failures are isolated per workspace and logged with exception type and stack

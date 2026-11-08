@@ -329,7 +329,20 @@ class ReportPump:
                 if not path.is_file():
                     continue
                 stat = path.stat()
+                # The creator's connect can expose the file before its WAL and
+                # schema setup. Leave that initialization entirely to it.
+                if stat.st_size == 0:
+                    continue
                 with orchestration.board_read(path.parent) as conn:
+                    tables = {
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type='table' AND name IN ('boards','tasks')"
+                        )
+                    }
+                    if tables != {"boards", "tasks"}:
+                        continue
                     schema_version = conn.execute("PRAGMA schema_version").fetchone()[0]
                 key = (path, stat.st_ino, schema_version)
                 if key not in self._initialized:

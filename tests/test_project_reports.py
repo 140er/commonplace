@@ -282,6 +282,107 @@ def test_dispatch_initializes_source_once_across_normal_passes(world, monkeypatc
     assert len(calls) == 1
 
 
+def test_dispatch_does_not_lock_source_before_wal_initialization(world, monkeypatch):
+    from commonplace.boards.store import BoardStore
+    from commonplace.projects import reports as module
+
+    w = world
+    ws = w.db.create_workspace("new-source", w.uid)
+    owner = sessions.person_principal(w.db, w.uid, ws)
+    orchestration.set_enabled(w.db, owner, True)
+    directory = Path(w.gw.supervisor.workspace_dir(ws))
+    directory.mkdir(parents=True)
+    path = directory / "boards.sqlite3"
+    # BoardStore's connect creates an empty file before its WAL pragma runs.
+    sqlite3.connect(path).close()
+    monkeypatch.setattr(w.db, "workspaces", lambda: [{"id": ws}])
+    rendezvous = Barrier(2)
+    resume = Barrier(2)
+    held = []
+    write = module.source_write
+
+    @contextmanager
+    def held_write(*args):
+        with write(*args) as conn:
+            held.append((conn.in_transaction, "BEGIN IMMEDIATE"))
+            rendezvous.wait(timeout=30)
+            resume.wait(timeout=30)
+            yield conn
+
+    monkeypatch.setattr(module, "source_write", held_write)
+
+    def scan():
+        try:
+            w.gw.project_reports.pass_once()
+        finally:
+            if not held:
+                rendezvous.wait(timeout=30)
+                resume.wait(timeout=30)
+
+    failure = None
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        scanning = pool.submit(scan)
+        rendezvous.wait(timeout=30)
+        try:
+            BoardStore(directory)
+        except sqlite3.OperationalError as exc:
+            failure = str(exc)
+        finally:
+            resume.wait(timeout=30)
+        scanning.result(timeout=30)
+    assert failure is None, f"BoardStore open failed: {failure}; pump lock: {held}"
+    # Skipping is temporary: after the creator has finished, the same pump
+    # must discover and initialize the source on its next pass.
+    assert not w.gw.project_reports._initialized
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE project_report_scan")
+    monkeypatch.setattr(module, "source_write", write)
+    w.gw.project_reports.pass_once()
+    assert any(key[0] == path.resolve() for key in w.gw.project_reports._initialized)
+
+
+@pytest.mark.parametrize("existing_tables", [(), ("boards",), ("tasks",)])
+def test_dispatch_defers_source_without_base_schema(world, monkeypatch, existing_tables):
+    from commonplace.boards.store import BoardStore
+    from commonplace.projects import reports as module
+
+    w = world
+    ws = w.db.create_workspace("partial-source", w.uid)
+    directory = Path(w.gw.supervisor.workspace_dir(ws))
+    directory.mkdir(parents=True)
+    path = directory / "boards.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE creator_marker (id INTEGER)")
+        for table in existing_tables:
+            conn.execute(f"CREATE TABLE {table} (id INTEGER)")
+    assert path.stat().st_size > 0
+    monkeypatch.setattr(w.db, "workspaces", lambda: [{"id": ws}])
+    write = module.source_write
+    writes = []
+
+    @contextmanager
+    def counted_write(*args):
+        writes.append(None)
+        with write(*args) as conn:
+            yield conn
+
+    monkeypatch.setattr(module, "source_write", counted_write)
+    w.gw.project_reports.pass_once()
+    assert not writes, "pump opened a write transaction before the base schema existed"
+    assert not w.gw.project_reports._initialized
+    with sqlite3.connect(path) as conn:
+        for table in existing_tables:
+            conn.execute(f"DROP TABLE {table}")
+    BoardStore(directory)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE project_report_scan")
+    w.gw.project_reports.pass_once()
+    assert writes
+    assert any(key[0] == path.resolve() for key in w.gw.project_reports._initialized)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT cursor FROM project_report_scan").fetchone() == (0,)
+
+
 def test_dispatch_isolates_publish_programming_error(world, monkeypatch, caplog):
     from commonplace.projects import reports as project_reports
 

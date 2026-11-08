@@ -335,6 +335,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_project_reports.py::test_gateway_install_does_not_resolve_or_create_workspaces` covers missing, forbidden and real supervisor lookups; `test_dispatch_recovers_existing_source_without_creating_workspaces` proves lazy migration, delivery, workspace isolation and one diagnostic per failed workspace pass without private workspace names, identifiers or content in formatted logs. `test_dispatch_reinitializes_changed_source` checks schema recovery through the catalog after an in-process table drop; normal-pass initialization counts have a separate regression. `test_dispatch_isolates_publish_programming_error` proves that a non-closure publication error is logged once while the same pass publishes the next workspace's report for delivery.
 
   - `tests/test_project_reports.py` uses the same public completion witnesses on the base and changed code; deterministic scans cover episode keys, publication recovery, routing isolation, retry inspection and transaction faults.
+  - Source initialization regressions hold the real report write transaction before the creator's WAL setup, require a successful BoardStore open, and verify next-pass recovery. Nonempty files missing either base table must also defer all report writes until initialization finishes.
 
   - The revoked-token socket guard observes the completed server-side 401, no body reads and no route dispatch, including a forced close before upload finishes.
   - The seat webhook replay checks actual worker completion with orchestration off and on, retains card-created notifications when enabled, and verifies message filtering and unchanged subscriptions on reconnect.
@@ -707,6 +708,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Source outboxes and observed stuck episodes, internal seat bindings, publication receipts and reserved report dispatch.
   - Report installation touches only control state; dispatcher passes resolve existing board databases without creating workspace directories, migrate sources lazily by path, inode and SQLite schema version, and isolate workspace failures, including publication ProgrammingError, with diagnostics that omit exception text and local values. Ordinary data writes retain the initialization cache; a new inode or a changed schema version triggers initialization again.
+  - Recovery skips zero-byte sources before connecting and uses a read-only base-schema probe for nonempty sources. Missing `boards` or `tasks` defers all report writes and migrations until a later pass, leaving creator initialization unblocked.
 
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
