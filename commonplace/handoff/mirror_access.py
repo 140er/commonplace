@@ -404,19 +404,21 @@ def gate(gateway, principal, rule, result):
         out.pop("total", None)
         return _filter_fact_links(out)
     if isinstance(result, dict) and isinstance(result.get("hallways"), list):
-        rows = result["hallways"]
-        if not all(
-            isinstance(row, dict) and hallway_visible(row, access, principal.policy) for row in rows
-        ):
-            # A late revocation discards the page and its counts together.
-            return {**result, "hallways": [], "count": 0, "total": 0}
-        # Hallways prove plural rooms above; generic drawer scrub expects room.
-        return _filter_fact_links({**result, "hallways": [public_row(row) for row in rows]})
+        return _gate_hallways(result, access, principal.policy)
     result = filter_room_keys(rule, result, can_read)
     cleaned = scrub(result)
     if cleaned is _DROP:
         return _dropped_result(rule, result)
     return _filter_fact_links(cleaned)
+
+
+def _gate_hallways(result, access, policy):
+    rows = result["hallways"]
+    if not all(isinstance(row, dict) and hallway_visible(row, access, policy) for row in rows):
+        # A late revocation discards the page and its counts together.
+        return {**result, "hallways": [], "count": 0, "total": 0}
+    # Hallways prove plural rooms above; generic drawer scrub expects room.
+    return _filter_fact_links({**result, "hallways": [public_row(row) for row in rows]})
 
 
 def _proved_record(node):
