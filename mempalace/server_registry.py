@@ -291,6 +291,15 @@ def write_monitor_marker(
 
     path = monitor_path(palace_path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A child may still be starting and have only the dead parent's marker.
+    # Preserve that identity when publishing the new parent's orphan state;
+    # otherwise the next cadence tick could mistake the orphan for no child.
+    orphan = live_child_record(palace_path) if state == "orphan_draining" else None
+    child_pid = getattr(child, "pid", None)
+    child_identity = getattr(child, "start_identity", None)
+    if orphan is not None:
+        child_pid = orphan.get("child_pid", orphan.get("pid"))
+        child_identity = orphan.get("child_start_identity", orphan.get("start_identity"))
     payload = {
         "pid": os.getpid(),
         "start_identity": process_identity(os.getpid()),
@@ -299,8 +308,8 @@ def write_monitor_marker(
         "port": port,
         "scheme": scheme,
         "managed": True,
-        "child_pid": getattr(child, "pid", None),
-        "child_start_identity": getattr(child, "start_identity", None),
+        "child_pid": child_pid,
+        "child_start_identity": child_identity,
     }
     atomic_write_text(path, json.dumps(payload) + "\n")
 

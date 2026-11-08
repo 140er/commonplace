@@ -249,3 +249,30 @@ def test_hub_client_recognizes_proved_refusal_without_replay(monkeypatch, matche
     with pytest.raises(ManagedHubUnavailable if matched else urllib.error.HTTPError):
         client.post({"jsonrpc": "2.0", "id": 1, "method": "ping"})
     assert calls == [True]
+
+
+def test_orphan_publication_preserves_identity_without_child_serverinfo(tmp_path, monkeypatch):
+    import json
+
+    from mempalace import server_registry
+
+    module = lifecycle()
+    identities = {11: 100, 12: 200, os.getpid(): 300}
+    monkeypatch.setattr(module, "process_identity", identities.get)
+    monkeypatch.setattr(server_registry, "server_state_dir", lambda _: tmp_path)
+    marker = {
+        "pid": 11,
+        "start_identity": 99,
+        "child_pid": 12,
+        "child_start_identity": 200,
+        "state": "starting",
+    }
+    (tmp_path / "monitor.json").write_text(json.dumps(marker))
+    for _ in range(2):
+        server_registry.write_monitor_marker("fixture", "orphan_draining")
+        published = server_registry.read_monitor_marker("fixture")
+        assert published["pid"] == os.getpid()
+        assert published["child_pid"] == 12
+        assert published["child_start_identity"] == 200
+        assert server_registry.live_child_record("fixture") == published
+        assert not (tmp_path / "serverinfo.json").exists()
