@@ -158,14 +158,15 @@ def test_budget_preserves_completed_sources(hub, runtime, monkeypatch):
 
 def test_absent_optional_tables_never_initialized(hub, runtime):
     headers = cookie(hub)
-    for table in (
-        "project_orchestrators",
-        "runner_machines",
-        "runner_connections",
-        "webhooks",
-        "orchestration_settings",
-    ):
-        hub.db._conn.execute(f'DROP TABLE "{table}"')
+    with hub.db._lock:
+        for table in (
+            "project_orchestrators",
+            "runner_machines",
+            "runner_connections",
+            "webhooks",
+            "orchestration_settings",
+        ):
+            hub.db._conn.execute(f'DROP TABLE "{table}"')
     before = logical(runtime, hub)
     data = get(hub, "runtime", headers)[1]
     assert data["orchestration"]["enabled"] is False and data["machines"]["items"] == []
