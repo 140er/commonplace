@@ -56,6 +56,7 @@ def read_associations(kind: str, identifier, expect=None):
             and len(identifier) == 2
             and all(isinstance(value, str) for value in identifier)
             and bool(identifier[0])
+            and bool(identifier[1])
         )
     else:
         valid = kind in {"drawer", "closet"} and isinstance(identifier, str) and bool(identifier)

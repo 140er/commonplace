@@ -207,7 +207,10 @@ def test_card253_s11_literal_wing(case, extra_wing):
             ],
         )
     seed(c, "source_file", RAW)
-    assert ("source_file" in fact(c)["sources"][0]) is not extra_wing
+    reads_before = len(c.reads)
+    row = fact(c)
+    assert len(c.reads) > reads_before, "kg_query did not reach the thread reader"
+    assert ("source_file" in row["sources"][0]) is not extra_wing
 
 
 def test_card253_s11_non_chroma(case, monkeypatch):
@@ -310,3 +313,36 @@ def test_card253_s11_union_revalidation(case, monkeypatch):
     monkeypatch.setattr(c.h.gateway.mediator.workers, "call_tool", changed)
     assert "source_file" not in fact(c)["sources"][0]
     assert len(reached) == 2 and "expect" in reached[1]
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("value", ["   ", "%20%20"])
+def test_card253_s11_empty_identity(case, role, value):
+    c = case
+    matches(c, [c.primary.id], raw="")
+    seed(c, "source_file", value)
+    c.calls.clear()
+    control = fact(c, role)
+    c.col.add(
+        ids=["hidden-empty"],
+        documents=["Exact stored words"],
+        metadatas=[{"wing": "shared", "room": c.hidden.id, "source_file": ""}],
+    )
+    assert c.col.get(ids=["hidden-empty"])["metadatas"][0]["source_file"] == ""
+    hidden = fact(c, role)
+    assert all("source_file" not in row["sources"][0] for row in (control, hidden)), (
+        "empty decoded identity proved citation"
+    )
+    assert hidden == control, "empty source rows changed public output"
+    assert not any(name == "read_associations" for _, name, _ in c.calls)
+
+
+@pytest.mark.parametrize("identifier", [("   ", ""), ["%20%20", ""]])
+def test_card253_s11_worker_empty_selector(monkeypatch, identifier):
+    from mempalace import mcp_server as mcp
+
+    def unexpected():
+        raise AssertionError("empty decoded selector reached backend")
+
+    monkeypatch.setattr(mcp, "_is_chroma_backend", unexpected)
+    assert mcp.read_associations("source_file", identifier) == {"associations": None}

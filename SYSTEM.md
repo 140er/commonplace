@@ -1710,6 +1710,8 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   metadata snapshot revalidates that same union before publication. Chroma selects
   the complete set of matching row ids in one SQLite snapshot, deduplicates by
   row id and decodes metadata in batches of at most 500 without hydrating documents.
+- An empty decoded identity never supplies proof: omit its citation before any
+  association worker call, and reject an empty decoded selector in the worker.
 - Zero matches, missing room proof, hidden matches, changed descriptors, expired
   deadlines and unavailable snapshots omit only the citation. Generic backends
   without a complete snapshot cannot supply proof. Basenames, prefixes, filesystem
@@ -1727,8 +1729,10 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   (mixed means omit). This is an explicit exception to hidden-present/absent
   output equality, including literal-wing readers; it grants no read permission.
 - Proof results are memoized by kind and concrete selector within one response;
-  already scrubbed rows are not scrubbed twice. A later request obtains fresh
-  proof. The union rule applies to token-free source_file values only; token-bearing
+  already scrubbed rows are not scrubbed twice. A revocation after a selector's
+  first proof is not observed by later citations with that selector in the same
+  response; this window is accepted under the response-local cache contract.
+  A later request obtains fresh proof. The union rule applies to token-free source_file values only; token-bearing
   values retain their existing token authorization without proving the plain remainder.
 
 ## Person private-read containment

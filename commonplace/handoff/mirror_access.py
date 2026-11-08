@@ -258,7 +258,7 @@ def scrub_provenance(node, access):
             access.reference(t) for t in parsed.tokens
         )
         if allowed and key == "source_file" and not parsed.tokens:
-            allowed = access.association("source_file", (value, parsed.text))
+            allowed = bool(parsed.text) and access.association("source_file", (value, parsed.text))
         if allowed and key in {"source_drawer_id", "source_closet"}:
             allowed = access.association(
                 "drawer" if key == "source_drawer_id" else "closet", parsed.text
