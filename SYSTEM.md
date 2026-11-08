@@ -1716,7 +1716,22 @@ webhooks: boardless events require every-wing access, and board events require
 a readable active board (space messages retain coordinator checks). Their feed
 and cursor are projected onto visible events, so private activity produces no
 sequence gaps, cursor increments or labels. Members consequently lose boardless
-live Memory refresh signals. Owner feeds retain their original ordered log.
+live Memory refresh signals. Card and board linked-memory state can remain stale
+until the next board event or an explicit refresh. Owner feeds retain their
+original ordered log.
+
+Each member poll snapshots readable active boards once and filters a bounded
+SQL page against that set. The opaque epoch hashes the member role and readable
+board identities, never hidden activity. A missing or changed epoch, or a cursor
+above the projected latest, returns `reset: true` without replaying events. The
+app refetches the open screen, including an open card, before adopting the reset
+cursor and epoch. Ordinary pages advance only through returned events.
+
+Non-owner webhook deliveries receive a durable subscription-local ordinal for
+payload id, seq and exposed event_seq. Only admitted events allocate an ordinal;
+retries and reconciliation retain it. Raw workspace event keys remain internal
+for deduplication. Owner subscriptions retain raw event numbering. Delivery
+reauthorization also prevents queued owner numbering escaping after demotion.
 
 Writes into unreadable private wings remain allowed, but duplicate drawer
 retries return the same successful shape as fresh writes. Replay fields and
@@ -1730,10 +1745,13 @@ Token issuance refuses private read scope for a holder who is not a workspace
 owner. PAT, durable subscription connection and OAuth authentication strip both
 private read and admin scopes unless current membership is exactly owner;
 missing membership rejects authentication. Stored policies are not rewritten.
+Member PATs minted earlier with private:read silently lose it when loaded.
 
 Health-flagged member notes are always saved privately when private writing is
 allowed; they are never redirected to shared storage. The successful HTTP save
 response includes a notice, and the MCP save text states: "Saved privately. You
 cannot read this note for now." This also applies to other saves into unreadable
 private wings. The notice uses the actual filed destination after write-wing
-pinning; readable shared or inbox saves do not carry that notice.
+pinning; readable shared or inbox saves do not carry that notice. A save that
+succeeds privately but fails to link to a card includes the same notice in its
+saved-but-not-linked error.

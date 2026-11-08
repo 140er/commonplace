@@ -48,7 +48,10 @@ def test_event_feed_hides_private_events_and_cursor(world):
     shared = events.emit(
         w.hub.db, w.hub.workspace, "card.updated", data={"board": "visible", "title": SHARED}
     )
-    before = w.http(w.member, "/api/events?after=0")
+    initial = w.http(w.member, "/api/events?after=0")[1]
+    epoch = initial.get("epoch", "")
+    path = f"/api/events?after=0&epoch={epoch}"
+    before = w.http(w.member, path)
     assert before[0] == 200 and SHARED in json.dumps(before)
     cursor = before[1]["seq"]
     w.insert_private()
@@ -57,13 +60,14 @@ def test_event_feed_hides_private_events_and_cursor(world):
     )
     owner_feed = w.http(w.owner, "/api/events?after=0")
     assert PRIVATE_ID in json.dumps(owner_feed) and PRIVATE in json.dumps(owner_feed)
-    after = w.http(w.member, "/api/events?after=0")
+    after = w.http(w.member, path)
     assert after == before, "hidden events changed the member feed or cursor"
-    assert w.http(w.member, f"/api/events?after={cursor}") == (200, {"events": [], "seq": cursor})
+    empty = w.http(w.member, f"/api/events?after={cursor}&epoch={epoch}")
+    assert empty[0] == 200 and empty[1]["events"] == [] and empty[1]["seq"] == cursor
     events.emit(
         w.hub.db, w.hub.workspace, "card.updated", data={"board": "visible", "title": "next shared"}
     )
-    page = w.http(w.member, f"/api/events?after={cursor}")[1]
+    page = w.http(w.member, f"/api/events?after={cursor}&epoch={epoch}")[1]
     assert page["seq"] == cursor + 1
     assert len(page["events"]) == 1 and page["events"][0]["seq"] == cursor + 1
     assert shared["seq"] > 0

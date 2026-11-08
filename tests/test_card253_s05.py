@@ -11,7 +11,12 @@ import pytest
 
 from commonplace.gateway import _tool_result
 from commonplace.handoff.models import ThreadMessage
-from tests._commonplace_helpers import functional_worker_transport, hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (  # noqa: F401
+    assert_member_drawer_access,
+    functional_worker_transport,
+    hub_fixture,
+    shared_readers,
+)
 
 TOOLS = [
     "mempalace_traverse",
@@ -704,3 +709,16 @@ def test_card253_s05_r3_compact_zero_guard(world, functional_worker_transport, f
 @pytest.mark.parametrize("value", [True, False])
 def test_card253_s05_r3_chroma_bool_guard(world, functional_worker_transport, field, value):
     test_card253_s05_r3_native_loci(world, functional_worker_transport, field, value)
+
+
+@pytest.mark.parametrize("kind", ["wildcard", "literal"])
+def test_member_shared_reader_contract(hub, shared_readers, kind):
+    principal = hub.db.authenticate_token(shared_readers[kind])
+    assert principal.role == "member" and not principal.person
+    assert not principal.policy.sees_all_wings
+    assert not principal.policy.has_scope("private:read")
+    assert principal.policy.can_read_wing("wing_fixture")
+    assert principal.policy.can_read_wing("shared")
+    assert not principal.policy.can_read_wing("private_notes")
+    assert not principal.policy.can_read_wing("private_chats")
+    assert_member_drawer_access(hub, shared_readers[kind])

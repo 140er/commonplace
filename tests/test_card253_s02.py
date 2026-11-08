@@ -10,8 +10,10 @@ from commonplace.gateway import (
 )
 from commonplace.handoff.models import ThreadMessage
 from tests._commonplace_helpers import (  # noqa: F401
+    assert_member_drawer_access,
     functional_worker_transport,
     hub_fixture,
+    shared_readers,
 )
 
 TOOLS = ["mempalace_status", "mempalace_list_rooms", "mempalace_get_taxonomy"]
@@ -802,3 +804,16 @@ def test_card253_s02_r2_gate_boundary(world, monkeypatch):
     assert calls[-1][1]["metadata"]["source_file"] == 42
     assert "source_file" not in drawer["metadata"]
     assert {name for name, _ in calls} == {"tunnel", "drawer"}
+
+
+@pytest.mark.parametrize("kind", ["wildcard", "literal"])
+def test_member_shared_reader_contract(hub, shared_readers, kind):  # noqa: F811
+    principal = hub.db.authenticate_token(shared_readers[kind])
+    assert principal.role == "member" and not principal.person
+    assert not principal.policy.sees_all_wings
+    assert not principal.policy.has_scope("private:read")
+    assert principal.policy.can_read_wing("wing_fixture")
+    assert principal.policy.can_read_wing("shared")
+    assert not principal.policy.can_read_wing("private_notes")
+    assert not principal.policy.can_read_wing("private_chats")
+    assert_member_drawer_access(hub, shared_readers[kind])

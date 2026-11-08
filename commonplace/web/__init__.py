@@ -174,30 +174,16 @@ def install(gateway):
         except ValueError:
             send_json(h, 400, {"error": "Invalid event cursor"})
             return
-        # The snapshot and read share the lock. The contract's seq is the latest
-        # sequence, so return every unread event rather than skipping a batch.
+        if principal.person and principal.role != "owner":
+            send_json(
+                h,
+                200,
+                events.member_page(gateway.db, gateway, principal, seq, query(h).get("epoch", "")),
+            )
+            return
         with gateway.db._lock:
             latest = events.latest_seq(gateway.db, principal.workspace_id)
-            if principal.person and principal.role != "owner":
-                from commonplace.webhooks import can_receive_event
-
-                # A raw cursor or gaps in event seq would count hidden events.
-                # Project both the feed and its cursor into the readable log.
-                visible = [
-                    event
-                    for event in events.after(gateway.db, principal.workspace_id, 0, latest or 1)
-                    if can_receive_event(gateway.db, gateway, principal, event)
-                ]
-                latest = len(visible)
-                batch = [
-                    {**event, "seq": index}
-                    for index, event in enumerate(visible, 1)
-                    if index > min(seq, latest)
-                ]
-            else:
-                batch = events.after(
-                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
-                )
+            batch = events.after(gateway.db, principal.workspace_id, min(seq, latest), latest or 1)
         send_json(h, 200, {"events": batch, "seq": latest})
 
     def connections(h):

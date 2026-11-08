@@ -8,7 +8,12 @@ import pytest
 
 from commonplace.handoff.models import ThreadMessage
 from mempalace import mcp_server as _mcp
-from tests._commonplace_helpers import functional_worker_transport, hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (  # noqa: F401
+    assert_member_drawer_access,
+    functional_worker_transport,
+    hub_fixture,
+    shared_readers,
+)
 
 _GET_KG = _mcp._get_kg
 
@@ -21,7 +26,7 @@ TOOLS = [
 
 
 @pytest.fixture
-def world(hub, monkeypatch, tmp_path, request):
+def world(hub, monkeypatch, tmp_path, request, shared_readers):  # noqa: F811
     from mempalace import mcp_server as mcp
 
     # The shared hub replaces _get_kg with one graph. Exercise the production
@@ -104,6 +109,7 @@ def world(hub, monkeypatch, tmp_path, request):
         readable=readable,
         hidden=hidden,
         tokens=tokens,
+        member_tokens=shared_readers,
         patch=monkeypatch,
     )
     hub.gateway.handoff.close()
@@ -955,10 +961,10 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
     principal = (
         sessions.person_principal(w.h.db, w.h.admin, w.h.workspace)
         if kind == "owner"
-        else w.h.db.authenticate_token(w.tokens["A"])
+        else w.h.db.authenticate_token(w.member_tokens["wildcard"])
     )
-    assert principal.policy.sees_all_wings
-    assert principal.role == "owner" and principal.person == (kind == "owner")
+    assert principal.policy.sees_all_wings == (kind == "owner")
+    assert (principal.role == "owner") == (kind == "owner")
     assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
 
     def request():
@@ -978,7 +984,10 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
         else _tool_response(700, {"error": "wings must be a list of names"})
     )
     present = request()
-    assert present == expected, "blank wing replaced develop's validation error with Denied"
+    if kind == "wildcard":
+        assert present.get("result", {}).get("isError"), "unreadable blank wing was accepted"
+    else:
+        assert present == expected, "blank wing replaced the validation error"
     remove_hidden(w)
     assert request() == present, "hidden facts changed blank-wing validation"
 
@@ -1004,10 +1013,10 @@ def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
     principal = (
         sessions.person_principal(w.h.db, w.h.admin, w.h.workspace)
         if kind == "owner"
-        else w.h.db.authenticate_token(w.tokens["A"])
+        else w.h.db.authenticate_token(w.member_tokens["wildcard"])
     )
-    assert principal.policy.sees_all_wings
-    assert principal.role == "owner" and principal.person == (kind == "owner")
+    assert principal.policy.sees_all_wings == (kind == "owner")
+    assert (principal.role == "owner") == (kind == "owner")
     assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
 
     def request():
@@ -1022,7 +1031,9 @@ def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
         )
 
     present = request()
-    if args["entity"] is None:
+    if kind == "wildcard":
+        assert present.get("result", {}).get("isError"), "unreadable empty wing was accepted"
+    elif args["entity"] is None:
         assert present == {
             "jsonrpc": "2.0",
             "id": 701,
@@ -1087,3 +1098,16 @@ def test_card253_s07_r7_canonical_empty_hidden_fact(kgworld, kind):
     )
     remove_hidden(w)
     assert request() == present, "canonical-empty H-only fact changed the public response"
+
+
+@pytest.mark.parametrize("kind", ["wildcard", "literal"])
+def test_member_shared_reader_contract(hub, shared_readers, kind):  # noqa: F811
+    principal = hub.db.authenticate_token(shared_readers[kind])
+    assert principal.role == "member" and not principal.person
+    assert not principal.policy.sees_all_wings
+    assert not principal.policy.has_scope("private:read")
+    assert principal.policy.can_read_wing("wing_fixture")
+    assert principal.policy.can_read_wing("shared")
+    assert not principal.policy.can_read_wing("private_notes")
+    assert not principal.policy.can_read_wing("private_chats")
+    assert_member_drawer_access(hub, shared_readers[kind])

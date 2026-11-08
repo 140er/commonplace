@@ -15,8 +15,10 @@ from commonplace.gateway import (
 from commonplace.handoff.models import ThreadMessage
 from commonplace.rules import checks
 from tests._commonplace_helpers import (  # noqa: F401
+    assert_member_drawer_access,
     functional_worker_transport,
     hub_fixture,
+    shared_readers,
 )
 
 TOOLS = ["mempalace_list_wings", "mempalace_get_taxonomy", "mempalace_search"]
@@ -726,3 +728,16 @@ def test_r12_ordinary_thr_prefix_room_stays_visible(world, tool):
         assert reply == {"wings": {"wing_notes": 1}}
     else:
         assert reply == {"taxonomy": {"wing_notes": {"thr_notes": 1}}}
+
+
+@pytest.mark.parametrize("kind", ["wildcard", "literal"])
+def test_member_shared_reader_contract(hub, shared_readers, kind):  # noqa: F811
+    principal = hub.db.authenticate_token(shared_readers[kind])
+    assert principal.role == "member" and not principal.person
+    assert not principal.policy.sees_all_wings
+    assert not principal.policy.has_scope("private:read")
+    assert principal.policy.can_read_wing("wing_fixture")
+    assert principal.policy.can_read_wing("shared")
+    assert not principal.policy.can_read_wing("private_notes")
+    assert not principal.policy.can_read_wing("private_chats")
+    assert_member_drawer_access(hub, shared_readers[kind])

@@ -582,6 +582,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Restricted event regressions cover subscription-local numbering, readable-set resets, cursor recovery and saved-but-unlinked notices. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
+
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
@@ -1070,6 +1072,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection; subscription ordinals hide workspace event gaps while raw keys remain internal for replay deduplication.
+
   - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
@@ -1491,6 +1495,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Saved-but-unlinked private notes retain their unreadable-author notice in the error response.
+
   - Health-flagged notes remain private. HTTP and MCP saves explicitly tell an unreadable author that the note was saved privately and cannot be read for now.
 
   - Owner memory maps retain readable person relationships when a citation cannot be proved.
@@ -1632,6 +1638,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor.
 
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses or sequence gaps.
 

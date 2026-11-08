@@ -304,6 +304,12 @@ def _save(ctx, args):
     )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
+    saved_wing = result.get("wing") or theme
+    notice = (
+        "Saved privately. You cannot read this note for now."
+        if is_private_wing(saved_wing) and not ctx.principal.policy.can_read_wing(saved_wing)
+        else ""
+    )
     if task is not None:
         try:
             _link(ctx, memory_id, task, store)
@@ -311,13 +317,8 @@ def _save(ctx, args):
             # The memory is stored: say so, so the agent doesn't save it again.
             raise ToolError(
                 f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
+                + (f"\n{notice}" if notice else "")
             ) from None
-    saved_wing = result.get("wing") or theme
-    notice = (
-        "Saved privately. You cannot read this note for now."
-        if is_private_wing(saved_wing) and not ctx.principal.policy.can_read_wing(saved_wing)
-        else ""
-    )
     return memory_id, task, notice
 
 

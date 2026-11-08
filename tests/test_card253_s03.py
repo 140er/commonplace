@@ -8,7 +8,12 @@ import pytest
 from commonplace import sessions
 from commonplace.gateway import WorkerClient
 from commonplace.handoff.models import ThreadMessage
-from tests._commonplace_helpers import functional_worker_transport, hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (  # noqa: F401
+    assert_member_drawer_access,
+    functional_worker_transport,
+    hub_fixture,
+    shared_readers,
+)
 
 TOOL = "mempalace_list_hallways"
 
@@ -580,3 +585,16 @@ def test_card253_s03_all_public_strings(world, monkeypatch, backend, field):
         "offset": 0,
         "limit": 10,
     }
+
+
+@pytest.mark.parametrize("kind", ["wildcard", "literal"])
+def test_member_shared_reader_contract(hub, shared_readers, kind):  # noqa: F811
+    principal = hub.db.authenticate_token(shared_readers[kind])
+    assert principal.role == "member" and not principal.person
+    assert not principal.policy.sees_all_wings
+    assert not principal.policy.has_scope("private:read")
+    assert principal.policy.can_read_wing("wing_fixture")
+    assert principal.policy.can_read_wing("shared")
+    assert not principal.policy.can_read_wing("private_notes")
+    assert not principal.policy.can_read_wing("private_chats")
+    assert_member_drawer_access(hub, shared_readers[kind])
