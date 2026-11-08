@@ -312,6 +312,7 @@ Format (read by `commonplace orch docs-check`):
   - Owner progress fault regressions traverse the real wired Recall authority in paired hidden/absent worlds.
 
   - Progress witnesses compare authenticated hidden-present and hidden-absent worlds through the real scheduler and successful-write path in both store formats.
+  - `tests/test_settings_load.py` drives fixed timers through production Settings reads, Retry and saved-state reloads, including fetch/body stalls, HTTP/network/JSON failures and contended orchestration reads.
 
   - Safety tests run identically on a pinned base and implementation; server import and low-level persistence remain covered.
   - Card schema regressions cover missing gateways, missing control databases and unexpected settings read failures.
@@ -698,6 +699,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Orchestration settings reads wait at most one second for the shared control lock, then return the existing retryable `settings_unavailable` refusal without reading an unlocked connection.
+
   - Connect recommends a board-scoped subscription to `space_message` and `card.moved`, retaining `card.created` with orchestration enabled, without creating or modifying webhooks.
   - The opt-in inbox excludes children and coordinator roots, exposes keyed children, and accepts first-wins split markers only from the coordinator or signed-in owner.
 
@@ -949,6 +952,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
 
   - Imported-history consent: The owner form offers independent unticked import and reader checkboxes and displays reader authority beside Revoke.
   - The Connect checklist renders the supplied webhook event recommendation, including card moves and optional card creation, with escaped values.
