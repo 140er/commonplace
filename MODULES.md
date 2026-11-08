@@ -29,6 +29,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `SYSTEM.md`, `MODULES.md`
 - **Owns:**
 
+  - The exact instance authority, packaged identity and opt-in receipt/mount residual contracts.
+
   - Admin card navigation restores a regular base, inventory counts match joined rows, and Retry retains the failed page mode and cursor.
 
   - The Admin runtime, effective-cap and attention read contracts, bounded RO sources and current partial-rollout residuals.
@@ -222,6 +224,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
+
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
 
 
@@ -269,10 +273,10 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
-  - Safe errors and missing optional sources remain distinct from measured zeros; deployment/backups remain deferred.
+  - Safe errors and missing optional sources remain distinct from measured zeros; missing operational records remain unknown.
 
 
-  - Later operational sections remain unavailable until their authority and status producers ship; public docs contain no operator configuration or credential material.
+  - Operational sections use the exact server admin predicate; public docs contain no operator configuration or credential material.
 
 
   - Updating installed files alone leaves an old running process unaffected.
@@ -326,6 +330,8 @@ Format (read by `commonplace orch docs-check`):
   - Container images, compose files, example reverse-proxy and service units, and the nightly backup wrappers.
 
 - **Promises:**
+
+  - Build SHA is validated package data; optional same-source RO/RW receipt binds forbid auto-creation. Gateway uses RO; only snapshot exec overrides to RW. Shared-namespace RW visibility remains explicit. Synthetic mount and package-install smoke verify the contract.
 
   - Images run the gateway as an unprivileged user on a mounted data directory; examples hold placeholders, never real hosts or secrets; deploy holds an active transient unit reference through fresh invocation, snapshot and backup verification, then releases it, including on trapped exits.
 
@@ -783,6 +789,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_card253_s12.py` covers strict store/private-reader failures, ordinary deny-on-fault compatibility and second-pass enumeration failure.
 
   - `tests/test_card253_s12.py` covers owner progress isolation, current read authority, quota causality, incomplete proof and bounded metadata polling.
+  - test_admin_instance_api.py, test_admin_instance_ui.py, admin_instance_ui.mjs and test_backup_status.py provide nine operational regression rows using fixed clocks, explicit fake timers, hostile files and synthetic CLI/hook fixtures. test_admin_instance_controls.py checks no writes, deadlines and build propagation; real-browser Admin acceptance retains owner/mobile boundaries.
+
   - Baseline-pass gateway and route-disposal controls accompany count/list, card-navigation and cursor-retry regressions; individual mutations prove sensitivity without counting setup failures.
 
   - test_admin_runtime_api.py and test_admin_runtime_ui.py are the twelve-row proof; test_admin_runtime_controls.py covers independent list cursors, absent tables, workspace filtering and completed-source survival.
@@ -965,6 +973,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
+  - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.
 
   - Serve always closes its control database on exit, including SIGTERM unwind, releasing owned resources through pre-close callbacks.
 
@@ -1484,12 +1493,14 @@ Format (read by `commonplace orch docs-check`):
 
 ## backup-and-encryption
 
-- **Paths:** `commonplace/backup.py`, `commonplace/backup_online.py`, `commonplace/backup_supervisor.py`, `commonplace/backup_pause.py`, `commonplace/admission.py`, `commonplace/workspace_encryption.py`
+- **Paths:** `commonplace/backup_status.py`, `commonplace/backup.py`, `commonplace/backup_online.py`, `commonplace/backup_supervisor.py`, `commonplace/backup_pause.py`, `commonplace/admission.py`, `commonplace/workspace_encryption.py`
 - **Owns:**
 
   - Offline and online verified backups and restores of the data directory, the gateway pause socket and run fence, the admission gate for store/file creators and the successor registry, the restore marker, and opt-in workspace SQLite encryption.
 
 - **Promises:**
+
+  - backup_status.py reads fixed no-follow/nonblocking regular files up to 16 KiB with strict schema. CLI-only 0600 atomic publication never changes snapshot/fence outcomes; SIGKILL may retain prior receipt and upload is unverified. test_backup_status.py covers privacy and atomic faults.
 
   - A backup copies every SQLite file with a manifest; an online backup runs beside the serving gateway without stopping or replacing it and publishes only after the run is committed.
 
@@ -1550,6 +1561,8 @@ Format (read by `commonplace orch docs-check`):
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
   - Admin validates runtime metadata, probes optional columns, filters inactive grants and preserves paginated rows with source-specific retry errors.
 
+  - Instance deploy/backups and /api/me share the exact per-request RO users.is_admin flag predicate after person-owner checks. Operational denial text is exact; deployed SHA is package data, health is independently validated, and receipt mode retries preserve siblings. test_admin_instance_api.py and test_admin_instance_ui.py cover authority, schemas, independent deadlines and disposal.
+
   - Only the exact Admin route bypasses shared refresh; leaving it disposes requests, card hashes load their requested card, joined counts match rows and Retry repeats the failed page.
 
   - Uses generation-aware encrypted RO board/runner reads and workspace-scoped control SELECTs only; injected UTC/monotonic clocks, query-only connections, short busy bounds and progress interrupts apply to all new sources. No store, seat or subscription initialization or application lock; pagination is list-bound and deduplicated.
@@ -1582,10 +1595,10 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
-  - Runtime suberrors preserve completed sibling facts; needs-me and stuck settle independently. Only deployment/health and backups remain later work. Missing optional data stays absent and corrupt sources return safe errors.
+  - Runtime suberrors preserve completed sibling facts; needs-me and stuck settle independently. Deployment/health and backup receipts have independent subpanels. Missing optional data stays absent and corrupt sources return safe errors.
 
 
-  - Safe source errors remain local to one section; session expiry/disposal clears data and pending generations. Deployment/health and backups are labeled as later work with no requests; token contact is not liveness.
+  - Safe source errors remain local to one section; session expiry/disposal clears data and pending generations. Ineligible operational sections send no requests; token contact is not liveness.
 
 
   - Rendering errors surface in the browser; the server state is unaffected.
