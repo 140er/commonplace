@@ -360,10 +360,10 @@ Format (read by `commonplace orch docs-check`):
 
 ## tests
 
-- Sign-out regression covers absent and active Admin controllers; the installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
-
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
 
   - Synthetic Admin HTTP inventories and served-asset Node contracts, with assertion-only pinned-base RED evidence and identical selected head GREEN nodes.
 
@@ -1158,7 +1158,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Sign-out and expiry stop an existing Admin controller and tolerate teardown before its binding is available.
+  - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 

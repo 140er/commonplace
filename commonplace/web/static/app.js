@@ -965,7 +965,7 @@ function mountWorkbenchChat() {
 // The signed-in user's seen ids live on the device: clear them on sign-out and session expiry
 // even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
-  if (typeof adminUI !== "undefined") adminUI?.stop();
+  adminUI?.stop();
   const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
   if (user) clearSeen(user);
   chatUI?.clearUnsent();
@@ -1300,7 +1300,7 @@ async function route() {
     state.base = resolveRoute("#/", { boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
-  if (previousBase === "#/admin" && typeof adminUI !== "undefined") adminUI?.stop();
+  if (previousBase === "#/admin") adminUI?.stop();
   if (previousBase === "#/console" && state.base !== "#/console") consoleUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
@@ -1757,9 +1757,9 @@ async function poll() {
   }
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
-document.addEventListener("session-expired", () => { if (typeof adminUI !== "undefined") adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
+document.addEventListener("session-expired", () => { adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { if (typeof adminUI !== "undefined") adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {

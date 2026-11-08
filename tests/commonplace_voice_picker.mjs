@@ -195,7 +195,7 @@ function bootFixture() {
   let resolveStatus;
   const pendingStatus = new Promise((resolve) => { resolveStatus = resolve; });
   const context = {
-    document, state, Event, boundedRequest, timer: null, clearTimeout() {},
+    document, state, Event, boundedRequest, adminUI: null, timer: null, clearTimeout() {},
     fetch: async (path) => path === "/api/voice" ? pendingStatus : { ok: true, status: 200, json: async () => ({ people: {} }) },
     shell() { calls.push("shell"); },
     async route() { calls.push("route"); },

@@ -34,7 +34,7 @@ const api = async (path, options) => {
   if (path.endsWith('/status')) return {orchestrator: {visible: false, last_seen: 'private'}};
   return {me: {user: 'maya'}, board: selectedBoard.slug, messages: rows, replies, cursor: messageCursor, reply_cursor: replyCursor};
 };
-const context = {state, root, e, enc: encodeURIComponent, api, ...chatstate,
+const context = {state, root, e, enc: encodeURIComponent, api, adminUI: null, ...chatstate,
   seenStore: (user, slug) => chatstate.seenStore(user, slug, storageAPI), clearSeen: (user) => chatstate.clearSeen(user, storageAPI),
   currentBoard: () => selectedBoard, singleKeysEnabled: () => true, chatUI: null,
   createChat: (options) => {chatOptions = options; creates++; return pane;},
