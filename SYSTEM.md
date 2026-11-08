@@ -334,6 +334,9 @@ not a guarantee to undo arbitrary external memory side effects after a lesson.
 Existing raw event emission can still fail after the board commit.
 
 Report installation registers recovery without resolving workspace directories.
+Recovery installs the report reset trigger only when all watched task columns
+exist; BoardStore installs it after migrating legacy task columns. This prevents
+missing-column trigger failures in task writes before that migration.
 The first dispatcher scan recovers and migrates existing board databases without creating
 workspace directories, followed by monotonic 30-second scan deadlines independent
 of requests and webhook traffic. Source initialization is cached by database path,

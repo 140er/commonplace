@@ -227,7 +227,13 @@ def test_legacy_columns_are_read_without_migration(hub, runtime):
     # The report dispatcher independently migrates existing sources. Stop and
     # join it before constructing a legacy schema for the Admin no-write check.
     webhooks.stop(hub.gateway)
-    assert not hub.gateway.webhooks.thread.is_alive()
+    assert not hub.gateway.webhooks.thread.is_alive(), "report dispatcher did not stop within 7s"
+    # These workers can also write snapshot tables; isolate all of them.
+    for name in ("hold_worker", "chat_worker", "phone_push"):
+        worker = getattr(hub.gateway, name, None)
+        if worker is not None:
+            worker.stop()
+            assert worker.thread is None or not worker.thread.is_alive(), f"{name} did not stop"
     task(runtime, 1, claim=OLD)
     with runtime[0].connection() as conn:
         # Legacy stores predate the report trigger that references heartbeat_at.

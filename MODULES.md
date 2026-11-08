@@ -1121,6 +1121,7 @@ Format (read by `commonplace orch docs-check`):
   - Source outboxes and observed stuck episodes, internal seat bindings, publication receipts and reserved report dispatch.
   - Report installation touches only control state; dispatcher passes resolve existing board databases without creating workspace directories, migrate sources lazily by path, inode and SQLite schema version, and isolate workspace failures, including publication ProgrammingError, with diagnostics that omit exception text and local values. Ordinary data writes retain the initialization cache; a new inode or a changed schema version triggers initialization again.
   - Recovery skips zero-byte sources before connecting and uses a read-only base-schema probe for nonempty sources. Missing `boards` or `tasks` defers all report writes and migrations until a later pass, leaving creator initialization unblocked.
+  - Report source initialization installs its reset trigger only when every watched task column exists. Legacy status writes remain usable until BoardStore adds missing columns and installs the trigger; `tests/test_project_report_legacy_source.py` covers pump recovery and subsequent migration.
   - The optional read-only runner input to shared usage accounting.
 
 
