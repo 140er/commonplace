@@ -270,3 +270,21 @@ An Idempotency-Key or include_deleted query is rejected with 400
 
 Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
 new-user migration and desktop synchronization are deferred.
+
+## Instance index figures (#284)
+
+`GET /api/admin/instance/index-stats?cursor=...` requires the same server-side
+person + workspace owner + `users.is_admin=1` authority as deploy/backups.
+It returns `{workspaces: [{workspace_id, drawers, embedding_model, dimension,
+vector_count, hnsw_capacity, tombstones}], has_more, next_cursor}`; every figure
+is `{value: number|string|null, reason: null|stable_code}`. The console labels
+unknown figures with their reasons and paginates with the existing lifecycle.
+Admin `mempalace_status` returns `{index_stats: {workspace_id, ...figures}}`
+without a worker call. Non-admin status responses remain unchanged; no stats
+fields appear for member persons, tokens or ordinary workspace owners.
+
+Only read-only Chroma SQLite queries and the bounded fixed HNSW header supply
+figures. Live SQL rows are not necessarily persisted HNSW rows; vector_count
+explicitly means the SQL count. Model and tombstones remain unknown rather than
+assuming defaults or subtracting unsynchronized counts. No content, names,
+paths, tokens or thread IDs are exposed. See SYSTEM.md for bounds and reasons.

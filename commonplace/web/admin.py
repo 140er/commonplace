@@ -849,6 +849,30 @@ def instance_authorized(gateway, principal, context):
     return row is not None and row["is_admin"] == 1
 
 
+def index_stats(gateway, context, after=None):
+    from commonplace.index_stats import unknown, workspace
+
+    # Close the control snapshot before any workspace file work.
+    with read_control(gateway.db, context) as conn:
+        rows = select(
+            conn,
+            context,
+            "SELECT id,created_at FROM workspaces "
+            + ("WHERE (created_at,id)>(?,?) " if after else "")
+            + "ORDER BY created_at,id LIMIT ?",
+            (*(after or ()), PAGE_SIZE + 1),
+        ).fetchall()
+    figures = []
+    for row in rows[:PAGE_SIZE]:
+        values = (
+            unknown("read_timeout")
+            if context.clock.monotonic() >= context.deadline
+            else workspace(gateway, row["id"])
+        )
+        figures.append({"workspace_id": identifier(row["id"]), **values})
+    return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
+
+
 def deploy(context):
     from commonplace import __version__ as commonplace_version
     from mempalace.version import __version__ as mempalace_version
@@ -935,7 +959,7 @@ def install(gateway):
         if principal is None:
             return
         parts = path_parts(h, "/api/admin/instance/")
-        if len(parts) != 1 or parts[0] not in ("deploy", "backups"):
+        if len(parts) != 1 or parts[0] not in ("deploy", "backups", "index-stats"):
             send_json(h, 404, {"error": "not found"})
             return
         section = parts[0]
@@ -943,6 +967,19 @@ def install(gateway):
             context = ReadContext(gateway.admin_clock)
             if not instance_authorized(gateway, principal, context):
                 send_json(h, 403, {"error": INSTANCE_DENIAL})
+                return
+            if section == "index-stats":
+                try:
+                    pairs = parse_qsl(
+                        urlsplit(h.path).query, keep_blank_values=True, strict_parsing=True
+                    )
+                    if len(pairs) > 1 or any(key != "cursor" for key, _ in pairs):
+                        raise ValueError()
+                    after = cursor_key(pairs[0][1], "instance", section) if pairs else None
+                except (ValueError, TypeError):
+                    send_json(h, 400, {"error": "Invalid admin query"})
+                    return
+                send_json(h, 200, index_stats(gateway, context, after))
                 return
             if urlsplit(h.path).query:
                 send_json(h, 400, {"error": "Invalid admin query"})

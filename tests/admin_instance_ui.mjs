@@ -20,6 +20,18 @@ async function main(){
  f.req('/api/admin/instance/deploy').resolve({...deploy,commonplace_version:'<img src=x>'});await flush();
  assert.doesNotMatch(f.mount.innerHTML,/<img/);assert.match(f.mount.innerHTML,/&lt;img/);
  assert.match(f.mount.innerHTML,/Running commit unknown/);assert.match(f.mount.innerHTML,/3\.12\.0/);
+ if(process.argv[2]==='index-stats'){
+   const figure={value:null,reason:'model_not_in_sqlite'};
+   const row={workspace_id:'ws_1234567890abcdef',...Object.fromEntries(['drawers','embedding_model','dimension','vector_count','hnsw_capacity','tombstones'].map(k=>[k,figure]))};
+   f.req('/api/admin/instance/index-stats').resolve({workspaces:[row],has_more:true,next_cursor:'next'});await flush();
+   assert.match(f.mount.innerHTML,/ws_1234567890abcdef/);assert.match(f.mount.innerHTML,/model_not_in_sqlite/);
+   void f.ui.refreshSection('index-stats',{more:true});
+   assert.ok(f.req('/api/admin/instance/index-stats?cursor=next'));
+   f.req('/api/admin/instance/index-stats?cursor=next').resolve({workspaces:[{...row,workspace_id:'ws_abcdef1234567890'}],has_more:false,next_cursor:null});await flush();
+   assert.match(f.mount.innerHTML,/ws_1234567890abcdef/);assert.match(f.mount.innerHTML,/ws_abcdef1234567890/);
+   f.ui.stop();
+   const denied=fixture(false);denied.ui.show();assert.ok(!denied.req('/api/admin/instance/index-stats'));assert.doesNotMatch(denied.mount.innerHTML,/Memory index/);denied.ui.stop();return;
+ }
  if(process.argv[2].startsWith('race-')){
    const [,mode,outcome]=process.argv[2].split('-');
    f.req('/api/admin/instance/backups').resolve({online:{state:'unknown',reason:'no_record'},offline:{state:'unknown',reason:'no_record'}});await flush();
@@ -46,7 +58,7 @@ async function main(){
  }else{
    f.req('/healthz').resolve({ok:true});
    f.req('/api/admin/instance/backups').resolve({online:{state:'unknown',reason:'no_record'},offline:{state:'error',error:'<img src=x onerror=alert(1)>'}});await flush();
-   assert.equal((f.mount.innerHTML.match(/<h2>/g)||[]).length,7);
+   assert.equal((f.mount.innerHTML.match(/<h2>/g)||[]).length,8);
    assert.match(f.mount.innerHTML,/Last completed recorded attempt/);assert.match(f.mount.innerHTML,/No recorded attempt/);
    assert.doesNotMatch(f.mount.innerHTML,/<img|onerror="|href="http|token=/);
    const before=f.requests.length;f.click('backup-offline');await flush();
