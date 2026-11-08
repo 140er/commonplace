@@ -14,6 +14,7 @@ TOOLS = [
     "mempalace_get_drawers",
     "mempalace_list_drawers",
     "mempalace_search",
+    "mempalace_list_tunnels",
 ]
 TEXT = "Verbatim bundle words."
 
@@ -232,7 +233,7 @@ def test_card253_s10_head_bundle_shapes(case, parent, shape):
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
-@pytest.mark.parametrize("operation", ["get", "retry", "memory"])
+@pytest.mark.parametrize("operation", ["get", "retry", "memory", "batch", "list", "search"])
 def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
     from commonplace import memory_tools
     from commonplace.handoff.models import ThreadMessage
@@ -249,7 +250,32 @@ def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
     )
     assert w.h.gateway.handoff.recall.can_read(principal, thread.id)
     identifier = seed(w, {"source_thread": source, "source_seq_start": 0, "source_seq_end": 0})
-    if operation == "retry":
+    if operation in {"batch", "list", "search"}:
+        if operation == "batch":
+            reply = invoke(w, TOOLS[2], {"drawer_ids": [identifier]}, role)
+        elif operation == "list":
+            reply = invoke(w, TOOLS[3], {"wing": "wing_fixture", "room": "notes"}, role)
+        else:
+            reply = invoke(
+                w,
+                TOOLS[4],
+                {"query": "bundle", "wing": "wing_fixture", "include_facts": False},
+                role,
+            )
+
+        def rows(value):
+            if isinstance(value, dict):
+                yield value
+                for child in value.values():
+                    yield from rows(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from rows(child)
+
+        metadata = next(row for row in rows(reply) if row.get("source_thread") == source)
+        assert metadata["source_seq_start"] == metadata["source_seq_end"] == 0
+        assert TEXT in str(reply)
+    elif operation == "retry":
         reply = invoke(
             w, TOOLS[0], {"wing": "wing_fixture", "room": "notes", "content": TEXT}, role
         )
@@ -302,3 +328,55 @@ def test_card253_s10_r1_native_memory_echo(case, role):
     got = _call(w.h, token, "memory_get", id=identifier)["content"][0]["text"]
     assert f"source={json.dumps(source)}" in got.split("\nquoted data: ", 1)[0]
     assert _http(w.h, token, f"/api/memory/{identifier}")[1]["source"] == source
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_card253_s10_r2_tunnel_endpoints(case, monkeypatch, tmp_path, role):
+    from mempalace import palace_graph
+
+    w = case
+    monkeypatch.setattr(
+        palace_graph, "_get_tunnel_file", lambda *a, **kw: str(tmp_path / "tunnels.json")
+    )
+    row = {
+        "id": "readable-tunnel",
+        "source": {"wing": "wing_fixture", "room": "notes"},
+        "target": {"wing": "wing_fixture", "room": "destination"},
+        "label": "readable",
+        "kind": "explicit",
+    }
+    palace_graph._save_tunnels([row])
+    assert palace_graph._load_tunnels() == [row]
+    reply = invoke(w, "mempalace_list_tunnels", {}, role)
+    assert "mempalace_list_tunnels" in w.calls
+    assert reply == [row], "readable tunnel endpoints changed"
+
+
+def test_card253_s10_r2_gate_endpoint(case):
+    from commonplace.handoff.mirror_access import gate
+
+    w = case
+    identifier = seed(w, {"source_thread": w.readable.id})
+    invoke(w, TOOLS[1], {"drawer_id": identifier})
+    row = {
+        "source": {"wing": "wing_fixture", "room": "notes"},
+        "target": {"wing": "wing_fixture", "room": "destination"},
+    }
+    assert gate(w.h.gateway, w.member, "all_wings", row) == row
+
+
+def test_card253_s10_r2_unsourced_fact_shape(case):
+    from commonplace.handoff.mirror_access import gate
+
+    w = case
+    identifier = seed(w, {"source_thread": w.readable.id})
+    invoke(w, TOOLS[1], {"drawer_id": identifier})
+    fact = {
+        "subject": "Person",
+        "predicate": "likes",
+        "object": "words",
+        "source_thread": None,
+        "source_seq_start": None,
+        "source_seq_end": None,
+    }
+    assert gate(w.h.gateway, w.member, "kg_read", fact) == fact

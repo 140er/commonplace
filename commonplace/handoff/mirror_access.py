@@ -255,12 +255,16 @@ def scrub_provenance(node, access):
     # Flat ranges follow the existing provenance pass, preserving token-free
     # legacy parents. Nested aliases require a complete protected reference.
     if out.get("source_thread") is None:
-        keys = {"source_seq_start", "source_seq_end"}
+        keys = {k for k in ("source_seq_start", "source_seq_end") if out.get(k) is not None}
         if keys.intersection(out):
             out = {key: value for key, value in out.items() if key not in keys}
     for key in ("source", "source_kept"):
         bundle = out.get(key)
-        if isinstance(bundle, dict) and not _proved_thread(bundle.get("thread"), access):
+        if (
+            isinstance(bundle, dict)
+            and bundle.keys() & {"thread", "seq_start", "seq_end"}
+            and not _proved_thread(bundle.get("thread"), access)
+        ):
             out = {name: value for name, value in out.items() if name != key}
     return out
 
