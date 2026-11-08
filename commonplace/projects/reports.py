@@ -100,7 +100,7 @@ class Snapshot:
 def snapshot(gateway, ws):
     """Close source map before merging control facts under one control lock."""
     try:
-        with orchestration.board_read(gateway.workspace_dir(ws)) as conn:
+        with orchestration.board_read(gateway.supervisor.workspace_dir(ws)) as conn:
             boards = {
                 r["slug"]: r["coordinator"]
                 for r in conn.execute("SELECT slug,coordinator FROM boards")
@@ -178,7 +178,7 @@ def capture(conn, row, snapshot_value, reason):
 @contextmanager
 def source_write(gateway, ws):
     """Write known initialized source state without running migrations."""
-    path = Path(gateway.workspace_dir(ws)) / "boards.sqlite3"
+    path = Path(gateway.supervisor.workspace_dir(ws)) / "boards.sqlite3"
     conn = connect(
         path.resolve().as_uri() + "?mode=rw", uri=True, timeout=0.2, isolation_level=None
     )
@@ -223,7 +223,7 @@ def observe(gateway, ws):
     if not snap.enabled:
         return
     # Persisted all-ID cursor gives fresh, waiting and stale cards equal access.
-    with orchestration.board_read(gateway.workspace_dir(ws)) as conn:
+    with orchestration.board_read(gateway.supervisor.workspace_dir(ws)) as conn:
         cursor = conn.execute("SELECT cursor FROM project_report_scan WHERE id=1").fetchone()[0]
         rows = conn.execute(
             "SELECT * FROM tasks WHERE id>? ORDER BY id LIMIT ?", (cursor, BATCH)
@@ -278,7 +278,7 @@ def ack(gateway, ws, report_id):
 def publish(gateway, ws):
     from commonplace.projects import report_dispatch
 
-    with orchestration.board_read(gateway.workspace_dir(ws)) as conn:
+    with orchestration.board_read(gateway.supervisor.workspace_dir(ws)) as conn:
         rows = [
             dict(r)
             for r in conn.execute(
@@ -308,18 +308,26 @@ def publish(gateway, ws):
 
 
 class ReportPump:
-    """One recovery pass at startup; dispatcher drives independent monotonic deadlines."""
+    """Recover existing sources on the dispatcher's independent monotonic deadlines."""
 
     def __init__(self, gateway):
         self.gateway = gateway
+        self._initialized = set()
 
     def pass_once(self):
         # A broken workspace must never prevent another workspace's recovery.
         for ws in self.gateway.db.workspaces():
             wid = ws["id"]
-            if not (Path(self.gateway.workspace_dir(wid)) / "boards.sqlite3").is_file():
-                continue
             try:
+                path = (
+                    Path(self.gateway.supervisor.workspace_dir(wid)) / "boards.sqlite3"
+                ).resolve()
+                if not path.is_file():
+                    continue
+                if path not in self._initialized:
+                    with source_write(self.gateway, wid) as conn:
+                        ensure_source(conn)
+                    self._initialized.add(path)
                 observe(self.gateway, wid)
                 publish(self.gateway, wid)
             except Exception:
@@ -329,14 +337,6 @@ class ReportPump:
 
 def install(gateway):
     ensure_control(gateway.db)
-    # Existing sources migrate once at installation, never from scanner reads.
-    for ws in gateway.db.workspaces():
-        path = Path(gateway.workspace_dir(ws["id"])) / "boards.sqlite3"
-        if path.is_file():
-            try:
-                with source_write(gateway, ws["id"]) as conn:
-                    ensure_source(conn)
-            except Exception:
-                continue
+    # Installation registers the pump only. The first dispatcher scan recovers
+    # existing sources without creating directories for unopened workspaces.
     gateway.project_reports = ReportPump(gateway)
-    gateway.project_reports.pass_once()
