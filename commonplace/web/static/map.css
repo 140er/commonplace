@@ -139,3 +139,5 @@
 
 .memory-view { display: flex; flex-direction: column; min-height: 65vh; gap: var(--gap); }
 .memory-view .stage { min-height: 55vh; }
+
+.memory-search > [data-memory-action="map"] { align-self: flex-start; }

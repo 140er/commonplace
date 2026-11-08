@@ -257,6 +257,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The map contract specifies fail-closed thread citations and null-but-present selection fields.
+
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
@@ -603,6 +605,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
+
+  - Map citation regressions cover member-owned private sources, fact_sources rows, thread topics, failed lookups, orphan people and wildcard theme refusal parity.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
@@ -1523,6 +1527,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Health-flagged notes remain private. HTTP and MCP saves explicitly tell an unreadable author that the note was saved privately and cannot be read for now.
 
+  - Map-only citation checks resolve all fact and selection threads through the workspace handoff store, fail closed, and cache repeated references per response; orphan people remain visible and unreadable themes look absent.
+
   - Map graph and selection reads exclude private wings, private drawer metadata, private/secret facts and private linked cards for person sessions without current control-database workspace-owner proof. Counts and limits follow exclusion; policies and other Memory reads are unchanged.
 
   - Owner memory maps retain readable person relationships when a citation cannot be proved.
@@ -1670,6 +1676,8 @@ Format (read by `commonplace orch docs-check`):
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
+
+  - Map opening refreshes person identity for its shortened privacy notice; the list-mode entry stays compact.
 
   - Memory has one Map mode control, reached workspace-wide or from a Space. It reuses the seeded canvas, layouts, filters and side panel, disposes on navigation and warns non-owners that their own private memories are also hidden.
 

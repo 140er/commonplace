@@ -760,7 +760,10 @@ def test_map_theme_scope_filters_before_counts_and_limit(hub):
     assert body["themes"] == [{"id": "shared", "label": "Shared", "count": 1}]
     assert other not in json.dumps(body) and "other project" not in json.dumps(body)
     scoped = _scoped(hub)
-    assert _http(hub, scoped, "/api/memory/map?theme=project_other")[0] == 403
+    assert _http(hub, scoped, "/api/memory/map?theme=project_other") == (
+        200,
+        {"nodes": [], "links": [], "themes": [], "weeks": []},
+    )
     assert _http(hub, scoped, "/api/memory/map?theme=shared")[1] == body
 
 
