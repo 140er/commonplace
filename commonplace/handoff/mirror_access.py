@@ -256,16 +256,34 @@ def scrub_provenance(node, access):
     # legacy parents. Nested aliases require a complete protected reference.
     if out.get("source_thread") is None:
         keys = {k for k in ("source_seq_start", "source_seq_end") if out.get(k) is not None}
-        if keys.intersection(out):
+        if keys:
             out = {key: value for key, value in out.items() if key not in keys}
     for key in ("source", "source_kept"):
         bundle = out.get(key)
         if (
             isinstance(bundle, dict)
-            and bundle.keys() & {"thread", "seq_start", "seq_end"}
+            and bundle.keys()
+            & {
+                "thread",
+                "seq_start",
+                "seq_end",
+                "source_thread",
+                "source_seq_start",
+                "source_seq_end",
+            }
             and not _proved_thread(bundle.get("thread"), access)
         ):
             out = {name: value for name, value in out.items() if name != key}
+    for key in ("source", "target"):
+        endpoint = out.get(key)
+        if isinstance(endpoint, dict) and "drawer_id" in endpoint:
+            identifier = endpoint["drawer_id"]
+            if (
+                not isinstance(identifier, str)
+                or not identifier
+                or not access.association("drawer", identifier)
+            ):
+                out = {name: value for name, value in out.items() if name != key}
     return out
 
 

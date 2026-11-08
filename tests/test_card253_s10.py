@@ -233,7 +233,9 @@ def test_card253_s10_head_bundle_shapes(case, parent, shape):
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
-@pytest.mark.parametrize("operation", ["get", "retry", "memory", "batch", "list", "search"])
+@pytest.mark.parametrize(
+    "operation", ["get", "retry", "memory", "batch", "list", "search_text_unchanged"]
+)
 def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
     from commonplace import memory_tools
     from commonplace.handoff.models import ThreadMessage
@@ -250,7 +252,7 @@ def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
     )
     assert w.h.gateway.handoff.recall.can_read(principal, thread.id)
     identifier = seed(w, {"source_thread": source, "source_seq_start": 0, "source_seq_end": 0})
-    if operation in {"batch", "list", "search"}:
+    if operation in {"batch", "list", "search_text_unchanged"}:
         if operation == "batch":
             reply = invoke(w, TOOLS[2], {"drawer_ids": [identifier]}, role)
         elif operation == "list":
@@ -382,3 +384,76 @@ def test_card253_s10_r2_unsourced_fact_shape(case):
         "source_seq_end": None,
     }
     assert gate(w.h.gateway, w.member, "kg_read", fact) == fact
+
+
+HIDDEN_TEXT = "Hidden tunnel words."
+
+
+@pytest.mark.parametrize("end", ["source", "target"])
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_card253_s10_r3_hidden_endpoint_drawer(case, monkeypatch, tmp_path, role, end):
+    from mempalace import palace_graph
+
+    w = case
+    monkeypatch.setattr(
+        palace_graph, "_get_tunnel_file", lambda *a, **kw: str(tmp_path / "tunnels.json")
+    )
+    identifier = make_drawer_id_from_content("private_chats", w.hidden.id, HIDDEN_TEXT)
+    w.col.add(
+        ids=[identifier],
+        documents=[HIDDEN_TEXT],
+        metadatas=[{"wing": "private_chats", "room": w.hidden.id}],
+        embeddings=[[1.0] + [0.0] * 383],
+    )
+    ends = {
+        "source": {"wing": "wing_fixture", "room": "notes"},
+        "target": {"wing": "wing_fixture", "room": "destination"},
+    }
+    ends[end]["drawer_id"] = identifier
+    row = {"id": "probe-tunnel", **ends, "label": "probe", "kind": "explicit"}
+    palace_graph._save_tunnels([row])
+    assert palace_graph._load_tunnels() == [row]
+    reply = invoke(w, "mempalace_list_tunnels", {}, role)
+    assert "mempalace_list_tunnels" in w.calls
+    assert identifier not in str(reply), f"hidden {end} drawer id returned"
+    assert w.hidden.id not in str(reply), f"hidden thread id returned via {end} drawer id"
+
+
+@pytest.mark.parametrize("end", ["source", "target"])
+@pytest.mark.parametrize("value", [None, 42, "", "unresolved", "readable"])
+def test_card253_s10_r3_head_endpoint_proof(case, monkeypatch, tmp_path, end, value):
+    from mempalace import palace_graph
+
+    w = case
+    identifier = seed(w, {"source_thread": w.readable.id})
+    value = identifier if value == "readable" else value
+    monkeypatch.setattr(
+        palace_graph, "_get_tunnel_file", lambda *a, **kw: str(tmp_path / "tunnels.json")
+    )
+    row = {
+        "id": "proof-tunnel",
+        "source": {"wing": "wing_fixture", "room": "notes"},
+        "target": {"wing": "wing_fixture", "room": "destination"},
+    }
+    row[end]["drawer_id"] = value
+    palace_graph._save_tunnels([row])
+    reply = invoke(w, "mempalace_list_tunnels", {})
+    assert len(reply) == 1
+    if value == identifier:
+        assert reply == [row]
+    else:
+        assert end not in reply[0]
+        assert (
+            reply[0]["target" if end == "source" else "source"]
+            == row["target" if end == "source" else "source"]
+        )
+
+
+def test_card253_s10_r3_head_nested_flat_alias(case):
+    from commonplace.handoff.mirror_access import gate
+
+    w = case
+    identifier = seed(w, {"source_thread": w.readable.id})
+    invoke(w, TOOLS[1], {"drawer_id": identifier})
+    payload = {"source": {"source_thread": w.hidden.id, "source_seq_start": 0, "source_seq_end": 0}}
+    assert gate(w.h.gateway, w.member, "drawer_read", payload) == {}
