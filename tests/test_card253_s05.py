@@ -29,13 +29,14 @@ def world(hub, monkeypatch, tmp_path, request):
 
     monkeypatch.setattr(graph, "MempalaceConfig", lambda: mcp._config)
     monkeypatch.setattr(mcp, "_READ_ONLY", True)
-    backend_name = "sqlite_exact"
+    backend_name = getattr(request, "param", "sqlite_exact")
     monkeypatch.setenv("MEMPALACE_BACKEND", backend_name)
     monkeypatch.setattr(mcp._config, "_palace_path_override", str(tmp_path / "exact"))
     from mempalace.backends import PalaceRef
+    from mempalace.backends.chroma import ChromaBackend
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
-    backend = SQLiteExactBackend()
+    backend = {"sqlite_exact": SQLiteExactBackend, "chroma": ChromaBackend}[backend_name]()
     collection = backend.get_collection(
         palace=PalaceRef(id=mcp._config.palace_path, local_path=mcp._config.palace_path),
         collection_name=mcp._config.collection_name,
@@ -46,7 +47,7 @@ def world(hub, monkeypatch, tmp_path, request):
     collection = EmbeddingCollection(collection)
     monkeypatch.setattr(mcp, "_get_collection", lambda **kwargs: collection)
     monkeypatch.setattr(mcp, "_selected_backend_name", lambda: backend_name)
-    monkeypatch.setattr(mcp, "_is_chroma_backend", lambda: False)
+    monkeypatch.setattr(mcp, "_is_chroma_backend", lambda: backend_name == "chroma")
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
     monkeypatch.setenv("COMMONPLACE_RULES", "off")
     member = hub.db.create_user("member@example.test")
@@ -397,8 +398,157 @@ def test_card253_s05_owner_guard(world, functional_worker_transport):
 
 
 @pytest.mark.parametrize(
-    "args", [{"max_hops": []}, {"max_hops": None}, {"max_hops": "2"}, {"start_room": []}]
+    "args",
+    [
+        {"max_hops": []},
+        {"max_hops": None},
+        {"max_hops": "2"},
+        {"start_room": []},
+        {"max_hops": True},
+        {"max_hops": 2.0},
+    ],
 )
-def test_card253_s05_odd_inputs(world, args):
-    reply = call(world, "mempalace_traverse", {"start_room": "visible", **args})
-    assert isinstance(reply, dict) and isinstance(reply.get("error"), str)
+def test_card253_s05_odd_inputs(world, functional_worker_transport, args):
+    w = world
+    seed(w, [{"wing": "wing_a", "room": "visible"}])
+    expected = call(w, "mempalace_traverse", {"start_room": "visible"})
+    reply = rpc(w, "mempalace_traverse", {"start_room": "visible", **args})
+    if args.get("max_hops") is True or args.get("max_hops") == [] or args.get("start_room") == []:
+        key = "start_room" if "start_room" in args else "max_hops"
+        kind = "string" if key == "start_room" else "integer"
+        assert reply.get("error") == {
+            "code": -32602,
+            "message": f"Invalid params for tool mempalace_traverse: '{key}' must be a{'' if kind == 'string' else 'n'} {kind}",
+        }, "graph argument error shape changed"
+    else:
+        assert _tool_result(reply) == expected, "graph argument coercion changed"
+
+
+def rpc(w, tool, args):
+    status, raw = w.h.raw(
+        w.tokens["A"],
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args},
+        },
+    )
+    assert status == 200
+    return json.loads(raw)
+
+
+@pytest.mark.parametrize("world", ["sqlite_exact", "chroma"], indirect=True)
+@pytest.mark.parametrize("legacy", ["wing-question", "room-question", "registry"])
+def test_card253_s05_r1_legacy(world, functional_worker_transport, legacy):
+    w = world
+    rows = [{"wing": wing, "room": "visible", "hall": "h"} for wing in ("wing_a", "wing_b")]
+    if legacy == "wing-question":
+        rows.append({"wing": "?", "room": "legacy", "hall": "h"})
+    elif legacy == "room-question":
+        rows.append({"wing": "wing_a", "room": "?", "hall": "h"})
+    else:
+        rows.extend(
+            {"wing": wing, "room": "_registry", "ingest_mode": "registry", "hall": "h"}
+            for wing in ("wing_a", "wing_b")
+        )
+    seed(w, rows)
+    expected = w.mcp.tool_graph_stats()
+    assert expected["total_rooms"] == 2
+    reply = call(w, "mempalace_graph_stats", {})
+    assert "mempalace_graph_stats" in w.hits
+    assert reply == expected, "readable legacy graph stats changed"
+    assert call(w, "mempalace_find_tunnels", {}) == w.mcp.tool_find_tunnels(), (
+        "readable legacy ranking changed"
+    )
+    assert call(w, "mempalace_traverse", {"start_room": "visible"}) == w.mcp.tool_traverse_graph(
+        "visible"
+    ), "readable legacy traversal changed"
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("mempalace_graph_stats", {"bogus": 1}),
+        ("mempalace_find_tunnels", {"max_hops": 2}),
+        ("mempalace_traverse", {"start_room": "visible", "bogus": True}),
+        ("mempalace_graph_stats", {"x": None, "y": 2}),
+    ],
+)
+def test_card253_s05_r1_unknown_arguments(world, tool, args):
+    w = world
+    unknown = [key for key in args if key != "start_room"]
+    quoted = ", ".join(f"'{key}'" for key in unknown)
+    word = "parameter" if len(unknown) == 1 else "parameters"
+    reply = rpc(w, tool, args)
+    assert reply == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32602, "message": f"Unknown {word} {quoted} for tool {tool}"},
+    }, "unknown graph argument lost its RPC error"
+    assert not w.hits, "unknown argument reached graph probe"
+
+
+@pytest.mark.parametrize("world", ["sqlite_exact", "chroma"], indirect=True)
+@pytest.mark.parametrize(
+    "tool", ["mempalace_list_tunnels", "mempalace_follow_tunnels", "mempalace_graph_stats"]
+)
+def test_card253_s05_r1_null_label(world, functional_worker_transport, tool):
+    from mempalace import palace_graph as graph
+
+    w = world
+    seed(w, [{"wing": "wing_a", "room": "visible"}])
+    row = {
+        "id": "null-label",
+        "source": {"wing": "wing_a", "room": "visible"},
+        "target": {"wing": "wing_b", "room": "ordinary"},
+        "label": None,
+        "extra": "preserve",
+    }
+    graph._save_tunnels([row], w.mcp._config)
+    assert graph._load_tunnels(w.mcp._config) == [row]
+    args = {"wing": "wing_a", "room": "visible"} if tool == "mempalace_follow_tunnels" else {}
+    local = {
+        "mempalace_list_tunnels": w.mcp.tool_list_tunnels,
+        "mempalace_follow_tunnels": w.mcp.tool_follow_tunnels,
+        "mempalace_graph_stats": w.mcp.tool_graph_stats,
+    }[tool]
+    expected = local(**args)
+    reply = call(w, tool, args)
+    assert reply == expected, "null label removed readable tunnel"
+    assert graph._load_tunnels(w.mcp._config) == [row]
+
+
+@pytest.mark.parametrize("world", ["chroma"], indirect=True)
+def test_card253_s05_r1_chroma_zero_hall(world, functional_worker_transport):
+    w = world
+    seed(w, [{"wing": wing, "room": "visible", "hall": 0} for wing in ("wing_a", "wing_b")])
+    expected = w.mcp.tool_graph_stats()
+    assert expected["total_edges"] == 1
+    assert call(w, "mempalace_graph_stats", {}) == expected, "Chroma zero hall lost its edge"
+    assert call(w, "mempalace_find_tunnels", {}) == w.mcp.tool_find_tunnels(), (
+        "Chroma zero hall changed ranking metadata"
+    )
+
+
+@pytest.mark.parametrize("world", ["chroma"], indirect=True)
+def test_card253_s05_r1_chroma_fallback_order(world, functional_worker_transport, monkeypatch):
+    from mempalace import read_scope
+
+    w = world
+    seed(
+        w,
+        [
+            {"wing": wing, "room": room, "hall": "h"}
+            for room in ("z-first", "a-second")
+            for wing in ("wing_a", "wing_b")
+        ],
+    )
+    monkeypatch.setattr(read_scope, "_chroma_page", lambda *a: None)
+    monkeypatch.setattr(w.mcp, "_graph_sqlite_reader", lambda: None)
+    monkeypatch.setattr(w.mcp, "_sqlite_graph_stats", lambda: None)
+    expected = w.mcp.tool_find_tunnels()
+    assert [row["room"] for row in expected] == ["z-first", "a-second"]
+    assert call(w, "mempalace_find_tunnels", {}) == expected, (
+        "Chroma fallback changed readable ties"
+    )

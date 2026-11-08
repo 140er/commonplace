@@ -247,3 +247,39 @@ def test_stats_require_both_tunnel_endpoints(world, functional_worker_transport,
     graph._save_tunnels([row], w.mcp._config)
     assert graph._load_tunnels(w.mcp._config) == [row]
     assert call(w, "mempalace_graph_stats", {})["explicit_tunnels"] == 0
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        None,
+        {"result": {"tools": []}},
+        {"result": {"tools": [{"name": "mempalace_graph_stats", "inputSchema": {}}]}},
+    ],
+)
+def test_graph_schema_fault_is_empty(world, functional_worker_transport, monkeypatch, listing):
+    w = world
+    seed(w, [{"wing": "wing_a", "room": "visible"}])
+    assert call(w, "mempalace_graph_stats", {})["total_rooms"] == 1
+    monkeypatch.setattr(w.h.gateway.mediator, "_tools_list", lambda *args: listing)
+    assert call(w, "mempalace_graph_stats", {})["total_rooms"] == 0
+
+
+@pytest.mark.parametrize("label", [None, "absent", 0, False, [], {}])
+def test_tunnel_label_type_guard(world, functional_worker_transport, label):
+    from mempalace import palace_graph as graph
+
+    w = world
+    seed(w, [{"wing": "wing_a", "room": "visible"}])
+    row = {
+        "id": "label-type",
+        "source": {"wing": "wing_a", "room": "visible"},
+        "target": {"wing": "wing_b", "room": "ordinary"},
+    }
+    if label != "absent":
+        row["label"] = label
+    graph._save_tunnels([row], w.mcp._config)
+    expected = [row] if label is None or label == "absent" else []
+    assert call(w, "mempalace_list_tunnels", {}) == expected
+    assert call(w, "mempalace_graph_stats", {})["explicit_tunnels"] == len(expected)
+    assert graph._load_tunnels(w.mcp._config) == [row]

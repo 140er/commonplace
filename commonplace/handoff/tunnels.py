@@ -37,7 +37,7 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0, raise_on_
                 row = item["tunnel"]
                 from .provenance_refs import _THREAD, _private_matches
 
-                label = row.get("label", "")
+                label = "" if row.get("label") is None else row["label"]
                 if not isinstance(label, str) or any(
                     not access.reference(match[0])
                     for match in [*_THREAD.finditer(label), *_private_matches(label)]

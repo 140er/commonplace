@@ -1,9 +1,12 @@
 """Authorize graph inputs before aggregation, traversal, ranking and counts."""
 
+import re
+
 from commonplace.rules import checks
 from mempalace import palace_graph
 from mempalace.config import sanitize_name
-from mempalace.read_scope import PAGE_SIZE, descriptor, valid_descriptors
+from mempalace.graph_scope import graph_descriptor
+from mempalace.read_scope import PAGE_SIZE, valid_descriptors
 
 from .mirror_access import reader, unreadable_room
 from .overview import _valid_cursor
@@ -21,6 +24,59 @@ def _result(name, args, rows, tunnels):
     if name == "mempalace_find_tunnels":
         return palace_graph.find_tunnels(args.get("wing_a"), args.get("wing_b"), graph_data=graph)
     return palace_graph.graph_stats(graph_data=graph, explicit_tunnels=tunnels)
+
+
+def empty_result(name, args):
+    start = args.get("start_room")
+    return _result(
+        name, {"start_room": start if isinstance(start, str) else "", "max_hops": 2}, [], []
+    )
+
+
+class GraphArgumentError(ValueError):
+    """A client validation error, rather than a projection failure."""
+
+
+def validate_arguments(name, args, schema):
+    """Apply the worker's graph schema before any metadata probe."""
+    properties = schema["properties"]
+    unknown = [key for key in args if key not in properties and key != "wait_for_previous"]
+    if unknown:
+        quoted = ", ".join(f"'{key}'" for key in unknown)
+        word = "parameter" if len(unknown) == 1 else "parameters"
+        raise GraphArgumentError(f"Unknown {word} {quoted} for tool {name}")
+    checked = {}
+    for key, value in args.items():
+        if value is None or key == "wait_for_previous":
+            continue
+        kind = properties[key].get("type")
+        if kind == "integer":
+            try:
+                if isinstance(value, float) and value.is_integer():
+                    value = int(value)
+                elif isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value.strip()):
+                    value = int(value.strip())
+            except (ValueError, OverflowError):
+                raise GraphArgumentError(
+                    f"Invalid params for tool {name}: '{key}' is too large"
+                ) from None
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise GraphArgumentError(
+                    f"Invalid params for tool {name}: '{key}' must be an integer"
+                )
+        elif kind == "string":
+            value = str(value) if type(value) is int else value
+            if not isinstance(value, str):
+                raise GraphArgumentError(
+                    f"Invalid params for tool {name}: '{key}' must be a string"
+                )
+        checked[key] = value
+    missing = [key for key in schema.get("required", []) if key not in checked]
+    if missing:
+        quoted = ", ".join(f"'{key}'" for key in missing)
+        word = "parameter" if len(missing) == 1 else "parameters"
+        raise GraphArgumentError(f"Missing required {word} {quoted} for tool {name}")
+    return checked
 
 
 def _arguments(name, args):
@@ -131,7 +187,10 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                         )
                     ):
                         return empty
-                    if descriptor(item["descriptor"]["id"], item["metadata"]) != item["descriptor"]:
+                    if (
+                        graph_descriptor(item["descriptor"]["id"], item["metadata"])
+                        != item["descriptor"]
+                    ):
                         return empty
                     returned.append(item["descriptor"])
                     rows.append(item["metadata"])

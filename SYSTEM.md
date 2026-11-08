@@ -1359,10 +1359,30 @@ are unchanged. Passive graph reads use the input projection described below.
 - Incomplete acquisition, malformed protocol replies, missing workspace context or
   deadline failure discard the entire graph response: zero stats, an empty tunnel
   list, or the ordinary not-found traversal envelope with empty suggestions. Odd
-  traversal argument types return a fixed validation error. No private diagnostics,
+  client argument errors retain their JSON-RPC validation shape. No private diagnostics,
   redaction markers or partial global counts are returned. Literal-wing readers
   retain the existing all-wing-tool refusal; actual owners use the same live reader.
 - Storage is never rewritten or purged. O4/O8 remain in force; external ids hidden
   only by wing policy retain their accepted limitation. The separate LOCKED
   D9.1 = A and D9.2 = A decisions, including actual-readable-work quota deferral,
   are unchanged by graph projection.
+
+
+### Readable legacy graph parity
+
+- Graph descriptors bind literal projected wing and room names, including legacy
+  `?` values. Readable registry and sentinel rows remain graph inputs, matching
+  the local graph paths; overview bookkeeping rules do not change.
+- Graph argument names are checked against the worker's tool schema before any
+  metadata probe. Unknown and missing arguments retain JSON-RPC `-32602` errors.
+  Traversal retains the worker's null/default and integer-coercion conventions;
+  booleans and non-coercible values retain its JSON-RPC error shape. Schema lookup
+  and projection share one deadline. Worker/schema/projection faults still return
+  the empty operation envelope, never a client-validation error.
+- Ordering follows the reader that actually served the metadata page. A Chroma
+  collection fallback keeps collection order; grouped Chroma reads preserve numeric
+  hall casts (including zero) and string-column dates. Other graph readers keep
+  their existing falsy hall/date handling. Projected descriptors bind those values.
+- Null and missing tunnel labels are empty only for protected-token scanning.
+  Returned/stored nulls, missing keys and unrelated fields remain unchanged; other
+  non-string labels still fail closed. No palace data is rewritten.
