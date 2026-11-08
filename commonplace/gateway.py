@@ -56,22 +56,16 @@ _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
 
-def _with_search_facts(result, facts, facts_error=None):
+def _with_search_facts(result, facts):
     from mempalace.fact_render import format_facts
 
     if result.get("error"):
         return result
-    if (
-        not facts
-        and not facts_error
-        and not any(key in result for key in ("facts", "results", "cli_output"))
-    ):
+    if not facts and not any(key in result for key in ("facts", "results", "cli_output")):
         return result
     out = {k: v for k, v in result.items() if k != "facts"}
-    if facts or facts_error or "cli_output" not in out:
+    if facts or "cli_output" not in out:
         out = {"facts": facts, **out}
-    if facts_error:
-        out["facts_error"] = "unavailable"
     if isinstance(out.get("cli_output"), str):
         out["cli_output"] = format_facts(facts) + out["cli_output"]
     return out
@@ -484,7 +478,7 @@ class Mediator:
         import_filters = dict(args)
         notes: list = []
         try:
-            _check_argument_types(args)
+            _check_argument_types(args, name=name)
             plan = getattr(self, f"_before_{rule}")(principal, name, args, notes)
         except PageArgumentError as exc:
             return {"jsonrpc": "2.0", "id": req_id, "error": exc.error}
@@ -511,9 +505,7 @@ class Mediator:
             if isinstance(plan, dict) and "facts" in plan:
                 result = _tool_result(response)
                 if isinstance(result, dict):
-                    response = _replace_result(
-                        response, _with_search_facts(result, plan["facts"], plan.get("facts_error"))
-                    )
+                    response = _replace_result(response, _with_search_facts(result, plan["facts"]))
             if isinstance(plan, dict) and plan.get("unhide"):
                 unhide = plan["unhide"]
                 response = _unhide(response, unhide)
@@ -830,7 +822,6 @@ class Mediator:
             "respond": _with_search_facts(
                 self._fan_out_search(principal, name, args),
                 fact_result["facts"],
-                fact_result.get("facts_error"),
             )
         }
 
@@ -858,7 +849,6 @@ class Mediator:
             result = gate(self.gateway, principal, "kg_read", result)
             return {
                 "facts": gate(self.gateway, principal, "kg_read", result.get("facts", [])[:limit]),
-                **({"facts_error": "unavailable"} if result.get("facts_error") else {}),
             }
         except Exception:
             logger.warning("Fact search unavailable; preserving drawer search", exc_info=True)
@@ -986,38 +976,15 @@ class Mediator:
 
     def _before_kg_read(self, principal, name, args, notes):
         policy = principal.policy
-        if name in ("mempalace_kg_query", "mempalace_kg_timeline"):
-            from .handoff.kg_projection import project
+        assert name in ("mempalace_kg_query", "mempalace_kg_timeline")
+        from .handoff.kg_projection import project
 
-            asked = args.get("wings")
-            if asked is not None:
-                for wing in asked:
-                    if not policy.can_read_wing(wing):
-                        raise Denied(f"this connection can't read wing {wing!r}")
-            return {"respond": project(self.gateway, principal, self.workers, name, args)}
-        if policy.sees_all_wings:
-            return None
         asked = args.get("wings")
         if asked is not None:
             for wing in asked:
                 if not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
-            asked = {canonical_wing(w) for w in asked}
-        result = self.workers.call_tool(principal, "mempalace_kg_list_wings", {})
-        known = result.get("wings") if isinstance(result, dict) else None
-        if not isinstance(known, list):
-            raise Denied("could not check which wings the facts are in")
-        args["wings"] = [
-            w
-            for w in known
-            if isinstance(w, str)
-            and policy.can_read_wing(w)
-            and (asked is None or canonical_wing(w) in asked)
-        ]
-        allowed = policy.fact_sensitivities()
-        given = args.get("sensitivities")
-        args["sensitivities"] = [s for s in allowed if given is None or s in given]
-        return None
+        return {"respond": project(self.gateway, principal, self.workers, name, args)}
 
     def _before_kg_write(self, principal, name, args, notes):
         policy = principal.policy
@@ -1441,7 +1408,7 @@ _WING_ARGS = ("wing", "source_wing", "target_wing", "wing_a", "wing_b")
 _ID_ARGS = ("drawer_id", "source_drawer_id", "target_drawer_id")
 
 
-def _check_argument_types(args: dict) -> None:
+def _check_argument_types(args: dict, *, name=None) -> None:
     """Wing and drawer arguments must already be what the policy checks.
 
     The worker coerces arguments (a JSON string becomes an array, a number a
@@ -1449,7 +1416,7 @@ def _check_argument_types(args: dict) -> None:
     ``drawer_ids`` given as a JSON string is parsed here, once, and the
     parsed list is what gets checked and forwarded.
     """
-    if "search" in args and type(args["search"]) is not bool:
+    if name == "mempalace_kg_query" and "search" in args and type(args["search"]) is not bool:
         raise Denied("'search' must be true or false")
     for key in _WING_ARGS + _ID_ARGS:
         if key in args and args[key] is not None and not isinstance(args[key], str):

@@ -1,5 +1,7 @@
 """Original-source authorization before knowledge graph read aggregation."""
 
+import time
+
 from commonplace.rules import checks
 from mempalace.knowledge_graph import valid_fact_entries
 
@@ -16,20 +18,15 @@ def project(gateway, principal, workers, name, args):
         suffix = "search"
     properties = mcp.TOOLS[name]["input_schema"]["properties"]
     try:
-        limit = mcp._coerce_argument(
-            args.get("limit", 100),
-            properties.get("limit", {"type": "integer", "minimum": 1, "maximum": 100}),
-            "limit",
-        )
-        offset = mcp._coerce_argument(
-            args.get("offset", 0),
-            properties.get("offset", {"type": "integer", "minimum": 0}),
-            "offset",
-        )
+        limit, offset = 100, 0
+        for key in ("limit", "offset"):
+            if key in args and key in properties:
+                args[key] = mcp._coerce_argument(args[key], properties[key], key)
+        if "limit" in properties:
+            limit = args.get("limit", 100)
+        if "offset" in properties:
+            offset = args.get("offset", 0)
         valid_page = True
-        for key, value in (("limit", limit), ("offset", offset)):
-            if key in args:
-                args[key] = value
     except (ValueError, TypeError):
         valid_page, offset, limit = False, 0, 100
     empty = {
@@ -70,7 +67,16 @@ def project(gateway, principal, workers, name, args):
             policy = principal.policy
             while True:
                 result = workers.call_tool(
-                    principal, name, {**args, "thread_scope": {"probe": True, "after": after}}
+                    principal,
+                    name,
+                    {
+                        **args,
+                        "thread_scope": {
+                            "probe": True,
+                            "after": after,
+                            "deadline": time.time() + checks.remaining(WORKER_TIMEOUT_S),
+                        },
+                    },
                 )
                 page = result.get("probe") if isinstance(result, dict) else None
                 if not isinstance(page, dict) or set(page) != {"facts", "next"}:
@@ -126,7 +132,15 @@ def project(gateway, principal, workers, name, args):
                 after = cursor
             checks.remaining(0)
             result = workers.call_tool(
-                principal, name, {**args, "thread_scope": {"allow": allowed}}
+                principal,
+                name,
+                {
+                    **args,
+                    "thread_scope": {
+                        "allow": allowed,
+                        "deadline": time.time() + checks.remaining(WORKER_TIMEOUT_S),
+                    },
+                },
             )
             if (
                 not isinstance(result, dict)
