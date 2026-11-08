@@ -13,7 +13,7 @@ from .overview import _valid_cursor
 from .tunnels import project as project_tunnels
 
 
-def _result(name, args, rows, tunnels):
+def _result(name, args, rows, tunnels, *, grouped=False):
     graph = palace_graph._nodes_edges_from_grouped_rows(
         (m["room"], m["wing"], m["hall"], 1, m["date"]) for m in rows
     )
@@ -23,6 +23,10 @@ def _result(name, args, rows, tunnels):
         )
     if name == "mempalace_find_tunnels":
         return palace_graph.find_tunnels(args.get("wing_a"), args.get("wing_b"), graph_data=graph)
+    if grouped:
+        # Grouped stats have their own room-name tie break, independently of
+        # the backend's traversal/discovery enumeration order.
+        graph = (dict(sorted(graph[0].items())), graph[1])
     return palace_graph.graph_stats(graph_data=graph, explicit_tunnels=tunnels)
 
 
@@ -117,7 +121,7 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
 
             access = reader(gateway, principal)
             after, allowed, seen = None, [], set()
-            grouped = None
+            order = None
             while True:
                 page = workers.call_tool(
                     principal,
@@ -133,15 +137,15 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                 )
                 if (
                     not isinstance(page, dict)
-                    or set(page) != {"rows", "next", "grouped"}
-                    or type(page["grouped"]) is not bool
-                    or grouped is not None
-                    and page["grouped"] != grouped
+                    or set(page) != {"rows", "next", "order"}
+                    or page["order"] not in ([], ["room", "wing", "hall"], ["wing", "room", "hall"])
+                    or order is not None
+                    and page["order"] != order
                     or not valid_descriptors(page["rows"])
                     or not _valid_cursor(page["next"], after, page["rows"])
                 ):
                     return empty
-                grouped = page["grouped"]
+                order = page["order"]
                 for row in page["rows"]:
                     checks.remaining(0)
                     if row["id"] in seen:
@@ -210,9 +214,9 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
             checks.remaining(0)
             access = reader(gateway, principal)
             rows = [row for row in rows if visible(access, row)]
-            if grouped:
-                rows.sort(key=lambda m: (m["room"], m["wing"], m["hall"]))
-            result = _result(name, args, rows, tunnels)
+            if order:
+                rows.sort(key=lambda m: tuple(m[key] for key in order))
+            result = _result(name, args, rows, tunnels, grouped=bool(order))
             checks.remaining(0)
             return result
     except Exception:

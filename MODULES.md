@@ -43,6 +43,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
+
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
   - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.
@@ -115,6 +117,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Distinguishes accepted non-string-label and existing follow-argument residuals from fixed graph regressions.
+
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -151,6 +155,8 @@ Format (read by `commonplace orch docs-check`):
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - Backend sibling, suggestion, cap and numeric-locus witnesses substantiate the compatibility topics.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
@@ -373,6 +379,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph page descriptors carry their source order key; grouped Chroma and exact numeric loci retain SQLite text casts.
+
   - Graph descriptors preserve literal placeholders and backend-specific hall/date values; page source determines readable tie ordering.
 
   - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
@@ -401,6 +409,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Unknown order keys fail closed; unrelated overview bookkeeping and tunnel compatibility exceptions remain unchanged.
+
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
   - Capped raw-token scans retain the existing grammar; checkpoints between string scans and token lookups enforce request deadline failure.
@@ -421,6 +431,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - SQLite, Chroma and Compact ordering guards plus numeric zero/exponent cases compare with local graph readers.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
@@ -461,6 +473,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
@@ -603,6 +617,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
+
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -641,6 +657,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Numeric wing/room/hall cases and three ordering surfaces run on exact and default backends, with Compact order controls.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
@@ -1106,6 +1124,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph traversal and ranking preserve backend sibling order before caps; grouped stats preserve their distinct tie convention.
+
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
   - Graph authorization binds literal projected metadata and keeps readable registry placements; null-label scans preserve stored values.
@@ -1163,6 +1183,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Incomplete proof still returns empty envelopes; accepted non-string tunnel-label and pre-existing follow-argument residuals remain.
+
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
   - Projection and schema faults stay distinct from caller validation errors; non-string labels other than null remain ineligible.
@@ -1190,6 +1212,8 @@ Format (read by `commonplace orch docs-check`):
   - A failed launch of the successor leaves the source agent running; an interrupted archive adoption resumes from its last committed step.
 
 - **Tests:**
+
+  - Sibling ties, fuzzy suggestions, cap membership and grouped statistics are compared to local readable outputs.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 

@@ -1344,7 +1344,7 @@ are unchanged. Passive graph reads use the input projection described below.
   revalidate concrete descriptors in fresh metadata snapshots. Empty allow means
   no placements; local unscoped graph calls keep their existing behavior.
 - Nodes, plural wings/halls/dates, counts, edges, fuzzy suggestions, traversal and
-  top-N ranking use only surviving rows. Grouped SQLite paths retain room/wing/hall
+  top-N ranking use only surviving rows. Grouped reads retain backend-specific
   ordering; collection paths retain enumeration order for tied readable candidates.
   Traversal and tunnel discovery retain the 50-result caps and stats the ten-node
   top list. Projected results never enter the raw graph or overview caches.
@@ -1379,10 +1379,26 @@ are unchanged. Passive graph reads use the input projection described below.
   booleans and non-coercible values retain its JSON-RPC error shape. Schema lookup
   and projection share one deadline. Worker/schema/projection faults still return
   the empty operation envelope, never a client-validation error.
-- Ordering follows the reader that actually served the metadata page. A Chroma
-  collection fallback keeps collection order; grouped Chroma reads preserve numeric
-  hall casts (including zero) and string-column dates. Other graph readers keep
-  their existing falsy hall/date handling. Projected descriptors bind those values.
+- Ordering follows the reader that actually served the metadata page. Grouped
+  Chroma uses room/wing/hall order; sqlite_exact and rust_exact use wing/room/hall,
+  as does Compact's grouped locus index. Collection fallback keeps enumeration
+  order. Sibling ties, suggestions and the 50-result cap follow that order;
+  grouped statistics retain their separate room-name tie break.
+- Grouped Chroma and exact readers preserve numeric wing/room/hall text casts,
+  including zero and exponent notation; their projected descriptors bind those
+  text values. Chroma grouped dates read the string column. Compact and collection
+  paths retain their existing metadata interpretation, including their own falsy
+  hall/date handling; the overview's bookkeeping rules remain separate.
 - Null and missing tunnel labels are empty only for protected-token scanning.
   Returned/stored nulls, missing keys and unrelated fields remain unchanged; other
   non-string labels still fail closed. No palace data is rewritten.
+
+
+### Graph compatibility residuals
+
+- Accepted parity exception: non-string tunnel labels other than null remain
+  ineligible on authenticated list/follow/count paths, although legacy local reads
+  can list those records. Null and absent labels remain readable and stored intact.
+- The existing explicit-follow path predates graph projection: unknown arguments
+  can still become an empty list instead of a JSON-RPC invalid-params error.
+  This remains a separate follow-up; graph-tool validation does not change it.

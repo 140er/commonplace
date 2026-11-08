@@ -34,9 +34,14 @@ def world(hub, monkeypatch, tmp_path, request):
     monkeypatch.setattr(mcp._config, "_palace_path_override", str(tmp_path / "exact"))
     from mempalace.backends import PalaceRef
     from mempalace.backends.chroma import ChromaBackend
+    from mempalace.backends.compact import CompactBackend
     from mempalace.backends.sqlite_exact import SQLiteExactBackend
 
-    backend = {"sqlite_exact": SQLiteExactBackend, "chroma": ChromaBackend}[backend_name]()
+    backend = {
+        "sqlite_exact": SQLiteExactBackend,
+        "chroma": ChromaBackend,
+        "compact": CompactBackend,
+    }[backend_name]()
     collection = backend.get_collection(
         palace=PalaceRef(id=mcp._config.palace_path, local_path=mcp._config.palace_path),
         collection_name=mcp._config.collection_name,
@@ -552,3 +557,80 @@ def test_card253_s05_r1_chroma_fallback_order(world, functional_worker_transport
     assert call(w, "mempalace_find_tunnels", {}) == expected, (
         "Chroma fallback changed readable ties"
     )
+
+
+@pytest.mark.parametrize("world", ["sqlite_exact", "chroma", "compact"], indirect=True)
+@pytest.mark.parametrize("operation", ["siblings", "suggestions", "cap"])
+def test_card253_s05_r2_order(world, functional_worker_transport, operation):
+    w = world
+    if operation == "cap":
+        rows = [{"wing": wing, "room": "start", "hall": "h"} for wing in ("wing_a", "wing_c")]
+        rows += [{"wing": "wing_a", "room": "solo", "hall": "h"}]
+        rows += [{"wing": "wing_c", "room": f"r{i:02}", "hall": "h"} for i in range(60)]
+        args = {"start_room": "start", "max_hops": 1}
+    else:
+        rows = [
+            {"wing": wing, "room": room, "hall": "h"}
+            for room, wings in (
+                ("z-first", ("wing_a", "wing_c")),
+                ("a-second", ("wing_b", "wing_c")),
+            )
+            for wing in wings
+        ]
+        rows += [{"wing": "wing_c", "room": "start", "hall": "h"}]
+        args = {"start_room": "" if operation == "suggestions" else "start", "max_hops": 1}
+    seed(w, rows)
+    expected = w.mcp.tool_traverse_graph(**args)
+    if operation == "cap":
+        assert isinstance(expected, list) and len(expected) == 50
+    elif operation == "siblings":
+        assert len(expected) == 3 and expected[1]["count"] == expected[2]["count"] == 2
+    else:
+        assert len(expected["suggestions"]) == 3
+    assert call(w, "mempalace_traverse", args) == expected, "graph readable order or cap changed"
+    if operation == "siblings":
+        assert call(w, "mempalace_find_tunnels", {}) == w.mcp.tool_find_tunnels(), (
+            "graph sibling ranking changed"
+        )
+    assert call(w, "mempalace_graph_stats", {}) == w.mcp.tool_graph_stats(), (
+        "graph stats tie convention changed"
+    )
+
+
+@pytest.mark.parametrize("world", ["sqlite_exact", "chroma"], indirect=True)
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("wing", 7),
+        ("wing", 7.5),
+        ("wing", 1e20),
+        ("wing", 0),
+        ("room", 7),
+        ("room", 7.5),
+        ("room", 1e20),
+        ("room", 0),
+        ("hall", 0),
+        ("hall", 0.0),
+        ("hall", 7),
+        ("hall", 7.5),
+    ],
+)
+def test_card253_s05_r2_numeric(world, functional_worker_transport, field, value):
+    w = world
+    rows = [{"wing": "wing_c", "room": "start", "hall": "h"}]
+    if field == "hall":
+        rows += [{"wing": wing, "room": "number", "hall": value} for wing in ("wing_a", "wing_c")]
+    else:
+        rows += [{"wing": "wing_c", "room": "number", "hall": "h", field: value}]
+    seed(w, rows)
+    expected = w.mcp.tool_graph_stats()
+    assert expected["total_rooms"] == 2
+    assert call(w, "mempalace_graph_stats", {}) == expected, (
+        "numeric graph placement or edge changed"
+    )
+    assert call(w, "mempalace_find_tunnels", {}) == w.mcp.tool_find_tunnels(), (
+        "numeric graph hall changed"
+    )
+    assert call(w, "mempalace_traverse", {"start_room": "start"}) == w.mcp.tool_traverse_graph(
+        "start"
+    ), "numeric graph traversal changed"
