@@ -17,5 +17,5 @@ def test_usage_docstring_limits_missing_runner_to_explicit_opt_in():
     doc = " ".join(usage.__doc__.split())
     assert (
         "With allow_missing_runner=True, absent runner input supplies no jobs/config override; "
-        "otherwise it is refused."
+        "otherwise absent runner input raises."
     ) in doc
