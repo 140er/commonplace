@@ -2,6 +2,7 @@
 
 from time import monotonic
 
+from .metadata_types import is_bookkeeping
 from .read_scope import PAGE_SIZE, descriptor, metadata_page, valid_descriptors
 
 # Two optional drawer associations per tunnel fit in one metadata batch.
@@ -48,7 +49,9 @@ def associations(rows, config, backend, get_collection, end):
                 for k in ("wing", "room")
             ):
                 continue
-            item = descriptor(key, meta)
+            if is_bookkeeping(meta):
+                continue
+            item = descriptor(key, {k: meta[k] for k in ("wing", "room")})
             if item is not None:
                 found[key] = item
     return found
@@ -68,20 +71,24 @@ def scoped_tunnels(scope, rows, config, backend, get_collection):
     end = monotonic() + timeout
     if set(scope) == {"probe", "after", "timeout"} and scope["probe"] is True:
         after = scope["after"]
-        if type(after) is not int or after < 0:
+        if after is not None and (not isinstance(after, str) or not after):
             raise ValueError("invalid tunnel cursor")
-        page = rows[after : after + TUNNEL_PAGE]
-        valid = [r for r in page if valid_tunnel(r)]
-        found = associations(valid, config, backend, get_collection, end)
+        # The caller supplies one file read; seek by identity, never by offset.
+        current = {r["id"]: r for r in rows if valid_tunnel(r)}
+        if len(current) != sum(valid_tunnel(r) for r in rows):
+            raise ValueError("duplicate tunnel identity")
+        keys = sorted(k for k in current if after is None or k > after)
+        page = [current[k] for k in keys[:TUNNEL_PAGE]]
+        found = associations(page, config, backend, get_collection, end)
         entries = [
             {"tunnel": r, "drawers": [found[i] for i in drawer_ids([r])]}
-            for r in valid
+            for r in page
             if all(i in found for i in drawer_ids([r]))
         ]
         return {
             "probe": {
                 "rows": entries,
-                "next": after + len(page) if after + len(page) < len(rows) else None,
+                "next": page[-1]["id"] if len(keys) > TUNNEL_PAGE else None,
             }
         }
     if set(scope) != {"allow", "timeout"} or not isinstance(scope["allow"], list):
@@ -98,9 +105,24 @@ def scoped_tunnels(scope, rows, config, backend, get_collection):
             or set(drawer_ids([item["tunnel"]])) != {r["id"] for r in item["drawers"]}
         ):
             raise ValueError("invalid tunnel descriptor")
-    current = [r for r in rows if valid_tunnel(r)]
-    selected = [item for item in allowed if item["tunnel"] in current]
+    current = {r["id"]: r for r in rows if valid_tunnel(r)}
+    selected = [
+        {"tunnel": current[item["tunnel"]["id"]], "drawers": item["drawers"]}
+        for item in allowed
+        if item["tunnel"]["id"] in current
+        and endpoint_proof(item["tunnel"]) == endpoint_proof(current[item["tunnel"]["id"]])
+    ]
     found = associations([i["tunnel"] for i in selected], config, backend, get_collection, end)
     if monotonic() >= end:
         raise TimeoutError("tunnel deadline expired")
     return [i["tunnel"] for i in selected if all(found.get(d["id"]) == d for d in i["drawers"])]
+
+
+def endpoint_proof(row):
+    return (
+        row["id"],
+        *(
+            tuple(row[key].get(k) for k in ("wing", "room", "drawer_id"))
+            for key in ("source", "target")
+        ),
+    )

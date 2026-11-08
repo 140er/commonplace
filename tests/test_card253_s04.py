@@ -171,7 +171,17 @@ def test_card253_s04_follow_source(world, functional_worker_transport):
     reply = call(w, "mempalace_follow_tunnels", args)
     control_tunnels(w, [])
     control = call(w, "mempalace_follow_tunnels", args)
-    assert "follow_tunnels" in w.hits or reply == []
+    # Prove that the real follow branch remains reachable for a readable tunnel.
+    from mempalace import palace_graph as graph
+
+    visible = {
+        "id": "control",
+        "source": {"wing": "wing_fixture", "room": w.readable.id},
+        "target": {"wing": "wing_other", "room": "ordinary"},
+    }
+    graph._save_tunnels([visible], w.mcp._config)
+    assert len(call(w, "mempalace_follow_tunnels", args)) == 1
+    assert "follow_tunnels" in w.hits
     assert reply == control == [], "s04 follow ignored source drawer"
 
 
@@ -187,3 +197,62 @@ def test_card253_s04_room_only(world, functional_worker_transport, reverse):
     assert len(reply) == 1
     assert reply[0]["direction"] == ("incoming" if reverse else "outgoing")
     assert graph._load_tunnels(w.mcp._config) == [row]
+
+
+@pytest.mark.parametrize("change", ["traversal", "metadata"])
+def test_card253_s04_unrelated_updates_preserved(
+    world, functional_worker_transport, monkeypatch, change
+):
+    from commonplace.gateway import WorkerClient
+    from mempalace import palace_graph as graph
+
+    w = world
+    row = tunnels(w)
+    row["source"]["drawer_id"] = "drawer"
+    graph._save_tunnels([row], w.mcp._config)
+    assert call(w, "mempalace_list_tunnels", {}) == [row]
+    original = WorkerClient.call_tool
+    hits = []
+
+    def call_tool(self, principal, name, args):
+        reply = original(self, principal, name, args)
+        if args.get("thread_scope", {}).get("probe"):
+            hits.append(name)
+            if change == "traversal":
+                graph.record_tunnel_traversal([row["id"]], w.mcp._config)
+            else:
+                w.col._inner.update(ids=["drawer"], metadatas=[{"note": "unrelated"}])
+        return reply
+
+    monkeypatch.setattr(WorkerClient, "call_tool", call_tool)
+    reply = call(w, "mempalace_list_tunnels", {})
+    current = graph._load_tunnels(w.mcp._config)
+    assert hits
+    assert reply == current, "readable tunnel lost after unrelated update"
+    if change == "traversal":
+        assert reply[0]["access_count"] == 1
+
+
+def test_card253_s04_delete_before_page_boundary(world, functional_worker_transport, monkeypatch):
+    from commonplace.gateway import WorkerClient
+    from mempalace import palace_graph as graph
+
+    w = world
+    row = tunnels(w)
+    rows = [{**row, "id": f"tunnel-{n:04}"} for n in range(251)]
+    graph._save_tunnels(rows, w.mcp._config)
+    assert call(w, "mempalace_list_tunnels", {}) == rows
+    original = WorkerClient.call_tool
+    hits = []
+
+    def call_tool(self, principal, name, args):
+        reply = original(self, principal, name, args)
+        if args.get("thread_scope", {}).get("probe") and not hits:
+            hits.append(name)
+            graph.delete_tunnel(rows[0]["id"])
+        return reply
+
+    monkeypatch.setattr(WorkerClient, "call_tool", call_tool)
+    reply = call(w, "mempalace_list_tunnels", {})
+    assert hits == ["mempalace_list_tunnels"]
+    assert reply == rows[1:], "readable tunnel skipped at page boundary"

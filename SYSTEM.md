@@ -1196,3 +1196,20 @@ probing. Incomplete acquisition, malformed protocol responses and deadline error
 produce an empty public list without private markers. Read-only follow retains
 record=False behavior; create/delete authorization and delete snapshot checks
 are unchanged. Passive graph traversal and graph statistics remain separate work.
+
+
+### Explicit tunnel concurrency and import qualification
+
+- Tunnel probes use identity keysets from one file read per worker call. Deleting
+  an earlier id cannot shift later pages. Final identity lookup compares only the
+  id and endpoint wing/room/drawer associations and returns the current row, so
+  traversal potentiation and unrelated drawer metadata updates remain visible.
+- Missing or changed associations still fail closed before preview hydration or
+  traversal recording. Probe and allow batches remain bounded and request-local.
+  Invalid name arguments retain the ordinary validation error envelope.
+- Computed `imported:` drawers have no stored metadata association and are excluded
+  from explicit tunnels even when the existing import reader proves their consent
+  and source range. Ordinary imported-history read APIs retain their range rules.
+- The read-only server seam used by the regression witness passes `record=False`;
+  the public follow schema does not expose that argument. Tunnel label reference
+  handling predates this change and remains follow-up work for graph traversal.

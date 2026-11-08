@@ -10,6 +10,16 @@ from .mirror_access import reader, unreadable_room
 def project(gateway, principal, workers, name, args, *, timeout=660.0):
     if not getattr(principal, "workspace_id", None):
         return []
+    from mempalace.config import sanitize_name
+
+    try:
+        for key in ("wing", "room") if name == "mempalace_follow_tunnels" else ("wing",):
+            if name != "mempalace_follow_tunnels" and not (args.get(key) or "").strip():
+                args[key] = None
+            elif name == "mempalace_follow_tunnels" or args.get(key) is not None:
+                args[key] = sanitize_name(args.get(key), key)
+    except ValueError as exc:
+        return {"error": str(exc)}
     try:
         gateway.handoff.store_for(principal.workspace_id)
         with checks.deadline(timeout):
@@ -36,7 +46,7 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                     for p in pairs
                 )
 
-            after, allowed, seen = 0, [], set()
+            after, allowed, seen = None, [], set()
             while True:
                 result = workers.call_tool(
                     principal,
@@ -79,7 +89,13 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0):
                 cursor = page["next"]
                 if cursor is None:
                     break
-                if type(cursor) is not int or cursor != after + TUNNEL_PAGE:
+                if (
+                    not isinstance(cursor, str)
+                    or not cursor
+                    or after is not None
+                    and cursor <= after
+                    or any(item["tunnel"]["id"] > cursor for item in page["rows"])
+                ):
                     return []
                 after = cursor
             # Do not reuse authority decisions across the probe/final boundary.

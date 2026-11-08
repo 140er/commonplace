@@ -83,6 +83,7 @@ def test_probe_final_race(world, functional_worker_transport, monkeypatch, chang
     w = world
     row = tunnels(w)
     readable_drawer(w, row, "source")
+    assert call(w, "mempalace_list_tunnels", {}) == [row]
     original = WorkerClient.call_tool
     hits = []
 
@@ -141,7 +142,7 @@ def test_empty_allow_and_changed_descriptor(world):
     w = world
     row = tunnels(w)
     readable_drawer(w, row, "source")
-    page = w.mcp.tool_list_tunnels(thread_scope={"probe": True, "after": 0, "timeout": 60})
+    page = w.mcp.tool_list_tunnels(thread_scope={"probe": True, "after": None, "timeout": 60})
     assert page["probe"]["rows"]
     allowed = page["probe"]["rows"]
     assert w.mcp.tool_list_tunnels(thread_scope={"allow": allowed, "timeout": 60}) == [row]
@@ -169,7 +170,7 @@ def test_complete_bounded_pages(world, functional_worker_transport, monkeypatch)
         return original(self, principal, name, args)
 
     monkeypatch.setattr(WorkerClient, "call_tool", call_tool)
-    assert call(w, "mempalace_list_tunnels", {}) == rows
+    assert call(w, "mempalace_list_tunnels", {}) == sorted(rows, key=lambda r: r["id"])
     assert len([s for s in scopes if s.get("probe")]) == 3
     assert [len(s["allow"]) for s in scopes if "allow" in s] == [250, 250, 3]
 
@@ -251,6 +252,10 @@ def test_explicit_deadline_no_transport_shim(world, monkeypatch):
 
     w = world
     tunnels(w)
+    principal = w.h.db.authenticate_token(w.tokens["A"])
+    mediator = w.h.gateway.mediator
+    with checks.deadline(30):
+        assert project(w.h.gateway, principal, mediator.workers, "mempalace_list_tunnels", {})
     original = checks.remaining
     hits = []
 
@@ -295,29 +300,96 @@ def test_hidden_drawer_never_hydrated_or_recorded(
     from mempalace import palace_graph as graph
 
     w = world
-    row = tunnels(w, endpoint)
-    calls = []
-    original_get = w.col.get
-    original_record = graph.record_tunnel_traversal
+    hidden = tunnels(w, endpoint)
+    w.col._inner.add(
+        ids=["visible"],
+        documents=["visible words"],
+        metadatas=[{"wing": "wing_other", "room": "ordinary"}],
+        embeddings=[[1.0] + [0.0] * 383],
+    )
+    visible = copy.deepcopy(hidden)
+    visible["id"] = "visible-tunnel"
+    visible["source"].pop("drawer_id", None)
+    visible["target"]["drawer_id"] = "visible"
+    save(w, [hidden, visible])
+    reads, records = [], []
+    original_get, original_record = w.col.get, graph.record_tunnel_traversal
 
     def get(*a, **kw):
-        assert "documents" not in kw.get("include", [])
+        reads.append(copy.deepcopy(kw))
         return original_get(*a, **kw)
 
-    def record(*a, **kw):
-        calls.append(a)
-        return original_record(*a, **kw)
+    def record(ids, *a, **kw):
+        records.append(list(ids))
+        return original_record(ids, *a, **kw)
 
     monkeypatch.setattr(w.col, "get", get)
     monkeypatch.setattr(graph, "record_tunnel_traversal", record)
-    monkeypatch.setattr(w.mcp, "_READ_ONLY", False)
-    assert (
-        call(
-            w,
-            "mempalace_follow_tunnels",
-            {k: v for k, v in row["source"].items() if k != "drawer_id"},
-        )
-        == []
+    args = {"wing": "wing_fixture", "room": w.readable.id}
+    reply = call(w, "mempalace_follow_tunnels", args)
+    assert [r["tunnel_id"] for r in reply] == [visible["id"]]
+    assert reply[0]["drawer_preview"] == "visible words"
+    assert reads and any(
+        "visible" in r.get("ids", []) and "documents" in r.get("include", []) for r in reads
     )
-    assert calls == []
-    assert graph._load_tunnels(w.mcp._config) == [row]
+    assert all("drawer" not in r.get("ids", []) for r in reads), "hidden drawer hydrated"
+    assert records == []
+    monkeypatch.setattr(w.mcp, "_READ_ONLY", False)
+    call(w, "mempalace_follow_tunnels", args)
+    assert records == [[visible["id"]]]
+    assert all("drawer" not in r.get("ids", []) for r in reads), "hidden drawer hydrated"
+    stored = graph._load_tunnels(w.mcp._config)
+    assert next(r for r in stored if r["id"] == hidden["id"]) == hidden
+
+
+def test_client_scope_ignored(world, functional_worker_transport):
+    w = world
+    tunnels(w, "source")
+    assert call(w, "mempalace_list_tunnels", {"thread_scope": {"allow": []}}) == []
+    from mempalace import palace_graph as graph
+
+    rows = graph._load_tunnels(w.mcp._config)
+    rows[0]["source"].pop("drawer_id")
+    save(w, rows)
+    assert call(w, "mempalace_list_tunnels", {"thread_scope": {"allow": []}}) == rows
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("mempalace_list_tunnels", {"wing": "../bad"}),
+        ("mempalace_follow_tunnels", {"wing": "../bad", "room": "ok"}),
+        ("mempalace_follow_tunnels", {"wing": "ok", "room": "../bad"}),
+    ],
+)
+def test_invalid_name_envelope(world, tool, args):
+    w = world
+    tunnels(w)
+    direct = (
+        w.mcp.tool_list_tunnels(**args)
+        if tool.endswith("list_tunnels")
+        else w.mcp.tool_follow_tunnels(**args)
+    )
+    assert call(w, tool, args) == direct
+
+
+def test_probe_never_selects_documents(world, monkeypatch):
+    from mempalace.backends import _inproc_sqlite
+
+    w = world
+    row = tunnels(w)
+    readable_drawer(w, row, "source")
+    statements = []
+    original = _inproc_sqlite.open_reader
+
+    def open_reader(*a, **kw):
+        conn = original(*a, **kw)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(_inproc_sqlite, "open_reader", open_reader)
+    page = w.mcp.tool_list_tunnels(thread_scope={"probe": True, "after": None, "timeout": 60})
+    assert page["probe"]["rows"]
+    selects = [s.lower() for s in statements if s.lstrip().lower().startswith("select")]
+    assert selects and any("metadata_json" in s for s in selects)
+    assert all("document," not in s and "document " not in s for s in selects)
