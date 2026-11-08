@@ -276,3 +276,93 @@ def test_orphan_publication_preserves_identity_without_child_serverinfo(tmp_path
         assert published["child_start_identity"] == 200
         assert server_registry.live_child_record("fixture") == published
         assert not (tmp_path / "serverinfo.json").exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX pipe descriptor fixture; process smoke covers EOF"
+)
+def test_runtime_server_uses_exact_eof_wired_coordinator(monkeypatch):
+    from types import SimpleNamespace
+
+    from mempalace import mcp_server as server
+
+    assert server._build_http_server.__globals__ is vars(server)
+    assert server._run_http_loop.__globals__ is vars(server)
+    module = lifecycle()
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setenv(module.CHILD_ENV, "1")
+    monkeypatch.setenv(module.LIVENESS_ENV, str(read_fd))
+    monkeypatch.delenv(module.FACTS_ENV, raising=False)
+    monkeypatch.setattr(server, "_http_coordinator", None)
+    monkeypatch.setattr(server, "_READ_ONLY", True)
+    monkeypatch.setattr(server, "_args", SimpleNamespace(host="127.0.0.1", port=0))
+    for name in (
+        "_refresh_vector_disabled_flag",
+        "_start_idle_exit_watchdog",
+        "_start_write_stall_watchdog",
+    ):
+        monkeypatch.setattr(server, name, lambda: None)
+    cleaned = threading.Event()
+    monkeypatch.setattr(server, "_exit_running_registered_cleanup", cleaned.set)
+    built = []
+
+    def serve(host, port):
+        built.append(server._build_http_server(host, port))
+        assert built[0].coordinator is server._http_coordinator
+
+    monkeypatch.setattr(server, "_serve_http", serve)
+    try:
+        server._run_http_loop()
+        assert built[0].coordinator is server._http_coordinator
+        os.close(write_fd)
+        write_fd = None
+        assert cleaned.wait(5), "invalid harness: EOF cleanup not delivered"
+        assert built[0].coordinator.reason == "parent_lost"
+        assert not built[0].coordinator.acquire()
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
+        for httpd in built:
+            httpd.server_close()
+
+
+def test_running_marker_invalid_serverinfo_stays_unavailable(tmp_path, monkeypatch):
+    import json
+
+    from mempalace import server_registry
+
+    monkeypatch.setattr(server_registry, "server_state_dir", lambda _: tmp_path)
+    server_registry.write_monitor_marker("fixture", "running")
+    (tmp_path / "serverinfo.json").write_text(
+        json.dumps({"pid": os.getpid(), "port": "bad", "host": "127.0.0.1"})
+    )
+    info = server_registry.read_live_serverinfo("fixture")
+    assert info["hub_unavailable"] is True
+    assert info["managed"] is True
+
+
+def test_partial_hub_refusal_body_stays_unproven(monkeypatch):
+    import http.client
+    import io
+    import urllib.error
+
+    from mempalace.hub_client import HubClient
+
+    class BrokenBody(io.BytesIO):
+        def read(self, *args):
+            raise http.client.IncompleteRead(b"fixture")
+
+    client = HubClient("fixture", {"host": "127.0.0.1", "port": 1})
+    error = urllib.error.HTTPError("http://127.0.0.1:1/mcp", 503, "fixture", {}, BrokenBody())
+    calls = []
+
+    def fail(*args):
+        calls.append(True)
+        raise error
+
+    monkeypatch.setattr(client, "_open", fail)
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        client.post({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert caught.value is error
+    assert calls == [True]
+    error.close()

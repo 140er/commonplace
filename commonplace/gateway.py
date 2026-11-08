@@ -177,6 +177,8 @@ class WorkerClient:
             with slot() if slot is not None else contextlib.nullcontext():
                 try:
                     worker = self.supervisor.get(principal.workspace_id)
+                except (WorkersPaused, SupervisorClosed):
+                    raise
                 except Exception as exc:
                     log_failure(logger, "worker start failed", exc)
                     raise WorkerUnavailable() from exc
@@ -191,6 +193,8 @@ class WorkerClient:
                             raise WorkerUnavailable() from None
                         try:
                             worker = self.supervisor.replace(worker, timeout_s=30)
+                        except (WorkersPaused, SupervisorClosed):
+                            raise
                         except Exception as exc:
                             raise WorkerUnavailable() from exc
                     else:

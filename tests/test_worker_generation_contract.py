@@ -47,8 +47,22 @@ class Supervisor:
         return self.workers[1]
 
 
-def run_post(monkeypatch, status=503, headers=None, payload=None, failure=None, body_failure=None):
+def run_post(
+    monkeypatch,
+    status=503,
+    headers=None,
+    payload=None,
+    failure=None,
+    body_failure=None,
+    replacement_failure=None,
+):
     supervisor = Supervisor()
+    if replacement_failure is not None:
+
+        def replace(*args, **kwargs):
+            raise replacement_failure
+
+        supervisor.replace = replace
     attempts = []
     if headers is None:
         headers = {
@@ -200,3 +214,13 @@ def test_draining_success_is_final(monkeypatch):
     assert supervisor.events[-1] == "retire"
     assert supervisor.call_again() == {"result": "replacement"}
     assert attempts == [0, 1]
+
+
+def test_replacement_pause_preserves_retry_hint(monkeypatch):
+    from commonplace.gateway import WorkerPaused
+    from commonplace.workers import WorkersPaused
+
+    outcome, attempts, _ = run_post(monkeypatch, replacement_failure=WorkersPaused(67))
+    assert isinstance(outcome, WorkerPaused)
+    assert outcome.retry_after_s == 67
+    assert attempts == [0]

@@ -1588,6 +1588,8 @@ def _build_http_server(host: str, port: int):
     from ..worker_lifecycle import Coordinator
 
     httpd = _MCPHTTPServer((host, port), _http_handler_class())
+    # HTTP and runtime fragments execute into mempalace.mcp_server globals;
+    # this is the exact EOF-wired object assigned by _run_http_loop.
     httpd.coordinator = _http_coordinator or Coordinator()
     bound_port = httpd.server_address[1]
     # Pin Host only on a loopback bind (the security-critical default). A

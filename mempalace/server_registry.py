@@ -244,9 +244,13 @@ def read_live_serverinfo(palace_path: str):
         return {**marker, "hub_unavailable": True} if marker else None
     if not _pid_alive(info.get("pid")):
         return {**marker, "hub_unavailable": True} if marker else None
-    if not isinstance(info.get("port"), int) or not info.get("host"):
-        return None
-    return info
+    if (
+        not isinstance(info.get("port"), int)
+        or not isinstance(info.get("host"), str)
+        or not info.get("host")
+    ):
+        return {**marker, "hub_unavailable": True} if marker else None
+    return {**info, "managed": True} if marker else info
 
 
 def client_base_url(info: dict) -> str:

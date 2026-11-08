@@ -253,7 +253,7 @@ class HubClient:
             if exc.code == 503:
                 try:
                     payload = json.loads(exc.read())
-                except (ValueError, OSError):
+                except (ValueError, OSError, http.client.HTTPException):
                     pass
             fields = exc.headers or {}
             if proven_refusal(exc.code, fields.get, payload, self.info.get("generation")):
