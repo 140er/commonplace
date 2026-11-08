@@ -738,3 +738,70 @@ def test_card253_s07_r2_worker_expiry(parity_corpus):
         "fixed", search=True, thread_scope={"allow": allow, "deadline": time.time() - 1}
     )
     assert result == {"facts": []}, "worker ignored the gateway expiry"
+
+
+@pytest.mark.parametrize("flag", [1, "yes"])
+def test_card253_s07_r3_missing_search_snapshot(parity_corpus, fixed_search_clock, flag):
+    w = parity_corpus
+    allow = w.kg.read_candidates()["facts"]
+    for i in range(70):
+        w.kg.add_triple(f"fixed entity {i}", "uses", "hidden", source_thread=w.hidden.id)
+    boolean = w.mcp.tool_kg_query("fixed entity", search=True, thread_scope={"allow": allow})
+    truthy = w.mcp.tool_kg_query("fixed entity", search=flag, thread_scope={"allow": allow})
+    assert truthy.get("facts") == [], "scoped search fell back to the global index"
+    assert boolean["facts"]
+    assert (
+        w.mcp.tool_kg_query("fixed entity", search=True, thread_scope={"allow": allow}) == boolean
+    )
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        (TOOLS[0], {"entity": "fixed", "offset": 0}),
+        (TOOLS[0], {"entity": "fixed", "search": True, "bogus": 1}),
+        (TOOLS[0], {"entity": "fixed", "search": False, "bogus": 1}),
+        (TOOLS[1], {"entity": "fixed", "bogus": 1}),
+        (TOOLS[2], {"bogus": 1}),
+        (TOOLS[3], {"bogus": 1}),
+    ],
+)
+def test_card253_s07_r3_undeclared_key(kgworld, tool, arguments):
+    assert call(kgworld, TOOLS[0], entity="fixed_entity")["facts"]
+    reply = kgworld.h.rpc(kgworld.tokens["A"], "tools/call", {"name": tool, "arguments": arguments})
+    key = "offset" if "offset" in arguments else "bogus"
+    assert reply.get("error") == {
+        "code": -32602,
+        "message": f"Unknown parameter '{key}' for tool {tool}",
+    }, "undeclared key was hidden by the projection envelope"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "fixed entity",
+        "Will",
+        "Ask Will about Acme",
+        "fixed",
+        "uses",
+        "Acme",
+        "what does Will work at",
+        "fixed entity uses",
+        "entity",
+        "hidden",
+        "needle",
+    ],
+)
+def test_card253_s07_r3_hidden_parity_guard(parity_corpus, fixed_search_clock, query):
+    w = parity_corpus
+    for i in range(70):
+        w.kg.add_triple(f"needle {i}", "uses", "same", source_thread=w.readable.id)
+    local = w.mcp.tool_kg_query(query, search=True, limit=100)
+    allow = w.kg.read_candidates()["facts"]
+    for i in range(70):
+        w.kg.add_triple(f"fixed entity {i}", "uses", f"hidden{i}", source_thread=w.hidden.id)
+        w.kg.add_triple(f"needle h{i}", "uses", "same", source_thread=w.hidden.id)
+    scoped = w.mcp.tool_kg_query(query, search=True, limit=100, thread_scope={"allow": allow})
+    assert scoped == local, "hidden rows affected parity or the selective seed cap"
+    if query == "needle":
+        assert len(local["facts"]) == 50

@@ -2076,6 +2076,8 @@ class KnowledgeGraph:
                 limit=candidate_limit,
                 common_term_fraction=common_term_fraction,
             )
+        if _read_ids.get() is not None:
+            raise RuntimeError("Scoped fact search snapshot unavailable")
         with self._lock:
             if not self._fact_index_ready:
                 raise RuntimeError("Fact search index unavailable")
