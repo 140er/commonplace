@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_commonplace_web import request
 
@@ -29,3 +31,9 @@ def test_health_and_version_independent(hub):
 
 def test_complete_admin_and_operational_retries(hub):
     run(hub, "complete")
+
+
+@pytest.mark.parametrize("mode", ["online", "offline"])
+@pytest.mark.parametrize("outcome", ["resolve", "reject"])
+def test_parent_receipts_refresh_supersedes_mode_retry(hub, mode, outcome):
+    run(hub, f"race-{mode}-{outcome}")

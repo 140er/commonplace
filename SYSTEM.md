@@ -23,8 +23,10 @@ entry was written.
   owner + exact server-fetched `users.is_admin=1`, read per request through the
   bounded RO connection, including `/api/me`. Authenticated ordinary failures use
   exactly “Instance administrator access required”; missing users deny and read
-  faults fail closed with 503 before source reads. Signed-out keeps the existing
-  gateway 401 challenge. No authority extends to other workspaces’ personal data.
+  faults on instance data routes fail closed with 503 before source reads.
+  A capability-read fault in `/api/me` preserves the 200 bootstrap response with
+  `can_admin_instance:false`; data routes always recheck authority. Signed-out keeps
+  the existing gateway 401 challenge. No authority extends to other workspaces’ personal data.
 
 - **Admin read and lifecycle bounds:** New projections use an existing SQLite
   `mode=ro` connection, connection-local `query_only`, at most 250 ms busy/connect
@@ -881,6 +883,9 @@ playbooks and the original wider orchestration acceptance remain separate work.
   emit only a fixed diagnostic and never alter backup outcomes or retries. SIGKILL
   before reporting leaves the previous attempt; no historical backfill, running
   indicator or remote-upload/retention verification is claimed. The gateway only
+  reads canonical UTC timestamps with mandatory date/time seconds and optional
+  one-to-six fractional digits. Parent receipt refreshes advance child generations
+  and cancel older per-mode retries before applying results. The reader
   reads fixed names through no-follow/nonblocking descriptors, fstat regular-file
   checks, strict schema/enums/timestamps and a 16 KiB cap; corrupt modes fail independently.
   The hosting operator provisions one UID/GID 10001:10001, 0700 directory and 0600

@@ -92,6 +92,8 @@ Format (read by `commonplace orch docs-check`):
   - Records the strict owner-progress authority probe separately from ordinary Recall denial semantics.
 
   - Records authenticated owner progress, process-lifetime units, fixed unavailable responses and the accepted global-quota causality.
+  - Capability-read faults preserve the bootstrap with false instance navigation; data routes keep fail-closed 503 responses and receipt refreshes supersede mode retries.
+
   - Admin reads tolerate missing migration columns, accept full-length slugs and distinguish active grants from historical assignments.
 
   - Records workspace-scoped operational facts without inventing a workspace cap, runner liveness, queue count or backup success.
@@ -238,6 +240,8 @@ Format (read by `commonplace orch docs-check`):
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
 - **Promises:**
+
+  - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
   - Unreleased notes record KG argument compatibility, wing aliases and intentional search response changes.
@@ -602,6 +606,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Progress witnesses compare authenticated hidden-present and hidden-absent worlds through the real scheduler and successful-write path in both store formats.
   - `tests/test_settings_load.py` drives fixed timers through production Settings reads, Retry and saved-state reloads, including fetch/body stalls, HTTP/network/JSON failures and contended orchestration reads.
+  - Admin and receipt controls observe operational calls and open flags outside production exception handlers; explicit alias-rejection and stale retry regressions fail by assertion.
+
   - Admin cleanup regressions exercise 100-character cursor boundaries, missing columns, inactive grants, typed metadata and next-page source errors.
 
   - Baseline-pass Admin controls remain distinct from RED regressions, and routing, disposal, escaping and redaction mutations must fail by assertion.
@@ -1512,9 +1518,13 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Receipt publication faults emit a fixed diagnostic and preserve the backup result; unsafe or noncanonical records fail independently per mode without paths or raw exception text.
+
   - A damaged backup is refused at verify time; an online run that loses its lease, heartbeat or fence ends invalid and publishes nothing; a live in-container successor refuses the run; a hand-copied restore carries no marker (residual in `SYSTEM.md`).
 
 - **Tests:**
+
+  - `tests/test_backup_status.py` covers atomic replacement faults, backup independence and hook exit-2 alias rejection; `tests/test_admin_instance_api.py` observes no-follow/nonblocking flags and per-mode reader faults.
 
   - `tests/test_backups.py`, `tests/test_backup_snapshot_deadline.py`, `tests/test_commonplace_w5_backup.py`, `tests/test_backup_online.py`, `tests/test_backup_online_enumeration.py`, `tests/test_backup_hook_online.py`, `tests/test_backup_pause.py`, `tests/test_backup_cli_fence.py`, `tests/test_admission_gate.py`, `tests/test_orch_store.py`.
 
@@ -1559,6 +1569,8 @@ Format (read by `commonplace orch docs-check`):
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
+  - The navigation-only instance flag falls back to false on read faults without breaking /api/me; receipt parent refreshes invalidate older mode generations.
+
   - Admin validates runtime metadata, probes optional columns, filters inactive grants and preserves paginated rows with source-specific retry errors.
 
   - Instance deploy/backups and /api/me share the exact per-request RO users.is_admin flag predicate after person-owner checks. Operational denial text is exact; deployed SHA is package data, health is independently validated, and receipt mode retries preserve siblings. test_admin_instance_api.py and test_admin_instance_ui.py cover authority, schemas, independent deadlines and disposal.

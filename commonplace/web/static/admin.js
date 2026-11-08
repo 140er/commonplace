@@ -175,6 +175,11 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
         for (const mode of modes) {
           const state = sections.get('backup-' + mode), receipt = data[mode];
           if (!['ready','unknown','error'].includes(receipt?.state)) throw new Error('Invalid receipt response');
+          if (key === 'backups') {
+            const child = 'backup-' + mode;
+            generations.set(child, (generations.get(child) || 0) + 1);
+            requests.get(child)?.abort(); requests.delete(child);
+          }
           state.data = receipt.state === 'error' ? null : receipt;
           state.error = receipt.state === 'error' ? 'Backup status unavailable. Retry.' : '';
           state.restricted = false;

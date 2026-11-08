@@ -4,6 +4,8 @@ import json
 import os
 from contextlib import contextmanager
 
+import pytest
+
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_admin_api import agent, clock, cookie, get, member
 from tests.test_commonplace_web import request
@@ -50,8 +52,11 @@ def test_instance_authority(hub, monkeypatch):
 
     monkeypatch.setattr(admin, "read_control", spy)
 
+    opened = []
+
     def forbidden(*args, **kwargs):
-        raise AssertionError("Operational source opened before instance authorization")
+        opened.append(True)
+        return {}
 
     monkeypatch.setattr(admin, "deploy", forbidden)
     from commonplace import backup_status
@@ -112,7 +117,9 @@ def test_instance_authority(hub, monkeypatch):
     for section in ("deploy", "backups"):
         code, data, _ = instance(hub, section, owner)
         assert code == 503 and "private-source" not in json.dumps(data)
-    assert request(hub, "/api/me", headers=owner)[0] == 503
+    code, _, raw = request(hub, "/api/me", headers=owner)
+    assert code == 200 and json.loads(raw)["can_admin_instance"] is False
+    assert not opened, "Denied/read-error paths must not open operational sources"
 
 
 def test_running_version_and_commit(hub, monkeypatch):
@@ -214,15 +221,21 @@ def test_backup_missing_and_malformed(hub, tmp_path, monkeypatch):
     from commonplace import backup_status
 
     real_open = os.open
+    opened_flags = []
 
     def checked_open(name, flags, *args, **kwargs):
         if str(name) == "online.json":
-            assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
-            assert kwargs.get("dir_fd") is not None
+            opened_flags.append((flags, kwargs.get("dir_fd")))
+            # Keep the hostile FIFO harmless even when testing a broken flag guard.
+            return real_open(name, flags | os.O_NONBLOCK, *args, **kwargs)
         return real_open(name, flags, *args, **kwargs)
 
     monkeypatch.setattr(backup_status.os, "open", checked_open)
     assert instance(hub, "backups", headers)[1]["online"]["state"] == "error"
+    assert opened_flags and all(
+        flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK and directory is not None
+        for flags, directory in opened_flags
+    )
     path.unlink()
     path.mkdir()
     assert instance(hub, "backups", headers)[1]["online"]["state"] == "error"
@@ -247,3 +260,93 @@ def test_instance_transport_controls(hub):
             == 404
         )
     assert json.loads(request(hub, "/healthz")[2]) == {"ok": True}
+
+
+def test_me_capability_read_failure_keeps_bootstrap(hub, monkeypatch):
+    from commonplace.web import admin
+
+    clock(hub)
+    headers = cookie(hub)
+    code, _, raw = request(hub, "/api/me", headers=headers)
+    assert code == 200
+    expected = json.loads(raw)
+    real_select = admin.select
+
+    def select(conn, context, sql, parameters=()):
+        if sql.startswith("SELECT is_admin"):
+            raise OSError("private-capability-read")
+        return real_select(conn, context, sql, parameters)
+
+    monkeypatch.setattr(admin, "select", select)
+    code, _, raw = request(hub, "/api/me", headers=headers)
+    assert code == 200
+    assert json.loads(raw) == {**expected, "can_admin_instance": False}
+    for section in ("deploy", "backups"):
+        assert instance(hub, section, headers)[0] == 503
+
+
+@pytest.mark.parametrize("field", ["started_at", "finished_at"])
+@pytest.mark.parametrize("stamp", ["2026-11-07T12Z", "2026-11-07 12:00:00Z"])
+def test_receipt_rejects_noncanonical_timestamps(hub, tmp_path, monkeypatch, field, stamp):
+    clock(hub)
+    monkeypatch.setenv("COMMONPLACE_BACKUP_STATUS_DIR", str(tmp_path))
+    (tmp_path / "online.json").write_text(json.dumps({**receipt(), field: stamp}))
+    (tmp_path / "offline.json").write_text(json.dumps(receipt("offline")))
+    code, data, _ = instance(hub, "backups", cookie(hub))
+    assert code == 200
+    assert data["online"] == {"state": "error", "error": "Backup status unavailable"}
+    assert data["offline"] == {"state": "ready", **receipt("offline")}
+
+
+def test_receipt_open_flags_are_observable(hub, tmp_path, monkeypatch):
+    from commonplace import backup_status
+
+    clock(hub)
+    monkeypatch.setenv("COMMONPLACE_BACKUP_STATUS_DIR", str(tmp_path))
+    (tmp_path / "online.json").write_text(json.dumps(receipt()))
+    seen = []
+    real_open = os.open
+
+    def observe(name, flags, *args, **kwargs):
+        seen.append((str(name), flags, kwargs.get("dir_fd")))
+        return real_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(backup_status.os, "open", observe)
+    code, data, _ = instance(hub, "backups", cookie(hub))
+    assert code == 200 and data["online"]["state"] == "ready"
+    receipt_opens = [item for item in seen if item[0] == "online.json"]
+    assert receipt_opens
+    assert all(
+        flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK and directory is not None
+        for _, flags, directory in receipt_opens
+    )
+
+
+def test_instance_read_error_never_opens_operational_sources(hub, monkeypatch):
+    from commonplace import backup_status
+    from commonplace.web import admin
+
+    clock(hub)
+    headers = cookie(hub)
+    opened = []
+    real_select = admin.select
+
+    def select(conn, context, sql, parameters=()):
+        if sql.startswith("SELECT is_admin"):
+            raise OSError("private-capability-read")
+        return real_select(conn, context, sql, parameters)
+
+    def deploy():
+        opened.append("deploy")
+        return {}
+
+    def receipts(context):
+        opened.append("backups")
+        return {mode: {"state": "unknown", "reason": "no_record"} for mode in ("online", "offline")}
+
+    monkeypatch.setattr(admin, "select", select)
+    monkeypatch.setattr(admin, "deploy", deploy)
+    monkeypatch.setattr(backup_status, "read_receipts", receipts)
+    for section in ("deploy", "backups"):
+        assert instance(hub, section, headers)[0] == 503
+        assert not opened, "The instance handler must deny before any operational source"
