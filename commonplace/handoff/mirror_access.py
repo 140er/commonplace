@@ -267,9 +267,7 @@ def hallway_visible(node, access, policy):
     label = node.get("label", "")
     if not isinstance(label, str):
         return False
-    tokens = [m[0] for m in provenance_refs._THREAD.finditer(label)]
-    tokens.extend(m[0] for m in provenance_refs._private_matches(label))
-    return all(access.reference(token) for token in tokens)
+    return all(access.reference(token) for token in provenance_refs.label_tokens(label))
 
 
 def gate(gateway, principal, rule, result):

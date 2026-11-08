@@ -1115,7 +1115,10 @@ def tool_list_hallways(
         return {"error": str(e)}
     if thread_scope is not None:
         from ..hallway_scope import read
+        from ..provenance import current
 
+        if current() is None:
+            return {"error": "Internal hallway scope requires verified gateway identity"}
         return read(thread_scope, wing)
     page, total = list_hallways_page(wing, limit=limit, offset=offset)
     return {

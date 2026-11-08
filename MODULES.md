@@ -58,7 +58,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
-  - Hallway eligibility and visible pagination are documented with their failure policy.
+  - Hallway read documentation distinguishes display-label token proof from citation parsing, visible counts from global storage and empty-on-incomplete behavior.
 
   - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
 
@@ -144,7 +144,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
-  - Hallway contract and ownership obligations are checked together.
+  - The documentation obligation covers hallway worker descriptors, public mediation and thread-reader ownership.
 
   - Owner-route store/private-reader fault regressions and the documentation obligation.
 
@@ -369,7 +369,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
-  - Changed hallway associations are excluded without rewriting stored rows; local unscoped pages remain compatible.
+  - Changed hallway associations are excluded without rewriting stored rows; unverified internal scope calls are refused, while local unscoped pages remain compatible.
 
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
   - Non-Chroma logical citations fail closed because the collection API cannot guarantee ordered snapshot enumeration.
@@ -590,7 +590,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
-  - Dedicated hallway visibility tests cover labels, rooms, totals, ties and complete enumeration.
+  - `tests/test_card253_s03.py` covers labels, rooms, totals, ties, complete enumeration and forged scopes.
 
   - `tests/test_card253_s12.py` covers strict store/private-reader failures, ordinary deny-on-fault compatibility and second-pass enumeration failure.
 
@@ -707,7 +707,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
 
-  - Public hallway tests cover visible totals and both storage formats.
+  - `tests/test_card253_s03.py` verifies visible totals, hidden client scope arguments and both persisted formats.
 
   - `tests/test_spaces_contract.py` and the installed public surface inventory.
 

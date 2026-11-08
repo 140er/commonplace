@@ -320,14 +320,69 @@ def test_card253_s03_worker_revalidation(world, monkeypatch, backend):
     w = world
     install(w, monkeypatch, backend, [record(w, "visible", entity_a="kept entity")], "original")
     assert public(w, limit=10)["count"] == 1
-    probe = mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"probe": True})
-    rows = probe["probe"]["rows"]
-    assert probe["probe"]["next"] is None
-    assert set(rows[0]["record"]) == {"id", "wing", "rooms", "label"}
-    install(w, monkeypatch, backend, [record(w, "visible", rooms=[w.hidden.id])], "changed")
-    assert mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"allow": rows}) == {
-        "hallways": []
+    from mempalace.provenance import verified
+
+    with verified(w.principal.identity()):
+        probe = mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"probe": True})
+        rows = probe["probe"]["rows"]
+        assert probe["probe"]["next"] is None
+        assert set(rows[0]["record"]) == {"id", "wing", "rooms", "label"}
+        install(w, monkeypatch, backend, [record(w, "visible", rooms=[w.hidden.id])], "changed")
+        assert mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"allow": rows}) == {
+            "hallways": []
+        }
+        assert mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"allow": []}) == {
+            "hallways": []
+        }
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_client_scope_is_ignored(world, monkeypatch, backend):
+    w = world
+    rows = [record(w, "visible"), record(w, "hidden", rooms=[w.hidden.id], label=w.hidden.id)]
+    install(w, monkeypatch, backend, rows, "client-scope")
+    listing = w.h.rpc(w.token, "tools/list")["result"]["tools"]
+    found = next(tool for tool in listing if tool["name"] == TOOL)
+    assert "thread_scope" not in found["inputSchema"]["properties"]
+    expected = public(w, limit=10)
+    w.calls.clear()
+    for forged in ({"probe": True}, {"allow": []}, {"allow": [{"position": 2, "record": rows[1]}]}):
+        reply = public(w, limit=10, thread_scope=forged)
+        assert reply == expected
+        assert "probe" not in reply and w.hidden.id not in json.dumps(reply)
+    assert expected["hallways"] == rows[:1]
+    assert all(call[0]["thread_scope"] != {"probe": True} for call in w.calls)
+    # The internal calls carry server-created cursors/descriptors, never the
+    # client's forged descriptor. Existing S1 mediation is shared by all tools.
+    finals = [
+        args["thread_scope"]["allow"] for args, _ in w.calls if "allow" in args["thread_scope"]
+    ]
+    assert finals and all(batch[0]["record"]["id"] == "visible" for batch in finals)
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_unverified_worker_scope_refused(world, monkeypatch, backend):
+    from mempalace import mcp_server
+    from mempalace.provenance import verified
+
+    w = world
+    install(w, monkeypatch, backend, [record(w, "hidden", rooms=[w.hidden.id])], "unverified")
+    assert public(w, limit=10)["hallways"] == []
+    with verified(None):
+        response = mcp_server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": TOOL,
+                    "arguments": {"wing": "wing_fixture", "thread_scope": {"probe": True}},
+                },
+            }
+        )
+    from commonplace.gateway import _tool_result
+
+    assert _tool_result(response) == {
+        "error": "Internal hallway scope requires verified gateway identity"
     }
-    assert mcp_server.tool_list_hallways(wing="wing_fixture", thread_scope={"allow": []}) == {
-        "hallways": []
-    }
+    assert w.hidden.id not in json.dumps(response)

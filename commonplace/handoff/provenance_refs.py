@@ -127,6 +127,13 @@ def _private_matches(text):
             yield match
 
 
+def label_tokens(text):
+    """Scan display text independently, without citation decoding or refusal."""
+    tokens = [m[0] for m in _THREAD.finditer(text)]
+    tokens.extend(m[0] for m in _private_matches(text))
+    return tuple(tokens)
+
+
 def _authorization_copy(text):
     """Build a bounded NFKC copy and preserve original character offsets."""
     chars, offsets = [], []

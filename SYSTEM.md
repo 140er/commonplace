@@ -945,6 +945,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   order. Request-local authority yields concrete descriptors; final snapshot reads
   exclude changed/new associations. Only eligible records enter the stable strength
   sort, visible total and offset/limit page. The final gate is a safety check.
+  Client discovery omits the internal scope; authenticated mediation discards
+  caller-supplied scope arguments and creates its own probe/allow descriptors.
+  Worker scope calls require a verified gateway identity; unscoped local calls
+  retain their operator behavior.
 - Missing workspace context, incomplete acquisition, malformed protocol or expired
   deadline returns a fixed empty pagination envelope, with no global totals or raw
   errors. Local unscoped reads remain available. Reads never recompute labels,
