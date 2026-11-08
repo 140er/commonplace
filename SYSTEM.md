@@ -307,9 +307,12 @@ Report installation registers recovery without resolving workspace directories.
 The first dispatcher scan recovers and migrates existing board databases without creating
 workspace directories, followed by monotonic 30-second scan deadlines independent
 of requests and webhook traffic. Source initialization is cached by database path,
-inode and nanosecond modification time, so changed files are checked again.
+inode and SQLite schema version, read through a read-only connection each pass.
+Ordinary data writes preserve the cache; replacing a database or changing its
+schema triggers initialization again, including repair of dropped report tables.
 Workspace failures are isolated per pass and logged with exception type and stack
-locations, excluding exception text and local values. Each workspace pass reads
+locations, excluding exception text and local values. Closed-control errors reach
+the dispatcher's normal shutdown handler. Each workspace pass reads
 at most 100 cards, publishes at most 100 source rows separately and cleans at most
 100 deleted episode keys. Persisted pagination provides fair continuation; a cycle can
 take longer than 30 seconds. The first observation in a generation baselines

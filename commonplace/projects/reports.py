@@ -8,6 +8,7 @@ still hold an old source row, so retaining its receipt is the safe retry boundar
 import json
 import logging
 import secrets
+import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -329,15 +330,19 @@ class ReportPump:
                 if not path.is_file():
                     continue
                 stat = path.stat()
-                key = (path, stat.st_ino, stat.st_mtime_ns)
+                with orchestration.board_read(path.parent) as conn:
+                    schema_version = conn.execute("PRAGMA schema_version").fetchone()[0]
+                key = (path, stat.st_ino, schema_version)
                 if key not in self._initialized:
                     with source_write(self.gateway, wid) as conn:
                         ensure_source(conn)
+                        schema_version = conn.execute("PRAGMA schema_version").fetchone()[0]
                     self._initialized = {k for k in self._initialized if k[0] != path}
-                    stat = path.stat()
-                    self._initialized.add((path, stat.st_ino, stat.st_mtime_ns))
+                    self._initialized.add((path, stat.st_ino, schema_version))
                 observe(self.gateway, wid)
                 publish(self.gateway, wid)
+            except sqlite3.ProgrammingError:
+                raise  # The dispatcher treats closed control databases as normal shutdown.
             except Exception as exc:
                 log_failure(logger, "project report pass failed", exc)
                 continue
