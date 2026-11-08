@@ -318,3 +318,5 @@ backup success/failure or fencing. Admin authorization is signed-in current-work
 owner plus a per-request server admin flag; ordinary owners see exactly
 “Instance administrator access required” and send no operational requests.
 See [Admin API](../../docs/admin.md) and [backup receipts](../../docs/backups.md#optional-status-receipts).
+
+See the [Instance console guide](../../docs/instance-admin.md) for read-only management metadata, authority, audit growth and capacity planning.

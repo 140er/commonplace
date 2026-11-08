@@ -22,28 +22,28 @@ export function projectSubline(board) {
 
 // The Workspace group of the account menu: the screens people only visit to set things up.
 // Shared by the desktop rail and the phone top bar so both list the same entries.
-function menuLinks({ needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
-  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a></div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}<button data-action="logout">Sign out</button>`;
+function menuLinks({ needs = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
+  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a></div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="logout">Sign out</button>`;
 }
 
 // Pure markup: the shell delegates data-action clicks and owns navigation/state.
 // The rail carries Bots and Memory only; botsWaiting is the one count (questions waiting on the person).
 // Rail styles live in workbench.css, so re-rendering the rail never adds a stylesheet.
-export function renderRail({ workspace = 'Commonplace', user = '', view = 'board', needs = 0, rulesWaiting = 0, botsWaiting = 0, can_admin = false } = {}) {
+export function renderRail({ workspace = 'Commonplace', user = '', view = 'board', needs = 0, rulesWaiting = 0, botsWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
   return `<nav class="rail" aria-label="Workspace">
     <button class="ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace"><span class="mark" aria-hidden="true">${e(Array.from(workspace)[0] || 'C')}</span>${e(workspace)}${icon('chevron')}</button>
     <button class="cmdk" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K">${icon('search')}<span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
     <a class="nav" href="#/bots" data-nav="bots"${current(view === 'bots')}>${icon('bots')}Bots ${badge(botsWaiting, 'waiting on you')}</a>
     <a class="nav" href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a>
     <div class="rail-foot"><button class="nav" id="shortcuts-link" data-action="shortcuts">${icon('keys')}Shortcuts <kbd>?</kbd></button>
-    <details class="user-menu"><summary class="me"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${e(user || 'Account')}${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin })}</div></details></div>
+    <details class="user-menu"><summary class="me"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${e(user || 'Account')}${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin, can_manage_instance })}</div></details></div>
   </nav>`;
 }
 
 // board is passed only on project screens, where the bar names the project and offers its settings.
-export function renderPhoneBar({ board = null, needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
+export function renderPhoneBar({ board = null, needs = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false } = {}) {
   const name = board?.name || board?.slug || 'Projects';
-  return `<header class="m-top"><details class="m-menu"><summary class="iconbtn" aria-label="Menu">${icon('menu')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin })}</div></details>${board?.slug ? `<button class="projbtn" data-action="switch-project" aria-label="Project: ${e(name)}. Switch project"><span class="sw" aria-hidden="true"></span>${e(name)}${icon('chevron')}</button>` : ''}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button>${board?.slug ? `<button class="btn m-settings" id="m-settings" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings">${icon('settings')}Settings</button>` : ''}</header>`;
+  return `<header class="m-top"><details class="m-menu"><summary class="iconbtn" aria-label="Menu">${icon('menu')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin, can_manage_instance })}</div></details>${board?.slug ? `<button class="projbtn" data-action="switch-project" aria-label="Project: ${e(name)}. Switch project"><span class="sw" aria-hidden="true"></span>${e(name)}${icon('chevron')}</button>` : ''}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button>${board?.slug ? `<button class="btn m-settings" id="m-settings" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings">${icon('settings')}Settings</button>` : ''}</header>`;
 }
 
 export function renderPhoneTabs({ view = 'bots', botsWaiting = 0 } = {}) {

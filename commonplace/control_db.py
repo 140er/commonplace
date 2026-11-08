@@ -928,6 +928,7 @@ class ControlDB:
         reason: str = "",
         wing: Optional[str] = None,
         target_ids: Iterable[str] = (),
+        recorded_at=None,
     ) -> int:
         """Append one entry and return its sequence number. Ids and decisions only."""
         ids = [str(t)[:200] for t in target_ids if t][:500]
@@ -936,7 +937,7 @@ class ControlDB:
                 "INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action, "
                 "tool, decision, reason, wing, target_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    _iso(_now()),
+                    _iso(recorded_at if recorded_at is not None else _now()),
                     workspace_id,
                     user_id,
                     connection_id,
@@ -982,6 +983,27 @@ class ControlDB:
                 reason=reason,
             )
             return True
+
+    def audit_bounded(self, context, **fields):
+        """Append through the coordinated writer with one remaining request budget."""
+        if not self._lock.acquire(timeout=context.remaining()):
+            raise TimeoutError()
+        try:
+            conn = self._conn
+            previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            try:
+                wait = int(context.remaining() * 1000)
+                conn.execute(f"PRAGMA busy_timeout={wait}")
+                conn.set_progress_handler(
+                    lambda: int(context.clock.monotonic() >= context.deadline), 100
+                )
+                self.audit(recorded_at=context.now, **fields)
+                context.remaining()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout={previous}")
+        finally:
+            self._lock.release()
 
     def audit_entries(self, workspace_ref: Optional[str] = None, limit: int = 100) -> list:
         sql = "SELECT * FROM audit_log"

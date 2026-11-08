@@ -14,6 +14,8 @@
 
 - **Promises:**
 
+  - Ordinary project routes require a signed-in owner; the separately audited instance console currently exposes metadata reads only.
+
   - Orchestration settings reads wait at most one second for the shared control lock, then return the existing retryable `settings_unavailable` refusal without reading an unlocked connection.
   - The explicit Admin-only optional-input flag permits absent runner jobs/config without initialization while ordinary doing cards still count. Admission defaults retain strict runner input and shared accounting.
 

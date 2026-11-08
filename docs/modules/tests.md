@@ -4,6 +4,7 @@
 - **Owns:**
 
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
+  - Fourteen metadata-console regression families over genuine HTTP sessions/connections and synthetic isolated stores.
 
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
 
@@ -116,6 +117,8 @@
   - `tests/test_fact_readers_import_graph.py` runs a fresh interpreter over the fact read and search path and asserts `commonplace.rules` is never loaded, scans the three fact readers for any `commonplace` import, and pins the shared read deadline.
 
 - **Promises:**
+
+  - New tests begin with a base-safe assertion before importing implementation modules; cursor/privacy/rate/write and lifecycle assertions cover the delivered surface.
 
   - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py` and `mempalace/deadline.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
 
@@ -298,6 +301,8 @@
 
 - **How it fails:**
 
+  - Authority, content leaks, domain read writes, stalled decoding and stale generations fail concrete assertions.
+
   - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
 
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
@@ -347,6 +352,8 @@
 
 
 - **Tests:**
+
+  - The selected read/UI families, focused Admin/web controls, synthetic browser acceptance and documentation obligations.
 
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
 

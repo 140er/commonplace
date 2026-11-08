@@ -80,7 +80,7 @@ def test_instance_authority(hub, monkeypatch):
         assert (
             json.loads(request(hub, "/api/me", headers=headers)[2])["can_admin_instance"] is False
         )
-    assert not reads, "Cheap person/role refusals must not open control projections"
+    assert len(reads) == 1, "Only the admin-member navigation capability needs a flag read"
     assert json.loads(request(hub, "/api/me", headers=owner)[2])["can_admin_instance"] is True
     hub.db._conn.execute("UPDATE users SET is_admin=0 WHERE id=?", (hub.admin,))
     for section in ("deploy", "backups"):
@@ -119,6 +119,7 @@ def test_instance_authority(hub, monkeypatch):
         assert code == 503 and "private-source" not in json.dumps(data)
     code, _, raw = request(hub, "/api/me", headers=owner)
     assert code == 200 and json.loads(raw)["can_admin_instance"] is False
+    assert json.loads(raw)["can_manage_instance"] is False
     assert not opened, "Denied/read-error paths must not open operational sources"
 
 
@@ -280,7 +281,11 @@ def test_me_capability_read_failure_keeps_bootstrap(hub, monkeypatch):
     monkeypatch.setattr(admin, "select", select)
     code, _, raw = request(hub, "/api/me", headers=headers)
     assert code == 200
-    assert json.loads(raw) == {**expected, "can_admin_instance": False}
+    assert json.loads(raw) == {
+        **expected,
+        "can_admin_instance": False,
+        "can_manage_instance": False,
+    }
     for section in ("deploy", "backups"):
         assert instance(hub, section, headers)[0] == 503
 

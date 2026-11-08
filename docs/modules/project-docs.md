@@ -3,6 +3,10 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The read-only instance console operator and API guide in `docs/instance-admin.md`.
+
+  - The instance console guide distinguishes workspace filters, path-bound targets, list pagination and the query-free operator settings endpoint.
+
   - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
@@ -55,6 +59,8 @@
 
 - **Promises:**
 
+  - Documents delivered GETs, exact authority, effective existing limits and future target-membership boundaries.
+
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
@@ -102,6 +108,8 @@
 
 - **How it fails:**
 
+  - Missing stores remain unknown; source/audit failures and ongoing audit capacity are explicit.
+
   - Safe errors and missing optional sources remain distinct from measured zeros; missing operational records remain unknown.
 
 
@@ -116,6 +124,8 @@
   - Broken commands in docs surface only when someone follows them.
 
 - **Tests:**
+
+  - Metadata console API and documentation obligation checks.
 
   - Admin API and lifecycle suites plus docs-check against the development merge base.
 

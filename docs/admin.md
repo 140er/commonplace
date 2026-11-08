@@ -321,3 +321,5 @@ and the [deployment guide](../deploy/commonplace/DEPLOY.md#optional-backup-statu
 Receipt timestamps require `YYYY-MM-DDTHH:MM:SSZ`, optionally with one to six
 fractional-second digits before `Z`; shortened or space-separated forms are rejected.
 A parent receipts refresh supersedes older per-mode retries.
+
+The separate [Instance console](instance-admin.md) shows cross-workspace management metadata to signed-in instance admins, including members. It grants no content access.

@@ -1,7 +1,9 @@
 ## hub-core
 
-- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
+- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/instance_admin.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
+
+  - Dedicated session-admin management metadata services, namespace admission and bounded coordinated read audit appends.
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
@@ -18,6 +20,8 @@
   - The untrusted write limit and the first-backfill allowance are environment configuration (`COMMONPLACE_WRITE_LIMIT*`, `COMMONPLACE_BACKFILL_*`); the allowance is counted durably per connection and per workspace.
 
 - **Promises:**
+
+  - Fresh session person/flag authority omits only the workspace-owner requirement; rate admission precedes denial audit; console reads bypass home-account quota only.
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
@@ -78,6 +82,8 @@
 
 - **How it fails:**
 
+  - Authority/source errors fail closed; authorized audit failure returns no metadata; denied bodies close before response.
+
   - `http_util.log_failure` logs the exception type and stack locations only; for sqlite3/sqlcipher3 errors it adds `sqlite_errorname`/`sqlite_errorcode` and the message only when it is one of SQLite's fixed texts (`SQLITE_MESSAGES`), never other exception text.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
@@ -106,6 +112,10 @@
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - `tests/test_instance_admin_read.py` covers genuine credentials, metadata isolation, fixed clocks, rate boundaries and read-only sources.
+
+  - Workspace settings retain identity, account limits and orchestration without a boards store; positive lifecycle and actor filters and non-session navigation refusals have regression coverage. Instance settings reject query filters and validation refusals carry no audit targets.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 

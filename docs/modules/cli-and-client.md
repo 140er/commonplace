@@ -11,6 +11,8 @@
 
 - **Promises:**
 
+  - The setup guide links the read-only instance console without implying workspace ownership grants management authority.
+
   - `runner report` sends only the values it was given for one started run; it never opens the data directory.
 
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
