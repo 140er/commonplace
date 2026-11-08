@@ -487,3 +487,21 @@ def test_card253_s11_media_raw_proof(file_search, monkeypatch, role, mode):
         assert all(
             h.get("source_path") == RAW and h.get("source_file") == Path(RAW).name for h in hits
         )
+
+
+def test_card253_s11_import_alias_scope():
+    from types import SimpleNamespace
+
+    from commonplace.handoff import mirror_access, provenance_refs
+
+    access = SimpleNamespace(
+        scrubbed={},
+        parse=provenance_refs.refs,
+        reference=lambda _: False,
+        association=lambda *_: False,
+    )
+    original = {"source_file": RAW, "source_thread": "thr_deadbeef"}
+    cleaned = mirror_access.scrub_provenance(original, access, import_file_alias=True)
+    assert cleaned == {"source_file": RAW}
+    assert original == {"source_file": RAW, "source_thread": "thr_deadbeef"}
+    assert mirror_access.scrub_provenance(dict(original), access) == {}

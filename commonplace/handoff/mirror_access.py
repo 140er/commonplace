@@ -237,7 +237,7 @@ def filter_room_keys(rule, result, can_read):
     return result
 
 
-def scrub_provenance(node, access, *, import_alias=False):
+def scrub_provenance(node, access, *, import_alias=False, import_file_alias=False):
     if access.scrubbed.get(id(node)) is node:
         return node
     out = node
@@ -247,7 +247,11 @@ def scrub_provenance(node, access, *, import_alias=False):
         fields |= {"path", "title"}  # Media search also displays source_path under these aliases.
     for key in fields:
         # Search's display basename is authorized by its complete raw path.
-        if (paired and key == "source_file") or (import_alias and key == "source_path"):
+        if (
+            (paired and key == "source_file")
+            or (import_alias and key == "source_path")
+            or (import_file_alias and key == "source_file")
+        ):
             continue
         value = node.get(key)
         if value is None and key != "source_path":
@@ -404,7 +408,7 @@ def gate(gateway, principal, rule, result, *, access=None):
     reader_recall = access.recall
     reader_scope = principal.policy.has_scope("memory:import:read")
 
-    def scrub(node):
+    def scrub(node, *, import_file_alias=False):
         if isinstance(node, dict):
             fact = _is_fact(node)
             if reader_scope and not access.preview_allowed(node):
@@ -435,7 +439,9 @@ def gate(gateway, principal, rule, result, *, access=None):
                 )
                 if node is _DROP:
                     return _DROP
-            node = scrub_provenance(node, access, import_alias=import_row)
+            node = scrub_provenance(
+                node, access, import_alias=import_row, import_file_alias=import_file_alias
+            )
             if not import_row and unreadable_room(
                 can_read, None if fact else node.get("wing"), node.get("room")
             ):
@@ -457,9 +463,9 @@ def gate(gateway, principal, rule, result, *, access=None):
                 return _DROP
             out = {}
             for key, value in node.items():
-                # Only _proved_record constructs this metadata after exact
-                # import-range proof; its source aliases are explicitly exempt.
-                cleaned = value if import_row and key == "metadata" else scrub(value)
+                # Only the source_file alias constructed after exact import
+                # proof is exempt; other metadata still passes through the gate.
+                cleaned = scrub(value, import_file_alias=import_row and key == "metadata")
                 if cleaned is _DROP:
                     return _DROP
                 if (
