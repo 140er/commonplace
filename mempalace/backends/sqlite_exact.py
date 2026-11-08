@@ -173,7 +173,7 @@ def _where_uses_only_cached_keys(where: Optional[dict]) -> bool:
 def _equality_where_sql(
     where: Optional[dict], *, locus_columns: bool = True
 ) -> Optional[tuple[str, list]]:
-    """Push equality, ``$eq`` / ``$in`` and ``$and`` of them into SQL, else ``None``.
+    """Push equality, ``$eq`` / ``$ne`` / ``$in`` and ``$and`` into SQL, else ``None``.
 
     ``None`` means the filter needs the Python ``matches_where`` path
     (``$or``, comparisons, ``$contains``, ``None`` operands, non-identifier keys).
@@ -211,6 +211,11 @@ def _equality_where_sql(
         if op == "$eq" and _pushable_scalar(operand):
             clauses.append(f"{expr} = ?")
             params.append(encode_filter(expected)["$eq"])
+        elif op == "$ne" and _pushable_scalar(operand):
+            # matches_where treats a missing key as None, which is unequal
+            # to a non-null scalar. SQL's NULL comparison needs this arm.
+            clauses.append(f"({expr} IS NULL OR {expr} != ?)")
+            params.append(encode_filter(expected)["$ne"])
         elif (
             op == "$in"
             and isinstance(operand, (list, tuple))

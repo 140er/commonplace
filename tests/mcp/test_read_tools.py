@@ -869,6 +869,8 @@ class TestMetadataFacets:
             call("wing", where=None, limit=16385),
             call("room", where=None, limit=16385),
             call("is_sentinel", where=None, limit=16385),
+            call("wing", where={"ingest_mode": "registry"}, limit=16385),
+            call("room", where={"ingest_mode": "registry"}, limit=16385),
             call(
                 "room",
                 where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},
@@ -906,6 +908,8 @@ class TestMetadataFacets:
         assert col.facet_counts.call_args_list == [
             call("wing", where=None, limit=16385),
             call("is_sentinel", where=None, limit=16385),
+            call("wing", where={"ingest_mode": "registry"}, limit=16385),
+            call("room", where={"ingest_mode": "registry"}, limit=16385),
             call(
                 "room",
                 where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},
@@ -953,6 +957,8 @@ class TestMetadataFacets:
             call("room", where=wing, limit=16385),
             call("wing", where=wing, limit=16385),
             call("is_sentinel", where=None, limit=16385),
+            call("wing", where={"ingest_mode": "registry"}, limit=16385),
+            call("room", where={"ingest_mode": "registry"}, limit=16385),
             call(
                 "room",
                 where={"$and": [{"wing": "engineering"}, {"ingest_mode": "registry"}]},
@@ -993,6 +999,8 @@ class TestMetadataFacets:
             call("wing", where=None, limit=16385),
             *calls[1:3],
             call("is_sentinel", where=None, limit=16385),
+            call("wing", where={"ingest_mode": "registry"}, limit=16385),
+            call("room", where={"ingest_mode": "registry"}, limit=16385),
             call(
                 "room",
                 where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},

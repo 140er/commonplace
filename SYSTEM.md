@@ -1499,10 +1499,30 @@ available, including pgvector, qdrant and exact/compact when their fast path is
 unavailable. Facet acquisitions have explicit distinct-key limits; bookkeeping
 subtraction uses a fixed number of room facets per wing: registry, sentinel
 union and their overlap. Only the bookkeeping facets' returned rooms are expanded;
-ordinary rooms do not cause additional round trips. Boolean and legacy string
+ordinary rooms do not cause additional facet calls. Missing rooms are reconciled
+from three global wing-keyed bookkeeping facets over those same predicates.
+Global room facets supply the wingless room remainder; two additional scalar
+facets (registry ingest_mode and non-registry sentinel is_sentinel) reconcile
+missing wing keys without double subtraction or string/numeric flag confusion.
+The exact/compact SQL filter pushes scalar $ne with an explicit NULL arm so
+missing ingest_mode keys remain eligible for the disjoint sentinel count.
+Facet taxonomy retains its existing explicitly keyed-wing enumeration; wingless
+bookkeeping cannot subtract from a literal wing named "unknown". Boolean and legacy string
 sentinel aliases share one union predicate, preventing duplicate subtraction.
 Taxonomy per-wing facets use at most eight concurrent calls, releasing each map
-after reduction. These are round-trip bounds, independent of request timing.
+after reduction. With W explicitly keyed wings, the unscoped facet-call bounds
+are status <= 9 + 3W, list_wings <= 8 + 3W, list_rooms <= 9 + 3W, taxonomy
+<= 8 + 4W, plus at most 2 calls when wingless rows exist. This conservative
+baseline includes the three global room facets even without wingless rows.
+These count facet calls, not backend requests or elapsed time. From backend
+code, sqlite_exact executes two SQL statements per facet (collection lookup
+and aggregate); pgvector and qdrant perform one existence probe per facet in
+addition to its aggregate request. Live remote costs have not been measured.
+Up to eight completed in-flight maps can transiently retain eight times 8 MiB,
+plus the separately bounded tally; the 8 MiB map limit is not a combined
+transient limit. Qdrant membership unions use homogeneous string/integer
+MatchAny groups, single boolean matches and numeric equality ranges, keeping
+bookkeeping filters server-side without mixed-type MatchAny bodies.
 
 Only `UnsupportedCapabilityError` in bookkeeping acquisition preserves ordinary
 facet results with `partial: true` and
@@ -1518,6 +1538,10 @@ string sentinels (`"true"` and `"1"`) as well as boolean flags, and explicit
 facet limits replace the previous default-1000 silent truncation. Counts are
 complete within the configured aggregate bounds; over-cap acquisitions refuse
 explicitly rather than publishing truncated totals.
+
+Missing-room registry/sentinel rows and rows without either locus key are
+also excluded from facet counts. Pre-existing sqlite_exact fast-path handling
+of the string "yes" and scoped first-page facet probe fan-out are unchanged.
 
 Non-facet raw fallback uses a presence-preserving projection of wing, room,
 is_sentinel and ingest_mode. Chroma reads these fields in one recovery-checked

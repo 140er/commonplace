@@ -308,7 +308,7 @@ def _chroma_room_wing_hall_counts():
     return rows
 
 
-def _overview_tally(col, where=None, bookkeeping=False):
+def _overview_tally(col):
     """Reduce bounded projected batches; discard partial state on lazy SQL errors."""
     _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
     import sqlite3
@@ -324,13 +324,13 @@ def _overview_tally(col, where=None, bookkeeping=False):
     for attempt in range(2):
         tally = Tally()
         try:
-            iterator = factory(where=where) if callable(factory) else None
+            iterator = factory(where=None) if callable(factory) else None
             if iterator is None:
                 raise OverviewError("overview_unavailable")
             for batch in iterator:
                 for meta in batch:
                     meta = meta or {}
-                    if is_bookkeeping(meta) != bookkeeping:
+                    if is_bookkeeping(meta):
                         continue
                     tally.add(meta.get("wing", "unknown"), meta.get("room", "unknown"))
                 del batch
@@ -345,15 +345,15 @@ def _overview_tally(col, where=None, bookkeeping=False):
     raise OverviewError("overview_unavailable")
 
 
-def _overview_metadata(col, where=None):
+def _overview_metadata(col):
     """Already-reduced rows for legacy reducers; never raw drawer metadata."""
-    total, taxonomy = _overview_tally(col, where)
+    total, taxonomy = _overview_tally(col)
     # Return a weighted reducer input without expanding drawer counts.
     return total, taxonomy
 
 
-def _apply_overview(col, wings=None, rooms=None, taxonomy=None, where=None):
-    total, counts = _overview_metadata(col, where)
+def _apply_overview(col, wings=None, rooms=None, taxonomy=None):
+    total, counts = _overview_metadata(col)
     if wings is not None:
         wings.update({w: sum(rs.values()) for w, rs in counts.items()})
     if rooms is not None:
@@ -368,9 +368,15 @@ def _apply_overview(col, wings=None, rooms=None, taxonomy=None, where=None):
 def _overview_facets(col, field, where=None):
     """Acquire a finite facet map; never let truncation look like full counts."""
     _observation.mark(metadata_fallback=False, fallback_kind="none")
+    from ..backends import BackendError, UnsupportedCapabilityError
     from ..overview import AGGREGATE_BYTES, CELL_BYTES, MAX_PAIRS, OverviewError, retained_size
 
-    counts = col.facet_counts(field, where=where, limit=MAX_PAIRS + 1)
+    try:
+        counts = col.facet_counts(field, where=where, limit=MAX_PAIRS + 1)
+    except UnsupportedCapabilityError:
+        raise
+    except BackendError:
+        raise OverviewError("overview_unavailable") from None
     if not isinstance(counts, dict):
         raise OverviewError("overview_unavailable")
     if len(counts) > MAX_PAIRS or retained_size(counts) > AGGREGATE_BYTES:
@@ -409,37 +415,59 @@ def _bookkeeping_sentinels(col):
     return {"is_sentinel": {"$in": list(values.values())}} if values else None
 
 
-def _bookkeeping_rooms(col, where, sentinels):
-    """One registry facet plus sentinel and overlap facets, independent of rooms."""
+def _bookkeeping_counts(col, field, where, sentinels):
+    """Registry plus sentinel union minus overlap, at a fixed facet cost."""
     registry = _facet_where(where, {"ingest_mode": "registry"})
-    rooms = _overview_facets(col, "room", where=registry)
+    counts = _overview_facets(col, field, where=registry)
     if sentinels:
-        for room, n in _overview_facets(col, "room", where=_facet_where(where, sentinels)).items():
-            rooms[room] = rooms.get(room, 0) + n
-        for room, n in _overview_facets(
-            col, "room", where=_facet_where(registry, sentinels)
-        ).items():
-            _subtract_counts(rooms, room, n)
-    return rooms
+        for key, n in _overview_facets(col, field, where=_facet_where(where, sentinels)).items():
+            counts[key] = counts.get(key, 0) + n
+        for key, n in _overview_facets(col, field, where=_facet_where(registry, sentinels)).items():
+            _subtract_counts(counts, key, n)
+    return counts
 
 
 def _bookkeeping_taxonomy(col, known_wings=None, unknown_wing=False) -> dict:
-    """Expand only rooms returned by bookkeeping facets, never ordinary rooms."""
+    """Reconcile absent keys using global totals, without per-room queries."""
     from ..overview import Tally
 
     sentinels = _bookkeeping_sentinels(col)
     if known_wings is None:
         known_wings = _overview_facets(col, "wing")
         unknown_wing = col.count() > sum(known_wings.values())
+    totals = _bookkeeping_counts(col, "wing", None, sentinels)
+    # Always acquire the global room union: the call bound has a fixed baseline
+    # and only the two scalar totals below depend on the wingless-row case.
+    remaining = _bookkeeping_counts(col, "room", None, sentinels)
+    missing_total = 0
+    if unknown_wing:
+        global_total = sum(
+            _overview_facets(col, "ingest_mode", where={"ingest_mode": "registry"}).values()
+        )
+        if sentinels:
+            # Disjoint union avoids an extra overlap-total query. Both fields
+            # are guaranteed present by their respective predicates. In
+            # particular, typed filtering distinguishes 0.0 from string "0.0".
+            nonregistry = _facet_where(sentinels, {"ingest_mode": {"$ne": "registry"}})
+            global_total += sum(_overview_facets(col, "is_sentinel", where=nonregistry).values())
+        missing_total = global_total - sum(totals.values())
     tally = Tally()
-    remaining = _bookkeeping_rooms(col, None, sentinels) if unknown_wing else None
     for wing in known_wings:
-        for room, n in _bookkeeping_rooms(col, {"wing": wing}, sentinels).items():
-            tally.add(wing, room, n)
-            if remaining is not None:
+        rooms = _bookkeeping_counts(col, "room", {"wing": wing}, sentinels)
+        for room, n in rooms.items():
+            if unknown_wing:
                 _subtract_counts(remaining, room, n)
-    for room, n in (remaining or {}).items():
-        tally.add("unknown", room, n)
+        missing = totals.get(wing, 0) - sum(rooms.values())
+        if missing > 0:
+            rooms["unknown"] = rooms.get("unknown", 0) + missing
+        for room, n in rooms.items():
+            tally.add(wing, room, n)
+    if unknown_wing:
+        missing = missing_total - sum(remaining.values())
+        if missing > 0:
+            remaining["unknown"] = remaining.get("unknown", 0) + missing
+        for room, n in remaining.items():
+            tally.add("unknown", room, n)
     return tally.result()[1]
 
 

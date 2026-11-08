@@ -491,6 +491,9 @@ Format (read by `commonplace orch docs-check`):
 
   - SQLite, Chroma and Compact ordering guards plus numeric zero/exponent cases compare with local graph readers.
   - `tests/test_worker_observation.py` covers generated call pairs, private-value rejection, actual leaf counters, opt-out, transport lifetime, bounded contexts and cross-process ring rotation.
+  - Missing-locus bookkeeping reconciles wing and room totals with fixed global facets; Qdrant emits typed server filters and ordinary facet failures use the canonical refusal.
+  - `tests/test_overview_facets_r3.py` checks fake/SQLite missing-key oracle parity and primary facet refusals; adapter tests check typed REST facet bodies.
+
   - `tests/test_overview_facets_r2.py` pins transient backend refusal, deterministic facet call bounds, lost-fingerprint recount and zero-get unsupported acquisition.
 
   - `tests/test_overview_review_regressions.py` covers real facet wrappers, aggregate bookkeeping and transient/persistent real Chroma recovery without fake byte capabilities.

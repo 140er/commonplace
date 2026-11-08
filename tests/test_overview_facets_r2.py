@@ -1,4 +1,4 @@
-"""Deterministic facet round-trip, failure and unsupported-acquisition witnesses."""
+"""Deterministic facet-call, failure and unsupported-acquisition witnesses."""
 
 from collections import Counter
 from types import SimpleNamespace
@@ -84,26 +84,32 @@ def test_bookkeeping_backend_failure_refuses(overview, monkeypatch, tool, kind):
 
 @pytest.mark.parametrize("wings,rooms", [(30, 12), (40, 20)])
 @pytest.mark.parametrize("tool", TOOLS)
-def test_facet_round_trips_are_linear_in_wings(overview, monkeypatch, tool, wings, rooms):
+@pytest.mark.parametrize("wingless", [False, True])
+def test_facet_calls_are_linear_in_wings(overview, monkeypatch, tool, wings, rooms, wingless):
     col = Facets(wings, rooms)
+    if wingless:
+        col.rows.append({"room": "r05"})
     monkeypatch.setattr(overview, "_get_collection", lambda **kw: col)
     result = getattr(overview, tool)()
     assert "error" not in result and not result.get("partial")
     if tool == "tool_status":
-        assert result["total_drawers"] == wings * rooms * 3
+        assert result["total_drawers"] == wings * rooms * 3 + int(wingless)
     elif tool == "tool_list_wings":
-        assert sum(result["wings"].values()) == wings * rooms * 3
+        assert sum(result["wings"].values()) == wings * rooms * 3 + int(wingless)
     elif tool == "tool_list_rooms":
-        assert sum(result["rooms"].values()) == wings * rooms * 3
+        assert sum(result["rooms"].values()) == wings * rooms * 3 + int(wingless)
     else:
         assert sum(sum(rs.values()) for rs in result["taxonomy"].values()) == wings * rooms * 3
     bound = {
-        "tool_status": 4 + 3 * wings,
-        "tool_list_wings": 3 + 3 * wings,
-        "tool_list_rooms": 4 + 3 * wings,
-        "tool_get_taxonomy": 3 + 4 * wings,
+        "tool_status": 9 + 3 * wings,
+        "tool_list_wings": 8 + 3 * wings,
+        "tool_list_rooms": 9 + 3 * wings,
+        "tool_get_taxonomy": 8 + 4 * wings,
     }[tool]
-    assert len(col.calls) <= bound
+    assert len(col.calls) <= bound + 2 * int(wingless)
+    # Facet taxonomy enumerates only keyed wings and needs no wingless totals.
+    extra = 2 * int(wingless and tool != "tool_get_taxonomy")
+    assert len(col.calls) == bound + extra
     assert all(limit == 16385 for _, _, limit in col.calls)
     assert col.gets == 0
 
