@@ -62,7 +62,7 @@ def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F81
         return result
 
     monkeypatch.setattr(WorkerClient, "call_tool", call)
-    # Public calls use post on the old base; this pass-through proves that path too.
+    # Track the unprojected worker path too, for historical-base witnesses.
     worker_hits = []
     original_page = mcp_server.list_hallways_page
 
@@ -114,7 +114,7 @@ def install(w, monkeypatch, backend, records, name):
 
 
 def public(w, **args):
-    value, raw = w.h.call(w.token, TOOL, wing="wing_fixture", **args)
+    value, raw = w.h.call(w.token, TOOL, wing=args.pop("wing", "wing_fixture"), **args)
     assert isinstance(value, dict) and isinstance(value.get("hallways"), list), raw
     return value
 
@@ -182,6 +182,7 @@ def test_card253_s03_eligibility_protocol(world, monkeypatch, backend):
     w = world
     rows = [
         record(w, "visible"),
+        record(w, "readable-mirror", wing="private_threads"),
         record(w, "label", label=f"{w.readable.id} {w.hidden.id}"),
         record(w, "bad", rooms="not a list"),
         record(w, "blank", rooms=[""]),
@@ -200,12 +201,15 @@ def test_card253_s03_eligibility_protocol(world, monkeypatch, backend):
         return result
 
     monkeypatch.setattr(mirror_access, "gate", gate)
-    reply = public(w, limit=10)
-    assert [r["id"] for r in reply["hallways"]] == ["visible", "legacy"]
+    reply = public(w, limit=10, wing=None)
+    assert reply["total"] == reply["count"] == len(reply["hallways"]), (
+        "s03 readable mirror dropped after counting"
+    )
+    assert [r["id"] for r in reply["hallways"]] == ["visible", "readable-mirror", "legacy"]
     assert gates == [True]  # No filtering deferred until after the page.
-    assert public(w, limit=1, offset=8) == {
+    assert public(w, limit=1, offset=8, wing=None) == {
         "hallways": [],
-        "total": 2,
+        "total": 3,
         "count": 0,
         "offset": 8,
         "limit": 1,
@@ -217,7 +221,7 @@ def test_card253_s03_eligibility_protocol(world, monkeypatch, backend):
             "UPDATE threads SET wing='private_chats', source_thread_id=? WHERE id=?",
             (f"capture:{w.h.admin}:revoked", w.readable.id),
         )
-    assert [r["id"] for r in public(w, limit=10)["hallways"]] == ["legacy"]
+    assert [r["id"] for r in public(w, limit=10, wing=None)["hallways"]] == ["legacy"]
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "json"])
@@ -386,3 +390,65 @@ def test_card253_s03_unverified_worker_scope_refused(world, monkeypatch, backend
         "error": "Internal hallway scope requires verified gateway identity"
     }
     assert w.hidden.id not in json.dumps(response)
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+@pytest.mark.parametrize("size", [500, 501])
+def test_card253_s03_exact_page_boundary(world, monkeypatch, backend, size):
+    w = world
+    rows = [record(w, f"row-{i}") for i in range(size)]
+    install(w, monkeypatch, backend, rows, "boundary")
+    reply = public(w, limit=1, offset=size - 1)
+    assert reply == {
+        "hallways": rows[-1:],
+        "total": size,
+        "count": 1,
+        "offset": size - 1,
+        "limit": 1,
+    }
+    probes = [result["probe"] for _, result in w.calls if "probe" in result]
+    assert len(probes) == (1 if size == 500 else 2)
+    assert probes[0]["next"] == (None if size == 500 else 500)
+    assert probes[-1]["next"] is None
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_readable_private_label(world, monkeypatch, backend):
+    from commonplace.handoff.provenance_refs import label_tokens
+
+    w = world
+    source = f"capture:{w.principal.user_id}:readable-label"
+    store = w.h.gateway.handoff.store_for(w.h.workspace)
+    thread = store.store(
+        w.h.workspace,
+        source,
+        [ThreadMessage(0, "user", "message", "own", "own")],
+        actor=w.principal.user_id,
+        wing="private_chats",
+    )
+    assert w.h.gateway.handoff.recall.can_read(w.principal, thread.id)
+    label = f"shared {source} {source} 👩‍💻 25%"
+    assert label_tokens(label) == (source,)
+    row = record(w, "private-label-readable", label=label)
+    install(w, monkeypatch, backend, [row], "private-label-readable")
+    assert public(w, limit=10) == {
+        "hallways": [row],
+        "total": 1,
+        "count": 1,
+        "offset": 0,
+        "limit": 10,
+    }
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "json"])
+def test_card253_s03_malformed_strength(world, monkeypatch, backend):
+    w = world
+    rows = [
+        record(w, "malformed", co_occurrence_count="3abc"),
+        record(w, "normal", co_occurrence_count=4),
+        record(w, "zero", co_occurrence_count=0),
+    ]
+    install(w, monkeypatch, backend, rows, "strength")
+    reply = public(w, limit=10)
+    assert reply["hallways"] == [rows[1], rows[0], rows[2]]
+    assert reply["total"] == reply["count"] == 3

@@ -382,6 +382,8 @@ def gate(gateway, principal, rule, result):
         ):
             # A late revocation discards the page and its counts together.
             return {**result, "hallways": [], "count": 0, "total": 0}
+        # Hallways prove plural rooms above; generic drawer scrub expects room.
+        return _filter_fact_links(result)
     result = filter_room_keys(rule, result, can_read)
     cleaned = scrub(result)
     if cleaned is _DROP:

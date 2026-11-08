@@ -58,6 +58,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - Hallway documentation distinguishes plural-room final validation from drawer scrubbing.
+
   - Hallway read documentation distinguishes display-label token proof from citation parsing, visible counts from global storage and empty-on-incomplete behavior.
 
   - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
@@ -115,6 +117,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
+  - Legacy non-descriptor fields and distinct-token scan work are explicit hallway residuals.
+
   - Hallway read failures expose an empty page, never global counts.
 
   - An authority fault makes the complete progress response unavailable, even when other threads are readable.
@@ -143,6 +147,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed association regressions and documentation obligations.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Readable mirror pages, exact page boundaries and private-label guards pin the documented behavior.
 
   - The documentation obligation covers hallway worker descriptors, public mediation and thread-reader ownership.
 
@@ -350,6 +356,8 @@ Format (read by `commonplace orch docs-check`):
   - Explicit tunnel probes page metadata without content, bind both endpoints and optional current drawer descriptors, and revalidate before follow hydration or recording.
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - Display-label token scans deduplicate identities without rewriting labels or changing citation parsing.
+
   - Hallway probes return bounded metadata pages in storage order; final reads revalidate exact descriptors.
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
@@ -369,6 +377,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
+  - Label scans retain the existing raw-token grammar and request deadline for distinct-token work.
+
   - Changed hallway associations are excluded without rewriting stored rows; unverified internal scope calls are refused, while local unscoped pages remain compatible.
 
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
@@ -384,6 +394,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Hallway guards cover exact 500/501 metadata page boundaries and readable private-token labels.
 
   - Hallway snapshot tests cover SQLite and legacy JSON ordering and changed descriptors.
 
@@ -432,6 +444,8 @@ Format (read by `commonplace orch docs-check`):
   - Explicit tunnel regression witnesses and private protocol tests cover moved drawers, room-only compatibility, bounded pages and authorization races.
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
+
+  - Readable mirror hallway regressions fail on the prior head with count/row disagreement in both stores.
 
   - Hallway regression witnesses exercise public tools with real stored thread authority.
 
@@ -559,6 +573,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
+  - A final gate that silently drops a readable mirror row fails the count equality and zero-drop assertions.
+
   - Hallway fault cases discard incomplete results and preserve the pagination envelope.
 
   - Swallowing an authority fault must fail the fixed-503 assertion rather than silently reduce counters.
@@ -589,6 +605,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed association read and protocol suites cover public results and private snapshot failures.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Hallway regressions additionally pin malformed-strength fallback, private-label bytes and exact metadata page boundaries.
 
   - `tests/test_card253_s03.py` covers labels, rooms, totals, ties, complete enumeration and forged scopes.
 
@@ -1028,6 +1046,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
+  - The hallway final gate preserves readable mirror-wing rows and their visible counts after plural-room validation.
+
   - Every hallway room and independently recognized label reference needs current read authority.
 
   - A dedicated strict Recall callback propagates owner-progress lookup faults; extraction retains the ordinary deny-on-fault callback.
@@ -1072,6 +1092,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 
+  - Malformed strength counts sort as zero, while failed hallway eligibility still empties the entire page.
+
   - Malformed rooms and roomless mirror hallways fail closed; display labels stay verbatim.
 
   - Store or private-reader exceptions invalidate the entire owner progress proof without an unscoped fallback.
@@ -1089,6 +1111,8 @@ Format (read by `commonplace orch docs-check`):
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 
   - Logical page SQLite/SDK equality, chunk visibility, owner authority, changed associations and incomplete acquisition are covered in the focused drawer-page tests.
+
+  - Hallway eligibility tests require zero final-gate drops and count/total agreement for readable mirror rows.
 
   - Hallway guards cover owner access, revocation and final-gate stability.
 

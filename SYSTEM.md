@@ -944,7 +944,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Metadata enumeration uses pages of at most 500 in SQLite rowid or JSON insertion
   order. Request-local authority yields concrete descriptors; final snapshot reads
   exclude changed/new associations. Only eligible records enter the stable strength
-  sort, visible total and offset/limit page. The final gate is a safety check.
+  sort, visible total and offset/limit page. The final gate rechecks plural rooms
+  and returns kept hallways directly, avoiding the singular-room drawer scrub;
+  a failed hallway check still discards the entire page and its counts.
+  Authenticated sorting treats unparseable strength counts as zero in both stores,
+  preserving stable ties instead of suppressing all readable hallways.
   Client discovery omits the internal scope; authenticated mediation discards
   caller-supplied scope arguments and creates its own probe/allow descriptors.
   Worker scope calls require a verified gateway identity; unscoped local calls
@@ -954,7 +958,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
   errors. Local unscoped reads remain available. Reads never recompute labels,
   remove stored legacy rows (O4), or extend imported-history consent.
 - Non-canonical label spellings outside the existing token patterns remain outside
-  this read proof. Other graph and provenance residuals below remain unchanged.
+  this read proof. Non-descriptor legacy fields (for example created_by) are not
+  reference-scanned; their stored strings remain an explicit residual outside
+  wing/rooms/label eligibility. Label tokens are deduplicated, but distinct-token
+  work remains bounded by the request deadline rather than a label-size cap.
+  Other graph and provenance residuals below remain unchanged.
 
 ### Thread-boundary residuals
 

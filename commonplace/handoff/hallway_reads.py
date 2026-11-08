@@ -6,6 +6,13 @@ from mempalace.hallway_scope import PAGE_SIZE, descriptor
 from .mirror_access import hallway_visible, reader
 
 
+def _strength(record):
+    try:
+        return -int(record.get("co_occurrence_count") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def project(gateway, principal, workers, args, *, timeout=660.0):
     limit, offset = args.get("limit", 100), args.get("offset", 0)
     empty = {"hallways": [], "total": 0, "count": 0, "offset": offset, "limit": limit}
@@ -82,7 +89,7 @@ def project(gateway, principal, workers, args, *, timeout=660.0):
                         return empty
                 records.extend(rows)
             checks.remaining(0)
-            records.sort(key=lambda r: -int(r.get("co_occurrence_count") or 0))
+            records.sort(key=_strength)
             page = records[max(0, offset) : max(0, offset) + max(0, limit)]
             return {**empty, "hallways": page, "total": len(records), "count": len(page)}
     except Exception:

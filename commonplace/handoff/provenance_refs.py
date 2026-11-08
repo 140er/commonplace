@@ -131,7 +131,7 @@ def label_tokens(text):
     """Scan display text independently, without citation decoding or refusal."""
     tokens = [m[0] for m in _THREAD.finditer(text)]
     tokens.extend(m[0] for m in _private_matches(text))
-    return tuple(tokens)
+    return tuple(dict.fromkeys(tokens))
 
 
 def _authorization_copy(text):
