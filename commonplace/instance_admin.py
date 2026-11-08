@@ -54,11 +54,11 @@ def audit(gateway, principal, context, action, *, workspace=None, decision="allo
         user_id=principal.user_id,
         connection_id=principal.connection_id or None,
         auth=principal.auth,
-        target_ids=["workspace:" + workspace]
+        target_ids=[]
+        if decision in ("deny", "refuse")
+        else ["workspace:" + workspace]
         if workspace
-        else ["instance"]
-        if decision != "deny"
-        else [],
+        else ["instance"],
     )
 
 
@@ -74,7 +74,9 @@ def opaque(value, prefix=None):
 
 
 def parse_query(pairs, kind, workspace):
-    allowed = {"workspace_id", "limit", "cursor"}
+    allowed = set() if kind == "settings" else {"limit", "cursor"}
+    if kind in ("workspaces", "people", "connections", "audit"):
+        allowed.add("workspace_id")
     if kind == "people":
         allowed |= {"user_id", "role", "disabled"}
     elif kind == "connections":
@@ -451,11 +453,20 @@ def operator_settings(gateway, context, conn, target, binding, query):
 def space_inventory(gateway, context, conn, target, binding, query):
     if query.get("cursor"):
         uncursor(gateway, query["cursor"], binding)
+    row = admin.select(
+        conn, context, "SELECT id,name,personal_of FROM workspaces WHERE id=?", (target,)
+    ).fetchone()
+    workspace = {
+        "id": admin.identifier(row["id"]),
+        "name": admin.display(row["name"]),
+        "personal_of": admin.identifier(row["personal_of"]),
+    }
     metadata = limits(conn, context, target)
     on = admin.orchestration_setting(conn, target, context)
     with admin.read_store(gateway, target, "boards.sqlite3", context) as boards:
         if boards is None:
             return {
+                "workspace": workspace,
                 "state": "unknown",
                 "reason": "not_configured",
                 "items": [],
@@ -509,6 +520,7 @@ def space_inventory(gateway, context, conn, target, binding, query):
 
             result = page(gateway, context, boards, binding, query, sql, (), "page_key", project)
     return {
+        "workspace": workspace,
         "state": "ready",
         **result,
         "limits": metadata,

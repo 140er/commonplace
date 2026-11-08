@@ -525,3 +525,95 @@ def test_console_admission_not_home_account_quota(hub, foreign, monkeypatch):
         )[0]
         == 404
     )
+
+
+def test_absent_store_workspace_settings_metadata(hub, foreign, monkeypatch):
+    from commonplace import plans
+
+    monkeypatch.setenv("COMMONPLACE_PLANS", "on")
+    owner = hub.db.members(foreign)[0]["id"]
+    hub.db._conn.execute("UPDATE workspaces SET personal_of=? WHERE id=?", (owner, foreign))
+    plans.set_plan(hub.db, owner, "free", actor=owner)
+    headers = cookie(hub)
+    hub.workspace = foreign
+    path = Path(hub.supervisor.workspace_dir(foreign))
+    assert not path.exists()
+    code, data, _ = read(hub, "workspace_settings", headers)
+    assert code == 200
+    assert data.get("workspace") == {"id": foreign, "name": "Elsewhere", "personal_of": owner}
+    assert data["state"] == "unknown"
+    assert data["limits"]["source"] == "account_plan"
+    assert data["limits"]["account_id"] == owner
+    assert data["limits"]["effective_plan"] == "free"
+    assert data["limits"]["storage_bytes"] == plans.PLANS["free"].storage_bytes
+    assert data["limits"]["transcription_seconds"] == plans.PLANS["free"].transcription_seconds
+    assert data["orchestration_enabled"] is False
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("state", ("active", "revoked", "expired"))
+def test_connection_state_positive_filter(hub, state):
+    cid, _ = agent(hub, "state-filter")
+    if state == "revoked":
+        hub.db._conn.execute(
+            "UPDATE connections SET revoked_at='2000-01-01T00:00:00Z' WHERE id=?", (cid,)
+        )
+    elif state == "expired":
+        hub.db._conn.execute(
+            "UPDATE connections SET expires_at='2000-01-01T00:00:00Z' WHERE id=?", (cid,)
+        )
+    code, data, _ = read(hub, "connections", query="?state=" + state)
+    assert code == 200
+    assert data["count"] >= 1
+    assert any(r["id"] == cid and r["state"] == state for r in data["items"])
+    assert all(r["state"] == state for r in data["items"])
+
+
+def test_audit_real_connection_positive_filter(hub):
+    cid, _ = agent(hub, "audit-filter")
+    hub.db.audit(action="instance_admin.read.people", decision="allow", connection_id=cid)
+    code, data, _ = read(
+        hub, "audit", query="?actor_connection_id=" + cid + "&action=instance_admin.read.people"
+    )
+    assert code == 200
+    assert data["count"] == 1
+    assert data["items"][0]["actor_connection_id"] == cid
+
+
+@pytest.mark.parametrize("credential", ("pat", "oauth", "machine"))
+def test_non_session_manage_capability_false(hub, credential):
+    headers = negative(hub, credential)
+    code, _, raw = request(hub, "/api/me", headers=headers)
+    if credential == "machine":
+        from commonplace import instance_admin
+        from commonplace.web import admin
+
+        assert code == 404 and json.loads(raw) == {"error": "not found"}
+        principal = hub.gateway.authenticate(headers["Authorization"])
+        assert principal is not None and principal.runner == "machine"
+        assert (
+            instance_admin.flag(hub.gateway, principal, admin.ReadContext(hub.gateway.admin_clock))
+            is False
+        )
+    else:
+        assert code == 200
+        assert json.loads(raw)["can_manage_instance"] is False
+
+
+@pytest.mark.parametrize(
+    "query", ("?workspace_id=ws_0000000000000000", "?limit=20", "?cursor=invalid")
+)
+def test_instance_settings_reject_filters_with_target_free_refusal(hub, query):
+    code, data, _ = read(hub, "settings", query=query)
+    assert code == 400 and data == {"error": "invalid_request"}
+    row = hub.db._conn.execute("SELECT * FROM audit_log ORDER BY seq DESC LIMIT 1").fetchone()
+    assert row["workspace_id"] is None
+    assert row["decision"] == "refuse"
+    assert json.loads(row["target_ids"]) == []
+
+
+def test_workspace_validation_refusal_has_no_targets(hub):
+    assert read(hub, "workspace_settings", query="?unknown=x")[0] == 400
+    row = hub.db._conn.execute("SELECT * FROM audit_log ORDER BY seq DESC LIMIT 1").fetchone()
+    assert row["decision"] == "refuse"
+    assert json.loads(row["target_ids"]) == []

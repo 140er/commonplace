@@ -13,7 +13,7 @@ globalThis.document = {
   removeEventListener(k, fn) { documentEvents.get(k)?.delete(fn); },
 };
 const payload = path => {
-  if (path.includes('/settings?')) return path.includes('/workspaces/') ? {limits:{source:'no_account_plan'},items:[]} : {plans_enabled:false,rate_limits_enabled:true,authenticated_requests:600,authenticated_window_seconds:60};
+  if ((/\/settings(?:\?|$)/).test(path)) return path.includes('/workspaces/') ? {state:'unknown',workspace:{id:'ws_one',name:'Fresh workspace',personal_of:'usr_one'},limits:{source:'account_plan',effective_plan:'free',storage_bytes:12345,transcription_seconds:67,account_id:'usr_one'},orchestration_enabled:true,items:[]} : {plans_enabled:false,rate_limits_enabled:true,authenticated_requests:600,authenticated_window_seconds:60};
   return {items:path.includes('/people?') ? [{name:'<script>private</script>',email:'person@example.com'}] : path.includes('/workspaces?') ? [{id:'ws_two',name:'Garden'}] : [],count:1};
 };
 
@@ -36,6 +36,11 @@ try {
   assert.match(f.mount.innerHTML,/&lt;script&gt;/);
   assert.doesNotMatch(f.mount.innerHTML,/<script>/);
   assert.match(f.mount.innerHTML,/Operator setting/);
+  assert.match(f.mount.innerHTML,/Workspace setting/);
+  assert.match(f.mount.innerHTML,/Fresh workspace/);
+  assert.match(f.mount.innerHTML,/12345/);
+  assert.match(f.mount.innerHTML,/account_plan/);
+  assert.match(f.mount.innerHTML,/Enabled/);
   assert.match(f.mount.innerHTML,/Loading/);
   for(const fn of [...f.timers.values()]) fn(); await flush();
   assert.match(f.mount.innerHTML,/Metadata unavailable/);
@@ -54,6 +59,16 @@ try {
   const out=fixture();out.ui.show();for (const fn of documentEvents.get('signout')) fn();await flush();assert.equal(out.mount.innerHTML,'');assert.equal(out.timers.size,0);
   no.ui.stop();
   const lost=fixture();lost.ui.show();lost.current.can_manage_instance=false;lost.calls[0].resolve(payload(lost.calls[0].path));await flush();assert.match(lost.mount.innerHTML,/Instance administrator access required/);assert.equal(lost.timers.size,0);
+  const stale=fixture();stale.ui.show();stale.current.can_manage_instance=false;
+  let prevented=false;
+  stale.listeners.get('submit')({target:{closest:()=>({dataset:{instanceFilter:'audit'}})},preventDefault(){prevented=true;}});
+  assert.ok(prevented,'Stale form must never navigate');
+  const paging=fixture();paging.ui.show();
+  for(const call of paging.calls) call.resolve(call.path.includes('/people?') ? {items:[],count:2,has_more:true,next_cursor:'old'} : payload(call.path));
+  await flush();paging.ui.refreshSection('people',{more:true});paging.calls.at(-1).reject({status:400});await flush();
+  assert.match(paging.mount.innerHTML,/Page expired. Refresh/);
+  const before=paging.calls.length;paging.ui.refreshSection('people',{more:true});assert.equal(paging.calls.length,before);
+  paging.ui.refreshSection('people');assert.ok(!paging.calls.at(-1).path.includes('cursor='));paging.ui.stop();
   const guard=fixture();guard.ui.show();
   guard.time.onClear=()=>{delete guard.time.onClear;guard.ui.selectWorkspace('ws_two');};
   guard.calls[0].resolve({items:[{id:'ws_old',name:'stale-response'}],count:1});await flush();

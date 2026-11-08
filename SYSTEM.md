@@ -2069,6 +2069,15 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
 
+### Instance console settings and filter recovery
+
+Workspace settings include workspace identity, account-plan source, effective limits
+and orchestration even when no boards store exists. Only the spaces inventory
+reports an unconfigured store in place of rows. Instance settings accept no query
+filters; validation refusals carry no target IDs. Draft filter text survives
+independent section settlement, stale form submissions prevent navigation, and
+expired pagination cursors require a refresh before more pages can load.
+
 ## Person private-read containment
 
 Person sessions derive private read authority only from the exact current

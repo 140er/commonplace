@@ -49,9 +49,18 @@ def test_instance_console_member_admin_foreign_target_and_retry(hub, chromium, w
         expect(connection_panel.get_by_role("button", name="Retry", exact=True)).to_be_visible(
             timeout=10000
         )
+        draft = people.locator('input[name="user_id"]')
+        draft.fill("unsubmitted-draft")
         connection_panel.get_by_role("button", name="Retry", exact=True).click()
         expect(connection_panel.get_by_text("synthetic-connection", exact=True)).to_be_visible()
         expect(people.get_by_text("member@example.com", exact=True)).to_be_visible()
+        expect(draft).to_have_value("unsubmitted-draft")
+        settings_panel = page.locator('[data-instance-panel="workspace_settings"]')
+        expect(settings_panel.get_by_text("Workspace ID", exact=True)).to_be_visible()
+        expect(settings_panel.get_by_text("Orchestration", exact=True)).to_be_visible()
+        expect(
+            settings_panel.get_by_text("Not configured. No store has been created.", exact=True)
+        ).to_have_count(0)
         page.locator("[data-instance-workspace]").select_option(foreign)
         expect(people.get_by_text("elsewhere@example.com", exact=True)).to_be_visible()
         expect(people.get_by_text("member@example.com", exact=True)).to_have_count(0)
