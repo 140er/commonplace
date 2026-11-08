@@ -64,6 +64,8 @@ Format (read by `commonplace orch docs-check`):
 
   - KG read guarantees include both query modes, protocol compatibility, deadline cleanup, measured cost and the response-local authority window.
 
+  - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+
   - Documents citation omission and backend proof limits separately from fact eligibility.
 
   - Records current typed citation proof and raw path authorization before display conversion.
@@ -149,6 +151,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Keeps unavailable citation links absent without changing visible facts; documents scoped-search snapshot refusal, validation compatibility and the deliberate omission of failure-only fact markers, with Unreleased notes and sees-all string-wing validation ordering and per-fact visibility.
 
+  - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -192,6 +196,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
+
+  - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
 
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
@@ -584,6 +590,8 @@ Format (read by `commonplace orch docs-check`):
   - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
 
 
+  - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+
   - Citation failure cases compare complete surviving facts with readable controls.
 
   - Typed citation fixtures use native stored threads and real public reads, with metadata and Recall spies.
@@ -735,6 +743,8 @@ Format (read by `commonplace orch docs-check`):
   - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
 
+  - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+
   - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
 
   - Only named public AssertionErrors count as base regressions; readable citations and plain-file display remain controls.
@@ -786,6 +796,8 @@ Format (read by `commonplace orch docs-check`):
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards; hidden-present parity guards and missing-snapshot/unknown-key regressions cover defensive reads; literal/shorthand readers and malformed-argument protocol/handler regressions and owner/wildcard blank and canonical-empty wing cases cover compatibility, legacy hidden facts and error-shape equality.
+
+  - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -873,6 +885,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Only KG query enforces strict search booleans; other tools retain normal unknown-key handling. KG reads preserve protocol errors for unknown keys and malformed pages; non-owner shorthand filters resolve to stored names after raw policy checks. Sees-all string wing names retain worker validation and literal filtering; per-fact policy and final allow-lists still enforce visibility. Fact enrichment and KG search share projection, worker expiry and fixed empty failures.
 
+  - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
 
@@ -915,6 +929,8 @@ Format (read by `commonplace orch docs-check`):
   - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
 
+  - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+
   - Worker failures remove only the affected citation, with no other-workspace fallback.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -939,6 +955,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
+
+  - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
 
@@ -1292,6 +1310,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Bounded KG authorization carries one expiry to workers; changed descriptors are excluded, and the palace lock is released after copying the authorized search snapshot. Authority caches last one response. Declared KG arguments retain schema/required-parameter errors and data-independent handler refusals; acquisition failures remain empty.
 
+  - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+
   - Outgoing typed citations require current wing and thread authority plus snapshot revalidation; raw source_file tokens are authorized before basename display.
   - Tunnel projection validates names before acquisition, pages by identity and preserves live readable associations across non-association updates.
 
@@ -1355,6 +1375,8 @@ Format (read by `commonplace orch docs-check`):
   - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
 
+  - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+
   - Association faults or revoked authority omit citations after original-source fact eligibility; words remain verbatim.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -1388,6 +1410,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
+
+  - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 

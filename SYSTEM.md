@@ -1026,6 +1026,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   consent. Non-canonical spellings outside the raw token grammar (percent escapes,
   fullwidth/NFKC forms) remain the accepted limitation; no returned string field is
   exempt from scanning. Other graph/provenance residuals below remain unchanged.
+
 ### Authenticated room and status counts
 
 - Authenticated `list_rooms` and `status` sum the complete authorized pair
@@ -1049,8 +1050,9 @@ playbooks and the original wider orchestration acceptance remain separate work.
   Invalid room-list wing types return the ordinary name-validation error;
   whitespace-only wing filters retain the existing all-rooms convention.
 - Imported-history listing consent and source-range rules remain in force;
-  these counts create no new read grant. Hallway, tunnel, graph and KG counts
-  and legacy provenance remain separate residuals. Stored rows stay intact.
+  these counts create no new read grant. The merged hallway, tunnel, graph and
+  KG projections retain their own read contracts. Legacy provenance remains
+  separate work. Stored rows stay intact.
 
 ### Thread-boundary residuals
 
@@ -1653,3 +1655,19 @@ Accepted endpoint residual: on non-Chroma backends, a readable chunked drawer's 
 Dependent non-null sequence values are omitted when their parent provenance is missing, hidden or unproved; earlier gateway expectations that retained orphan ranges are updated to this rule.
 
 Tunnel reads also inherit the earlier whole-record tunnel projection: malformed, unresolved or non-Chroma logical drawer descriptors can remove the entire tunnel before this final endpoint scrub.
+
+### Authorized room and status count responses
+
+- Only `mempalace_list_rooms` and `mempalace_status` replies produced by the
+  gateway's `respond` path skip the final generic mirror/provenance gate.
+  Their room/wing maps already come from complete request-local wing and
+  thread authorization plus descriptor revalidation; imported room listings
+  retain their existing consented-reader proof.
+- This keeps visible labels such as `source_file` or `origin_id` as count-map
+  keys and preserves room/wing sums. Hidden pairs are excluded before counts;
+  incomplete proof still yields zero visible counts and maps.
+- Tunnel replies, drawer records, every other tool and ordinary forwarded
+  replies keep the generic gate. Provenance scrubbing and typed-association
+  semantics are unchanged, including omission of malformed scalar citations.
+- Broader semantic record/count-map collisions and search/duplicate vector
+  diagnostics remain separate work.

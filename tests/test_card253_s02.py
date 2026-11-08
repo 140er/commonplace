@@ -688,3 +688,116 @@ def test_card253_s02_r1_scope_guard(world):
         w.mcp.tool_status(thread_scope=5)
     # Keep the functional transport guard meaningful, beyond local validation.
     assert result(w, "mempalace_status")["total_drawers"] == 0
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "source_thread",
+        "source_url",
+        "source_file",
+        "source_drawer_id",
+        "source_closet",
+        "origin_id",
+        "origin_link",
+        "approval_link",
+        "source_link",
+    ],
+)
+@pytest.mark.parametrize(
+    "tool,locus",
+    [("mempalace_list_rooms", "room"), ("mempalace_status", "room"), ("mempalace_status", "wing")],
+)
+def test_card253_s02_r2_named_counts(world, key, tool, locus):
+    w = world
+    seed(w, hidden_wings=())
+    metadata = {"wing": "wing_fixture", "room": "ordinary"}
+    metadata[locus] = key
+    w.col._inner.add(
+        ids=["named-count"],
+        documents=["visible verbatim words"],
+        metadatas=[metadata],
+        embeddings=[[1.0] + [0.0] * 383],
+    )
+    assert w.col.get(ids=["named-count"], include=["metadatas"])["metadatas"] == [metadata]
+    reply = result(w, tool)
+    counts = reply["rooms" if locus == "room" else "wings"]
+    assert counts.get(key) == 1, "visible provenance-named count omitted"
+    if tool == "mempalace_status":
+        assert sum(reply["rooms"].values()) == reply["total_drawers"] == 2
+        assert sum(reply["wings"].values()) == reply["total_drawers"]
+
+
+def test_card253_s02_r2_room_sum(world):
+    w = world
+    seed(w, hidden_wings=())
+    w.col._inner.add(
+        ids=["named-count"],
+        documents=["visible verbatim words"],
+        metadatas=[{"wing": "wing_fixture", "room": "source_file"}],
+        embeddings=[[1.0] + [0.0] * 383],
+    )
+    reply = result(w, "mempalace_status")
+    assert sum(reply["rooms"].values()) == reply["total_drawers"] == 2, (
+        "visible room sum differs from total"
+    )
+
+
+def test_card253_s02_r2_gate_boundary(world, monkeypatch):
+    import copy
+
+    from commonplace.handoff import mirror_access
+    from mempalace import palace_graph as graph
+
+    w = world
+    seed(w)
+    member = w.h.db.authenticate_token(w.tokens["A"])
+    w.tokens["guard"] = w.h.token(
+        "boundary-reader",
+        user=member.user_id,
+        tools=TOOLS + ["mempalace_list_tunnels", "mempalace_get_drawer"],
+        scopes=["memory:read", "private:read", "threads:read"],
+        read_wings=["*"],
+        trust="trusted",
+    )
+    principal = w.h.db.authenticate_token(w.tokens["guard"])
+    assert principal.policy.sees_all_wings
+    assert w.h.gateway.handoff.recall.can_read(principal, w.readable.id)
+    assert not w.h.gateway.handoff.recall.can_read(principal, w.hidden.id)
+    for tool in TOOLS + ["mempalace_list_tunnels", "mempalace_get_drawer"]:
+        assert principal.policy.refusal(tool) is None
+    monkeypatch.setattr(graph, "MempalaceConfig", lambda: w.mcp._config)
+    tunnel = {
+        "id": "visible-boundary",
+        "source": {"wing": "wing_fixture", "room": w.readable.id},
+        "target": {"wing": "wing_other", "room": "ordinary"},
+    }
+    graph._save_tunnels([tunnel], w.mcp._config)
+    assert graph._load_tunnels(w.mcp._config) == [tunnel]
+    w.col._inner.update(ids=["readable-0"], metadatas=[{"source_file": 42}])
+    assert w.col.get(ids=["readable-0"], include=["metadatas"])["metadatas"][0]["source_file"] == 42
+    real_gate = mirror_access.gate
+    calls, phase = [], []
+
+    def gate(gateway, caller, rule, payload):
+        calls.append((phase[-1], copy.deepcopy(payload)))
+        return real_gate(gateway, caller, rule, payload)
+
+    monkeypatch.setattr(mirror_access, "gate", gate)
+    for tool in ("mempalace_list_rooms", "mempalace_status"):
+        phase[:] = [tool]
+        reply = result(w, tool, kind="guard")
+        assert reply["rooms"] == {w.readable.id: 1}
+        if tool == "mempalace_status":
+            assert reply["wings"] == {"wing_fixture": 1}
+            assert reply["total_drawers"] == 1
+    assert calls == [], "authorized count replies reached the generic gate"
+    phase[:] = ["tunnel"]
+    assert result(w, "mempalace_list_tunnels", kind="guard") == [tunnel]
+    assert calls[-1] == ("tunnel", [tunnel])
+    phase[:] = ["drawer"]
+    drawer = result(w, "mempalace_get_drawer", {"drawer_id": "readable-0"}, kind="guard")
+    assert calls[-1][0] == "drawer"
+    assert calls[-1][1]["metadata"]["source_file"] == 42
+    assert "source_file" not in drawer["metadata"]
+    assert {name for name, _ in calls} == {"tunnel", "drawer"}

@@ -572,7 +572,17 @@ class Mediator:
             except Exception as exc:
                 # Optional import search fails closed; preserve ordinary results.
                 logger.error("Imported-history search failed (%s)", type(exc).__name__)
-        response, committed_result = self._gate_response(principal, name, rule, req_id, response)
+        # Authorized count-map labels must not be interpreted as provenance fields.
+        if (
+            name in ("mempalace_list_rooms", "mempalace_status")
+            and isinstance(plan, dict)
+            and "respond" in plan
+        ):
+            committed_result = _tool_result(response)
+        else:
+            response, committed_result = self._gate_response(
+                principal, name, rule, req_id, response
+            )
 
         if classify_tool(name) != "read":
             result = committed_result
