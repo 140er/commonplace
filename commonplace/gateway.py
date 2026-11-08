@@ -1006,6 +1006,8 @@ class Mediator:
         asked = args.get("wings")
         if asked is not None:
             for wing in asked:
+                if policy.sees_all_wings and isinstance(wing, str) and not wing.strip():
+                    continue  # Preserve the handler's blank-name error and validation order.
                 if not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
         if not policy.sees_all_wings:

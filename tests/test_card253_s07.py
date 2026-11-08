@@ -925,3 +925,58 @@ def test_card253_s07_r5_sqlite_offset_error(kgworld):
         "message": "Internal tool error",
         "data": {"error_class": "OverflowError"},
     }, "unrepresentable SQLite offset became an empty success"
+
+
+@pytest.mark.parametrize("kind", ["owner", "wildcard"])
+@pytest.mark.parametrize(
+    "tool,args,protocol",
+    [
+        (TOOLS[0], {"entity": "fixed_entity"}, None),
+        (TOOLS[0], {"entity": "fixed_entity", "search": True}, None),
+        (TOOLS[1], {}, None),
+        (
+            TOOLS[0],
+            {"entity": "fixed_entity", "limit": 0},
+            "Invalid params for tool mempalace_kg_query: 'limit' must be at least 1",
+        ),
+        (
+            TOOLS[0],
+            {"entity": None},
+            "Missing required parameter 'entity' for tool mempalace_kg_query",
+        ),
+    ],
+)
+def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
+    from commonplace import sessions
+    from commonplace.gateway import _tool_response
+
+    w = kgworld
+    principal = (
+        sessions.person_principal(w.h.db, w.h.admin, w.h.workspace)
+        if kind == "owner"
+        else w.h.db.authenticate_token(w.tokens["A"])
+    )
+    assert principal.policy.sees_all_wings
+    assert (principal.role == "owner") == (kind == "owner")
+    assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
+
+    def request():
+        return w.h.gateway.mediator._tools_call(
+            principal,
+            {
+                "jsonrpc": "2.0",
+                "id": 700,
+                "method": "tools/call",
+                "params": {"name": tool, "arguments": {**args, "wings": ["  "]}},
+            },
+        )
+
+    expected = (
+        {"jsonrpc": "2.0", "id": 700, "error": {"code": -32602, "message": protocol}}
+        if protocol
+        else _tool_response(700, {"error": "wings must be a list of names"})
+    )
+    present = request()
+    assert present == expected, "blank wing replaced develop's validation error with Denied"
+    remove_hidden(w)
+    assert request() == present, "hidden facts changed blank-wing validation"

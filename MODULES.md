@@ -141,7 +141,7 @@ Format (read by `commonplace orch docs-check`):
   - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
 
-  - Keeps unavailable citation links absent without changing visible facts; documents scoped-search snapshot refusal, validation compatibility and the deliberate omission of failure-only fact markers, with Unreleased notes.
+  - Keeps unavailable citation links absent without changing visible facts; documents scoped-search snapshot refusal, validation compatibility and the deliberate omission of failure-only fact markers, with Unreleased notes and owner/wildcard blank-wing validation ordering.
 
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
 
@@ -237,6 +237,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
   - Unreleased notes record KG argument compatibility, wing aliases and intentional search response changes.
+  - One Unreleased Changed section records KG argument compatibility, wing aliases and intentional search response changes.
 
   - Admin docs pin current-member connection listing, matching inventory counts, exact-route card navigation and cursor-preserving Retry.
 
@@ -740,7 +741,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
-  - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards; hidden-present parity guards and missing-snapshot/unknown-key regressions cover defensive reads; literal/shorthand readers and malformed-argument protocol/handler regressions cover compatibility and error-shape equality.
+  - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards; hidden-present parity guards and missing-snapshot/unknown-key regressions cover defensive reads; literal/shorthand readers and malformed-argument protocol/handler regressions and owner/wildcard blank-wing cases cover compatibility and error-shape equality.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -823,7 +824,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
 
-  - Only KG query enforces strict search booleans; other tools retain normal unknown-key handling. KG reads preserve protocol errors for unknown keys and malformed pages; non-owner shorthand filters resolve to stored names after raw policy checks. Fact enrichment and KG search share projection, worker expiry and fixed empty failures.
+  - Only KG query enforces strict search booleans; other tools retain normal unknown-key handling. KG reads preserve protocol errors for unknown keys and malformed pages; non-owner shorthand filters resolve to stored names after raw policy checks. Sees-all blank wing names retain worker validation order and error forms. Fact enrichment and KG search share projection, worker expiry and fixed empty failures.
 
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
