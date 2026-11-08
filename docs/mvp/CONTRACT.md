@@ -196,6 +196,14 @@ Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JS
 
 **OAuth 2.1 (W8)** for claude.ai and ChatGPT, on AGENT_URL: protected-resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`), AS metadata (RFC 8414) at `/.well-known/oauth-authorization-server`, dynamic client registration (RFC 7591) at `/oauth/register`, `/oauth/authorize` (requires the web session; consent screen = one card: client name, workspace, Allow / Deny; policy preset = slim, standard trust, write_wing `inbox`, read `shared,inbox,project_*`; no extra clicks beyond Allow), `/oauth/token` (authorization_code with PKCE S256 only, refresh_token with rotation), `/oauth/revoke`. Access tokens `cmmn_at_…`-style opaque, 1 h; refresh 90 d. Stored as hashes; each grant is a `connections` row with `auth='oauth'`. 401 on `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="<AGENT_URL>/.well-known/oauth-protected-resource"`. An `OAuthAuthenticator` is added to `gateway.authenticators` in `install(gateway)`.
 
+OAuth consent permits only `'self'` and the exact validated callback origin in
+CSP `form-action`, so browser form redirects to third-party clients work. Login
+and generic HTML/error pages remain self-only. Strict parsed DNS/loopback-IPv6
+host and numeric-port validation rejects unsafe new or legacy redirect URIs
+through the existing invalid-redirect path; HTTPS/loopback HTTP schemes and
+exact registered-URI matching remain unchanged.
+
+
 **Privacy, invisible (W9)**: `commonplace/privacy.py` with `scan(text) -> list[str]` flags: `secret:<kind>` (API keys, tokens incl. cmmn_, private keys, passwords in URLs, JWTs), `health`, `injection:<kind>` (§9 list). No clicks, no prompts. Use: `memory_save` routes text flagged `health` to theme `private` when the caller may write `private`, otherwise keeps the theme; secrets are flagged in the event data (`flags`) and shown as ⚠ in the app; text is never changed. Boards store `flags` from `scan()` on titles/bodies/comments.
 
 ## Update 03:40 CET: decided

@@ -29,6 +29,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `SYSTEM.md`, `MODULES.md`
 - **Owns:**
 
+  - OAuth consent CSP documents the single validated redirect origin and stricter legacy redirect validation.
+
   - The exact instance authority, packaged identity and opt-in receipt/mount residual contracts.
 
   - Admin card navigation restores a regular base, inventory counts match joined rows, and Retry retains the failed page mode and cursor.
@@ -235,6 +237,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
+
+  - The OAuth contract permits cross-origin consent redirects without broadening login-page CSP.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -546,6 +550,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -980,6 +986,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
+
+  - Only authenticated consent forms permit their exact validated redirect origin in form-action; login and generic pages remain self-only.
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
