@@ -177,7 +177,7 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     const button = event.target.closest('[data-admin-action]');
     if (!button) return;
     const { adminSection: key, adminAction: action, adminList: list } = button.dataset;
-    void refreshSection(key, action === 'retry' ? sections.get(key)?.retry : { more: action === 'more', list });
+    void refreshSection(key, action === 'retry' ? sections.get(key)?.retry ?? {} : { more: action === 'more', list });
   }
 
   function show() {
