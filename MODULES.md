@@ -69,6 +69,8 @@ Format (read by `commonplace orch docs-check`):
   - KG read guarantees include both query modes, protocol compatibility, deadline cleanup, measured cost and the response-local authority window.
 
   - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+  - Search citation documentation couples raw paths and display basenames under one proof, including media aliases.
+
   - The plain-file contract distinguishes empty decoded identities from the accepted shared-path presence residual.
 
   - The plain-file proof contract records literal/decoded union matching and the accepted mixed-match presence side-channel.
@@ -161,6 +163,8 @@ Format (read by `commonplace orch docs-check`):
   - Keeps unavailable citation links absent without changing visible facts; documents scoped-search snapshot refusal, validation compatibility and the deliberate omission of failure-only fact markers, with Unreleased notes and sees-all string-wing validation ordering and per-fact visibility.
 
   - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+  - The only raw-path exemption remains the alias constructed after exact import-range proof.
+
   - Documents that revocation after first selector proof is observed only by a later response.
 
   - Documentation names loss of plain-file citations on non-Chroma backends as an intentional compatibility limit.
@@ -214,6 +218,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
+  - Raw search regression evidence distinguishes readable directory retention from mixed-match omission.
+
   - Empty-identity world equality and exact-head documentation obligations keep this boundary explicit.
 
   - Literal-path regression evidence and documentation obligations keep the union contract current.
@@ -493,6 +499,8 @@ Format (read by `commonplace orch docs-check`):
   - KG search reuses the local tokenizer, selective terms and 50-seed candidate rules on a detached authorized index; deadline checks stop copy, indexing and scoring work. Scoped search requires its detached snapshot.
 
   - Authenticated room/status sums use authorized pairs. Status suppresses global capacity and raw probe reasons, reports a fixed disabled-index reason, and omits transport diagnostics and palace/database paths. Status, list_rooms (including consented private_chats imports), list_wings and taxonomy propagate backup-pause retry errors; consented private_chats drawer listings do too. Pause tests cover RPC and internal calls on those routes.
+  - File association selectors require a nonblank decoded identity, including direct worker requests.
+
   - Plain-file metadata probes require a nonempty decoded selector before selecting any stored rows.
 
   - File association snapshots match both stored spelling and decoded identity, deduplicating physical row ids.
@@ -529,6 +537,8 @@ Format (read by `commonplace orch docs-check`):
   - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
   - Incomplete room/status acquisition returns zero visible sums with a count-free disabled-index reason; integrity failure flags remain, without raw failure details or shared principal caches.
+
+  - Whitespace-only decoded worker selectors return no proof before backend access.
 
   - A blank decoded selector returns unavailable proof before backend access, even when empty source fields exist.
 
@@ -571,6 +581,8 @@ Format (read by `commonplace orch docs-check`):
   - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - `tests/test_card253_s02.py` covers room/status branches, real capacity refresh with hidden/control equality, transport diagnostic suppression, invalid wing types, no-palace/local guards and projection faults.
+
+  - Worker whitespace-selector guards complement empty-selector tests and search regression suites.
 
   - Worker selector guards cover tuple and transported-list forms with empty decoded identities.
 
@@ -651,6 +663,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+  - Search regressions exercise real public search with directory paths for trusted members and authenticated owners.
+
   - Empty-identity regressions assert identical citation-free outputs for hidden-present and hidden-absent empty source fields.
 
   - Plain-file regressions cover readable stored literal and padded paths plus hidden exact displayed spellings for members and owners.
@@ -809,6 +823,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+  - Raw output assertions inspect every hit field for retained path or basename after failed proof.
+
   - Regression output assertions distinguish the empty-identity leak from backend setup errors.
 
   - Pinned-head failures must be output AssertionErrors; unsupported backend guards assert citation omission without discarding fact text.
@@ -868,6 +884,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_card253_s07.py` covers local/scoped parity, stop-word names, candidate caps, refusal scope, cooperative deadline cleanup and lock release alongside KG visibility and source-snapshot guards; hidden-present parity guards and missing-snapshot/unknown-key regressions cover defensive reads; literal/shorthand readers and malformed-argument protocol/handler regressions and owner/wildcard blank and canonical-empty wing cases cover compatibility, legacy hidden facts and error-shape equality.
 
   - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
+  - Media pass-through spies prove retrieval emits raw aliases before the common gate; blank typed selectors never issue association requests.
+
   - Literal-wing witnesses assert fresh thread-reader activity during the public KG query.
 
   - Union snapshot changes, non-Chroma refusal and RPC counts supplement the literal-spelling regression selection.
@@ -1407,6 +1425,8 @@ Format (read by `commonplace orch docs-check`):
   - Bounded KG authorization carries one expiry to workers; changed descriptors are excluded, and the palace lock is released after copying the authorized search snapshot. Authority caches last one response. Declared KG arguments retain schema/required-parameter errors and data-independent handler refusals; acquisition failures remain empty.
 
   - Only list_rooms/status respond payloads bypass the final generic gate after existing authorization proof; provenance-named count labels remain visible.
+  - Search authorizes source_path before its basename; both citations share the same union outcome and failed media proof also drops asset aliases.
+
   - Empty decoded file identities omit their citations before association worker calls.
 
   - Response-local association memoization shares one revalidated union proof across repeated citations and skips already scrubbed rows.
@@ -1477,6 +1497,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
+  - Divergent path and display fields are omitted together; ordinary search records cannot borrow the import-proved alias exemption.
+
   - A selector proof remains response-local; mid-response revocation is not seen by later citations of the same selector.
 
   - Any unreadable literal or decoded match omits the citation; proof caches never survive the response.
@@ -1518,6 +1540,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - `tests/test_card253_s02.py` covers nine provenance-key count collisions, hidden-pair exclusion and real tunnel/drawer gate reachability; the same typed-association and fact-provenance suites remain guards.
+  - Member and owner search/media witnesses cover readable and mixed directory paths; imported-reader suites retain exact-range protections.
+
   - Whitespace citation tests compare readable-empty and mixed empty-source worlds for members and owners.
 
   - Literal-wing readers, repeated citations and consecutive requests exercise scope and request isolation.

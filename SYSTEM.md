@@ -1732,6 +1732,20 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   already scrubbed rows are not scrubbed twice. A revocation after a selector's
   first proof is not observed by later citations with that selector in the same
   response; this window is accepted under the response-local cache contract.
+  A later request obtains fresh proof. The union rule applies only to token-free
+  file citations; token-bearing values retain their existing token authorization
+  without proving the plain remainder.
+
+- Authenticated search proves the raw source_path before retaining its source_file
+  display basename. These fields share one union proof, cannot disagree about the
+  source, and disappear together if proof fails. The same gate covers media search;
+  failed asset proof also removes its path, title and availability aliases. Local
+  unscoped search keeps its existing display format and source filters.
+- Only non-fact records constructed after exact import-range proof retain the
+  documented source_path and nested metadata.source_file alias exemption. Ordinary
+  search and media records receive no exemption. Blank decoded drawer and closet
+  selectors are refused before worker calls; the worker also refuses a decoded
+  file selector containing only whitespace.
   A later request obtains fresh proof. The union rule applies to token-free source_file values only; token-bearing
   values retain their existing token authorization without proving the plain remainder.
 

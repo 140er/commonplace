@@ -237,36 +237,52 @@ def filter_room_keys(rule, result, can_read):
     return result
 
 
-def scrub_provenance(node, access):
+def scrub_provenance(node, access, *, import_alias=False):
     if access.scrubbed.get(id(node)) is node:
         return node
     out = node
+    paired = "source_path" in node and not import_alias
     fields = provenance_refs.PROVENANCE_FIELDS | provenance_refs.DERIVED_FIELDS
     if node.get("result_type") == "asset":
         fields |= {"path", "title"}  # Media search also displays source_path under these aliases.
     for key in fields:
+        # Search's display basename is authorized by its complete raw path.
+        if (paired and key == "source_file") or (import_alias and key == "source_path"):
+            continue
         value = node.get(key)
-        if value is None:
+        if value is None and key != "source_path":
             continue
-        if not isinstance(value, str):
-            if out is node:
-                out = dict(node)
-            out.pop(key, None)
+        if key == "source_path" and key not in node:
             continue
-        parsed = access.parse(value)
-        allowed = parsed is not provenance_refs.REFUSE and all(
-            access.reference(t) for t in parsed.tokens
-        )
-        if allowed and key == "source_file" and not parsed.tokens:
-            allowed = bool(parsed.text) and access.association("source_file", (value, parsed.text))
-        if allowed and key in {"source_drawer_id", "source_closet"}:
-            allowed = access.association(
-                "drawer" if key == "source_drawer_id" else "closet", parsed.text
+        allowed = False
+        if isinstance(value, str):
+            parsed = access.parse(value)
+            allowed = parsed is not provenance_refs.REFUSE and all(
+                access.reference(t) for t in parsed.tokens
             )
+            if allowed and key in {"source_file", "source_path"} and not parsed.tokens:
+                allowed = bool(parsed.text) and access.association(
+                    "source_file", (value, parsed.text)
+                )
+            if allowed and key in {"source_drawer_id", "source_closet"}:
+                allowed = bool(parsed.text) and access.association(
+                    "drawer" if key == "source_drawer_id" else "closet", parsed.text
+                )
+            if allowed and key == "source_path":
+                if "source_file" in node:
+                    allowed = node["source_file"] in (value, Path(value).name)
+                if node.get("result_type") == "asset" and "path" in node:
+                    allowed = allowed and node["path"] == value
         if not allowed:
             if out is node:
                 out = dict(node)
             out.pop(key, None)
+            if key == "source_path":
+                out.pop("source_file", None)
+                if node.get("result_type") == "asset":
+                    # Media search exposes the same citation through these aliases.
+                    for alias in ("path", "title", "available"):
+                        out.pop(alias, None)
     # Flat ranges follow the existing provenance pass, preserving token-free
     # legacy parents. Nested aliases require a complete protected reference.
     if out.get("source_thread") is None:
@@ -419,7 +435,7 @@ def gate(gateway, principal, rule, result, *, access=None):
                 )
                 if node is _DROP:
                     return _DROP
-            node = scrub_provenance(node, access)
+            node = scrub_provenance(node, access, import_alias=import_row)
             if not import_row and unreadable_room(
                 can_read, None if fact else node.get("wing"), node.get("room")
             ):
@@ -441,11 +457,14 @@ def gate(gateway, principal, rule, result, *, access=None):
                 return _DROP
             out = {}
             for key, value in node.items():
-                cleaned = scrub(value)
+                # Only _proved_record constructs this metadata after exact
+                # import-range proof; its source aliases are explicitly exempt.
+                cleaned = value if import_row and key == "metadata" else scrub(value)
                 if cleaned is _DROP:
                     return _DROP
                 if (
                     key == "metadata"
+                    and not import_row
                     and isinstance(cleaned, dict)
                     and isinstance(cleaned.get("source_file"), str)
                 ):
@@ -621,6 +640,7 @@ def _scrub_fact(node, can_read, access=None):
             "source_link",
             "source_drawer_id",
             "source_file",
+            "source_path",
             "source_closet",
             "origin_id",
             "origin_link",

@@ -346,3 +346,144 @@ def test_card253_s11_worker_empty_selector(monkeypatch, identifier):
 
     monkeypatch.setattr(mcp, "_is_chroma_backend", unexpected)
     assert mcp.read_associations("source_file", identifier) == {"associations": None}
+
+
+@pytest.fixture
+def file_search(case, monkeypatch):
+    from tests.test_typed_association_reads import SCOPES, TOOLS
+
+    c = case
+    tools = [*TOOLS, "mempalace_search"]
+    c.token = c.h.token(
+        "file-search",
+        user=c.member.user_id,
+        tools=tools,
+        scopes=SCOPES,
+        read_wings=["*"],
+        write_wings=["shared"],
+        trust="trusted",
+    )
+    c.search_posts = []
+    original = c.h.gateway.mediator.workers.post
+
+    def post(principal, request):
+        c.search_posts.append(request)
+        return original(principal, request)
+
+    monkeypatch.setattr(c.h.gateway.mediator.workers, "post", post)
+    member = c.h.db.authenticate_token(c.token)
+    for principal in (member, c.owner):
+        assert principal.policy.trust == "trusted" and principal.policy.sees_all_wings
+        assert all(principal.policy.has_scope(scope) for scope in SCOPES)
+        assert principal.policy.refusal("mempalace_search") is None
+        assert c.h.gateway.handoff.recall.can_read(principal, c.primary.id)
+        assert not c.h.gateway.handoff.recall.can_read(principal, c.hidden.id)
+    return c
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("mode", ["readable", "mixed"])
+def test_card253_s11_search_raw_proof(file_search, role, mode):
+    import json
+    from pathlib import Path
+
+    c = file_search
+    matches(c, [c.primary.id] if mode == "readable" else [c.primary.id, c.hidden.id])
+    before = len(c.reads)
+    reply = invoke(c, "search", role, query="Exact stored words")
+    hits = reply["results"]
+    assert hits, reply
+    assert len(c.reads) > before
+    assert any(r.get("params", {}).get("name") == "mempalace_search" for r in c.search_posts)
+    if mode == "mixed":
+        output = json.dumps(hits)
+        assert RAW not in output and Path(RAW).name not in output, "search retained unproved path"
+    else:
+        assert all(
+            h.get("source_path") == RAW and h.get("source_file") == Path(RAW).name for h in hits
+        ), "search lost readable directory citation"
+
+
+@pytest.mark.parametrize("field", ["source_drawer_id", "source_closet"])
+def test_card253_s11_blank_typed_selector(case, field):
+    c = case
+    seed(c, field, "   ")
+    c.calls.clear()
+    row = fact(c)
+    assert field not in row
+    assert all(field not in source for source in row["sources"])
+    assert not any(name == "read_associations" for _, name, _ in c.calls)
+
+
+def test_card253_s11_worker_whitespace_selector(monkeypatch):
+    from mempalace import mcp_server as mcp
+
+    def unexpected():
+        raise AssertionError("whitespace decoded selector reached backend")
+
+    monkeypatch.setattr(mcp, "_is_chroma_backend", unexpected)
+    assert mcp.read_associations("source_file", ("   ", "   ")) == {"associations": None}
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("mode", ["readable", "mixed"])
+def test_card253_s11_media_raw_proof(file_search, monkeypatch, role, mode):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from mempalace.palace import ASSETS_COLLECTION_NAME, get_collection
+    from mempalace.searcher import media_search
+
+    c = file_search
+    matches(c, [c.primary.id] if mode == "readable" else [c.primary.id, c.hidden.id])
+    assets = get_collection(c.config.palace_path, collection_name=ASSETS_COLLECTION_NAME)
+    assets.add(
+        ids=["asset"],
+        documents=["Exact stored words"],
+        metadatas=[
+            {
+                "wing": "shared",
+                "room": c.primary.id,
+                "source_path": RAW,
+                "source_file": RAW,
+                "media_type": "image",
+                "mime_type": "image/png",
+                "title": Path(RAW).name,
+                "related_drawer_id": "file-0000",
+            }
+        ],
+    )
+    # Exercise the real media retrieval with the suite's local deterministic
+    # embedding provider; only opt in to the model-family routing check.
+    monkeypatch.setattr(
+        media_search,
+        "MempalaceConfig",
+        lambda: SimpleNamespace(
+            embedding_model="embeddinggemma2",
+            collection_name=c.config.collection_name,
+        ),
+    )
+    original = media_search.search_with_media
+    raw = []
+
+    def media(*args, **kwargs):
+        result = original(*args, **kwargs)
+        raw.append(result)
+        return result
+
+    monkeypatch.setattr(media_search, "search_with_media", media)
+    reply = invoke(c, "search", role, query="Exact stored words", include_media=True)
+    assert raw and not raw[0].get("error"), raw
+    assert any(
+        h.get("source_path") == RAW and h.get("result_type") == "asset" for h in raw[0]["results"]
+    )
+    hits = reply["results"]
+    assert any(h.get("result_type") == "asset" for h in hits), reply
+    if mode == "mixed":
+        output = json.dumps(hits)
+        assert RAW not in output and Path(RAW).name not in output
+    else:
+        assert all(
+            h.get("source_path") == RAW and h.get("source_file") == Path(RAW).name for h in hits
+        )
