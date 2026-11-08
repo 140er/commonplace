@@ -22,7 +22,7 @@ def case(hub, kg, collection, config, monkeypatch, functional_worker_transport):
     h = hub
     h.supervisor.get(h.workspace)
     uid = h.db.create_user("reader@example.test")
-    h.db.add_member(h.workspace, uid, "member", actor=h.admin)
+    h.db.add_member(h.workspace, uid, "owner", actor=h.admin)
     token = h.token(
         "reader",
         user=uid,
@@ -41,7 +41,7 @@ def case(hub, kg, collection, config, monkeypatch, functional_worker_transport):
         assert p.policy.trust == "trusted" and p.policy.sees_all_wings
         assert all(p.policy.has_scope(scope) for scope in SCOPES)
         assert all(p.policy.refusal(tool) is None for tool in TOOLS)
-    assert not member.person and member.role == "member"
+    assert not member.person and member.role == "owner"
     assert owner.person and owner.role == "owner"
     store = h.gateway.handoff.store_for(h.workspace)
     c = SimpleNamespace(

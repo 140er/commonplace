@@ -312,12 +312,18 @@ def _save(ctx, args):
             raise ToolError(
                 f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
             ) from None
-    return memory_id, task
+    notice = (
+        "Saved privately. You cannot read this note for now."
+        if not ctx.principal.policy.can_read_wing(theme)
+        else ""
+    )
+    return memory_id, task, notice
 
 
 def memory_save(ctx, args):
-    memory_id, task = _save(ctx, args)
-    return f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
+    memory_id, task, notice = _save(ctx, args)
+    result = f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
+    return result + (f"\n{notice}" if notice else "")
 
 
 def _file_fact(ctx, args):
@@ -547,8 +553,8 @@ def install(gateway):
                     raise ToolError("no: memory write refused")
                 body = read_json(h)
                 with rest_write(ctx, h, "memory_save", body):
-                    memory_id, _ = _save(ctx, body)
-                send_json(h, 201, {"id": memory_id})
+                    memory_id, _, notice = _save(ctx, body)
+                send_json(h, 201, {"id": memory_id, **({"notice": notice} if notice else {})})
             elif h.command == "GET" and parts == ["search"]:
                 if principal.policy.refusal("memory_search"):
                     raise ToolError("no: memory search refused")

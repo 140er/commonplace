@@ -55,7 +55,8 @@ def world(hub, monkeypatch, tmp_path, request):
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
     monkeypatch.setenv("COMMONPLACE_RULES", "off")
     member = hub.db.create_user("member@example.test")
-    hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+    hub.db.add_member(hub.workspace, member, "owner", actor=hub.admin)
+    # Private-read fixture holders must be owners; filer boundaries remain independent.
     store = hub.gateway.handoff.store_for(hub.workspace)
     readable = store.store(
         hub.workspace,
@@ -87,7 +88,7 @@ def world(hub, monkeypatch, tmp_path, request):
         trust="trusted",
     )
     principal = hub.db.authenticate_token(tokens["A"])
-    assert principal.role != "owner" and principal.policy.has_scope("threads:read")
+    assert principal.role == "owner" and principal.policy.has_scope("threads:read")
     assert principal.policy.trust == "trusted" and principal.policy.has_scope("kg:read")
     assert principal.policy.sees_all_wings
     assert hub.gateway.handoff.recall.can_read(principal, readable.id)
@@ -957,7 +958,7 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
         else w.h.db.authenticate_token(w.tokens["A"])
     )
     assert principal.policy.sees_all_wings
-    assert (principal.role == "owner") == (kind == "owner")
+    assert principal.role == "owner" and principal.person == (kind == "owner")
     assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
 
     def request():
@@ -1006,7 +1007,7 @@ def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
         else w.h.db.authenticate_token(w.tokens["A"])
     )
     assert principal.policy.sees_all_wings
-    assert (principal.role == "owner") == (kind == "owner")
+    assert principal.role == "owner" and principal.person == (kind == "owner")
     assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
 
     def request():

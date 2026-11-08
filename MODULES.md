@@ -47,6 +47,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Private-read containment includes event cursor projection, indistinguishable unreadable write retries, readable tunnel endpoints, current-role token caps and explicit private-save notices.
+
   - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
 
   - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
@@ -440,6 +442,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Drawer retries retain replay status for readable owners while also returning request-derived fresh-write fields, allowing the gateway to hide replay status for unreadable wings.
+
   - Graph snapshots use local SQL locus expressions, including native booleans and integers outside int64; descriptors also bind stored sort values.
 
   - Graph page descriptors carry their source order key; grouped Chroma and exact numeric loci retain SQLite text casts.
@@ -577,6 +581,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
@@ -878,6 +884,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
+
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
@@ -991,6 +999,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - OAuth authentication strips loaded private/admin scope when current workspace membership is not exactly owner, independently of token scope narrowing.
+
   - Person private read scope requires the exact current workspace owner role. Omitted, missing and unexpected roles fail closed; members temporarily lose their own private wings too.
 
   - Imported-history consent: OAuth reader consent is separate and unticked; defaults and person policies exclude the reader, while refresh descendants cannot regain a dropped scope.
@@ -1059,6 +1069,8 @@ Format (read by `commonplace orch docs-check`):
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
 - **Promises:**
+
+  - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
 
@@ -1479,6 +1491,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Health-flagged notes remain private. HTTP and MCP saves explicitly tell an unreadable author that the note was saved privately and cannot be read for now.
+
   - Owner memory maps retain readable person relationships when a citation cannot be proved.
 
   - Owner HTTP progress always forwards the authenticated principal, returns only readable progress and disables response caching.
@@ -1618,6 +1632,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses or sequence gaps.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 

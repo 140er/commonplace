@@ -19,7 +19,8 @@ def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F81
 
     monkeypatch.setenv("COMMONPLACE_RULES", "off")
     member = hub.db.create_user("reader@example.test")
-    hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+    hub.db.add_member(hub.workspace, member, "owner", actor=hub.admin)
+    # Private-read fixture holders must be owners; filer boundaries remain independent.
     store = hub.gateway.handoff.store_for(hub.workspace)
     readable = store.store(
         hub.workspace,
@@ -43,7 +44,7 @@ def world(hub, monkeypatch, tmp_path, functional_worker_transport):  # noqa: F81
         trust="trusted",
     )
     principal = hub.db.authenticate_token(token)
-    assert principal.role != "owner" and principal.policy.trust == "trusted"
+    assert principal.role == "owner" and principal.policy.trust == "trusted"
     assert principal.policy.sees_all_wings
     assert all(
         principal.policy.has_scope(s) for s in ("memory:read", "private:read", "threads:read")

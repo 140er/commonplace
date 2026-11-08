@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Optional
 
 from mempalace.config import WORKSTATION_WINGS, normalize_wing_name, wing_aliases
@@ -338,6 +338,14 @@ class Policy:
             )
         except Exception:
             return DENY_ALL
+
+    def for_role(self, role: Optional[str]) -> "Policy":
+        """Loaded authority cannot outlive current workspace ownership."""
+        if role == "owner":
+            return self
+        return replace(
+            self, scopes=tuple(s for s in self.scopes if s not in {"private:read", "admin"})
+        )
 
     # ── scopes and trust ──
     def has_scope(self, scope: str) -> bool:

@@ -58,7 +58,8 @@ def world(hub, monkeypatch, tmp_path, request):
     monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
     monkeypatch.setenv("COMMONPLACE_RULES", "off")
     member = hub.db.create_user("member@example.test")
-    hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+    hub.db.add_member(hub.workspace, member, "owner", actor=hub.admin)
+    # Private-read fixture holders must be owners; filer boundaries remain independent.
     store = hub.gateway.handoff.store_for(hub.workspace)
     readable = store.store(
         hub.workspace,
@@ -89,7 +90,7 @@ def world(hub, monkeypatch, tmp_path, request):
             trust="trusted",
         )
         principal = hub.db.authenticate_token(tokens[kind])
-        assert principal.role != "owner" and principal.policy.trust == "trusted"
+        assert principal.role == "owner" and principal.policy.trust == "trusted"
         assert all(
             principal.policy.has_scope(scope)
             for scope in ("memory:read", "private:read", "threads:read")
@@ -369,7 +370,7 @@ def test_card253_s05_literal_guard(world):
         trust="trusted",
     )
     principal = w.h.db.authenticate_token(w.tokens["A"])
-    assert principal.role != "owner" and not principal.policy.sees_all_wings
+    assert principal.role == "owner" and not principal.policy.sees_all_wings
     for tool, args in (
         ("mempalace_graph_stats", {}),
         ("mempalace_find_tunnels", {}),

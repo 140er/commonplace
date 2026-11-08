@@ -1708,3 +1708,31 @@ memories-filed-away, and low-level coordination event/artifact/patch operations.
 They have the same unknown-operation refusal as unavailable operations. Explicit
 private reads remain independent of private data presence. This containment does
 not define a restricted estate response or restore filer-specific private reads.
+
+### Event, write and durable-token boundaries
+
+Non-owner person event feeds use the same current-principal visibility as
+webhooks: boardless events require every-wing access, and board events require
+a readable active board (space messages retain coordinator checks). Their feed
+and cursor are projected onto visible events, so private activity produces no
+sequence gaps, cursor increments or labels. Members consequently lose boardless
+live Memory refresh signals. Owner feeds retain their original ordered log.
+
+Writes into unreadable private wings remain allowed, but duplicate drawer
+retries return the same successful shape as fresh writes. Replay fields and
+retained source provenance are hidden; returned structural fields depend only
+on the supplied request and current chunk configuration. Readable-owner retries
+still report already_exists. Tunnel creation additionally requires both endpoint
+wings to be readable for principals without every-wing access, and outgoing
+write results pass the wing scrubber. Denial happens before any private upsert.
+
+Token issuance refuses private read scope for a holder who is not a workspace
+owner. PAT, durable subscription connection and OAuth authentication strip both
+private read and admin scopes unless current membership is exactly owner;
+missing membership rejects authentication. Stored policies are not rewritten.
+
+Health-flagged member notes are always saved privately when private writing is
+allowed; they are never redirected to shared storage. The successful HTTP save
+response includes a notice, and the MCP save text states: "Saved privately. You
+cannot read this note for now." This also applies to other saves into unreadable
+wings. Shared saves remain readable and do not carry that notice.

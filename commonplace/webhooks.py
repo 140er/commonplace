@@ -517,6 +517,21 @@ def _can_receive(db, gateway, row, event):
         if set(event["data"]) == {"webhook_id"} and event["data"]["webhook_id"] == own_id:
             # A test of this very webhook carries nothing but its own id.
             return True
+        return can_receive_event(db, gateway, principal, event)
+    except Exception as exc:
+        log_failure(logger, "webhook owner authorization failed", exc)
+        return False
+
+
+def can_receive_event(db, gateway, principal, event):
+    """Shared event visibility for current principals and webhook subscriptions."""
+    try:
+        if (
+            principal is None
+            or principal.workspace_id != event["workspace_id"]
+            or not principal.policy.has_scope("memory:read")
+        ):
+            return False
         if "board" not in event["data"]:
             return principal.policy.sees_all_wings
         board = event["data"]["board"]
@@ -525,9 +540,9 @@ def _can_receive(db, gateway, row, event):
         from .boards.service import open_store
 
         store = open_store(
-            gateway.workspace_dir(row["workspace_id"]),
+            gateway.workspace_dir(principal.workspace_id),
             db=gateway.db,
-            workspace_id=row["workspace_id"],
+            workspace_id=principal.workspace_id,
         )
         with store.connection() as conn:
             found = conn.execute(
@@ -539,7 +554,7 @@ def _can_receive(db, gateway, row, event):
             return False
         return found is not None and principal.policy.can_read_wing(found["wing"])
     except Exception as exc:
-        log_failure(logger, "webhook owner authorization failed", exc)
+        log_failure(logger, "event reader authorization failed", exc)
         return False
 
 
