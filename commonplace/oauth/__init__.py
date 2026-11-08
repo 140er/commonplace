@@ -37,11 +37,12 @@ a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9
 """
 
 
-def _page(h, content: str, *, status=200, headers=()) -> None:
+def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
     style_hash = base64.b64encode(hashlib.sha256(_CSS.encode()).digest()).decode("ascii")
+    form_action = "'self'" + (" " + form_origin if form_origin else "")
     csp = (
         "default-src 'none'; style-src 'sha256-" + style_hash + "'; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        f"form-action {form_action}; base-uri 'none'; frame-ancestors 'none'"
     )
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
@@ -57,6 +58,39 @@ def _page(h, content: str, *, status=200, headers=()) -> None:
     )
 
 
+def _redirect_origin(uri) -> str | None:
+    """Serialize parsed URL parts, never untrusted authority text, into CSP."""
+    try:
+        parts = urlsplit(uri)
+        host = parts.hostname
+        port = parts.port
+        if not host or parts.username is not None or parts.password is not None:
+            return None
+        if port is not None and not 0 < port < 65536:
+            return None
+        # urlsplit accepts an empty port and punctuation in DNS hostnames.
+        if parts.netloc.endswith(":"):
+            return None
+        host = host.lower()
+        if ":" in host:
+            if not re.fullmatch(r"[0-9a-f:]+", host) or not ipaddress.IPv6Address(host).is_loopback:
+                return None
+            host = f"[{host}]"
+        elif len(host) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.removesuffix(".").split(".")
+        ):
+            return None
+        if parts.scheme != "https":
+            if parts.scheme != "http":
+                return None
+            if host != "localhost" and not ipaddress.ip_address(parts.hostname).is_loopback:
+                return None
+        return f"{parts.scheme}://{host}" + (f":{port}" if port is not None else "")
+    except ValueError:
+        return None
+
+
 def _valid_redirect(uri) -> bool:
     if (
         not isinstance(uri, str)
@@ -67,22 +101,7 @@ def _valid_redirect(uri) -> bool:
         or any(ord(c) <= 32 or ord(c) >= 127 for c in uri)
     ):
         return False
-    try:
-        parts = urlsplit(uri)
-        host = parts.hostname
-        if not host or parts.username is not None or parts.password is not None:
-            return False
-        if parts.port is not None and not 0 < parts.port < 65536:
-            return False
-        if parts.scheme == "https":
-            return True
-        if parts.scheme != "http":
-            return False
-        if host == "localhost":
-            return True
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return _redirect_origin(uri) is not None
 
 
 def _register(db, data: dict) -> dict:
@@ -151,7 +170,8 @@ def _response(parameters, **values):
 
 def _validate_authorization(db, parameters):
     client = store.client(db, parameters.get("client_id", ""))
-    if parameters.get("redirect_uri") not in json.loads(client["redirect_uris"]):
+    uri = parameters.get("redirect_uri")
+    if uri not in json.loads(client["redirect_uris"]) or not _valid_redirect(uri):
         raise OAuthError("invalid_request", "Redirect URI is not registered")
     # Only errors after exact client/redirect validation may leave this server.
     try:
@@ -261,7 +281,13 @@ def _show_authorize(gateway, h, *, status=200):
             '<button type="submit">Sign in</button></form>'
         )
         headers = (("Set-Cookie", cookie),)
-    _page(h, content, status=status, headers=headers)
+    _page(
+        h,
+        content,
+        status=status,
+        headers=headers,
+        form_origin=_redirect_origin(parameters["redirect_uri"]) if principal else None,
+    )
 
 
 def _submit_authorize(gateway, h):

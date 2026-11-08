@@ -12,6 +12,16 @@ entry was written.
 
 ## Decisions
 
+- **OAuth consent navigation:** Only a consent form bound to a validated client and
+  exact registered redirect adds that redirect's parsed origin to CSP `form-action
+  'self'`. Login forms and generic HTML pages remain self-only, including failed
+  login retries; a retry that renders authenticated consent gets the same single
+  origin allowance. Other CSP directives, PKCE, state and exact redirect matching
+  are unchanged. Redirect hosts must be DNS labels or bracketed loopback IPv6,
+  with numeric ports; schemes remain HTTPS or loopback HTTP. New registrations
+  and authorization GET/POST reject unsafe legacy registrations locally before
+  rendering or redirecting. No stored client data is migrated.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

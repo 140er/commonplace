@@ -1,5 +1,6 @@
 """Real HTTP OAuth flows through the gateway and its in-process Memory worker."""
 
+import base64
 import hashlib
 import http.client
 import importlib
@@ -726,3 +727,226 @@ def test_absolute_request_target_cannot_redirect_login_offsite(client):
         "POST", path, {"request": request, "login_token": login_token}
     )
     assert status == 303 and headers["Location"] == path
+
+
+def _form_action(headers):
+    return next(
+        directive.strip().split()[1:]
+        for directive in headers["Content-Security-Policy"].split(";")
+        if directive.strip().startswith("form-action ")
+    )
+
+
+@pytest.mark.parametrize(
+    "uri,origin",
+    [
+        ("https://MCP.example:8443/callback?fixed=1", "https://mcp.example:8443"),
+        ("http://127.0.0.1:54321/callback", "http://127.0.0.1:54321"),
+        ("http://[::1]:54321/callback", "http://[::1]:54321"),
+        ("https://client.example/callback;path='ok',?q=1", "https://client.example"),
+    ],
+)
+def test_consent_form_action_only_exact_validated_origin(client, uri, origin):
+    cid = client.register(redirect_uris=[uri, "https://second.example/callback"])
+    client.login()
+    status, headers, text = client.request("GET", client.authorize_path(cid, redirect_uri=uri))
+    assert status == 200 and '<form method="post"' in text and "Allow" in text
+    assert _form_action(headers) == ["'self'", origin]
+    # No other directive may change, and the other registered origin is absent.
+    style_hash = base64.b64encode(hashlib.sha256(oauth._CSS.encode()).digest()).decode()
+    assert headers["Content-Security-Policy"] == (
+        "default-src 'none'; style-src 'sha256-" + style_hash + "'; "
+        f"form-action 'self' {origin}; base-uri 'none'; frame-ancestors 'none'"
+    )
+
+
+def test_login_and_retry_forms_keep_self_only(client):
+    cid = client.register()
+    path = client.authorize_path(cid)
+    status, headers, text = client.request("GET", path)
+    assert status == 200 and '<form method="post"' in text
+    assert 'name="login_token"' in text and "Allow" not in text
+    assert _form_action(headers) == ["'self'"]
+    request = re.search(r'name="request" value="([^"]+)"', text)[1]
+    status, headers, text = client.request(
+        "POST", path, {"request": request, "login_token": "invalid"}
+    )
+    assert status == 401 and '<form method="post"' in text
+    assert 'name="login_token"' in text and "Allow" not in text
+    assert _form_action(headers) == ["'self'"]
+    # A concurrent sign-in can make a failed login re-render actual consent.
+    client.login()
+    request = re.search(r'name="request" value="([^"]+)"', text)[1]
+    status, headers, text = client.request(
+        "POST", path, {"request": request, "login_token": "invalid"}
+    )
+    assert status == 401 and "Allow" in text and '<form method="post"' in text
+    assert _form_action(headers) == ["'self'", "https://client.example"]
+
+
+def test_invalid_authorization_never_renders_external_form_action(client, monkeypatch):
+    cid = client.register()
+    client.login()
+    for path in (
+        client.authorize_path("unknown"),
+        client.authorize_path(cid, redirect_uri="https://evil.example/"),
+    ):
+        status, headers, text = client.request("GET", path)
+        assert status == 400 and "<form" not in text
+        assert "Content-Security-Policy" not in headers  # Existing JSON errors.
+    # Generic HTML/error pages have no validated redirect and retain the default.
+    captured = {}
+    monkeypatch.setattr(oauth, "send", lambda *args, **kwargs: captured.update(kwargs))
+    oauth._page(None, "<p>Error</p>", status=400)
+    assert _form_action(dict(captured["headers"])) == ["'self'"]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://client.example;form-action/callback",
+        "https://client.example'unsafe/callback",
+        "https://client.example,evil.example/callback",
+        "https://bad_label.example/callback",
+        "https://client.example:/callback",
+        "https://[2001:db8::1]/callback",
+    ],
+)
+def test_hostile_registered_redirect_fails_closed(client, uri):
+    # Simulate an existing registration accepted by the old permissive validator.
+    cid = client.register()
+    with client.hub.db._lock:
+        client.hub.db._conn.execute(
+            "UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = ?",
+            (json.dumps([uri]), cid),
+        )
+    client.login()
+    path = client.authorize_path(cid, redirect_uri=uri)
+    status, headers, text = client.request("GET", path)
+    assert status == 400 and "<form" not in text and "Location" not in headers
+    assert "Content-Security-Policy" not in headers
+    assert_error(
+        client.request("POST", "/oauth/register", {"redirect_uris": [uri]}), "invalid_redirect_uri"
+    )
+
+
+@pytest.mark.parametrize("flow", ["consent", "login_retry", "consent_retry"])
+def test_consent_chromium_cross_origin_submit(client, flow, pytestconfig):
+    """Run explicitly with heavy --browser and scripts/requirements-release.txt.
+
+    Only synthetic credentials in an ephemeral DB; never log callback queries.
+    A CSP violation ends the wait too, so base RED is an assertion, not a timeout.
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from playwright.sync_api import sync_playwright
+
+    assert not pytestconfig.getoption("showlocals"), "Use --no-showlocals"
+    received = []
+
+    class Callback(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            received.append(parse_qs(urlsplit(self.path).query))
+            payload = b"<title>callback-received</title>"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Callback)
+    thread = threading.Thread(target=target.serve_forever, kwargs={"poll_interval": 0.05})
+    thread.start()
+    origin = f"http://127.0.0.1:{client.hub.port}"
+    callback_origin = f"http://127.0.0.1:{target.server_port}"
+    console = []
+    try:
+        cid = client.register(redirect_uris=[callback_origin + "/callback"])
+        path = client.authorize_path(
+            cid, redirect_uri=callback_origin + "/callback", state="browser-test"
+        )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
+            try:
+                context = browser.new_context()
+                page = context.new_page()
+                page.on("console", lambda message: console.append(message.text))
+                if flow == "consent":
+                    client.login()
+                    context.add_cookies(
+                        [
+                            {
+                                "name": sessions.COOKIE,
+                                "value": client.cookies[sessions.COOKIE],
+                                "url": origin,
+                            }
+                        ]
+                    )
+                response = page.goto(origin + path)
+                assert response.status == 200
+                if flow != "consent":
+                    assert page.get_by_role("button", name="Sign in", exact=True).count() == 1
+                    if flow == "consent_retry":
+                        client.login()
+                        context.add_cookies(
+                            [
+                                {
+                                    "name": sessions.COOKIE,
+                                    "value": client.cookies[sessions.COOKIE],
+                                    "url": origin,
+                                }
+                            ]
+                        )
+                    page.get_by_label("Sign in token").fill("invalid")
+                    with page.expect_response(lambda r: r.request.method == "POST") as retry:
+                        page.get_by_role("button", name="Sign in", exact=True).click()
+                    assert retry.value.status == 401
+                    if flow == "login_retry":
+                        token = sessions.create_login_link(
+                            client.hub.db, "owner@example.com", client.hub.workspace
+                        )
+                        page.get_by_label("Sign in token").fill(token)
+                        page.get_by_role("button", name="Sign in", exact=True).click()
+                        assert page.get_by_role("button", name="Allow", exact=True).count() == 1
+                page.evaluate("""document.addEventListener('securitypolicyviolation', e => {
+                    if (e.effectiveDirective === 'form-action') document.title = 'csp-blocked';
+                });""")
+                with page.expect_response(lambda r: r.request.method == "POST") as submitted:
+                    page.get_by_role("button", name="Allow", exact=True).click(no_wait_after=True)
+                assert submitted.value.status == 303
+                page.wait_for_function(
+                    "['callback-received', 'csp-blocked'].includes(document.title)"
+                )
+                blocked = page.title() == "csp-blocked"
+                # Chromium's blocked URL contains a code: remove all query text.
+                safe_console = [
+                    re.sub(
+                        r"https?://[^\s'\"]+",
+                        lambda m: m[0].split("?", 1)[0] + "?<redacted>",
+                        message,
+                    )
+                    for message in console
+                    if "form-action" in message
+                ]
+                print(f"Chromium {flow}: blocked={blocked}; CSP console={safe_console}")
+                assert not blocked, "Chromium blocked the real consent redirect via form-action CSP"
+                arrived = urlsplit(page.url).netloc == urlsplit(callback_origin).netloc
+                assert arrived and len(received) == 1, "Must reach the other origin exactly once"
+                valid_query = bool(received[0].get("code")) and received[0].get("state") == [
+                    "browser-test"
+                ]
+                assert valid_query, (
+                    "Callback must contain an authorization code and preserved state"
+                )
+                print(
+                    f"Chromium {flow}: cross-origin callback reached with code and state (values withheld)"
+                )
+            finally:
+                browser.close()
+    finally:
+        target.shutdown()
+        target.server_close()
+        thread.join(timeout=5)
