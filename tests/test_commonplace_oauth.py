@@ -741,6 +741,9 @@ def _form_action(headers):
     "uri,origin",
     [
         ("https://MCP.example:8443/callback?fixed=1", "https://mcp.example:8443"),
+        ("https://client.example:443/callback", "https://client.example:443"),
+        ("http://127.0.0.1:80/callback", "http://127.0.0.1:80"),
+        ("https://127.0.0.1:443/callback", "https://127.0.0.1:443"),
         ("http://127.0.0.1:54321/callback", "http://127.0.0.1:54321"),
         ("https://client.example/callback;path='ok',?q=1", "https://client.example"),
     ],
@@ -751,6 +754,9 @@ def test_consent_form_action_only_exact_validated_origin(client, uri, origin):
     status, headers, text = client.request("GET", client.authorize_path(cid, redirect_uri=uri))
     assert status == 200 and '<form method="post"' in text and "Allow" in text
     assert _form_action(headers) == ["'self'", origin]
+    assert text.count(origin) == 1
+    assert f"<p>Code destination: {origin}</p>" in text
+    assert "https://second.example" not in text
     # No other directive may change, and the other registered origin is absent.
     style_hash = base64.b64encode(hashlib.sha256(oauth._CSS.encode()).digest()).decode()
     assert headers["Content-Security-Policy"] == (
@@ -766,6 +772,7 @@ def test_login_and_retry_forms_keep_self_only(client):
     assert status == 200 and '<form method="post"' in text
     assert 'name="login_token"' in text and "Allow" not in text
     assert _form_action(headers) == ["'self'"]
+    assert "Code destination:" not in text and "https://client.example" not in text
     request = re.search(r'name="request" value="([^"]+)"', text)[1]
     status, headers, text = client.request(
         "POST", path, {"request": request, "login_token": "invalid"}
@@ -773,6 +780,7 @@ def test_login_and_retry_forms_keep_self_only(client):
     assert status == 401 and '<form method="post"' in text
     assert 'name="login_token"' in text and "Allow" not in text
     assert _form_action(headers) == ["'self'"]
+    assert "Code destination:" not in text and "https://client.example" not in text
     # A concurrent sign-in can make a failed login re-render actual consent.
     client.login()
     request = re.search(r'name="request" value="([^"]+)"', text)[1]
@@ -781,6 +789,8 @@ def test_login_and_retry_forms_keep_self_only(client):
     )
     assert status == 401 and "Allow" in text and '<form method="post"' in text
     assert _form_action(headers) == ["'self'", "https://client.example"]
+    assert text.count("https://client.example") == 1
+    assert "<p>Code destination: https://client.example</p>" in text
 
 
 def test_invalid_authorization_never_renders_external_form_action(client, monkeypatch):
@@ -810,6 +820,13 @@ def test_invalid_authorization_never_renders_external_form_action(client, monkey
         "https://client.example:/callback",
         "https://[2001:db8::1]/callback",
         "http://[::1]:54321/callback",
+        "https://127.1/callback",
+        "https://0x7f000001/callback",
+        "https://0177.0.0.1/callback",
+        "https://127.0.0.1./callback",
+        "https://2130706433/callback",
+        "https://client.123/callback",
+        "https://client.0xff/callback",
     ],
 )
 def test_hostile_registered_redirect_fails_closed(client, uri):
@@ -980,3 +997,101 @@ def test_consent_chromium_cross_origin_submit(client, flow, host, pytestconfig):
         target.shutdown()
         target.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_registered_redirect_validation_errors_explain_reregistration(client, method):
+    cid = client.register()
+    client.login()
+    path = client.authorize_path(cid)
+    _, _, text = client.request("GET", path)
+    request = re.search(r'name="request" value="([^"]+)"', text)[1]
+    legacy = "https://bad_label.example/callback"
+    with client.hub.db._lock:
+        client.hub.db._conn.execute(
+            "UPDATE oauth_clients SET redirect_uris = ? WHERE client_id = ?",
+            (json.dumps([legacy]), cid),
+        )
+        for row in client.hub.db._conn.execute(
+            "SELECT request_hash, parameters FROM oauth_requests"
+        ).fetchall():
+            parameters = json.loads(row["parameters"])
+            parameters["redirect_uri"] = legacy
+            client.hub.db._conn.execute(
+                "UPDATE oauth_requests SET parameters = ? WHERE request_hash = ?",
+                (json.dumps(parameters), row["request_hash"]),
+            )
+    response = client.request(
+        method,
+        client.authorize_path(cid, redirect_uri=legacy),
+        {"request": request, "decision": "allow"} if method == "POST" else None,
+    )
+    assert_error(response, "invalid_request")
+    description = json.loads(response[2])["error_description"]
+    assert description == "Redirect URI no longer passes validation; register the client again"
+    assert legacy not in description
+    unregistered = client.request("GET", client.authorize_path(cid))
+    assert_error(unregistered, "invalid_request")
+    assert json.loads(unregistered[2])["error_description"] == "Redirect URI is not registered"
+
+
+def test_registration_error_names_supported_redirect_rule(client):
+    uri = "https://bad_label.example/callback"
+    response = client.request("POST", "/oauth/register", {"redirect_uris": [uri]})
+    assert_error(response, "invalid_redirect_uri")
+    description = json.loads(response[2]).get("error_description", "")
+    assert "HTTPS or loopback HTTP" in description
+    assert "canonical IPv4" in description and "numeric port" in description
+    assert "IPv6" in description and uri not in description
+
+
+def test_consent_chromium_explicit_default_port_navigation(client, pytestconfig):
+    """Observe redirect navigation, with DNS disabled; no TLS server required."""
+    from playwright.sync_api import sync_playwright
+
+    assert not pytestconfig.getoption("showlocals"), "Use --no-showlocals"
+    uri = "https://CLIENT.example:443/callback"
+    destination = "https://client.example:443"
+    cid = client.register(redirect_uris=[uri])
+    client.login()
+    origin = f"http://127.0.0.1:{client.hub.port}"
+    started, violations = [], []
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--disable-dev-shm-usage", "--host-resolver-rules=MAP client.example ~NOTFOUND"],
+        )
+        try:
+            context = browser.new_context()
+            context.add_cookies(
+                [{"name": sessions.COOKIE, "value": client.cookies[sessions.COOKIE], "url": origin}]
+            )
+            context.expose_function(
+                "recordViolation", lambda directive: violations.append(directive)
+            )
+            context.add_init_script(
+                "document.addEventListener('securitypolicyviolation', e => window.recordViolation(e.effectiveDirective));"
+            )
+            page = context.new_page()
+
+            def navigation(request):
+                parts = urlsplit(request.url)
+                if request.is_navigation_request() and parts.hostname == "client.example":
+                    started.append(parts.scheme == "https" and (parts.port or 443) == 443)
+
+            page.on("request", navigation)
+            page.goto(origin + client.authorize_path(cid, redirect_uri=uri))
+            shown = (
+                page.locator("main > p")
+                .all_text_contents()
+                .count("Code destination: " + destination)
+                == 1
+            )
+            page.get_by_role("button", name="Allow", exact=True).click(no_wait_after=True)
+            page.wait_for_timeout(1500)
+            evidence = f"default-port navigation_started={bool(started)}, form-action violations={violations}"
+            print(evidence)
+            assert started == [True] and "form-action" not in violations, evidence
+            assert shown, "Consent must show the validated default-port origin before navigation"
+        finally:
+            browser.close()

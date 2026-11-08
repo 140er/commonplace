@@ -79,6 +79,10 @@ def _redirect_origin(uri) -> str | None:
             for label in host.removesuffix(".").split(".")
         ):
             return None
+        last_label = host.removesuffix(".").rsplit(".", 1)[-1]
+        if parts.scheme == "https" and re.fullmatch(r"[0-9]+|0x[0-9a-f]+", last_label):
+            if str(ipaddress.IPv4Address(host)) != host:
+                return None
         if parts.scheme != "https":
             if parts.scheme != "http":
                 return None
@@ -109,7 +113,11 @@ def _register(db, data: dict) -> dict:
         or not 1 <= len(redirects) <= 20
         or not all(_valid_redirect(uri) for uri in redirects)
     ):
-        raise OAuthError("invalid_redirect_uri")
+        raise OAuthError(
+            "invalid_redirect_uri",
+            "Use HTTPS or loopback HTTP with a valid DNS hostname or canonical IPv4 address "
+            "and optional numeric port; IPv6 and empty ports are not supported",
+        )
     name = data.get("client_name", "Application")
     if (
         not isinstance(name, str)
@@ -169,8 +177,12 @@ def _response(parameters, **values):
 def _validate_authorization(db, parameters):
     client = store.client(db, parameters.get("client_id", ""))
     uri = parameters.get("redirect_uri")
-    if uri not in json.loads(client["redirect_uris"]) or not _valid_redirect(uri):
+    if uri not in json.loads(client["redirect_uris"]):
         raise OAuthError("invalid_request", "Redirect URI is not registered")
+    if not _valid_redirect(uri):
+        raise OAuthError(
+            "invalid_request", "Redirect URI no longer passes validation; register the client again"
+        )
     # Only errors after exact client/redirect validation may leave this server.
     try:
         if parameters.get("response_type") != "code":
@@ -237,6 +249,7 @@ def _show_authorize(gateway, h, *, status=200):
         )
     hidden = f'<input type="hidden" name="request" value="{escape(request, quote=True)}">'
     action = escape(authorize_path, quote=True)
+    form_origin = _redirect_origin(parameters["redirect_uri"]) if principal else None
     if principal:
         workspace = gateway.db.workspace(principal.workspace_id)["name"]
         consent = ""
@@ -259,6 +272,7 @@ def _show_authorize(gateway, h, *, status=200):
                 consent += f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
         content = (
             f"<h1>{escape(client['client_name'])}</h1><p>{escape(workspace)}</p>"
+            f"<p>Code destination: {escape(form_origin, quote=True)}</p>"
             f'<form method="post" action="{action}">{hidden}{consent}'
             '<button name="decision" value="allow">Allow</button>'
             '<button name="decision" value="deny">Deny</button></form>'
@@ -284,7 +298,7 @@ def _show_authorize(gateway, h, *, status=200):
         content,
         status=status,
         headers=headers,
-        form_origin=_redirect_origin(parameters["redirect_uri"]) if principal else None,
+        form_origin=form_origin,
     )
 
 
