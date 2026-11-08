@@ -380,6 +380,7 @@ class Mediator:
             if t.get("name") not in local_names and policy.tool_visible(t.get("name"))
         ]
         visible = copy.deepcopy(visible)
+        # Worker authorization descriptors are never part of client discovery.
         for tool in visible:
             for key in ("inputSchema", "input_schema"):
                 tool.get(key, {}).get("properties", {}).pop("thread_scope", None)
@@ -476,6 +477,8 @@ class Mediator:
                 response["result"]["content"].append({"type": "text", "text": rule_check.notice})
             return response
 
+        # Discard client descriptors before every route, including KG search
+        # pass-through. Only the authenticated mediator can issue probe/allow.
         args.pop("thread_scope", None)
         rule = TOOL_RULES[name][1]
         import_filters = dict(args)
