@@ -840,7 +840,7 @@ def test_hostile_registered_redirect_fails_closed(client, uri):
     ],
 )
 def test_consent_chromium_cross_origin_submit(client, flow, host, pytestconfig):
-    """Run explicitly with heavy --browser and scripts/requirements-release.txt.
+    """Run explicitly with scripts/requirements-release.txt and Chromium installed.
 
     Only synthetic credentials in an ephemeral DB; never log callback queries.
     A bounded callback wait makes blocked base navigation fail by assertion.
