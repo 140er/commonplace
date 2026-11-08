@@ -603,6 +603,10 @@ class Mediator:
         return None
 
     def _before_all_wings(self, principal, name, args, notes):
+        if name in ("mempalace_traverse", "mempalace_find_tunnels", "mempalace_graph_stats"):
+            from .handoff.graph import project
+
+            return {"respond": project(self.gateway, principal, self.workers, name, args)}
         if name in ("mempalace_list_tunnels", "mempalace_follow_tunnels"):
             from .handoff.tunnels import project
 

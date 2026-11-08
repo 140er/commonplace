@@ -49,6 +49,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
+  - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
+
   - Documents citation omission and backend proof limits separately from fact eligibility.
 
   - Records current typed citation proof and raw path authorization before display conversion.
@@ -115,6 +117,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
+  - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
+
   - Keeps unavailable citation links absent without changing visible facts.
 
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
@@ -147,6 +151,8 @@ Format (read by `commonplace orch docs-check`):
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
+
+  - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - Memory-map and capped-backend regressions verify the documented failure policy.
 
@@ -361,6 +367,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
+
   - Tunnel keysets use stable ids; final lookup ignores traversal statistics and unrelated metadata while rechecking current endpoint associations.
 
   - Explicit tunnel probes page metadata without content, bind both endpoints and optional current drawer descriptors, and revalidate before follow hydration or recording.
@@ -390,6 +398,7 @@ Format (read by `commonplace orch docs-check`):
   - Capped raw-token scans retain the existing grammar; checkpoints between string scans and token lookups enforce request deadline failure.
 
   - Changed hallway associations are excluded without rewriting stored rows; unverified internal scope calls are refused, while local unscoped pages remain compatible.
+  - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
 
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
   - Non-Chroma logical citations fail closed because the collection API cannot guarantee ordered snapshot enumeration.
@@ -408,6 +417,7 @@ Format (read by `commonplace orch docs-check`):
   - Hallway guards cover exact 500/501 metadata page boundaries and readable private-token labels.
 
   - Hallway snapshot tests cover SQLite and legacy JSON ordering and changed descriptors.
+  - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - Presence and private read-scope tests exercise SQLite, compact, Chroma, facet and generic metadata paths, unknown values, batching and races.
   - Capped-backend tests place a hidden chunk beyond the first short metadata page.
@@ -445,6 +455,8 @@ Format (read by `commonplace orch docs-check`):
   - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
+
+  - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
 
   - Citation failure cases compare complete surviving facts with readable controls.
 
@@ -581,6 +593,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
+  - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
+
   - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
 
   - Only named public AssertionErrors count as base regressions; readable citations and plain-file display remain controls.
@@ -615,6 +629,8 @@ Format (read by `commonplace orch docs-check`):
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
+
+  - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
@@ -689,6 +705,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
+  - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
+
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
   - Authenticated explicit tunnel reads use request-local endpoint and drawer proof for owners and connections without altering mutation authorization.
 
@@ -725,6 +743,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
+  - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
+
   - Worker failures remove only the affected citation, with no other-workspace fallback.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -743,6 +763,8 @@ Format (read by `commonplace orch docs-check`):
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
+
+  - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - Public typed citation tests cover trusted members, owner sessions and workspace isolation.
 
@@ -1062,6 +1084,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
+  - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
+
   - Outgoing typed citations require current wing and thread authority plus snapshot revalidation; raw source_file tokens are authorized before basename display.
   - Tunnel projection validates names before acquisition, pages by identity and preserves live readable associations across non-association updates.
 
@@ -1115,6 +1139,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
+  - Incomplete graph metadata or tunnel proof returns the operation’s empty public envelope without global counts.
+
   - Association faults or revoked authority omit citations after original-source fact eligibility; words remain verbatim.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
@@ -1138,6 +1164,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
+
+  - Readable graph controls, hidden bridges/top-N candidates, both statistics paths and bounded projection fault guards exercise the read boundary.
 
   - Typed citation tests cover moved targets, legacy chunk handles, raw directories and revoked authority.
 
