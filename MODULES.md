@@ -38,6 +38,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
   - Documents citation omission and backend proof limits separately from fact eligibility.
@@ -92,6 +94,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
+
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
   - Keeps unavailable citation links absent without changing visible facts.
@@ -114,6 +118,8 @@ Format (read by `commonplace orch docs-check`):
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
@@ -368,6 +374,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
   - Citation failure cases compare complete surviving facts with readable controls.
@@ -489,6 +497,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
+
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
   - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
@@ -513,6 +523,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 
@@ -568,6 +580,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Consented private-chat listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
+
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
 
   - Private association requests carry the authenticated workspace and are unavailable as public operations.
@@ -600,6 +614,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
+
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
 
   - Worker failures remove only the affected citation, with no other-workspace fallback.
@@ -614,6 +630,8 @@ Format (read by `commonplace orch docs-check`):
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
 

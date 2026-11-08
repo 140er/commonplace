@@ -324,6 +324,11 @@ def test_card253_s06_r1_literal_import_total(page_world, monkeypatch, path):
     assert all(p.get("total") == 2 and p.get("count") == 1 for p in present), (
         "s06 import reader lost visible total"
     )
+    plain = literal_token(w)
+    plain_present = [
+        h.call(plain, "mempalace_list_drawers", wing="wing_fixture", limit=1, offset=n)[0]
+        for n in (0, 1)
+    ]
     col.delete(ids=["a-hidden"])
     mcp._invalidate_overview_caches()
     control = [
@@ -331,11 +336,12 @@ def test_card253_s06_r1_literal_import_total(page_world, monkeypatch, path):
         for n in (0, 1)
     ]
     assert present == control
-    plain = literal_token(w)
-    assert [
+    plain_control = [
         h.call(plain, "mempalace_list_drawers", wing="wing_fixture", limit=1, offset=n)[0]
         for n in (0, 1)
-    ] == control
+    ]
+    assert plain_present == plain_control
+    assert plain_control == control
 
 
 @pytest.mark.parametrize("case", ["since", "offset", "limit_null"])
@@ -368,10 +374,9 @@ def test_card253_s06_r1_gateway_errors(page_world, case):
     assert status == 200, "s06 invalid pagination escaped as HTTP 500"
     reply = json.loads(raw)
     if case == "since":
-        try:
+        with pytest.raises(ValueError) as exc:
             parse_date_bound("not-a-date", "since")
-        except ValueError as exc:
-            message = str(exc)
+        message = str(exc.value)
         assert _tool_result(reply) == {"error": message}, "s06 invalid filter became empty success"
     elif case == "offset":
         assert reply == {
@@ -401,3 +406,76 @@ def test_card253_s06_r1_denial_text(page_world, case):
         else "this connection can't read wing 'denied'"
     )
     assert result == {"error": message, "denied": True}, "s06 denial text changed"
+
+
+@pytest.mark.parametrize("case", ["limit_null", "offset_abc", "since_bad"])
+def test_card253_s06_r2_private_page_args(page_world, monkeypatch, case):
+    import json
+
+    from commonplace.gateway import _tool_result
+    from commonplace.handoff.recall import Recall
+    from mempalace.date_window import parse_date_bound
+
+    h = page_world[0]
+    token = h.token(
+        "private-page-reader",
+        tools=["mempalace_list_drawers"],
+        scopes=["memory:read", "memory:import:read"],
+        read_wings=["wing_fixture"],
+        trust="trusted",
+    )
+    principal = h.db.authenticate_token(token)
+    assert principal.policy.has_scope("memory:import:read")
+    assert h.gateway.handoff.recall.import_reader(principal)
+    assert not principal.person and principal.role == "owner"
+    warm, _ = h.call(token, "mempalace_list_drawers", wing="wing_fixture")
+    assert warm == {"drawers": [], "total": 0, "count": 0, "offset": 0, "limit": 20}
+    original = Recall.import_listing
+    calls = []
+
+    def listing(self, reader, **kwargs):
+        calls.append(kwargs)
+        return original(self, reader, **kwargs)
+
+    monkeypatch.setattr(Recall, "import_listing", listing)
+    control, _ = h.call(token, "mempalace_list_drawers", wing="private_chats")
+    assert control == {"drawers": [], "count": 0}
+    assert calls == [{"limit": 20, "offset": 0, "room": None}]
+    calls.clear()
+    extra = {
+        "limit_null": {"limit": None},
+        "offset_abc": {"offset": "abc"},
+        "since_bad": {"since": "not-a-date"},
+    }[case]
+    request = {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "tools/call",
+        "params": {
+            "name": "mempalace_list_drawers",
+            "arguments": {"wing": "private_chats", **extra},
+        },
+    }
+    status, raw = h.raw(token, request)
+    assert status == 200, "s06 private page args escaped as HTTP 500"
+    reply = json.loads(raw)
+    if case == "limit_null":
+        assert _tool_result(reply) == control
+        assert calls == [{"limit": 20, "offset": 0, "room": None}]
+    elif case == "offset_abc":
+        assert reply == {
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": {
+                "code": -32602,
+                "message": "Invalid params for tool mempalace_list_drawers: 'offset' must be an integer",
+            },
+        }, "s06 private offset changed RPC error"
+        assert not calls
+    else:
+        with pytest.raises(ValueError) as exc:
+            parse_date_bound("not-a-date", "since")
+        assert _tool_result(reply) == {"error": str(exc.value)}, (
+            "s06 private invalid since became empty success"
+        )
+        assert not calls

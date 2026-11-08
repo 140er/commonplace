@@ -653,24 +653,7 @@ class Mediator:
             and policy.has_scope("memory:import:read")
             and name in ("mempalace_list_drawers", "mempalace_list_rooms")
         ):
-            recall = self._reader_recall(principal)
-            drawers = (
-                []
-                if recall is None
-                else recall.import_listing(
-                    principal,
-                    limit=max(1, min(int(args.get("limit", 20)), 100)),
-                    offset=max(0, min(int(args.get("offset", 0)), 100)),
-                    room=args.get("room"),
-                )
-            )
-            if args.get("since") or args.get("before"):
-                drawers = []  # An unproved date cannot match an explicit window.
-            if name == "mempalace_list_rooms":
-                return {
-                    "respond": {"wing": "private_chats", "rooms": {d["room"]: 1 for d in drawers}}
-                }
-            return {"respond": {"drawers": drawers, "count": len(drawers)}}
+            return self._before_import_listing(principal, name, args)
         if name == "mempalace_list_drawers":
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
@@ -695,6 +678,67 @@ class Mediator:
         if not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
         return None
+
+    def _before_import_listing(self, principal, name, args):
+        from .handoff.drawer_pages import PageArgumentError, _prepare_page
+        from .rules import checks
+
+        empty = (
+            {"wing": "private_chats", "rooms": {}}
+            if name == "mempalace_list_rooms"
+            else {"drawers": [], "count": 0}
+        )
+        timeout = WORKER_TIMEOUT_S
+        try:
+            with checks.deadline(timeout):
+                prepared = _prepare_page(principal, self.workers, args, checks.remaining(timeout))
+                if (
+                    isinstance(prepared, dict)
+                    and set(prepared) == {"error"}
+                    and isinstance(prepared["error"], str)
+                ):
+                    return {"respond": prepared}
+                if (
+                    not isinstance(prepared, dict)
+                    or set(prepared) != {"drawers", "total", "count", "offset", "limit"}
+                    or prepared.get("drawers") != []
+                    or prepared.get("total") != 0
+                    or prepared.get("count") != 0
+                    or type(prepared.get("limit")) is not int
+                    or not 1 <= prepared["limit"] <= 100
+                    or type(prepared.get("offset")) is not int
+                    or prepared["offset"] < 0
+                ):
+                    return {"respond": empty}
+                context = getattr(self.gateway, "handoff", None)
+                if context is not None:
+                    context.store_for(principal.workspace_id)
+                recall = self._reader_recall(principal)
+                drawers = (
+                    []
+                    if recall is None
+                    else recall.import_listing(
+                        principal,
+                        limit=prepared["limit"],
+                        offset=prepared["offset"],
+                        room=args.get("room"),
+                    )
+                )
+                if args.get("since") or args.get("before"):
+                    drawers = []  # Valid windows still require a proved import date.
+                checks.remaining(0)
+                if name == "mempalace_list_rooms":
+                    return {
+                        "respond": {
+                            "wing": "private_chats",
+                            "rooms": {d["room"]: 1 for d in drawers},
+                        }
+                    }
+                return {"respond": {"drawers": drawers, "count": len(drawers)}}
+        except PageArgumentError:
+            raise
+        except Exception:
+            return {"respond": empty}
 
     def _before_search(self, principal, name, args, notes):
         requested = args.get("wings")
