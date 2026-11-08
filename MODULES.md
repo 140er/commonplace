@@ -307,6 +307,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Trailing fork regressions cover hidden read scrubbing/write refusal, readable spelling preservation, every printable ASCII suffix and ordinary URL/path/prose collision guards; concatenated references have public read/write refusal and develop byte-preservation guards.
 
+  - Background Settings prerequisite regressions preserve rendered sections, mounted webhook input identity and unsaved values through errors, deadlines and recovery.
 
   - Console activity schema and query checks freeze the store clock so dated fixtures stay inside the retention window.
   - Owner progress fault regressions traverse the real wired Recall authority in paired hidden/absent worlds.
@@ -952,6 +953,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
 

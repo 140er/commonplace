@@ -1060,7 +1060,8 @@ async function refresh({ background = false, events = [] } = {}) {
     state.renderPending = null;
     if (state.base === "#/rules") rulesUI.force = false;
     showError(error.message);
-    if (state.base === "#/settings" || !root.querySelector("#content").children.length) root.querySelector("#content").innerHTML = message(error.message, true);
+    const content = root.querySelector("#content");
+    if ((state.base === "#/settings" && (!background || !content.querySelector(".settings"))) || !content.children.length) content.innerHTML = message(error.message, true);
     return false;
   }
 }

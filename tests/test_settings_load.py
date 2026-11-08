@@ -24,7 +24,7 @@ HARNESS = r"""
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const [path, failure] = process.argv.slice(1);
+const [path, failure, mode] = process.argv.slice(1);
 const read = name => fs.readFileSync('commonplace/web/static/' + name, 'utf8');
 const app = read('app.js');
 function slice(start, end) {
@@ -42,7 +42,7 @@ async function advance(ms) {
   }
   await tick();
 }
-let html = '', screenError = '', orchestrationHTML = '', blocked = true, saved = true;
+let html = '', screenError = '', orchestrationHTML = '', blocked = true, saved = true, webhookDraft = null;
 const input = {};
 const host = {
   isConnected: true,
@@ -53,8 +53,12 @@ const host = {
 const content = {
   children: [{}],
   get innerHTML() { return html; },
-  set innerHTML(value) { html = value; orchestrationHTML = ''; },
+  set innerHTML(value) {
+    html = value; orchestrationHTML = '';
+    webhookDraft = value.includes('data-form="webhook"') ? { value: '' } : null;
+  },
   querySelector(selector) {
+    if (selector === 'input[name="url"]') return webhookDraft;
     if (selector === '.settings') return html.includes('class="settings"') ? {} : null;
     if (selector === '[data-workspace-orchestration]') return host;
     return null;
@@ -109,6 +113,32 @@ const retry = app.match(/else if \(action === "retry"\) ([^\n]+)/);
 assert.ok(retry);
 vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
 (async () => {
+  if (mode === 'background') {
+    blocked = false;
+    await context.refresh();
+    const rendered = html, savedState = orchestrationHTML;
+    const draft = content.querySelector('input[name="url"]');
+    assert.ok(draft, 'Initial Settings load includes the webhook form');
+    draft.value = 'https://example.test/unsaved-webhook';
+    blocked = true;
+    const background = context.refresh({ background: true, events: [{ kind: 'board.created' }] });
+    await tick();
+    await advance(10000);
+    assert.equal(await background, false);
+    assert.equal(html, rendered, 'A failed background read must preserve the rendered Settings sections');
+    assert.equal(orchestrationHTML, savedState, 'Saved orchestration state remains visible');
+    assert.equal(content.querySelector('input[name="url"]'), draft, 'The draft input must remain mounted');
+    assert.equal(draft.value, 'https://example.test/unsaved-webhook');
+    assert.ok(screenError.includes(path), 'The separate screen error must identify the failed prerequisite');
+    assert.equal(timers.size, 0);
+    blocked = false;
+    await context.refresh({ background: true });
+    assert.equal(screenError, '');
+    assert.equal(html, rendered);
+    assert.equal(content.querySelector('input[name="url"]'), draft);
+    assert.equal(draft.value, 'https://example.test/unsaved-webhook');
+    return;
+  }
   if (failure === 'success') {
     blocked = false; saved = path === 'on';
     await context.refresh();
@@ -170,6 +200,19 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
 def test_settings_failure_and_retry(path, failure):
     result = subprocess.run(
         ["node", "-e", HARNESS, path, failure],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("path", SHARED)
+@pytest.mark.parametrize("failure", ["fetch", "body", "http", "network", "json"])
+def test_background_prerequisite_failure_preserves_settings(path, failure):
+    result = subprocess.run(
+        ["node", "-e", HARNESS, path, failure, "background"],
         cwd=ROOT,
         capture_output=True,
         text=True,

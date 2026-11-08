@@ -327,6 +327,8 @@ appears in the owner queue again without changing its stored words or audit log.
 
 - A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
 
+- On Settings, a background prerequisite failure preserves already-rendered sections and mounted webhook drafts, reporting the named failure through the separate screen error with Retry. Initial and foreground failures may replace content with the error.
+
 ### Starts on a configured board
 
 - Every config-driven start runs one fenced transaction (`BEGIN IMMEDIATE` on `runner.sqlite3`): resolve and hash, refuse under the restore flag or for a `plan`-labelled card (`plan_pending`), look up the existing step (or, for a person, the runner's own request key), check the cap, insert.
