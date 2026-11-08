@@ -611,6 +611,11 @@ class Mediator:
             from .handoff.hallway_reads import project
 
             return {"respond": project(self.gateway, principal, self.workers, args)}
+
+        if name in ("mempalace_kg_stats", "mempalace_kg_list_wings"):
+            from .handoff.kg_projection import project
+
+            return {"respond": project(self.gateway, principal, self.workers, name, args)}
         if name == "mempalace_delete_by_source":
             return self._scope_delete_by_source(principal, name, args)
         if name == "mempalace_delete_tunnel":
@@ -949,6 +954,15 @@ class Mediator:
 
     def _before_kg_read(self, principal, name, args, notes):
         policy = principal.policy
+        if name in ("mempalace_kg_query", "mempalace_kg_timeline") and not args.get("search"):
+            from .handoff.kg_projection import project
+
+            asked = args.get("wings")
+            if asked is not None:
+                for wing in asked:
+                    if not policy.can_read_wing(wing):
+                        raise Denied(f"this connection can't read wing {wing!r}")
+            return {"respond": project(self.gateway, principal, self.workers, name, args)}
         if policy.sees_all_wings:
             return None
         asked = args.get("wings")

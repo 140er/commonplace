@@ -41,6 +41,7 @@ import sqlite3
 import threading
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -714,6 +715,9 @@ _STRICTER_SENSITIVITY = (
 )
 
 
+_read_ids = ContextVar("kg_read_ids", default=None)
+
+
 def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
     """``AND`` clauses for a read filter. A fact with no wing passes no wing filter."""
     sql, params = "", []
@@ -725,7 +729,8 @@ def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
             continue
         sql += f" AND {alias}.{column} IN ({', '.join('?' for _ in allowed)})"
         params.extend(allowed)
-    return sql, params
+    scoped, values = _allow_sql(_read_ids.get(), alias)
+    return sql + scoped, params + values
 
 
 def _fact_fields(row) -> dict:
@@ -882,7 +887,7 @@ class KnowledgeGraph:
         except (OSError, NotImplementedError):
             pass
         self._connection = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._init_db()
 
     @classmethod
@@ -891,7 +896,7 @@ class KnowledgeGraph:
         kg = cls.__new__(cls)
         kg.db_path = ":memory:"
         kg._connection = None
-        kg._lock = threading.Lock()
+        kg._lock = threading.RLock()
         kg._init_db()
         return kg
 
@@ -1131,6 +1136,54 @@ class KnowledgeGraph:
             (json.dumps(list(expected)),),
         )
         return [row["id"] for row in rows if self._fact_snapshot(conn, row) == expected[row["id"]]]
+
+    def _read_descriptor(self, conn, row):
+        return {
+            **self._fact_snapshot(conn, row),
+            "sensitivity": row["sensitivity"],
+            "source_thread": row["source_thread"],
+            "source_seq_start": row["source_seq_start"],
+            "source_seq_end": row["source_seq_end"],
+            "sources": [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM fact_sources WHERE triple_id=? ORDER BY id", (row["id"],)
+                )
+            ],
+        }
+
+    def read_candidates(self, after=None):
+        """Metadata only; never hydrate hidden fact text."""
+        with self._lock:
+            conn = self._conn()
+            rows = conn.execute(
+                "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
+                "WHERE (? IS NULL OR id > ?) ORDER BY id LIMIT 501",
+                (after, after),
+            ).fetchall()
+            facts = [self._read_descriptor(conn, row) for row in rows[:500]]
+            return {"facts": facts, "next": facts[-1]["id"] if len(rows) > 500 else None}
+
+    def read_projection(self, allow, operation):
+        """Revalidate descriptors and execute all reads in the same snapshot."""
+        with self._lock:
+            conn = self._conn()
+            conn.execute("BEGIN")
+            token = None
+            try:
+                expected = {r["id"]: r for r in allow}
+                rows = conn.execute(
+                    "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
+                    "WHERE id IN (SELECT value FROM json_each(?))",
+                    (json.dumps(list(expected)),),
+                ).fetchall()
+                ids = [r["id"] for r in rows if self._read_descriptor(conn, r) == expected[r["id"]]]
+                token = _read_ids.set(ids)
+                return operation()
+            finally:
+                if token is not None:
+                    _read_ids.reset(token)
+                conn.rollback()
 
     def mutation_candidates(
         self,
@@ -2174,8 +2227,13 @@ class KnowledgeGraph:
 
             if not results:
                 exact_exists = (
-                    conn.execute("SELECT 1 FROM entities WHERE id = ?", (eid,)).fetchone()
-                    is not None
+                    conn.execute("SELECT 1 FROM entities WHERE id=?", (eid,)).fetchone()
+                    if _read_ids.get() is None
+                    else conn.execute(
+                        "SELECT 1 FROM triples t WHERE (t.subject = ? OR t.object = ?)"
+                        + visible_sql,
+                        (eid, eid, *visible_params),
+                    ).fetchone()
                 )
                 if not exact_exists:
                     candidates = self._lookup_entity_candidates(
@@ -2219,7 +2277,7 @@ class KnowledgeGraph:
         id_esc = _escape_like(eid)
         visible_sql, visible_params = _visibility_sql(wings, sensitivities)
         seen_in = ""
-        if wings is not None or sensitivities is not None:
+        if wings is not None or sensitivities is not None or _read_ids.get() is not None:
             seen_in = (
                 f" AND id IN (SELECT subject FROM triples t WHERE 1{visible_sql}"
                 f" UNION SELECT object FROM triples t WHERE 1{visible_sql})"
@@ -2542,6 +2600,18 @@ class KnowledgeGraph:
 
     def list_wings(self):
         """Fact wings in one covering-index query, without graph-wide statistics."""
+        if _read_ids.get() is not None:
+            clause, params = _allow_sql(_read_ids.get(), "t")
+            with self._lock:
+                return [
+                    r[0]
+                    for r in self._conn().execute(
+                        "SELECT DISTINCT wing FROM triples t WHERE wing IS NOT NULL"
+                        + clause
+                        + " ORDER BY wing",
+                        params,
+                    )
+                ]
         with self._lock:
             return [
                 r["wing"]
@@ -2551,6 +2621,27 @@ class KnowledgeGraph:
             ]
 
     def stats(self):
+        if _read_ids.get() is not None:
+            clause, params = _allow_sql(_read_ids.get(), "t")
+            with self._lock:
+                rows = (
+                    self._conn()
+                    .execute(
+                        "SELECT t.subject, t.object, t.predicate, t.wing, t.valid_to FROM triples t WHERE 1"
+                        + clause,
+                        params,
+                    )
+                    .fetchall()
+                )
+            current = sum(r["valid_to"] is None for r in rows)
+            return {
+                "entities": len({r[k] for r in rows for k in ("subject", "object")}),
+                "triples": len(rows),
+                "current_facts": current,
+                "expired_facts": len(rows) - current,
+                "relationship_types": sorted({r["predicate"] for r in rows}),
+                "wings": sorted({r["wing"] for r in rows if r["wing"] is not None}),
+            }
         with self._lock:
             conn = self._conn()
             entities = conn.execute("SELECT COUNT(*) as cnt FROM entities").fetchone()["cnt"]
