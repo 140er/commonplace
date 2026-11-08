@@ -162,45 +162,26 @@ def test_http_save_defaults_and_caller_stamp_cannot_be_forged(hub):
     assert _http(hub, token, f"/api/memory/{default_id}")[1]["theme"] == "inbox"
 
 
-def test_save_records_the_chat_range_it_came_from(hub):
+def test_save_keeps_unproved_chat_ranges_in_storage_only(hub):
     owner = hub.owner_token()
     source = {"thread": "thread-41", "seq_start": 41, "seq_end": 44}
     memory_id = _save(hub, owner, "We switched to pnpm.", source=source)
     got = _call(hub, owner, "memory_get", id=memory_id)["content"][0]["text"]
-    header = got.split("\nquoted data: ", 1)[0]
-    assert f"source={json.dumps(source)}" in header
-    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] == source
-
-    one = _save(hub, owner, "One message.", source={"thread": "t", "seq_start": 3})
-    assert _http(hub, owner, f"/api/memory/{one}")[1]["source"] == {
-        "thread": "t",
-        "seq_start": 3,
-        "seq_end": 3,
-    }
+    assert "source=" not in got.split("\nquoted data: ", 1)[0]
+    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] is None
     plain = _save(hub, owner, "No source.")
     assert _http(hub, owner, f"/api/memory/{plain}")[1]["source"] is None
-    got = _call(hub, owner, "memory_get", id=plain)["content"][0]["text"]
-    assert "source=" not in got.split("\nquoted data: ", 1)[0]
-
     status, body = _http(
         hub, owner, "/api/memory", {"text": "over http", "source": {"thread": "h", "seq_end": 9}}
     )
     assert status == 201
-    assert _http(hub, owner, f"/api/memory/{body['id']}")[1]["source"] == {
-        "thread": "h",
-        "seq_start": 9,
-        "seq_end": 9,
-    }
+    assert _http(hub, owner, f"/api/memory/{body['id']}")[1]["source"] is None
 
 
-def test_save_accepts_a_source_sent_as_json_text(hub):
+def test_save_accepts_unproved_source_as_json_without_echoing_it(hub):
     owner = hub.owner_token()
     memory_id = _save(hub, owner, "json text source", source='{"thread": "t", "seq_start": 2}')
-    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] == {
-        "thread": "t",
-        "seq_start": 2,
-        "seq_end": 2,
-    }
+    assert _http(hub, owner, f"/api/memory/{memory_id}")[1]["source"] is None
 
 
 @pytest.mark.parametrize(

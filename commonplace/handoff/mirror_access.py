@@ -252,6 +252,16 @@ def scrub_provenance(node, access):
             if out is node:
                 out = dict(node)
             out.pop(key, None)
+    # Sequence numbers disclose provenance only as part of a proved thread
+    # bundle. These aliases occur in stored metadata and retry responses.
+    if not _proved_thread(out.get("source_thread"), access):
+        keys = {"source_thread", "source_seq_start", "source_seq_end"}
+        if keys.intersection(out):
+            out = {key: value for key, value in out.items() if key not in keys}
+    for key in ("source", "source_kept"):
+        bundle = out.get(key)
+        if isinstance(bundle, dict) and not _proved_thread(bundle.get("thread"), access):
+            out = {name: value for name, value in out.items() if name != key}
     return out
 
 
@@ -296,6 +306,11 @@ def _hallway_text_visible(value, access):
         return True
     except TimeoutError:
         return False
+
+
+def _proved_thread(value, access):
+    parsed = access.parse(value)
+    return parsed is not provenance_refs.REFUSE and _thread_id(parsed.text) and access(parsed.text)
 
 
 def gate(gateway, principal, rule, result, *, access=None):
