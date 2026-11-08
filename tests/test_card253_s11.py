@@ -268,7 +268,7 @@ def test_card253_s11_response_memo(case, monkeypatch, count):
     assert parsed.count(RAW) == 2  # one parse and proof per request, not per fact
 
 
-def test_card253_s11_no_selector(case, monkeypatch):
+def test_card253_s11_no_selector(tmp_path, monkeypatch):
     from mempalace.backends import chroma_sqlite
 
     def unexpected(*args):
@@ -276,9 +276,7 @@ def test_card253_s11_no_selector(case, monkeypatch):
 
     with monkeypatch.context() as patch:
         patch.setattr(chroma_sqlite, "_ready_snapshot", unexpected)
-        assert (
-            chroma_sqlite.sqlite_drawer_rows(case.config.palace_path, "mempalace_drawers") is None
-        )
+        assert chroma_sqlite.sqlite_drawer_rows(str(tmp_path), "mempalace_drawers") is None
 
 
 def test_card253_s11_union_revalidation(case, monkeypatch):
