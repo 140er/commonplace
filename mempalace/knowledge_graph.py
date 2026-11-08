@@ -716,6 +716,7 @@ _STRICTER_SENSITIVITY = (
 
 
 _read_ids = ContextVar("kg_read_ids", default=None)
+_search_snapshot = ContextVar("kg_search_snapshot", default=None)
 
 
 def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
@@ -1154,36 +1155,109 @@ class KnowledgeGraph:
 
     def read_candidates(self, after=None):
         """Metadata only; never hydrate hidden fact text."""
-        with self._lock:
-            conn = self._conn()
-            rows = conn.execute(
-                "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
-                "WHERE (? IS NULL OR id > ?) ORDER BY id LIMIT 501",
-                (after, after),
-            ).fetchall()
-            facts = [self._read_descriptor(conn, row) for row in rows[:500]]
-            return {"facts": facts, "next": facts[-1]["id"] if len(rows) > 500 else None}
+        from time import monotonic
 
-    def read_projection(self, allow, operation):
-        """Revalidate descriptors and execute all reads in the same snapshot."""
+        from commonplace.rules import checks
+
         with self._lock:
             conn = self._conn()
-            conn.execute("BEGIN")
+            end = checks._deadline.get()
+            if end is not None:
+                checks.remaining(0)
+                conn.set_progress_handler(lambda: monotonic() >= end, 1000)
+            try:
+                rows = conn.execute(
+                    "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
+                    "WHERE (? IS NULL OR id > ?) ORDER BY id LIMIT 501",
+                    (after, after),
+                ).fetchall()
+                facts = []
+                for row in rows[:500]:
+                    checks.remaining(0)
+                    facts.append(self._read_descriptor(conn, row))
+                return {"facts": facts, "next": facts[-1]["id"] if len(rows) > 500 else None}
+            finally:
+                conn.set_progress_handler(None, 0)
+
+    def _copy_search_snapshot(self, conn, ids):
+        from commonplace.rules import checks
+
+        scope = json.dumps(ids)
+        queries = {
+            "entities": (
+                "SELECT * FROM entities WHERE id IN ("
+                "SELECT subject FROM triples WHERE id IN (SELECT value FROM json_each(?)) "
+                "UNION SELECT object FROM triples WHERE id IN (SELECT value FROM json_each(?)))",
+                (scope, scope),
+            ),
+            "triples": (
+                "SELECT t.* FROM triples t JOIN fact_search_keys k ON k.triple_id=t.id "
+                "WHERE t.id IN (SELECT value FROM json_each(?)) ORDER BY k.docid",
+                (scope,),
+            ),
+            "fact_sources": (
+                "SELECT * FROM fact_sources WHERE triple_id IN (SELECT value FROM json_each(?)) ORDER BY id",
+                (scope,),
+            ),
+        }
+        copied = {}
+        for table, (sql, params) in queries.items():
+            checks.remaining(0)
+            schema = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()[0]
+            rows = []
+            for row in conn.execute(sql, params):
+                checks.remaining(0)
+                rows.append(dict(row))
+            copied[table] = (schema, rows)
+        return copied
+
+    def read_projection(self, allow, operation, *, search=False):
+        """Revalidate once; search works on a detached authorized snapshot."""
+        from time import monotonic
+
+        from commonplace.rules import checks
+
+        with self._lock:
+            conn = self._conn()
+            end = checks._deadline.get()
+            if end is not None:
+                checks.remaining(0)
+                conn.set_progress_handler(lambda: monotonic() >= end, 1000)
             token = None
             try:
+                conn.execute("BEGIN")
                 expected = {r["id"]: r for r in allow}
                 rows = conn.execute(
                     "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
                     "WHERE id IN (SELECT value FROM json_each(?))",
                     (json.dumps(list(expected)),),
                 ).fetchall()
-                ids = [r["id"] for r in rows if self._read_descriptor(conn, r) == expected[r["id"]]]
-                token = _read_ids.set(ids)
-                return operation()
+                ids = []
+                for row in rows:
+                    checks.remaining(0)
+                    if self._read_descriptor(conn, row) == expected[row["id"]]:
+                        ids.append(row["id"])
+                if search:
+                    copied = self._copy_search_snapshot(conn, ids)
+                else:
+                    token = _read_ids.set(ids)
+                    return operation()
             finally:
                 if token is not None:
                     _read_ids.reset(token)
+                conn.set_progress_handler(None, 0)
                 conn.rollback()
+        # No palace connection or lock is held while building/searching the
+        # private in-memory lexical index. Later writes cannot alter this copy.
+        token = _read_ids.set(ids)
+        snapshot_token = _search_snapshot.set(copied)
+        try:
+            return operation()
+        finally:
+            _search_snapshot.reset(snapshot_token)
+            _read_ids.reset(token)
 
     def mutation_candidates(
         self,
@@ -1988,60 +2062,23 @@ class KnowledgeGraph:
         as_of = sanitize_iso_temporal(as_of, "as_of")
         visible_sql, params = _visibility_sql(wings, sensitivities)
         temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
+        snapshot = _search_snapshot.get()
+        if snapshot is not None:
+            from .fact_index import snapshot_candidates
+
+            return snapshot_candidates(
+                snapshot,
+                tokens,
+                visible_sql,
+                params,
+                temporal_sql,
+                temporal_params,
+                limit=candidate_limit,
+                common_term_fraction=common_term_fraction,
+            )
         with self._lock:
             if not self._fact_index_ready:
                 raise RuntimeError("Fact search index unavailable")
-            if _read_ids.get() is not None:
-                # Global FTS vocabulary/BM25 and seed caps include hidden facts.
-                # Rank the complete authorized corpus using the existing lexical
-                # scorer; only these rows may affect frequencies or candidates.
-                from .searcher.facts import _words
-
-                rows = [
-                    dict(row)
-                    for row in self._conn().execute(
-                        "SELECT t.*, s.name AS subject_name, o.name AS object_name "
-                        "FROM triples t JOIN entities s ON s.id=t.subject "
-                        "JOIN entities o ON o.id=t.object WHERE 1"
-                        + visible_sql
-                        + temporal_sql
-                        + " ORDER BY t.id",
-                        [*params, *temporal_params],
-                    )
-                ]
-                frequencies = dict.fromkeys(tokens, 0)
-                matching = []
-                for row in rows:
-                    words = _words(
-                        " ".join((row["subject_name"], row["predicate"], row["object_name"]))
-                    )
-                    matched = tokens & words
-                    for word in matched:
-                        frequencies[word] += 1
-                    if matched:
-                        matching.append(row)
-                sources = self.sources([row["id"] for row in matching])
-                source_fields = (
-                    "source_thread",
-                    "source_seq_start",
-                    "source_seq_end",
-                    "source_drawer_id",
-                    "source_file",
-                    "added_at",
-                    *fact_provenance.COLUMNS,
-                )
-                return [
-                    {
-                        **row,
-                        "sources": [
-                            {**dict.fromkeys(source_fields), **source}
-                            for source in sources.get(row["id"], [])
-                        ],
-                        "frequencies": frequencies,
-                        "documents": len(rows),
-                    }
-                    for row in matching
-                ]
             return candidates(
                 self._conn(),
                 tokens,

@@ -461,8 +461,12 @@ def test_card253_s07_search_scope_unforgeable(kgworld, monkeypatch, scope):
     reply = call(w, TOOLS[0], entity="fixed_entity", search=True, thread_scope=scope)
     # Each public call discards client scope and issues its own probe/final read.
     assert len(forwarded) == 4
-    assert forwarded[0] == forwarded[2] and forwarded[1] == forwarded[3]
-    assert forwarded[0]["thread_scope"] == {"probe": True, "after": None}
+    comparable = [
+        {**args, "thread_scope": {k: v for k, v in args["thread_scope"].items() if k != "deadline"}}
+        for args in forwarded
+    ]
+    assert comparable[0] == comparable[2] and comparable[1] == comparable[3]
+    assert comparable[0]["thread_scope"] == {"probe": True, "after": None}
     allowed = forwarded[1]["thread_scope"]["allow"]
     assert allowed and all(w.hidden.id not in row["threads"] for row in allowed)
     assert reply == expected and "probe" not in reply
@@ -595,11 +599,142 @@ def test_card253_s07_r1_strict_worker_search(world, flag):
     assert refused, "worker coerced a non-boolean search switch"
 
 
-def test_card253_s07_r1_search_statistics(kgworld, fixed_search_clock):
+def test_card253_s07_visible_corpus_guard(kgworld, fixed_search_clock):
     w = kgworld
     w.kg.add_triple("fixed", "uses", "secondary", wing="wing_fixture", source_thread=w.readable.id)
     present = call(w, TOOLS[0], entity="fixed entity", search=True, limit=100)
     remove_hidden(w)
     absent = call(w, TOOLS[0], entity="fixed entity", search=True, limit=100)
-    assert present == absent, "hidden corpus changed visible lexical scores"
-    assert len(present["facts"]) == 2
+    # H-equality guard: this already passed before the parity correction.
+    assert present == absent, "hidden corpus changed the visible search result"
+    assert present["facts"]
+
+
+@pytest.fixture
+def parity_corpus(world):
+    w = world
+    w.kg = w.mcp._get_kg()
+    for subject, predicate, obj in (
+        ("fixed_entity", "uses", "readable"),
+        ("fixed", "uses", "secondary"),
+        ("Will Chen", "works_at", "Acme"),
+    ):
+        w.kg.add_triple(subject, predicate, obj, wing="wing_fixture", source_thread=w.readable.id)
+    return w
+
+
+def scoped_search(w, query, **kwargs):
+    allow = w.kg.read_candidates()["facts"]
+    return w.mcp.tool_kg_query(query, search=True, thread_scope={"allow": allow}, **kwargs)
+
+
+@pytest.mark.parametrize("query", ["Will", "fixed entity"])
+def test_card253_s07_r2_local_parity(parity_corpus, fixed_search_clock, query):
+    w = parity_corpus
+    local = w.mcp.tool_kg_query(query, search=True, limit=100)
+    scoped = scoped_search(w, query, limit=100)
+    assert scoped == local, "scoped search differs from the local visible-corpus scorer"
+    assert len(local["facts"]) == 1
+
+
+def test_card253_s07_r2_seed_cap(parity_corpus, fixed_search_clock):
+    w = parity_corpus
+    for i in range(70):
+        w.kg.add_triple(
+            f"needle {i}", "uses", "same", wing="wing_fixture", source_thread=w.readable.id
+        )
+    local = w.mcp.tool_kg_query("needle", search=True, limit=100)
+    assert len(local["facts"]) == 50
+    assert scoped_search(w, "needle", limit=100) == local, "scoped search ignored the seed cap"
+
+
+def test_card253_s07_r2_authenticated_will(kgworld):
+    w = kgworld
+    w.kg.add_triple(
+        "Will Chen", "works_at", "Acme", wing="wing_fixture", source_thread=w.readable.id
+    )
+    reply = call(w, TOOLS[0], entity="Will", search=True)
+    assert [row["subject"] for row in reply["facts"]] == ["Will Chen"], "readable name vanished"
+
+
+@pytest.mark.parametrize("flag", [None, "yes"])
+def test_card253_s07_r2_unknown_search_flag(kgworld, flag):
+    w = kgworld
+    w.tokens["A"] = w.h.token(
+        "extra-key-reader",
+        user=w.h.db.authenticate_token(w.tokens["A"]).user_id,
+        tools=[*TOOLS, "mempalace_search"],
+        scopes=["memory:read", "private:read", "threads:read", "kg:read"],
+        read_wings=["*"],
+        trust="trusted",
+    )
+    normal = call(w, "mempalace_search", query="fixed", include_facts=False)
+    extra = w.h.rpc(
+        w.tokens["A"],
+        "tools/call",
+        {
+            "name": "mempalace_search",
+            "arguments": {
+                "query": "fixed",
+                "include_facts": False,
+                "search": flag,
+            },
+        },
+    )
+    assert normal.get("results") is not None
+    # Unknown keys retain worker protocol handling, not the KG-specific Denied.
+    assert extra.get("error", {}).get("code") == -32602, "non-KG search key hit the KG refusal"
+
+
+@pytest.mark.parametrize("expire", [False, True])
+def test_card253_s07_r2_scan_deadline_lock(parity_corpus, fixed_search_clock, monkeypatch, expire):
+    import threading
+
+    from commonplace.rules import checks
+    from mempalace.searcher import facts
+
+    w = parity_corpus
+    for i in range(3):
+        w.kg.add_triple("scanmarker", "uses", f"item{i}", source_thread=w.readable.id)
+    original = facts._words
+    observed = []
+    deadline_token = checks._deadline.set(None)
+
+    def words(text, *args, **kwargs):
+        if text.startswith("scanmarker uses "):
+            acquired = []
+
+            def inspect_lock():
+                held = w.kg._lock.acquire(blocking=False)
+                acquired.append(held)
+                if held:
+                    w.kg._lock.release()
+
+            inspector = threading.Thread(target=inspect_lock)
+            inspector.start()
+            inspector.join(timeout=1)
+            observed.append(acquired == [True])
+            if expire:
+                checks._deadline.set(-1)
+        return original(text, *args, **kwargs)
+
+    monkeypatch.setattr(facts, "_words", words)
+    try:
+        result = scoped_search(w, "scanmarker", limit=100)
+    finally:
+        checks._deadline.reset(deadline_token)
+    assert observed, "real candidate/scoring branch not reached"
+    assert all(observed), "scan held the palace lock"
+    if expire:
+        assert len(observed) == 1 and result.get("facts") == [], "scan kept working after deadline"
+
+
+def test_card253_s07_r2_worker_expiry(parity_corpus):
+    import time
+
+    w = parity_corpus
+    allow = w.kg.read_candidates()["facts"]
+    result = w.mcp.tool_kg_query(
+        "fixed", search=True, thread_scope={"allow": allow, "deadline": time.time() - 1}
+    )
+    assert result == {"facts": []}, "worker ignored the gateway expiry"
