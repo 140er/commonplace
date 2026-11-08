@@ -500,19 +500,7 @@ def gate(gateway, principal, rule, result, *, access=None):
         and isinstance(result, dict)
         and isinstance(result.get("results"), list)
     ):
-        items = []
-        errors = 0
-        for item in result["results"]:
-            cleaned = scrub(item)
-            if cleaned is _DROP:
-                cleaned = {"drawer_id": item.get("drawer_id"), **missing(item)}
-            errors += bool(isinstance(cleaned, dict) and cleaned.get("error"))
-            items.append(cleaned)
-        if all(a is b for a, b in zip(items, result["results"])):
-            return _filter_fact_links(result)
-        out = {**result, "results": items, "count": len(items), "errors": errors}
-        out.pop("total", None)
-        return _filter_fact_links(out)
+        return _gate_drawer_batch(result, scrub, missing)
     if isinstance(result, dict) and isinstance(result.get("hallways"), list):
         return _gate_hallways(result, access, principal.policy)
     result = filter_room_keys(rule, result, can_read)
@@ -520,6 +508,23 @@ def gate(gateway, principal, rule, result, *, access=None):
     if cleaned is _DROP:
         return _dropped_result(rule, result)
     return _filter_fact_links(cleaned)
+
+
+def _gate_drawer_batch(result, scrub, missing):
+    """Reuse the response scrubber and preserve ordered batch error envelopes."""
+    items = []
+    errors = 0
+    for item in result["results"]:
+        cleaned = scrub(item)
+        if cleaned is _DROP:
+            cleaned = {"drawer_id": item.get("drawer_id"), **missing(item)}
+        errors += bool(isinstance(cleaned, dict) and cleaned.get("error"))
+        items.append(cleaned)
+    if all(a is b for a, b in zip(items, result["results"])):
+        return _filter_fact_links(result)
+    out = {**result, "results": items, "count": len(items), "errors": errors}
+    out.pop("total", None)
+    return _filter_fact_links(out)
 
 
 def _gate_hallways(result, access, policy):

@@ -1763,6 +1763,11 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   without its citation. This identity residual is documented alongside the
   accepted shared-path presence residual; citation omission does not anonymize
   stable ids or grant additional content access.
+### Drawer batch response scrubber
+
+- Batch drawer reads apply the same response-local scrubber through a shared
+  internal helper. Input order, missing-drawer errors, counts and citation proof
+  remain unchanged. Hallway responses retain their independent endpoint proof.
   A later request obtains fresh proof. The union rule applies to token-free source_file values only; token-bearing
   values retain their existing token authorization without proving the plain remainder.
 

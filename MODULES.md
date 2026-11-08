@@ -55,6 +55,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
   - Outgoing provenance aliases and ranges document token-free compatibility, orphan-range removal and accepted endpoint proof limits.
+  - Records the shared drawer-batch scrubber separately from hallway endpoint proof.
+
   - Gateway search omits closet previews without inventing a closet authorization descriptor.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
@@ -151,6 +153,8 @@ Format (read by `commonplace orch docs-check`):
   - Documented graph ordering depends on actual snapshot schema rather than backend name alone.
 
   - Distinguishes accepted non-string-label and existing follow-argument residuals from fixed graph regressions.
+  - Internal helper extraction changes no read grants or public error envelopes.
+
   - Documents retained path-derived result identities and distinguishes citation omission from path anonymity.
 
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
@@ -209,6 +213,8 @@ Format (read by `commonplace orch docs-check`):
   - The documentation obligation checks the updated graph parity contract.
 
   - Backend sibling, suggestion, cap and numeric-locus witnesses substantiate the compatibility topics.
+  - Existing batch, hallway and citation suites verify the integrated read contract.
+
   - Closet-only and mixed-path member/owner regressions verify the outgoing preview boundary.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
@@ -1421,6 +1427,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Graph traversal and ranking preserve backend sibling order before caps; grouped stats preserve their distinct tie convention.
   - Outgoing source/source_kept bundles share provenance authority for short and source_ aliases, retaining token-free parents under wing policy. Non-null orphan ranges are removed; null keys remain. Source/target drawer endpoints require association proof. Non-Chroma chunked logical endpoints are an accepted residual under the exact-physical-id limit in SYSTEM.md, “Current typed provenance association proof”. Non-dict nested provenance and mixed private-primary/native-secondary KG projection remain residuals.
+  - Batch drawer responses reuse the existing response-local scrubber through one helper without changing input order or error counts.
+
   - The gateway strips closet_preview from search results, including readable closets; local search remains unchanged.
 
   - Literal-wing drawer readers retain proved visible totals after import-aware metadata scrubbing; page arguments share worker schema defaults and error forms.
@@ -1495,6 +1503,8 @@ Format (read by `commonplace orch docs-check`):
   - Malformed sort values or a changed snapshot descriptor discard projected graph output.
 
   - Incomplete proof still returns empty envelopes; accepted non-string tunnel-label and pre-existing follow-argument residuals remain.
+  - Missing-drawer envelopes and incomplete proof retain the same fail-closed behavior after helper extraction.
+
   - A shared source path cannot prove the closet text belongs to a readable wing and room.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -1539,6 +1549,8 @@ Format (read by `commonplace orch docs-check`):
   - Graph protocol fault, live-reader and legacy locus-order witnesses exercise mediation.
 
   - Sibling ties, fuzzy suggestions, cap membership and grouped statistics are compared to local readable outputs.
+  - Batch association, citation and hallway suites cover the combined response paths.
+
   - Public search spies verify hidden closet text reaches the worker result but never the gateway result.
 
   - Drawer-page regressions cover import-reader totals, literal wing authority, date errors, invalid offsets, null limits and exact denial messages.
