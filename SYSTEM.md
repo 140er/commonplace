@@ -27,6 +27,7 @@ entry was written.
   A capability-read fault in `/api/me` preserves the 200 bootstrap response with
   `can_admin_instance:false`; data routes always recheck authority. Signed-out keeps
   the existing gateway 401 challenge. No authority extends to other workspaces’ personal data.
+  The installed route inventory mirrors both authenticated Admin GET prefixes.
 
 - **Admin read and lifecycle bounds:** New projections use an existing SQLite
   `mode=ro` connection, connection-local `query_only`, at most 250 ms busy/connect

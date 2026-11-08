@@ -540,6 +540,7 @@ Format (read by `commonplace orch docs-check`):
   - Deterministic overview memory regressions exercise bounded projected acquisition and unchanged counts on synthetic fixtures.
 
   - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
+  - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace and instance prefixes. Sign-in and voice boot fixtures load the real bounded request helper.
   - The twelve runtime/limits/stuck/owner-queue RED rows, separate pagination/source/authority controls and updated earlier Admin lifecycle acceptance.
 
 
