@@ -332,3 +332,22 @@ def test_status_without_worker(hub, disk, monkeypatch):
     assert result["index_stats"]["workspace_id"] == hub.workspace
     assert result["index_stats"]["vector_count"] == {"value": 101, "reason": None}
     assert not hub.supervisor.launcher.started
+
+
+def test_generation_pointer_is_not_read(hub, disk, monkeypatch):
+    pointer = disk[0].parent / ".store-pointer.json"
+    pointer.write_text("synthetic pointer whose contents must never be read")
+    original = io.open
+
+    def guarded(path, *a, **kw):
+        assert Path(path) != pointer
+        return original(path, *a, **kw)
+
+    monkeypatch.setattr(io, "open", guarded)
+    code, data, _ = instance(hub, "index-stats", cookie(hub))
+    assert code == 200
+    assert all(
+        v == {"value": None, "reason": "generation_not_established"}
+        for k, v in data["workspaces"][0].items()
+        if k != "workspace_id"
+    )

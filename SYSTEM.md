@@ -49,6 +49,8 @@ entry was written.
   a nine-row cap; more than eight segments returns `segment_catalog_limit`.
   A workspace store override cannot be established from the allowed sources:
   return `backend_not_established`, including compact stores with old Chroma files.
+  Generation pointers are only stat-ed: `generation_not_established` prevents
+  reading JSON pointers or reporting figures from retired legacy directories.
   Missing/corrupt/unsupported stores return nulls with stable reasons. No settings,
   dependencies, admission changes, background jobs or index-content reads added.
 

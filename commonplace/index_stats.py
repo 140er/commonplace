@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import stat
 import struct
@@ -139,7 +140,17 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
 
 def workspace(gateway, workspace_id):
     try:
-        directory = gateway.supervisor.workspace_dir(workspace_id)
+        if not re.fullmatch(r"ws_[a-f0-9]{16}", workspace_id):
+            return unknown("workspace_unavailable")
+        directory = gateway.supervisor.root / workspace_id
+        # Resolving an active generation would read a JSON pointer, outside
+        # the permitted figure sources. Fail unknown instead of reading it or
+        # reporting figures from a retired legacy directory.
+        if directory.is_symlink() or any(
+            (directory / name).exists() or (directory / name).is_symlink()
+            for name in (".store-pointer.json", ".store-pointer.prev.json")
+        ):
+            return unknown("generation_not_established")
         # A store override may select compact even with a retired Chroma file.
         # Only stat it: allowed figure sources cannot establish its contents.
         if (directory / "workspace.json").exists():

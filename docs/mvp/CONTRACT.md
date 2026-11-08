@@ -288,3 +288,8 @@ figures. Live SQL rows are not necessarily persisted HNSW rows; vector_count
 explicitly means the SQL count. Model and tombstones remain unknown rather than
 assuming defaults or subtracting unsynchronized counts. No content, names,
 paths, tokens or thread IDs are exposed. See SYSTEM.md for bounds and reasons.
+
+Store overrides and active generation pointers are stat-ed only. Their presence
+returns `backend_not_established` or `generation_not_established`; reading those
+JSON files is outside the permitted figure sources, and retired legacy Chroma
+files must not be mistaken for the current store.
