@@ -10,6 +10,7 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from mempalace import fact_provenance
@@ -441,6 +442,32 @@ def _map_private_thread(ctx, thread, cache):
     return cache[thread]
 
 
+def _map_private_reference(ctx, value, cache):
+    """Only thread-naming derived fields take part in the map citation check."""
+    from .handoff.provenance_refs import REFUSE, label_tokens, refs
+
+    parsed = refs(value)
+    if parsed is REFUSE:
+        # Recognition failure alone must not hide an ordinary non-thread field.
+        text = value if isinstance(value, str) else ""
+        threads = set(label_tokens(text))
+    else:
+        threads = set(parsed.tokens)
+        text = parsed.text or ""
+    if text.startswith(("thr_", "mcp:")):
+        threads.add(text)
+    try:
+        link = urlsplit(text)
+        if link.scheme == "t3-thread" and link.netloc == "v1":
+            threads.add(link.path.lstrip("/"))
+        elif link.path.startswith("/app/threads/"):
+            threads.add(link.path.removeprefix("/app/threads/"))
+    except ValueError:
+        # An ordinary, malformed non-thread URL is not a citation.
+        pass
+    return any(_map_private_thread(ctx, thread, cache) for thread in threads)
+
+
 def _recent(ctx, limit, theme=None, *, hide_private=False):
     """Enumerate checked metadata, excluding private rows before totals/limits."""
     wings = _memory(ctx, "mempalace_list_wings", {}).get("wings", {})
@@ -514,18 +541,32 @@ def _people(ctx, nodes, links, memory_ids, theme=None, *, hide_private=False):
                 for row in citations
             ):
                 return False
+            if any(
+                _map_private_reference(ctx, row.get(field), private_threads)
+                for row in citations
+                for field in ("origin_id", "origin_link", "approval_link")
+            ):
+                return False
             citations = {row.get("source_drawer_id") for row in citations}
             for identifier in citations - {None, ""}:
                 if identifier not in private_drawers:
                     private_drawers[identifier] = True
                     try:
                         drawer = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
-                        private_drawers[identifier] = _map_private(drawer) or _map_private_thread(
-                            ctx,
-                            (drawer.get("metadata") or {}).get("source_thread"),
-                            private_threads,
+                        private_drawers[identifier] = (
+                            _map_private(drawer)
+                            or _map_private_thread(
+                                ctx,
+                                (drawer.get("metadata") or {}).get("source_thread"),
+                                private_threads,
+                            )
+                            or _map_private_reference(
+                                ctx,
+                                drawer.get("room") or (drawer.get("metadata") or {}).get("room"),
+                                private_threads,
+                            )
                         )
-                    except ToolError:
+                    except Exception:
                         pass
                 if private_drawers[identifier]:
                     return False

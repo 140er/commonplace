@@ -20,6 +20,16 @@ if (process.argv[2] === 'entry') {
   assert.match(renderMemory({}), /data-memory-action="map"/);
   const app = await readFile(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
   assert.match(app.slice(app.indexOf('function spaceView()'), app.indexOf('function boardsView()')), /title\(board\?\.name[\s\S]*?href="#\/memory\?project=/, 'Space header must reach its Memory view');
+} else if (process.argv[2] === 'me_failure') {
+  const ui = createMemory({ mount, panel, boards: context.boards, me: { can_admin: true },
+    api: async path => { paths.push(path); if (path === '/api/me') throw new Error('identity unavailable'); return graph; },
+  });
+  await ui.showMap('atlas');
+  assert.equal(mounted, 1, 'Identity failure must not prevent mounting the map');
+  assert.deepEqual(paths, ['/api/me', '/api/memory/map?theme=project_atlas']);
+  assert.equal(notice.hidden, false, 'Failed identity proof must keep the notice visible');
+  assert.doesNotMatch(mount.innerHTML, /Map could not be loaded/);
+  ui.stop();
 } else {
   const ui = createMemory({ mount, panel, api: context.api, boards: context.boards });
   assert.match(mount.innerHTML, /data-memory-action="map"/, 'Map mode must be reachable');
