@@ -122,7 +122,7 @@ def usage(
     """Count current slots.
 
     With allow_missing_runner=True, absent runner input supplies no jobs/config
-    override; otherwise it is refused.
+    override; otherwise absent runner input raises.
     """
     from commonplace.runner.jobs import _after
 
