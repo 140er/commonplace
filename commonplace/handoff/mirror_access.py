@@ -271,7 +271,7 @@ def scrub_provenance(node, access):
                 "source_seq_start",
                 "source_seq_end",
             }
-            and not _proved_thread(bundle.get("thread"), access)
+            and not _proved_thread(bundle.get("thread", bundle.get("source_thread")), access)
         ):
             out = {name: value for name, value in out.items() if name != key}
     for key in ("source", "target"):

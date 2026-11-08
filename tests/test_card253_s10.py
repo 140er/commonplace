@@ -417,10 +417,15 @@ def test_card253_s10_r3_hidden_endpoint_drawer(case, monkeypatch, tmp_path, role
     assert "mempalace_list_tunnels" in w.calls
     assert identifier not in str(reply), f"hidden {end} drawer id returned"
     assert w.hidden.id not in str(reply), f"hidden thread id returned via {end} drawer id"
+    w.col.delete(ids=[identifier])
+    w.mcp._invalidate_overview_caches()
+    assert invoke(w, "mempalace_list_tunnels", {}, role) == reply
 
 
 @pytest.mark.parametrize("end", ["source", "target"])
-@pytest.mark.parametrize("value", [None, 42, "", "unresolved", "readable"])
+@pytest.mark.parametrize(
+    "value", [None, 42, "", "unresolved", "readable", ["x"], {"a": 1}, True, 0.5]
+)
 def test_card253_s10_r3_head_endpoint_proof(case, monkeypatch, tmp_path, end, value):
     from mempalace import palace_graph
 
@@ -457,3 +462,70 @@ def test_card253_s10_r3_head_nested_flat_alias(case):
     invoke(w, TOOLS[1], {"drawer_id": identifier})
     payload = {"source": {"source_thread": w.hidden.id, "source_seq_start": 0, "source_seq_end": 0}}
     assert gate(w.h.gateway, w.member, "drawer_read", payload) == {}
+
+
+@pytest.mark.parametrize("key", ["source", "source_kept"])
+def test_card253_s10_r4_alias_only(case, key):
+    from commonplace.handoff.mirror_access import gate
+
+    w = case
+    invoke(w, TOOLS[1], {"drawer_id": seed(w, {"source_thread": w.readable.id})})
+    payload = {key: {"source_thread": w.readable.id, "source_seq_start": 0, "source_seq_end": 0}}
+    assert gate(w.h.gateway, w.member, "drawer_read", payload) == payload
+
+
+def test_card253_s10_r4_guard_mixed_alias(case):
+    from commonplace.handoff.mirror_access import gate
+
+    w = case
+    invoke(w, TOOLS[1], {"drawer_id": seed(w, {"source_thread": w.readable.id})})
+    payload = {
+        "source": {
+            "thread": w.readable.id,
+            "source_thread": w.hidden.id,
+            "source_seq_start": 0,
+            "source_seq_end": 0,
+        }
+    }
+    assert gate(w.h.gateway, w.member, "drawer_read", payload) == {
+        "source": {"thread": w.readable.id}
+    }
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize("kind", ["plain", "chunked"])
+def test_card253_s10_r4_guard_endpoint_compat(case, monkeypatch, tmp_path, role, kind):
+    from mempalace import palace_graph
+
+    w = case
+    assert w.mcp._selected_backend_name() == "sqlite_exact"
+    parts = ["Chunked words one. ", "Chunked words two."] if kind == "chunked" else ["Plain words."]
+    logical = make_drawer_id_from_content("wing_fixture", "notes", "".join(parts))
+    w.col.add(
+        ids=[
+            f"{logical}_chunk_{i:06d}" if kind == "chunked" else logical for i in range(len(parts))
+        ],
+        documents=parts,
+        metadatas=[
+            {
+                "wing": "wing_fixture",
+                "room": "notes",
+                **({"parent_drawer_id": logical, "chunk_index": i} if kind == "chunked" else {}),
+            }
+            for i in range(len(parts))
+        ],
+        embeddings=[[1.0] + [0.0] * 383 for _ in parts],
+    )
+    drawer = invoke(w, TOOLS[1], {"drawer_id": logical}, role)
+    assert drawer["content"] == "".join(parts)
+    monkeypatch.setattr(
+        palace_graph, "_get_tunnel_file", lambda *a, **kw: str(tmp_path / "tunnels.json")
+    )
+    row = {
+        "id": "compat-tunnel",
+        "source": {"wing": "wing_fixture", "room": "notes"},
+        "target": {"wing": "wing_fixture", "room": "destination", "drawer_id": logical},
+    }
+    palace_graph._save_tunnels([row])
+    expected = [row] if kind == "plain" else [{k: v for k, v in row.items() if k != "target"}]
+    assert invoke(w, "mempalace_list_tunnels", {}, role) == expected
