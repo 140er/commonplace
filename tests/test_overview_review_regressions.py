@@ -75,11 +75,14 @@ def test_facet_backed_counts_remain_available(overview, monkeypatch, backend, to
     assert overview._metadata_cache is None
 
 
+@pytest.mark.parametrize("error_name", ["pending", "operational"])
 @pytest.mark.parametrize("persistent", [False, True])
 @pytest.mark.parametrize("after_batch", [False, True])
 def test_real_chroma_reopens_projection_once(
-    overview, monkeypatch, collection, palace_path, persistent, after_batch
+    overview, monkeypatch, collection, palace_path, persistent, after_batch, error_name
 ):
+    import sqlite3
+
     from mempalace.backends.chroma import ChromaCollection
     from mempalace.backends.chroma_sqlite import MetadataRecoveryPending
 
@@ -102,7 +105,12 @@ def test_real_chroma_reopens_projection_once(
                 if after_batch:
                     yield next(source)
                 if persistent or attempt == 1:
-                    raise MetadataRecoveryPending("synthetic transient")
+                    error = (
+                        MetadataRecoveryPending
+                        if error_name == "pending"
+                        else sqlite3.OperationalError
+                    )
+                    raise error("synthetic transient")
                 yield from source
             finally:
                 source.close()
@@ -145,6 +153,7 @@ def test_oversize_refusal_is_fingerprint_cached(monkeypatch, config):
     from mempalace.overview import OverviewError
 
     calls = []
+    fingerprint = [("fixed",)]
 
     def refuse(*args):
         calls.append(args)
@@ -152,12 +161,12 @@ def test_oversize_refusal_is_fingerprint_cached(monkeypatch, config):
 
     monkeypatch.setattr(m, "_config", config)
     monkeypatch.setattr(m, "_is_chroma_backend", lambda: True)
-    monkeypatch.setattr(m, "_palace_db_fingerprint", lambda: ("fixed",))
+    monkeypatch.setattr(m, "_palace_db_fingerprint", lambda: fingerprint[0])
     monkeypatch.setattr(chroma_sqlite, "_sqlite_wing_room_counts", refuse)
     m._invalidate_overview_caches()
     assert m._sqlite_taxonomy() == m._sqlite_taxonomy() == {"error": "overview_too_large"}
     assert len(calls) == 1
-    m._invalidate_overview_caches()
+    fingerprint[0] = ("changed",)
     assert m._sqlite_taxonomy() == {"error": "overview_too_large"}
     assert len(calls) == 2
 

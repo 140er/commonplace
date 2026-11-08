@@ -1497,12 +1497,27 @@ The public search response deliberately omits `facts_error`, including on failed
 Status, wing, room and taxonomy overviews retain backend facet aggregates when
 available, including pgvector, qdrant and exact/compact when their fast path is
 unavailable. Facet acquisitions have explicit distinct-key limits; bookkeeping
-subtraction uses equality-filtered aggregates, not raw metadata rows. If that
-backend cannot facet bookkeeping fields, the ordinary facet results remain
-available with `partial: true` and `bookkeeping_error: bookkeeping_unavailable`;
-they explicitly include unsubtracted bookkeeping, rather than claiming complete
-user-drawer counts. Other facet acquisition errors do not silently enter an
-unsupported raw reader.
+subtraction uses a fixed number of room facets per wing: registry, sentinel
+union and their overlap. Only the bookkeeping facets' returned rooms are expanded;
+ordinary rooms do not cause additional round trips. Boolean and legacy string
+sentinel aliases share one union predicate, preventing duplicate subtraction.
+Taxonomy per-wing facets use at most eight concurrent calls, releasing each map
+after reduction. These are round-trip bounds, independent of request timing.
+
+Only `UnsupportedCapabilityError` in bookkeeping acquisition preserves ordinary
+facet results with `partial: true` and
+`bookkeeping_error: bookkeeping_unavailable`, including unsubtracted bookkeeping.
+Any other `BackendError`, including transient service or closed-backend errors,
+returns `overview_unavailable` in the normal refusal envelope with no drawer total
+and no aggregates. A transient error cannot publish inflated counts as partial.
+Live Qdrant/pgvector facet support remains unverified; local wrapper tests use
+isolated test clients and do not establish live payload-index/filter parity.
+
+Two public count corrections are deliberate: facet overviews subtract legacy
+string sentinels (`"true"` and `"1"`) as well as boolean flags, and explicit
+facet limits replace the previous default-1000 silent truncation. Counts are
+complete within the configured aggregate bounds; over-cap acquisitions refuse
+explicitly rather than publishing truncated totals.
 
 Non-facet raw fallback uses a presence-preserving projection of wing, room,
 is_sentinel and ingest_mode. Chroma reads these fields in one recovery-checked
@@ -1526,10 +1541,11 @@ maps are checked under the same aggregate/key limits; they are backend
 aggregates, not the byte-bounded raw metadata acquisition contract.
 
 Only one bounded taxonomy cache is retained, keyed by palace, collection and
-database fingerprint, including too-large refusals. Writes, reconnects and a
-changed fingerprint invalidate successful and refused entries alike; the
-existing freshness TTL covers backends without a file fingerprint. Raw overview
-metadata is never cached.
+database fingerprint, including only `overview_too_large` refusals; transient
+`overview_unavailable` errors are never cached. Writes, reconnects and a changed
+or lost fingerprint invalidate successful and refused entries alike. The
+existing freshness TTL applies only while both cached and current fingerprints
+are absent. Raw overview metadata is never cached.
 
 A lazy SQLite acquisition error closes the failed snapshot and discards its
 entire partial tally. The same byte-bounded projected reader is reopened once
@@ -1537,10 +1553,8 @@ from the beginning with identical where. A second acquisition failure, including
 persistent MetadataRecoveryPending, returns explicit `overview_unavailable`.
 This read-only retry can recover a transient failure; it does not apply queued
 Chroma writes or call an unbounded SDK reader. There is no invented Chroma byte
-capability. Only backends without a projected reader use page adapters; those
-must genuinely guarantee acquisition bytes via overview_page_bytes_bounded=True:
-get returns projected metadata bounded to 500 rows and 1 MiB with the same where
-on each page. Trimming an already acquired unbounded payload does not qualify.
+capability. A non-facet backend without a bounded projected reader is refused
+without calling get; no production backend advertises a byte-bounded page adapter.
 Unsupported non-facet raw acquisition returns `overview_unavailable`; oversized
 cells/aggregates return `overview_too_large`. These refusals carry the normal
 empty aggregate keys and `partial: true`; status keeps its protocol/backend

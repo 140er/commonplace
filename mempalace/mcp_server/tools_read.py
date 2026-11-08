@@ -101,7 +101,12 @@ def _sqlite_taxonomy():
         and fingerprint is not None
         and _taxonomy_cache[2] == fingerprint
     )
-    ttl_fresh = fingerprint is None and (time.time() - _taxonomy_cache_time) < _TAXONOMY_CACHE_TTL
+    ttl_fresh = (
+        fingerprint is None
+        and _taxonomy_cache is not None
+        and _taxonomy_cache[2] is None
+        and (time.time() - _taxonomy_cache_time) < _TAXONOMY_CACHE_TTL
+    )
     if (
         _taxonomy_cache is not None
         and _taxonomy_cache[0] == cache_key
@@ -131,8 +136,9 @@ def _sqlite_taxonomy():
 
         if isinstance(exc, OverviewError):
             result = {"error": str(exc)}
-            _taxonomy_cache = (cache_key, result, fingerprint)
-            _taxonomy_cache_time = time.time()
+            if str(exc) == "overview_too_large":
+                _taxonomy_cache = (cache_key, result, fingerprint)
+                _taxonomy_cache_time = time.time()
             return result
         logger.debug("sqlite taxonomy fast path failed; falling back", exc_info=True)
         return None
@@ -304,26 +310,10 @@ def _chroma_room_wing_hall_counts():
 
 def _overview_tally(col, where=None, bookkeeping=False):
     """Reduce bounded projected batches; discard partial state on lazy SQL errors."""
+    _observation.mark(metadata_fallback=True, fallback_kind="projected_stream")
     import sqlite3
 
-    from ..overview import OverviewError, Tally, projected_batches
-
-    def pages():
-        # This flag is a backend acquisition guarantee, not a post-read check.
-        if getattr(col, "overview_page_bytes_bounded", False) is not True:
-            raise OverviewError("overview_unavailable")
-        offset = 0
-        while True:
-            got = col.get(limit=500, offset=offset, where=where, include=["metadatas"])
-            rows = got.get("metadatas") or []
-            if len(rows) > 500:
-                raise OverviewError("overview_unavailable")
-            yield from projected_batches(iter(rows))
-            size = len(rows)
-            del rows, got
-            if size < 500:
-                return
-            offset += size
+    from ..overview import OverviewError, Tally
 
     factory = (
         getattr(col, "iter_overview_metadata", None)
@@ -336,7 +326,7 @@ def _overview_tally(col, where=None, bookkeeping=False):
         try:
             iterator = factory(where=where) if callable(factory) else None
             if iterator is None:
-                iterator = pages()
+                raise OverviewError("overview_unavailable")
             for batch in iterator:
                 for meta in batch:
                     meta = meta or {}
@@ -377,6 +367,7 @@ def _apply_overview(col, wings=None, rooms=None, taxonomy=None, where=None):
 
 def _overview_facets(col, field, where=None):
     """Acquire a finite facet map; never let truncation look like full counts."""
+    _observation.mark(metadata_fallback=False, fallback_kind="none")
     from ..overview import AGGREGATE_BYTES, CELL_BYTES, MAX_PAIRS, OverviewError, retained_size
 
     counts = col.facet_counts(field, where=where, limit=MAX_PAIRS + 1)
@@ -394,51 +385,60 @@ def _facet_where(*clauses):
     return {"$and": clauses} if len(clauses) > 1 else (clauses[0] if clauses else None)
 
 
-def _bookkeeping_total(col, where=None):
-    """Equality-only facets work on every facet backend, including legacy flags."""
+def _bookkeeping_sentinels(col):
+    """One union predicate keeps boolean/string aliases from double counting."""
+    import math
+
+    from ..backends import UnsupportedCapabilityError
+
+    values = {}
+    for flag in _overview_facets(col, "is_sentinel"):
+        if not is_bookkeeping({"is_sentinel": flag}):
+            continue
+        values[(type(flag), flag)] = flag
+        if str(flag).strip().lower() in {"true", "1"}:
+            values[(bool, True)] = True
+        try:
+            number = float(flag)
+            if number and math.isfinite(number):
+                values[(float, number)] = number
+        except (TypeError, ValueError):
+            pass
+    if len(values) > 500:
+        raise UnsupportedCapabilityError("bookkeeping sentinel filter exceeds backend limit")
+    return {"is_sentinel": {"$in": list(values.values())}} if values else None
+
+
+def _bookkeeping_rooms(col, where, sentinels):
+    """One registry facet plus sentinel and overlap facets, independent of rooms."""
     registry = _facet_where(where, {"ingest_mode": "registry"})
-    registered = sum(_overview_facets(col, "ingest_mode", where=registry).values())
-
-    def sentinels(scope):
-        return sum(
-            n
-            for flag, n in _overview_facets(col, "is_sentinel", where=scope).items()
-            if is_bookkeeping({"is_sentinel": flag})
-        )
-
-    return registered + sentinels(where) - sentinels(registry)
-
-
-def _bookkeeping_rooms(col, where=None):
-    total = _bookkeeping_total(col, where)
-    if not total:
-        return {}
-    rooms = {}
-    for room in _overview_facets(col, "room", where=where):
-        n = _bookkeeping_total(col, _facet_where(where, {"room": room}))
-        if n:
-            rooms[room] = n
-    missing = total - sum(rooms.values())
-    if missing > 0:
-        rooms["unknown"] = rooms.get("unknown", 0) + missing
+    rooms = _overview_facets(col, "room", where=registry)
+    if sentinels:
+        for room, n in _overview_facets(col, "room", where=_facet_where(where, sentinels)).items():
+            rooms[room] = rooms.get(room, 0) + n
+        for room, n in _overview_facets(
+            col, "room", where=_facet_where(registry, sentinels)
+        ).items():
+            _subtract_counts(rooms, room, n)
     return rooms
 
 
-def _bookkeeping_taxonomy(col) -> dict:
-    """Bounded aggregates; no raw-row subtraction, even on non-SQL backends."""
-    if not _supports_metadata_facets(col):
-        return _overview_tally(col, bookkeeping=True)[1]
+def _bookkeeping_taxonomy(col, known_wings=None, unknown_wing=False) -> dict:
+    """Expand only rooms returned by bookkeeping facets, never ordinary rooms."""
     from ..overview import Tally
 
-    remaining = _bookkeeping_rooms(col)
-    if not remaining:
-        return {}
+    sentinels = _bookkeeping_sentinels(col)
+    if known_wings is None:
+        known_wings = _overview_facets(col, "wing")
+        unknown_wing = col.count() > sum(known_wings.values())
     tally = Tally()
-    for wing in _overview_facets(col, "wing"):
-        for room, n in _bookkeeping_rooms(col, {"wing": wing}).items():
+    remaining = _bookkeeping_rooms(col, None, sentinels) if unknown_wing else None
+    for wing in known_wings:
+        for room, n in _bookkeeping_rooms(col, {"wing": wing}, sentinels).items():
             tally.add(wing, room, n)
-            _subtract_counts(remaining, room, n)
-    for room, n in remaining.items():
+            if remaining is not None:
+                _subtract_counts(remaining, room, n)
+    for room, n in (remaining or {}).items():
         tally.add("unknown", room, n)
     return tally.result()[1]
 
@@ -452,21 +452,31 @@ def _subtract_counts(counts: dict, key, n: int) -> None:
 
 
 def _drop_bookkeeping_facets(
-    col, wings=None, rooms=None, taxonomy=None, only=None, result=None
+    col,
+    wings=None,
+    rooms=None,
+    taxonomy=None,
+    only=None,
+    result=None,
+    known_wings=None,
+    unknown_wing=False,
 ) -> int:
     """Take registry rows and sentinels out of facet tallies; return how many.
 
     ``only`` limits the drop to rows in those wings.
     """
-    from ..backends import BackendError
+    from ..backends import BackendError, UnsupportedCapabilityError
+    from ..overview import OverviewError
 
     try:
-        bookkeeping = _bookkeeping_taxonomy(col)
-    except BackendError:
+        bookkeeping = _bookkeeping_taxonomy(col, known_wings, unknown_wing)
+    except UnsupportedCapabilityError:
         if result is None:
             raise
         result.update(partial=True, bookkeeping_error="bookkeeping_unavailable")
         return 0
+    except BackendError:
+        raise OverviewError("overview_unavailable") from None
     dropped = 0
     for w, room_counts in bookkeeping.items():
         if only is not None and w not in only:
@@ -590,7 +600,12 @@ def tool_status():
                 except (TypeError, ValueError):
                     pass
                 result["total_drawers"] = count - _drop_bookkeeping_facets(
-                    col, wings, rooms, result=result
+                    col,
+                    wings,
+                    rooms,
+                    result=result,
+                    known_wings=temp_wings,
+                    unknown_wing=count > sum(temp_wings.values()),
                 )
 
             except Exception as e:
@@ -735,7 +750,13 @@ def tool_list_wings(thread_scope: dict = None):
                     wings["unknown"] = wings.get("unknown", 0) + unknown_wings
             except (TypeError, ValueError):
                 pass
-            _drop_bookkeeping_facets(col, wings=wings, result=result)
+            _drop_bookkeeping_facets(
+                col,
+                wings=wings,
+                result=result,
+                known_wings=temp_wings,
+                unknown_wing=col.count() > sum(temp_wings.values()),
+            )
         except Exception as e:
             if _supports_metadata_facets(col):
                 logger.warning("Failed to fetch overview facets: %s", e)
@@ -774,7 +795,8 @@ def tool_list_rooms(wing: str = None):
     result = {"wing": wing or "all", "rooms": rooms}
     try:
         if _supports_metadata_facets(col):
-            wings = wing_aliases(wing, _overview_facets(col, "wing")) if wing else None
+            known_wings = _overview_facets(col, "wing") if wing else None
+            wings = wing_aliases(wing, known_wings) if wing else None
             where = {"wing": {"$in": wings}} if wing else None
         else:
             _total, counts = _overview_tally(col)
@@ -784,28 +806,25 @@ def tool_list_rooms(wing: str = None):
                     for r, n in rs.items():
                         rooms[r] = rooms.get(r, 0) + n
             return result
+        temp_rooms = _overview_facets(col, "room", where=where)
+        rooms.update(temp_rooms)
         try:
-            if not _supports_metadata_facets(col):
-                raise ValueError("facets not supported")
-            temp_rooms = _overview_facets(col, "room", where=where)
-            rooms.update(temp_rooms)
-            try:
-                if wing:
-                    wing_count = sum(_overview_facets(col, "wing", where=where).values())
-                    unknown_rooms = wing_count - sum(temp_rooms.values())
-                else:
-                    unknown_rooms = col.count() - sum(temp_rooms.values())
-                if unknown_rooms > 0:
-                    rooms["unknown"] = rooms.get("unknown", 0) + unknown_rooms
-            except (TypeError, ValueError):
-                pass
-            _drop_bookkeeping_facets(col, rooms=rooms, only=wings, result=result)
-        except Exception as e:
-            if _supports_metadata_facets(col):
-                logger.warning("Failed to fetch overview facets: %s", e)
-                raise
-            rooms.clear()
-            _apply_overview(col, rooms=rooms, where=where)
+            if wing:
+                wing_count = sum(_overview_facets(col, "wing", where=where).values())
+                unknown_rooms = wing_count - sum(temp_rooms.values())
+            else:
+                unknown_rooms = col.count() - sum(temp_rooms.values())
+            if unknown_rooms > 0:
+                rooms["unknown"] = rooms.get("unknown", 0) + unknown_rooms
+        except (TypeError, ValueError):
+            pass
+        _drop_bookkeeping_facets(
+            col,
+            rooms=rooms,
+            only=wings,
+            result=result,
+            known_wings={w: n for w, n in known_wings.items() if w in wings} if wing else None,
+        )
     except Exception as e:
         logger.exception("tool_list_rooms metadata fetch failed")
         return _overview_error(str(e), rooms=True, wing=wing)
@@ -834,15 +853,27 @@ def tool_get_taxonomy(thread_scope: dict = None):
 
             wing_counts = _overview_facets(col, "wing")
             tally = Tally()
-            for wing, n in wing_counts.items():
-                room_counts = _overview_facets(col, "room", where={"wing": wing})
-                missing = n - sum(room_counts.values())
-                if missing > 0:
-                    room_counts["unknown"] = room_counts.get("unknown", 0) + missing
-                for room, count in room_counts.items():
-                    tally.add(wing, room, count)
+            from concurrent.futures import ThreadPoolExecutor
+            from itertools import islice
+
+            wings = iter(wing_counts)
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                while batch := list(islice(wings, 8)):
+                    futures = {
+                        wing: executor.submit(_overview_facets, col, "room", where={"wing": wing})
+                        for wing in batch
+                    }
+                    for wing in batch:
+                        future = futures.pop(wing)
+                        room_counts = future.result()
+                        missing = wing_counts[wing] - sum(room_counts.values())
+                        if missing > 0:
+                            room_counts["unknown"] = room_counts.get("unknown", 0) + missing
+                        for room, count in room_counts.items():
+                            tally.add(wing, room, count)
+                        del room_counts, future
             taxonomy.update(tally.result()[1])
-            _drop_bookkeeping_facets(col, taxonomy=taxonomy, result=result)
+            _drop_bookkeeping_facets(col, taxonomy=taxonomy, result=result, known_wings=wing_counts)
         except Exception as e:
             if _supports_metadata_facets(col):
                 logger.warning("Failed to fetch overview facets: %s", e)

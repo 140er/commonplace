@@ -863,8 +863,23 @@ class TestMetadataFacets:
             "room_x": 4,
             "room_y": 1,
         }
-        assert [c.args[0] for c in col.facet_counts.call_args_list[:2]] == ["wing", "room"]
-        assert all(c.kwargs["limit"] == 16385 for c in col.facet_counts.call_args_list)
+        from unittest.mock import call
+
+        assert col.facet_counts.call_args_list == [
+            call("wing", where=None, limit=16385),
+            call("room", where=None, limit=16385),
+            call("is_sentinel", where=None, limit=16385),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_b"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+        ]
 
     def test_tool_list_wings_uses_metadata_facets(self, monkeypatch):
         import mempalace.mcp_server as mcp
@@ -886,8 +901,22 @@ class TestMetadataFacets:
                 "wing_b": 2,
             }
         }
-        assert col.facet_counts.call_args_list[0].args == ("wing",)
-        assert col.facet_counts.call_args_list[0].kwargs["limit"] == 16385
+        from unittest.mock import call
+
+        assert col.facet_counts.call_args_list == [
+            call("wing", where=None, limit=16385),
+            call("is_sentinel", where=None, limit=16385),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_b"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+        ]
 
     def test_tool_list_rooms_uses_metadata_facets(self, monkeypatch):
 
@@ -919,10 +948,16 @@ class TestMetadataFacets:
         from unittest.mock import call
 
         wing = {"wing": {"$in": ["engineering", "wing_engineering"]}}
-        assert col.facet_counts.call_args_list[:3] == [
+        assert col.facet_counts.call_args_list == [
             call("wing", where=None, limit=16385),
             call("room", where=wing, limit=16385),
             call("wing", where=wing, limit=16385),
+            call("is_sentinel", where=None, limit=16385),
+            call(
+                "room",
+                where={"$and": [{"wing": "engineering"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
         ]
 
     def test_tool_get_taxonomy_uses_metadata_facets(self, monkeypatch):
@@ -949,14 +984,26 @@ class TestMetadataFacets:
         monkeypatch.setattr(mcp, "_get_collection", lambda: col)
 
         result = mcp.tool_get_taxonomy()
-        assert col.facet_counts.call_args_list[0] == call("wing", where=None, limit=16385)
-        # Per-wing room facets run concurrently (ThreadPoolExecutor), so order is
-        # non-deterministic. Compare order-independently without a set() — a
-        # ``call`` carrying a dict kwarg is unhashable, so membership (==) is used.
-        room_calls = [c for c in col.facet_counts.call_args_list[1:] if c.args == ("room",)]
-        assert len(room_calls) == 2
-        assert call("room", where={"wing": "wing_a"}, limit=16385) in room_calls
-        assert call("room", where={"wing": "wing_b"}, limit=16385) in room_calls
+        calls = col.facet_counts.call_args_list
+        primary = [call("room", where={"wing": w}, limit=16385) for w in ("wing_a", "wing_b")]
+        # Preserve the base's order-independent concurrent room expectation,
+        # while checking the complete sequence including bookkeeping work.
+        assert calls[1:3] == primary or calls[1:3] == primary[::-1]
+        assert calls == [
+            call("wing", where=None, limit=16385),
+            *calls[1:3],
+            call("is_sentinel", where=None, limit=16385),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_a"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+            call(
+                "room",
+                where={"$and": [{"wing": "wing_b"}, {"ingest_mode": "registry"}]},
+                limit=16385,
+            ),
+        ]
 
         assert result["taxonomy"] == {
             "wing_a": {

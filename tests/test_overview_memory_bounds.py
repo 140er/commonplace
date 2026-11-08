@@ -177,11 +177,13 @@ def test_missing_projected_keys_preserve_legacy_totals_green(overview):
 
 
 def test_bookkeeping_subtraction_is_bounded(overview):
-    m, col = overview([{"wing": "w", "room": "r", "is_sentinel": "true"} for _ in range(501)])
-    result = m._bookkeeping_taxonomy(col)
-    assert result == {"w": {"r": 501}}
-    assert all(limit and limit <= 500 for limit, _, _ in col.gets)
-    assert col.full == 0
+    from test_overview_review_regressions import Facets
+
+    m, _ = overview([])
+    col = Facets()
+    col.rows = [{"wing": "w", "room": "r", "is_sentinel": "true"} for _ in range(501)]
+    assert m._bookkeeping_taxonomy(col) == {"w": {"r": 501}}
+    assert all(limit == 16385 for _, _, limit in col.calls)
 
 
 def test_real_sql_projection_preserves_presence_green(

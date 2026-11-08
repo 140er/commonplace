@@ -428,6 +428,8 @@ Format (read by `commonplace orch docs-check`):
   - Allocation observation activates only on first local dispatch; sampling construction failures release active state, construction failures latch with counted loss, and RSS status/source use the same read.
 
   - Storage-serving processes emit only a closed primitive allocation schema to a private two-file local diagnostic ring; forwarding and daemon jobs do not activate it. Contexts, queue, line size and retained files are bounded; observation failure never changes storage limits or restart behavior.
+  - Bookkeeping uses bounded facet round trips per wing, narrows partial results to unsupported capabilities, and never caches transient overview errors.
+
   - Facet-backed overview counts remain available; projected recovery closes/discards and retries once, and fingerprinted refusals retain normal response keys.
 
   - Overview reads project only locus/bookkeeping keys, preserve metadata-less drawers, and refuse acquisition or aggregate bounds explicitly.
@@ -489,6 +491,8 @@ Format (read by `commonplace orch docs-check`):
 
   - SQLite, Chroma and Compact ordering guards plus numeric zero/exponent cases compare with local graph readers.
   - `tests/test_worker_observation.py` covers generated call pairs, private-value rejection, actual leaf counters, opt-out, transport lifetime, bounded contexts and cross-process ring rotation.
+  - `tests/test_overview_facets_r2.py` pins transient backend refusal, deterministic facet call bounds, lost-fingerprint recount and zero-get unsupported acquisition.
+
   - `tests/test_overview_review_regressions.py` covers real facet wrappers, aggregate bookkeeping and transient/persistent real Chroma recovery without fake byte capabilities.
 
   - `tests/test_overview_memory_bounds.py` covers lazy recovery, byte splitting, pair/cell refusal, filtered rooms and raw-cache removal.
@@ -515,6 +519,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
   - Assertion-only review witnesses pin public facet compatibility, real-wrapper projected retry, refusal envelopes and negative-cache invalidation.
 
