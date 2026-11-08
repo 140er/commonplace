@@ -49,7 +49,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   shorthand wing filters resolve to stored names as before, with visible-only
   counts and pages.
 
-
 - Imported-history listing and thread reads without reader consent return 404
   instead of 403. Connection imports use `import-private:<user>:<source>:<id>`;
   incomplete three-part identities are refused rather than granted reader access.

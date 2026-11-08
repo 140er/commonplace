@@ -980,3 +980,109 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
     assert present == expected, "blank wing replaced develop's validation error with Denied"
     remove_hidden(w)
     assert request() == present, "hidden facts changed blank-wing validation"
+
+
+@pytest.mark.parametrize("kind", ["owner", "wildcard"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"entity": "fixed_entity", "wings": ["-"]},
+        {"entity": "fixed_entity", "wings": ["_"]},
+        {"entity": "fixed_entity", "wings": ["."]},
+        {"entity": "fixed_entity", "wings": ["Wing_"]},
+        {"entity": "fixed_entity", "wings": ["wing_"]},
+        {"entity": "fixed_entity", "wings": ["wing_fixture", "wing_"]},
+        {"entity": None, "wings": ["wing_"]},
+    ],
+)
+def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
+    from commonplace import sessions
+    from commonplace.gateway import _tool_result
+
+    w = kgworld
+    principal = (
+        sessions.person_principal(w.h.db, w.h.admin, w.h.workspace)
+        if kind == "owner"
+        else w.h.db.authenticate_token(w.tokens["A"])
+    )
+    assert principal.policy.sees_all_wings
+    assert (principal.role == "owner") == (kind == "owner")
+    assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
+
+    def request():
+        return w.h.gateway.mediator._tools_call(
+            principal,
+            {
+                "jsonrpc": "2.0",
+                "id": 701,
+                "method": "tools/call",
+                "params": {"name": TOOLS[0], "arguments": args},
+            },
+        )
+
+    present = request()
+    if args["entity"] is None:
+        assert present == {
+            "jsonrpc": "2.0",
+            "id": 701,
+            "error": {
+                "code": -32602,
+                "message": "Missing required parameter 'entity' for tool mempalace_kg_query",
+            },
+        }, "canonical-empty wing masked the required-entity error"
+    else:
+        result = _tool_result(present)
+        assert isinstance(result, dict) and "facts" in result, (
+            "sees-all canonical-empty wing was refused with Denied"
+        )
+        assert result["count"] == (1 if "wing_fixture" in args["wings"] else 0)
+        assert bool(result["facts"]) == ("wing_fixture" in args["wings"])
+    remove_hidden(w)
+    assert request() == present, "hidden facts changed canonical-empty wing results"
+
+
+@pytest.mark.parametrize("kind", ["owner", "wildcard"])
+def test_card253_s07_r7_canonical_empty_hidden_fact(kgworld, kind):
+    from commonplace import sessions
+    from commonplace.gateway import _tool_result
+    from commonplace.policy import canonical_wing
+
+    w = kgworld
+    # Local legacy storage can contain names the gateway cannot grant for writes.
+    with w.kg._lock:
+        w.kg._conn().execute("UPDATE triples SET wing='-' WHERE id=?", (w.hidden_wing,))
+        w.kg._conn().commit()
+    assert canonical_wing("-") == ""
+    assert any(
+        row["id"] == w.hidden_wing and row["wing"] == "-" for row in w.kg.read_candidates()["facts"]
+    )
+    principal = (
+        sessions.person_principal(w.h.db, w.h.admin, w.h.workspace)
+        if kind == "owner"
+        else w.h.db.authenticate_token(w.tokens["A"])
+    )
+    assert principal.policy.sees_all_wings and not principal.policy.can_read_wing("-")
+    assert not w.h.gateway.handoff.recall.can_read(principal, w.hidden.id)
+    assert w.h.gateway.call_memory_tool(principal, TOOLS[0], {"entity": "fixed_entity"})["facts"]
+
+    def request():
+        return w.h.gateway.mediator._tools_call(
+            principal,
+            {
+                "jsonrpc": "2.0",
+                "id": 702,
+                "method": "tools/call",
+                "params": {
+                    "name": TOOLS[0],
+                    "arguments": {"entity": "hidden_subject", "wings": ["-"]},
+                },
+            },
+        )
+
+    present = request()
+    result = _tool_result(present)
+    assert isinstance(result, dict) and result.get("facts") == [] and result.get("count") == 0, (
+        "canonical-empty legacy wing lost the visible-only empty result"
+    )
+    remove_hidden(w)
+    assert request() == present, "canonical-empty H-only fact changed the public response"
