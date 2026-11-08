@@ -1484,7 +1484,7 @@ def sqlite_drawer_rows(
     collection_name: str,
     *,
     drawer_id: str = "",
-    source_file: Optional[str] = None,
+    source_file: Optional[tuple[str, str]] = None,
     metadata_only: bool = False,
     logical: bool = True,
 ) -> Optional[tuple[bool, list[tuple[str, Optional[str], dict]]]]:
@@ -1498,6 +1498,8 @@ def sqlite_drawer_rows(
     ``metadata_only`` excludes document columns in SQL; ``logical=False`` keeps
     closet ids exact. Citation proof treats unavailable snapshots as unproved.
     """
+    if not drawer_id and source_file is None:
+        return None
     try:
         with _ready_snapshot(palace_path, collection_name) as snapshot:
             if snapshot is None:
@@ -1512,11 +1514,11 @@ def sqlite_drawer_rows(
             ).fetchall()
             if source_file is not None:
                 selected = conn.execute(
-                    "SELECT e.id, e.embedding_id FROM embedding_metadata p"
+                    "SELECT DISTINCT e.id, e.embedding_id FROM embedding_metadata p"
                     " JOIN embeddings e ON e.id = p.id"
-                    " WHERE p.key = 'source_file' AND p.string_value = ?"
+                    " WHERE p.key = 'source_file' AND p.string_value IN (?, ?)"
                     " AND e.segment_id = ? ORDER BY e.id",
-                    (source_file, segment_id),
+                    (*source_file, segment_id),
                 ).fetchall()
             direct = bool(selected)
             if not direct and logical and source_file is None:

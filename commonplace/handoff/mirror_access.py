@@ -22,6 +22,7 @@ class _ResponseAccess:
     def __init__(self, gateway, principal):
         self.gateway, self.principal = gateway, principal
         self.rooms, self.records, self.parsed, self.private = {}, {}, {}, {}
+        self.associations, self.scrubbed = {}, {}
 
     def recall(self):
         ctx = self.gateway.handoff
@@ -116,6 +117,13 @@ class _ResponseAccess:
         return self.private[key]
 
     def association(self, kind, identifier):
+        """Memoize one revalidated proof per concrete selector in this response."""
+        key = (kind, identifier)
+        if key not in self.associations:
+            self.associations[key] = self._association(kind, identifier)
+        return self.associations[key]
+
+    def _association(self, kind, identifier):
         """Authorize current metadata in this workspace, then revalidate it."""
         try:
             checks.remaining(0)
@@ -230,6 +238,8 @@ def filter_room_keys(rule, result, can_read):
 
 
 def scrub_provenance(node, access):
+    if access.scrubbed.get(id(node)) is node:
+        return node
     out = node
     fields = provenance_refs.PROVENANCE_FIELDS | provenance_refs.DERIVED_FIELDS
     if node.get("result_type") == "asset":
@@ -248,7 +258,7 @@ def scrub_provenance(node, access):
             access.reference(t) for t in parsed.tokens
         )
         if allowed and key == "source_file" and not parsed.tokens:
-            allowed = access.association("source_file", parsed.text)
+            allowed = access.association("source_file", (value, parsed.text))
         if allowed and key in {"source_drawer_id", "source_closet"}:
             allowed = access.association(
                 "drawer" if key == "source_drawer_id" else "closet", parsed.text
@@ -289,6 +299,8 @@ def scrub_provenance(node, access):
                 or not access.association("drawer", identifier)
             ):
                 out = {name: value for name, value in out.items() if name != key}
+    # Keep a strong reference so a recycled object id cannot skip authorization.
+    access.scrubbed[id(out)] = out
     return out
 
 

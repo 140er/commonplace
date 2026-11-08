@@ -1703,22 +1703,33 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   diagnostics remain separate work.
 ### Plain-file citation proof and compatibility narrowing
 
-- Under locked D9.1=A, token-free source_file citations match the complete decoded
-  raw path exactly against drawer metadata in the authenticated workspace. Every
+- Under locked D9.1=A, token-free source_file citations match the union of the stored literal
+  spelling and the complete percent-decoded, whitespace-trimmed identity against
+  drawer metadata in the authenticated workspace. Every
   match needs current wing and room authority, including for owners; a final
-  metadata snapshot revalidates the match set before publication. Chroma reads
-  metadata in batches of at most 500 without hydrating documents.
+  metadata snapshot revalidates that same union before publication. Chroma selects
+  the complete set of matching row ids in one SQLite snapshot, deduplicates by
+  row id and decodes metadata in batches of at most 500 without hydrating documents.
 - Zero matches, missing room proof, hidden matches, changed descriptors, expired
   deadlines and unavailable snapshots omit only the citation. Generic backends
   without a complete snapshot cannot supply proof. Basenames, prefixes, filesystem
-  inspection and other workspaces never supply proof. Drawer display still uses
+  inspection and other workspaces never supply proof. Non-Chroma backends lose
+  plain-file citations because their collection API cannot establish a complete
+  stable match set. Drawer display still uses
   the basename after raw-path authorization.
 - Original-source D1-readable fact text stays verbatim, external plain source_url
   compatibility is preserved, and O4 roomless/unproved source rows stay stored.
   No migration or deletion occurs. Provenance aliases and sequence bundles retain
   their existing behavior. Locked D9.2=A and its accepted global-quota effect on
   actually blocked readable work remain unchanged.
-
+- D9.1=A accepts a presence side-channel: adding a hidden drawer that shares a
+  readable plain path changes a previously retained citation to an omitted one
+  (mixed means omit). This is an explicit exception to hidden-present/absent
+  output equality, including literal-wing readers; it grants no read permission.
+- Proof results are memoized by kind and concrete selector within one response;
+  already scrubbed rows are not scrubbed twice. A later request obtains fresh
+  proof. The union rule applies to token-free source_file values only; token-bearing
+  values retain their existing token authorization without proving the plain remainder.
 
 ## Person private-read containment
 
