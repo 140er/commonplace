@@ -30,7 +30,8 @@ def test_association_unproved(case, monkeypatch, role, kind, fault):
     field = "source_drawer_id" if kind == "drawer" else "source_closet"
     col = target(c, kind, c.primary.id)
     seed(c, field, "opaque-local-id")
-    assert citation(fact(c, role), kind)[field] == "opaque-local-id"
+    control = fact(c, role)
+    assert citation(control, kind)[field] == "opaque-local-id"
     original = c.h.gateway.mediator.workers.call_tool
 
     def call(principal, name, args):
@@ -65,6 +66,10 @@ def test_association_unproved(case, monkeypatch, role, kind, fault):
     row = invoke(c, "kg_query", role, entity="TypedFact")["facts"][0]
     assert row["object"] == "Exact  original words"
     assert field not in citation(row, kind)
+    if fault != "revoked":
+        for item in [control, *control["sources"]]:
+            item.pop(field, None)
+        assert row == control
 
 
 @pytest.mark.parametrize("role", ["member", "owner"])
@@ -149,10 +154,22 @@ def test_metadata_only_pages_and_alignment(case, monkeypatch):
 def test_expired_deadline_never_probes():
     from types import SimpleNamespace
 
-    access = reader(SimpleNamespace(), SimpleNamespace())
+    calls = []
+
+    def call_tool(*args):
+        calls.append(args)
+        return {"associations": None}
+
+    access = reader(
+        SimpleNamespace(mediator=SimpleNamespace(workers=SimpleNamespace(call_tool=call_tool))),
+        SimpleNamespace(),
+    )
     token = checks._deadline.set(checks.monotonic() - 1)
     try:
+        with pytest.raises(TimeoutError, match="rules deadline expired"):
+            checks.remaining(0)
         assert not access.association("drawer", "opaque")
+        assert calls == []
     finally:
         checks._deadline.reset(token)
 
@@ -195,13 +212,18 @@ def test_malformed_raw_file_keeps_drawer(case, value):
     assert "source_file" not in row["metadata"]
 
 
-@pytest.mark.parametrize("fault", ["missing-wing", "missing-room", "empty-room", "lookup"])
+@pytest.mark.parametrize(
+    "fault", ["missing-wing", "missing-room", "empty-room", "lookup", "readable"]
+)
 def test_closet_mutation_probe_unavailable(config, kg, monkeypatch, fault):
     from tests._mcp_server_helpers import _patch_mcp_server
 
     _patch_mcp_server(monkeypatch, config, kg)
 
+    calls = []
+
     def unavailable(*args, **kwargs):
+        calls.append((args, kwargs))
         if fault == "lookup":
             raise ValueError("incomplete metadata")
         row = {"wing": "shared", "room": "notes"}
@@ -209,7 +231,7 @@ def test_closet_mutation_probe_unavailable(config, kg, monkeypatch, fault):
             row.pop("wing")
         elif fault == "missing-room":
             row.pop("room")
-        else:
+        elif fault == "empty-room":
             row["room"] = ""
         return {"associations": [row]}
 
@@ -223,5 +245,51 @@ def test_closet_mutation_probe_unavailable(config, kg, monkeypatch, fault):
         source_closet="opaque",
         thread_scope={"probe": True, "closet": "opaque"},
     )
-    assert result["cited"] == {"closet": None}
+    assert calls == [(("closet", "opaque"), {})]
+    assert result["cited"] == {"closet": ["shared", "notes"] if fault == "readable" else None}
     assert kg.query_entity("A") == []
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_capped_backend_logical_citation_fails_closed(case, monkeypatch, role):
+    from mempalace import palace
+
+    c = case
+    calls = []
+
+    class CappedCollection:
+        def get(self, *, ids=None, include, where=None, limit=None, offset=0):
+            assert include == ["metadatas"]
+            calls.append((ids, where, limit, offset))
+            if ids is not None:
+                return {"ids": [], "metadatas": []}
+            stop = min(offset + min(limit, 100), 601)
+            return {
+                "ids": [f"chunk-{i:04}" for i in range(offset, stop)],
+                "metadatas": [
+                    {
+                        "wing": "shared",
+                        "room": c.hidden.id if i == 550 else c.primary.id,
+                        "parent_entry_id": "logical",
+                        "chunk_index": i,
+                    }
+                    for i in range(offset, stop)
+                ],
+            }
+
+    backend = CappedCollection()
+    assert len(backend.get(include=["metadatas"], where={}, limit=500)["ids"]) == 100
+    assert (
+        backend.get(include=["metadatas"], where={}, limit=500, offset=550)["metadatas"][0]["room"]
+        == c.hidden.id
+    )
+    calls.clear()
+    monkeypatch.setattr(mcp, "_is_chroma_backend", lambda: False)
+    monkeypatch.setattr(palace, "get_collection", lambda *a, **kw: backend)
+    seed(c, "source_drawer_id", "logical")
+    assert (
+        c.kg._conn().execute("SELECT source_drawer_id FROM fact_sources").fetchone()[0] == "logical"
+    )
+    row = fact(c, role)
+    assert "source_drawer_id" not in row["sources"][0], "incomplete backend proof exposed citation"
+    assert calls and calls[0][0] == ["logical"]

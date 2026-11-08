@@ -44,8 +44,9 @@ def read_associations(kind: str, identifier: str, expect=None):
     """Read complete current metadata only; never create optional collections.
 
     Physical ids take precedence over logical handles, as in drawer reads.
-    Each page is bounded; every chunk must be proved, including legacy parents.
-    A second request compares the concrete descriptors in its read snapshot.
+    Chroma proves every chunk, including legacy parents, in a read snapshot.
+    Other backends support exact physical ids only, failing closed for logical
+    handles. A second request compares the concrete descriptors.
     """
     if kind not in {"drawer", "closet"} or not isinstance(identifier, str) or not identifier:
         return {"associations": None}
@@ -78,20 +79,11 @@ def read_associations(kind: str, identifier: str, expect=None):
         found = col.get(ids=[identifier], include=["metadatas"])
         rows = _association_descriptors(found)
         if not rows and kind == "drawer":
-            offset = 0
-            while True:
-                page = _association_descriptors(
-                    col.get(
-                        where=_logical_parent_where(identifier),
-                        include=["metadatas"],
-                        limit=500,
-                        offset=offset,
-                    )
-                )
-                rows.extend(page)
-                if len(page) < 500:
-                    break
-                offset += len(page)
+            # The generic collection contract has no ordering or snapshot token.
+            # Even an empty terminal page cannot prove that offset paging did
+            # not skip a chunk during concurrent changes. Keep exact physical
+            # ids supported, but omit logical citations without complete proof.
+            return {"associations": None}
 
     rows.sort(key=lambda row: row["id"])
     if not rows or len({r["id"] for r in rows}) != len(rows):

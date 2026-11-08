@@ -38,6 +38,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Documents citation omission and backend proof limits separately from fact eligibility.
+
   - Records current typed citation proof and raw path authorization before display conversion.
 
   - Documents field-specific citation length errors, atomic whole-write refusal, surface-specific citation exceptions and informational performance measurements.
@@ -83,6 +85,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Keeps unavailable citation links absent without changing visible facts.
+
   - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
 
   - An authority fault makes the complete progress response unavailable, even when other threads are readable.
@@ -99,6 +103,8 @@ Format (read by `commonplace orch docs-check`):
   - A path added without a block fails `docs-check`.
 
 - **Tests:**
+
+  - Memory-map and capped-backend regressions verify the documented failure policy.
 
   - Typed association regressions and documentation obligations.
 
@@ -284,6 +290,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Scoped wing and taxonomy counts use bounded metadata-only identity pages, normalize absent/null/question-mark loci to unknown, exclude bookkeeping, and revalidate concrete descriptors in fresh snapshots. Local unscoped readers retain their conventions.
+  - Exact non-Chroma physical citation ids remain supported without document hydration.
 
   - A private read-only metadata capability resolves physical and logical citation ids, including every legacy chunk, without document hydration or optional collection creation.
 
@@ -298,6 +305,7 @@ Format (read by `commonplace orch docs-check`):
 - **How it fails:**
 
   - Incomplete acquisition or invalid descriptors discard all projected output. New or changed metadata cannot inherit an earlier allow descriptor.
+  - Non-Chroma logical citations fail closed because the collection API cannot guarantee ordered snapshot enumeration.
 
   - Missing metadata, changed descriptors and incomplete room proof return no association; read probes never invoke mutation handlers.
 
@@ -309,6 +317,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Presence and private read-scope tests exercise SQLite, compact, Chroma, facet and generic metadata paths, unknown values, batching and races.
+  - Capped-backend tests place a hidden chunk beyond the first short metadata page.
 
   - Typed association protocol tests cover optional collection absence, metadata-only paging and snapshot revalidation.
 
@@ -332,6 +341,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Citation failure cases compare complete surviving facts with readable controls.
 
   - Typed citation fixtures use native stored threads and real public reads, with metadata and Recall spies.
 
@@ -440,6 +451,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - Deadline tests assert no worker calls; closet probes assert invocation and a readable positive result.
+
   - Only named public AssertionErrors count as base regressions; readable citations and plain-file display remain controls.
 
   - Swallowing an authority fault must fail the fixed-503 assertion rather than silently reduce counters.
@@ -458,6 +471,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Regression selections cover owner maps and capped non-Chroma logical citation proof.
 
   - Typed association read and protocol suites cover public results and private snapshot failures.
 
@@ -945,17 +960,23 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Owner memory maps retain readable person relationships when a citation cannot be proved.
+
   - Owner HTTP progress always forwards the authenticated principal, returns only readable progress and disables response caching.
 
   - Reads and writes respect the caller's wings and scopes; store cutovers are backup-gated and restartable; capture is explicit and append-only.
 
 - **How it fails:**
 
+  - Missing, deleted and unreadable citation targets omit memory links without failing the map.
+
   - Incomplete progress proof returns the fixed 503 error without partial totals or private failure details.
 
   - An interrupted cutover keeps the previous store live; an index rebuild degrades search speed, not stored text.
 
 - **Tests:**
+
+  - Memory-map regressions compare hidden and absent citation targets and retain readable fact text.
 
   - `tests/test_card253_s12.py` covers authenticated HTTP isolation and failures; `tests/test_search_index_progress.py` covers the route contract.
 

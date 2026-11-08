@@ -167,18 +167,24 @@ def test_s09_moved(case, kind):
     field = "source_drawer_id" if kind == "drawer" else "source_closet"
     col = target(c, kind, c.primary.id)
     seed(c, field, "opaque-local-id")
-    assert citation(fact(c), kind)[field] == "opaque-local-id"
+    control = fact(c)
+    assert citation(control, kind)[field] == "opaque-local-id"
     col.update(ids=["opaque-local-id"], metadatas=[{"wing": "shared", "room": c.hidden.id}])
     row = fact(c)
     assert field not in citation(row, kind), "s09 opaque moved citation retained"
     assert all(field not in source for source in row["sources"])
+    for item in [control, *control["sources"]]:
+        item.pop(field, None)
+    assert row == control
 
 
 @pytest.mark.parametrize("kind", ["drawer", "closet"])
 def test_s09_workspace(case, kind, tmp_path):
+    """An unproved local target cannot borrow a separate palace fixture's metadata."""
     c = case
     field = "source_drawer_id" if kind == "drawer" else "source_closet"
-    target(c, kind, c.hidden.id)
+    local = target(c, kind, c.hidden.id)
+    assert local.get(ids=["opaque-local-id"])["metadatas"][0]["room"] == c.hidden.id
     z = c.h.db.create_workspace("elsewhere", c.h.admin)
     other = stored(c, "capture:other:codex:readable", workspace=z)
     assert c.store.get(other.id).workspace_id == z
@@ -194,6 +200,9 @@ def test_s09_workspace(case, kind, tmp_path):
         )
         assert zcol.get(ids=["opaque-local-id"])["metadatas"][0]["room"] == other.id
         seed(c, field, "opaque-local-id")
+        assert (
+            c.kg._conn().execute(f"SELECT {field} FROM triples").fetchone()[0] == "opaque-local-id"
+        )
         row = fact(c)
         assert field not in citation(row, kind), "s09 legacy local citation unproved"
     finally:
