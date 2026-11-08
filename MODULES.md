@@ -388,6 +388,7 @@ Format (read by `commonplace orch docs-check`):
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes.
   - Driven-clock heartbeat tests cover standby takeover after release and expiry; a subprocess SIGTERM test covers immediate restart after stubbed-HTTP serve teardown. Shutdown regressions cover server and worker entry points, one lease release and duplicate closes after SQLite closes. Unreadable-grant and confirmation regressions require local disconnect and unconfirmed revocation.
   - The same contract selection runs on pinned base and implementation head; transport regressions execute separately.
+  - Space profile/tool snapshots are captured from the development base, retaining its split and inbox visibility and card-schema additions.
   - `tests/test_projects_phase_b.py::test_head_connect_hint_and_trust_failures` asserts the Connect list contract: base message and move events, plus creation and report events when enabled.
 
   - `tests/test_project_reports.py::test_gateway_install_does_not_resolve_or_create_workspaces` covers missing, forbidden and real supervisor lookups; `test_dispatch_recovers_existing_source_without_creating_workspaces` proves lazy migration, delivery, workspace isolation and one diagnostic per failed workspace pass without private workspace names, identifiers or content in formatted logs. `test_dispatch_reinitializes_changed_source` checks schema recovery through the catalog after an in-process table drop; normal-pass initialization counts have a separate regression. `test_dispatch_isolates_publish_programming_error` proves that a non-closure publication error is logged once while the same pass publishes the next workspace's report for delivery.
@@ -963,7 +964,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Chat status counts cards in needs-me while ignoring per-board coordinator notices. Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
+  - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
+  - Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
 
   - Chat answers come from the configured provider or the poster's own runner, never a silent fallback; audio stays in request memory; push is opt-in.
 
@@ -973,7 +975,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
-  - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files. Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
+  - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
+  - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
 
 
 ## memory-and-search
