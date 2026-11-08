@@ -1129,7 +1129,6 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Orchestration settings reads wait at most one second for the shared control lock, then return the existing retryable `settings_unavailable` refusal without reading an unlocked connection.
-  - An absent runner connection or optional jobs/config table supplies no jobs/config override while ordinary doing cards still count. Normal admission callers retain shared accounting.
   - The explicit Admin-only optional-input flag permits absent runner jobs/config without initialization while ordinary doing cards still count. Admission defaults retain strict runner input and shared accounting.
 
 
