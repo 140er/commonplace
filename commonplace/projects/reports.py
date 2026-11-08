@@ -8,7 +8,6 @@ still hold an old source row, so retaining its receipt is the safe retry boundar
 import json
 import logging
 import secrets
-import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -341,8 +340,6 @@ class ReportPump:
                     self._initialized.add((path, stat.st_ino, schema_version))
                 observe(self.gateway, wid)
                 publish(self.gateway, wid)
-            except sqlite3.ProgrammingError:
-                raise  # The dispatcher treats closed control databases as normal shutdown.
             except Exception as exc:
                 log_failure(logger, "project report pass failed", exc)
                 continue

@@ -282,16 +282,59 @@ def test_dispatch_initializes_source_once_across_normal_passes(world, monkeypatc
     assert len(calls) == 1
 
 
-def test_dispatch_propagates_closed_control_database(world, monkeypatch, caplog):
+def test_dispatch_isolates_publish_programming_error(world, monkeypatch, caplog):
     from commonplace.projects import reports as project_reports
 
-    def closed(*args):
-        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+    w = world
+    other_ws = w.db.create_workspace("healthy-reports", w.uid)
+    other_owner = sessions.person_principal(w.db, w.uid, other_ws)
+    other_service = BoardService(ToolContext(principal=other_owner, gateway=w.gw))
+    other_service.board_add(slug="healthy", wing="healthy")
+    orchestration.set_enabled(w.db, other_owner, True)
+    status, setup = connect.connect(w.gw, other_owner, "healthy")
+    assert status == 201
+    other_seat = w.db.authenticate_token(setup["token"])
+    webhooks.add(w.db, other_seat, "http://127.0.0.1/healthy", kinds=["project.report"])
+    n = other_service.task_add("Healthy source", board="healthy")["number"]
+    with other_service.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET status='doing',assignee=? WHERE id=?", (other_seat.actor, n))
+    other_service.task_update(n, status="done")
+    workspaces = {row["id"]: row for row in w.db.workspaces()}
+    monkeypatch.setattr(w.db, "workspaces", lambda: [workspaces[w.ws], workspaces[other_ws]])
+    publish = project_reports.publish
+    attempted = []
 
-    monkeypatch.setattr(project_reports, "publish", closed)
-    with pytest.raises(sqlite3.ProgrammingError):
-        world.gw.project_reports.pass_once()
-    assert not caplog.records
+    def publish_one_workspace_error(gateway, ws):
+        attempted.append(ws)
+        if ws == w.ws:
+            raise sqlite3.ProgrammingError("Incorrect number of bindings supplied.")
+        return publish(gateway, ws)
+
+    monkeypatch.setattr(project_reports, "publish", publish_one_workspace_error)
+    caplog.clear()
+    failure = None
+    with caplog.at_level(logging.ERROR, logger="commonplace.projects.reports"):
+        try:
+            w.gw.project_reports.pass_once()
+        except Exception as exc:
+            failure = type(exc).__name__
+    assert failure is None, f"workspace error escaped: {failure}"
+    assert attempted == [w.ws, other_ws]
+    failures = [r for r in caplog.records if "project report pass failed" in r.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].name == "commonplace.projects.reports"
+    assert "ProgrammingError" in failures[0].getMessage()
+    assert "Incorrect number of bindings supplied" not in caplog.text
+    # Deliver without running another report pass, so this pass must have published it.
+    w.gw.webhooks.reconcile()
+    for _ in range(1000):
+        row = w.gw.webhooks._due()
+        if row is None:
+            break
+        w.gw.webhooks._deliver(row)
+    else:
+        pytest.fail("delivery pass did not converge")
+    assert len([p for url, p in w.posts if url.endswith("/healthy")]) == 1
 
 
 @pytest.mark.parametrize("writer", ["task_update", "decide", "seed_card"])
