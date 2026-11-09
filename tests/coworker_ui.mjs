@@ -228,7 +228,9 @@ const cases = {
     await flush();
     const oldMemory = f.take('/api/coworkers/conversations/a/memory');
     f.click('hide-memory', 'm-one');
-    f.take('/api/coworkers/conversations/a/memory/m-one', 'DELETE').resolve({ ok: true });
+    const remove = f.take('/api/coworkers/conversations/a/memory/m-one', 'DELETE');
+    assert.deepEqual(remove.options.body, {}, 'Memory removal must send JSON for the server write boundary');
+    remove.resolve({ ok: true });
     await flush(); assert.doesNotMatch(f.host.innerHTML, /EXACT_SAVED_WORDS/);
     oldMemory.resolve({ memories: [memory] }); await refresh; await flush();
     assert.doesNotMatch(f.host.innerHTML, /EXACT_SAVED_WORDS/, 'An old read must not undo Hide');

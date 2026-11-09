@@ -274,7 +274,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     const flight = {};
     d.savingMemory = flight; memoryRevision++; detailError = ""; render();
     try {
-      const result = await request(`${path(conversationId)}/memory${id != null ? `/${enc(id)}` : ""}`, id != null ? { method: "DELETE" } : { method: "POST", body: { text } });
+      const result = await request(`${path(conversationId)}/memory${id != null ? `/${enc(id)}` : ""}`, id != null ? { method: "DELETE", body: {} } : { method: "POST", body: { text } });
       if (!valid(page, turn, conversationId)) return;
       memoryRevision++;
       if (id != null) memories = memories.filter(item => !same(item.id, id));

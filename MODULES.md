@@ -1634,6 +1634,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
+
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
 
@@ -1643,6 +1645,9 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer.
+  - Coworker text is escaped, mutation calls use same-origin JSON, and the original project chat remains reachable.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
