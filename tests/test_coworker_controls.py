@@ -49,7 +49,8 @@ def comments(dispatch, item):
         return [
             dict(r)
             for r in conn.execute(
-                "SELECT actor,text FROM task_events WHERE task_id=? AND kind='comment' ORDER BY id",
+                "SELECT 'user:' || stamp_user AS actor,text FROM task_events "
+                "WHERE task_id=? AND kind='comment' ORDER BY id",
                 (item.number,),
             )
         ]
@@ -110,6 +111,7 @@ def test_inflight_stop_is_only_received_even_after_task_and_front_are_done(env, 
         "started",
         thread_id="fixture-thread",
     )
+    dispatch.boards.task_update(item.number, status="doing")
     dispatch.boards.task_update(item.number, status="done")
     assert item.job["state"] == "done"
     assert control(env, item, operation="stop") == receipt

@@ -224,6 +224,20 @@ def test_browser_canonical_progress_returns_to_origin_without_blocking_composer(
                 boards.task_comment(number, "Exact worker observation <script>inert</script>")
                 page.get_by_role("button", name="Refresh", exact=True).click()
                 progress.get_by_text("Reading synthetic fixture.", exact=True).wait_for()
+                page.get_by_text("Task controls", exact=True).click()
+                instruction = "Exact targeted instruction <script>inert</script>"
+                page.get_by_label("Follow up on this task", exact=True).fill(instruction)
+                page.get_by_role("button", name="Send follow-up", exact=True).click()
+                receipt_text = (
+                    "Follow-up received · task comment saved; worker application unsupported"
+                )
+                page.locator(".cw-notice").filter(has_text=receipt_text).wait_for()
+                with boards.store.connection() as conn:
+                    comments = conn.execute(
+                        "SELECT text FROM task_events WHERE task_id=? AND kind='comment' ORDER BY id",
+                        (number,),
+                    ).fetchall()
+                assert [item["text"] for item in comments][-1] == instruction
                 assert page.locator("#cw-compose").is_enabled()
                 page.locator("#cw-compose").fill("A new message while work continues")
                 page.get_by_role("button", name="Send", exact=True).click()
@@ -237,6 +251,9 @@ def test_browser_canonical_progress_returns_to_origin_without_blocking_composer(
                 progress.get_by_text("Task marked done", exact=True).wait_for()
                 page.reload()
                 progress.get_by_text("Exact final fixture result.", exact=True).wait_for()
+                # Durable control receipts survive reconnect without resubmission.
+                page.get_by_text("Task controls", exact=True).click()
+                page.get_by_text(receipt_text, exact=True).first.wait_for()
                 assert not any(
                     "Exact final fixture result." in item["text"]
                     for item in store.list_messages(owner, conversation["id"])

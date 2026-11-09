@@ -59,7 +59,7 @@ export function coworkerControlsHTML(job, draft = {}) {
   const follow = draft.follow_up || {}, stop = draft.stop || {};
   const receipts = (controls.receipts || []).map(receipt => `<li><strong>${e(controlReceiptLabel(receipt))}</strong><small> · ${e(receipt.state)}</small>${receipt.text ? `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${e(receipt.text)}</p>` : ""}</li>`).join("");
   if (!controls.can_follow_up && !controls.can_stop && !receipts) return "";
-  return `<details class="cw-task-controls"${draft.text || follow.attempt || stop.attempt ? " open" : ""}><summary>Task controls</summary>${receipts ? `<ol aria-label="Task control receipts">${receipts}</ol>` : ""}${controls.can_follow_up ? `<form data-cw-form="task-control" data-id="${e(job.id)}"><label>Follow up on this task<textarea data-cw-field="control-${e(job.id)}" rows="2" maxlength="4000"${follow.uncertain ? "" : " required"}>${e(draft.text || "")}</textarea></label><p class="cw-quiet">Only these explicit words are shared with the already linked project as a task comment. Private chat and memory are not included. Worker application is unsupported.</p><button class="btn sm" data-cw-followup="${e(job.id)}"${follow.busy || (!follow.uncertain && !draft.text?.trim()) ? " disabled" : ""}>${follow.busy ? "Sending follow-up…" : follow.uncertain ? "Retry same follow-up" : "Send follow-up"}</button></form>` : ""}${controls.can_stop ? `<p><button type="button" class="btn sm" data-cw-action="stop-task" data-id="${e(job.id)}"${stop.busy ? " disabled" : ""}>${stop.busy ? "Requesting stop…" : stop.uncertain ? "Retry same stop" : "Request stop"}</button> <small>Targets this original run. A request does not confirm worker termination.</small></p>` : ""}</details>`;
+  return `<details class="cw-task-controls" data-cw-control-id="${e(job.id)}"${draft.open || draft.text || follow.attempt || stop.attempt ? " open" : ""}><summary>Task controls</summary>${receipts ? `<ol aria-label="Task control receipts">${receipts}</ol>` : ""}${controls.can_follow_up ? `<form data-cw-form="task-control" data-id="${e(job.id)}"><label>Follow up on this task<textarea data-cw-field="control-${e(job.id)}" rows="2" maxlength="4000"${follow.uncertain ? "" : " required"}>${e(draft.text || "")}</textarea></label><p class="cw-quiet">Only these explicit words are shared with the already linked project as a task comment. Private chat and memory are not included. Worker application is unsupported.</p><button class="btn sm" data-cw-followup="${e(job.id)}"${follow.busy || (!follow.uncertain && !draft.text?.trim()) ? " disabled" : ""}>${follow.busy ? "Sending follow-up…" : follow.uncertain ? "Retry same follow-up" : "Send follow-up"}</button></form>` : ""}${controls.can_stop ? `<p><button type="button" class="btn sm" data-cw-action="stop-task" data-id="${e(job.id)}"${stop.busy ? " disabled" : ""}>${stop.busy ? "Requesting stop…" : stop.uncertain ? "Retry same stop" : "Request stop"}</button> <small>Targets this original run. A request does not confirm worker termination.</small></p>` : ""}</details>`;
 }
 
 export function coworkerJobHTML(job, bots = [], busy = false, controlDraft = {}) {
@@ -208,6 +208,9 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
 
   function render() {
     if (!eligible() || !host) return;
+    for (const detail of host.querySelectorAll?.("[data-cw-control-id]") || []) {
+      taskDraft(detail.dataset.cwControlId).open = detail.open;
+    }
     const active = doc?.activeElement, field = host.contains?.(active) && active?.dataset?.cwField;
     const editorField = host.contains?.(active) && active?.closest?.(".cw-editor") && active.name;
     const action = host.contains?.(active) && active?.dataset?.cwAction;
