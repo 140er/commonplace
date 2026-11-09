@@ -1,0 +1,74 @@
+# Compute implementation boundaries
+
+2026-11-09. Reversible isolated development, not a review or live enrollment.
+Council transport/custody rationale is in decisions.md and the source handoffs.
+
+## Concurrent ownership
+
+Credential builder owns `commonplace/compute/credentials.py` and
+`tests/test_compute_credentials.py`. Transport builder owns
+`commonplace/compute/protocol.py`, `transport.py` and
+`tests/test_compute_transport.py`. Parent owns public integration, schema/authority
+coordination, dependency declarations, SYSTEM.md and MODULES.md. No live remote
+endpoints, secrets or operator key files are used in development or testing.
+
+## Custody seam
+
+Implement a concrete encrypted credential store, independent of HTTP. Constructor
+receives explicit database path, external wrapping-key path, protected data root
+and an authority callback. No environment/ambient credentials. Explicit local
+initialization is separate from opening existing custody; never regenerate lost
+keys over ciphertext. Authority callback must approve exact binding/action using
+current trusted service authority, not a caller-provided owner boolean.
+
+Immutable CredentialBinding fields: workspace, owner, gateway, node (empty only
+for gateway credentials), account, purpose (`gateway` or `target`), version
+positive integer. Validate exact bounded identifiers/account and deny unexpected
+fields. Generation creates Ed25519 material internally, returns opaque credential
+ID, binding, expiry and public key only. Store AES-256-GCM ciphertext and wrapped
+per-workspace data key; versioned AAD binds credential identity and every binding
+field plus expiry/keyset. Revocation and expiry deny acquisition. Handles must
+hide private material in repr/serialization; only an explicitly named internal
+transport accessor may produce short-lived private bytes. Nothing prints them.
+No claim that Python guarantees zeroization or local revocation removes remote
+keys. Rotation may issue distinct pending versions; activation must remain
+explicit rather than silently replacing an enrolled binding.
+
+Constructor/operation signatures may follow source conventions; document actual
+public symbols precisely in module docstrings for parent integration. Tests must
+exercise real crypto with synthetic generated keys, binding/ciphertext tamper,
+wrong/missing/unsafe wrapping keys, expiry/revocation/reopen and no plaintext on
+disk. No provider may auto-initialize production key material during requests.
+
+## Transport seam
+
+Build a versioned bounded JSON helper protocol and real optional SSH adapter.
+Public service calls use immutable exact gateway/target enrollment IDs and pins;
+no generic connect(host,port) or user-controlled command/URL. Gateway policy maps
+an enrolled node ID to an owner-installed numeric address/port. Validate all
+limits, fields, identities and frame lengths before effect; active discovery and
+scripts remain unsupported. Only typed `system.info.v1` is initially compiled.
+A fixed command compiler must reject free-form commands and unknown arguments.
+
+Outer SSH must verify the complete pinned host key before authenticating. Inner
+SSH on the helper-provided channel independently verifies the target key before
+its separate authentication. No TOFU, agent forwarding, SSH config, ambient
+keys, passwords, keyboard-interactive or direct-target fallback. Lazily import a
+maintained optional SSH library (Paramiko is acceptable); parent declares extra.
+Transport receives short-lived explicit key material/handle; no credential store
+or privileged HTTP integration is implemented by the transport builder.
+
+Use a narrow helper handshake: describe/collect_passive/open_enrolled_ssh,
+8KiB control frames, fresh challenge nonce and exact request/digest/binding-epoch
+admission. A service authorization callback supplies fresh dispatch authority;
+local replay journal consumes one permit before route opening. Replayed or
+ambiguous attempts never auto-reexecute. Protected gateway configuration is
+trusted installation input, not a request body. No generic shell execution.
+Enforce finite timeout/output/tunnel budgets and truthful cancel/disconnect
+states; missing exit evidence is uncertain. Helper/channel abstraction tests
+must prove gateway and target key rejection before authentication, enrolled-only
+routing, replay denial, unknown/oversize field rejection and no silent fallback.
+
+These modules are disabled until parent adds authenticated persistent enrollment,
+approvals, current-authority fencing and deployment prerequisites. A domain
+binding, callback or passing synthetic fixture grants no live execution right.
