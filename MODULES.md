@@ -848,6 +848,8 @@ Format (read by `commonplace orch docs-check`):
   - Token tests distinguish missing selected capture credentials during initialization from import-only feed credential rejection.
   - GitHub lifecycle rendering runs in Node with deferred replies and synthetic roots, including logout during an outstanding status read.
   - `tests/test_spaces_contract.py`, `tests/spaces_surfaces.json` and the checked REST/public surface regressions.
+  - Surface snapshots include only the newly projected restricted reads; disabled-handoff comparisons preserve every other legacy field.
+  - Memory REST freshness doubles return the save result including its privacy notice; unreadable retry tests retain the fresh-write envelope and source redaction.
 
   - Focused presence and read-scope selections run alongside existing gateway, mirror, imported-history and mutation-scope regressions.
 
