@@ -83,7 +83,7 @@ main() {
             [[ $line =~ ^[A-Z_][A-Z0-9_]*= ]] || continue
             key=${line%%=*}
             case $key in
-                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
+                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_BUILD_COMMIT|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
                 *) continue ;;
             esac
             value=${line#*=}
@@ -139,7 +139,7 @@ main() {
     [[ $APP_PORT =~ ^[0-9]{1,5}$ ]] || die config 'invalid APP_PORT'
     (( 10#$APP_PORT >= 1 && 10#$APP_PORT <= 65535 )) || die config 'invalid APP_PORT'
     APP_PORT=$((10#$APP_PORT))
-    for key in jq flock curl systemctl systemd-run sleep docker date timeout; do
+    for key in jq flock curl systemctl systemd-run sleep docker date timeout git; do
         command -v "$key" >/dev/null || die preflight "missing $key"
     done
     [[ -f $COMPOSE_FILE && -f $COMPOSE_ENV_FILE ]] || die config 'compose and environment files must exist'
@@ -196,10 +196,25 @@ main() {
     local -a compose=(docker compose -f "$COMPOSE_FILE" --env-file "$COMPOSE_ENV_FILE")
     rendered=$("${compose[@]}" config --format json 2>/dev/null) || die deploy 'compose config failed'
     jq --arg port "$APP_PORT" -e 'all(.services[] | .ports[]? | select(.published != null); .host_ip == "127.0.0.1" and (.published | tostring) == $port)' <<< "$rendered" >/dev/null 2>&1 || die deploy 'published ports must use loopback'
+    [[ ${COMMONPLACE_BUILD_COMMIT:-} =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || die release 'COMMONPLACE_BUILD_COMMIT must be a full reviewed commit'
+    [[ $(git -C "$COMMONPLACE_SOURCE_DIR" rev-parse HEAD) == "$COMMONPLACE_BUILD_COMMIT" ]] || die release 'source HEAD differs from requested commit'
+    local dirty
+    dirty=$(git -C "$COMMONPLACE_SOURCE_DIR" status --porcelain --untracked-files=all) || die release 'cannot inspect source'
+    [[ -z $dirty ]] || die release 'source must be clean'
+    jq -e --arg source "$COMMONPLACE_SOURCE_DIR" --arg commit "$COMMONPLACE_BUILD_COMMIT" '
+        .services.commonplace | .build.context == $source and
+        .build.dockerfile == "deploy/commonplace/Dockerfile" and
+        .build.args.COMMONPLACE_BUILD_COMMIT == $commit and
+        (.image | type == "string" and endswith(":" + $commit))
+    ' <<< "$rendered" >/dev/null 2>&1 || die release 'Compose must select the requested source and build commit'
     "${compose[@]}" up -d --build || die deploy 'compose up failed'
     "${compose[@]}" ps || die deploy 'compose ps failed'
     health=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$APP_PORT/healthz") || health=unavailable
-    printf '[deploy] healthz: %s\n' "$health"
+    [[ $health == 200 ]] || die deploy 'health probe failed'
+    local running
+    running=$("${compose[@]}" exec -T commonplace python -c "from importlib.resources import files; print(files('commonplace.web').joinpath('_build_commit.txt').read_text(encoding='ascii').strip())") || die release 'cannot attest running package'
+    [[ $running == "$COMMONPLACE_BUILD_COMMIT" ]] || die release 'running package differs from requested commit'
+    printf '[deploy] verified release: %s; healthz: %s\n' "$running" "$health"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -541,6 +541,11 @@ def run_deploy(tmp_path, **fakes):
         assert executable, f"required test dependency: {name}"
         if not (bin_dir / name).exists():
             (bin_dir / name).symlink_to(executable)
+    git = bin_dir / "git"
+    git.write_text(
+        '#!/usr/bin/env bash\nif [[ "$*" == *rev-parse* ]]; then echo ' + "0" * 39 + "1; fi\n"
+    )
+    git.chmod(0o755)
     stat = bin_dir / "stat"
     stat.write_text(
         "#!/usr/bin/env bash\nprintf '%s\\n' " + shlex.quote(fakes.get("stat", "0 600")) + "\n"
@@ -600,12 +605,25 @@ HOLD_SIGNAL
 exit HOLD_RC""".replace("HOLD_RC", str(fakes.get("hold_rc", 0))).replace(
             "HOLD_SIGNAL", fakes.get("hold_signal", ":")
         ),
-        "docker": """if [[ "$*" == *"config --format json" ]]; then
+        "docker": fakes.get(
+            "docker",
+            """if [[ "$*" == *"config --format json" ]]; then
  echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED"}]}}}'
-fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
-            "PUBLISHED", fakes.get("published", "8765")
+fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1"))
+            .replace("PUBLISHED", fakes.get("published", "8765"))
+            .replace(
+                '"ports":',
+                '"build":{"context":"'
+                + str(ROOT)
+                + '","dockerfile":"deploy/commonplace/Dockerfile","args":{"COMMONPLACE_BUILD_COMMIT":"'
+                + "0" * 39
+                + '1"}},"image":"commonplace:0000000000000000000000000000000000000001","ports":',
+            )
+            + '\nif [[ "$*" == *"exec -T commonplace python -c"* ]]; then echo '
+            + "0" * 39
+            + "1; fi",
         ),
-        "curl": "echo 200",
+        "curl": fakes.get("curl", "echo 200"),
         "latest": fakes.get(
             "latest",
             'jq -cn --arg time "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" \'{id:("a" * 64),time:$time}\'',
@@ -628,6 +646,7 @@ fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
         "PATH": str(bin_dir),
         "COMMONPLACE_ROOT": str(tmp_path),
         "COMMONPLACE_SOURCE_DIR": str(ROOT),
+        "COMMONPLACE_BUILD_COMMIT": "0" * 39 + "1",
         "COMMONPLACE_ENV_FILE": str(tmp_path / ".env"),
         "COMMONPLACE_DATA_DIR": str(tmp_path / "data"),
         "COMMONPLACE_DEPLOY_ENV": str(config),
@@ -826,8 +845,9 @@ def test_deploy_sh_success_order(tmp_path):
         "docker",
         "docker",
         "curl",
+        "docker",
     ]
-    assert calls[-4:-1] == [
+    assert calls[-5:-2] == [
         compose + ["config", "--format", "json"],
         compose + ["up", "-d", "--build"],
         compose + ["ps"],
@@ -1142,3 +1162,51 @@ def test_deploy_reports_both_missing_paths(tmp_path):
     assert result.returncode == 1
     assert result.stderr.count("\n") == 2
     assert [call[0] for call in calls] == ["id"]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["stale_context", "stale_image", "runtime_old", "runtime_missing", "health", "up", "requested"],
+)
+def test_deploy_requested_release(tmp_path, scenario):
+    sha = "0" * 39 + "1"
+    source = tmp_path / "release"
+    source.mkdir()
+    service = {
+        "build": {
+            "context": str(source),
+            "dockerfile": "deploy/commonplace/Dockerfile",
+            "args": {"COMMONPLACE_BUILD_COMMIT": sha},
+        },
+        "image": "commonplace:" + sha,
+        "ports": [],
+    }
+    if scenario == "stale_context":
+        service["build"]["context"] = str(tmp_path / "old-release")
+        service["image"] = "commonplace:old"
+    if scenario == "stale_image":
+        service["image"] = "commonplace:old"
+    rendered = json.dumps({"services": {"commonplace": service}})
+    runtime = "f" * 40 if scenario == "runtime_old" else sha
+    docker = f"""case "$*" in
+*"config --format json") echo {shlex.quote(rendered)} ;;
+*"up -d --build"*) exit {9 if scenario == "up" else 0} ;;
+*"exec -T commonplace python -c"*) {"exit 9" if scenario == "runtime_missing" else "echo " + runtime} ;;
+esac"""
+    result, calls = run_deploy(
+        tmp_path,
+        docker=docker,
+        compose_env="COMMONPLACE_SIGNUP=closed\n",
+        curl="echo 503" if scenario == "health" else "echo 200",
+        env={"COMMONPLACE_SOURCE_DIR": str(source), "COMMONPLACE_BUILD_COMMIT": sha},
+    )
+    assert (tmp_path / "compose.yml").read_text() == ""
+    assert (tmp_path / ".env").read_text() == "COMMONPLACE_SIGNUP=closed\n"
+    if scenario == "requested":
+        assert result.returncode == 0, result.stderr
+        assert sha in result.stdout
+        assert any("exec" in call for call in calls)
+    else:
+        assert result.returncode != 0, (result.stdout, result.stderr)
+        if scenario in {"stale_context", "stale_image"}:
+            assert not any("up" in call for call in calls)
