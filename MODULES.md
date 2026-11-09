@@ -1050,6 +1050,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/callstack.py`
 - **Owns:**
 
+  - Atomic, person-authorized chat-task origin bindings in the canonical boards transaction, with opaque actor-scoped dispatch keys and conflicting-intent refusal.
+
   - Canonical Space REST response projection and typed creation refusals.
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.

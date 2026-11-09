@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -2625,6 +2626,55 @@ class BoardService:
                     raise CardRefused("blocked_by")
                 result = self._card(conn, row)
         return self._start_assignment(result)
+
+    def ensure_chat_task(self, origin_key, request):
+        """Create/replay one explicitly requested chat task in the boards transaction.
+
+        The origin is an opaque internal dispatch key, never private message text.
+        This method is intentionally absent from agent tool/HTTP registration.
+        Conversation membership and intent checks belong to the caller; board
+        permission is always checked here under the actual person's principal.
+        """
+        if not self.principal.person:
+            raise ToolError("no: chat task dispatch requires a person")
+        if (
+            not isinstance(origin_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", origin_key)
+            or not isinstance(request, dict)
+            or set(request) - {"board", "title", "body"}
+            or not {"board", "title"} <= set(request)
+        ):
+            raise ToolError("no: invalid chat task intent")
+        with self.transaction() as conn:
+            board = self._board(conn, request["board"])
+            self._write(board, submission=True)
+            title = validate_text(request["title"], "title", required=True, limit=500)
+            body = validate_text(request.get("body", ""), "body", limit=100_000)
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"board": board["slug"], "title": title, "body": body},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            previous = conn.execute(
+                "SELECT request_digest,task_id FROM chat_task_origins "
+                "WHERE actor=? AND origin_key=?",
+                (self.principal.actor, origin_key),
+            ).fetchone()
+            if previous is not None:
+                if previous["request_digest"] != fingerprint:
+                    raise ToolError("no: chat task intent conflicts with its origin")
+                row, _ = self._get(conn, previous["task_id"])
+                return self._card(conn, row, self.principal)
+            card = self._new_card(conn, board, title=title, body=body, status="todo")
+            conn.execute(
+                "INSERT INTO chat_task_origins(actor,origin_key,request_digest,task_id) "
+                "VALUES (?,?,?,?)",
+                (self.principal.actor, origin_key, fingerprint, card["number"]),
+            )
+        return card
 
     def _release_origin(self, conn, row, approve, reason, escalate):
         p = self.principal
