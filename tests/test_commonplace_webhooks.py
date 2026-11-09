@@ -916,3 +916,37 @@ def test_dispatcher_closed_control_database_exits_silently(security, monkeypatch
     assert removed == [dispatcher.on_event]
     assert waits == []
     assert not caplog.records
+
+
+def test_subscription_lookup_failure_is_logged_without_enqueue(security, monkeypatch, caplog):
+    s = security
+    hidden = ["PRIVATE_LOOKUP_CANARY", s.hook["secret"]]
+    if hasattr(webhooks, "_event_identity"):
+        # Materialize a fixture-private key without creating any delivery.
+        webhooks._event_identity(s.db, s.hook, 1)
+        with s.db._lock:
+            hidden.append(
+                s.db._conn.execute(
+                    "SELECT event_id_key FROM webhooks WHERE id=?", (s.hook["id"],)
+                ).fetchone()[0]
+            )
+
+    def unavailable(connection_id):
+        raise sqlite3.OperationalError(" ".join(hidden))
+
+    monkeypatch.setattr(s.db, "authenticate_connection", unavailable)
+    s.dispatcher.on_event(security_event(s))
+    with s.db._lock:
+        assert s.db._conn.execute("SELECT count(*) FROM webhook_deliveries").fetchone()[0] == 0
+    records = [record for record in caplog.records if record.name == webhooks.logger.name]
+    assert len(records) == 1, "subscription lookup failure must produce exactly one diagnostic"
+    # The earlier admission boundary logged the same failure under its old name.
+    expected = (
+        "webhook subscription authority failed"
+        if hasattr(webhooks, "_subscription_principal")
+        else "webhook owner authorization failed"
+    )
+    assert records[0].args[0] == expected
+    assert records[0].args[1] == "OperationalError"
+    exposed = any(value in caplog.text for value in hidden)
+    assert not exposed, "lookup diagnostic exposed exception text or key material"

@@ -1746,6 +1746,8 @@ or manual data setup is required. Subscriptions with `sees_all_wings` retain the
 raw sequence and id. Enqueue, send and listing resolve the subscription's current
 effective authority, including owner-held restricted tokens; an unresolvable
 principal is restricted. Send rechecks queued payloads after authority changes.
+Subscription lookup exceptions log one diagnostic with exception type and stack
+locations, excluding exception text and key material; admission still fails closed.
 
 Writes into unreadable private wings remain allowed, but duplicate drawer
 retries return the same successful shape as fresh writes. Replay fields and

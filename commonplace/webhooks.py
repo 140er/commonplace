@@ -496,8 +496,9 @@ def _subscription_principal(db, row):
             return None
         if principal is not None and principal.workspace_id == row["workspace_id"]:
             return principal
-    except Exception:
+    except Exception as exc:
         # Unresolvable identity must never enable workspace sequence metadata.
+        log_failure(logger, "webhook subscription authority failed", exc)
         return None
     return None
 
