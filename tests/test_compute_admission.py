@@ -437,7 +437,12 @@ def test_actual_guarded_two_hop_ssh_approved_probe_and_redacted_result(admission
     )
     assert state.service._run_once()
     run = run_row(state, state.proposal)
-    assert run["phase"] == "terminal" and run["certainty"] == "known", dict(run)
+    assert run["phase"] == "terminal" and run["certainty"] == "known", (
+        run["reason"],
+        fixture.messages,
+        fixture.errors,
+        fixture.refusals,
+    )
     assert run["exit_code"] == 0 and run["reserved"] == 0
     assert fixture.messages == ["ready", "admission_challenge", "opened"]
     assert fixture.authenticated == ["gateway", "target"]

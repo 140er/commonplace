@@ -283,6 +283,7 @@ class SocketPairAdmissionSSH:
         self.fault, self.hook = fault, hook
         self.authenticated, self.commands, self.opened, self.messages = [], [], [], []
         self.resources, self.threads, self.errors = [], [], []
+        self.refusals = []
         self.stop = threading.Event()
         self.helper_path = state.env.path.parent / "fixture-helper-replay.sqlite3"
         self.request = None
@@ -298,8 +299,18 @@ class SocketPairAdmissionSSH:
         def guarded():
             try:
                 fn()
-            except (EOFError, OSError, paramiko.SSHException, ProtocolDenied):
-                pass  # Deliberately refused peers and ambiguous acknowledgement.
+            except (EOFError, OSError, paramiko.SSHException, ProtocolDenied) as exc:
+                import traceback
+
+                self.refusals.append(
+                    (
+                        type(exc).__name__,
+                        [
+                            (frame.name, frame.lineno)
+                            for frame in traceback.extract_tb(exc.__traceback__)
+                        ],
+                    )
+                )
             except Exception as exc:
                 self.errors.append(type(exc).__name__)
 
@@ -416,6 +427,9 @@ class SocketPairAdmissionSSH:
         class Wire:
             """Faults alter control frames only, never nested encrypted SSH."""
 
+            def __init__(self):
+                self.control_done = False
+
             def settimeout(self, timeout):
                 channel.settimeout(timeout)
 
@@ -426,7 +440,11 @@ class SocketPairAdmissionSSH:
                 # FrameIO sends exactly one bounded frame. Relay sends arbitrary
                 # encrypted data, which this adapter leaves untouched.
                 message = None
-                if len(data) >= 4 and int.from_bytes(data[:4], "big") == len(data) - 4:
+                if (
+                    not self.control_done
+                    and len(data) >= 4
+                    and int.from_bytes(data[:4], "big") == len(data) - 4
+                ):
                     message = decode_frame(data)
                 if message is not None:
                     fixture.messages.append(message["kind"])
@@ -451,6 +469,8 @@ class SocketPairAdmissionSSH:
                     elif message["kind"] == "opened" and fixture.fault == "lost_opened":
                         channel.close()
                         raise EOFError
+                    if message["kind"] == "opened":
+                        self.control_done = True
                 channel.sendall(data)
 
             def fileno(self):

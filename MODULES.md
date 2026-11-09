@@ -1460,7 +1460,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
   - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
-  - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and leaves remote admission disabled until its channel is integrated.
+  - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and a separate explicitly configured SSH challenge/one-use permit exchange authorizes fixed-operation admission without upgrading local lease domains.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
   - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
 
@@ -1482,6 +1482,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
+  - `tests/test_compute_admission.py` covers explicit digest-bound mode, guarded two-hop SSH permits, tampering/replay/expiry, pre/post-issuance revocation, writer exclusion and uncertainty retention.
   - `tests/test_compute_fence.py` proves local cross-process writer exclusion, durable epoch invalidation, stale-authority refusal, timeout/crash/restart, persistent unparticipating-writer denial and default-off lifecycle.
   - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
   - `tests/test_compute_control.py` and `tests/test_compute_api.py` cover persistent/replayed actions, current authority, Origin/framing, typed enrollment/grants and stale digest rejection; `tests/test_compute_browser.py` exercises the full real gateway UI lifecycle.

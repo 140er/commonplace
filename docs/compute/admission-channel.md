@@ -1,5 +1,25 @@
 # Authenticated helper admission round-trip implementation
 
+Implemented in source9ea079d908005e3cd65ce448d87f68fd322b30bb, integrated2641cc18.
+Trusted WorkspaceExecutionConfig.admission_mode must explicitly equal
+`controller-ssh-permit-v1`; the helper must independently select the same mode.
+The mode enters Store._binding and therefore the exact approval digest. Local
+leases still cover only LOCAL_DOMAINS; actual remote ordering uses the separate
+SSH exchange, never an added lease flag. Unconfigured execution stays disabled.
+Initial guarded64checks passed after the parent corrected a fixture control-frame
+injector that misclassified subsequent encrypted SSH packets. This is component
+verification, not independent review, provisioning or a release verdict.
+
+Controller gateway_admissions and the helper replay journal use additive schema
+migrations preserving earlier consumed identities. The controller records the
+unique helper channel, nonce and exact permit before returning to the transport;
+the helper validates and consumes its record before opening a route. Issued
+permits remain in flight: uncertainty reserves capacity and does not auto-retry.
+Passive cache collection needs its own purpose-bound admission (#325) and remains
+unavailable with a local-only lease.
+
+The frozen implementation brief follows for traceability.
+
 Next builder owns compute/protocol.py, transport.py, executor.py and narrowly
 needed fence.py / __init__.py lifecycle configuration, plus new
  tests/test_compute_admission.py and necessary isolated SSH fixture updates.

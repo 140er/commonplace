@@ -170,9 +170,16 @@ persisted SQL guards for central local authority writers. Private registered
 functions reject unparticipating legacy connections; missing/replaced participant
 files, changed guards or unknown workspaces deny. ControlDB locks/transactions,
 BoardStore connections/transactions, Compute journals/enrollment and custody
-transactions participate. These local domains exclude gateway_admission: the
-remote authenticated helper-to-controller permit channel is still absent, so
-execution remains off with gateway_admission_unintegrated. No instantaneous
+transactions participate. These local domains exclude gateway_admission. Explicit trusted
+admission_mode=controller-ssh-permit-v1 installs a separate wire adapter:
+request/ready/go/challenge, fresh fenced durable one-use permit issuance,
+lock release before send, independent helper validation/replay consumption,
+then opened and the independently pinned inner SSH hop. Mode changes alter the
+canonical approval digest. Controller and helper journals preserve earlier
+records through additive migration, and issued-permit uncertainty keeps its
+capacity reservation. Unconfigured execution still stops with
+gateway_admission_unintegrated. The fixed-operation channel does not enable
+passive collection, which needs a separate purpose-bound admission path. No instantaneous
 remote revocation or filesystem rollback guarantee is claimed.
 
 Approved actions are consumed once into append-only identity-bound execution_runs
@@ -193,7 +200,7 @@ The owner UI displays admitted/running/unknown/observed-exit facts, redacted
 evidence and cancellation intent separately from stored proposal approval.
 Trusted per-workspace startup configuration wires service installation and
 shutdown without key initialization. Host shutdown refuses to report clean if
-worker threads remain. Remote admission wiring, independent provisioning and
+worker threads remain. Passive admission wiring, independent provisioning and
 external reconciliation/restore procedures remain separate requirements.
 Compute management fence timeouts return a bounded503 authority_unavailable.
 

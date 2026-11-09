@@ -42,6 +42,22 @@ signed verification, protected credential provisioning and participating local
 and gateway authority admission are required before remote effects can be enabled.
 The default installation does not scan networks or dispatch remote operations.
 
+Trusted host startup can select
+`WorkspaceExecutionConfig(admission_mode="controller-ssh-permit-v1", ...)`
+alongside its explicit enabled flag, protected files and independently pinned
+provisioning verifier keys. The forced SSH helper must independently select that
+same mode. This is constructor configuration, never a browser field. Changing
+the mode changes the action digest and requires fresh approval. Existing local
+authority leases do not certify remote admission; the adapter performs a fresh
+one-use permit round trip over pinned SSH. A permit already issued is in flight,
+and a lost response does not release its durable reservation.
+
+The Passive observations section shows configured availability and persistent
+collection history. Collection requires separate trusted passive admission;
+enabling fixed-operation execution alone does not enable it. Scope ceilings are
+charged permanently at intake, including unused or cancelled reservations.
+Unknown attempts retain their slots and never automatically recollect.
+
 ## Verification
 
 The normal focused checks use pytest through heavy. Custody and concrete fence
@@ -51,7 +67,7 @@ local rather than weakening ownership validation.
 
 ```sh
 heavy --local-only -- uv run --extra compute --extra sqlcipher pytest -q \
-  tests/test_compute_fence.py tests/test_compute_executor.py \
+  tests/test_compute_fence.py tests/test_compute_executor.py tests/test_compute_admission.py \
   tests/test_compute_credentials.py tests/test_compute_ssh_fixture.py
 heavy -- uv run --extra compute pytest -q \
   tests/test_compute_discovery.py tests/test_compute_transport.py \
