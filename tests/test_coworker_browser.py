@@ -172,3 +172,84 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
         thread.join(timeout=5)
         supervisor.close()
         db.close()
+
+
+def test_browser_canonical_progress_returns_to_origin_without_blocking_composer(
+    tmp_path, monkeypatch
+):
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    for name in ("CHAT", "HOLD"):
+        monkeypatch.setenv(f"COMMONPLACE_{name}_WORKER", "off")
+    monkeypatch.setenv("COMMONPLACE_RATE_LIMITS", "off")
+    for name in ("COMMONPLACE_ALLOWED_HOSTS", "COMMONPLACE_APP_URL", "COMMONPLACE_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    db = ControlDB(str(tmp_path / "control.sqlite3"))
+    supervisor = WorkerSupervisor(str(tmp_path), launcher=object())
+    gateway = Gateway(db, supervisor)
+    owner = db.create_user("task-browser@synthetic.test")
+    wid = db.create_workspace("Task progress fixture", owner)
+    cookie = sessions.start_session(db, owner, wid)
+    principal = sessions.session_principal(db, cookie)
+    boards = BoardService(ToolContext(principal=principal, gateway=gateway))
+    boards.board_add("work", wing="fixture")
+    store = open_store(gateway, wid)
+    bot = store.create_bot(owner, "Mira")
+    conversation = store.create_conversation(owner, "dm", bot_ids=[bot["id"]], board="work")
+    gateway.coworker_worker.start()
+    server = gateway.build_server("127.0.0.1", 0)
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                context = browser.new_context(viewport={"width": 1440, "height": 1000})
+                context.add_cookies([{"name": sessions.COOKIE, "value": cookie, "url": origin}])
+                page = context.new_page()
+                page.set_default_timeout(10000)
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.goto(origin + "/app/#/coworkers/" + conversation["id"])
+                page.locator("#cw-compose").fill("/task Inspect fixture\nExact shared request.")
+                page.get_by_role("button", name="Send", exact=True).click()
+                progress = page.get_by_role("region", name="Canonical task progress")
+                progress.get_by_text("Task to do", exact=True).wait_for()
+                job = store.list_jobs(owner, conversation["id"])[0]
+                number = job["task"]["number"]
+                boards.task_update(number, status="doing", status_line="Reading synthetic fixture.")
+                boards.task_comment(number, "Exact worker observation <script>inert</script>")
+                page.get_by_role("button", name="Refresh", exact=True).click()
+                progress.get_by_text("Reading synthetic fixture.", exact=True).wait_for()
+                assert page.locator("#cw-compose").is_enabled()
+                page.locator("#cw-compose").fill("A new message while work continues")
+                page.get_by_role("button", name="Send", exact=True).click()
+                page.locator(".cw-message p").filter(
+                    has_text="A new message while work continues"
+                ).wait_for()
+                assert boards.task_show(number)["status"] == "doing"
+                boards.task_update(number, status="done", status_line="Exact final fixture result.")
+                page.get_by_role("button", name="Refresh", exact=True).click()
+                progress.get_by_text("Exact final fixture result.", exact=True).wait_for()
+                progress.get_by_text("Task marked done", exact=True).wait_for()
+                page.reload()
+                progress.get_by_text("Exact final fixture result.", exact=True).wait_for()
+                assert not any(
+                    "Exact final fixture result." in item["text"]
+                    for item in store.list_messages(owner, conversation["id"])
+                )
+                page.set_viewport_size({"width": 390, "height": 844})
+                assert page.locator("#cw-compose").is_enabled()
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                assert errors == []
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        supervisor.close()
+        db.close()

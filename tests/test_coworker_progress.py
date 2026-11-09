@@ -238,6 +238,21 @@ def test_revocation_rebind_and_cancel_withhold_before_canonical_source_reads(
     elif change in ("origin_member", "viewer_member"):
         user = env.uid if change == "origin_member" else env.other
         with env.db._lock:
+            # Runner enrollment binds connections to the membership by FK.
+            # Remove those synthetic dependents before removing membership;
+            # leave the person sessions alive to isolate the membership check.
+            env.db._conn.execute(
+                "DELETE FROM runner_connections WHERE connection_id IN "
+                "(SELECT id FROM connections WHERE workspace_id=? AND user_id=?)",
+                (env.wid, user),
+            )
+            env.db._conn.execute(
+                "UPDATE connections SET parent_id=NULL WHERE workspace_id=? AND user_id=?",
+                (env.wid, user),
+            )
+            env.db._conn.execute(
+                "DELETE FROM connections WHERE workspace_id=? AND user_id=?", (env.wid, user)
+            )
             env.db._conn.execute(
                 "DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (env.wid, user)
             )
