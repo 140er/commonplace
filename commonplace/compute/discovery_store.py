@@ -55,6 +55,22 @@ CREATE TRIGGER IF NOT EXISTS discovery_no_rebind BEFORE UPDATE OF
  id,user_id,session_hash,request_id,intake,scope_id,gateway_id,board,task_number,binding,
  created_at,hosts,results,seconds,rate,scope_concurrency,authority_epoch ON discoveries
  BEGIN SELECT RAISE(ABORT,'discovery admission cannot be rebound'); END;
+CREATE TABLE IF NOT EXISTS discovery_attempts (
+ discovery_id TEXT PRIMARY KEY REFERENCES discoveries(id), worker TEXT NOT NULL,
+ request TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS discovery_permits (
+ discovery_id TEXT PRIMARY KEY REFERENCES discovery_attempts(discovery_id),
+ purpose TEXT NOT NULL, request_digest TEXT NOT NULL, authority_epoch INTEGER NOT NULL,
+ helper_channel TEXT NOT NULL UNIQUE, helper_nonce TEXT NOT NULL UNIQUE,
+ permit TEXT NOT NULL, issued_at REAL NOT NULL);
+CREATE TRIGGER IF NOT EXISTS discovery_attempt_no_update BEFORE UPDATE ON discovery_attempts
+ BEGIN SELECT RAISE(ABORT,'discovery attempt is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS discovery_attempt_no_delete BEFORE DELETE ON discovery_attempts
+ BEGIN SELECT RAISE(ABORT,'discovery attempt cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS discovery_permit_no_update BEFORE UPDATE ON discovery_permits
+ BEGIN SELECT RAISE(ABORT,'discovery permit is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS discovery_permit_no_delete BEFORE DELETE ON discovery_permits
+ BEGIN SELECT RAISE(ABORT,'discovery permit cannot be deleted'); END;
 """
 
 
@@ -103,8 +119,8 @@ class DiscoveryStore:
     def _transaction(self, principal, session_hash, *, admit=False):
         service = self.service
         if admit and service is not None and service.running:
-            # Strict remote participation is required for *new* effects. Capture
-            # its lease without nesting the control Store's own fence context.
+            # The service validates the selected concrete admission adapter before
+            # obtaining its local lease; never upgrade its declared domains.
             with service._guard() as lease:
                 with self.gateway.db._lock:
                     current = self.control._owner(principal, session_hash)
@@ -130,6 +146,7 @@ class DiscoveryStore:
             if row["agent_id"]
             else current
         )
+        self.control._execution_task(agent, row["task_number"])
         raw = json.loads(row["metadata"])
         scope = NetworkScope(
             context=DiscoveryContext(**raw["context"]),

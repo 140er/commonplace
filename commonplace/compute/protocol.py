@@ -6,7 +6,8 @@ ReplayJournal and GatewayHelper. GatewayHelper receives protected installation
 bindings, an authenticated SSH-key workspace/gateway binding, a current-authority
 callback and an explicitly supplied SQLite connection. Explicit
 controller-ssh-permit-v1 mode adds a fresh controller admission round trip on the
-same authenticated SSH stream; neither mode enables passive execution permits.
+same authenticated SSH stream. Passive permits require their own explicit
+passive_admission_mode and use a separate purpose/replay namespace.
 It never reads config,
 credentials or inventory and never creates a listener. Passive collection needs
 an explicitly configured trusted collector, independent ceiling and live scope
@@ -36,12 +37,13 @@ import time
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
 
-from .discovery import DiscoveryDenied, PassiveCollector, validate_sources
+from .discovery import DiscoveryDenied, PassiveCollector, _scope, validate_sources
 from .scopes import DiscoveryContext, DiscoveryLimits, NetworkScope, ScopeDenied
 
 VERSION = 1
 ADMISSION_MODE = "controller-ssh-permit-v1"
 ADMISSION_VERSION = 1
+PASSIVE_PURPOSE = "compute-passive-collection"
 MAX_FRAME_BYTES = 8192
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -128,6 +130,9 @@ class PassiveDiscoveryRequest:
     limits: DiscoveryLimits
     output_bytes: int = MAX_FRAME_BYTES
     method: str = "passive"
+    passive_admission_mode: str | None = None
+    start_by: float | None = None
+    run_until: float | None = None
 
     def __post_init__(self):
         identifier(self.discovery)
@@ -145,20 +150,42 @@ class PassiveDiscoveryRequest:
             object.__setattr__(self, "sources", validate_sources(self.sources))
         except DiscoveryDenied:
             raise ProtocolDenied("unsupported_passive_source") from None
+        if self.passive_admission_mode is not None:
+            if self.passive_admission_mode != ADMISSION_MODE:
+                raise ProtocolDenied("unsupported_admission_mode")
+            finite(self.start_by)
+            finite(self.run_until)
+            if self.start_by > self.run_until:
+                raise ProtocolDenied("admission_expired")
+        elif self.start_by is not None or self.run_until is not None:
+            raise ProtocolDenied("unsupported_admission_mode")
+
+    @property
+    def digest(self):
+        return hashlib.sha256(canonical(self.message())).hexdigest()
 
     def message(self):
-        return {"v": VERSION, "kind": "collect_passive", **asdict(self)}
+        result = {"v": VERSION, "kind": "collect_passive", **asdict(self)}
+        if self.passive_admission_mode is None:
+            for name in ("passive_admission_mode", "start_by", "run_until"):
+                del result[name]
+        return result
 
     @classmethod
     def from_message(cls, value):
-        exact_fields(value, {"v", "kind", *cls.__dataclass_fields__})
+        fields = {"v", "kind", *cls.__dataclass_fields__}
+        if type(value) is dict and "passive_admission_mode" not in value:
+            fields -= {"passive_admission_mode", "start_by", "run_until"}
+        exact_fields(value, fields)
+        if "passive_admission_mode" in value and value["passive_admission_mode"] != ADMISSION_MODE:
+            raise ProtocolDenied("unsupported_admission_mode")
         if (
             type(value["v"]) is not int
             or value["v"] != VERSION
             or value["kind"] != "collect_passive"
         ):
             raise ProtocolDenied("unsupported_protocol")
-        fields = {name: value[name] for name in cls.__dataclass_fields__}
+        fields = {name: value[name] for name in cls.__dataclass_fields__ if name in value}
         exact_fields(fields["context"], DiscoveryContext.__dataclass_fields__)
         exact_fields(fields["limits"], DiscoveryLimits.__dataclass_fields__)
         try:
@@ -642,6 +669,96 @@ class AdmissionChallenge:
         return cls(request, message["channel"], message["nonce"], message["start_by"])
 
 
+@dataclass(frozen=True)
+class PassiveAdmissionChallenge:
+    """Purpose-separated identity on the existing pinned outer SSH subsystem.
+
+    A discovery ID names its sole immutable reserved attempt. This is a typed
+    challenge, never authority; the controller must commit its permit locally.
+    """
+
+    request: PassiveDiscoveryRequest
+    channel: str
+    nonce: str
+    start_by: float
+
+    def __post_init__(self):
+        if (
+            type(self.request) is not PassiveDiscoveryRequest
+            or self.request.passive_admission_mode != ADMISSION_MODE
+        ):
+            raise ProtocolDenied("unsupported_admission_mode")
+        for value in (self.channel, self.nonce):
+            if type(value) is not str or not _HEX.fullmatch(value):
+                raise ProtocolDenied("invalid_nonce")
+        finite(self.start_by)
+        if self.start_by > self.request.start_by:
+            raise ProtocolDenied("admission_expired")
+
+    def message(self, kind="passive_challenge"):
+        return {
+            "v": VERSION,
+            "kind": kind,
+            "purpose": PASSIVE_PURPOSE,
+            "admission_v": ADMISSION_VERSION,
+            "passive_admission_mode": self.request.passive_admission_mode,
+            "discovery": self.request.discovery,
+            "scope": self.request.scope,
+            "digest": self.request.digest,
+            "gateway_epoch": self.request.gateway_epoch,
+            "authority_epoch": self.request.authority_epoch,
+            "channel": self.channel,
+            "nonce": self.nonce,
+            "start_by": self.start_by,
+            "run_until": self.request.run_until,
+        }
+
+    def validate_time(self, now):
+        finite(now)
+        if not (
+            now < self.start_by <= min(self.request.start_by, now + 5)
+            and self.start_by
+            <= self.request.run_until
+            <= now + self.request.limits.duration_seconds
+        ):
+            raise ProtocolDenied("admission_expired")
+
+    @classmethod
+    def from_message(cls, message, request, *, kind="passive_challenge", ready=None):
+        if type(message) is not dict:
+            raise ProtocolDenied("admission_mismatch")
+        challenge = cls(
+            request, message.get("channel"), message.get("nonce"), message.get("start_by")
+        )
+        if (
+            type(message.get("v")) is not int
+            or type(message.get("admission_v")) is not int
+            or type(message.get("gateway_epoch")) is not int
+            or type(message.get("authority_epoch")) is not int
+            or message != challenge.message(kind)
+            or (ready is not None and message != {**ready, "kind": kind})
+        ):
+            raise ProtocolDenied("admission_mismatch")
+        return challenge
+
+
+def passive_result(response, challenge):
+    """Validate the exact permit-bound result envelope; return legacy payload."""
+    header = challenge.message("passive_observations")
+    fields = {"observations", "truncated", "reason", "source_bytes", "source_lines"}
+    exact_fields(response, set(header) | fields)
+    if len(canonical(response)) > challenge.request.output_bytes:
+        raise ProtocolDenied("output_limit")
+    if any(type(response[k]) is not type(v) or response[k] != v for k, v in header.items()):
+        raise ProtocolDenied("admission_mismatch")
+    return {
+        "v": VERSION,
+        "kind": "passive_observations",
+        "discovery": challenge.request.discovery,
+        **{k: response[k] for k in fields},
+    }
+
+
 class ReplayJournal:
     """Durable local consumption, using a parent-supplied protected connection.
 
@@ -672,6 +789,7 @@ class ReplayJournal:
             "ON compute_transport_journal(channel)"
         )
         connection.commit()
+        self._passive_schema()
 
     def consume(self, request, nonce, *, channel=None, permit=None):
         if request.admission_mode is not None:
@@ -734,6 +852,83 @@ class ReplayJournal:
         ).fetchone()
         return row[0] if row else None
 
+    def _passive_schema(self):
+        # A separate purpose namespace in the SAME protected replay database.
+        # Existing execution consumption and unknown reservations are untouched.
+        self.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS compute_passive_journal (
+                workspace TEXT NOT NULL, gateway TEXT NOT NULL, discovery TEXT NOT NULL,
+                scope TEXT NOT NULL, digest TEXT NOT NULL, purpose TEXT NOT NULL,
+                channel TEXT NOT NULL UNIQUE, nonce TEXT NOT NULL UNIQUE,
+                permit TEXT NOT NULL, state TEXT NOT NULL,
+                PRIMARY KEY(workspace,gateway,discovery));
+            CREATE TRIGGER IF NOT EXISTS compute_passive_no_delete
+                BEFORE DELETE ON compute_passive_journal
+                BEGIN SELECT RAISE(ABORT,'passive replay cannot be deleted'); END;
+            CREATE TRIGGER IF NOT EXISTS compute_passive_no_rebind BEFORE UPDATE OF
+                workspace,gateway,discovery,scope,digest,purpose,channel,nonce,permit
+                ON compute_passive_journal
+                BEGIN SELECT RAISE(ABORT,'passive replay cannot be rebound'); END;
+        """)
+
+    def consume_passive(self, request, challenge, permit, *, concurrency):
+        if self.connection.in_transaction:
+            raise ProtocolDenied("journal_transaction_active")
+        if type(challenge) is not PassiveAdmissionChallenge or challenge.request != request:
+            raise ProtocolDenied("admission_mismatch")
+        PassiveAdmissionChallenge.from_message(permit, request, kind="passive_permit")
+        if permit != challenge.message("passive_permit"):
+            raise ProtocolDenied("admission_mismatch")
+        positive_integer(concurrency)
+        self._passive_schema()
+        db = self.connection
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            if (
+                db.execute(
+                    "SELECT count(*) FROM compute_passive_journal WHERE workspace=? AND gateway=? "
+                    "AND state IN ('consumed','uncertain')",
+                    (request.context.workspace, request.context.gateway),
+                ).fetchone()[0]
+                >= concurrency
+            ):
+                raise ProtocolDenied("collection_capacity_exceeded")
+            db.execute(
+                "INSERT INTO compute_passive_journal VALUES (?,?,?,?,?,?,?,?,?,'consumed')",
+                (
+                    request.context.workspace,
+                    request.context.gateway,
+                    request.discovery,
+                    request.scope,
+                    request.digest,
+                    PASSIVE_PURPOSE,
+                    challenge.channel,
+                    challenge.nonce,
+                    canonical(permit).decode(),
+                ),
+            )
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.rollback()
+            raise ProtocolDenied("replayed_discovery") from None
+        except BaseException:
+            db.rollback()
+            raise
+
+    def finish_passive(self, request, *, known=False):
+        if self.connection.in_transaction:
+            raise ProtocolDenied("journal_transaction_active")
+        with self.connection:
+            self.connection.execute(
+                "UPDATE compute_passive_journal SET state=? WHERE workspace=? AND gateway=? AND discovery=?",
+                (
+                    "completed" if known else "uncertain",
+                    request.context.workspace,
+                    request.context.gateway,
+                    request.discovery,
+                ),
+            )
+
 
 class GatewayHelper:
     """Single-session forced-command engine, disabled unless explicitly enabled.
@@ -763,6 +958,7 @@ class GatewayHelper:
         passive_ceiling=None,
         passive_scope=None,
         admission_mode=None,
+        passive_admission_mode=None,
     ):
         limits = Limits() if limits is None else limits
         if (
@@ -785,6 +981,10 @@ class GatewayHelper:
             raise ProtocolDenied("invalid_controller_binding")
         if admission_mode not in (None, ADMISSION_MODE):
             raise ProtocolDenied("unsupported_admission_mode")
+        if passive_admission_mode not in (None, ADMISSION_MODE):
+            raise ProtocolDenied("unsupported_admission_mode")
+        self.passive_admission_mode = passive_admission_mode
+        self._passive_pending = self._passive_admitted = None
         self.admission_mode = admission_mode
         self.gateway, self.routes, self.journal = gateway, MappingProxyType(copied), journal
         self.authorize, self.open_route = authorize, open_route
@@ -821,33 +1021,24 @@ class GatewayHelper:
         ) or request.gateway_epoch != self.gateway.epoch:
             raise ProtocolDenied("invalid_controller_binding")
 
-        def current_scope():
-            try:
-                # These are the helper's own clocks and protected installation
-                # state, independently of the collector's trusted runtime.
-                now = finite(self.wall())
-                if self.passive_ceiling.revoked or now >= self.passive_ceiling.expires_at:
-                    raise ProtocolDenied("scope_revoked_or_expired")
-                allowed = self.authorize(request, "collect_passive")
-                if allowed is not True:
-                    raise ProtocolDenied("authority_denied")
-                current = self.passive_scope(request)
-                now = finite(self.wall())
-                if (
-                    type(current) is not NetworkScope
-                    or current.context != request.context
-                    or current.revoked
-                    or now >= current.expires_at
-                    or now >= self.passive_ceiling.expires_at
-                ):
-                    raise ProtocolDenied("scope_revoked_or_expired")
-                return current
-            except ProtocolDenied:
-                raise
-            except Exception:
-                raise ProtocolDenied("authority_unavailable") from None
-
+        if request.passive_admission_mode != self.passive_admission_mode:
+            raise ProtocolDenied("unsupported_admission_mode")
+        admitted, self._passive_admitted = self._passive_admitted, None
         header = {"v": VERSION, "kind": "passive_observations", "discovery": request.discovery}
+        if self.passive_admission_mode is not None:
+            if admitted is None or admitted[0].request != request:
+                raise ProtocolDenied("admission_permit_required")
+            header = admitted[0].message("passive_observations")
+
+        def current_scope():
+            return self._passive_scope(request)
+
+        def stopped():
+            return cancelled() or (
+                admitted is not None
+                and (self.wall() >= request.run_until or self.monotonic() >= admitted[1])
+            )
+
         try:
             result = self.passive_collector.collect(
                 context=request.context,
@@ -857,11 +1048,136 @@ class GatewayHelper:
                 current_scope=current_scope,
                 output_bytes=min(request.output_bytes, self.limits.output_bytes),
                 envelope_bytes=len(canonical(header)) - 1,
-                cancelled=cancelled,
+                cancelled=stopped,
             )
         except ScopeDenied:
             raise ProtocolDenied("passive_collection_denied") from None
         return {**header, **result.document()}
+
+    def _passive_scope(self, request):
+        if not self.enabled or self.passive_collector is None:
+            raise ProtocolDenied("passive_source_unavailable")
+        if request.passive_admission_mode != self.passive_admission_mode or (
+            request.context.workspace,
+            request.context.gateway,
+            request.gateway_epoch,
+        ) != (self.gateway.workspace, self.gateway.gateway, self.gateway.epoch):
+            raise ProtocolDenied("invalid_controller_binding")
+        try:
+            now = finite(self.wall())
+            if request.run_until is not None and now >= request.run_until:
+                raise ProtocolDenied("admission_expired")
+            if self.authorize(request, "collect_passive") is not True:
+                raise ProtocolDenied("authority_denied")
+            current = self.passive_scope(request)
+            now = finite(self.wall())
+            _scope(self.passive_ceiling, request.context, request.limits, now)
+            _scope(current, request.context, request.limits, now)
+            if not set(request.sources) <= self.passive_collector.sources:
+                raise ProtocolDenied("passive_source_unavailable")
+            return current
+        except ProtocolDenied:
+            raise
+        except ScopeDenied:
+            raise ProtocolDenied("passive_collection_denied") from None
+        except Exception:
+            raise ProtocolDenied("authority_unavailable") from None
+
+    def prepare_passive(self, request):
+        if (
+            type(request) is not PassiveDiscoveryRequest
+            or request.passive_admission_mode != ADMISSION_MODE
+            or self.passive_admission_mode != ADMISSION_MODE
+            or self._passive_pending is not None
+        ):
+            raise ProtocolDenied("unsupported_admission_mode")
+        self._passive_scope(request)
+        challenge = PassiveAdmissionChallenge(
+            request, self.nonce(), self.nonce(), min(request.start_by, self.wall() + 5)
+        )
+        challenge.validate_time(self.wall())
+        now, tick = self.wall(), self.monotonic()
+        self._passive_pending = (
+            "ready",
+            challenge,
+            tick + challenge.start_by - now,
+            tick + request.run_until - now,
+        )
+        return challenge.message("passive_ready")
+
+    def challenge_passive(self, request, ready, go):
+        pending, self._passive_pending = self._passive_pending, None
+        challenge = PassiveAdmissionChallenge.from_message(ready, request, kind="passive_ready")
+        PassiveAdmissionChallenge.from_message(go, request, kind="passive_go", ready=ready)
+        if pending is None or pending[:2] != ("ready", challenge) or self.monotonic() >= pending[2]:
+            raise ProtocolDenied("admission_mismatch")
+        challenge.validate_time(self.wall())
+        self._passive_scope(request)
+        self._passive_pending = ("challenge", *pending[1:])
+        return challenge.message()
+
+    def admit_passive(self, request, challenge, permit):
+        pending, self._passive_pending = self._passive_pending, None
+        if (
+            self.passive_admission_mode != ADMISSION_MODE
+            or type(challenge) is not PassiveAdmissionChallenge
+            or challenge.request != request
+            or pending is None
+            or pending[:2] != ("challenge", challenge)
+        ):
+            raise ProtocolDenied("admission_mismatch")
+        PassiveAdmissionChallenge.from_message(permit, request, kind="passive_permit")
+        if permit != challenge.message("passive_permit"):
+            raise ProtocolDenied("admission_mismatch")
+        current = self._passive_scope(request)
+        challenge.validate_time(self.wall())
+        if self.monotonic() >= pending[2]:
+            raise ProtocolDenied("admission_expired")
+        self.journal.consume_passive(
+            request,
+            challenge,
+            permit,
+            concurrency=min(
+                self.limits.tunnels,
+                self.passive_ceiling.limits.concurrency,
+                current.limits.concurrency,
+            ),
+        )
+        try:
+            challenge.validate_time(self.wall())
+            if self.monotonic() >= pending[2]:
+                raise ProtocolDenied("admission_expired")
+            self._passive_admitted = (challenge, pending[3])
+            return self.collect_passive(request)
+        except BaseException:
+            self.journal.finish_passive(request)
+            raise
+        finally:
+            self._passive_admitted = None
+
+    def _serve_passive(self, io, request):
+        if request.passive_admission_mode != self.passive_admission_mode:
+            raise ProtocolDenied("unsupported_admission_mode")
+        if self.passive_admission_mode is None:
+            io.deadline = self.monotonic() + request.limits.duration_seconds
+            io.send(self.collect_passive(request))
+            return
+        ready = self.prepare_passive(request)
+        pending = self._passive_pending
+        io.deadline = min(io.deadline, pending[2])
+        io.send(ready)
+        message = self.challenge_passive(request, ready, io.receive())
+        io.send(message)
+        challenge = PassiveAdmissionChallenge.from_message(message, request, ready=ready)
+        permit = io.receive()
+        try:
+            result = self.admit_passive(request, challenge, permit)
+            io.deadline = pending[3]
+            io.send(result)
+            self.journal.finish_passive(request, known=True)
+        except BaseException:
+            self.journal.finish_passive(request)
+            raise
 
     def _route(self, request, phase):
         if not self.enabled:
@@ -993,12 +1309,7 @@ class GatewayHelper:
             or set(message) != {"v", "kind", "workspace", "gateway"}
         ):
             request = PassiveDiscoveryRequest.from_message(message)
-            # Source work has its own bounded monotonic duration. Cancellation
-            # stops further work; no claim of force-stopping a trusted callback.
-            io.deadline = self.monotonic() + request.limits.duration_seconds
-            result = self.collect_passive(request)
-            io.send(result)
-            return
+            return self._serve_passive(io, request)
         if message.get("kind") in {"describe", "collect_passive"}:
             exact_fields(message, {"v", "kind", "workspace", "gateway"})
             if (
@@ -1022,7 +1333,7 @@ class GatewayHelper:
                     "limits": asdict(self.limits),
                 }
             )
-            return
+            return None
         request = ExecutionRequest.from_message(message)
         io.byte_limit = min(io.byte_limit, request.limits.tunnel_bytes)
         io._budget(0)

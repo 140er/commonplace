@@ -3,7 +3,9 @@
 Parent installation: open_store(..., control_store=the_fenced_compute_store),
 configure(gateway, workspace_id, store=..., enabled=True, fence=the_same_fence,
 wrapping_key_path=explicit_private_path, provisioning_keys={key_id: public_bytes},
-sources=("linux_arp",)), then service.start(). Shutdown calls service.stop()
+sources=("linux_arp",), passive_admission_mode=ADMISSION_MODE), then service.start().
+Trusted WorkspaceExecutionConfig must independently select that admission_mode
+and discovery_enabled/discovery_sources. Shutdown calls service.stop()
 before stores close. Without this explicit configuration, routes remain inert.
 Constructors/configure/install never read keys or open sockets. start preflights
 already initialized custody; no automatic key generation or provider fallback.
@@ -12,9 +14,10 @@ Trusted provisioning calls _accept_enrollment with GatewayDiscoveryReceipt signe
 by an independently pinned verifier. Its purpose binds *outer-only* passive helper
 enrollment, not a public verified-state boolean or a target enrollment. The
 verifier must check the exact gateway/credential binding, protected helper source
-configuration and participation in gateway admission epoch checks. The unchanged
-AuthorityFence contract remains required. Tests' fixture fences cannot certify
-production participation. No controller callback proves instantaneous revocation
+configuration and participation in gateway admission epoch checks. Local
+authority uses LOCAL_DOMAINS only; PassiveSSHTransport supplies the separate
+authenticated, purpose-bound challenge/permit exchange. A mode flag alone does
+not certify remote participation. No controller callback proves instantaneous revocation
 of an already-running remote helper. Unknown attempts never auto-recollect.
 """
 
@@ -44,12 +47,17 @@ from .discovery import (
 from .discovery_store import digest, gateway_document, open_store
 from .discovery_transport import PassiveSSHTransport
 from .executor import _CustodyKey
-from .fence import FenceDenied, _held
+from .fence import FenceDenied, _held, _LocalAuthorityFence
 from .protocol import (
+    ADMISSION_MODE,
+    PASSIVE_PURPOSE,
+    PassiveAdmissionChallenge,
     PassiveDiscoveryRequest,
+    ProtocolDenied,
     canonical,
     finite,
     identifier,
+    passive_result,
     positive_integer,
 )
 from .scopes import DiscoveryLimits
@@ -123,7 +131,11 @@ class DiscoveryService:
         driver=None,
         policy=None,
         job_limits=None,
+        passive_admission_mode=None,
     ):
+        if passive_admission_mode not in (None, ADMISSION_MODE):
+            raise ProtocolDenied("unsupported_admission_mode")
+        self.passive_admission_mode = passive_admission_mode
         self.store, self.control = store, store.control
         self.enabled, self.fence = enabled is True, fence
         self.wrapping_key_path = wrapping_key_path
@@ -140,6 +152,14 @@ class DiscoveryService:
         self._threads = []
         self._ready = False
         self.last_reason = "disabled" if not self.enabled else "not_started"
+        self._transport = PassiveSSHTransport(
+            authorize=self._authorize,
+            credential=self._credential,
+            driver=driver,
+            passive_admission_mode=passive_admission_mode,
+            gateway_admission=self._wire_admission if passive_admission_mode is not None else None,
+            wall=self.control._now,
+        )
         store.service = self
 
     @property
@@ -153,7 +173,52 @@ class DiscoveryService:
             or self.control._authority_fence is not self.fence
         ):
             raise FenceDenied("authority_fence_unavailable")
-        return _held(self.fence, self.store.workspace_id)
+        self._configured_mode()
+        return _held(
+            self.fence,
+            self.store.workspace_id,
+            local=self.passive_admission_mode == ADMISSION_MODE,
+        )
+
+    def _configured_mode(self):
+        from . import ExecutionConfig, WorkspaceExecutionConfig
+
+        config = getattr(self.control.gateway.db, "_compute_config", None)
+        workspace = next(
+            (
+                w
+                for w in getattr(config, "workspaces", ())
+                if w.workspace == self.store.workspace_id
+            ),
+            None,
+        )
+        if self.passive_admission_mode is None:
+            if workspace is not None and getattr(workspace, "admission_mode", None) is not None:
+                raise FenceDenied("gateway_admission_unintegrated")
+            return
+        if (
+            type(config) is not ExecutionConfig
+            or type(workspace) is not WorkspaceExecutionConfig
+            or workspace.discovery_enabled is not True
+            or workspace.admission_mode != ADMISSION_MODE
+            or tuple(workspace.discovery_sources) != self.sources
+            or Path(workspace.wrapping_key_path) != Path(self.wrapping_key_path)
+            or workspace.provisioning_keys != self._keys
+            or Path(workspace.directory)
+            != Path(self.control.gateway.workspace_dir(workspace.workspace))
+            or getattr(self.control.gateway, "_compute_fences", {}).get(workspace.workspace)
+            is not self.fence
+            or type(self._transport) is not PassiveSSHTransport
+            or self._transport.passive_admission_mode != ADMISSION_MODE
+        ):
+            raise FenceDenied("gateway_admission_unintegrated")
+
+    def _unchanged(self, lease):
+        if (
+            isinstance(self.fence, _LocalAuthorityFence)
+            and self.fence._coordinator.epoch() != lease.epoch
+        ):
+            raise StoreError("authority_changed", 409)
 
     def available(self):
         """Current process availability; no key/custody/network work on HTTP."""
@@ -331,6 +396,7 @@ class DiscoveryService:
         )
         raw_scope = {**asdict(scope), "methods": sorted(scope.methods)}
         return {
+            "passive_admission_mode": self.passive_admission_mode,
             "scope": raw_scope,
             "gateway": gateway_document(gateway),
             "authority": authority,
@@ -425,7 +491,17 @@ class DiscoveryService:
                             DiscoveryLimits(
                                 row["hosts"], 1, row["rate"], row["seconds"], row["results"]
                             ),
+                            passive_admission_mode=self.passive_admission_mode,
+                            start_by=min(deadline, now + 5)
+                            if self.passive_admission_mode
+                            else None,
+                            run_until=deadline if self.passive_admission_mode else None,
                         )
+                        conn.execute(
+                            "INSERT INTO discovery_attempts VALUES (?,?,?,?)",
+                            (row["id"], self._worker, canonical(request.message()).decode(), now),
+                        )
+                        self._unchanged(lease)
                         conn.execute(
                             "UPDATE discoveries SET state='claimed',slot=1,worker=?,deadline=?,updated_at=? WHERE id=? AND state='queued'",
                             (self._worker, deadline, now, row["id"]),
@@ -438,16 +514,18 @@ class DiscoveryService:
         if row["worker"] != self._worker or row["state"] not in ("claimed", "dispatching"):
             raise StoreError("authority_changed", 409)
         scope, gateway = self._fresh(control, conn, row, lease)
-        expected = PassiveDiscoveryRequest(
-            row["id"],
-            row["scope_id"],
-            gateway.epoch,
-            lease.epoch,
-            scope.context,
-            tuple(json.loads(row["intake"])["sources"]),
-            DiscoveryLimits(row["hosts"], 1, row["rate"], row["seconds"], row["results"]),
-        )
-        if request != expected:
+        attempt = conn.execute(
+            "SELECT * FROM discovery_attempts WHERE discovery_id=?", (request.discovery,)
+        ).fetchone()
+        if (
+            attempt is None
+            or attempt["worker"] != self._worker
+            or attempt["request"] != canonical(request.message()).decode()
+            or request.passive_admission_mode != self.passive_admission_mode
+            or request.gateway_epoch != gateway.epoch
+            or request.authority_epoch != lease.epoch
+            or (request.run_until is not None and request.run_until != row["deadline"])
+        ):
             raise StoreError("authority_changed", 409)
         return row, scope, gateway
 
@@ -460,6 +538,7 @@ class DiscoveryService:
                         if phase not in ("connect", "auth", "collect") or row["state"] != "claimed":
                             return False
                         if phase == "collect":
+                            self._unchanged(lease)
                             conn.execute(
                                 "UPDATE discoveries SET state='dispatching',updated_at=? WHERE id=?",
                                 (self.control._now(), request.discovery),
@@ -468,10 +547,9 @@ class DiscoveryService:
         except Exception:
             return False
 
-    @contextmanager
-    def _credential(self, request, gateway):
-        context = object()
-        binding = CredentialBinding(
+    @staticmethod
+    def _credential_binding(request, gateway):
+        return CredentialBinding(
             request.context.workspace,
             request.context.user,
             gateway.gateway,
@@ -480,6 +558,66 @@ class DiscoveryService:
             "gateway",
             gateway.credential_version,
         )
+
+    def _admission_credential(self, request, gateway):
+        context = object()
+        binding = self._credential_binding(request, gateway)
+
+        def authority(credential_request, supplied):
+            return (
+                supplied is context
+                and credential_request.action == "acquire"
+                and (
+                    credential_request.enrollment.credential_id,
+                    credential_request.enrollment.binding,
+                )
+                == (gateway.credential_id, binding)
+            )
+
+        with self._custody_store(authority) as custody:
+            custody.acquire(gateway.credential_id, binding, context).close()
+
+    def _wire_admission(self, request, challenge):
+        if (
+            self.passive_admission_mode != ADMISSION_MODE
+            or type(challenge) is not PassiveAdmissionChallenge
+            or challenge.request != request
+        ):
+            raise ProtocolDenied("authority_denied")
+        try:
+            with self._guard() as lease:
+                with self.control._journal() as control:
+                    with self.store._journal() as conn:
+                        row, _, gateway = self._check(control, conn, lease, request)
+                        if row["state"] != "dispatching" or row["slot"] != 1:
+                            raise StoreError("authority_changed", 409)
+                        challenge.validate_time(self.control._now())
+                        self._admission_credential(request, gateway)
+                        self._unchanged(lease)
+                        permit = challenge.message("passive_permit")
+                        conn.execute(
+                            "INSERT INTO discovery_permits VALUES (?,?,?,?,?,?,?,?)",
+                            (
+                                request.discovery,
+                                PASSIVE_PURPOSE,
+                                request.digest,
+                                lease.epoch,
+                                challenge.channel,
+                                challenge.nonce,
+                                canonical(permit).decode(),
+                                self.control._now(),
+                            ),
+                        )
+                        challenge.validate_time(self.control._now())
+            # Commit AND authority release precede all channel sends/reads.
+            return permit
+        except Exception:
+            raise ProtocolDenied("authority_denied") from None
+
+    @contextmanager
+    def _credential(self, request, gateway):
+        context = object()
+        binding = self._credential_binding(request, gateway)
 
         def authority(credential_request, supplied):
             if (
@@ -632,8 +770,20 @@ class DiscoveryService:
                         # proves that helper invocation ended, not host liveness.
                         scope, _ = self._fresh(control, conn, row, lease, publishing=True)
                         if outcome.response is not None:
+                            response = outcome.response
+                            if request.passive_admission_mode is not None:
+                                record = conn.execute(
+                                    "SELECT permit FROM discovery_permits WHERE discovery_id=?",
+                                    (request.discovery,),
+                                ).fetchone()
+                                if record is None:
+                                    raise ValueError
+                                challenge = PassiveAdmissionChallenge.from_message(
+                                    json.loads(record["permit"]), request, kind="passive_permit"
+                                )
+                                response = passive_result(response, challenge)
                             observations, measured, partial = self._validate_response(
-                                outcome.response, request, scope
+                                response, request, scope
                             )
                             known = True
                     except Exception:
@@ -653,7 +803,15 @@ class DiscoveryService:
                             if partial
                             else ("completed", "collection_complete")
                         )
-                    elif outcome.dispatched or row["state"] in ("dispatching", "uncertain"):
+                    elif (
+                        outcome.dispatched
+                        or row["state"] in ("dispatching", "uncertain")
+                        or conn.execute(
+                            "SELECT 1 FROM discovery_permits WHERE discovery_id=?",
+                            (request.discovery,),
+                        ).fetchone()
+                        is not None
+                    ):
                         state = "uncertain"
                     else:
                         state = "failed"
@@ -678,9 +836,8 @@ class DiscoveryService:
         if claimed is None:
             return False
         request, gateway, deadline = claimed
-        transport = PassiveSSHTransport(
-            authorize=self._authorize, credential=self._credential, driver=self.driver
-        )
+        transport = self._transport
+        transport.driver = self.driver
         seconds = deadline - self.control._now()
         if seconds <= 0:
             from .discovery_transport import DiscoveryOutcome
@@ -725,8 +882,8 @@ def configured_service(gateway, workspace_id):
 def install_lifecycle(gateway):
     """Install only explicitly enabled discovery using the existing workspace fence.
 
-    A local-only execution fence cannot satisfy discovery's remote participation
-    requirement. Such configurations remain unavailable; no trust flag is added.
+    The exact trusted admission_mode selects the concrete passive SSH adapter;
+    a local lease remains local. Missing mode/fence/custody stays unavailable.
     Shutdown shares the central signal-all, bounded-join lifecycle.
     """
     config = getattr(gateway.db, "_compute_config", None)
@@ -756,6 +913,7 @@ def install_lifecycle(gateway):
                 wrapping_key_path=workspace.wrapping_key_path,
                 provisioning_keys=workspace.provisioning_keys,
                 sources=workspace.discovery_sources,
+                passive_admission_mode=getattr(workspace, "admission_mode", None),
             )
             gateway.db._compute_services.append(service)
             service.start()
