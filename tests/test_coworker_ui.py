@@ -1,5 +1,6 @@
 """Isolated production-JS controller checks; no server or model is started."""
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,4 +30,7 @@ def test_coworker_ui(case):
         text=True,
         timeout=15,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    # Node includes the whole data-URL module in stack locations. Keep actual
+    # error/stack text readable instead of printing encoded production source.
+    diagnostic = re.sub(r"data:text/javascript;base64,[A-Za-z0-9+/=]+", "<module>", result.stderr)
+    assert result.returncode == 0, result.stdout + diagnostic

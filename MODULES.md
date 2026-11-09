@@ -1647,7 +1647,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer.
-  - Coworker text is escaped, mutation calls use same-origin JSON, and the original project chat remains reachable.
+  - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 

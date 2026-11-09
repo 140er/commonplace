@@ -54,6 +54,8 @@ function fixture() {
   async function open(id = 'a', data = detail(id), list = directory()) {
     ui.show(id);
     take(`/api/coworkers/conversations/${id}`).resolve(data);
+    await flush();
+    assert.equal(sendButton, null, "Wait for bot directory before enabling conversation controls");
     take('/api/coworkers').resolve(list);
     await flush();
   }
