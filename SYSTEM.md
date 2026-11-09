@@ -49,8 +49,18 @@ at most five whole records totaling 4000 characters; no record is summarized
 or cut to fit. This bounded lexical selection does not promise exhaustive recall. No workspace-wide memory search or tool execution is granted to model
 output. Explicit `/task TITLE` plus optional exact body admits a canonical todo
 card on the conversation's authorized board; task_created acknowledges admission,
-not worker launch or task completion. Execution still requires the existing
-board orchestrator/runner configuration. A lost acknowledgement does not trigger
+not task completion. When existing orchestration and a runner are configured,
+the internal person-owner start_chat_task checks the opaque canonical origin,
+current card/configuration and caller authority, then uses the canonical fenced
+runner admission with a stable hashed origin key. No broad control/boards lock
+spans admission. Replay reuses the same runner job; configuration changes conflict.
+Unconfigured or refused admission preserves the real card and a typed reason.
+Runner queued/leased/starting/started/uncertain/cancelled facts are distinct from
+the finished front turn; the UI names these admission outcomes and links the
+canonical task for current progress. This retains the existing runner admission
+snapshot/fence semantics, not a new instantaneous revocation guarantee.
+Execution still requires existing accepted runner configuration and actual worker
+launch. These tests exercise durable admission, not a real runner process. A lost acknowledgement does not trigger
 blind replay. Tests use blocked synthetic providers; no production model latency
 or real worker launch is claimed by these checks.
 

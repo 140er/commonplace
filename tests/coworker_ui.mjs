@@ -82,6 +82,12 @@ const cases = {
     const admission = coworkerJobHTML(job('created', 'a', 'done', { code: 'task_created', task: { board: 'work', number: 315 } }));
     assert.match(admission, />Task created</);
     assert.doesNotMatch(admission, />Completed</, 'Canonical task admission must not imply completed work');
+    for (const [code, label] of [['runner_queued', 'Runner admission queued'], ['runner_started', 'Worker launch recorded'], ['runner_interrupted', 'Runner outcome unknown'], ['runner_not_configured', 'Task created · runner unavailable']]) {
+      const html = coworkerJobHTML(job('admission', 'a', 'done', { code, task: { board: 'work', number: 315 } }));
+      assert.ok(html.includes(label));
+      assert.doesNotMatch(html, />Completed</, 'A finished front turn does not mean completed work');
+      assert.match(html, /Open task #315/);
+    }
     f.ui.stop();
   },
 
