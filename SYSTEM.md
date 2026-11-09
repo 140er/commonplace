@@ -12,6 +12,8 @@ entry was written.
 
 ## Decisions
 
+- **Release staging and verification:** Deployment fails closed unless the requested reviewed source, rendered build identity and running package commit agree. Readiness is bounded, service health is checked internally and externally, and operator configuration remains separate.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

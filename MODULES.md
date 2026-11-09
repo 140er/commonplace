@@ -351,6 +351,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Deployment binds the reviewed source commit, build context and image identity, waits for readiness, and verifies running package identity and internal service health.
+
   - Build SHA is validated package data; optional same-source RO/RW receipt binds forbid auto-creation. Gateway uses RO; only snapshot exec overrides to RW. Shared-namespace RW visibility remains explicit. Synthetic mount and package-install smoke verify the contract.
 
   - Images run the gateway as an unprivileged user on a mounted data directory; examples hold placeholders, never real hosts or secrets; deploy holds an active transient unit reference through fresh invocation, snapshot and backup verification, then releases it, including on trapped exits.
@@ -599,6 +601,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
+
+  - Mocked deployment regressions reject stale release pins, missing runtime identity, invalid service mappings and failed readiness without a real container daemon.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
