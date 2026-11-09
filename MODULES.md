@@ -1,7 +1,7 @@
 # Modules
 
 Who owns each path, what it promises, how it fails and which tests hold it to
-that. `SYSTEM.md` holds the cross-module decisions and residuals.
+that. `SYSTEM.md` and `docs/decisions/` hold the cross-module decisions and residuals.
 
 Format (read by `commonplace orch docs-check`):
 
@@ -26,7 +26,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## system-docs
 
-- **Paths:** `SYSTEM.md`, `MODULES.md`
+- **Paths:** `SYSTEM.md`, `MODULES.md`, `docs/decisions/`
 - **Owns:**
 
   - The exact instance authority, packaged identity and opt-in receipt/mount residual contracts.
@@ -126,7 +126,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Card task-type decisions document owner-only writes, unchanged defaults, grant semantics and the explicit slice 1 residuals.
 
-  - Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` changes with every change that `docs-check` covers, unless a base-listed waiver applies.
+  - Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` or a substantive decision file changes with every change that `docs-check` covers, unless a base-listed waiver applies.
 
   - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary and unproven live OAuth behavior.
 
@@ -239,6 +239,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
+
+  - Contributor guidance routes independent system decisions to stable per-card files and describes the legacy transition.
+
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -1210,7 +1213,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`, `tests/test_decision_docs.py`
 - **Owns:**
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
@@ -1218,6 +1221,9 @@ Format (read by `commonplace orch docs-check`):
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
 - **Promises:**
+
+  - Docs-check accepts titled decision files alongside legacy system edits, rejects empty or deleted-only updates, and retains module and base-waiver obligations.
+
 
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 

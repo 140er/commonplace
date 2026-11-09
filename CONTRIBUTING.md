@@ -156,6 +156,12 @@ Check the [Issues](https://github.com/MemPalace/mempalace/issues) tab. Great sta
 
 ## Architecture Decisions
 
+For system-contract changes, read `SYSTEM.md` and every file in `docs/decisions/`.
+Write independent decisions in stable, separate `card-<number>-<topic>.md` files
+there; do not prepend to `SYSTEM.md` or maintain a shared decision index. Update
+the affected `MODULES.md` blocks too. See `SYSTEM.md`, “Keeping this file current”,
+for the format, compatibility transition and unchanged waiver rules.
+
 If you're planning a significant change, open an issue first to discuss the approach. Key principles:
 
 - **Verbatim first**: Never summarize user content. Store exact words.

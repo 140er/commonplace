@@ -10,7 +10,8 @@ base of ``base`` and ``head`` and exits 1 when:
   (``commonplace/`` itself is split into its entries), or a path is listed twice;
 - a changed path is owned by no block (longest listed path wins; a directory ends in
   ``/``);
-- a module whose paths changed kept its block unchanged, or ``SYSTEM.md`` did not change
+- a module whose paths changed kept its block unchanged, or neither ``SYSTEM.md``
+  nor a titled decision file in ``docs/decisions/`` changed
   (a whitespace-only edit counts as unchanged; the check never judges whether the new
   text is accurate).
 
@@ -33,6 +34,7 @@ from pathlib import Path
 MODULES = "MODULES.md"
 SYSTEM = "SYSTEM.md"
 FIELDS = ("Paths", "Owns", "Promises", "How it fails", "Tests")
+DECISIONS = "docs/decisions/"
 EXEMPT = frozenset({MODULES, SYSTEM})
 SPLIT_DIRS = ("commonplace/",)
 WAIVER_KEY = "Docs-waiver"
@@ -238,6 +240,22 @@ def _words(text: str | None) -> str | None:
     return None if text is None else " ".join(text.split())
 
 
+def decision_path(path: str) -> bool:
+    """Only direct Markdown files belong to the system decision collection."""
+    return path.startswith(DECISIONS) and "/" not in path[len(DECISIONS) :] and path.endswith(".md")
+
+
+def valid_decision(text: str | None) -> bool:
+    """A title alone, empty file or deletion is not a decision update."""
+    if not text:
+        return False
+    lines = text.strip().splitlines()
+    return bool(
+        re.fullmatch(r"### \S.*", lines[0])
+        and any(line.strip() and not line.lstrip().startswith("#") for line in lines[1:])
+    )
+
+
 def check(repo, base: str = DEFAULT_BASE, head: str = "HEAD") -> list[str]:
     """Problems for ``merge_base(base, head)..head``; raises ``DocsCheckError`` on git errors."""
     head_sha = resolve(repo, head)
@@ -264,7 +282,7 @@ def check(repo, base: str = DEFAULT_BASE, head: str = "HEAD") -> list[str]:
             problems.append(f"waiver '{item}' is not in the base {SYSTEM} waiver list")
     touched: dict[str, str] = {}
     for path in paths:
-        if path in EXEMPT:
+        if path in EXEMPT or decision_path(path):
             continue
         name = owner(path, modules.owners)
         if name is None and base_modules is not None and show(repo, head_sha, path) is None:
@@ -280,10 +298,17 @@ def check(repo, base: str = DEFAULT_BASE, head: str = "HEAD") -> list[str]:
         after = modules.blocks.get(name)
         if before is not None and after is not None and _words(before.text) == _words(after.text):
             problems.append(f"module '{name}' changed ('{path}') but its {MODULES} block did not")
-    if SYSTEM not in paths:
-        problems.append(f"{SYSTEM} did not change")
-    elif _words(show(repo, base_sha, SYSTEM)) == _words(show(repo, head_sha, SYSTEM)):
-        problems.append(f"{SYSTEM} changed only in whitespace")
+    decision_updated = any(
+        decision_path(path)
+        and valid_decision(show(repo, head_sha, path))
+        and _words(show(repo, base_sha, path)) != _words(show(repo, head_sha, path))
+        for path in paths
+    )
+    if not decision_updated:
+        if SYSTEM not in paths:
+            problems.append(f"{SYSTEM} did not change")
+        elif _words(show(repo, base_sha, SYSTEM)) == _words(show(repo, head_sha, SYSTEM)):
+            problems.append(f"{SYSTEM} changed only in whitespace")
     return problems
 
 
