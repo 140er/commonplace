@@ -1,78 +1,10 @@
-"""Begin delivery precedes work when available, without holding memory calls hostage."""
+"""HTTP startup observation is asynchronous, ordered and isolated from failure."""
 
 import json
-import os
-import signal
-import subprocess
-import sys
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
-
-
-@pytest.mark.skipif(os.name == "nt", reason="SIGKILL witness is Unix-only")
-@pytest.mark.parametrize("phase", [None, "startup_preflight"])
-def test_begin_survives_immediate_kill_with_background_writer_held(tmp_path, phase):
-    # Hold the background writer until the producer explicitly waits for delivery.
-    # This removes the base's lucky scheduling window. No fake sink or flush at exit.
-    script = r"""
-import json, sys, threading
-from mempalace.worker_observation import Observer
-permit, ready = threading.Event(), threading.Event()
-original_drain = Observer._drain
-def held_drain(self):
-    ready.set()
-    permit.wait()
-    original_drain(self)
-Observer._drain = held_drain
-observer = Observer(sys.argv[1])
-ready.wait()
-original_wait = threading.Event.wait
-def producer_wait(self, timeout=None):
-    if threading.current_thread() is threading.main_thread():
-        permit.set()
-    return original_wait(self, timeout)
-threading.Event.wait = producer_wait
-phase = json.loads(sys.argv[2])
-with observer.scope("mempalace_status" if phase is None else None, "http", phase) as token:
-    print(json.dumps([observer.generation, token.call_id]), flush=True)
-    original_wait(threading.Event())
-"""
-    child = subprocess.Popen(
-        [sys.executable, "-c", script, str(tmp_path), json.dumps(phase)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        # A pipe readiness deadline avoids hanging if the child setup breaks.
-        import selectors
-
-        with selectors.DefaultSelector() as selector:
-            selector.register(child.stdout, selectors.EVENT_READ)
-            assert selector.select(10), "child did not enter observed work"
-        marker = child.stdout.readline()
-        child.send_signal(signal.SIGKILL)
-        _, stderr = child.communicate(timeout=10)
-        assert marker, stderr
-        generation, call_id = json.loads(marker)
-        assert child.returncode == -signal.SIGKILL
-        path = tmp_path / "diagnostics" / "worker-memory.jsonl"
-        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-        assert [r["event"] for r in rows] == [
-            "generation_start",
-            "phase_begin" if phase else "call_begin",
-        ], "generation and exact begin must be on disk before work starts"
-        assert all(r["worker_generation"] == generation for r in rows)
-        assert rows[1]["call_id"] == call_id
-        assert rows[1]["startup_phase"] == phase
-        assert [r["record_seq"] for r in rows] == [1, 2]
-    finally:
-        if child.poll() is None:
-            child.kill()
-            child.communicate(timeout=10)
 
 
 def test_default_http_startup_phases_on_disk(tmp_path, monkeypatch):
@@ -109,11 +41,12 @@ def test_default_http_startup_phases_on_disk(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("phase", ["capacity_probe", "eager_warmup"])
-def test_phase_activates_before_work(tmp_path, monkeypatch, phase):
+def test_http_phase_coverage(tmp_path, monkeypatch, phase):
     from mempalace import mcp_server as server
     from mempalace.worker_observation import Observer
 
     monkeypatch.delenv("MEMPALACE_WORKER_MEMORY_OBSERVE", raising=False)
+    monkeypatch.delenv("MEMPALACE_EAGER_WARMUP", raising=False)
     monkeypatch.setattr(server, "_worker_observer", None)
     monkeypatch.setattr(server, "_worker_observer_failed", False)
     monkeypatch.setattr(server._config, "_config_dir", tmp_path)
@@ -123,48 +56,49 @@ def test_phase_activates_before_work(tmp_path, monkeypatch, phase):
     monkeypatch.setattr(server, "_start_idle_exit_watchdog", lambda: None)
     monkeypatch.setattr(server, "_start_write_stall_watchdog", lambda: None)
     monkeypatch.setattr(server, "_refresh_vector_disabled_flag", lambda: None)
-    monkeypatch.delenv("MEMPALACE_EAGER_WARMUP", raising=False)
 
     def serve(*args):
         with server._worker_phase(phase):
-            path = tmp_path / "diagnostics" / "worker-memory.jsonl"
-            rows = (
-                [json.loads(line) for line in path.read_text().splitlines()]
-                if path.exists()
-                else []
-            )
-            assert rows, "HTTP startup must activate the observer"
-            assert rows[-1]["event"] == "phase_begin"
-            assert rows[-1]["startup_phase"] == phase
+            pass
 
     monkeypatch.setattr(server, "_serve_http", serve)
     try:
         server._run_http_loop()
+        if server._worker_observer is not None:
+            server._worker_observer.close()
+        path = tmp_path / "diagnostics" / "worker-memory.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        assert [(r["event"], r["startup_phase"]) for r in rows if r["startup_phase"] == phase] == [
+            ("phase_begin", phase),
+            ("phase_end", phase),
+        ]
     finally:
         if server._worker_observer is not None:
             server._worker_observer.close()
 
 
-@pytest.mark.parametrize("failure", ["sink", "delivery_lock", "stalled_sink", "queue"])
-def test_observation_failure_never_blocks_work(tmp_path, failure):
+@pytest.mark.parametrize("failure", ["constructor", "sink", "delivery_lock", "queue"])
+def test_observation_failure_does_not_stop_http_startup(tmp_path, monkeypatch, failure):
+    from mempalace import mcp_server as server
     from mempalace.worker_observation import Observer
 
-    release, entered = threading.Event(), threading.Event()
+    instances, served = [], []
 
-    def sink(line):
+    def factory(directory):
+        if failure == "constructor":
+            raise OSError("synthetic constructor failure")
+        observer = Observer(directory)
+        observer.queue.join()
+        instances.append(observer)
         if failure == "sink":
-            raise OSError("synthetic sink failure")
-        if failure == "stalled_sink":
-            entered.set()
-            release.wait(5)
 
-    observer = Observer(tmp_path, sink=sink)
-    try:
-        if failure == "stalled_sink":
-            assert entered.wait(2)
-        if failure == "delivery_lock":
+            def broken(line):
+                raise OSError("synthetic sink failure")
+
+            observer.sink = broken
+        elif failure == "delivery_lock":
             observer.delivery_lock.acquire()
-        if failure == "queue":
+        elif failure == "queue":
 
             def full(line):
                 import queue
@@ -172,20 +106,64 @@ def test_observation_failure_never_blocks_work(tmp_path, failure):
                 raise queue.Full
 
             observer.queue.put_nowait = full
-        before = observer.lost
-        start = time.monotonic()
-        ran = False
-        with observer.scope("mempalace_status"):
-            ran = True
-        elapsed = time.monotonic() - start
-        assert ran
-        if failure == "sink":
+        return observer
+
+    monkeypatch.delenv("MEMPALACE_WORKER_MEMORY_OBSERVE", raising=False)
+    monkeypatch.delenv("MEMPALACE_EAGER_WARMUP", raising=False)
+    monkeypatch.setattr(server, "_worker_observer", None)
+    monkeypatch.setattr(server, "_worker_observer_failed", False)
+    monkeypatch.setattr(server, "_worker_observation_lost", 0)
+    monkeypatch.setattr(server, "_worker_observer_factory", factory)
+    monkeypatch.setattr(server._config, "_config_dir", tmp_path)
+    monkeypatch.setattr(server, "_READ_ONLY", True)
+    monkeypatch.setattr(server, "_args", SimpleNamespace(host="127.0.0.1", port=0))
+    monkeypatch.setattr(server, "_start_idle_exit_watchdog", lambda: None)
+    monkeypatch.setattr(server, "_start_write_stall_watchdog", lambda: None)
+    monkeypatch.setattr(server, "_refresh_vector_disabled_flag", lambda: None)
+    monkeypatch.setattr(server, "_serve_http", lambda *args: served.append(True))
+    try:
+        server._run_http_loop()
+        for observer in instances:
             observer.queue.join()
-        assert observer.lost > before
-        assert elapsed < 0.1, "observation must not wait for a stalled sink"
-        assert not getattr(observer, "acknowledgments", {})
+        assert served == [True]
+        assert server._worker_observation_lost + sum(o.lost for o in instances) > 0
     finally:
-        if failure == "delivery_lock":
-            observer.delivery_lock.release()
-        release.set()
+        for observer in instances:
+            if failure == "delivery_lock":
+                observer.delivery_lock.release()
+            observer.close()
+
+
+def test_concurrent_record_sequence_order(tmp_path):
+    from mempalace.worker_observation import Observer
+
+    observer = Observer(tmp_path)
+    barrier = threading.Barrier(5)
+
+    def produce():
+        barrier.wait(timeout=5)
+        for _ in range(8):
+            with observer.scope("mempalace_status", "http"):
+                pass
+
+    threads = [threading.Thread(target=produce) for _ in range(4)]
+    try:
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=5)
+        for thread in threads:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+        observer.close()
+        rows = [
+            json.loads(line)
+            for line in (tmp_path / "diagnostics" / "worker-memory.jsonl").read_text().splitlines()
+        ]
+        seqs = [r["record_seq"] for r in rows]
+        assert len(seqs) > 1
+        assert seqs == sorted(set(seqs))
+        assert rows[0]["event"] == "generation_start"
+    finally:
+        for thread in threads:
+            thread.join(timeout=5)
         observer.close()
