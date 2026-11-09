@@ -42,11 +42,31 @@ export function coworkerTarget(text, selected, bots) {
   return bot ? { botId: bot.id, label: `To ${bot.name}` } : { botId: null, label: "To the group. Select or @mention a bot for a reply." };
 }
 
-export function coworkerJobHTML(job, bots = [], busy = false) {
+const controlReceiptLabel = receipt => ({
+  queued_start_cancelled: "Queued start cancelled before launch",
+  stop_requested_termination_unconfirmed: "Stop requested · termination unconfirmed",
+  worker_stop_unsupported: "Stop received · this runner cannot stop a launched worker",
+  comment_saved_application_unsupported: "Follow-up received · task comment saved; worker application unsupported",
+  runner_outcome_unknown: "Control outcome uncertain · check the original task",
+  acknowledgement_pending: "Control acknowledgement uncertain · this request will not be applied again",
+  no_originating_runner: "Stop received · no originating runner is available",
+  runner_start_finished: "Stop received · runner admission already finished; worker termination unconfirmed",
+}[receipt.code] || "Control receipt recorded · application unconfirmed");
+
+export function coworkerControlsHTML(job, draft = {}) {
+  const controls = job.task_progress?.availability === "available" && job.task_progress.controls;
+  if (!controls) return "";
+  const follow = draft.follow_up || {}, stop = draft.stop || {};
+  const receipts = (controls.receipts || []).map(receipt => `<li><strong>${e(controlReceiptLabel(receipt))}</strong><small> · ${e(receipt.state)}</small>${receipt.text ? `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${e(receipt.text)}</p>` : ""}</li>`).join("");
+  if (!controls.can_follow_up && !controls.can_stop && !receipts) return "";
+  return `<details class="cw-task-controls"${draft.text || follow.attempt || stop.attempt ? " open" : ""}><summary>Task controls</summary>${receipts ? `<ol aria-label="Task control receipts">${receipts}</ol>` : ""}${controls.can_follow_up ? `<form data-cw-form="task-control" data-id="${e(job.id)}"><label>Follow up on this task<textarea data-cw-field="control-${e(job.id)}" rows="2" maxlength="4000"${follow.uncertain ? "" : " required"}>${e(draft.text || "")}</textarea></label><p class="cw-quiet">Only these explicit words are shared with the already linked project as a task comment. Private chat and memory are not included. Worker application is unsupported.</p><button class="btn sm" data-cw-followup="${e(job.id)}"${follow.busy || (!follow.uncertain && !draft.text?.trim()) ? " disabled" : ""}>${follow.busy ? "Sending follow-up…" : follow.uncertain ? "Retry same follow-up" : "Send follow-up"}</button></form>` : ""}${controls.can_stop ? `<p><button type="button" class="btn sm" data-cw-action="stop-task" data-id="${e(job.id)}"${stop.busy ? " disabled" : ""}>${stop.busy ? "Requesting stop…" : stop.uncertain ? "Retry same stop" : "Request stop"}</button> <small>Targets this original run. A request does not confirm worker termination.</small></p>` : ""}</details>`;
+}
+
+export function coworkerJobHTML(job, bots = [], busy = false, controlDraft = {}) {
   const name = bots.find(bot => same(bot.id, job.bot_id))?.name || "Bot";
   const task = typeof job.task === "object" ? job.task?.number : job.task;
   const taskLink = /^[1-9]\d*$/.test(String(task)) ? `<a href="#/card/${enc(task)}">Open task #${e(task)}</a>` : "";
-  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(outcomeLabel(job))}</span>${job.code ? `<small>${e(outcomeDetail(job))}</small>` : ""}${taskLink}${coworkerTaskProgressHTML(job.task_progress, task)}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel"}</button>` : ""}</li>`;
+  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(outcomeLabel(job))}</span>${job.code ? `<small>${e(outcomeDetail(job))}</small>` : ""}${taskLink}${coworkerTaskProgressHTML(job.task_progress, task)}${coworkerControlsHTML(job, controlDraft)}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel front response"}</button>` : ""}</li>`;
 }
 
 export function coworkerTaskProgressHTML(progress, task) {
@@ -61,7 +81,7 @@ export function coworkerTaskProgressHTML(progress, task) {
   const evidence = (progress.evidence || []).map(item => `<li><a href="${href}">${e(item.title || item.drawer_id || "Evidence on task")}</a>${item.invalidated ? " <small>Invalidated evidence</small>" : ""}${omissions(item)}</li>`).join("");
   const runner = progress.runner;
   const decision = progress.status === "review" || progress.proposal_status === "pending";
-  return `<section aria-label="Canonical task progress"><p><strong>${state}</strong> · Canonical task #${e(task)} · version ${e(progress.version)}</p>${field("Task:", progress.title)}${field("Task body:", progress.body)}${field("Status:", progress.status_line)}${runner ? `<p>${e(runnerOutcomes[`runner_${runner.state}`] || "Runner state unavailable")}${runner.cancel_requested_at ? " · Cancellation requested; termination unconfirmed." : ""}</p>${field("Runner detail:", runner.outcome_code)}${omissions(runner)}` : ""}${field("Question:", progress.ask)}${field("Context:", progress.review_context)}${decision ? `<p><a href="${href}">Open task for the authorized decision</a></p>` : ""}${events ? `<ol aria-label="Canonical task events">${events}</ol>` : ""}${progress.events_omitted ? '<small>Older task events omitted; open the task for full history.</small>' : ""}${evidence ? `<ul aria-label="Canonical task evidence">${evidence}</ul>` : ""}${progress.evidence_bounded ? '<small>Evidence selection is bounded; open the task for full visible history.</small>' : ""}${field("Pull request recorded on task:", progress.pr_url)}${omissions(progress)}<a href="${href}">Full task history and artifacts</a></section>`;
+  return `<section aria-label="Canonical task progress"><p><strong>${state}</strong> · Canonical task #${e(task)} · version ${e(progress.version)}</p>${field("Task:", progress.title)}${field("Task body:", progress.body)}${field("Status:", progress.status_line)}${runner ? `<p>${e(runnerOutcomes[`runner_${runner.state}`] || "Runner state unavailable")}${runner.cancel_requested_at ? runner.state === "cancelled" ? " · Admission cancelled before launch." : " · Cancellation requested; termination unconfirmed." : ""}</p>${field("Runner detail:", runner.outcome_code)}${omissions(runner)}` : ""}${field("Question:", progress.ask)}${field("Context:", progress.review_context)}${decision ? `<p><a href="${href}">Open task for the authorized decision</a></p>` : ""}${events ? `<ol aria-label="Canonical task events">${events}</ol>` : ""}${progress.events_omitted ? '<small>Older task events omitted; open the task for full history.</small>' : ""}${evidence ? `<ul aria-label="Canonical task evidence">${evidence}</ul>` : ""}${progress.evidence_bounded ? '<small>Evidence selection is bounded; open the task for full visible history.</small>' : ""}${field("Pull request recorded on task:", progress.pr_url)}${omissions(progress)}<a href="${href}">Full task history and artifacts</a></section>`;
 }
 
 export function createCoworkers({ mount, api, current, boards = () => [], navigate = hash => { location.hash = hash; }, timers = globalThis, doc = globalThis.document, events = globalThis.window }) {
@@ -72,6 +92,12 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
   let memoryRevision = 0, jobsRevision = 0, directoryRevision = 0, focusedMessage = null;
   let directoryExpanded = false, renderedHTML = "";
   const requests = new Set(), drafts = new Map(), cancelling = new Set();
+  const controlDrafts = new Map();
+  const taskDraft = id => {
+    const key = String(id);
+    if (!controlDrafts.has(key)) controlDrafts.set(key, { text: "", follow_up: {}, stop: {} });
+    return controlDrafts.get(key);
+  };
   const eligible = () => live && current()?.workspace === workspace && current()?.actor === identity;
   const draft = () => {
     const key = String(selected);
@@ -100,6 +126,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
   }
   function clearDetail() {
     conversation = null; messages = []; jobs = []; memories = []; cursor = 0;
+    controlDrafts.clear();
   }
   function mergeJob(job, receipt = false) {
     const old = jobs.find(item => same(item.id, job.id));
@@ -114,11 +141,32 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     jobs = merge(jobs, [job]);
   }
   function clearTaskProgress() {
+    controlDrafts.clear();
     jobs = jobs.map(job => {
       if (!job.task_progress) return job;
       const { task, ...receipt } = job;
       return { ...receipt, task_progress: { source: "canonical_task", availability: "unavailable" } };
     });
+  }
+  function reconcileControls() {
+    for (const job of jobs) {
+      const controls = job.task_progress?.availability === "available" && job.task_progress.controls;
+      if (!controls?.can_follow_up && !controls?.can_stop) { controlDrafts.delete(String(job.id)); continue; }
+      const d = taskDraft(job.id);
+      for (const operation of ["follow_up", "stop"]) {
+        const state = d[operation];
+        const receipt = [...(controls.receipts || [])].reverse().find(item => item.operation === operation && (!state.attempt || item.request_id === state.attempt.request_id));
+        if (!receipt) continue;
+        if (receipt.state === "uncertain") {
+          state.attempt ||= { operation, request_id: receipt.request_id, ...(operation === "follow_up" ? { text: receipt.text } : {}) };
+          state.uncertain = true;
+          if (operation === "follow_up" && !d.text) d.text = receipt.text;
+        } else if (state.attempt && !state.busy) {
+          if (operation === "follow_up" && d.text === state.attempt.text) d.text = "";
+          state.attempt = null; state.uncertain = false;
+        }
+      }
+    }
   }
   function denied(error) {
     if (error?.status === 401) { stop(); return true; }
@@ -155,7 +203,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
   function detailHTML() {
     if (!conversation || !directory) return `<section class="cw-empty"><h2>${selected ? loading ? "Opening conversation…" : "Conversation unavailable" : "Talk to your coworkers"}</h2><p>${selected ? "" : "Choose a conversation, or start a DM or group."}</p>${detailError ? `<p role="alert">${e(detailError)}</p>${button("refresh", "Retry")}` : ""}</section>`;
     const bots = participants(), d = draft(), target = coworkerTarget(d.text, d.target, bots);
-    return `<section class="cw-conversation" aria-label="${e(conversationName(conversation))}"><header class="cw-conversation-head"><div><h2>${e(conversationName(conversation))}</h2><p class="cw-quiet">${conversation.kind === "dm" ? "Direct message" : "Group"}${conversation.board ? ` · Project ${e(conversation.board)} · <a href="#/board/${enc(conversation.board)}/chat">Project chat</a>` : ""}</p></div>${button("refresh", "Refresh")}</header><div class="cw-timeline" tabindex="0" aria-label="Conversation timeline"><ol aria-label="Messages">${messages.length ? messages.map(messageHTML).join("") : '<li class="cw-quiet">No messages yet. Say what you would like to work on.</li>'}</ol></div><section class="cw-work" aria-label="Response jobs"><ul>${jobs.map(job => coworkerJobHTML(job, bots, cancelling.has(String(job.id)))).join("")}</ul></section><p class="cw-notice" role="status" data-cw-notice>${e(detailError || notice)}</p><form class="cw-composer" data-cw-form="message"><label>Reply to<select name="target" data-cw-field="target"><option value="">${bots.length === 1 ? "Conversation bot" : "Group / @mention"}</option>${bots.map(bot => `<option value="${e(bot.id)}"${same(d.target, bot.id) ? " selected" : ""}>${e(bot.name)}</option>`).join("")}</select></label><label for="cw-compose">Message</label><textarea id="cw-compose" name="text" data-cw-field="text" rows="3" maxlength="8000" aria-describedby="cw-address cw-shortcut"${d.uncertain ? "" : " required"}>${e(d.text)}</textarea><p id="cw-address"${target.error ? ' role="alert"' : ""}>${e(target.error || target.label)}</p>${conversation.board ? '<p class="cw-quiet">Use /task Title for project work. That request is shared with the project.</p>' : ""}<div class="cw-send-row"><small id="cw-shortcut">Ctrl / ⌘ + Enter to send</small><button class="btn primary" data-cw-send${d.sending || (!d.uncertain && (!d.text.trim() || target.error)) ? " disabled" : ""}>${d.sending ? "Sending…" : d.uncertain ? "Retry send" : "Send"}</button></div></form></section><aside class="cw-context" aria-label="Conversation context"><details open><summary>Members</summary><ul>${conversation.member_ids.map(id => `<li>${e(person(id))}${same(id, directory.user_id) ? " (you)" : ""}</li>`).join("")}${bots.map(bot => `<li>${e(bot.name)} <small>Bot${bot.connection_id ? " · connection linked" : " · persona"}</small></li>`).join("")}</ul></details><details open data-cw-memory><summary>Conversation memory</summary><p class="cw-quiet">Visible to this conversation. Hiding a memory keeps the original record and messages.</p><ul>${memories.length ? memories.map(item => `<li><p>${e(item.text)}</p>${button("hide-memory", "Hide", `data-id="${e(item.id)}"${d.savingMemory ? " disabled" : ""}`)}</li>`).join("") : '<li class="cw-quiet">No saved memory in this conversation.</li>'}</ul><form data-cw-form="memory"><label for="cw-memory-text">Remember exact words</label><textarea id="cw-memory-text" name="text" data-cw-field="memory" rows="3" maxlength="4000" required>${e(d.memory)}</textarea><button class="btn"${d.savingMemory ? " disabled" : ""}>${d.savingMemory ? "Saving…" : "Add memory"}</button></form></details></aside>`;
+    return `<section class="cw-conversation" aria-label="${e(conversationName(conversation))}"><header class="cw-conversation-head"><div><h2>${e(conversationName(conversation))}</h2><p class="cw-quiet">${conversation.kind === "dm" ? "Direct message" : "Group"}${conversation.board ? ` · Project ${e(conversation.board)} · <a href="#/board/${enc(conversation.board)}/chat">Project chat</a>` : ""}</p></div>${button("refresh", "Refresh")}</header><div class="cw-timeline" tabindex="0" aria-label="Conversation timeline"><ol aria-label="Messages">${messages.length ? messages.map(messageHTML).join("") : '<li class="cw-quiet">No messages yet. Say what you would like to work on.</li>'}</ol></div><section class="cw-work" aria-label="Response jobs"><ul>${jobs.map(job => coworkerJobHTML(job, bots, cancelling.has(String(job.id)), taskDraft(job.id))).join("")}</ul></section><p class="cw-notice" role="status" data-cw-notice>${e(detailError || notice)}</p><form class="cw-composer" data-cw-form="message"><label>Reply to<select name="target" data-cw-field="target"><option value="">${bots.length === 1 ? "Conversation bot" : "Group / @mention"}</option>${bots.map(bot => `<option value="${e(bot.id)}"${same(d.target, bot.id) ? " selected" : ""}>${e(bot.name)}</option>`).join("")}</select></label><label for="cw-compose">Message</label><textarea id="cw-compose" name="text" data-cw-field="text" rows="3" maxlength="8000" aria-describedby="cw-address cw-shortcut"${d.uncertain ? "" : " required"}>${e(d.text)}</textarea><p id="cw-address"${target.error ? ' role="alert"' : ""}>${e(target.error || target.label)}</p>${conversation.board ? '<p class="cw-quiet">Use /task Title for project work. That request is shared with the project.</p>' : ""}<div class="cw-send-row"><small id="cw-shortcut">Ctrl / ⌘ + Enter to send</small><button class="btn primary" data-cw-send${d.sending || (!d.uncertain && (!d.text.trim() || target.error)) ? " disabled" : ""}>${d.sending ? "Sending…" : d.uncertain ? "Retry send" : "Send"}</button></div></form></section><aside class="cw-context" aria-label="Conversation context"><details open><summary>Members</summary><ul>${conversation.member_ids.map(id => `<li>${e(person(id))}${same(id, directory.user_id) ? " (you)" : ""}</li>`).join("")}${bots.map(bot => `<li>${e(bot.name)} <small>Bot${bot.connection_id ? " · connection linked" : " · persona"}</small></li>`).join("")}</ul></details><details open data-cw-memory><summary>Conversation memory</summary><p class="cw-quiet">Visible to this conversation. Hiding a memory keeps the original record and messages.</p><ul>${memories.length ? memories.map(item => `<li><p>${e(item.text)}</p>${button("hide-memory", "Hide", `data-id="${e(item.id)}"${d.savingMemory ? " disabled" : ""}`)}</li>`).join("") : '<li class="cw-quiet">No saved memory in this conversation.</li>'}</ul><form data-cw-form="memory"><label for="cw-memory-text">Remember exact words</label><textarea id="cw-memory-text" name="text" data-cw-field="memory" rows="3" maxlength="4000" required>${e(d.memory)}</textarea><button class="btn"${d.savingMemory ? " disabled" : ""}>${d.savingMemory ? "Saving…" : "Add memory"}</button></form></details></aside>`;
   }
 
   function render() {
@@ -258,6 +306,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
         if (memoryVersion === memoryRevision) memories = result.memories.filter(item => same(item.conversation_id, id));
       }
       const d = draft();
+      reconcileControls();
       if (d.attempt && !d.sending && messages.some(item => item.request_id === d.attempt.request_id)) {
         if (d.text === d.attempt.text) d.text = "";
         d.attempt = null; d.uncertain = false;
@@ -346,6 +395,38 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
       if (valid(page, turn, conversationId) && !denied(error)) detailError = `Cancellation could not be confirmed. Refresh to check the job. ${errorText(error)}`;
     } finally { cancelling.delete(String(id)); if (valid(page, turn, conversationId)) render(); }
   }
+  async function controlTask(id, operation) {
+    const job = jobs.find(job => same(job.id, id)), progress = job?.task_progress;
+    if (!eligible() || !conversation || progress?.availability !== "available" || !progress.controls?.[operation === "follow_up" ? "can_follow_up" : "can_stop"]) return;
+    const d = taskDraft(id), state = d[operation];
+    if (state.busy || (!state.attempt && operation === "follow_up" && !d.text.trim())) return;
+    const body = state.attempt || { operation, request_id: globalThis.crypto.randomUUID(), ...(operation === "follow_up" ? { text: d.text } : {}) };
+    const page = epoch, turn = generation, conversationId = selected;
+    state.attempt = body; state.busy = true; notice = ""; detailError = ""; render();
+    try {
+      const result = await request(`${BASE}/jobs/${enc(id)}/controls`, { method: "POST", body });
+      if (!valid(page, turn, conversationId)) return;
+      const receipt = result.receipt;
+      if (!same(receipt?.job_id, id) || receipt.operation !== operation || receipt.request_id !== body.request_id || receipt.text !== (body.text || "")) throw new Error("Task control response did not match this request.");
+      // A newer per-viewer read may have revoked the binding during this POST.
+      // Never let a late receipt restore withdrawn task content or controls.
+      const currentJob = jobs.find(job => same(job.id, id));
+      if (currentJob?.task_progress === progress) {
+        progress.controls.receipts = merge(progress.controls.receipts || [], [receipt]).slice(-10);
+        notice = controlReceiptLabel(receipt);
+      }
+      const uncertain = receipt.state === "uncertain";
+      if (!uncertain && operation === "follow_up" && d.text === body.text) d.text = "";
+      state.attempt = uncertain ? body : null; state.uncertain = uncertain;
+    } catch (error) {
+      if (!valid(page, turn, conversationId)) return;
+      if (!denied(error)) {
+        state.uncertain = !error.status || error.status >= 500;
+        if (!state.uncertain) state.attempt = null;
+        detailError = state.uncertain ? `Control receipt could not be confirmed. Retry uses the same request ID and exact text. ${errorText(error)}` : `Control was not accepted. ${errorText(error)}`;
+      }
+    } finally { state.busy = false; if (valid(page, turn, conversationId)) { render(); schedule(); } }
+  }
   async function saveForm(form) {
     if (!eligible() || formBusy) return;
     captureForm(form);
@@ -379,6 +460,13 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     if (form) { captureForm(form); return; }
     const field = event.target.dataset?.cwField;
     if (!field || !conversation) return;
+    if (field.startsWith("control-")) {
+      const id = field.slice("control-".length), d = taskDraft(id);
+      d.text = event.target.value;
+      const send = host.querySelector(`[data-cw-followup="${id}"]`);
+      if (send) send.disabled = d.follow_up.busy || (!d.follow_up.uncertain && !d.text.trim());
+      return;
+    }
     draft()[field] = event.target.value;
     composeState();
   }
@@ -397,6 +485,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     if (action === "refresh") void refresh();
     else if (action === "toggle-directory") { directoryExpanded = !directoryExpanded; render(); }
     else if (action === "cancel-job") void cancelJob(id);
+    else if (action === "stop-task") void controlTask(id, "stop");
     else if (action === "hide-memory") void changeMemory(id);
     else if (action === "close-editor") { if (!formBusy) { editor = ""; formValues = {}; render(); } }
     else if (action === "new-bot" || action === "new-conversation" || action === "start-dm") {
@@ -411,6 +500,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     event.preventDefault(); event.stopPropagation();
     if (form.dataset.cwForm === "message") void send();
     else if (form.dataset.cwForm === "memory") void changeMemory();
+    else if (form.dataset.cwForm === "task-control") void controlTask(form.dataset.id, "follow_up");
     else void saveForm(form);
   }
   function keydown(event) {

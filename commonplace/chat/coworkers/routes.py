@@ -90,6 +90,16 @@ class Authority:
 
         return project(self, job, task, user_id)
 
+    def task_control_target(self, job, task, user_id):
+        from .task_controls import target
+
+        return target(self, job, task, user_id)
+
+    def task_progress_current(self, job, projection, user_id):
+        from .task_progress import current
+
+        current(self, job, projection, user_id)
+
 
 def _person(gateway, h):
     # Do not accept PATs, an agent's cached principal or a request body identity.
@@ -215,6 +225,28 @@ def handle(gateway, h):
                 )
         if len(parts) >= 2 and parts[0] == "conversations":
             return _conversation_route(gateway, h, principal, session, store, parts, params)
+        if (
+            len(parts) == 3
+            and parts[0] == "jobs"
+            and parts[2] == "controls"
+            and h.command == "POST"
+        ):
+            body = _body(h)
+            if body is None:
+                return None
+            _fields(body, ("operation", "request_id", "text"), ("operation", "request_id"))
+            if body.get("operation") == "stop" and "text" in body:
+                raise StoreError()
+            return send_json(
+                h,
+                200,
+                store.control_task(
+                    principal.user_id,
+                    _numeric(parts[1]),
+                    **body,
+                    session_hash=sessions._hash(session),
+                ),
+            )
         if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel" and h.command == "POST":
             body = _body(h)
             if body is None:

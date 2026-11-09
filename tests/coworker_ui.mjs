@@ -46,8 +46,8 @@ function fixture() {
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
   };
   const input = (field, value) => listeners.get('input')({ target: { dataset: { cwField: field }, value, closest: () => null } });
-  const submit = (kind, entries = []) => {
-    const form = { dataset: { cwForm: kind }, entries };
+  const submit = (kind, entries = [], id = null) => {
+    const form = { dataset: { cwForm: kind, id }, entries };
     listeners.get('submit')({ target: { closest: selector => selector === '[data-cw-form]' ? form : null }, preventDefault() {}, stopPropagation() {} });
   };
   const click = (action, id) => listeners.get('click')({ target: { closest: selector => selector === '[data-cw-action]' ? { dataset: { cwAction: action, id } } : null } });
@@ -63,6 +63,107 @@ function fixture() {
 }
 
 const cases = {
+  async control_reconnect() {
+    const f = fixture();
+    const receipt = { id: 1, job_id: 9, operation: 'follow_up', request_id: 'durable-original-key', text: 'Exact unknown instruction', state: 'uncertain', code: 'acknowledgement_pending' };
+    const linked = job(9, 'a', 'done', { code: 'runner_queued', task: { board: 'work', number: 327 }, task_progress: {
+      source: 'canonical_task', availability: 'available', status: 'doing', version: 2,
+      controls: { can_follow_up: true, can_stop: true, receipts: [receipt] },
+    } });
+    await f.open('a', detail('a', { jobs: [linked] }));
+    assert.match(f.host.innerHTML, /Retry same follow-up/);
+    assert.match(f.host.innerHTML, /Exact unknown instruction/);
+    f.input('control-9', 'Edited after reconnect'); f.submit('task-control', [], 9);
+    const retry = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    assert.deepEqual(retry.options.body, { operation: 'follow_up', request_id: receipt.request_id, text: receipt.text });
+    retry.resolve({ receipt }); await flush();
+    f.submit('task-control', [], 9);
+    const again = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    assert.deepEqual(again.options.body, retry.options.body, 'A received uncertain receipt never creates a new key');
+    again.resolve({ receipt }); await flush();
+    assert.equal((f.host.innerHTML.match(/<li><strong>Control acknowledgement uncertain/g) || []).length, 1);
+    f.ui.stop();
+  },
+
+  async task_controls() {
+    const f = fixture(), attack = '<img src=x onerror="alert(1)">';
+    const linked = job(9, 'a', 'done', { code: 'runner_queued', task: { board: 'work', number: 327 }, task_progress: {
+      source: 'canonical_task', availability: 'available', status: 'doing', version: 2,
+      controls: { can_follow_up: true, can_stop: true, receipts: [] },
+    } });
+    await f.open('a', detail('a', { jobs: [linked] }));
+    assert.match(f.host.innerHTML, /Only these explicit words are shared with the already linked project/);
+    assert.match(f.host.innerHTML, /maxlength="4000"/);
+    assert.match(f.host.innerHTML, /Worker application is unsupported/);
+    f.input('control-9', '  Exact follow-up ' + attack + '\nLine two.  ');
+    f.submit('task-control', [], 9);
+    const follow = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    assert.deepEqual(Object.keys(follow.options.body).sort(), ['operation', 'request_id', 'text']);
+    assert.equal(follow.options.body.operation, 'follow_up');
+    assert.equal(follow.options.body.text, '  Exact follow-up ' + attack + '\nLine two.  ');
+    // An in-flight control never monopolizes the ordinary message composer.
+    f.input('text', 'Keep chatting during control');
+    assert.equal(f.sendButton().disabled, false);
+    f.submit('message');
+    f.take('/api/coworkers/conversations/a/messages', 'POST').resolve({ message: message(2, 'a', 'Keep chatting during control'), job: null });
+    await flush();
+    follow.reject(new Error('Lost acknowledgement')); await flush();
+    assert.match(f.host.innerHTML, /Retry same follow-up/);
+    f.input('control-9', 'A newer draft remains separate');
+    f.submit('task-control', [], 9);
+    const retry = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    assert.deepEqual(retry.options.body, follow.options.body, 'Unknown acknowledgements reuse the exact key and text');
+    const receipt = { id: 1, job_id: 9, ...retry.options.body, state: 'unsupported', code: 'comment_saved_application_unsupported' };
+    retry.resolve({ receipt }); await flush();
+    assert.match(f.host.innerHTML, /task comment saved; worker application unsupported/);
+    assert.match(f.host.innerHTML, /Exact follow-up &lt;img/);
+    assert.match(f.host.innerHTML, /A newer draft remains separate/);
+    assert.doesNotMatch(f.host.innerHTML, /<img|>Completed</);
+    f.click('stop-task', 9);
+    const stop = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    assert.deepEqual(Object.keys(stop.options.body).sort(), ['operation', 'request_id']);
+    stop.resolve({ receipt: { id: 2, job_id: 9, ...stop.options.body, text: '', state: 'received', code: 'stop_requested_termination_unconfirmed' } });
+    await flush();
+    assert.match(f.host.innerHTML, /Stop requested · termination unconfirmed/);
+    assert.match(f.host.innerHTML, /Task in progress/);
+    assert.doesNotMatch(f.host.innerHTML, /confirmed terminated|Worker stopped|>Completed</);
+    assert.equal(f.requests.filter(r => r.path.endsWith('/messages') && r.options.method === 'POST').length, 1, 'Controls do not create a new bot turn');
+    f.ui.stop();
+    await f.open('a', detail('a', { jobs: [{ ...linked, task_progress: { ...linked.task_progress, controls: { can_follow_up: true, can_stop: true, receipts: [receipt] } } }] }));
+    assert.match(f.host.innerHTML, /task comment saved; worker application unsupported/);
+    f.ui.stop();
+  },
+
+  async control_revocation() {
+    const f = fixture();
+    const linked = job(9, 'a', 'done', { code: 'runner_queued', task: { board: 'work', number: 327 }, task_progress: {
+      source: 'canonical_task', availability: 'available', status: 'doing', version: 2,
+      controls: { can_follow_up: true, can_stop: true, receipts: [] },
+    } });
+    await f.open('a', detail('a', { jobs: [linked] }));
+    f.input('control-9', 'PRIVATE_CONTROL_DRAFT'); f.submit('task-control', [], 9);
+    const post = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    const refresh = f.ui.refresh(); f.take('/api/coworkers').resolve(directory());
+    f.take('/api/coworkers/conversations/a/messages?after=0&limit=100').resolve({ messages: [], jobs: [{ ...linked, task: undefined, task_progress: { source: 'canonical_task', availability: 'unavailable' } }] });
+    await flush(); f.take('/api/coworkers/conversations/a/memory').resolve({ memories: [] }); await refresh;
+    post.resolve({ receipt: { id: 1, job_id: 9, ...post.options.body, state: 'unsupported', code: 'comment_saved_application_unsupported' } });
+    await flush();
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_CONTROL_DRAFT|Task controls|task comment saved/);
+    const before = f.requests.length; f.click('stop-task', 9); assert.equal(f.requests.length, before);
+    f.ui.stop();
+
+    await f.open('a', detail('a', { jobs: [linked] }));
+    f.input('control-9', 'PRIVATE_NAVIGATION_DRAFT'); f.submit('task-control', [], 9);
+    const late = f.take('/api/coworkers/jobs/9/controls', 'POST');
+    f.ui.show('b');
+    f.take('/api/coworkers/conversations/b').resolve(detail('b')); f.take('/api/coworkers').resolve(directory());
+    await flush();
+    late.resolve({ receipt: { id: 2, job_id: 9, ...late.options.body, state: 'unsupported', code: 'comment_saved_application_unsupported' } });
+    await flush();
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_NAVIGATION_DRAFT|Task controls|task comment saved/);
+    f.ui.stop();
+  },
+
   async progress() {
     const attack = '<img src=x onerror="alert(1)">';
     const progress = {

@@ -28,6 +28,9 @@ MAX_BOTS = 200
 MAX_CONVERSATIONS = 200
 MAX_PENDING = 20
 MAX_PROGRESS_TASKS = 20
+MAX_CONTROL_TEXT = 4_000
+MAX_CONTROLS = 100
+CONTROL_HISTORY = 10
 TERMINAL = frozenset(
     {
         "done",
@@ -89,6 +92,19 @@ CREATE INDEX IF NOT EXISTS memories_conversation ON memories(conversation_id,id)
 CREATE TABLE IF NOT EXISTS memory_tombstones (
  memory_id INTEGER PRIMARY KEY REFERENCES memories(id), actor TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_controls (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL REFERENCES jobs(id),
+ actor TEXT NOT NULL, operation TEXT NOT NULL CHECK(operation IN ('follow_up','stop')),
+ request_id TEXT NOT NULL, text TEXT NOT NULL, target TEXT NOT NULL,
+ state TEXT NOT NULL, code TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(actor,operation,request_id)
+);
+CREATE INDEX IF NOT EXISTS task_controls_job ON task_controls(job_id,actor,id);
+CREATE TRIGGER IF NOT EXISTS task_controls_immutable
+BEFORE UPDATE OF job_id,actor,operation,request_id,text,target,created_at ON task_controls
+BEGIN SELECT RAISE(ABORT, 'coworker control intent is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS task_controls_no_delete BEFORE DELETE ON task_controls
+BEGIN SELECT RAISE(ABORT, 'coworker control history is append-only'); END;
 """
 for _table in ("messages", "intake", "memories", "memory_tombstones"):
     for _operation in ("UPDATE", "DELETE"):
@@ -540,6 +556,7 @@ class Store:
             if not isinstance(task, dict) or set(task) != {"board", "number"}:
                 return result
             projection = self._authority.task_progress(row, task, user_id)
+            projection["controls"] = self._control_projection(conn, row, projection, user_id)
             # Recheck after source reads too; callbacks must not publish stale
             # data after a reentrant revocation/cancel/rebind or memory removal.
             current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
@@ -553,11 +570,152 @@ class Store:
                 or current["progress_binding"] != self._progress_binding(conn, current)
             ):
                 return result
+            self._authority.task_progress_current(current, projection, user_id)
         except StoreError:
             return result
         result["task"] = {"board": projection["board"], "number": projection["number"]}
         result["task_progress"] = projection
         return result
+
+    @staticmethod
+    def _control_receipt(row):
+        # No canonical identifiers, session digests or internal target binding.
+        return {
+            key: row[key]
+            for key in (
+                "id",
+                "job_id",
+                "operation",
+                "request_id",
+                "text",
+                "state",
+                "code",
+                "created_at",
+                "updated_at",
+            )
+        }
+
+    def _control_projection(self, conn, job, task, user_id):
+        result = {"can_follow_up": False, "can_stop": False, "receipts": []}
+        try:
+            target = self._authority.task_control_target(job, task, user_id)
+        except StoreError:
+            return result
+        result.update(can_follow_up=True, can_stop=target["runner_job"] is not None)
+        rows = conn.execute(
+            "SELECT * FROM task_controls WHERE job_id=? AND actor=? ORDER BY id DESC LIMIT ?",
+            (job["id"], "user:" + user_id, CONTROL_HISTORY),
+        ).fetchall()
+        # A changed canonical origin/run never revives an earlier receipt.
+        result["receipts"] = [
+            self._control_receipt(r) for r in reversed(rows) if json.loads(r["target"]) == target
+        ]
+        return result
+
+    def _control_context(self, conn, user_id, job_id, session_hash):
+        job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job is None or self._authority is None:
+            raise StoreError("not_found", 404)
+        self._conversation(conn, user_id, job["conversation_id"])
+        view = self._progress_job(conn, job, user_id, session_hash=session_hash)
+        if view.get("task_progress", {}).get("availability") != "available":
+            raise StoreError("not_found", 404)
+        target = self._authority.task_control_target(job, view["task"], user_id)
+        current = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        self._runtime_access(conn, current)
+        self._authority.job({"user_id": user_id, "session_hash": session_hash})
+        self._conversation(conn, user_id, current["conversation_id"])
+        self._check_visibility(conn, current)
+        if (
+            current["state"] != job["state"]
+            or current["task"] != job["task"]
+            or current["progress_binding"] != self._progress_binding(conn, current)
+        ):
+            raise StoreError("not_found", 404)
+        return dict(current), target
+
+    def control_task(self, user_id, job_id, operation, request_id, text="", *, session_hash=None):
+        """Durable one-attempt outbox for an explicit person's targeted control.
+
+        Commit the uncertain receipt before crossing the canonical store boundary.
+        Exact retries observe it; they NEVER repeat an effect, even after restart
+        or a lost acknowledgement. There is no worker launch or model call here.
+        """
+        from . import task_controls
+
+        _number(job_id)
+        _id(request_id)
+        if operation not in ("follow_up", "stop"):
+            raise StoreError()
+        _text(text, MAX_CONTROL_TEXT, empty=operation == "stop")
+        if operation == "stop" and text:
+            raise StoreError()
+        with self._transaction() as conn:
+            job, target = self._control_context(conn, user_id, job_id, session_hash)
+            if operation == "stop" and target["runner_job"] is None:
+                raise StoreError("not_found", 404)
+            actor = "user:" + user_id
+            previous = conn.execute(
+                "SELECT * FROM task_controls WHERE actor=? AND operation=? AND request_id=?",
+                (actor, operation, request_id),
+            ).fetchone()
+            if previous is not None:
+                if previous["job_id"] != job_id or previous["text"] != text:
+                    raise StoreError("request_conflict", 409)
+                if json.loads(previous["target"]) != target:
+                    raise StoreError("not_found", 404)
+                return {"receipt": self._control_receipt(previous)}
+            if (
+                conn.execute(
+                    "SELECT count(*) FROM task_controls WHERE job_id=?", (job_id,)
+                ).fetchone()[0]
+                >= MAX_CONTROLS
+            ):
+                raise StoreError("at_capacity", 409)
+            stamp = _stamp()
+            receipt_id = conn.execute(
+                "INSERT INTO task_controls(job_id,actor,operation,request_id,text,target,state,code,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,'uncertain','acknowledgement_pending',?,?)",
+                (
+                    job_id,
+                    actor,
+                    operation,
+                    request_id,
+                    text,
+                    json.dumps(target, sort_keys=True),
+                    stamp,
+                    stamp,
+                ),
+            ).lastrowid
+
+        def authorize():
+            # No broad control/conversation lock spans the canonical mutation.
+            # Fresh exact origin/viewer sessions and audience fences precede it.
+            with self._transaction() as conn:
+                current, binding = self._control_context(conn, user_id, job_id, session_hash)
+                if binding != target:
+                    raise StoreError("not_found", 404)
+                return self._authority.user(user_id), current
+
+        try:
+            outcome = task_controls.apply(self._authority, target, operation, text, authorize)
+        except Exception:
+            # Includes commit-with-lost-ack. Do not infer failure and retry, or
+            # expose exception text (which may contain private canonical data).
+            outcome = None
+        with self._transaction() as conn:
+            _, current = self._control_context(conn, user_id, job_id, session_hash)
+            if current != target:
+                raise StoreError("not_found", 404)
+            if outcome is not None:
+                conn.execute(
+                    "UPDATE task_controls SET state=?,code=?,updated_at=? WHERE id=?",
+                    (*outcome, _stamp(), receipt_id),
+                )
+            receipt = conn.execute(
+                "SELECT * FROM task_controls WHERE id=?", (receipt_id,)
+            ).fetchone()
+            return {"receipt": self._control_receipt(receipt)}
 
     def _progress_binding(self, conn, job):
         conversation = self._conversation(conn, job["user_id"], job["conversation_id"])

@@ -143,6 +143,18 @@ def _runner(authority, job, task, viewer):
         }
 
 
+def current(authority, job, projection, user_id):
+    """Fence publication after local control-receipt projection as well."""
+    try:
+        path = Path(authority.gateway.workspace_dir(authority.workspace_id)) / "boards.sqlite3"
+        with _read(path) as conn:
+            binding, _ = _authority(conn, authority, job, projection, user_id)
+            if binding["version"] != projection["version"]:
+                raise StoreError("context_changed", 409)
+    except (OSError, sqlite3.Error, ControlError, ToolError, ValueError, TypeError, KeyError):
+        raise StoreError("progress_unavailable", 404) from None
+
+
 def project(authority, job, task, user_id):
     """Return allowlisted source facts; failure exposes no source text or IDs."""
     try:

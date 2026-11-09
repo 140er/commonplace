@@ -21,6 +21,9 @@ import pytest
         "forms",
         "progress",
         "progress_revocation",
+        "task_controls",
+        "control_revocation",
+        "control_reconnect",
     ],
 )
 def test_coworker_ui(case):
