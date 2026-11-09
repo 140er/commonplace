@@ -236,7 +236,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
-  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory builder boundaries in `docs/compute/`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel builder boundaries in `docs/compute/`.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -876,6 +876,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
+  - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
   - The gateway installs inert owner Compute management routes alongside chat; this extension setup neither loads credential custody nor starts remote execution.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
@@ -1057,6 +1058,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Atomic, person-authorized chat-task origin bindings in the canonical boards transaction, with opaque actor-scoped dispatch keys and conflicting-intent refusal.
+  - Configured BoardStore connections participate in the concrete Compute authority coordinator before authority writes and attach persisted SQL guards.
   - Internal start_chat_task validates that canonical origin and requests the existing configured person-owner fenced runner admission with a stable hashed origin key; refusal leaves the card intact.
 
   - Canonical Space REST response projection and typed creation refusals.
@@ -1458,7 +1460,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
   - Bounded passive ARP/IPv6 neighbor cache parsing, provenance-preserving observation collection and explicitly configured typed helper support; default collection is unavailable.
-  - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; the authority-fence contract denies absent integration.
+  - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and leaves remote admission disabled until its channel is integrated.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
   - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
 
@@ -1478,6 +1480,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
+  - `tests/test_compute_fence.py` proves local cross-process writer exclusion, durable epoch invalidation, stale-authority refusal, timeout/crash/restart, persistent unparticipating-writer denial and default-off lifecycle.
   - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
   - `tests/test_compute_control.py` and `tests/test_compute_api.py` cover persistent/replayed actions, current authority, Origin/framing, typed enrollment/grants and stale digest rejection; `tests/test_compute_browser.py` exercises the full real gateway UI lifecycle.
   - `tests/test_compute_credentials.py`, `tests/test_compute_transport.py` and the optional actual Paramiko socketpair `tests/test_compute_ssh_fixture.py` cover authenticated custody, lifecycle, safe-open refusals, protocol validation, replay, limits and both SSH pins before authentication.

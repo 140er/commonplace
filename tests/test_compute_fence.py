@@ -62,7 +62,7 @@ def local_state(execution_env, tmp_path):
         user_ref=env.owner,
         name="fixture-writer",
         client="test",
-        policy=Policy.build(),
+        policy=Policy.build(scopes=["memory:read"]),
         actor=env.owner,
     )
     state.scope = env.store.create_scope(
@@ -82,6 +82,8 @@ def local_state(execution_env, tmp_path):
     # Exercise the same trusted startup path as ControlDB(compute_config=...).
     # The source fixture has already provisioned all its synthetic stores.
     compute._configure_control(env.db, state.config)
+    env.gateway.add_route = lambda *args: None
+    env.gateway.add_prefix_route = lambda *args: None
     compute.install(env.gateway)
     assert env.gateway._compute_execution_reasons[env.workspace] == "gateway_admission_unintegrated"
     state.fence = env.gateway._compute_fences[env.workspace]

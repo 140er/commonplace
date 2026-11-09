@@ -17,6 +17,7 @@ from commonplace.control_db import ControlError
 from commonplace.http_util import send_json
 
 from .control import StoreError, open_store
+from .fence import FenceDenied
 
 _CREATE_FIELDS = {
     "gateways": frozenset(
@@ -156,6 +157,9 @@ def handle(gateway, handler):
             401 if code == "sign_in" else 403 if code == "owner_required" else 400,
             {"error": code},
         )
+    except FenceDenied:
+        h.close_connection = True
+        return send_json(h, 503, {"error": "authority_unavailable"})
     except ControlError:
         h.close_connection = True
         return send_json(h, 401, {"error": "sign_in"})

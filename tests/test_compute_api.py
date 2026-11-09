@@ -425,3 +425,13 @@ def test_routes_and_constructors_have_no_custody_transport_network_or_thread_eff
         == 200
     )
     assert not (api.env.path.parent / "compute-credentials.sqlite3").exists()
+
+
+def test_authority_fence_timeout_returns_bounded_unavailable(api, monkeypatch):
+    from commonplace.compute.fence import FenceDenied
+
+    def unavailable(*args):
+        raise FenceDenied("authority_timeout")
+
+    monkeypatch.setattr(control.Store, "_owner", unavailable)
+    assert api.request() == (503, {"error": "authority_unavailable"})

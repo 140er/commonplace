@@ -164,9 +164,16 @@ The default-off ExecutionService uses signed, exact enrollment receipts from
 separately pinned provisioning public keys; a browser owner cannot assert live
 verification. Receipts expire within one hour and rebind proposals on verification
 changes. A participating AuthorityFence must cover control, boards, Compute,
-custody, enrollment and gateway admission; this component currently supplies the
-required abstract contract and denies absent/unparticipating fences. It does not
-claim production writer participation or a live revocation guarantee.
+custody, enrollment and gateway admission. Explicit trusted ExecutionConfig now
+installs bounded cross-process POSIX locking, durable epoch invalidation and
+persisted SQL guards for central local authority writers. Private registered
+functions reject unparticipating legacy connections; missing/replaced participant
+files, changed guards or unknown workspaces deny. ControlDB locks/transactions,
+BoardStore connections/transactions, Compute journals/enrollment and custody
+transactions participate. These local domains exclude gateway_admission: the
+remote authenticated helper-to-controller permit channel is still absent, so
+execution remains off with gateway_admission_unintegrated. No instantaneous
+remote revocation or filesystem rollback guarantee is claimed.
 
 Approved actions are consumed once into append-only identity-bound execution_runs
 before keys or network are opened. Exact origin/approver sessions, fresh canonical
@@ -184,8 +191,11 @@ redaction before persistence, binary/oversize output is omitted, serialized
 evidence is at most8192 bytes. Lost audience authority withholds remote text.
 The owner UI displays admitted/running/unknown/observed-exit facts, redacted
 evidence and cancellation intent separately from stored proposal approval.
-Production fence/worker installation, independent provisioning and external
-reconciliation/restore procedures remain separate integration requirements.
+Trusted per-workspace startup configuration wires service installation and
+shutdown without key initialization. Host shutdown refuses to report clean if
+worker threads remain. Remote admission wiring, independent provisioning and
+external reconciliation/restore procedures remain separate requirements.
+Compute management fence timeouts return a bounded503 authority_unavailable.
 
 ### Isolated Compute custody and SSH transport
 
