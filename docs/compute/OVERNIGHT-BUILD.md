@@ -42,8 +42,10 @@ Earlier affected chat checks:220 passed with SQLCipher enabled, including durabl
 controls; final UI/docs checks14 passed. Real-browser journeys cover concurrent
 chat intake, scoped memory/reload/group isolation, actual canonical task results,
 exact follow-up receipts and script upload/inspection/approval/reload/mobile layout.
-The final broader affected legacy regression is recorded in the execution log
-when it finishes; do not infer a full repository-suite result from these checks.
+The final broader affected chat/boards/gateway/web/runner/orchestration regression
+passed1603 checks with2 optional browser skips in450.39s. Those browser journeys
+were covered by the separate Chromium round. This is an affected-surface result,
+not a claim that the entire repository suite ran.
 
 ## External prerequisites and remaining limits
 
