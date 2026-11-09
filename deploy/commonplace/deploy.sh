@@ -207,12 +207,18 @@ main() {
         .build.args.COMMONPLACE_BUILD_COMMIT == $commit and
         (.image | type == "string" and endswith(":" + $commit))
     ' <<< "$rendered" >/dev/null 2>&1 || die release 'Compose must select the requested source and build commit'
-    "${compose[@]}" up -d --build || die deploy 'compose up failed'
+    jq --arg port "$APP_PORT" -e '
+        [.services.commonplace.ports[]? | select(
+            .host_ip == "127.0.0.1" and (.published | tostring) == $port and
+            (.target | tostring) == "8765" and (.protocol // "tcp") == "tcp"
+        )] | length == 1
+    ' <<< "$rendered" >/dev/null 2>&1 || die deploy 'Commonplace requires its loopback health port mapping'
+    "${compose[@]}" up -d --build --wait --wait-timeout 90 || die deploy 'compose up failed'
     "${compose[@]}" ps || die deploy 'compose ps failed'
     health=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$APP_PORT/healthz") || health=unavailable
     [[ $health == 200 ]] || die deploy 'health probe failed'
     local running
-    running=$("${compose[@]}" exec -T commonplace python -c "from importlib.resources import files; print(files('commonplace.web').joinpath('_build_commit.txt').read_text(encoding='ascii').strip())") || die release 'cannot attest running package'
+    running=$("${compose[@]}" exec -T commonplace python -c "from importlib.resources import files; from urllib.request import urlopen; response = urlopen('http://127.0.0.1:8765/healthz', timeout=10); assert response.status == 200; print(files('commonplace.web').joinpath('_build_commit.txt').read_text(encoding='ascii').strip())") || die release 'cannot attest running package'
     [[ $running == "$COMMONPLACE_BUILD_COMMIT" ]] || die release 'running package differs from requested commit'
     printf '[deploy] verified release: %s; healthz: %s\n' "$running" "$health"
 }

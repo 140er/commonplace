@@ -332,3 +332,8 @@ backup success/failure or fencing. Admin authorization is signed-in current-work
 owner plus a per-request server admin flag; ordinary owners see exactly
 “Instance administrator access required” and send no operational requests.
 See [Admin API](../../docs/admin.md) and [backup receipts](../../docs/backups.md#optional-status-receipts).
+
+The wrapper requires the Commonplace service itself to publish its container
+health port (8765) on the configured loopback application port. Compose waits
+up to 90 seconds for service health before the external probe; the commit
+attestation also probes health inside that same service container.

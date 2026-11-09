@@ -608,7 +608,7 @@ exit HOLD_RC""".replace("HOLD_RC", str(fakes.get("hold_rc", 0))).replace(
         "docker": fakes.get(
             "docker",
             """if [[ "$*" == *"config --format json" ]]; then
- echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED"}]}}}'
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED","target":8765}]}}}'
 fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1"))
             .replace("PUBLISHED", fakes.get("published", "8765"))
             .replace(
@@ -849,7 +849,7 @@ def test_deploy_sh_success_order(tmp_path):
     ]
     assert calls[-5:-2] == [
         compose + ["config", "--format", "json"],
-        compose + ["up", "-d", "--build"],
+        compose + ["up", "-d", "--build", "--wait", "--wait-timeout", "90"],
         compose + ["ps"],
     ]
 
@@ -1166,7 +1166,21 @@ def test_deploy_reports_both_missing_paths(tmp_path):
 
 @pytest.mark.parametrize(
     "scenario",
-    ["stale_context", "stale_image", "runtime_old", "runtime_missing", "health", "up", "requested"],
+    [
+        "stale_context",
+        "stale_image",
+        "runtime_old",
+        "runtime_missing",
+        "health",
+        "up",
+        "requested",
+        "missing_port",
+        "other_service_port",
+        "wrong_target",
+        "cold_start",
+        "readiness_timeout",
+        "internal_health",
+    ],
 )
 def test_deploy_requested_release(tmp_path, scenario):
     sha = "0" * 39 + "1"
@@ -1179,19 +1193,30 @@ def test_deploy_requested_release(tmp_path, scenario):
             "args": {"COMMONPLACE_BUILD_COMMIT": sha},
         },
         "image": "commonplace:" + sha,
-        "ports": [],
+        "ports": [{"host_ip": "127.0.0.1", "published": "8765", "target": 8765}],
     }
     if scenario == "stale_context":
         service["build"]["context"] = str(tmp_path / "old-release")
         service["image"] = "commonplace:old"
     if scenario == "stale_image":
         service["image"] = "commonplace:old"
-    rendered = json.dumps({"services": {"commonplace": service}})
+    services = {"commonplace": service}
+    if scenario in {"missing_port", "other_service_port"}:
+        service["ports"] = []
+    if scenario == "other_service_port":
+        services["other"] = {
+            "ports": [{"host_ip": "127.0.0.1", "published": "8765", "target": 8765}]
+        }
+    if scenario == "wrong_target":
+        service["ports"][0]["target"] = 9999
+    rendered = json.dumps({"services": services})
     runtime = "f" * 40 if scenario == "runtime_old" else sha
     docker = f"""case "$*" in
 *"config --format json") echo {shlex.quote(rendered)} ;;
-*"up -d --build"*) exit {9 if scenario == "up" else 0} ;;
-*"exec -T commonplace python -c"*) {"exit 9" if scenario == "runtime_missing" else "echo " + runtime} ;;
+*"up -d --build"*)
+    [[ "$*" == *"--wait --wait-timeout 90"* ]] || exit 8
+    exit {9 if scenario in {"up", "readiness_timeout"} else 0} ;;
+*"exec -T commonplace python -c"*) {"exit 9" if scenario in {"runtime_missing", "internal_health"} else "echo " + runtime} ;;
 esac"""
     result, calls = run_deploy(
         tmp_path,
@@ -1202,10 +1227,11 @@ esac"""
     )
     assert (tmp_path / "compose.yml").read_text() == ""
     assert (tmp_path / ".env").read_text() == "COMMONPLACE_SIGNUP=closed\n"
-    if scenario == "requested":
+    if scenario in {"requested", "cold_start"}:
         assert result.returncode == 0, result.stderr
         assert sha in result.stdout
-        assert any("exec" in call for call in calls)
+        assert any("exec" in call and any("urlopen" in arg for arg in call) for call in calls)
+        assert any("--wait" in call and "--wait-timeout" in call for call in calls)
     else:
         assert result.returncode != 0, (result.stdout, result.stderr)
         if scenario in {"stale_context", "stale_image"}:
