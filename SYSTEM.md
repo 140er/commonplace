@@ -30,12 +30,13 @@ entry was written.
   data is migrated.
 
 - **Instance index figures (#284):** Only the existing instance-admin person/owner
-  authority receives `mempalace_status.index_stats`; this status branch replaces
-  the worker-backed overview and never starts a worker. Other callers keep the
+  authority receives additive `mempalace_status.index_stats`; all normal overview
+  fields and diagnostics remain exactly as before. Only the added figures avoid
+  worker/collection operations; the normal overview retains its existing path. Other callers keep the
   existing overview shape, without feature fields. `/api/admin/instance/index-stats`
   pages workspace IDs in creation/ID order, 100 per page, and closes the control
-  snapshot before workspace file reads. Each workspace SQLite read has a 100 ms
-  monotonic budget, 10 ms busy wait and a progress interrupt; the console request
+  snapshot before workspace file reads. Each SQLite query has a 500 ms
+  monotonic budget capped by the page deadline, 10 ms busy wait and a progress interrupt; the console request
   retains its 2 s budget and returns unknown for remaining workspaces.
   Figures expose only `{value, reason}` and workspace IDs. Chroma live SQLite
   embedding rows supply drawers and vector_count (including changes not yet
@@ -51,6 +52,12 @@ entry was written.
   return `backend_not_established`, including compact stores with old Chroma files.
   Generation pointers are only stat-ed: `generation_not_established` prevents
   reading JSON pointers or reporting figures from retired legacy directories.
+  A missing pointer with sibling generation directories returns the same reason.
+  Rollback-journal databases are read directly. WAL header bytes 18–19 must
+  have both existing sidecars, otherwise `wal_unavailable` prevents creation.
+  Paths are lstat-ed and symlinks refused (`symlink`); writer contention returns
+  `busy`, not corruption. Missing/empty HNSW state uses `header_unavailable`.
+  Non-admin index-stats requests receive the exact unknown-section 404.
   Missing/corrupt/unsupported stores return nulls with stable reasons. No settings,
   dependencies, admission changes, background jobs or index-content reads added.
 

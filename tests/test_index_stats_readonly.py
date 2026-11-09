@@ -53,7 +53,9 @@ def status_response(hub, headers):
 
 
 def status(hub, headers):
-    return json.loads(status_response(hub, headers)["result"]["content"][0]["text"])
+    response = status_response(hub, headers)
+    assert "result" in response, response
+    return json.loads(response["result"]["content"][0]["text"])
 
 
 def no_load(monkeypatch, hub):
@@ -119,6 +121,11 @@ def test_exact_figures_no_load(hub, disk, monkeypatch):
         for p in palace.rglob("*")
         if p.is_file()
     }
+    from commonplace.handoff import overview
+
+    monkeypatch.setattr(
+        overview, "summary", lambda *a, **kw: {"total_drawers": 101, "wings": {}, "rooms": {}}
+    )
     no_load(monkeypatch, hub)
     headers = cookie(hub)
     code, console, _ = instance(hub, "index-stats", headers)
@@ -170,8 +177,8 @@ def test_nonadmins_unchanged(hub, monkeypatch):
     for auth in headers:
         assert status(hub, auth) == expected
         code, data, _ = instance(hub, "index-stats", auth)
-        assert code in (403, 404) and "workspaces" not in data
-    assert instance(hub, "index-stats", token)[0] in (403, 404)
+        assert (code, data) == (404, {"error": "not found"})
+    assert instance(hub, "index-stats", token)[:2] == (404, {"error": "not found"})
 
 
 @pytest.mark.parametrize(
@@ -326,8 +333,19 @@ def test_authority_fault_and_override_do_not_expose_figures(hub, disk, monkeypat
 
 
 def test_status_without_worker(hub, disk, monkeypatch):
+    from commonplace.handoff import overview
+
+    expected = {
+        "total_drawers": 101,
+        "wings": {"notes": 101},
+        "rooms": {"day": 101},
+        "protocol": "MCP",
+        "aaak_dialect": True,
+    }
+    monkeypatch.setattr(overview, "summary", lambda *a, **kw: dict(expected))
     no_load(monkeypatch, hub)
     result = status(hub, cookie(hub))
+    assert {k: v for k, v in result.items() if k != "index_stats"} == expected
     assert "index_stats" in result
     assert result["index_stats"]["workspace_id"] == hub.workspace
     assert result["index_stats"]["vector_count"] == {"value": 101, "reason": None}

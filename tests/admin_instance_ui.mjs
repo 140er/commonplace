@@ -23,6 +23,7 @@ async function main(){
  if(process.argv[2]==='index-stats'){
    const figure={value:null,reason:'model_not_in_sqlite'};
    const row={workspace_id:'ws_1234567890abcdef',...Object.fromEntries(['drawers','embedding_model','dimension','vector_count','hnsw_capacity','tombstones'].map(k=>[k,figure]))};
+   assert.ok(f.req('/api/admin/instance/index-stats'), 'Memory index request must exist');
    f.req('/api/admin/instance/index-stats').resolve({workspaces:[row],has_more:true,next_cursor:'next'});await flush();
    assert.match(f.mount.innerHTML,/ws_1234567890abcdef/);assert.match(f.mount.innerHTML,/model_not_in_sqlite/);
    void f.ui.refreshSection('index-stats',{more:true});

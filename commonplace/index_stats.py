@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 FIELDS = ("drawers", "embedding_model", "dimension", "vector_count", "hnsw_capacity", "tombstones")
-READ_SECONDS = 0.100
+READ_SECONDS = 0.5
 # Chroma 1.5.9 Cargo.lock: hnswlib 6868102bde454dc761136e1994490133a6a026bb,
 # hnswalg.h HEADER_FIELDS: int, six size_t, int, uint32, three size_t,
 # double, size_t. Native little-endian, 64-bit size_t only; no alignment padding.
@@ -24,7 +24,19 @@ def unknown(reason):
     return {key: {"value": None, "reason": reason} for key in FIELDS}
 
 
+def _symlink(*paths):
+    for path in paths:
+        try:
+            if stat.S_ISLNK(Path(path).lstat().st_mode):
+                return True
+        except FileNotFoundError:
+            pass
+    return False
+
+
 def _header(path):
+    if _symlink(path.parent, path):
+        return None, "symlink"
     if sys.byteorder != "little" or struct.calcsize("P") != 8:
         return None, "unsupported_header_format"
     # O_NONBLOCK prevents a corrupt FIFO from blocking a request. fstat checks
@@ -48,8 +60,8 @@ def _header(path):
         os.close(fd)
 
 
-def read(palace, *, backend="chroma", clock=time.monotonic):
-    """Read one workspace within 100 ms of SQLite work; unknown never means zero.
+def read(palace, *, backend="chroma", clock=time.monotonic, deadline=float("inf")):
+    """Bound each query to 500 ms and the caller deadline; unknown never means zero.
 
     SQLite rows include pending HNSW changes, so header elements minus SQL rows
     cannot prove tombstones. The MemPalace embedder identity is a JSON sidecar,
@@ -58,7 +70,8 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
     result = unknown("unavailable")
     if backend != "chroma":
         return unknown("unsupported_backend")
-    deadline = clock() + READ_SECONDS
+    page_deadline = deadline
+    deadline = min(clock() + READ_SECONDS, page_deadline)
 
     def remaining():
         if clock() >= deadline:
@@ -66,19 +79,40 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
 
     conn = None
     try:
-        path = Path(palace) / "chroma.sqlite3"
+        palace = Path(palace)
+        path = palace / "chroma.sqlite3"
+        if _symlink(palace, path):
+            return unknown("symlink")
         if not path.is_file():
             return unknown("missing_database")
-        # mode=ro sees current WAL commits; immutable=1 would silently ignore
-        # them. Never request WAL mode or initialize/migrate a database.
-        if Path(str(path) + "-wal").exists() and not Path(str(path) + "-shm").is_file():
+        # Chroma normally uses rollback journals (1,1). WAL (2,2) must
+        # already have both sidecars: even mode=ro can create them otherwise.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return unknown("invalid_database")
+            raw = os.read(fd, 20)
+        finally:
+            os.close(fd)
+        if len(raw) != 20 or raw[:16] != b"SQLite format 3\x00":
+            return unknown("invalid_database")
+        if raw[18:20] == b"\x02\x02" and not all(
+            Path(str(path) + suffix).is_file() for suffix in ("-wal", "-shm")
+        ):
             return unknown("wal_unavailable")
         remaining()
         conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.010)
         conn.execute("PRAGMA query_only=ON")
         conn.set_progress_handler(lambda: int(clock() >= deadline), 100)
         conn.execute("BEGIN")
-        row = conn.execute(
+
+        def query(sql, parameters=()):
+            nonlocal deadline
+            deadline = min(clock() + READ_SECONDS, page_deadline)
+            remaining()
+            return conn.execute(sql, parameters)
+
+        row = query(
             "SELECT id,dimension FROM collections WHERE name=? LIMIT 2",
             ("mempalace_drawers",),
         ).fetchall()
@@ -94,9 +128,7 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
         result["tombstones"] = {"value": None, "reason": "unsynchronized_sources"}
         # Chroma has no collection index on segments. Walk at most eight
         # entries in primary-key order, then refuse larger catalogs.
-        catalog = conn.execute(
-            "SELECT id,scope,collection FROM segments ORDER BY id LIMIT 9"
-        ).fetchall()
+        catalog = query("SELECT id,scope,collection FROM segments ORDER BY id LIMIT 9").fetchall()
         if len(catalog) > 8:
             return unknown("segment_catalog_limit")
         segments = [(sid, scope) for sid, scope, cid in catalog if cid == collection]
@@ -105,7 +137,7 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
         if len(metadata) == 1 and len(segments) <= 2:
             # Chroma UNIQUE(segment_id,embedding_id) is a covering index. No
             # content/metadata rows are read; the progress handler bounds count.
-            n = conn.execute(
+            n = query(
                 "SELECT count(*) FROM embeddings WHERE segment_id=?", (metadata[0],)
             ).fetchone()[0]
             result["drawers"] = {"value": n, "reason": None}
@@ -129,8 +161,15 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
         return result
     except TimeoutError:
         return unknown("read_timeout")
-    except sqlite3.Error:
-        return unknown("read_timeout" if clock() >= deadline else "invalid_database")
+    except sqlite3.Error as exc:
+        if clock() >= deadline:
+            return unknown("read_timeout")
+        if getattr(exc, "sqlite_errorcode", 0) & 255 in (
+            sqlite3.SQLITE_BUSY,
+            sqlite3.SQLITE_LOCKED,
+        ):
+            return unknown("busy")
+        return unknown("invalid_database")
     except (OSError, ValueError):
         return unknown("unavailable")
     finally:
@@ -138,15 +177,19 @@ def read(palace, *, backend="chroma", clock=time.monotonic):
             conn.close()
 
 
-def workspace(gateway, workspace_id):
+def workspace(gateway, workspace_id, *, clock=time.monotonic, deadline=float("inf")):
     try:
+        if clock() >= deadline:
+            return unknown("read_timeout")
         if not re.fullmatch(r"ws_[a-f0-9]{16}", workspace_id):
             return unknown("workspace_unavailable")
         directory = gateway.supervisor.root / workspace_id
         # Resolving an active generation would read a JSON pointer, outside
         # the permitted figure sources. Fail unknown instead of reading it or
         # reporting figures from a retired legacy directory.
-        if directory.is_symlink() or any(
+        if _symlink(directory):
+            return unknown("symlink")
+        if any(directory.parent.glob(directory.name + ".generation-*")) or any(
             (directory / name).exists() or (directory / name).is_symlink()
             for name in (".store-pointer.json", ".store-pointer.prev.json")
         ):
@@ -155,6 +198,6 @@ def workspace(gateway, workspace_id):
         # Only stat it: allowed figure sources cannot establish its contents.
         if (directory / "workspace.json").exists():
             return unknown("backend_not_established")
-        return read(directory / "palace")
+        return read(directory / "palace", clock=clock, deadline=deadline)
     except (OSError, ValueError):
         return unknown("workspace_unavailable")

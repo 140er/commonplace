@@ -279,8 +279,9 @@ It returns `{workspaces: [{workspace_id, drawers, embedding_model, dimension,
 vector_count, hnsw_capacity, tombstones}], has_more, next_cursor}`; every figure
 is `{value: number|string|null, reason: null|stable_code}`. The console labels
 unknown figures with their reasons and paginates with the existing lifecycle.
-Admin `mempalace_status` returns `{index_stats: {workspace_id, ...figures}}`
-without a worker call. Non-admin status responses remain unchanged; no stats
+Admin `mempalace_status` adds `index_stats: {workspace_id, ...figures}` to
+the normal overview, preserving every existing field and diagnostic. Only the
+added figures avoid worker calls; the normal overview path is unchanged. Non-admin status responses remain unchanged; no stats
 fields appear for member persons, tokens or ordinary workspace owners.
 
 Only read-only Chroma SQLite queries and the bounded fixed HNSW header supply
@@ -293,3 +294,13 @@ Store overrides and active generation pointers are stat-ed only. Their presence
 returns `backend_not_established` or `generation_not_established`; reading those
 JSON files is outside the permitted figure sources, and retired legacy Chroma
 files must not be mistaken for the current store.
+
+A missing pointer with sibling generation directories is also unknown. Each SQL
+query has a 0.5-second budget within the 2-second page deadline; an expired page
+returns null/read_timeout for the current and remaining workspaces. Rollback
+journals and WAL are supported read-only. The 20-byte SQLite header is read
+before opening SQL: WAL requires both sidecars or returns wal_unavailable,
+creating no files on a closed WAL palace. Symlinked workspace/palace/database/
+segment/header paths are refused with symlink; locks return busy. Empty HNSW
+state returns header_unavailable. Non-admin index-stats requests return exactly
+404 {"error":"not found"}, identical to an unknown section.

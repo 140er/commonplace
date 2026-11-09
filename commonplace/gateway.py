@@ -750,21 +750,20 @@ class Mediator:
                 )
             except Exception:
                 authorized = False
+            from .handoff.overview import summary
+
+            result = summary(self.gateway, principal, self.workers, name)
             if authorized:
                 from .index_stats import workspace
 
-                figures = workspace(self.gateway, principal.workspace_id)
-                return {
-                    "respond": {
-                        "index_stats": {
-                            "workspace_id": principal.workspace_id,
-                            **figures,
-                        }
-                    }
+                result = {
+                    **result,
+                    "index_stats": {
+                        "workspace_id": principal.workspace_id,
+                        **workspace(self.gateway, principal.workspace_id),
+                    },
                 }
-            from .handoff.overview import summary
-
-            return {"respond": summary(self.gateway, principal, self.workers, name)}
+            return {"respond": result}
         if name == "mempalace_delete_by_source":
             return self._scope_delete_by_source(principal, name, args)
         if name == "mempalace_delete_tunnel":

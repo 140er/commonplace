@@ -867,7 +867,9 @@ def index_stats(gateway, context, after=None):
         values = (
             unknown("read_timeout")
             if context.clock.monotonic() >= context.deadline
-            else workspace(gateway, row["id"])
+            else workspace(
+                gateway, row["id"], clock=context.clock.monotonic, deadline=context.deadline
+            )
         )
         figures.append({"workspace_id": identifier(row["id"]), **values})
     return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
@@ -966,7 +968,10 @@ def install(gateway):
         try:
             context = ReadContext(gateway.admin_clock)
             if not instance_authorized(gateway, principal, context):
-                send_json(h, 403, {"error": INSTANCE_DENIAL})
+                if section == "index-stats":
+                    send_json(h, 404, {"error": "not found"})
+                else:
+                    send_json(h, 403, {"error": INSTANCE_DENIAL})
                 return
             if section == "index-stats":
                 try:
