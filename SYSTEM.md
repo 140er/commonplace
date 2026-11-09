@@ -335,8 +335,9 @@ wrong-pin refusal before the affected authentication. They use no network/device
 endpoint. Public enrollment/approval APIs, controller authority fencing,
 background execution/outbox integration and deployment prerequisites are still
 required before enabling this transport for users. The pure callbacks do not
-claim atomic cross-store revocation. Custody filesystem tests run on the host:
-edge1 user namespaces remap root ownership and correctly fail safe-open checks.
+claim atomic cross-store revocation. Custody filesystem tests require native
+POSIX ownership semantics. Environments that remap ownership must fail the
+safe-open checks.
 
 ### Compute discovery domain boundary
 

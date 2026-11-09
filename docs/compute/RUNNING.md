@@ -65,24 +65,23 @@ Unknown attempts retain their slots and never automatically recollect.
 
 ## Verification
 
-The normal focused checks use pytest through heavy. Custody and concrete fence
-fixtures need host POSIX ownership semantics; edge1's user namespace remaps root
-ownership and correctly fails their safe-open preconditions. Keep those checks
-local rather than weakening ownership validation.
+Run focused checks with pytest. Custody and concrete fence fixtures require
+native POSIX ownership semantics. Environments that remap ownership must fail
+their safe-open preconditions; do not weaken ownership validation.
 
 ```sh
-heavy --local-only -- uv run --extra compute --extra sqlcipher pytest -q \
+uv run --extra compute --extra sqlcipher pytest -q \
   tests/test_compute_fence.py tests/test_compute_executor.py tests/test_compute_admission.py \
   tests/test_compute_passive_admission.py tests/test_compute_discovery_lifecycle.py \
   tests/test_compute_credentials.py tests/test_compute_ssh_fixture.py
-heavy -- uv run --extra compute pytest -q \
+uv run --extra compute pytest -q \
   tests/test_compute_discovery.py tests/test_compute_transport.py \
   tests/test_compute_scopes.py tests/test_coworker_dispatch.py
 ```
 
 Optional Chromium tests are `tests/test_coworker_browser.py` and
 `tests/test_compute_browser.py`. Supply Playwright and its browser cache explicitly
-before pytest, whose fixtures isolate HOME; run via `heavy --browser`.
+before pytest, whose fixtures isolate HOME.
 They use real app/gateway/storage with synthetic providers and public enrollment
 fixtures, not real endpoints, operator keys or paid model calls.
 

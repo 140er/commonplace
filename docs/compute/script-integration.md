@@ -44,12 +44,11 @@ actual confinement. A disposable operator-provisioned non-root namespace/cgroup/
 tmpfs/read-only runtime fixture is still needed for a real positive test. The
 runtime contract names only implemented controls; no seccomp filter is claimed.
 
-## Local verification limitation
+## Confinement verification requirements
 
-Read-only coordinator-host checks on2026-11-09 found effective UID1000,
-unprivileged_userns_clone=1, AppArmor's unprivileged-userns restriction=1,
-a non-writable /sys/fs/cgroup and no configured disposable sandbox fixture.
-These fail the mandatory local runtime preconditions. No kernel setting, mount,
-cgroup delegation or privileged host configuration was changed. Actual confined
-execution needs a separately provisioned disposable fixture and independent
-runtime verification; the application must stay disabled without it.
+Actual confined execution requires a separately provisioned disposable non-root
+fixture with namespace support, delegated cgroups, bounded tmpfs and a verified
+read-only runtime. The positive test skips only when no fixture is configured;
+a configured fixture must pass prerequisite checks and execute successfully.
+Synthetic wire tests do not replace this verification. The application must stay
+disabled without independent runtime verification.

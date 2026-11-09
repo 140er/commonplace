@@ -1,7 +1,7 @@
 """Safe filesystem/process fixtures; no confinement-positive claim from fakes.
 
 The final opt-in test requires separately provisioned disposable Linux resources;
-missing kernel features are a truthful skip. Deterministic upload tests bypass
+only an absent fixture is skipped; provisioned failures fail. Deterministic upload tests bypass
 only host qualification and cancel BEFORE spawn. They test atomic storage and
 replay, never pretend that monkeypatched configuration provides confinement.
 """
@@ -13,7 +13,7 @@ import os
 import stat
 import subprocess
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -552,20 +552,41 @@ def test_optional_actual_disposable_confined_script(tmp_path):
         arguments=(str(sentinel), "; literal $(id)"),
         output_paths=("result.txt",),
     )
-    try:
-        BubblewrapSandbox(settings).check(value)
-    except ProtocolDenied:
-        pytest.skip(
-            "mandatory Linux namespaces/cgroup/tmpfs/immutable-runtime features unavailable"
-        )
+    BubblewrapSandbox(settings).check(value)
     attempt = "fixture-" + os.urandom(8).hex()
     execution = ScriptRequest(attempt, attempt, value, time.time() + 60)
     result = TargetHelper(
         settings, key_principal=settings.key_principal, authorize=lambda *a: True
     ).execute_verified(execution, script)
-    if result.state == "denied" and result.code == "sandbox_unavailable":
-        pytest.skip("bwrap kernel confinement setup unavailable; no script-start marker observed")
-    assert result.state == "observed_exit" and result.exit_code == 0
+    assert result.state == "observed_exit" and result.exit_code == 0, (
+        f"provisioned sandbox execution failed: {result.state}/{result.code}"
+    )
     assert result.termination_confirmed and result.stdout == b"confined result\n"
     assert result.artifacts == (("result.txt", b"confined artifact"),)
     assert sentinel.read_bytes() == b"host data must remain private and unchanged"
+
+
+@pytest.mark.parametrize("phase", ["preflight", "launch"])
+def test_provisioned_positive_fixture_denials_fail(tmp_path, monkeypatch, phase):
+    """A supplied fixture must never turn a broken sandbox into a skipped check."""
+    settings = replace(config(tmp_path), workspace="fixture-script-workspace")
+    config_path = tmp_path / "fixture.json"
+    config_path.write_text(json.dumps(asdict(settings)))
+    monkeypatch.setenv("COMMONPLACE_COMPUTE_SANDBOX_FIXTURE", str(config_path))
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **kw: pytest.fail("regression fixture must not spawn")
+    )
+
+    def preflight(self, manifest):
+        if phase == "preflight":
+            raise ProtocolDenied("sandbox_unavailable")
+
+    monkeypatch.setattr(BubblewrapSandbox, "check", preflight)
+    monkeypatch.setattr(
+        TargetHelper,
+        "execute_verified",
+        lambda *a: SimpleNamespace(state="denied", code="sandbox_unavailable"),
+    )
+    error = ProtocolDenied if phase == "preflight" else AssertionError
+    with pytest.raises(error, match="sandbox_unavailable"):
+        test_optional_actual_disposable_confined_script(tmp_path)

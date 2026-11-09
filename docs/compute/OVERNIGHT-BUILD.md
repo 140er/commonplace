@@ -49,18 +49,15 @@ not a claim that the entire repository suite ran.
 
 ## External prerequisites and remaining limits
 
-The coordinator host has UID1000, AppArmor's unprivileged-userns restriction=1,
-no writable cgroup root and no provisioned disposable confinement fixture. Those
-mandatory checks prevent actual confined execution here. No kernel settings,
-mounts, cgroups, users, operator keys, live caches or devices were changed.
-Provision and independently verify a disposable target before enabling scripts.
+Actual confinement remains unverified because no disposable target fixture was
+provisioned. A target requires non-root namespace support, delegated cgroups,
+bounded tmpfs and a verified read-only runtime. Provision and independently
+verify a disposable target before enabling scripts.
 Targets also need separately authorized SSH helper/account/key/runtime setup,
 protected persistent journals and reconciliation before restoring old state.
 
-Claude review capacity was reported exhausted. Sol has not reviewed or supplied
-any gate verdict. The branch must not be called release-ready or merged without
-an authorized independent review and the required checks. No paid fallback or
-GitHub Actions were used.
+The branch must not be called release-ready or merged without a passing
+authorized independent review and the required checks.
 
 Real provider speed/quality, a live long-running worker process and actual remote
 termination have not been demonstrated. Named bots are presentation/configuration,

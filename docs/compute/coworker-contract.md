@@ -140,6 +140,6 @@ private memory isolation and tombstones; cancelled/late results; restart without
 duplicated answers/effects; slow provider in conversation A while B answers and
 HTTP posts still return; actual task references if dispatch is supported.
 
-Worker authors run only quick syntax/lint checks. Parent runs one grouped focused
-test selection through heavy and required suite/checks after integration. Record
-real commands/results; no unrun test or fixture success claims.
+Run syntax and lint checks during development, then a grouped focused pytest
+selection and required checks after integration. Record actual commands and
+results; do not claim success for tests or fixtures that were not run.
