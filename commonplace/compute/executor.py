@@ -22,6 +22,7 @@ preserve this journal; restoring an old journal requires disabling execution.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -305,10 +306,12 @@ class ExecutionService:
                         )
                     digest = hashlib.sha256(raw + receipt.signature).hexdigest()
                     conn.execute(
-                        "INSERT INTO enrollment_verifications VALUES (?,?,?,?,?,?) "
+                        "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,"
+                        "receipt_digest,verified_at,expires_at) VALUES (?,?,?,?,?,?) "
                         "ON CONFLICT(node_id) DO UPDATE SET gateway_id=excluded.gateway_id,"
                         "enrollment=excluded.enrollment,receipt_digest=excluded.receipt_digest,"
-                        "verified_at=excluded.verified_at,expires_at=excluded.expires_at",
+                        "verified_at=excluded.verified_at,expires_at=excluded.expires_at,"
+                        "script_runtime=NULL",
                         (
                             node_id,
                             gateway["id"],
@@ -321,6 +324,12 @@ class ExecutionService:
                     self.store._audit(conn, current, node_id, "enrollment.verified")
         except Exception:
             raise StoreError("verification_unavailable", 409) from None
+
+    def _accept_script_runtime(self, principal, node_id, *, session_hash, receipt):
+        """Trusted, independently signed runtime receipt; absent from REST."""
+        from .script_control import accept_runtime
+
+        return accept_runtime(self, principal, node_id, session_hash=session_hash, receipt=receipt)
 
     def _person(self, user_id, session_hash):
         principal = sessions.person_principal(
@@ -436,6 +445,29 @@ class ExecutionService:
                         continue
                     self._unchanged(lease)
                     now = self.store._now()
+                    attempt = uuid.uuid4().hex
+                    start_by = min(
+                        now + limits.admission_seconds,
+                        row["approval_expires_at"],
+                        row["proposal_expires_at"],
+                    )
+                    arguments = binding["arguments"]
+                    if binding["operation"] == "workspace.script.v1":
+                        from .scripts import ScriptManifest, ScriptRequest
+
+                        script_request = ScriptRequest(
+                            row["id"],
+                            attempt,
+                            ScriptManifest.from_dict(binding["script"]["manifest"]),
+                            start_by,
+                            authority_epoch=lease.epoch,
+                            approval_digest=self._consent_digest(row),
+                        )
+                        arguments = {
+                            "bundle_id": script_request.manifest.bundle_id,
+                            "manifest_digest": script_request.manifest.digest,
+                            "script_digest": script_request.digest,
+                        }
                     request = ExecutionRequest(
                         workspace=self.store.workspace_id,
                         project=binding["authority"]["board"],
@@ -443,7 +475,7 @@ class ExecutionService:
                         agent=origin.actor,
                         task=str(binding["task_number"]),
                         execution=row["id"],
-                        attempt=uuid.uuid4().hex,
+                        attempt=attempt,
                         gateway=gateway.gateway,
                         node=route.node,
                         gateway_epoch=gateway.epoch,
@@ -452,15 +484,11 @@ class ExecutionService:
                         target_credential_version=route.credential_version,
                         authority_epoch=lease.epoch,
                         enrollment=binding["enrollment"],
-                        start_by=min(
-                            now + limits.admission_seconds,
-                            row["approval_expires_at"],
-                            row["proposal_expires_at"],
-                        ),
+                        start_by=start_by,
                         run_until=now + limits.runtime_seconds,
                         limits=limits,
                         operation=binding["operation"],
-                        arguments=binding["arguments"],
+                        arguments=arguments,
                         admission_mode=self.admission_mode,
                         approval_digest=(
                             self._consent_digest(row) if self.admission_mode is not None else None
@@ -509,6 +537,25 @@ class ExecutionService:
             raise StoreError("attempt_unavailable", 409)
         return run
 
+    def _script_payload(self, request, conn, binding, principal):
+        from .script_control import read_bundle
+        from .script_transport import validate_envelope
+        from .scripts import ScriptRequest
+
+        _, manifest, script = read_bundle(
+            self.store, conn, principal, binding["arguments"]["bundle_id"]
+        )
+        script_request = ScriptRequest(
+            request.execution,
+            request.attempt,
+            manifest,
+            request.start_by,
+            authority_epoch=request.authority_epoch,
+            approval_digest=request.approval_digest,
+        )
+        validate_envelope(request, script_request, script)
+        return script_request, script
+
     def _check(self, conn, lease, request):
         run = self._run(conn, request)
         if (
@@ -518,7 +565,11 @@ class ExecutionService:
             or lease.epoch != request.authority_epoch
         ):
             raise StoreError("authority_changed", 409)
-        row, binding, *_ = self._fresh(conn, request.execution)
+        row, binding, _, _, origin = self._fresh(conn, request.execution)
+        if request.operation != binding["operation"]:
+            raise StoreError("authority_changed", 409)
+        if request.operation == "workspace.script.v1":
+            self._script_payload(request, conn, binding, origin)
         if request.admission_mode != self.admission_mode or (
             request.admission_mode is not None
             and (
@@ -707,6 +758,7 @@ class ExecutionService:
                     credential_request.enrollment.binding,
                 )
                 not in expected
+                or not self._script_credential(request, credential_request)
             ):
                 return False
             with self._guard() as lease:
@@ -765,6 +817,7 @@ class ExecutionService:
                     credential_request.enrollment.binding,
                 )
                 in expected
+                and self._script_credential(request, credential_request)
             )
 
         path = Path(self.store._path() if callable(self.store._path) else self.store._path)
@@ -777,6 +830,25 @@ class ExecutionService:
         ) as custody:
             for credential_id, binding in expected:
                 custody.acquire(credential_id, binding, context).close()
+
+    def _script_credential(self, request, credential_request):
+        if (
+            request.operation != "workspace.script.v1"
+            or credential_request.enrollment.binding.purpose != "target"
+        ):
+            return True
+        from .script_control import _configured
+
+        runtime = _configured(self.store, request.node)
+        try:
+            public = credential_request.enrollment.public_key.split()
+            return (
+                len(public) == 2
+                and hashlib.sha256(base64.b64decode(public[1], validate=True)).hexdigest()
+                == runtime.key_principal
+            )
+        except (ValueError, TypeError):
+            return False
 
     @staticmethod
     def _evidence(result, limit):
@@ -829,7 +901,10 @@ class ExecutionService:
             and result.state == "completed"
             and run["stage"] == 4
             and type(result.exit_code) is int
-            and 0 <= result.exit_code <= 255
+            and (
+                0 <= result.exit_code <= 255
+                or (request.operation == "workspace.script.v1" and -255 <= result.exit_code < 0)
+            )
         )
         issued = conn.execute(
             "SELECT 1 FROM gateway_admissions WHERE execution_id=?", (request.execution,)
@@ -840,6 +915,28 @@ class ExecutionService:
         if not_started and run["cancel_requested_at"] is not None:
             reason = "cancelled_before_start"
         evidence = self._evidence(result, request.limits.output_bytes) if valid and publish else {}
+        if request.operation == "workspace.script.v1":
+            from .script_sandbox import ScriptResult
+            from .scripts import project_result
+
+            script_result = result.script_result if valid else None
+            known_exit = (
+                known_exit
+                and type(script_result) is ScriptResult
+                and (
+                    script_result.state == "observed_exit"
+                    and script_result.termination_confirmed
+                    and script_result.exit_code == result.exit_code
+                )
+            )
+            known = known_exit or not_started
+            evidence = (
+                project_result(script_result)
+                if publish and type(script_result) is ScriptResult
+                else {}
+            )
+            if len(canonical(evidence)) > MAX_RESULT_BYTES:
+                evidence = {"output": "[omitted:too_long]"}
         conn.execute(
             "UPDATE execution_runs SET phase=?,reason=?,certainty=?,reserved=?,updated_at=?,"
             "exit_code=?,result=? WHERE execution_id=?",
@@ -873,6 +970,16 @@ class ExecutionService:
         custody, keys = None, []
         try:
             custody, keys = self._custody(request, gateway, route)
+            script_arguments = {}
+            if request.operation == "workspace.script.v1":
+                with self._guard() as lease:
+                    with self.store._journal() as conn:
+                        self._check(conn, lease, request)
+                        _, binding, _, _, origin = self._fresh(conn, request.execution)
+                        script_request, script = self._script_payload(
+                            request, conn, binding, origin
+                        )
+                script_arguments = {"script_request": script_request, "script": script}
             result = SSHTransport(
                 self._authorize,
                 enabled=True,
@@ -883,7 +990,14 @@ class ExecutionService:
                 gateway_admission=(
                     self._wire_admission if self.admission_mode is not None else None
                 ),
-            ).execute(request, gateway, route, *keys, cancelled=_Cancellation(self, request))
+            ).execute(
+                request,
+                gateway,
+                route,
+                *keys,
+                cancelled=_Cancellation(self, request),
+                **script_arguments,
+            )
         except Exception:
             # No raw exception strings or key-bearing objects enter the journal.
             # Even an unknown connect/exec acknowledgement cannot cause a retry.

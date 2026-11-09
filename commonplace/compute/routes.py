@@ -30,6 +30,7 @@ _CREATE_FIELDS = {
         "gateway_id task_number agent_id cidrs interfaces methods expires_at limits".split()
     ),
     "executions": frozenset("node_id task_number operation arguments request_id".split()),
+    "scripts": frozenset("node_id task_number request_id source arguments output_paths".split()),
 }
 
 
@@ -52,12 +53,12 @@ def _constant(value):
     raise ValueError
 
 
-def _body(h):
+def _body(h, maximum=8192):
     # The shared boundary already bounds/framing-checks Content-Length. Parse
     # here to preserve this API's fixed invalid_request code on every failure.
     try:
         length = int(h.headers.get("Content-Length", "0"))
-        if not 0 < length <= 65_536:
+        if not 0 < length <= maximum:
             raise ValueError
         raw = h.rfile.read(length)
         if len(raw) != length:
@@ -107,11 +108,13 @@ def handle(gateway, handler):
             if len(parts) == 1 and parts[0] in _CREATE_FIELDS:
                 kind = parts[0]
                 return send_json(h, 200, {kind: getattr(store, "list_" + kind)(principal, **auth)})
+            if len(parts) == 2 and parts[0] == "scripts":
+                return send_json(h, 200, {"script": store.get_script(principal, parts[1], **auth)})
         if h.command == "POST":
             if len(parts) == 1 and parts[0] in _CREATE_FIELDS:
                 kind = parts[0]
                 body = _fields(
-                    _body(h),
+                    _body(h, 65_536 if kind == "scripts" else 8192),
                     _CREATE_FIELDS[kind],
                     optional=("agent_id",) if kind == "scopes" else (),
                 )
@@ -120,6 +123,9 @@ def handle(gateway, handler):
                 if kind == "executions":
                     execution, created = store.propose_execution(principal, **auth, **body)
                     return send_json(h, 201 if created else 200, {"execution": execution})
+                if kind == "scripts":
+                    script, created = store.create_script(principal, **auth, **body)
+                    return send_json(h, 201 if created else 200, {"script": script})
                 singular = kind[:-1]
                 item = getattr(store, "create_" + singular)(principal, **auth, **body)
                 return send_json(h, 201, {singular: item})

@@ -11,6 +11,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .script_control import ScriptRuntimeConfig
+
 
 @dataclass(frozen=True)
 class WorkspaceExecutionConfig:
@@ -22,6 +24,18 @@ class WorkspaceExecutionConfig:
     admission_mode: str | None = None
     discovery_enabled: bool = False
     discovery_sources: tuple[str, ...] = ()
+    scripts_enabled: bool = False
+    script_runtimes: tuple[ScriptRuntimeConfig, ...] = ()
+
+    def __post_init__(self):
+        if (
+            type(self.scripts_enabled) is not bool
+            or type(self.script_runtimes) is not tuple
+            or len(self.script_runtimes) > 32
+            or any(type(r) is not ScriptRuntimeConfig for r in self.script_runtimes)
+            or len({r.node_id for r in self.script_runtimes}) != len(self.script_runtimes)
+        ):
+            raise ValueError("invalid_compute_configuration")
 
 
 @dataclass(frozen=True)

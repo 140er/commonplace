@@ -7,10 +7,13 @@ SQLCipher discovery, and calls authorize(context, binding, action) on every read
 or write. The callback must check the real current owner/task/object authority.
 No identity/task registry or execution side effect is introduced here.
 
-ScriptRequest(execution, attempt, manifest, expires_at).digest is the canonical
-approval digest. It includes every manifest field and expiry. Target upload is
-not a grant: the parent must bind this digest into its existing fenced admission
-and approval consumption. Private keys and caller environment have no fields.
+ScriptRequest.digest is the complete *dispatch* digest, including the fresh
+attempt/epoch and exact consumed consent. Logical proposal bindings explicitly
+use authority_epoch=None: they never pretend to snapshot a future global epoch.
+Compute approves its immutable proposal (including the complete manifest), then
+binds that consent into this fresh request and its one-use outer SSH permit.
+Legacy integer-epoch manifests retain their original wire/digest, and cannot be
+upgraded into the logical proposal mode. No approved manifest is ever rewritten.
 Public projections must use project_result, never log bundles/raw remote bytes.
 """
 
@@ -94,7 +97,7 @@ class ScriptBinding:
     node_epoch: int = 1
     gateway_credential_version: int = 1
     target_credential_version: int = 1
-    authority_epoch: int = 1
+    authority_epoch: int | None = 1
 
     def __post_init__(self):
         for name in ("workspace", "project", "user", "agent", "task", "gateway", "node"):
@@ -105,9 +108,10 @@ class ScriptBinding:
             "node_epoch",
             "gateway_credential_version",
             "target_credential_version",
-            "authority_epoch",
         ):
             bounded_integer(getattr(self, name), 1, 2**31 - 1)
+        if self.authority_epoch is not None:
+            bounded_integer(self.authority_epoch, 1, 2**31 - 1)
 
     @classmethod
     def from_dict(cls, value):
@@ -266,6 +270,8 @@ class ScriptRequest:
     manifest: ScriptManifest
     expires_at: float
     controller_contract: str = CONTROLLER_CONTRACT
+    authority_epoch: int | None = None
+    approval_digest: str | None = None
 
     def __repr__(self):
         return "<ScriptRequest redacted>"
@@ -278,9 +284,17 @@ class ScriptRequest:
             raise ScriptDenied("invalid_manifest")
         if self.controller_contract != CONTROLLER_CONTRACT:
             raise ScriptDenied("unsupported_admission_mode")
+        if self.manifest.binding.authority_epoch is None:
+            bounded_integer(self.authority_epoch, 1, 2**63 - 1)
+            digest(self.approval_digest)
+        elif self.authority_epoch is not None or self.approval_digest is not None:
+            raise ScriptDenied("binding_mismatch")
 
     def document(self):
-        return asdict(self)
+        document = asdict(self)
+        if self.manifest.binding.authority_epoch is not None:
+            del document["authority_epoch"], document["approval_digest"]
+        return document
 
     @property
     def digest(self):
@@ -288,10 +302,16 @@ class ScriptRequest:
 
     @classmethod
     def from_dict(cls, value):
-        exact_fields(value, cls.__dataclass_fields__)
+        fields = set(cls.__dataclass_fields__)
+        if type(value) is dict and not ({"authority_epoch", "approval_digest"} & value.keys()):
+            fields -= {"authority_epoch", "approval_digest"}
+        exact_fields(value, fields)
         fields = dict(value)
         fields["manifest"] = ScriptManifest.from_dict(fields["manifest"])
-        return cls(**fields)
+        request = cls(**fields)
+        if set(value) != set(request.document()):
+            raise ScriptDenied("invalid_fields")
+        return request
 
 
 _SCHEMA = """
@@ -415,6 +435,26 @@ class ScriptBundleStore:
         manifest.verify(script)
         return manifest, script
 
+    def read(self, bundle_id, *, context):
+        """Read by immutable identity, authorizing the actual stored audience.
+
+        Unlike get(binding=...), this supports old private object lookup after
+        unrelated dispatch epochs change. It still rechecks current authority.
+        """
+        identifier(bundle_id)
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT manifest,digest,script FROM script_bundles_v1 WHERE bundle_id=? AND workspace=?",
+                (bundle_id, self.workspace),
+            ).fetchone()
+        if row is None:
+            raise ScriptDenied("bundle_not_found")
+        manifest = _stored_manifest(row[0], row[1])
+        self._allow(context, manifest.binding, "get")
+        script = bytes(row[2])
+        manifest.verify(script)
+        return manifest, script
+
     def list(self, *, binding, context, limit=MAX_LIST):
         bounded_integer(limit, 1, MAX_LIST)
         self._allow(context, binding, "list")
@@ -457,7 +497,11 @@ def project_result(result):
             text = None
         projected[name] = redact.redact(text)[0] if text is not None else "[omitted:too_long]"
     projected["artifacts"] = [
-        {"path": path, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        {
+            "path": redact.redact(path)[0],
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
         for path, data in result.artifacts
     ]
     return projected

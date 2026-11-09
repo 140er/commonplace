@@ -312,6 +312,9 @@ class Store:
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=FULL")
                     conn.executescript(_SCHEMA)
+                    from .script_control import schema
+
+                    schema(conn)
                     _attach_connection(conn, str(path), "compute")
                     conn.execute("BEGIN IMMEDIATE")
                     try:
@@ -518,6 +521,7 @@ class Store:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "limits": binding["limits"],
+            **({"script": binding["script"]} if "script" in binding else {}),
         }
 
     def _execution_view(self, conn, row):
@@ -731,7 +735,10 @@ class Store:
         execution_id,
         request_id,
     ):
-        compile_operation(operation, arguments)
+        from .scripts import OPERATION
+
+        if operation != OPERATION:
+            compile_operation(operation, arguments)
         node, nm, gateway, gm = self._node(conn, principal, node_id)
         authority = self._authority(principal, gateway["board"], task_number)
         outer, inner = self._enrollment(gateway, gm), self._route(node, nm, gateway["id"])
@@ -776,6 +783,15 @@ class Store:
         ).fetchone()
         if verification is not None:
             binding["verification"] = dict(verification)
+        if operation == OPERATION:
+            from .script_control import approved_contract
+
+            binding["script"] = approved_contract(
+                self, conn, principal, node_id, task_number, arguments
+            )
+            # A proposal contains an immutable logical script contract. Neither
+            # its own writes nor a later attempt can rewrite the approved bytes.
+            binding["version"] = 2
         return binding
 
     def propose_execution(
@@ -802,7 +818,10 @@ class Store:
                     raise StoreError("conflict", 409)
                 return self._execution_view(conn, existing), False
             try:
-                compile_operation(operation, arguments)
+                from .scripts import OPERATION
+
+                if operation != OPERATION:
+                    compile_operation(operation, arguments)
             except ProtocolDenied:
                 raise StoreError("unsupported_operation", 400) from None
             now = self._now()
@@ -965,12 +984,18 @@ class Store:
 
     def inventory(self, principal, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
+            from .script_control import capable
+
             return {
                 **{
                     kind: self._list(conn, current, kind)
                     for kind in ("gateways", "nodes", "scopes", "executions")
                 },
-                "capabilities": {"transport": False, "passive_discovery": False, "scripts": False},
+                "capabilities": {
+                    "transport": False,
+                    "passive_discovery": False,
+                    "scripts": capable(self, conn, current),
+                },
                 "can_manage": True,
             }
 
@@ -1005,6 +1030,24 @@ class Store:
     def get_execution(self, principal, execution_id, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
             return self._get_public(conn, current, "executions", execution_id)
+
+    def create_script(self, principal, **kwargs):
+        """Create an immutable task/node-bound script; return (metadata, created)."""
+        from .script_control import create_script
+
+        return create_script(self, principal, **kwargs)
+
+    def get_script(self, principal, bundle_id, *, session_hash):
+        """Current owner/object-authorized manifest and original UTF-8 source."""
+        from .script_control import get_script
+
+        return get_script(self, principal, bundle_id, session_hash=session_hash)
+
+    def list_scripts(self, principal, *, session_hash):
+        """At most 100 authorized immutable script manifests, without source."""
+        from .script_control import list_scripts
+
+        return list_scripts(self, principal, session_hash=session_hash)
 
 
 def open_store(gateway, workspace_id, *, authority_fence=None):

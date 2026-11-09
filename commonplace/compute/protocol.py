@@ -328,6 +328,20 @@ def enrollment_digest(gateway, route):
 
 def compile_operation(operation, arguments):
     """Return a literal Linux probe; no interpolation or caller shell fragments."""
+    if operation == "workspace.script.v1":
+        if type(arguments) not in (dict, MappingProxyType) or set(arguments) != {
+            "bundle_id",
+            "manifest_digest",
+            "script_digest",
+        }:
+            raise ProtocolDenied("unsupported_operation")
+        identifier(arguments["bundle_id"])
+        for name in ("manifest_digest", "script_digest"):
+            if type(arguments[name]) is not str or not _HEX.fullmatch(arguments[name]):
+                raise ProtocolDenied("invalid_digest")
+        from .target_helper import TARGET_HELPER_COMMAND
+
+        return TARGET_HELPER_COMMAND
     if (
         operation != "system.info.v1"
         or type(arguments) not in (dict, MappingProxyType)
@@ -397,7 +411,9 @@ class ExecutionRequest:
             if type(self.approval_digest) is not str or not _HEX.fullmatch(self.approval_digest):
                 raise ProtocolDenied("invalid_digest")
         compile_operation(self.operation, self.arguments)
-        object.__setattr__(self, "arguments", MappingProxyType({}))
+        if self.operation == "workspace.script.v1" and self.admission_mode != ADMISSION_MODE:
+            raise ProtocolDenied("unsupported_admission_mode")
+        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
 
     def document(self):
         result = {name: getattr(self, name) for name in self.__dataclass_fields__}
@@ -591,6 +607,8 @@ def admission_message(kind, request, channel, nonce, start_by):
             authority_epoch=request.authority_epoch,
             approval_digest=request.approval_digest,
         )
+    if request.operation == "workspace.script.v1":
+        message["purpose"] = request.operation
     return message
 
 
@@ -598,6 +616,8 @@ def validate_admission(message, kind, request):
     fields = _ADMISSION_FIELDS
     if request.admission_mode is not None:
         fields = fields | {"admission_mode", "admission_v", "authority_epoch", "approval_digest"}
+    if request.operation == "workspace.script.v1":
+        fields = fields | {"purpose"}
     exact_fields(message, fields)
     if type(message["v"]) is not int or message["v"] != VERSION or message["kind"] != kind:
         raise ProtocolDenied("unsupported_protocol")
@@ -959,6 +979,7 @@ class GatewayHelper:
         passive_scope=None,
         admission_mode=None,
         passive_admission_mode=None,
+        scripts_enabled=False,
     ):
         limits = Limits() if limits is None else limits
         if (
@@ -984,6 +1005,7 @@ class GatewayHelper:
         if passive_admission_mode not in (None, ADMISSION_MODE):
             raise ProtocolDenied("unsupported_admission_mode")
         self.passive_admission_mode = passive_admission_mode
+        self.scripts_enabled = scripts_enabled is True
         self._passive_pending = self._passive_admitted = None
         self.admission_mode = admission_mode
         self.gateway, self.routes, self.journal = gateway, MappingProxyType(copied), journal
@@ -1182,6 +1204,8 @@ class GatewayHelper:
     def _route(self, request, phase):
         if not self.enabled:
             raise ProtocolDenied("transport_disabled")
+        if request.operation == "workspace.script.v1" and not self.scripts_enabled:
+            raise ProtocolDenied("unsupported_operation")
         route = self.routes.get(request.node)
         if route is None:
             raise ProtocolDenied("node_not_enrolled")

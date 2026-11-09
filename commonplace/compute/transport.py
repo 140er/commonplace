@@ -189,6 +189,19 @@ class ParamikoDriver:
             channel.close()
             raise
 
+    def script_command(self, transport, timeout):
+        """Fixed bidirectional helper channel; unlike a probe stdin stays open."""
+        from .target_helper import TARGET_HELPER_COMMAND
+
+        channel = transport.open_session(timeout=timeout)
+        try:
+            channel.settimeout(timeout)
+            self._request(channel, lambda: channel.exec_command(TARGET_HELPER_COMMAND), timeout)
+            return channel
+        except BaseException:
+            channel.close()
+            raise
+
     @staticmethod
     def _request(channel, request, timeout):
         expired = threading.Event()
@@ -291,6 +304,7 @@ class ExecutionResult:
     stderr: bytes = field(default=b"", repr=False)
     cancellation_requested: bool = False
     tunnel_bytes: int = 0
+    script_result: object = field(default=None, repr=False)
 
 
 class SSHTransport:
@@ -337,7 +351,18 @@ class SSHTransport:
         if allowed is not True:
             raise ProtocolDenied("authority_denied")
 
-    def execute(self, request, gateway, route, gateway_key, target_key, *, cancelled=None):
+    def execute(
+        self,
+        request,
+        gateway,
+        route,
+        gateway_key,
+        target_key,
+        *,
+        cancelled=None,
+        script_request=None,
+        script=None,
+    ):
         if not self.enabled:
             raise ProtocolDenied("transport_disabled")
         if (
@@ -360,6 +385,9 @@ class SSHTransport:
             raise ProtocolDenied("unsupported_admission_mode")
         request.validate_binding(gateway, route, self.limits, self.wall())
         command = compile_operation(request.operation, dict(request.arguments))
+        from .script_transport import validate_payload
+
+        validate_payload(request, script_request, script)
         self._authorize(request, "connect", cancelled)
         resources = []
         routed, tunnel = False, None
@@ -454,6 +482,21 @@ class SSHTransport:
             self.driver.authenticate(inner, route.account, target_key, remaining())
             self._authorize(request, "execute", cancelled)
             # Setting routed before the request accounts for a lost exec ack.
+            if request.operation == "workspace.script.v1":
+                from .script_transport import exchange
+
+                process = self.driver.script_command(inner, remaining())
+                resources.append(process)
+                outcome = exchange(process, request, script_request, script, deadline, cancelled)
+                observed = outcome.state == "observed_exit" and outcome.termination_confirmed
+                return ExecutionResult(
+                    "completed" if observed else "uncertain",
+                    "exit_observed" if observed else "exit_evidence_missing",
+                    outcome.exit_code if observed else None,
+                    cancellation_requested=outcome.cancel_requested,
+                    tunnel_bytes=tunnel.used,
+                    script_result=outcome,
+                )
             process = self.driver.command(inner, command, remaining())
             resources.append(process)
             return self._collect(process, tunnel, deadline, request, cancelled)
