@@ -80,7 +80,7 @@ def _redirect_origin(uri) -> str | None:
         ):
             return None
         last_label = host.removesuffix(".").rsplit(".", 1)[-1]
-        if parts.scheme == "https" and re.fullmatch(r"[0-9]+|0x[0-9a-f]+", last_label):
+        if parts.scheme == "https" and re.fullmatch(r"[0-9]+|0x[0-9a-f]*", last_label):
             if str(ipaddress.IPv4Address(host)) != host:
                 return None
         if parts.scheme != "https":

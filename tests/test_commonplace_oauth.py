@@ -827,6 +827,8 @@ def test_invalid_authorization_never_renders_external_form_action(client, monkey
         "https://2130706433/callback",
         "https://client.123/callback",
         "https://client.0xff/callback",
+        "https://0x/callback",
+        "https://client.0x/callback",
     ],
 )
 def test_hostile_registered_redirect_fails_closed(client, uri):
