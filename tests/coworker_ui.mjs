@@ -63,6 +63,80 @@ function fixture() {
 }
 
 const cases = {
+  async progress() {
+    const attack = '<img src=x onerror="alert(1)">';
+    const progress = {
+      source: 'canonical_task', availability: 'available', version: 4, status: 'doing',
+      title: attack, status_line: 'Exact status <safe>', body: 'Original task body.',
+      runner: { state: 'uncertain', outcome_code: attack, cancel_requested_at: 'now' },
+      events: [{ id: 4, kind: 'comment', at: '2026-11-09T12:00:00Z', text: 'Exact worker result <safe>', omitted_fields: [], redacted: false }],
+      evidence: [{ title: attack, drawer_id: 'javascript:alert(1)', invalidated: true }],
+      omitted_fields: ['review_context'], events_omitted: true, evidence_bounded: true,
+    };
+    const linked = state => job('task', 'a', 'done', { code: 'runner_queued', task: { board: 'work', number: 326 }, task_progress: { ...progress, status: state } });
+    const html = coworkerJobHTML(linked('doing'));
+    assert.match(html, /Canonical task progress/);
+    assert.match(html, /Task in progress/);
+    assert.match(html, /Runner outcome unknown/);
+    assert.match(html, /termination unconfirmed/);
+    assert.match(html, /Exact worker result &lt;safe&gt;/);
+    assert.match(html, /Invalidated evidence/);
+    assert.match(html, /Older task events omitted/);
+    assert.match(html, /Oversized source fields omitted/);
+    assert.doesNotMatch(html, /<img|href="javascript:|>Completed</);
+    assert.match(coworkerJobHTML(linked('done')), /Task marked done/);
+    assert.match(coworkerJobHTML({ ...linked('todo'), task_progress: { ...progress, status: 'todo', runner: { state: 'failed' } } }), /Runner start failed/);
+    const decision = coworkerJobHTML({ ...linked('review'), task_progress: { ...progress, status: 'review', ask: attack, review_context: 'Exact question context.' } });
+    assert.match(decision, /href="#\/card\/326">Open task for the authorized decision/);
+    assert.doesNotMatch(decision, /<button|data-cw-action="approve|>Completed</);
+    const f = fixture();
+    await f.open('a', detail('a', { jobs: [linked('doing')] }));
+    f.input('text', 'Keep chatting during canonical work.');
+    assert.equal(f.sendButton().disabled, false);
+    f.submit('message');
+    f.take('/api/coworkers/conversations/a/messages', 'POST').resolve({ message: message(2, 'a', 'Keep chatting during canonical work.'), job: job('front', 'a', 'pending') });
+    await flush();
+    const refresh = f.ui.refresh(); f.take('/api/coworkers').resolve(directory());
+    f.take('/api/coworkers/conversations/a/messages?after=0&limit=100').resolve({ messages: [], jobs: [linked('done')] });
+    await flush(); f.take('/api/coworkers/conversations/a/memory').resolve({ memories: [] }); await refresh;
+    assert.equal((f.host.innerHTML.match(/Exact worker result &lt;safe&gt;/g) || []).length, 1);
+    assert.match(f.host.innerHTML, /Task marked done/);
+    f.ui.stop();
+    // Reload reconstructs the typed source view without any manufactured answer.
+    await f.open('a', detail('a', { jobs: [linked('done')] }));
+    assert.match(f.host.innerHTML, /Exact worker result &lt;safe&gt;/);
+    assert.doesNotMatch(f.host.innerHTML, /cw-from-bot/);
+    f.ui.stop();
+  },
+
+  async progress_revocation() {
+    const f = fixture();
+    const secret = job('task', 'a', 'done', { code: 'runner_queued', task: { board: 'work', number: 326 }, task_progress: { source: 'canonical_task', availability: 'available', status: 'doing', version: 2, status_line: 'PRIVATE_CANONICAL_PROGRESS' } });
+    const withheld = job('task', 'a', 'done', { code: 'runner_queued', task_progress: { source: 'canonical_task', availability: 'unavailable' } });
+    await f.open('a', detail('a', { jobs: [secret] }));
+    f.input('text', 'An ambiguous old request'); f.submit('message');
+    const post = f.take('/api/coworkers/conversations/a/messages', 'POST');
+    const refresh = f.ui.refresh(); f.take('/api/coworkers').resolve(directory());
+    f.take('/api/coworkers/conversations/a/messages?after=0&limit=100').resolve({ messages: [], jobs: [withheld] });
+    await flush(); f.take('/api/coworkers/conversations/a/memory').resolve({ memories: [] }); await refresh;
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_CANONICAL_PROGRESS|href="#\/card\/326"/);
+    post.resolve({ message: message(2, 'a', 'An ambiguous old request'), job: secret });
+    await flush();
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_CANONICAL_PROGRESS|href="#\/card\/326"/, 'Late acknowledgement cannot revive withdrawn progress');
+    f.ui.stop();
+
+    await f.open('a', detail('a', { jobs: [secret] }));
+    const failed = f.ui.refresh(); f.take('/api/coworkers').resolve(directory());
+    f.take('/api/coworkers/conversations/a/messages?after=0&limit=100').reject(new Error('Unavailable'));
+    await failed;
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_CANONICAL_PROGRESS/);
+    f.ui.show('b');
+    f.take('/api/coworkers/conversations/b').resolve(detail('b')); f.take('/api/coworkers').resolve(directory());
+    await flush();
+    assert.doesNotMatch(f.host.innerHTML, /PRIVATE_CANONICAL_PROGRESS/);
+    f.ui.stop();
+  },
+
   async escaping() {
     const f = fixture(), attack = '<img src=x onerror="alert(1)"> & <script>bad()</script>';
     f.setUser({ workspace: 'w-one', actor: 'user:u-one', people: { 'user:u-one': attack } });

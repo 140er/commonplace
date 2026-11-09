@@ -19,6 +19,8 @@ import pytest
         "routing",
         "memory",
         "forms",
+        "progress",
+        "progress_revocation",
     ],
 )
 def test_coworker_ui(case):

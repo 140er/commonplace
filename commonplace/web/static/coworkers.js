@@ -46,7 +46,22 @@ export function coworkerJobHTML(job, bots = [], busy = false) {
   const name = bots.find(bot => same(bot.id, job.bot_id))?.name || "Bot";
   const task = typeof job.task === "object" ? job.task?.number : job.task;
   const taskLink = /^[1-9]\d*$/.test(String(task)) ? `<a href="#/card/${enc(task)}">Open task #${e(task)}</a>` : "";
-  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(outcomeLabel(job))}</span>${job.code ? `<small>${e(outcomeDetail(job))}</small>` : ""}${taskLink}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel"}</button>` : ""}</li>`;
+  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(outcomeLabel(job))}</span>${job.code ? `<small>${e(outcomeDetail(job))}</small>` : ""}${taskLink}${coworkerTaskProgressHTML(job.task_progress, task)}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel"}</button>` : ""}</li>`;
+}
+
+export function coworkerTaskProgressHTML(progress, task) {
+  if (progress?.source !== "canonical_task") return "";
+  if (progress.availability !== "available" || !/^[1-9]\d*$/.test(String(task))) return `<small>${progress.availability === "omitted" ? "Older task progress omitted from this view." : "Current task progress is unavailable for this conversation."}</small>`;
+  const href = `#/card/${enc(task)}`;
+  const state = { backlog: "Task in backlog", todo: "Task to do", doing: "Task in progress", review: "Task in review", done: "Task marked done" }[progress.status] || "Task status unavailable";
+  const field = (label, text) => text ? `<p><strong>${label}</strong> <span style="white-space:pre-wrap;overflow-wrap:anywhere">${e(text)}</span></p>` : "";
+  const omissions = item => `${item.omitted_fields?.length ? '<small>Oversized source fields omitted; open the task for the original.</small>' : ""}${item.redacted ? '<small>Credentials redacted.</small>' : ""}`;
+  const eventNames = { comment: "Comment", ask: "Question", decide: "Decision recorded", handoff: "Handoff", release: "Release" };
+  const events = (progress.events || []).map(item => `<li><small>${e(eventNames[item.kind] || "Task event")} · ${e(item.at || "")}</small>${field("", item.text)}${field("Choice:", item.choice)}${field("Context:", item.context)}${omissions(item)}</li>`).join("");
+  const evidence = (progress.evidence || []).map(item => `<li><a href="${href}">${e(item.title || item.drawer_id || "Evidence on task")}</a>${item.invalidated ? " <small>Invalidated evidence</small>" : ""}${omissions(item)}</li>`).join("");
+  const runner = progress.runner;
+  const decision = progress.status === "review" || progress.proposal_status === "pending";
+  return `<section aria-label="Canonical task progress"><p><strong>${state}</strong> · Canonical task #${e(task)} · version ${e(progress.version)}</p>${field("Task:", progress.title)}${field("Task body:", progress.body)}${field("Status:", progress.status_line)}${runner ? `<p>${e(runnerOutcomes[`runner_${runner.state}`] || "Runner state unavailable")}${runner.cancel_requested_at ? " · Cancellation requested; termination unconfirmed." : ""}</p>${field("Runner detail:", runner.outcome_code)}${omissions(runner)}` : ""}${field("Question:", progress.ask)}${field("Context:", progress.review_context)}${decision ? `<p><a href="${href}">Open task for the authorized decision</a></p>` : ""}${events ? `<ol aria-label="Canonical task events">${events}</ol>` : ""}${progress.events_omitted ? '<small>Older task events omitted; open the task for full history.</small>' : ""}${evidence ? `<ul aria-label="Canonical task evidence">${evidence}</ul>` : ""}${progress.evidence_bounded ? '<small>Evidence selection is bounded; open the task for full visible history.</small>' : ""}${field("Pull request recorded on task:", progress.pr_url)}${omissions(progress)}<a href="${href}">Full task history and artifacts</a></section>`;
 }
 
 export function createCoworkers({ mount, api, current, boards = () => [], navigate = hash => { location.hash = hash; }, timers = globalThis, doc = globalThis.document, events = globalThis.window }) {
@@ -86,11 +101,24 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
   function clearDetail() {
     conversation = null; messages = []; jobs = []; memories = []; cursor = 0;
   }
-  function mergeJob(job) {
+  function mergeJob(job, receipt = false) {
     const old = jobs.find(item => same(item.id, job.id));
     // An HTTP acknowledgement can arrive after a refresh already saw completion.
     if (old && ((!activeJob(old) && activeJob(job)) || (old.state === "running" && ["pending", "queued"].includes(job.state)) || (old.updated_at && job.updated_at && old.updated_at > job.updated_at))) return;
+    // Mutation acknowledgements may predate a newer per-viewer GET revocation.
+    // Only conversation reads replace canonical progress; receipts cannot revive it.
+    if (receipt && job.task_progress) {
+      const { task_progress, task, ...ack } = job;
+      job = { ...ack, ...(old?.task ? { task: old.task } : {}), ...(old?.task_progress ? { task_progress: old.task_progress } : {}) };
+    }
     jobs = merge(jobs, [job]);
+  }
+  function clearTaskProgress() {
+    jobs = jobs.map(job => {
+      if (!job.task_progress) return job;
+      const { task, ...receipt } = job;
+      return { ...receipt, task_progress: { source: "canonical_task", availability: "unavailable" } };
+    });
   }
   function denied(error) {
     if (error?.status === 401) { stop(); return true; }
@@ -219,6 +247,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
           const rows = result.messages.filter(item => same(item.conversation_id, id));
           messages = merge(messages, rows).sort(messageOrder);
           if (jobsVersion === jobsRevision) jobs = result.jobs.filter(item => same(item.conversation_id, id));
+          else clearTaskProgress();
           const next = rows.at(-1)?.id;
           if (!rows.length || same(next, cursor)) break;
           cursor = next;
@@ -236,6 +265,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
       detailError = ""; failures = 0;
     } catch (error) {
       if (!valid(page, turn, id)) return;
+      clearTaskProgress();
       if (!denied(error) && error.name !== "AbortError") { detailError = `${conversation ? "Refresh unavailable; showing the last received data." : "Could not open conversation."} ${errorText(error)}`; failures++; }
     } finally {
       if (valid(page, turn, id)) { reading = false; loading = false; render(); }
@@ -265,7 +295,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
       if (!valid(page, turn, id)) return;
       if (!same(result.message?.conversation_id, id)) throw new Error("Message response did not match this conversation.");
       messages = merge(messages, [result.message]).sort(messageOrder);
-      if (result.job && same(result.job.conversation_id, id)) { mergeJob(result.job); jobsRevision++; }
+      if (result.job && same(result.job.conversation_id, id)) { mergeJob(result.job, true); jobsRevision++; }
       // Do not advance the read cursor: other humans may have posted before this acknowledgement.
       if (d.text === body.text) d.text = "";
       d.attempt = null; d.uncertain = false;
@@ -288,12 +318,14 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     if (d.savingMemory || (!id && !d.memory.trim())) return;
     const text = d.memory, page = epoch, turn = generation, conversationId = selected;
     const flight = {};
-    d.savingMemory = flight; memoryRevision++; detailError = ""; render();
+    d.savingMemory = flight; memoryRevision++; detailError = "";
+    if (id != null) { jobsRevision++; clearTaskProgress(); }
+    render();
     try {
       const result = await request(`${path(conversationId)}/memory${id != null ? `/${enc(id)}` : ""}`, id != null ? { method: "DELETE", body: {} } : { method: "POST", body: { text } });
       if (!valid(page, turn, conversationId)) return;
       memoryRevision++;
-      if (id != null) memories = memories.filter(item => !same(item.id, id));
+      if (id != null) { memories = memories.filter(item => !same(item.id, id)); jobsRevision++; clearTaskProgress(); }
       else if (same(result.memory?.conversation_id, conversationId)) { memories = merge(memories, [result.memory]); if (d.memory === text) d.memory = ""; }
       else throw new Error("Memory response did not match this conversation.");
       notice = id != null ? "Memory hidden from this conversation. Original messages remain." : "Memory saved for this conversation.";
@@ -309,7 +341,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
       const result = await request(`${BASE}/jobs/${enc(id)}/cancel`, { method: "POST", body: {} });
       if (!valid(page, turn, conversationId)) return;
       if (!same(result.job?.conversation_id, conversationId) || !same(result.job?.id, id)) throw new Error("Cancellation response did not match this conversation.");
-      mergeJob(result.job); jobsRevision++; notice = `Job state: ${labels[result.job.state] || result.job.state}.`;
+      mergeJob(result.job, true); jobsRevision++; notice = `Job state: ${labels[result.job.state] || result.job.state}.`;
     } catch (error) {
       if (valid(page, turn, conversationId) && !denied(error)) detailError = `Cancellation could not be confirmed. Refresh to check the job. ${errorText(error)}`;
     } finally { cancelling.delete(String(id)); if (valid(page, turn, conversationId)) render(); }

@@ -85,6 +85,11 @@ class Authority:
         if card.get("board") != board:
             raise StoreError("not_found", 404)
 
+    def task_progress(self, job, task, user_id):
+        from .task_progress import project
+
+        return project(self, job, task, user_id)
+
 
 def _person(gateway, h):
     # Do not accept PATs, an agent's cached principal or a request body identity.
@@ -216,7 +221,13 @@ def handle(gateway, h):
                 return None
             _fields(body, ())
             return send_json(
-                h, 200, {"job": store.cancel_job(principal.user_id, _numeric(parts[1]))}
+                h,
+                200,
+                {
+                    "job": store.cancel_job(
+                        principal.user_id, _numeric(parts[1]), session_hash=sessions._hash(session)
+                    )
+                },
             )
         raise StoreError("not_found", 404)
     except StoreError as exc:
@@ -234,7 +245,12 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
             {
                 "conversation": conversation,
                 "messages": store.list_messages(principal.user_id, conversation_id),
-                "jobs": store.list_jobs(principal.user_id, conversation_id),
+                "jobs": store.list_jobs(
+                    principal.user_id,
+                    conversation_id,
+                    progress=True,
+                    session_hash=sessions._hash(session),
+                ),
                 "memories": store.list_memory(principal.user_id, conversation_id),
             },
         )
@@ -249,7 +265,12 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                     "messages": store.list_messages(
                         principal.user_id, conversation_id, after=after, limit=limit
                     ),
-                    "jobs": store.list_jobs(principal.user_id, conversation_id),
+                    "jobs": store.list_jobs(
+                        principal.user_id,
+                        conversation_id,
+                        progress=True,
+                        session_hash=sessions._hash(session),
+                    ),
                 },
             )
         if h.command == "POST":

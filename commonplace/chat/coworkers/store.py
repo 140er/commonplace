@@ -7,6 +7,7 @@ No content is stored in the control database or exposed to workspace event feeds
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -26,6 +27,7 @@ MAX_MEMORIES = 100
 MAX_BOTS = 200
 MAX_CONVERSATIONS = 200
 MAX_PENDING = 20
+MAX_PROGRESS_TASKS = 20
 TERMINAL = frozenset(
     {
         "done",
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS jobs (
  message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id), bot_id TEXT NOT NULL REFERENCES bots(id),
  user_id TEXT NOT NULL, state TEXT NOT NULL, code TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, task TEXT, session_hash TEXT,
- requested_bot TEXT, visibility_version INTEGER
+ requested_bot TEXT, visibility_version INTEGER, progress_binding TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state,id);
 CREATE INDEX IF NOT EXISTS jobs_conversation ON jobs(conversation_id,id);
@@ -165,6 +167,10 @@ class Store:
                     self._ready_path = path
                 conn.execute("BEGIN IMMEDIATE")
                 try:
+                    if "progress_binding" not in {
+                        r[1] for r in conn.execute("PRAGMA table_info(jobs)")
+                    }:
+                        conn.execute("ALTER TABLE jobs ADD COLUMN progress_binding TEXT")
                     yield conn
                 except BaseException:
                     conn.rollback()
@@ -418,10 +424,13 @@ class Store:
                     raise StoreError("request_conflict", 409)
                 return {
                     "message": self._message(existing),
-                    "job": self._job(
+                    "job": self._progress_job(
+                        conn,
                         conn.execute(
                             "SELECT * FROM jobs WHERE message_id=?", (existing["id"],)
-                        ).fetchone()
+                        ).fetchone(),
+                        user_id,
+                        session_hash=session_hash,
                     ),
                 }
             target = self._target(conn, conversation_id, text, bot_id)
@@ -453,14 +462,110 @@ class Store:
                 ),
             }
 
-    def list_jobs(self, user_id, conversation_id):
+    def list_jobs(self, user_id, conversation_id, *, progress=False, session_hash=None):
         with self._transaction() as conn:
             self._conversation(conn, user_id, conversation_id)
             rows = conn.execute(
                 "SELECT * FROM jobs WHERE conversation_id=? ORDER BY id DESC LIMIT 100",
                 (conversation_id,),
             ).fetchall()
-            return [self._job(r) for r in reversed(rows)]
+            # Newest twenty task projections per response; older entries remain
+            # receipts. No canonical content is copied into shared chat history.
+            projected, remaining = [], MAX_PROGRESS_TASKS
+            for row in rows:
+                if progress and self._progress_candidate(conn, row):
+                    projected.append(
+                        self._progress_job(
+                            conn, row, user_id, remaining > 0, session_hash=session_hash
+                        )
+                    )
+                    remaining -= 1
+                else:
+                    projected.append(self._job(row))
+            return projected[::-1]
+
+    @staticmethod
+    def _progress_candidate(conn, row):
+        if row is None:
+            return False
+        if row["task"] is not None:
+            return True
+        if row["state"] not in ("done", "failed", "interrupted", "uncertain"):
+            return False
+        message = conn.execute(
+            "SELECT text FROM messages WHERE id=?", (row["message_id"],)
+        ).fetchone()
+        if message is None:
+            return False
+        command = message["text"].partition("\n")[0]
+        # Same explicit user intent as runtime._task, never model/tool text.
+        return command.startswith("/task ") and 0 < len(command[len("/task") :].strip()) <= 200
+
+    def _progress_job(self, conn, row, user_id, include=True, *, session_hash=None):
+        result = self._job(row)
+        if result is None or not self._progress_candidate(conn, row):
+            return result
+        # Even an idempotent POST acknowledgement must not revive an old task
+        # reference after authority or conversation visibility changed.
+        result.pop("task", None)
+        result["task_progress"] = {"source": "canonical_task", "availability": "unavailable"}
+        if not include:
+            result["task_progress"]["availability"] = "omitted"
+            return result
+        try:
+            if (
+                self._authority is None
+                or row["state"] not in ("done", "failed", "interrupted", "uncertain")
+                or not row["session_hash"]
+                or not session_hash
+            ):
+                return result
+            viewer = {"user_id": user_id, "session_hash": session_hash}
+            self._authority.job(viewer)
+            self._conversation(conn, user_id, row["conversation_id"])
+            self._runtime_access(conn, row)
+            self._check_visibility(conn, row)
+            if row["progress_binding"] != self._progress_binding(conn, row):
+                return result
+            task = (
+                json.loads(row["task"])
+                if row["task"] is not None
+                else {
+                    "board": self._conversation(conn, row["user_id"], row["conversation_id"])[
+                        "board"
+                    ],
+                    "number": None,
+                }
+            )
+            if not isinstance(task, dict) or set(task) != {"board", "number"}:
+                return result
+            projection = self._authority.task_progress(row, task, user_id)
+            # Recheck after source reads too; callbacks must not publish stale
+            # data after a reentrant revocation/cancel/rebind or memory removal.
+            current = conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
+            self._runtime_access(conn, current)
+            self._authority.job(viewer)
+            self._conversation(conn, user_id, row["conversation_id"])
+            self._check_visibility(conn, current)
+            if (
+                current["state"] != row["state"]
+                or current["task"] != row["task"]
+                or current["progress_binding"] != self._progress_binding(conn, current)
+            ):
+                return result
+        except StoreError:
+            return result
+        result["task"] = {"board": projection["board"], "number": projection["number"]}
+        result["task_progress"] = projection
+        return result
+
+    def _progress_binding(self, conn, job):
+        conversation = self._conversation(conn, job["user_id"], job["conversation_id"])
+        bot = conn.execute("SELECT * FROM bots WHERE id=?", (job["bot_id"],)).fetchone()
+        if bot is None:
+            raise StoreError("not_found", 404)
+        data = {"conversation": self._conversation_view(conn, conversation), "bot": self._bot(bot)}
+        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
     def list_memory(self, user_id, conversation_id):
         with self._transaction() as conn:
@@ -507,7 +612,7 @@ class Store:
             )
             return {"ok": True}
 
-    def cancel_job(self, user_id, job_id):
+    def cancel_job(self, user_id, job_id, *, session_hash=None):
         _number(job_id)
         with self._transaction() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -518,7 +623,12 @@ class Store:
                 "UPDATE jobs SET state='cancelled',code='cancelled',updated_at=? WHERE id=? AND state IN ('pending','running')",
                 (_stamp(), job_id),
             )
-            return self._job(conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+            return self._progress_job(
+                conn,
+                conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone(),
+                user_id,
+                session_hash=session_hash,
+            )
 
     def _runtime_access(self, conn, job):
         self._conversation(conn, job["user_id"], job["conversation_id"])
@@ -556,8 +666,8 @@ class Store:
                     (row["conversation_id"],),
                 ).fetchone()[0]
                 conn.execute(
-                    "UPDATE jobs SET state='running',updated_at=?,visibility_version=? WHERE id=? AND state='pending'",
-                    (_stamp(), visibility, row["id"]),
+                    "UPDATE jobs SET state='running',updated_at=?,visibility_version=?,progress_binding=? WHERE id=? AND state='pending'",
+                    (_stamp(), visibility, self._progress_binding(conn, row), row["id"]),
                 )
                 return self._job(
                     conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
