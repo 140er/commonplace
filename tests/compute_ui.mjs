@@ -23,7 +23,7 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } } } = {}) {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [] } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
   const listeners = new Map(), requests = [], boardsSeen = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
@@ -33,6 +33,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     querySelector(selector) { return selector === '[name="pin_confirmed"]' ? confirmation : selector === '#compute-editor-heading' ? { focus() {} } : null; },
   };
   const api = (path, options = {}) => {
+    if (path === "/api/compute/scripts" && !options.method) return Promise.resolve({ scripts: structuredClone(scripts) });
     if (path === "/api/compute/discoveries" && !options.method) return Promise.resolve(structuredClone(passive));
     let yes, no;
     const promise = new Promise((resolve, reject) => { yes = resolve; no = reject; });
@@ -244,6 +245,30 @@ const cases = {
     assert.match(partial.host.innerHTML, /Fixture target/); assert.match(partial.host.innerHTML, /Projects could not be loaded/);
     assert.equal(partial.boardsSeen.length, 0, 'A failed project read must not wipe the shell’s existing project navigation');
     partial.click('gateway'); assert.doesNotMatch(partial.host.innerHTML, /data-compute-form="gateway"/); partial.ui.stop();
+  },
+
+  async scripts() {
+    const source = '  print("<script>inert</script>")\n';
+    const bundle = { id: 'bundle-one', node_id: node.id, task_number: 42, digest: 'b'.repeat(64), manifest: { runtime: 'python3.v1', privilege: 'unprivileged', arguments: ['; literal $(id)'], output_paths: ['result.txt'] } };
+    const payload = computePayload('script', { node_id: node.id, task_number: '42', source, arguments: '["; literal $(id)"]', output_paths: 'result.txt' }, { requestId: 'fixed' });
+    assert.equal(payload.source, source); assert.deepEqual(payload.arguments, ['; literal $(id)']); assert.deepEqual(payload.output_paths, ['result.txt']);
+    for (const bad of [{ source: 'é'.repeat(16385) }, { source: '\ud800' }, { source: 'x\0y' }, { arguments: '[1]' }, { arguments: '["' + 'é'.repeat(129) + '"]' }, { output_paths: '../outside' }, { output_paths: 'a,a/b' }]) assert.throws(() => computePayload('script', { node_id: node.id, task_number: '42', source, arguments: '[]', ...bad }, { requestId: 'fixed' }));
+    assert.throws(() => computePayload('script', { node_id: node.id, task_number: '42', source: '\\'.repeat(32768), arguments: '[]' }, { requestId: 'fixed' }), /64 KiB/);
+    const f = fixture(); await f.open(); f.click('script');
+    f.submit('script', { node_id: node.id, task_number: '42', source, arguments: '["; literal $(id)"]', output_paths: 'result.txt' });
+    const first = f.take('/api/compute/scripts', 'POST'); first.reject(new Error('lost response')); await flush();
+    f.submit('script', { node_id: node.id, task_number: '42', source, arguments: '["; literal $(id)"]', output_paths: 'result.txt' });
+    const retry = f.take('/api/compute/scripts', 'POST'); assert.deepEqual(retry.options.body, first.options.body);
+    retry.resolve({ script: bundle }); await flush();
+    f.click('inspect-script', bundle.id); f.take('/api/compute/scripts/bundle-one').resolve({ script: { ...bundle, source } }); await flush();
+    assert.match(f.host.innerHTML, /Exact script source/); assert.doesNotMatch(f.host.innerHTML, /<script>inert/);
+    f.click('script-proposal', bundle.id); f.submit('script-proposal', {});
+    const proposal = f.take('/api/compute/executions', 'POST');
+    assert.deepEqual(proposal.options.body, { node_id: node.id, task_number: 42, operation: 'workspace.script.v1', arguments: { bundle_id: bundle.id }, request_id: 'request-2' });
+    proposal.resolve({ execution: execution('awaiting_approval', { operation: 'workspace.script.v1', arguments: { bundle_id: bundle.id } }) }); await flush(); f.ui.stop();
+    const late = fixture({ scripts: [bundle] }); await late.open(); late.click('inspect-script', bundle.id);
+    const pending = late.take('/api/compute/scripts/bundle-one'); late.setRoute('#/coworkers'); late.events.dispatchEvent(new Event('hashchange'));
+    pending.resolve({ script: { ...bundle, source: 'PRIVATE_LATE_SOURCE' } }); await flush(); assert.equal(late.host.innerHTML, '');
   },
 
   async discovery() {

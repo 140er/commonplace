@@ -267,6 +267,34 @@ The Compute screen shows collection availability, exact current scope/source for
 replay-safe intake, escaped observations/usage and cancellation intent. A passive
 observation never enrolls or authorizes execution on a target.
 
+### Immutable script bundles and confined target helper
+
+The workspace.script.v1 component stores exact UTF-8 Python source in a
+crypto-aware immutable bundle store (32KiB/script,256 bundles,100 listed).
+Manifests bind existing identities/enrollment, exact script/runtime digests,
+arguments, input hashes/paths, output paths, unprivileged runtime and finite
+resource limits. Value construction grants no authority. Controller approval
+and transport integration are separate from this component.
+
+A separately provisioned target helper uses a fixed SSH command after the pinned
+inner connection. Its strict begin/ready/chunk/commit/result/data/done exchange
+is bounded by64 frames,192KiB and40 seconds, with exact digest checks and a
+separate cancellation frame. Private atomic uploads use protected openat paths;
+durable target claims prevent replay of incomplete or restored attempts.
+
+Execution defaults off. It requires a non-root capability-free host identity,
+mandatory namespaces, no network, a digest-bound read-only root-owned runtime,
+bounded tmpfs, delegated cgroup-v2 CPU/memory/pids controls and descendant kill.
+No raw host-shell fallback exists. Missing provisioning or kernel features deny.
+Results distinguish observed exit, cancellation intent and unknown termination;
+controller projections redact bounded output and expose artifact metadata only.
+Actual positive confinement has not been verified without a separately
+provisioned disposable fixture; deterministic wire/storage tests do not prove it.
+The owner script UI follows the frozen REST surface for exact UTF-8 upload,
+source/manifest inspection, replay-safe creation and immutable bundle proposals.
+No runtime roots, verification flags, keys or upload inputs appear in the form;
+real API/browser integration waits for the controller script bridge.
+
 ### Isolated Compute custody and SSH transport
 
 Compute is an opt-in dependency extra (Paramiko >=5.1,<6); installation enables

@@ -22,6 +22,7 @@ import pytest
         "failures",
         "routing",
         "discovery",
+        "scripts",
     ],
 )
 def test_compute_ui(case):

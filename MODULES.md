@@ -1459,6 +1459,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
+  - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; controller script approvals/transport remain a separate integration.
   - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
   - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and a separate explicitly configured SSH challenge/one-use permit exchange authorizes fixed-operation admission without upgrading local lease domains.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
@@ -1466,6 +1467,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
   - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
   - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection without the separately configured purpose-bound SSH permit adapter.
   - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
@@ -1480,6 +1482,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_compute_scripts.py` and `tests/test_compute_script_sandbox.py` cover immutable exact bytes/digests, crypto-aware storage, finite strict wire, protected atomic uploads, literal sandbox argv, denial and uncertain retention; the real positive-confinement fixture is separately provisioned and optional.
   - `tests/test_compute_passive_admission.py` proves actual guarded outer SSH collection, purpose-bound one-use permits, replay/tamper/expiry and revocation ordering, uncertain restart retention and default-off behavior.
   - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
@@ -1670,7 +1673,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
-  - The owner Compute route, real-inventory enrollment/scope/proposal/approval and passive collection forms, escaped observation history and session/route response fencing; transport capabilities remain server-authoritative.
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
 
   - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
 
