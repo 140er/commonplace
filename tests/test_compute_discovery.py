@@ -572,9 +572,10 @@ def test_os_supplier_uses_only_fixed_source_path_and_synthetic_file(scope, tmp_p
         opened.append(name)
         return real_open(path, flags)
 
-    monkeypatch.setattr(os, "open", open_cache)
     reader = OSCacheSupplier(wall=Clock())
-    result = collect(scope, reader, sources=("linux_arp",))
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", open_cache)
+        result = collect(scope, reader, sources=("linux_arp",))
     assert len(result.observations) == 1 and opened == ["/proc/net/arp"]
     with pytest.raises(DiscoveryDenied, match="unsupported"):
         reader.read("/etc/passwd", max_bytes=100, max_lines=10, checkpoint=lambda: None)
@@ -596,17 +597,18 @@ def test_os_reader_enforces_bounds_and_closes_synthetic_descriptors(
     path.write_bytes(data)
     real_open, real_close = os.open, os.close
     closed = []
-    monkeypatch.setattr(os, "open", lambda name, flags: real_open(path, flags))
 
     def close(fd):
         closed.append(fd)
         real_close(fd)
 
-    monkeypatch.setattr(os, "close", close)
-    with pytest.raises(DiscoveryDenied, match=reason):
-        OSCacheSupplier(wall=Clock()).read(
-            "linux_arp", max_bytes=max_bytes, max_lines=max_lines, checkpoint=lambda: None
-        )
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", lambda name, flags: real_open(path, flags))
+        patch.setattr(os, "close", close)
+        with pytest.raises(DiscoveryDenied, match=reason):
+            OSCacheSupplier(wall=Clock()).read(
+                "linux_arp", max_bytes=max_bytes, max_lines=max_lines, checkpoint=lambda: None
+            )
     assert len(closed) == 1
 
 

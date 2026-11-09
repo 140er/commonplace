@@ -1457,6 +1457,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
+  - Bounded passive ARP/IPv6 neighbor cache parsing, provenance-preserving observation collection and explicitly configured typed helper support; default collection is unavailable.
   - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; the authority-fence contract denies absent integration.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
   - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
@@ -1476,6 +1477,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
   - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
   - `tests/test_compute_control.py` and `tests/test_compute_api.py` cover persistent/replayed actions, current authority, Origin/framing, typed enrollment/grants and stale digest rejection; `tests/test_compute_browser.py` exercises the full real gateway UI lifecycle.
   - `tests/test_compute_credentials.py`, `tests/test_compute_transport.py` and the optional actual Paramiko socketpair `tests/test_compute_ssh_fixture.py` cover authenticated custody, lifecycle, safe-open refusals, protocol validation, replay, limits and both SSH pins before authentication.

@@ -140,6 +140,24 @@ service/execution wiring remains separate. Full Chromium integration exercises
 the real gateway, workspace store and proposal approval lifecycle with synthetic
 enrollment data and no remote connections.
 
+### Passive gateway cache discovery component
+
+PassiveCollector reads only explicitly configured trusted cache suppliers under
+fresh exact DiscoveryContext/NetworkScope checks. Active methods, unknown sources,
+foreign actors/tasks/projects/gateways, expired/revoked or expanded grants deny.
+ARP/IPv6 neighbor parsing keeps numeric address/interface and bounded inert
+metadata, preserving gateway/source/time provenance through cautious deduplication.
+Host/rate/result/time/source-byte/line/output ceilings and cancellation are checked
+throughout each collection. Blocking trusted callbacks cannot be forcibly stopped;
+durable cross-job quotas/persistence and controller integration are separate.
+
+OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
+subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
+typed collect_passive only when collector, independent protected ceiling and
+fresh scope resolver are all explicitly configured. Default remains unavailable.
+Synthetic tests inspect no current host/LAN cache. Observations grant no enrollment
+or execution rights and cannot become commands or memory instructions.
+
 ### Durable Compute execution component
 
 The default-off ExecutionService uses signed, exact enrollment receipts from
