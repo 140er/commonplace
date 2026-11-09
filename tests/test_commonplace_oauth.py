@@ -864,6 +864,7 @@ def test_consent_chromium_cross_origin_submit(client, flow, host, pytestconfig):
     Only synthetic credentials in an ephemeral DB; never log callback queries.
     A bounded callback wait makes blocked base navigation fail by assertion.
     """
+    pytest.importorskip("playwright.sync_api", reason="optional browser regression dependency")
     import socket
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1049,6 +1050,7 @@ def test_registration_error_names_supported_redirect_rule(client):
 
 def test_consent_chromium_explicit_default_port_navigation(client, pytestconfig):
     """Observe redirect navigation, with DNS disabled; no TLS server required."""
+    pytest.importorskip("playwright.sync_api", reason="optional browser regression dependency")
     from playwright.sync_api import sync_playwright
 
     assert not pytestconfig.getoption("showlocals"), "Use --no-showlocals"
