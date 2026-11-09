@@ -1467,7 +1467,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
-  - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection.
+  - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection without the separately configured purpose-bound SSH permit adapter.
   - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
   - Every management operation checks current exact person-owner session and canonical board/task authority; confirmed full public keys remain pending verification, and approval rebinds the exact current action digest. No management request loads keys or performs remote effects.
   - Custody uses strict protected external wrapping keys, encrypted workspace keys and binding-authenticated private-key ciphertext; only public enrollment data is returned. Acquisition and transport access require current exact authority callbacks.
@@ -1480,6 +1480,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_compute_passive_admission.py` proves actual guarded outer SSH collection, purpose-bound one-use permits, replay/tamper/expiry and revocation ordering, uncertain restart retention and default-off behavior.
   - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
   - `tests/test_compute_admission.py` covers explicit digest-bound mode, guarded two-hop SSH permits, tampering/replay/expiry, pre/post-issuance revocation, writer exclusion and uncertainty retention.

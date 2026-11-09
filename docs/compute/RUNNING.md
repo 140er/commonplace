@@ -53,8 +53,13 @@ one-use permit round trip over pinned SSH. A permit already issued is in flight,
 and a lost response does not release its durable reservation.
 
 The Passive observations section shows configured availability and persistent
-collection history. Collection requires separate trusted passive admission;
-enabling fixed-operation execution alone does not enable it. Scope ceilings are
+collection history. Collection requires separate trusted passive admission: set discovery_enabled=True
+and explicit discovery_sources (linux_arp and/or ip_neigh), with the trusted
+admission_mode above. The independently configured helper must enable passive
+admission in the same mode, protect its own scope ceiling/current resolver and
+supply only approved caches. A separate signed gateway discovery receipt is
+required. Execution can remain enabled=False in a discovery-only workspace;
+enabling fixed-operation execution alone does not enable collection. Scope ceilings are
 charged permanently at intake, including unused or cancelled reservations.
 Unknown attempts retain their slots and never automatically recollect.
 
@@ -68,6 +73,7 @@ local rather than weakening ownership validation.
 ```sh
 heavy --local-only -- uv run --extra compute --extra sqlcipher pytest -q \
   tests/test_compute_fence.py tests/test_compute_executor.py tests/test_compute_admission.py \
+  tests/test_compute_passive_admission.py tests/test_compute_discovery_lifecycle.py \
   tests/test_compute_credentials.py tests/test_compute_ssh_fixture.py
 heavy -- uv run --extra compute pytest -q \
   tests/test_compute_discovery.py tests/test_compute_transport.py \

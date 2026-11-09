@@ -15,8 +15,9 @@ migrations preserving earlier consumed identities. The controller records the
 unique helper channel, nonce and exact permit before returning to the transport;
 the helper validates and consumes its record before opening a route. Issued
 permits remain in flight: uncertainty reserves capacity and does not auto-retry.
-Passive cache collection needs its own purpose-bound admission (#325) and remains
-unavailable with a local-only lease.
+Passive cache collection uses its own purpose-bound admission (#325), documented
+in passive-admission.md. A local-only lease without that adapter grants no
+collection authority.
 
 The frozen implementation brief follows for traceability.
 

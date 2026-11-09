@@ -200,7 +200,7 @@ The owner UI displays admitted/running/unknown/observed-exit facts, redacted
 evidence and cancellation intent separately from stored proposal approval.
 Trusted per-workspace startup configuration wires service installation and
 shutdown without key initialization. Host shutdown refuses to report clean if
-worker threads remain. Passive admission wiring, independent provisioning and
+worker threads remain. Independent provisioning and
 external reconciliation/restore procedures remain separate requirements.
 Compute management fence timeouts return a bounded503 authority_unavailable.
 
@@ -216,8 +216,16 @@ independent reconciliation before restoring collection.
 Trusted explicit discovery startup reuses the registered workspace authority fence,
 custody and pinned outer SSH helper, with separate signed gateway discovery
 receipts. Imports and HTTP requests never load keys, read host caches or connect.
-A local-only fence does not qualify as remote admission participation: collection
-stays disabled. Central shutdown signals and joins configured discovery workers.
+A local lease alone does not qualify as remote admission participation. Explicit
+trusted discovery_enabled, discovery_sources and controller-ssh-permit-v1 mode
+select the separate purpose-bound passive adapter: ready, durable collection
+intent, challenge, fresh fenced one-use permit, helper validation and durable
+replay consumption before any cache supplier call. Exact scope, request digest,
+attempt, epochs, source configuration and short expiry are bound on both peers.
+Discovery attempts/permits use immutable durable journals; helper replay records
+have a separate passive namespace and preserve existing execution records.
+Discovery-only startup installs the same required local authority participation
+without enabling execution. Central shutdown signals and joins configured workers.
 The Compute screen shows collection availability, exact current scope/source forms,
 replay-safe intake, escaped observations/usage and cancellation intent. A passive
 observation never enrolls or authorizes execution on a target.

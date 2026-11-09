@@ -1,8 +1,12 @@
 """Trusted discovery installation must never upgrade a local-only fence."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
+from commonplace import compute
 from commonplace.compute import discovery_service
+from commonplace.compute.fence import LOCAL_DOMAINS
+from commonplace.compute.protocol import ADMISSION_MODE
 from tests.test_compute_control import compute_env as compute_env
 from tests.test_compute_executor import execution_env as execution_env
 from tests.test_compute_fence import local_state as local_state
@@ -39,3 +43,30 @@ def test_trusted_local_fence_never_becomes_remote_discovery_authority(local_stat
     assert not service.running and not service.available()
     assert env.gateway._compute_discovery_reasons[env.workspace] == "discovery_unavailable"
     assert service._threads == []
+
+
+def test_discovery_only_startup_installs_fence_without_enabling_execution(local_state, monkeypatch):
+    state, env = local_state, local_state.env
+    workspace = replace(
+        state.config.workspaces[0],
+        enabled=False,
+        admission_mode=ADMISSION_MODE,
+        discovery_enabled=True,
+        discovery_sources=("linux_arp",),
+    )
+    env.db._compute_config = replace(state.config, workspaces=(workspace,))
+    start = discovery_service.DiscoveryService.start
+    monkeypatch.setattr(
+        discovery_service.DiscoveryService, "start", lambda self: start(self, background=False)
+    )
+    compute._install_execution(env.gateway)
+    discovery_service.install_lifecycle(env.gateway)
+    assert env.gateway._compute_execution_reasons[env.workspace] == "disabled"
+    assert env.gateway._compute_services == {}
+    discovery = discovery_service.configured_service(env.gateway, env.workspace)
+    assert discovery is not None and discovery.running
+    assert discovery.passive_admission_mode == ADMISSION_MODE
+    with discovery.fence.hold(env.workspace) as lease:
+        assert lease.domains == LOCAL_DOMAINS
+    assert discovery in env.db._compute_services
+    assert discovery.stop()

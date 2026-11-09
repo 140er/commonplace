@@ -95,7 +95,7 @@ def _install_execution(gateway):
     gateway._compute_execution_reasons = {}
     for workspace in config.workspaces:
         identifier(workspace.workspace)
-        if workspace.enabled is not True:
+        if workspace.enabled is not True and workspace.discovery_enabled is not True:
             gateway._compute_execution_reasons[workspace.workspace] = "disabled"
             continue
         try:
@@ -148,6 +148,9 @@ def _install_execution(gateway):
                 fence = coordinator.seal(workspace.workspace, paths.values())
                 gateway._compute_fences[workspace.workspace] = fence
                 store._authority_fence = fence
+            if workspace.enabled is not True:
+                gateway._compute_execution_reasons[workspace.workspace] = "disabled"
+                continue
             service = ExecutionService(
                 store,
                 enabled=True,
