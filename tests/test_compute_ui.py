@@ -21,6 +21,7 @@ import pytest
         "lifecycle",
         "failures",
         "routing",
+        "discovery",
     ],
 )
 def test_compute_ui(case):

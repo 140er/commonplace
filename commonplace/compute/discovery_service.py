@@ -720,3 +720,45 @@ def configure(gateway, workspace_id, *, store=None, **settings):
 
 def configured_service(gateway, workspace_id):
     return getattr(gateway, "_compute_discovery_services", {}).get(workspace_id)
+
+
+def install_lifecycle(gateway):
+    """Install only explicitly enabled discovery using the existing workspace fence.
+
+    A local-only execution fence cannot satisfy discovery's remote participation
+    requirement. Such configurations remain unavailable; no trust flag is added.
+    Shutdown shares the central signal-all, bounded-join lifecycle.
+    """
+    config = getattr(gateway.db, "_compute_config", None)
+    if config is None:
+        return
+    from .control import open_store as open_control_store
+
+    gateway._compute_discovery_reasons = {}
+    for workspace in config.workspaces:
+        if getattr(workspace, "discovery_enabled", False) is not True:
+            gateway._compute_discovery_reasons[workspace.workspace] = "disabled"
+            continue
+        try:
+            fence = getattr(gateway, "_compute_fences", {}).get(workspace.workspace)
+            if fence is None:
+                raise FenceDenied("authority_fence_unavailable")
+            control = open_control_store(gateway, workspace.workspace)
+            if control._authority_fence is not fence:
+                raise FenceDenied("authority_fence_unavailable")
+            store = open_store(gateway, workspace.workspace, control_store=control)
+            service = configure(
+                gateway,
+                workspace.workspace,
+                store=store,
+                enabled=True,
+                fence=fence,
+                wrapping_key_path=workspace.wrapping_key_path,
+                provisioning_keys=workspace.provisioning_keys,
+                sources=workspace.discovery_sources,
+            )
+            gateway.db._compute_services.append(service)
+            service.start()
+            gateway._compute_discovery_reasons[workspace.workspace] = service.last_reason
+        except Exception:
+            gateway._compute_discovery_reasons[workspace.workspace] = "discovery_unavailable"

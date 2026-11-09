@@ -236,7 +236,11 @@ def test_current_owner_and_object_authority_and_cross_audience_concealment(disco
         {"error": "not_found"},
     )
     # Another current owner of the same workspace is a distinct discovery audience.
-    env.db.add_member(env.workspace, env.member, "owner", actor=env.owner)
+    with env.db._tx():
+        env.db._conn.execute(
+            "UPDATE memberships SET role='owner' WHERE workspace_id=? AND user_id=?",
+            (env.workspace, env.member),
+        )
     other_cookie = sessions.start_session(env.db, env.member, env.workspace)
     assert api.request(path="/" + item["id"], cookie=other_cookie) == (404, {"error": "not_found"})
     assert api.request(cookie=other_cookie)[1]["discoveries"] == []

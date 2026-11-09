@@ -112,6 +112,14 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 assert inventory["scopes"][0]["revoked"] is True
                 assert inventory["gateways"][0]["state"] == "pending_verification"
                 assert inventory["nodes"][0]["state"] == "pending_verification"
+                discovery = page.request.get(origin + "/api/compute/discoveries")
+                assert discovery.status == 200
+                assert discovery.json() == {
+                    "discoveries": [],
+                    "capabilities": {"passive_discovery": False},
+                }
+                assert page.locator('[data-compute-action="discovery"]').is_disabled()
+                assert page.locator("#compute-discoveries").inner_text() == "Passive observations"
                 page.set_viewport_size({"width": 390, "height": 844})
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 assert errors == []

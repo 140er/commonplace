@@ -23,7 +23,7 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture() {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } } } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
   const listeners = new Map(), requests = [], boardsSeen = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
@@ -33,6 +33,7 @@ function fixture() {
     querySelector(selector) { return selector === '[name="pin_confirmed"]' ? confirmation : selector === '#compute-editor-heading' ? { focus() {} } : null; },
   };
   const api = (path, options = {}) => {
+    if (path === "/api/compute/discoveries" && !options.method) return Promise.resolve(structuredClone(passive));
     let yes, no;
     const promise = new Promise((resolve, reject) => { yes = resolve; no = reject; });
     const request = { path, options, settled: false, resolve(value) { request.settled = true; yes(structuredClone(value)); }, reject(error) { request.settled = true; no(error); } };
@@ -243,6 +244,28 @@ const cases = {
     assert.match(partial.host.innerHTML, /Fixture target/); assert.match(partial.host.innerHTML, /Projects could not be loaded/);
     assert.equal(partial.boardsSeen.length, 0, 'A failed project read must not wipe the shell’s existing project navigation');
     partial.click('gateway'); assert.doesNotMatch(partial.host.innerHTML, /data-compute-form="gateway"/); partial.ui.stop();
+  },
+
+  async discovery() {
+    const f = fixture({ passive: { discoveries: [], capabilities: { passive_discovery: true } } });
+    await f.open(); f.click('discovery');
+    assert.match(f.host.innerHTML, /permanently charges/);
+    f.submit('discovery', { scope_id: scope.id, sources: 'linux_arp' });
+    const write = f.take('/api/compute/discoveries', 'POST');
+    assert.deepEqual(write.options.body, { scope_id: scope.id, sources: ['linux_arp'], request_id: 'request-1' });
+    write.reject(new Error('lost response')); await flush();
+    f.submit('discovery', { scope_id: scope.id, sources: 'linux_arp' });
+    const retry = f.take('/api/compute/discoveries', 'POST');
+    assert.deepEqual(retry.options.body, write.options.body);
+    const row = { id: 'd-one', scope_id: scope.id, board: 'demo', task_number: 42, state: 'queued', observations: [], usage: {} };
+    retry.resolve({ discovery: row }); await flush();
+    assert.match(f.host.innerHTML, /Passive collection: queued/i);
+    f.click('discovery-cancel', row.id);
+    f.take('/api/compute/discoveries/d-one/cancel', 'POST').resolve({ discovery: { ...row, state: 'uncertain', observations: [{ metadata: '<img src=x onerror=bad()>' }] } });
+    await flush(); assert.match(f.host.innerHTML, /Outcome unknown/); assert.doesNotMatch(f.host.innerHTML, /<img/);
+    f.ui.stop();
+    const off = fixture(); await off.open(); off.click('discovery');
+    assert.doesNotMatch(off.host.innerHTML, /data-compute-form="discovery"/); off.ui.stop();
   },
 
   async routing() {

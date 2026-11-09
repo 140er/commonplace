@@ -197,6 +197,24 @@ worker threads remain. Remote admission wiring, independent provisioning and
 external reconciliation/restore procedures remain separate requirements.
 Compute management fence timeouts return a bounded503 authority_unavailable.
 
+### Durable passive discovery
+
+The owner-session `/api/compute/discoveries` API records exact scoped intake and
+serves workspace-local observation history. Its crypto-aware
+compute-discovery.sqlite3 ledger permanently charges reserved scope ceilings;
+unused, cancelled and denied allocations are not refunded. Uncertain attempts
+retain concurrency/rate slots and never automatically recollect. Backups require
+independent reconciliation before restoring collection.
+
+Trusted explicit discovery startup reuses the registered workspace authority fence,
+custody and pinned outer SSH helper, with separate signed gateway discovery
+receipts. Imports and HTTP requests never load keys, read host caches or connect.
+A local-only fence does not qualify as remote admission participation: collection
+stays disabled. Central shutdown signals and joins configured discovery workers.
+The Compute screen shows collection availability, exact current scope/source forms,
+replay-safe intake, escaped observations/usage and cancellation intent. A passive
+observation never enrolls or authorizes execution on a target.
+
 ### Isolated Compute custody and SSH transport
 
 Compute is an opt-in dependency extra (Paramiko >=5.1,<6); installation enables

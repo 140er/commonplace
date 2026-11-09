@@ -411,7 +411,7 @@ def test_routes_and_constructors_have_no_custody_transport_network_or_thread_eff
     api.env.gateway.add_prefix_route = lambda *args: registered.append(args)
     routes.install(api.env.gateway)
     lazy = open_store(api.env.gateway, api.env.workspace)
-    assert lazy is not None and len(registered) == 4
+    assert lazy is not None and len(registered) == 8
     assert not api.env.path.exists()
     _, node = api.enrolled()
     _, result = api.propose(node)

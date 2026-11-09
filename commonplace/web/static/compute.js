@@ -61,6 +61,11 @@ export function computePayload(kind, values, { now = Date.now() / 1000, requestI
     if (bounds.concurrency > bounds.hosts) throw new Error("Concurrency cannot exceed the host limit.");
     return { gateway_id: required(values.gateway_id, "gateway"), task_number: integer(values.task_number, "Task number"), ...(values.agent_id?.trim() ? { agent_id: required(values.agent_id, "connection ID") } : {}), cidrs, interfaces, methods: ["passive"], expires_at: expiry(60), limits: bounds };
   }
+  if (kind === "discovery") {
+    const sources = list(values.sources, "cache sources");
+    if (sources.some(source => !["linux_arp", "ip_neigh"].includes(source))) throw new Error("Choose supported passive cache sources.");
+    return { scope_id: required(values.scope_id, "scope"), sources, request_id: required(requestId, "request ID") };
+  }
   if (kind === "proposal") {
     if (values.operation && values.operation !== "system.info.v1") throw new Error("Only system.info.v1 is available.");
     return { node_id: required(values.node_id, "target"), task_number: integer(values.task_number, "Task number"), operation: "system.info.v1", arguments: {}, request_id: required(requestId, "request ID") };
@@ -87,6 +92,7 @@ export function computeExecutionHTML(row, { busy = false } = {}) {
 export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID() }) {
   let host = null, session = null, workspace = null, identity = null, live = false, epoch = 0, revision = 0;
   let inventory = null, projects = [], reading = false, busy = false, uncertain = false, error = "", notice = "", boardError = "";
+  let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null;
   const requests = new Set();
   const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === "#/compute";
@@ -139,10 +145,15 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + field("agent_id", "Existing connection ID (optional)", { optional: true, help: "Leave empty to bind the scope to you. No connection directory is created here." })
         + area("cidrs", "Canonical private CIDRs", 1024, "One per line or separated by commas; at most 16. Exact networks only.")
         + area("interfaces", "Exact interfaces", 1024, "One per line or separated by commas; at most 16.")
-        + '<p class="compute-wide">Method: passive only. This stores a grant; observation collection is unavailable.</p>'
+        + '<p class="compute-wide">Method: passive only. Collection requires a separately configured and verified gateway.</p>'
         + Object.entries(limits).map(([name, ceiling]) => field(name, { hosts: "Host ceiling", concurrency: "Concurrent hosts", rate_per_second: "Hosts per second", duration_seconds: "Duration in seconds", results: "Result ceiling" }[name], { type: "number", min: 1, ceiling })).join("")
         + field("expires_minutes", "Expires in minutes", { type: "number", min: 1, ceiling: 60 })
         + check("scope_confirmed", "Grant only these passive networks, interfaces and limits for this task and actor until expiry. Enrollment and execution require separate authority.");
+    } else if (editor === "discovery") {
+      heading = "Collect passive observations"; submit = "Queue passive collection";
+      fields = select("scope_id", "Current passive scope", inventory.scopes.filter(row => !row.revoked && Number(row.expires_at) > now()).map(row => [row.id, `${row.context?.project} · task ${row.context?.task} · ${(row.cidrs || []).join(", ")}`]))
+        + select("sources", "Existing gateway cache", [["linux_arp", "Linux ARP cache"], ["ip_neigh", "IPv6 neighbor cache"]])
+        + '<p class="compute-wide">Reads existing cache observations only. Each admitted collection permanently charges its reserved scope ceilings, even if cancelled or unused. Unknown attempts retain capacity. Observations do not enroll targets.</p>';
     } else if (editor === "proposal") {
       heading = "Propose system information"; submit = "Create proposal for approval";
       fields = select("node_id", "Enrolled target", (inventory?.nodes || []).map(row => [row.id, `${row.name} · ${row.board}`]))
@@ -174,8 +185,9 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
         + inventorySection("gateways", "Gateways", gatewayRows, "No gateways. Add an existing project’s numeric management endpoint and explicitly confirm its full public host key.", "gateway", "Add gateway", projects.length > 0, boardError || (!projects.length ? "Create a project before adding a gateway." : ""))
         + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled. Enrollment uses an existing gateway and a separately confirmed public host key.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "")
         + inventorySection("scopes", "Passive scopes", scopeRows, "No passive scopes granted. Each scope binds exact networks, interfaces, actor, task, bounds and expiry.", "scope", "Grant scope", inventory.gateways.length > 0)
+        + inventorySection("discoveries", "Passive observations", discoveries.map(row => `<li class="compute-row"><header><strong>${e(row.board)} · ${taskHTML(row)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>Scope ${e(row.scope_id)} · ${e(row.reason || "")}</p><details><summary>${e(row.observations?.length || 0)} observations and usage</summary><pre>${e(JSON.stringify({ observations: row.observations || [], usage: row.usage || {} }, null, 2))}</pre></details>${["queued", "running"].includes(row.state) ? button("discovery-cancel", "Request cancellation", busy || reading || uncertain, row.id) : ""}${row.state === "uncertain" ? "<p>Outcome unknown. Capacity remains reserved; this attempt will not automatically repeat.</p>" : ""}</li>`), "No passive observations collected.", "discovery", "Collect observations", discoveryAvailable && inventory.scopes.some(row => !row.revoked && Number(row.expires_at) > now()), discoveryError || (discoveryAvailable ? "Collection reads approved gateway caches in the background. Reload to check progress." : "Passive collection is unavailable until its gateway and admission channel are configured."))
         + inventorySection("executions", "Execution proposals", inventory.executions.map(row => computeExecutionHTML(row, { busy: busy || reading || uncertain })), "No execution proposals. The fixed system information operation requires a target and a canonical task.", "proposal", "Propose system info", inventory.nodes.length > 0)
-        + '</div><section class="compute-capabilities" aria-labelledby="compute-capabilities"><h2 id="compute-capabilities">Remote capabilities</h2><div><button class="btn" disabled aria-describedby="compute-transport-reason">Dispatch</button><p id="compute-transport-reason">Remote dispatch is unavailable in this control surface. Proposals and approvals do not establish verified transport.</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Passive sources are unavailable. A scope grant does not collect observations or enroll devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script execution is unavailable. Only the fixed system information proposal is supported.</p></div></section>';
+        + '</div><section class="compute-capabilities" aria-labelledby="compute-capabilities"><h2 id="compute-capabilities">Remote capabilities</h2><div><button class="btn" disabled aria-describedby="compute-transport-reason">Dispatch</button><p id="compute-transport-reason">Remote dispatch is unavailable in this control surface. Proposals and approvals do not establish verified transport.</p></div><div><button class="btn" disabled aria-describedby="compute-passive-reason">Collect observations</button><p id="compute-passive-reason">Collection availability is shown with Passive observations. A scope grant never enrolls devices.</p></div><div><button class="btn" disabled aria-describedby="compute-script-reason">Scripts</button><p id="compute-script-reason">Script execution is unavailable. Only the fixed system information proposal is supported.</p></div></section>';
     } else if (inventory) body = '<p>Compute management requires the current workspace owner.</p>';
     host.innerHTML = `<div class="compute"><header class="compute-intro"><p>Set up pinned gateways and targets, grant bounded passive scopes, and approve exact task proposals.</p>${button("refresh", reading ? "Loading…" : "Reload inventory", busy || reading)}</header><p class="compute-notice" role="status">${e(notice || (reading ? "Loading Compute inventory…" : ""))}</p>${!editor && error ? `<p class="compute-error" role="alert">${e(error)}</p>` : ""}${body}</div>`;
   }
@@ -183,13 +195,17 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (!eligible() || reading || busy) return;
     const page = epoch, read = ++revision;
     reading = true; error = ""; render();
-    const results = await Promise.allSettled([request(BASE), request("/api/boards")]);
+    const results = await Promise.allSettled([request(BASE), request("/api/boards"), request(`${BASE}/discoveries`)]);
     if (!valid(page) || read !== revision) return;
     reading = false;
-    const [data, boards] = results;
+    const [data, boards, passive] = results;
     if (data.status === "rejected") { if (!denied(data.reason)) { error = errorText(data.reason); render(); } return; }
     // A failed board read does not replace the successful Compute inventories.
     if (boards.status === "rejected" && boards.reason?.status === 401) { stop(); return; }
+    if (passive.status === "rejected" && [401, 403].includes(passive.reason?.status)) { denied(passive.reason); return; }
+    discoveries = passive.status === "fulfilled" ? passive.value.discoveries : [];
+    discoveryAvailable = passive.status === "fulfilled" && passive.value.capabilities?.passive_discovery === true;
+    discoveryError = passive.status === "rejected" ? "Passive observations could not be loaded. Reload before collecting." : "";
     inventory = data.value;
     projects = boards.status === "fulfilled" ? boards.value.boards : [];
     boardError = boards.status === "rejected" ? "Projects could not be loaded. Reload before adding a gateway." : "";
@@ -208,6 +224,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       if (row?.state !== "awaiting_approval" || !digestOK(row.digest) || !rowById("nodes", row.node_id) || !rowById("gateways", row.gateway_id)) return;
       approvalDigest = row.digest;
     }
+    if (kind === "discovery" && !discoveryAvailable) return;
     editor = kind; selected = id; values = ["node", "gateway"].includes(kind) ? { port: "22" } : {}; error = ""; notice = ""; uncertain = false; attempt = null;
     render(); host.querySelector("#compute-editor-heading")?.focus();
   }
@@ -217,18 +234,19 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     try {
       const result = await request(path, { method: "POST", body: payload });
       if (!valid(page)) return;
-      const name = { gateways: "gateway", nodes: "node", scopes: "scope", executions: "execution" }[collection], row = result[name];
-      inventory[collection] = [row, ...inventory[collection].filter(item => !same(item.id, row.id))];
+      const name = { gateways: "gateway", nodes: "node", scopes: "scope", executions: "execution", discoveries: "discovery" }[collection], row = result[name];
+      if (collection === "discoveries") discoveries = [row, ...discoveries.filter(item => !same(item.id, row.id))];
+      else inventory[collection] = [row, ...inventory[collection].filter(item => !same(item.id, row.id))];
       editor = ""; selected = null; values = {}; attempt = null; approvalDigest = "";
-      notice = ["approve", "cancel", "proposal"].includes(kind) ? `Server state: ${executionStatus(row)}.` : kind === "revoke" ? "Passive scope revoked." : kind === "scope" ? "Passive scope recorded. No observations collected." : "Saved pending verification. No connection verified.";
+      notice = collection === "discoveries" ? `Passive collection: ${stateText(row.state)}. Reload to check progress. Cancellation does not confirm remote termination.` : ["approve", "cancel", "proposal"].includes(kind) ? `Server state: ${executionStatus(row)}.` : kind === "revoke" ? "Passive scope revoked." : kind === "scope" ? "Passive scope recorded. No observations collected." : "Saved pending verification. No connection verified.";
     } catch (failure) {
       if (!valid(page) || denied(failure)) return;
       error = errorText(failure);
       // Only proposal creation has a replay contract. Retain its exact request
       // key across an ambiguous failure; other writes wait for inventory reload.
       if (!failure.status || failure.status >= 500) {
-        uncertain = kind !== "proposal";
-        if (kind === "proposal") error += " Retry the unchanged proposal to reuse its original request ID.";
+        uncertain = !["proposal", "discovery"].includes(kind);
+        if (["proposal", "discovery"].includes(kind)) error += " Retry the unchanged request to reuse its original request ID.";
       }
     } finally { if (valid(page)) { busy = false; render(); } }
   }
@@ -240,13 +258,13 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     values = Object.fromEntries(new FormData(form));
     try {
       const kind = editor;
-      if (kind === "proposal") {
-        const signature = JSON.stringify([values.node_id, values.task_number]);
+      if (["proposal", "discovery"].includes(kind)) {
+        const signature = JSON.stringify([kind, values.node_id, values.task_number, values.scope_id, values.sources]);
         if (!attempt || attempt.signature !== signature) attempt = { signature, id: requestId() };
       }
       const payload = computePayload(kind, values, { now: now(), requestId: attempt?.id });
       if (kind === "approve" && (payload.expected_digest !== approvalDigest || rowById("executions", selected)?.digest !== approvalDigest || rowById("executions", selected)?.state !== "awaiting_approval")) throw new Error("The digest does not match the current proposal. Inspect and confirm it again.");
-      const collection = { gateway: "gateways", node: "nodes", scope: "scopes", proposal: "executions", approve: "executions" }[kind];
+      const collection = { gateway: "gateways", node: "nodes", scope: "scopes", proposal: "executions", approve: "executions", discovery: "discoveries" }[kind];
       void mutate(`${BASE}/${collection}${kind === "approve" ? `/${enc(selected)}/approve` : ""}`, payload, collection, kind);
     } catch (failure) { error = failure.message; render(); }
   }
@@ -259,12 +277,14 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (busy) return;
     if (action === "close") { editor = ""; values = {}; selected = null; approvalDigest = ""; error = ""; attempt = null; if (uncertain) notice = "Receipt unavailable. Reload inventory before starting another action."; render(); return; }
     if (uncertain) return;
-    if (action === "cancel") {
+    if (action === "discovery-cancel") {
+      if (discoveries.some(row => same(row.id, id) && ["queued", "running"].includes(row.state))) void mutate(`${BASE}/discoveries/${enc(id)}/cancel`, {}, "discoveries", "discovery-cancel");
+    } else if (action === "cancel") {
       if (cancellable(rowById("executions", id) || {})) void mutate(`${BASE}/executions/${enc(id)}/cancel`, {}, "executions", "cancel");
     } else if (action === "revoke") {
       const row = rowById("scopes", id);
       if (row && !row.revoked && Number(row.expires_at) > now()) void mutate(`${BASE}/scopes/${enc(id)}/revoke`, {}, "scopes", "revoke");
-    } else if (["gateway", "node", "scope", "proposal", "approve"].includes(action)) open(action, id);
+    } else if (["gateway", "node", "scope", "proposal", "approve", "discovery"].includes(action)) open(action, id);
   }
   function input(event) {
     const field = event.target;
@@ -283,6 +303,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     events?.removeEventListener("hashchange", routeChanged); events?.removeEventListener("pagehide", stop); doc?.removeEventListener("session-expired", stop);
     if (host) host.innerHTML = "";
     host = null; session = null; workspace = null; identity = null; inventory = null; projects = []; editor = ""; values = {}; selected = null; approvalDigest = ""; attempt = null;
+    discoveries = []; discoveryAvailable = false; discoveryError = "";
     busy = false; reading = false; uncertain = false; notice = ""; error = ""; boardError = "";
   }
   function show() {

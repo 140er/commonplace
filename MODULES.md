@@ -1459,7 +1459,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
-  - Bounded passive ARP/IPv6 neighbor cache parsing, provenance-preserving observation collection and explicitly configured typed helper support; default collection is unavailable.
+  - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
   - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and leaves remote admission disabled until its channel is integrated.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
   - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
@@ -1467,6 +1467,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
+  - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection.
   - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
   - Every management operation checks current exact person-owner session and canonical board/task authority; confirmed full public keys remain pending verification, and approval rebinds the exact current action digest. No management request loads keys or performs remote effects.
   - Custody uses strict protected external wrapping keys, encrypted workspace keys and binding-authenticated private-key ciphertext; only public enrollment data is returned. Acquisition and transport access require current exact authority callbacks.
@@ -1479,6 +1480,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
   - `tests/test_compute_fence.py` proves local cross-process writer exclusion, durable epoch invalidation, stale-authority refusal, timeout/crash/restart, persistent unparticipating-writer denial and default-off lifecycle.
   - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
@@ -1662,7 +1664,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
-  - The owner Compute route, real-inventory enrollment/scope/proposal/approval forms and session/route response fencing; transport capabilities remain server-authoritative.
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval and passive collection forms, escaped observation history and session/route response fencing; transport capabilities remain server-authoritative.
 
   - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
 
