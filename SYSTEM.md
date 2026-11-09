@@ -88,6 +88,28 @@ Space chat; the caller must obtain explicit intent before sharing requested task
 text with the selected board. This internal seam adds no public agent tool or
 permission and rechecks existing board write authority on replay.
 
+### Compute management REST and durable authority
+
+`/api/compute` is installed with the gateway and admits only cookie-person current
+workspace owners, including reads. Mutations reuse the mandatory exact Origin and
+bounded JSON boundary. Every store operation rechecks the exact session, current
+owner membership and canonical board/task authority; PATs cannot impersonate
+owners. Workspace-local crypto-aware compute.sqlite3 contains public enrollment
+metadata, scoped grants, proposals, approvals and append-only audit; credential
+custody is separate and is never opened by these routes. Constructors remain lazy.
+
+Gateway/node creation requires explicitly confirmed full public host-key bytes;
+records remain pending_verification with no public verified-state setter. Scopes
+are passive-only and bind exact current owner/optional live connection, project,
+gateway and canonical task. Bounds: lists100, gateways200, nodes/scopes1000,
+executions2000; scope expiry at most one hour, proposal15minutes, approval5minutes
+and no later than proposal expiry. Exhaustion conflicts without deleting history.
+Exact user/request-key/payload replay reuses a proposal; changed payload conflicts.
+Approval recomputes the entire binding/digest and current authority before storing
+consent. Epoch/key/task/session changes invalidate it. Approval/cancellation here
+are pre-dispatch local facts. No verification, approval consumption, discovery,
+key loading, network I/O or remote dispatch is exposed by the management surface.
+
 ### Compute management interface
 
 The owner-only `#/compute` screen consumes authenticated Compute inventories and
@@ -103,9 +125,10 @@ Every visit binds responses to its exact session object, workspace, actor and
 route. Route departure/sign-out/session expiry abort requests and clear form and
 approval state; stale responses cannot populate another visit. Only proposal
 creation has idempotent retry identity; ambiguous other mutations require inventory
-reload. Compute API installation and service/execution wiring are separate from
-this UI slice. UI tests use inert requests; backend/browser integration still
-requires the authenticated control implementation.
+reload. The management API is installed through the normal extension list;
+service/execution wiring remains separate. Full Chromium integration exercises
+the real gateway, workspace store and proposal approval lifecycle with synthetic
+enrollment data and no remote connections.
 
 ### Isolated Compute custody and SSH transport
 

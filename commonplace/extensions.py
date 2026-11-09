@@ -48,6 +48,7 @@ MODULES = (
     "commonplace.orch",
     "commonplace.console",
     "commonplace.chat",
+    "commonplace.compute",
     "commonplace.holds",
     "commonplace.projects",
 )
