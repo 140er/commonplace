@@ -54,6 +54,16 @@ update must leave `.env`, `compose.yml`, and other operator files outside
 its destination. Do not use `--delete` against the operator directory.
 Keep the previous source release and image tag for rollback.
 
+For a trusted, reviewed git source archive, use
+`bash deploy/commonplace/stage-archive.sh SOURCE.tar NEW_SOURCE_DIR`.
+The destination must not exist; its parent must already allow the webserver
+reader to traverse it. The helper preserves archive member modes even under
+`umask 077`, so public asset directories remain traversable and files readable.
+Plain unprivileged `tar -xf` can instead leave directories 0700 and files 0600.
+Keep runtime data, configuration and credentials outside this source directory.
+Never repair this with recursive chmod on the operator directory. This helper
+only stages source; it does not select, attest, activate or deploy a release.
+
 Copy `deploy/commonplace.caddy.example` or
 `deploy/commonplace-public.caddy.example` to your private Caddy site
 configuration. Replace bind addresses, hostnames and the static root with

@@ -1,11 +1,14 @@
 """Deployment invariants and the host backup hook, without Docker or a network."""
 
+import io
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -1142,3 +1145,86 @@ def test_deploy_reports_both_missing_paths(tmp_path):
     assert result.returncode == 1
     assert result.stderr.count("\n") == 2
     assert [call[0] for call in calls] == ["id"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="staging targets GNU/Linux tar")
+def test_archive_staging_preserves_public_modes_and_private_runtime(tmp_path):
+    """Mode bits model an unrelated reader, including when pytest runs as root."""
+    archive = tmp_path / "source.tar"
+    with tarfile.open(archive, "w") as output:
+        for name in ("landing", "landing/public", "landing/public/assets"):
+            member = tarfile.TarInfo(name)
+            member.type = tarfile.DIRTYPE
+            member.mode = 0o755
+            output.addfile(member)
+        for name, mode in (("landing/public/assets/site.css", 0o644), ("build.sh", 0o755)):
+            content = b"fixture source\n"
+            member = tarfile.TarInfo(name)
+            member.mode = mode
+            member.size = len(content)
+            output.addfile(member, io.BytesIO(content))
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    config = runtime / "config"
+    config.write_bytes(b"private fixture\n")
+    config.chmod(0o600)
+    before = (runtime.stat().st_mode, config.stat().st_mode, config.read_bytes())
+
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    # Explicitly select the unprivileged tar default even for a root test runner.
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'umask 077; tar --no-same-permissions -xf "$1" -C "$2"',
+            "stage",
+            str(archive),
+            str(legacy),
+        ],
+        check=True,
+    )
+
+    def modes(root):
+        return [
+            stat.S_IMODE((root / path).stat().st_mode)
+            for path in (
+                "landing",
+                "landing/public",
+                "landing/public/assets",
+                "landing/public/assets/site.css",
+                "build.sh",
+            )
+        ]
+
+    assert modes(legacy) == [0o700, 0o700, 0o700, 0o600, 0o700]
+    source = tmp_path / "source"
+    helper = DEPLOY / "commonplace" / "stage-archive.sh"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'umask 077; exec bash "$1" "$2" "$3"',
+            "stage",
+            str(helper),
+            str(archive),
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert stat.S_IMODE(source.stat().st_mode) == 0o755
+    assert modes(source) == [0o755, 0o755, 0o755, 0o644, 0o755]
+    assert (source / "landing/public/assets/site.css").read_bytes() == b"fixture source\n"
+    assert (runtime.stat().st_mode, config.stat().st_mode, config.read_bytes()) == before
+    # Refuse a destination containing private runtime files, without changing it.
+    refused = subprocess.run(
+        ["bash", str(helper), str(archive), str(runtime)],
+        capture_output=True,
+        text=True,
+    )
+    assert refused.returncode != 0
+    assert not (runtime / "landing").exists()
+    assert (runtime.stat().st_mode, config.stat().st_mode, config.read_bytes()) == before
