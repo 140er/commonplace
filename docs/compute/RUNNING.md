@@ -1,0 +1,65 @@
+# Run and inspect this feature
+
+Use the feature worktree and a separate development data directory. The commands
+below are instructions; the overnight build did not start a persistent server or
+change the running Commonplace instance.
+
+```sh
+uv sync --extra dev --extra compute
+uv run commonplace --data /tmp/commonplace-coworker-dev init \
+  --admin-email owner@example.test --workspace coworker-dev
+uv run commonplace --data /tmp/commonplace-coworker-dev serve \
+  --host 127.0.0.1 --port 8765
+```
+
+Use the existing local sign-in setup for that owner, then open
+`http://127.0.0.1:8765/app/#/coworkers`. Initialization creates an owner and workspace;
+it does not configure email delivery or an external model. Existing deployments
+can inspect the feature against an isolated copy using their normal sign-in.
+
+Create a named bot, then a DM or group. Group invitations currently use existing
+workspace user IDs. Link a conversation to a project when its explicit work
+requests should enter that project's canonical tasks. Messages, audience and
+explicit memories persist locally; hiding memory suppresses future recall and
+stale publication without erasing original messages. A new conversation never
+inherits another DM's memory merely because it uses the same bot.
+
+Configure the existing front-model settings deliberately for a local compatible
+provider. With no provider configured, jobs report Needs configuration and produce
+no invented answer. Intake always persists before provider work. Model calls are
+bounded; actual latency depends on the configured provider.
+
+`/task Title` followed by an optional exact body creates a canonical project task.
+Only that request is shared with the project. An accepted configured runner can
+receive durable admission without blocking other chats; no runner leaves the
+card available with a truthful reason. Admission, launch and completed task work
+are separate. Open the task for its current progress.
+
+Workspace owners can open `#/compute` for public-key enrollment metadata, passive
+scopes, exact action proposals, approval and cancellation. New enrollments remain
+pending verification. Private keys never go into these forms. Independently
+signed verification, protected credential provisioning and participating local
+and gateway authority admission are required before remote effects can be enabled.
+The default installation does not scan networks or dispatch remote operations.
+
+## Verification
+
+The normal focused checks use pytest through heavy. Custody and concrete fence
+fixtures need host POSIX ownership semantics; edge1's user namespace remaps root
+ownership and correctly fails their safe-open preconditions. Keep those checks
+local rather than weakening ownership validation.
+
+```sh
+heavy --local-only -- uv run --extra compute --extra sqlcipher pytest -q \
+  tests/test_compute_fence.py tests/test_compute_executor.py \
+  tests/test_compute_credentials.py tests/test_compute_ssh_fixture.py
+heavy -- uv run --extra compute pytest -q \
+  tests/test_compute_discovery.py tests/test_compute_transport.py \
+  tests/test_compute_scopes.py tests/test_coworker_dispatch.py
+```
+
+Optional Chromium tests are `tests/test_coworker_browser.py` and
+`tests/test_compute_browser.py`. Supply Playwright and its browser cache explicitly
+before pytest, whose fixtures isolate HOME; run via `heavy --browser`.
+They use real app/gateway/storage with synthetic providers and public enrollment
+fixtures, not real endpoints, operator keys or paid model calls.
