@@ -345,6 +345,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Trusted source archives stage into an absent directory with archive-defined public permissions, separately from private runtime configuration.
+
   - Build SHA is validated package data; optional same-source RO/RW receipt binds forbid auto-creation. Gateway uses RO; only snapshot exec overrides to RW. Shared-namespace RW visibility remains explicit. Synthetic mount and package-install smoke verify the contract.
 
   - Images run the gateway as an unprivileged user on a mounted data directory; examples hold placeholders, never real hosts or secrets; deploy holds an active transient unit reference through fresh invocation, snapshot and backup verification, then releases it, including on trapped exits.
@@ -575,6 +577,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Synthetic archive fixtures pin public permission preservation under a private umask and refusal to overwrite private runtime directories.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 

@@ -12,6 +12,8 @@ entry was written.
 
 ## Decisions
 
+- **Release staging and verification:** Trusted source archive staging preserves public member permissions in a new directory; existing runtime configuration and data are never permission-repaired or overwritten.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
