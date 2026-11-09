@@ -4,7 +4,9 @@ import http.client
 import json
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
+import commonplace.workers as workers
 from commonplace.workers import _PASSED_ENV, SubprocessLauncher, WorkerSupervisor
 from mempalace import provenance
 
@@ -83,3 +85,19 @@ def test_subprocess_worker_is_isolated_and_locked(tmp_path, monkeypatch):
     finally:
         sup.stop_all()
     assert not worker.alive()
+
+
+def test_gateway_worker_does_not_inherit_eager_warmup(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMPALACE_EAGER_WARMUP", "1")
+    monkeypatch.setattr(workers, "_share_model_cache", lambda home: None)
+    monkeypatch.setattr(workers, "_free_loopback_port", lambda: 12345)
+    monkeypatch.setattr(workers, "_proc_starttime", lambda pid: None)
+    monkeypatch.setattr(workers, "wait_until_ready", lambda worker, timeout: None)
+    spawn = Mock(return_value=Mock(pid=123, poll=Mock(return_value=None)))
+    monkeypatch.setattr(workers.subprocess, "Popen", spawn)
+
+    SubprocessLauncher().start("ws_test", tmp_path / "workspace")
+
+    spawn.assert_called_once()
+    inherits_warmup = "MEMPALACE_EAGER_WARMUP" in spawn.call_args.kwargs["env"]
+    assert not inherits_warmup

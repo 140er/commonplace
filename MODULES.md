@@ -908,6 +908,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
+  - `MEMPALACE_EAGER_WARMUP` applies only to directly launched workers (stdio or a local server). Gateway-launched workers exclude it from their environment, even when set on the gateway or container. It remains outside `_PASSED_ENV`.
+
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.

@@ -12,6 +12,8 @@ entry was written.
 
 ## Decisions
 
+- **Eager warmup scope:** `MEMPALACE_EAGER_WARMUP` is opt-in for directly launched workers (stdio or a local server). The gateway does not forward it to workspace workers; setting it on the gateway or container has no effect on their startup. Gateway workers retain lazy loading, avoiding a full cold index load at worker start.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

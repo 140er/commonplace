@@ -1122,6 +1122,10 @@ def _describe_device_safe() -> str:
 def _maybe_eager_warmup_embedder() -> None:
     """Pre-load embedder + HNSW segment at startup when ``MEMPALACE_EAGER_WARMUP`` is truthy.
 
+    Applies only to directly launched workers (stdio or a local server).
+    The gateway excludes this variable from spawned workspace workers, so
+    setting it on the gateway or container does not enable their warmup.
+
     The first MCP tool call that touches chromadb (``diary_write``,
     ``add_drawer``, ``search``) otherwise pays two compounding cold-load
     costs that together can exceed the MCP client timeout and surface as
