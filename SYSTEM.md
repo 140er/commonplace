@@ -12,6 +12,20 @@ entry was written.
 
 ## Decisions
 
+### Compute discovery domain boundary
+
+`commonplace.compute.scopes` contains pure, inert validation only. It does not
+register gateway routes, read credentials, scan networks, enroll nodes or execute
+commands. Scope authority must come from authenticated server-side approvals;
+constructing a value is not a grant. At dispatch, workspace, project, gateway,
+user, agent and task must all match; expiry is exclusive and revocation denies.
+CIDRs are canonical, limited to RFC1918/IPv6 ULA, with at most 16 networks and
+interfaces. Only approved passive/active methods are eligible; no active method
+is enabled implicitly. Host/rate/concurrency/time/result ceilings are finite
+positive integers (4096 hosts/results, 64 concurrent, 100 per second, 300 seconds
+maximum); the future dispatch service must account for aggregate consumption.
+No remote transport or execution capability is claimed by this domain module.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

@@ -236,6 +236,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The coworker vertical-slice API/store/runtime contract and concurrent implementation file ownership in `docs/compute/coworker-contract.md`.
+
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -1437,6 +1439,26 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_handoff_` files, `tests/test_commonplace_continuity_unit.py`.
 
+
+## compute
+
+- **Paths:** `commonplace/compute/`
+- **Owns:**
+
+  - Pure validation of explicitly approved, finite gateway discovery scopes.
+
+- **Promises:**
+
+  - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
+  - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
+
+- **How it fails:**
+
+  - Invalid, incomplete, nonfinite, foreign or out-of-scope requests raise ScopeDenied without network or credential access. Aggregate runtime accounting remains the dispatch service's responsibility.
+
+- **Tests:**
+
+  - `tests/test_compute_scopes.py` covers approved IPv4/IPv6, every actor dimension, expiry/revocation, unsupported destinations/methods/interfaces, finite limits and mutation attempts.
 
 ## chat-and-voice
 
