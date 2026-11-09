@@ -43,7 +43,10 @@ The internal Store.runtime_job rechecks the exact originating session, live
 membership, bot binding, running state and memory visibility before context is
 sent and before publication. Its session digest is never in public job views.
 Only the conversation's bounded history and explicit verbatim memory enter model
-context. No workspace-wide memory search or tool execution is granted to model
+context. Recall ranks the at-most-100 visible memories by query word overlap
+with recency as a tie breaker, examines at most 32 ranked candidates, and includes
+at most five whole records totaling 4000 characters; no record is summarized
+or cut to fit. This bounded lexical selection does not promise exhaustive recall. No workspace-wide memory search or tool execution is granted to model
 output. Explicit `/task TITLE` plus optional exact body admits a canonical todo
 card on the conversation's authorized board; task_created acknowledges admission,
 not worker launch or task completion. Execution still requires the existing

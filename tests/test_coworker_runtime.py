@@ -758,3 +758,22 @@ def test_exact_origin_revoked_during_context_blocks_provider_despite_other_sessi
     assert worker.run_once(env.wid)
     assert replies(env, cid) == []
     assert jobs(env, cid)[0]["state"] == "interrupted"
+
+
+def test_recall_ranks_later_relevant_memory_and_keeps_full_maximum_record(env, monkeypatch):
+    cid = env.conversation()["id"]
+    for i in range(40):
+        env.store.add_memory(env.uid, cid, f"Unrelated older fixture {i}")
+    exact = "Cobalt orchard: " + "x" * (4000 - len("Cobalt orchard: "))
+    env.store.add_memory(env.uid, cid, exact)
+    env.post(cid, "What do you remember about Cobalt orchard?")
+    calls = []
+
+    def complete(config, key, system, turns, **kwargs):
+        calls.append(json.loads(turns[0]["content"]))
+        return "answer"
+
+    monkeypatch.setattr(runtime.model, "complete", complete)
+    assert env.worker().run_once(env.wid)
+    assert calls[0]["memories"][0]["text"] == exact
+    assert sum(len(m["text"]) for m in calls[0]["memories"]) <= runtime.MEMORY_CHARS

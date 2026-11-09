@@ -7,6 +7,7 @@ instead of repeating a possibly sent provider call or a board side effect.
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -33,7 +34,7 @@ from .store import StoreError, open_store
 logger = logging.getLogger(__name__)
 POLL_SECONDS = 1
 MEMORY_ITEMS = 5
-MEMORY_CHARS = 3000
+MEMORY_CHARS = 4000
 MEMORY_CANDIDATES = 32
 PROVIDER_TIMEOUT = min(3.5, MODEL_TIMEOUT_S)
 PROVIDER_CONCURRENCY = 2
@@ -279,6 +280,16 @@ class CoworkerWorker:
         if not fits():
             raise _Withheld("input_too_long")
         memories = store.list_memory(uid, cid)
+        # Rank the bounded visible set before taking candidates. Always taking
+        # its oldest prefix permanently excluded later explicit memories.
+        terms = set(re.findall(r"[^\W_]{3,}", message["text"].casefold()))
+        memories.sort(
+            key=lambda memory: (
+                len(terms.intersection(re.findall(r"[^\W_]{3,}", memory["text"].casefold()))),
+                memory["id"],
+            ),
+            reverse=True,
+        )
         used = []
         memory_chars = 0
         for memory in memories[:MEMORY_CANDIDATES]:

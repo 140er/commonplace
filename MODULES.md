@@ -1480,7 +1480,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
-  - Internal runtime dispatch rechecks the exact originating session before sending context; only explicit task syntax reaches canonical boards and model output never executes tools.
+  - Internal runtime dispatch rechecks the exact originating session before sending context; bounded lexical recall considers later relevant memories without truncating their words; only explicit task syntax reaches canonical boards and model output never executes tools.
   - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.

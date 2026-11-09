@@ -31,6 +31,8 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
     gateway = Gateway(db, supervisor)
     owner = db.create_user("synthetic@example.test")
     wid = db.create_workspace("Browser fixture", owner)
+    member = db.create_user("invited@example.test")
+    db.add_member(wid, member, "member", actor=owner)
     cookie = sessions.start_session(db, owner, wid)
     settings.set_front(
         db,
@@ -143,6 +145,23 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 assert (
                     "Late answer must be withheld" not in page.locator(".cw-timeline").inner_text()
                 )
+                page.locator('[data-cw-action="new-conversation"]').click()
+                page.locator('[data-cw-form="conversation"] select[name="kind"]').select_option(
+                    "group"
+                )
+                page.get_by_label("Title (optional)").fill("Shared planning room")
+                page.locator('input[name="bot_ids"]').check()
+                page.get_by_label("Other workspace user IDs").fill(member)
+                page.get_by_role("button", name="Create conversation", exact=True).click()
+                page.get_by_role("heading", name="Shared planning room", exact=True).wait_for()
+                group_id = page.url.split("/coworkers/", 1)[1]
+                assert set(
+                    open_store(gateway, wid).get_conversation(member, group_id)["member_ids"]
+                ) == {owner, member}
+                assert "Exact scoped memory" not in page.locator("[data-cw-memory]").inner_text()
+                page.set_viewport_size({"width": 390, "height": 844})
+                assert page.locator("#cw-compose").is_visible()
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 assert errors == []
             finally:
                 browser.close()
