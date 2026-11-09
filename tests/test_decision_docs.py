@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 
 TREE = Path(os.environ.get("DECISION_PROOF_TREE", Path(__file__).resolve().parents[1]))
-PINNED_BASE = "18227ce51175dd906479fd1d79aa01c7c85b2660"
 spec = importlib.util.spec_from_file_location(
     "decision_docs_check", TREE / "commonplace/orch/docs_check.py"
 )
@@ -151,26 +150,20 @@ class DecisionProofs(unittest.TestCase):
         self.assertEqual(check.check(self.repo, self.base), [])
 
     def test_migration_preserves_every_byte_of_existing_decisions(self):
-        # Read the pinned source via git; the tested tree may be an exported base.
-        source_repo = Path(__file__).resolve().parents[1]
-        result = subprocess.run(
-            ["git", "-C", str(source_repo), "show", f"{PINNED_BASE}:SYSTEM.md"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=True,
-        )
-        original = result.stdout.split("## Decisions\n", 1)[1].split("## Numbers\n", 1)[0]
-        migrated = "".join(
-            p.read_text() for p in sorted((TREE / "docs/decisions").glob("legacy-*.md"))
+        # Immutable migration input works in shallow checkouts and source archives.
+        original_system = (
+            Path(__file__).parent / "fixtures/decision_docs/system-before-267.md"
+        ).read_bytes()
+        original = original_system.split(b"## Decisions\n", 1)[1].split(b"## Numbers\n", 1)[0]
+        migrated = b"".join(
+            p.read_bytes() for p in sorted((TREE / "docs/decisions").glob("legacy-*.md"))
         )
         self.assertEqual(migrated, original)
         # All other original lines survive, apart from explicitly replaced guidance.
-        remaining = result.stdout.split("## Numbers\n", 1)[1].split(
-            "## Keeping this file current\n", 1
+        remaining = original_system.split(b"## Numbers\n", 1)[1].split(
+            b"## Keeping this file current\n", 1
         )[0]
-        self.assertIn(remaining, (TREE / "SYSTEM.md").read_text())
+        self.assertIn(remaining, (TREE / "SYSTEM.md").read_bytes())
 
 
 if __name__ == "__main__":
