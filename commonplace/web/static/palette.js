@@ -27,6 +27,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   for (const project of boards) add(`board-${project.slug}`, project.name || project.slug, 'Projects', { href: `#/board/${encode(project.slug)}`, board: project.slug });
   add('needs', 'Needs me', 'Go to', { href: '#/needs', key: 'G N' });
   add('memory', 'Memory', 'Go to', { href: '#/memory', key: 'G M' });
+  add('coworkers', 'Coworkers', 'Go to', { href: '#/coworkers', keywords: 'bots conversations direct messages groups' });
   if (board) {
     add('board', 'Go to board', 'Go to', { href: `#/board/${encode(board.slug)}`, key: 'G B' });
     add('space', 'Space', 'Go to', { href: `#/space/${encode(board.slug)}` });
