@@ -727,11 +727,13 @@ class Mediator:
         ):
             return self._before_import_listing(principal, name, args)
         if name == "mempalace_list_drawers":
+            # The existing projection filters physical identities before paging,
+            # so wildcard shared readers do not need private read authority.
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
-                if not policy.can_read_wing(wing):
+                if wing and not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
                 args["wing"] = wing
             from .handoff.drawer_pages import finish_page, project
@@ -743,10 +745,10 @@ class Mediator:
             wing = args.get("wing")
             if not wing:
                 wing = _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
                 args["wing"] = wing
-            if not policy.can_read_wing(wing):
+            if wing and not policy.can_read_wing(wing):
                 raise Denied(f"this connection can't read wing {wing!r}")
         if name == "mempalace_list_rooms":
             from .handoff.overview import summary
@@ -1004,7 +1006,12 @@ class Mediator:
         policy = principal.policy
         for key in ("source_wing", "target_wing"):
             wing = args.get(key)
-            if not wing or not policy.can_write_wing(wing):
+            if (
+                not wing
+                or not policy.can_write_wing(wing)
+                or not policy.sees_all_wings
+                and not policy.can_read_wing(wing)
+            ):
                 raise Denied(f"this connection can't link wing {wing!r}")
         for prefix in ("source", "target"):
             self._check_thread_room(
@@ -1310,11 +1317,19 @@ class Mediator:
             # A retry into a wing the caller can't read must not show whose
             # chat the first copy came from.
             result = _tool_result(response)
-            if isinstance(result, dict) and "source_kept" in result:
-                result = {k: v for k, v in result.items() if k != "source_kept"}
+            if isinstance(result, dict):
+                result = {k: v for k, v in result.items() if k not in {"source_kept", "reason"}}
                 return _replace_result(response, result)
             return response
-        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
+        if rule not in (
+            "wing_list",
+            "read_wing",
+            "search",
+            "drawer_read",
+            "diary_read",
+            "kg_read",
+            "tunnel_write",
+        ):
             return response
         result = _tool_result(response)
         if result is None:
