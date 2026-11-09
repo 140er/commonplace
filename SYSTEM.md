@@ -140,6 +140,35 @@ service/execution wiring remains separate. Full Chromium integration exercises
 the real gateway, workspace store and proposal approval lifecycle with synthetic
 enrollment data and no remote connections.
 
+### Durable Compute execution component
+
+The default-off ExecutionService uses signed, exact enrollment receipts from
+separately pinned provisioning public keys; a browser owner cannot assert live
+verification. Receipts expire within one hour and rebind proposals on verification
+changes. A participating AuthorityFence must cover control, boards, Compute,
+custody, enrollment and gateway admission; this component currently supplies the
+required abstract contract and denies absent/unparticipating fences. It does not
+claim production writer participation or a live revocation guarantee.
+
+Approved actions are consumed once into append-only identity-bound execution_runs
+before keys or network are opened. Exact origin/approver sessions, fresh canonical
+authority, pinned enrollment, credential versions and expiries are rechecked at
+stages. Claims cannot be deleted/rebound; uncertain or interrupted runs retain
+capacity and never automatically replay. Pre-effect cancellation can be confirmed;
+later cancellation is intent until exact exit evidence arrives. Canonical tasks
+are not marked complete by probe completion. Shutdown requests cancellation and
+reports thread completion; it cannot force-stop Python threads or prove remote kill.
+
+Custody opens lazily from an already-provisioned private workspace file and
+external wrapping-key path. A handle rechecks current binding at actual SSH auth.
+Results remain workspace-local: at most4096 bytes are considered for UTF-8
+redaction before persistence, binary/oversize output is omitted, serialized
+evidence is at most8192 bytes. Lost audience authority withholds remote text.
+The owner UI displays admitted/running/unknown/observed-exit facts, redacted
+evidence and cancellation intent separately from stored proposal approval.
+Production fence/worker installation, independent provisioning and external
+reconciliation/restore procedures remain separate integration requirements.
+
 ### Isolated Compute custody and SSH transport
 
 Compute is an opt-in dependency extra (Paramiko >=5.1,<6); installation enables

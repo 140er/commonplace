@@ -6,7 +6,15 @@ const algorithms = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
 const limits = { hosts: 4096, concurrency: 64, rate_per_second: 100, duration_seconds: 300, results: 4096 };
 const same = (a, b) => String(a) === String(b);
 const digestOK = value => /^[a-f0-9]{64}$/.test(String(value));
-const predispatch = row => ["awaiting_approval", "approved"].includes(row.state);
+const predispatch = row => !row.run && ["awaiting_approval", "approved"].includes(row.state);
+const cancellable = row => predispatch(row) || row.run && row.run.phase !== "terminal" && row.run.cancel_requested_at == null;
+const executionStatus = row => {
+  const run = row.run;
+  if (!run) return stateText(row.state);
+  if (run.phase === "terminal") return run.reason === "cancelled_before_start" ? "Cancelled before start" : run.exit_code != null ? `Exit observed · code ${run.exit_code}` : "Execution did not start";
+  if (run.cancel_requested_at != null) return "Cancellation requested · termination unconfirmed";
+  return { admitted: "Execution admitted", dispatching: "Dispatch requested", running: "Execution running", uncertain: "Outcome unknown · capacity reserved" }[run.phase] || "Execution state unavailable";
+};
 const button = (action, label, disabled = false, id = "") => `<button type="button" class="btn" data-compute-action="${action}" data-id="${e(id)}"${disabled ? " disabled" : ""}>${label}</button>`;
 const states = { pending_verification: "Pending verification", awaiting_approval: "Awaiting approval", approved: "Approved · not dispatched", cancelled: "Cancelled before dispatch" };
 const stateText = value => states[value] || value || "Unknown state";
@@ -69,7 +77,9 @@ const limitsHTML = value => Object.entries(value || {}).map(([key, val]) => `<dt
 const bindingHTML = row => row ? `<dl><dt>Address</dt><dd>${e(row.address)}:${e(row.port)}</dd><dt>Account</dt><dd>${e(row.account)}</dd><dt>Epoch</dt><dd>${e(row.epoch)}</dd><dt>Credential reference</dt><dd>${e(row.credential_id)} · version ${e(row.credential_version)}</dd></dl><p>Full public host key</p><pre>${e(row.host_key?.algorithm)} ${e(row.host_key?.key)}</pre>` : "<p>Binding unavailable. Reload before approving.</p>";
 
 export function computeExecutionHTML(row, { busy = false } = {}) {
-  return `<li class="compute-row" data-state="${e(row.state)}"><header><strong>${e(row.operation)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${e(row.board)} · ${taskHTML(row)} · Target ${e(row.node_id)}</p><p class="compute-digest">SHA256 <code>${e(row.digest)}</code></p>${row.reason ? `<p>${e(row.reason)}</p>` : ""}<details><summary>Proposal details</summary><dl><dt>Proposal</dt><dd>${e(row.id)}</dd><dt>Gateway</dt><dd>${e(row.gateway_id)}</dd><dt>Arguments</dt><dd><code>${e(JSON.stringify(row.arguments || {}))}</code></dd>${limitsHTML(row.limits)}<dt>Created</dt><dd>${e(row.created_at)}</dd><dt>Updated</dt><dd>${e(row.updated_at)}</dd></dl></details><div class="compute-actions">${row.state === "awaiting_approval" ? button("approve", "Inspect approval", busy || !digestOK(row.digest), row.id) : ""}${predispatch(row) ? button("cancel", "Cancel proposal", busy, row.id) : ""}</div></li>`;
+  const run = row.run;
+  const evidence = run ? `<section aria-label="Execution evidence"><p>${e(run.reason)}</p>${run.result?.output ? `<pre>${e(run.result.output)}</pre>` : ""}${run.capacity_reserved ? '<p>Capacity remains reserved until the execution outcome is reconciled.</p>' : ""}</section>` : "";
+  return `<li class="compute-row" data-state="${e(run?.phase || row.state)}"><header><strong>${e(row.operation)}</strong><span class="compute-state">${e(executionStatus(row))}</span></header><p>${e(row.board)} · ${taskHTML(row)} · Target ${e(row.node_id)}</p><p class="compute-digest">SHA256 <code>${e(row.digest)}</code></p>${row.reason ? `<p>${e(row.reason)}</p>` : ""}<details><summary>Proposal details</summary><dl><dt>Proposal</dt><dd>${e(row.id)}</dd><dt>Gateway</dt><dd>${e(row.gateway_id)}</dd><dt>Arguments</dt><dd><code>${e(JSON.stringify(row.arguments || {}))}</code></dd>${limitsHTML(row.limits)}<dt>Created</dt><dd>${e(row.created_at)}</dd><dt>Updated</dt><dd>${e(row.updated_at)}</dd></dl></details><div class="compute-actions">${!run && row.state === "awaiting_approval" ? button("approve", "Inspect approval", busy || !digestOK(row.digest), row.id) : ""}${cancellable(row) ? button("cancel", run ? "Request cancellation" : "Cancel proposal", busy, row.id) : ""}</div>${evidence}</li>`;
 }
 
 // One visit owns its DOM, session object and all requests. Even transports that
@@ -210,7 +220,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const name = { gateways: "gateway", nodes: "node", scopes: "scope", executions: "execution" }[collection], row = result[name];
       inventory[collection] = [row, ...inventory[collection].filter(item => !same(item.id, row.id))];
       editor = ""; selected = null; values = {}; attempt = null; approvalDigest = "";
-      notice = ["approve", "cancel", "proposal"].includes(kind) ? `Server state: ${stateText(row.state)}.` : kind === "revoke" ? "Passive scope revoked." : kind === "scope" ? "Passive scope recorded. No observations collected." : "Saved pending verification. No connection verified.";
+      notice = ["approve", "cancel", "proposal"].includes(kind) ? `Server state: ${executionStatus(row)}.` : kind === "revoke" ? "Passive scope revoked." : kind === "scope" ? "Passive scope recorded. No observations collected." : "Saved pending verification. No connection verified.";
     } catch (failure) {
       if (!valid(page) || denied(failure)) return;
       error = errorText(failure);
@@ -250,7 +260,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     if (action === "close") { editor = ""; values = {}; selected = null; approvalDigest = ""; error = ""; attempt = null; if (uncertain) notice = "Receipt unavailable. Reload inventory before starting another action."; render(); return; }
     if (uncertain) return;
     if (action === "cancel") {
-      if (predispatch(rowById("executions", id) || {})) void mutate(`${BASE}/executions/${enc(id)}/cancel`, {}, "executions", "cancel");
+      if (cancellable(rowById("executions", id) || {})) void mutate(`${BASE}/executions/${enc(id)}/cancel`, {}, "executions", "cancel");
     } else if (action === "revoke") {
       const row = rowById("scopes", id);
       if (row && !row.revoked && Number(row.expires_at) > now()) void mutate(`${BASE}/scopes/${enc(id)}/revoke`, {}, "scopes", "revoke");

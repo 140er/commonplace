@@ -178,6 +178,10 @@ def execution_env(compute_env, tmp_path):
     key_path = service_root / "fixture.wrap"
     custody_path = env.path.parent / "compute-credentials.sqlite3"
     # These keys are generated only in the isolated fixture, not operator keys.
+    # Provision both synthetic service directories privately. The host umask is
+    # group-writable; custody correctly refuses a writable ancestor even when
+    # the immediate workspace directory is private.
+    env.path.parent.parent.chmod(0o700)
     initialize_wrapping_key(key_path, env.path.parent, database_path=custody_path)
     context = object()
     custody = CredentialStore.initialize(
@@ -744,6 +748,7 @@ def test_unknown_exec_ack_is_not_replayed_or_logged(execution_env):
         b"x" * 70000,
         b"binary\xffoutput",
     ],
+    ids=["token", "private-key", "oversized", "binary"],
 )
 def test_bounded_redaction_before_workspace_persistence_and_projection(execution_env, output):
     state = execution_env

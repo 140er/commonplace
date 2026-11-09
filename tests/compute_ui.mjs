@@ -64,6 +64,17 @@ const cases = {
     assert.match(f.host.innerHTML, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp;/);
     assert.match(f.host.innerHTML, /href="#\/card\/42"/);
     assert.doesNotMatch(computeExecutionHTML(execution('failed', { task_number: 'javascript:alert(1)', digest: attack })), /href="javascript:/);
+    const running = execution('approved', { run: { phase: 'running', reason: 'active', certainty: 'unknown', capacity_reserved: true, cancel_requested_at: null, result: { output: attack } } });
+    const runningHTML = computeExecutionHTML(running);
+    assert.match(runningHTML, /Execution running/);
+    assert.match(runningHTML, /Request cancellation/);
+    assert.doesNotMatch(runningHTML, /Approved · not dispatched|<img|<script>/);
+    const cancelled = computeExecutionHTML({ ...running, run: { ...running.run, cancel_requested_at: 1000 } });
+    assert.match(cancelled, /termination unconfirmed/);
+    assert.doesNotMatch(cancelled, /data-compute-action="cancel"/);
+    const completed = computeExecutionHTML({ ...running, run: { ...running.run, phase: 'terminal', exit_code: 0, capacity_reserved: false } });
+    assert.match(completed, /Exit observed · code 0/);
+    assert.doesNotMatch(completed, /data-compute-action="cancel"|capacity remains reserved/i);
     f.click('gateway'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.click('approve', 'e-one'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.ui.stop();
