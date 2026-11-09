@@ -49,7 +49,7 @@ import stat
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -464,6 +464,18 @@ class CredentialStore:
 
     @contextmanager
     def _transaction(self, *, write=False):
+        from .fence import _mutation
+
+        # Authority callback may acquire ControlDB; always take its coordinator
+        # before the custody lock, including final handle-to-key conversion.
+        with _mutation(self._database_path):
+            with self._fenced_transaction(write=write):
+                yield
+
+    @contextmanager
+    def _fenced_transaction(self, *, write=False):
+        from .fence import _coordinator
+
         with self._lock:
             if self._closed:
                 raise CredentialError("credential_closed")
@@ -471,7 +483,14 @@ class CredentialStore:
                 self._check_files()
                 self._conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
-                    yield
+                    coordinator = _coordinator(self._database_path)
+                    guard = (
+                        coordinator.custody_write(self._conn, str(self._database_path))
+                        if coordinator is not None and write
+                        else nullcontext()
+                    )
+                    with guard:
+                        yield
                     self._conn.execute("COMMIT")
                 except BaseException:
                     self._conn.execute("ROLLBACK")

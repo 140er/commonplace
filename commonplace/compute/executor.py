@@ -2,9 +2,9 @@
 
 Host integration is explicit: pass the same participating AuthorityFence to Store
 and ExecutionService, an externally provisioned wrapping-key path, and pinned
-Ed25519 provisioning public keys. There is no production fence in this package.
-Do not enable work until control, boards, custody, enrollment and gateway writers
-participate. Neither a fixture fence nor SSH callbacks prove live revocation.
+Ed25519 provisioning public keys. Local writer participation is implemented in
+fence.py; its lease deliberately excludes the missing authenticated remote
+gateway callback channel. Such a local-only service cannot start transport.
 
 start/stop manage bounded background threads; there is no public dispatch or
 verification setter. Trusted provisioning calls _accept_enrollment with a signed
@@ -38,7 +38,7 @@ from .credentials import (
     CredentialStore,
     internal_transport_private_bytes,
 )
-from .fence import FenceDenied, _held
+from .fence import FenceDenied, _held, _LocalAuthorityFence
 from .protocol import (
     ExecutionRequest,
     Limits,
@@ -199,10 +199,20 @@ class ExecutionService:
     def _guard(self):
         if self.fence is None or self.store._authority_fence is not self.fence:
             raise FenceDenied("authority_fence_unavailable")
-        return _held(self.fence, self.store.workspace_id)
+        return _held(self.fence, self.store.workspace_id, local=True)
+
+    def _unchanged(self, lease):
+        if (
+            isinstance(self.fence, _LocalAuthorityFence)
+            and self.fence._coordinator.epoch() != lease.epoch
+        ):
+            raise StoreError("authority_changed", 409)
 
     def start(self):
         if not self.enabled:
+            return False
+        if isinstance(self.fence, _LocalAuthorityFence):
+            self.last_reason = "gateway_admission_unintegrated"
             return False
         try:
             with self._guard():
@@ -322,6 +332,7 @@ class ExecutionService:
         origin = self._person(row["user_id"], row["session_hash"])
         approver = self._person(row["approved_by"], row["approval_session_hash"])
         stored = json.loads(row["binding"])
+        self.store._execution_task(origin, stored["task_number"])
         fresh = self.store._binding(
             conn,
             origin,
@@ -413,6 +424,7 @@ class ExecutionService:
                     ).fetchone()[0]
                     if count >= limits.tunnels:
                         continue
+                    self._unchanged(lease)
                     now = self.store._now()
                     request = ExecutionRequest(
                         workspace=self.store.workspace_id,
@@ -440,6 +452,16 @@ class ExecutionService:
                         operation=binding["operation"],
                         arguments=binding["arguments"],
                     )
+                    if isinstance(self.fence, _LocalAuthorityFence):
+                        try:
+                            self._admission_credentials(request, gateway, route)
+                            self._unchanged(lease)
+                        except CredentialError:
+                            conn.execute(
+                                "UPDATE executions SET reason='admission_denied' WHERE id=?",
+                                (row["id"],),
+                            )
+                            continue
                     conn.execute(
                         "INSERT INTO execution_runs(execution_id,attempt_id,worker_id,gateway_id,"
                         "request,approval_digest,phase,reason,certainty,reserved,created_at,updated_at,run_until) "
@@ -485,6 +507,7 @@ class ExecutionService:
         row, *_ = self._fresh(conn, request.execution)
         if not hmac.compare_digest(run["approval_digest"], self._consent_digest(row)):
             raise StoreError("authority_changed", 409)
+        self._unchanged(lease)
         return run
 
     def _authorize(self, request, phase):
@@ -504,6 +527,43 @@ class ExecutionService:
                             request.execution,
                         ),
                     )
+            return True
+        except Exception:
+            return False
+
+    def _gateway_admission(self, request, phase):
+        """Existing GatewayHelper authorize(request, ready|admit) callback seam.
+
+        This is a concrete current-check/durable local permit, not a network
+        endpoint. A protected helper must reach it over an authenticated channel;
+        no such remote channel is installed here, so local-fence transport stays
+        off. Helper nonce/channel/deadline validation and AdmissionJournal.consume
+        remain independent. Once this callback commits, a later revocation is
+        ordered after issuance; it cannot retract an already in-flight permit.
+        """
+        if (
+            not self.enabled
+            or type(request) is not ExecutionRequest
+            or phase not in ("ready", "admit")
+        ):
+            return False
+        try:
+            with self._guard() as lease:
+                with self.store._journal() as conn:
+                    run = self._check(conn, lease, request)
+                    if self.store._now() >= request.start_by or run["stage"] < (
+                        1 if phase == "ready" else 2
+                    ):
+                        return False
+                    if phase == "admit":
+                        # Exact attempt is already immutable in execution_runs.
+                        # A lost callback acknowledgement never mints a second
+                        # permit; the helper's nonce journal prevents replay too.
+                        conn.execute(
+                            "INSERT INTO gateway_admissions(execution_id,attempt_id,authority_epoch,issued_at) "
+                            "VALUES (?,?,?,?)",
+                            (request.execution, request.attempt, lease.epoch, self.store._now()),
+                        )
             return True
         except Exception:
             return False
@@ -586,6 +646,41 @@ class ExecutionService:
             custody.close()
             raise
 
+    def _admission_credentials(self, request, gateway, route):
+        """Read authenticated active custody state before local permit commit.
+
+        Already inside the authority fence and after exact current consent/task
+        checks. Handle acquisition authenticates binding, version, expiry and
+        revocation without converting a private key or performing network work.
+        A pre-existing revocation therefore wins *before* durable admission.
+        """
+        if self.wrapping_key_path is None:
+            raise CredentialError("credential_unavailable")
+        expected = self._credential_bindings(request, gateway, route)
+        context = object()
+
+        def authorize(credential_request, supplied):
+            return (
+                supplied is context
+                and credential_request.action == "acquire"
+                and (
+                    credential_request.enrollment.credential_id,
+                    credential_request.enrollment.binding,
+                )
+                in expected
+            )
+
+        path = Path(self.store._path() if callable(self.store._path) else self.store._path)
+        with CredentialStore(
+            path.parent / "compute-credentials.sqlite3",
+            self.wrapping_key_path,
+            path.parent,
+            authorize,
+            clock=self.store.clock,
+        ) as custody:
+            for credential_id, binding in expected:
+                custody.acquire(credential_id, binding, context).close()
+
     @staticmethod
     def _evidence(result, limit):
         if type(result.stdout) is not bytes or type(result.stderr) is not bytes:
@@ -663,6 +758,9 @@ class ExecutionService:
     def _run_once(self):
         """Internal background iteration; a fixture may drive it synchronously."""
         if not self.enabled or self._stop.is_set():
+            return False
+        if isinstance(self.fence, _LocalAuthorityFence):
+            self.last_reason = "gateway_admission_unintegrated"
             return False
         try:
             claimed = self._claim()

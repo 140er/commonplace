@@ -17,9 +17,10 @@ five minutes and the proposal deadline. These bounds do not enable dispatch.
 
 There is deliberately no public verification setter or dispatch API. The private
 execution service shares this database's journal, separately from action consent.
-Production dispatch still requires participating cross-process/remote fencing.
-The process-local control lock here protects only management transactions in
-this process; it is not a cross-store remote-effect authorization fence.
+Trusted startup configuration replaces the central control lock with the local
+cross-process coordinator and guards actual control/board/Compute/custody writes.
+Without configuration the existing process-local management semantics remain.
+The authenticated remote helper callback channel is still required for dispatch.
 Custody remains separate in compute-credentials.sqlite3 and is never opened here.
 """
 
@@ -46,7 +47,7 @@ from commonplace.control_db import ControlError, Principal
 from commonplace.extensions import ToolContext, ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
-from .fence import _held
+from .fence import _attach_connection, _held
 from .protocol import (
     EnrolledRoute,
     GatewayEnrollment,
@@ -117,6 +118,15 @@ CREATE TABLE IF NOT EXISTS execution_runs (
  cancel_requested_at REAL, cancel_requested_by TEXT,
  exit_code INTEGER, result TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS gateway_admissions (
+ execution_id TEXT PRIMARY KEY REFERENCES execution_runs(execution_id),
+ attempt_id TEXT NOT NULL UNIQUE, authority_epoch INTEGER NOT NULL,
+ issued_at REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS gateway_admissions_no_delete BEFORE DELETE ON gateway_admissions BEGIN
+ SELECT RAISE(ABORT,'gateway admissions cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS gateway_admissions_no_update BEFORE UPDATE ON gateway_admissions BEGIN
+ SELECT RAISE(ABORT,'gateway admissions cannot be rebound'); END;
 CREATE TRIGGER IF NOT EXISTS execution_runs_no_delete BEFORE DELETE ON execution_runs BEGIN
  SELECT RAISE(ABORT,'compute execution claims cannot be deleted'); END;
 CREATE TRIGGER IF NOT EXISTS execution_runs_no_rebind BEFORE UPDATE OF
@@ -271,7 +281,7 @@ class Store:
     @contextmanager
     def _transaction(self, principal, session_hash):
         guard = (
-            _held(self._authority_fence, self.workspace_id)
+            _held(self._authority_fence, self.workspace_id, local=True)
             if self._authority_fence is not None
             else nullcontext()
         )
@@ -302,6 +312,7 @@ class Store:
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=FULL")
                     conn.executescript(_SCHEMA)
+                    _attach_connection(conn, str(path), "compute")
                     conn.execute("BEGIN IMMEDIATE")
                     try:
                         yield conn
@@ -359,6 +370,32 @@ class Store:
                 return context
         except (ToolError, ControlError):
             raise StoreError("not_found", 404) from None
+
+    def _execution_task(self, principal, number):
+        """Apply canonical card gates without granting or changing a runner.
+
+        Compute approval is consent to one probe, never origin release, plan
+        approval, reassignment, or permission to run a blocked/review card.
+        """
+        from commonplace.boards.service import _plan_waiting, _waiting_on_person
+
+        service = BoardService(ToolContext(principal=principal, gateway=self.gateway))
+        with service.store.connection() as conn:
+            task = task_row(conn, number)
+            require_visible(task, principal)
+            board = service._board(conn, task["board"])
+            service._write(board, row=task)
+            if (
+                board["archived"]
+                or task["status"] not in ("todo", "doing")
+                or task["assignee"] not in (None, principal.actor)
+                or _waiting_on_person(task)
+                or _plan_waiting(task)
+                or task["proposal_status"] in ("pending", "rejected")
+                or active_blockers(conn, number)
+                or (service._restricted_origin(task) and not service._origin_released(task))
+            ):
+                raise StoreError("task_not_startable", 409)
 
     @staticmethod
     def _row(conn, table, object_id):
@@ -958,6 +995,8 @@ class Store:
 def open_store(gateway, workspace_id, *, authority_fence=None):
     """Construct a lazy crypto-aware store at the current workspace generation."""
     identifier(workspace_id)
+    if authority_fence is None:
+        authority_fence = getattr(gateway, "_compute_fences", {}).get(workspace_id)
     return Store(
         lambda: Path(gateway.workspace_dir(workspace_id)) / "compute.sqlite3",
         gateway=gateway,
