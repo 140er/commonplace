@@ -13,6 +13,7 @@ import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecr
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createConsole } from "./console.js";
 import { createCoworkers } from "./coworkers.js";
+import { createCompute } from "./compute.js";
 import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
@@ -68,6 +69,7 @@ const state = {
 };
 let adminUI = null;
 let coworkersUI = null;
+let computeUI = null;
 let consoleUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -226,6 +228,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  computeUI?.stop();
   coworkersUI?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
@@ -331,6 +334,7 @@ function cardMenuUI() {
   return state.cardMenu.ui;
 }
 function shell() {
+  computeUI?.stop();
   coworkersUI?.stop();
   state.workbenchChat?.dispose();
   state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
@@ -381,7 +385,7 @@ function navigation() {
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
   const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/space/") ? "space"
-    : state.base.startsWith("#/coworkers") ? "coworkers" : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
+    : state.base === "#/compute" ? "compute" : state.base.startsWith("#/coworkers") ? "coworkers" : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   const needsByBoard = {};
   for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
   boardNav.outerHTML = renderRail({ can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard, rulesWaiting: state.rulesWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
@@ -997,9 +1001,18 @@ function coworkersScreen() {
   title("Coworkers");
   navigation();
 }
+function computeScreen() {
+  computeUI ??= createCompute({ mount: () => root.querySelector("#content"), api, current: () => state.me,
+    onBoards(boards) { state.boards = boards; navigation(); },
+  });
+  computeUI.show();
+  title("Compute");
+  navigation();
+}
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
   if (state.route === "#/admin") return;
+  if (state.route === "#/compute") return;
   if (/^#\/coworkers(?:[/?]|$)/.test(state.route)) return;
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
@@ -1307,13 +1320,14 @@ async function route() {
   if (direct) { state.base = resolveRoute("#/", { boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|coworkers(?:\/[^/?]+)?(?:\?message=[^&]+)?|console|settings|admin)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|coworkers(?:\/[^/?]+)?(?:\?message=[^&]+)?|compute|console|settings|admin)$/.test(hash) ? hash : "#/");
     state.card = null;
-  } else if (state.base === "#/admin" || state.base.startsWith("#/coworkers")) {
+  } else if (["#/admin", "#/compute"].includes(state.base) || state.base.startsWith("#/coworkers")) {
     state.base = resolveRoute("#/", { boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
+  if (previousBase === "#/compute") computeUI?.stop();
   if (previousBase.startsWith("#/coworkers") && !state.base.startsWith("#/coworkers")) coworkersUI?.stop();
   if (previousBase === "#/console" && state.base !== "#/console") consoleUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
@@ -1343,6 +1357,7 @@ async function route() {
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
+  if (hash === "#/compute") { computeScreen(); return; }
   if (state.base.startsWith("#/coworkers")) { coworkersScreen(); return; }
   await refresh();
 }
@@ -1549,6 +1564,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "handoff") handoffForm(state.card);
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
+      computeUI?.stop();
       coworkersUI?.stop();
       state.needsUI?.stop(); state.needsUI = null;
       voice.stop();
@@ -1776,7 +1792,11 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) queue
 document.addEventListener("session-expired", () => { adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
 window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
-window.addEventListener("pageshow", (event) => { if (event.persisted && state.me && state.base.startsWith("#/coworkers")) coworkersScreen(); });
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted || !state.me) return;
+  if (state.base.startsWith("#/coworkers")) coworkersScreen();
+  if (state.base === "#/compute") computeScreen();
+});
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {

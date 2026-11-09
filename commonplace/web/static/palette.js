@@ -28,6 +28,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   add('needs', 'Needs me', 'Go to', { href: '#/needs', key: 'G N' });
   add('memory', 'Memory', 'Go to', { href: '#/memory', key: 'G M' });
   add('coworkers', 'Coworkers', 'Go to', { href: '#/coworkers', keywords: 'bots conversations direct messages groups' });
+  if (can_admin === true) add('compute', 'Compute', 'Go to', { href: '#/compute', keywords: 'gateways targets passive scopes execution proposals' });
   if (board) {
     add('board', 'Go to board', 'Go to', { href: `#/board/${encode(board.slug)}`, key: 'G B' });
     add('space', 'Space', 'Go to', { href: `#/space/${encode(board.slug)}` });
