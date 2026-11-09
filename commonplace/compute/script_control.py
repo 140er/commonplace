@@ -18,7 +18,7 @@ from .control import StoreError
 from .protocol import ADMISSION_MODE, canonical, enrollment_digest, finite, identifier
 from .scripts import OPERATION, ScriptBinding, ScriptBundleStore, ScriptManifest, digest
 
-SCRIPT_RUNTIME_CONTRACT = "confined-python3-v1/bwrap-userns-seccomp-cgroup2-tmpfs-v1"
+SCRIPT_RUNTIME_CONTRACT = "confined-python3-v1/bwrap-userns-cgroup2-tmpfs-v1"
 
 
 @dataclass(frozen=True)

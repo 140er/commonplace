@@ -85,3 +85,14 @@ Optional Chromium tests are `tests/test_coworker_browser.py` and
 before pytest, whose fixtures isolate HOME; run via `heavy --browser`.
 They use real app/gateway/storage with synthetic providers and public enrollment
 fixtures, not real endpoints, operator keys or paid model calls.
+
+## Workspace scripts
+
+The owner Workspace scripts section saves immutable Python source, arguments and
+relative output paths, then exposes source/manifest inspection and a separate
+exact execution proposal. Scripts remain unavailable without trusted
+scripts_enabled, ScriptRuntimeConfig and a separately signed runtime receipt;
+private provisioning and verification are not browser actions. See
+script-integration.md for the contract and operator prerequisites. No host-shell
+fallback is supported. The actual positive confinement fixture remains unverified
+unless explicitly provisioned; signed synthetic receipts prove wiring only.

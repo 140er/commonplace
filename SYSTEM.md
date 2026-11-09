@@ -273,8 +273,11 @@ The workspace.script.v1 component stores exact UTF-8 Python source in a
 crypto-aware immutable bundle store (32KiB/script,256 bundles,100 listed).
 Manifests bind existing identities/enrollment, exact script/runtime digests,
 arguments, input hashes/paths, output paths, unprivileged runtime and finite
-resource limits. Value construction grants no authority. Controller approval
-and transport integration are separate from this component.
+resource limits. Value construction grants no authority. Owner script REST and existing Compute approvals/ExecutionService now consume
+these bundles. Trusted scripts_enabled and ScriptRuntimeConfig bindings require
+an independently signed ScriptRuntimeReceipt, accepted only through the private
+offline verifier seam and stored in guarded enrollment_verifications.script_runtime.
+No public request supplies runtime identity, confinement flags, roots or keys.
 
 A separately provisioned target helper uses a fixed SSH command after the pinned
 inner connection. Its strict begin/ready/chunk/commit/result/data/done exchange
@@ -293,7 +296,12 @@ provisioned disposable fixture; deterministic wire/storage tests do not prove it
 The owner script UI follows the frozen REST surface for exact UTF-8 upload,
 source/manifest inspection, replay-safe creation and immutable bundle proposals.
 No runtime roots, verification flags, keys or upload inputs appear in the form;
-real API/browser integration waits for the controller script bridge.
+real API/browser tests cover upload, source inspection, immutable proposal,
+exact approval and reconnect using signed synthetic runtime metadata. Actual
+outer/inner SSH wire fixtures never execute host scripts. Logical manifest epoch
+is None; the fresh upload request carries authority epoch and approval digest,
+covered by the outer immutable operation and purpose-bound one-use permit.
+Old integer-epoch script documents and the fixed-probe wire remain unchanged.
 
 ### Isolated Compute custody and SSH transport
 

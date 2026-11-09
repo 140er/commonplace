@@ -1,7 +1,7 @@
 """Concrete default-off Linux confinement for the separately installed helper.
 
 Operator prerequisites (none are created here): a dedicated non-root service UID,
-non-setuid /usr/bin/bwrap with userns/seccomp support, an immutable read-only
+non-setuid /usr/bin/bwrap with userns support, an immutable read-only
 minimal runtime filesystem, a delegated cgroup-v2 subtree with cpu/memory/pids
 already enabled, and a private bounded tmpfs scratch mount. No host root, home,
 environment, agent socket or network is exposed. Runtime inventory hashes bind

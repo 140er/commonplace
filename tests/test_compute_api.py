@@ -284,7 +284,7 @@ def test_unknown_routes_and_methods_cannot_verify_consume_or_dispatch(api):
         f"/executions/{execution['id']}/consume",
         "/dispatch",
         "/observations",
-        "/scripts",
+        "/scripts/arbitrary/run",
     ):
         assert api.request("POST", path, {}) == (404, {"error": "not_found"})
     assert api.request("DELETE", f"/executions/{execution['id']}", {}) == (
@@ -381,8 +381,8 @@ def test_revoked_session_and_deleted_task_deny_after_intake(api):
 def test_boundary_rechecks_current_session_after_body_read(api, monkeypatch):
     original = routes._body
 
-    def revoke_during_body(handler):
-        body = original(handler)
+    def revoke_during_body(handler, maximum=8192):
+        body = original(handler, maximum)
         sessions.end_session(api.env.db, api.cookie)
         return body
 

@@ -8,6 +8,7 @@ claims production confinement. Parent owns suite execution; child static checks.
 
 import base64
 import hashlib
+import json
 import os
 import select
 import sqlite3
@@ -106,6 +107,7 @@ def script_state(admission_state):
         **script_payload(state),
     )
     assert created
+    state.script = json.loads(canonical(state.script))
     state.receipt = receipt
     return state
 
@@ -123,6 +125,11 @@ def propose_script(state, *, approval=True, request_id="script-execution"):
     assert created
     state.proposal = approve(state.env, proposal) if approval else proposal
     return state.proposal
+
+
+def authority_epoch(state):
+    with state.coordinator.locked():
+        return state.coordinator.epoch()
 
 
 def test_default_off_rest_and_unknown_authority_fields(compute_env):
@@ -256,12 +263,12 @@ def test_proposal_approval_claim_separates_stable_contract_and_fresh_dispatch(sc
     state = script_state
     proposal = propose_script(state, approval=False)
     manifest_before = canonical(state.script["manifest"])
-    proposed_epoch = state.coordinator.epoch()
+    proposed_epoch = authority_epoch(state)
     approved = approve(state.env, proposal)
     assert approved["digest"] == proposal["digest"]
-    assert state.coordinator.epoch() > proposed_epoch
+    assert authority_epoch(state) > proposed_epoch
     request, _, _ = state.service._claim()
-    assert request.authority_epoch == state.coordinator.epoch()
+    assert request.authority_epoch == authority_epoch(state)
     assert request.operation == OPERATION and request.approval_digest
     assert state.service._claim() is None
     with state.service._guard() as lease:
@@ -281,9 +288,9 @@ def test_proposal_approval_claim_separates_stable_contract_and_fresh_dispatch(sc
 
 def test_private_lookup_survives_unrelated_epoch_but_rechecks_current_owner(script_state):
     state = script_state
-    before = state.coordinator.epoch()
+    before = authority_epoch(state)
     state.env.service.task_add("Unrelated canonical task", board="compute")
-    assert state.coordinator.epoch() > before
+    assert authority_epoch(state) > before
     assert state.env.store.get_script(state.env.principal, state.script["id"], **state.env.auth)[
         "source"
     ]

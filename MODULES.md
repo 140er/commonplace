@@ -1459,7 +1459,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
-  - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; controller script approvals/transport remain a separate integration.
+  - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; owner script REST, runtime receipts and existing exact approvals/one-use pinned SSH execution integrate those bundles.
   - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
   - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and a separate explicitly configured SSH challenge/one-use permit exchange authorizes fixed-operation admission without upgrading local lease domains.
   - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
@@ -1473,7 +1473,7 @@ Format (read by `commonplace orch docs-check`):
   - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
   - Every management operation checks current exact person-owner session and canonical board/task authority; confirmed full public keys remain pending verification, and approval rebinds the exact current action digest. No management request loads keys or performs remote effects.
   - Custody uses strict protected external wrapping keys, encrypted workspace keys and binding-authenticated private-key ciphertext; only public enrollment data is returned. Acquisition and transport access require current exact authority callbacks.
-  - Helper routing is enrollment-only, one execution is consumed before opening a target, both SSH pins precede authentication, and only the fixed read-only probe compiles. Budgets bound frames, admission, bytes, time and active tunnels; uncertain reservations persist.
+  - Helper routing is enrollment-only, one execution is consumed before opening a target, both SSH pins precede authentication, and only the fixed probe or literal confined target-helper command compiles; script bytes travel in the separate strict bounded upload protocol. Budgets bound frames, admission, bytes, time and active tunnels; uncertain reservations persist.
 
 - **How it fails:**
 
@@ -1482,6 +1482,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_compute_script_integration.py` covers canonical script proposal/approval/claim, signed runtime binding, logical-vs-dispatch epoch, actual pinned two-hop wire-only target transfer, tampering/revocation/cancellation and reserved uncertainty.
   - `tests/test_compute_scripts.py` and `tests/test_compute_script_sandbox.py` cover immutable exact bytes/digests, crypto-aware storage, finite strict wire, protected atomic uploads, literal sandbox argv, denial and uncertain retention; the real positive-confinement fixture is separately provisioned and optional.
   - `tests/test_compute_passive_admission.py` proves actual guarded outer SSH collection, purpose-bound one-use permits, replay/tamper/expiry and revocation ordering, uncertain restart retention and default-off behavior.
   - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
