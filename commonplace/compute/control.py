@@ -15,9 +15,9 @@ Lists return at most 100 records. Initial storage ceilings are 200 gateways,
 Scopes expire within one hour, proposals within 15 minutes, and approvals within
 five minutes and the proposal deadline. These bounds do not enable dispatch.
 
-There is deliberately no verification setter, approval consumer or dispatch API.
-The parent execution service still needs cross-process/control/board fencing,
-verified enrollment, custody resolution, expiry and output publication checks.
+There is deliberately no public verification setter or dispatch API. The private
+execution service shares this database's journal, separately from action consent.
+Production dispatch still requires participating cross-process/remote fencing.
 The process-local control lock here protects only management transactions in
 this process; it is not a cross-store remote-effect authorization fence.
 Custody remains separate in compute-credentials.sqlite3 and is never opened here.
@@ -33,7 +33,7 @@ import json
 import re
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +46,7 @@ from commonplace.control_db import ControlError, Principal
 from commonplace.extensions import ToolContext, ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
+from .fence import _held
 from .protocol import (
     EnrolledRoute,
     GatewayEnrollment,
@@ -99,6 +100,29 @@ CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY, object_id TEXT NOT NULL, action TEXT NOT NULL,
  user_id TEXT NOT NULL, created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS enrollment_verifications (
+ node_id TEXT PRIMARY KEY REFERENCES nodes(id), gateway_id TEXT NOT NULL,
+ enrollment TEXT NOT NULL, receipt_digest TEXT NOT NULL,
+ verified_at REAL NOT NULL, expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS execution_runs (
+ execution_id TEXT PRIMARY KEY REFERENCES executions(id),
+ attempt_id TEXT NOT NULL UNIQUE, worker_id TEXT NOT NULL,
+ gateway_id TEXT NOT NULL, request TEXT NOT NULL, approval_digest TEXT NOT NULL,
+ phase TEXT NOT NULL CHECK(phase IN ('admitted','dispatching','running','uncertain','terminal')),
+ stage INTEGER NOT NULL DEFAULT 0 CHECK(stage BETWEEN 0 AND 4),
+ reason TEXT NOT NULL, certainty TEXT NOT NULL CHECK(certainty IN ('unknown','known')),
+ reserved INTEGER NOT NULL CHECK(reserved IN (0,1)),
+ created_at REAL NOT NULL, updated_at REAL NOT NULL, run_until REAL NOT NULL,
+ cancel_requested_at REAL, cancel_requested_by TEXT,
+ exit_code INTEGER, result TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TRIGGER IF NOT EXISTS execution_runs_no_delete BEFORE DELETE ON execution_runs BEGIN
+ SELECT RAISE(ABORT,'compute execution claims cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS execution_runs_no_rebind BEFORE UPDATE OF
+ execution_id,attempt_id,worker_id,gateway_id,request,approval_digest,created_at,run_until
+ ON execution_runs BEGIN
+ SELECT RAISE(ABORT,'compute execution claims cannot be rebound'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN
  SELECT RAISE(ABORT,'compute audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN
@@ -197,11 +221,14 @@ def _document(binding):
 class Store:
     """Lazy workspace storage; constructors perform no I/O or remote work."""
 
-    def __init__(self, path, *, gateway, workspace_id, clock=time.time):
+    def __init__(self, path, *, gateway, workspace_id, clock=time.time, authority_fence=None):
         self._path = path
         self.gateway = gateway
         self.workspace_id = workspace_id
         self.clock = clock
+        # Optional for management; execution requires this exact participating
+        # fence. Other control/board/custody writers must be wired by the host.
+        self._authority_fence = authority_fence
 
     def _now(self):
         return finite(self.clock())
@@ -243,11 +270,28 @@ class Store:
 
     @contextmanager
     def _transaction(self, principal, session_hash):
+        guard = (
+            _held(self._authority_fence, self.workspace_id)
+            if self._authority_fence is not None
+            else nullcontext()
+        )
+        with guard:
+            with self.gateway.db._lock:
+                current = self._owner(principal, session_hash)
+                with self._journal() as conn:
+                    yield conn, current
+
+    @contextmanager
+    def _journal(self):
+        """Private local transaction, never held across credential/network work.
+
+        The executor must acquire its participating authority fence first. This
+        process-local control lock alone is not a revocation/admission fence.
+        """
         try:
             # Always acquire control before any workspace writer, matching the
             # existing coworker authority order. No cached allow decisions.
             with self.gateway.db._lock:
-                current = self._owner(principal, session_hash)
                 path = Path(self._path() if callable(self._path) else self._path)
                 with GATE.creating(path):
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,10 +300,11 @@ class Store:
                     conn.row_factory = row_factory
                     conn.execute("PRAGMA foreign_keys=ON")
                     conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=FULL")
                     conn.executescript(_SCHEMA)
                     conn.execute("BEGIN IMMEDIATE")
                     try:
-                        yield conn, current
+                        yield conn
                     except BaseException:
                         conn.rollback()
                         raise
@@ -437,6 +482,30 @@ class Store:
             "updated_at": row["updated_at"],
             "limits": binding["limits"],
         }
+
+    def _execution_view(self, conn, row):
+        result = self._public_execution(row)
+        run = conn.execute(
+            "SELECT * FROM execution_runs WHERE execution_id=?", (row["id"],)
+        ).fetchone()
+        if run is not None:
+            result["run"] = {
+                name: run[name]
+                for name in (
+                    "attempt_id",
+                    "phase",
+                    "reason",
+                    "certainty",
+                    "created_at",
+                    "updated_at",
+                    "cancel_requested_at",
+                    "cancel_requested_by",
+                    "exit_code",
+                )
+            }
+            result["run"]["capacity_reserved"] = bool(run["reserved"])
+            result["run"]["result"] = json.loads(run["result"])
+        return result
 
     def create_gateway(
         self,
@@ -629,7 +698,7 @@ class Store:
         node, nm, gateway, gm = self._node(conn, principal, node_id)
         authority = self._authority(principal, gateway["board"], task_number)
         outer, inner = self._enrollment(gateway, gm), self._route(node, nm, gateway["id"])
-        return {
+        binding = {
             "version": 1,
             "workspace": self.workspace_id,
             "user": principal.user_id,
@@ -649,6 +718,13 @@ class Store:
             "limits": asdict(Limits()),
             "expires_at": proposal_expires_at,
         }
+        verification = conn.execute(
+            "SELECT receipt_digest,expires_at FROM enrollment_verifications WHERE node_id=?",
+            (node_id,),
+        ).fetchone()
+        if verification is not None:
+            binding["verification"] = dict(verification)
+        return binding
 
     def propose_execution(
         self, principal, *, session_hash, node_id, task_number, operation, arguments, request_id
@@ -672,7 +748,7 @@ class Store:
             if existing is not None:
                 if existing["request"] != request:
                     raise StoreError("conflict", 409)
-                return self._public_execution(existing), False
+                return self._execution_view(conn, existing), False
             try:
                 compile_operation(operation, arguments)
             except ProtocolDenied:
@@ -777,6 +853,25 @@ class Store:
     def cancel_execution(self, principal, execution_id, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
             row = self._execution_access(conn, current, execution_id)
+            run = conn.execute(
+                "SELECT * FROM execution_runs WHERE execution_id=?", (execution_id,)
+            ).fetchone()
+            if run is not None:
+                if run["cancel_requested_at"] is None:
+                    now = self._now()
+                    conn.execute(
+                        "UPDATE execution_runs SET cancel_requested_at=?,cancel_requested_by=?,"
+                        "updated_at=? WHERE execution_id=?",
+                        (now, current.user_id, now, execution_id),
+                    )
+                    if run["phase"] == "admitted" and run["stage"] == 0:
+                        conn.execute(
+                            "UPDATE execution_runs SET phase='terminal',reason='cancelled_before_start',"
+                            "certainty='known',reserved=0 WHERE execution_id=?",
+                            (execution_id,),
+                        )
+                    self._audit(conn, current, execution_id, "execution.cancel_requested")
+                return self._execution_view(conn, row)
             if row["state"] != "cancelled":
                 if row["state"] not in ("awaiting_approval", "approved"):
                     raise StoreError("conflict", 409)
@@ -800,7 +895,7 @@ class Store:
             gateway, _ = self._gateway(conn, current, row["gateway_id"])
             self._authority(current, gateway["board"], row["task_number"])
             return self._public_scope(row)
-        return self._public_execution(self._execution_access(conn, current, object_id))
+        return self._execution_view(conn, self._execution_access(conn, current, object_id))
 
     def _list(self, conn, current, kind):
         results = []
@@ -860,11 +955,12 @@ class Store:
             return self._get_public(conn, current, "executions", execution_id)
 
 
-def open_store(gateway, workspace_id):
+def open_store(gateway, workspace_id, *, authority_fence=None):
     """Construct a lazy crypto-aware store at the current workspace generation."""
     identifier(workspace_id)
     return Store(
         lambda: Path(gateway.workspace_dir(workspace_id)) / "compute.sqlite3",
         gateway=gateway,
         workspace_id=workspace_id,
+        authority_fence=authority_fence,
     )
