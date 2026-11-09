@@ -1469,9 +1469,14 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - Workspace-local coworker bot personas, private DM/group conversation membership, append-only original messages, conversation-scoped memories and durable response-job intake.
+
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
 - **Promises:**
+
+  - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
+  - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
   - Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
@@ -1483,6 +1488,8 @@ Format (read by `commonplace orch docs-check`):
   - Without a provider or runner the chat shows a receipt and no answer; push delivery failures are recorded, not retried forever.
 
 - **Tests:**
+
+  - `tests/test_coworker_store.py` and `tests/test_coworker_api.py` exercise durable intake/reopen, private/group membership, request conflicts, scoped memory visibility, current session/connection authority, late replies and recovery.
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
   - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
