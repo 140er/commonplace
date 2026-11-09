@@ -549,6 +549,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
+
   - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
@@ -1471,11 +1473,14 @@ Format (read by `commonplace orch docs-check`):
 
   - Workspace-local coworker bot personas, private DM/group conversation membership, append-only original messages, conversation-scoped memories and durable response-job intake.
 
+  - The bounded concurrent coworker front runtime, conversation-local model context, provider admission limits and canonical explicit task intake.
+
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
 - **Promises:**
 
   - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
+  - Internal runtime dispatch rechecks the exact originating session before sending context; only explicit task syntax reaches canonical boards and model output never executes tools.
   - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
@@ -1489,6 +1494,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_coworker_runtime.py` proves independent conversation progress, bounded scoped memory, configured provider limits, current authority/cancellation fences and atomic task intent without model-driven effects.
   - `tests/test_coworker_store.py` and `tests/test_coworker_api.py` exercise durable intake/reopen, private/group membership, request conflicts, scoped memory visibility, current session/connection authority, late replies and recovery.
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
@@ -1646,7 +1652,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer.
+  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task admission is labeled Task created rather than completed work.
   - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.

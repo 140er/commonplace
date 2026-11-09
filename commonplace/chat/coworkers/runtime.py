@@ -186,14 +186,15 @@ class CoworkerWorker:
     def _authorize(self, wid, store, job, expected=None):
         if self._stop.is_set():
             raise _Withheld("interrupted")
+        current_job = store.runtime_job(job["id"])
         db = self.gateway.db
         principal = sessions.person_principal(db, job["user_id"], wid)
         if principal is None:
             raise _Withheld("no_access")
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # Store checks the originating session at claim and publication. Public
-        # jobs omit its digest; additionally pin a live session for this turn.
-        session_hash = job.get("session_hash") or (expected and expected["session"])
+        # Internal Store reads recheck the exact originating session immediately
+        # before dispatch and publication; public job views omit this digest.
+        session_hash = current_job["session_hash"] or (expected and expected["session"])
         with db._lock:
             row = db._conn.execute(
                 "SELECT id_hash FROM sessions WHERE user_id=? AND workspace_id=? "

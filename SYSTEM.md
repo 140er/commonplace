@@ -18,7 +18,8 @@ entry was written.
 replacing existing project chat. Server data drives bot profiles, DM/group
 membership, messages, jobs/task links and scoped memory. Multiple-bot groups
 require an explicit or unambiguous recipient; ordinary group discussion starts
-no bot broadcast. Message receipt and pending work are distinct from answers.
+no bot broadcast. Message receipt and pending work are distinct from answers; canonical task
+admission is labeled Task created, not task completion.
 Conversation controls wait for both the detail and authorized bot directory,
 including when detail arrives first. Input limits match server message/memory
 bounds. The composer remains available during background jobs; ambiguous HTTP retries
@@ -27,6 +28,28 @@ changes and sign-out invalidate older responses and clear private views. No
 worker identity, model response or live execution is fabricated in this UI.
 Human group invitations currently use explicit existing workspace user IDs;
 a member directory is not implemented by this slice.
+
+### Coworker background runtime
+
+The worker starts with the chat installation and stops before database close.
+Four bounded front threads rotate registered workspaces and preserve each
+conversation/bot's order; at most two calls enter one configured provider endpoint.
+Model requests have a 3.5 second timeout, bounded input/output and atomic per-day
+attempt accounting. This is a responsiveness limit, not measured real-provider
+latency. An endpoint circuit opens after repeated failures; no silent provider
+fallback or automatic failed-turn replay occurs.
+
+The internal Store.runtime_job rechecks the exact originating session, live
+membership, bot binding, running state and memory visibility before context is
+sent and before publication. Its session digest is never in public job views.
+Only the conversation's bounded history and explicit verbatim memory enter model
+context. No workspace-wide memory search or tool execution is granted to model
+output. Explicit `/task TITLE` plus optional exact body admits a canonical todo
+card on the conversation's authorized board; task_created acknowledges admission,
+not worker launch or task completion. Execution still requires the existing
+board orchestrator/runner configuration. A lost acknowledgement does not trigger
+blind replay. Tests use blocked synthetic providers; no production model latency
+or real worker launch is claimed by these checks.
 
 ### Coworker conversation storage and REST boundary
 

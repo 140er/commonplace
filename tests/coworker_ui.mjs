@@ -79,6 +79,9 @@ const cases = {
     assert.match(f.host.innerHTML, /href="#\/card\/314"/);
     assert.match(f.host.innerHTML, /href="#\/coworkers\/a\?message=1"/);
     assert.doesNotMatch(coworkerJobHTML(job('bad', 'a', 'failed', { task: 'javascript:alert(1)' })), /javascript:/);
+    const admission = coworkerJobHTML(job('created', 'a', 'done', { code: 'task_created', task: { board: 'work', number: 315 } }));
+    assert.match(admission, />Task created</);
+    assert.doesNotMatch(admission, />Completed</, 'Canonical task admission must not imply completed work');
     f.ui.stop();
   },
 

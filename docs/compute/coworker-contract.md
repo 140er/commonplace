@@ -102,6 +102,7 @@ public routes and must not bypass current caller access:
 
 ```
 store.claim_job() -> dict | None
+store.runtime_job(job_id) -> internal dict with exact session digest (never REST)
 store.finish_job(job_id, state, code="", task=None)
 store.add_bot_reply(job_id, text, model=None) -> dict
 store.recover_jobs()  # stale in-flight => interrupted/uncertain; never blind replay

@@ -564,6 +564,23 @@ class Store:
                 )
             return None
 
+    def runtime_job(self, job_id):
+        """Internal fresh dispatch check, including the exact originating session.
+
+        The session digest stays out of public job projections and REST replies.
+        No authority lock is retained across provider or network work.
+        """
+        _number(job_id)
+        with self._transaction() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise StoreError("not_found", 404)
+            self._runtime_access(conn, row)
+            if row["state"] != "running":
+                raise StoreError("job_terminal", 409)
+            self._check_visibility(conn, row)
+            return {**self._job(row), "session_hash": row["session_hash"]}
+
     def finish_job(self, job_id, state, code="", task=None):
         _number(job_id)
         if not isinstance(state, str) or state not in TERMINAL:

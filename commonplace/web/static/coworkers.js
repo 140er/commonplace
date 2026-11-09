@@ -30,7 +30,7 @@ export function coworkerJobHTML(job, bots = [], busy = false) {
   const name = bots.find(bot => same(bot.id, job.bot_id))?.name || "Bot";
   const task = typeof job.task === "object" ? job.task?.number : job.task;
   const taskLink = /^[1-9]\d*$/.test(String(task)) ? `<a href="#/card/${enc(task)}">Open task #${e(task)}</a>` : "";
-  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(labels[job.state] || job.state || "Unknown state")}</span>${job.code ? `<small>${e(job.code)}</small>` : ""}${taskLink}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel"}</button>` : ""}</li>`;
+  return `<li class="cw-job" data-state="${e(job.state)}"><a href="${messageHref(job.conversation_id, job.message_id)}" data-cw-message="${e(job.message_id)}">${e(name)}</a><span>${e(job.code === "task_created" ? "Task created" : labels[job.state] || job.state || "Unknown state")}</span>${job.code ? `<small>${e(job.code)}</small>` : ""}${taskLink}${activeJob(job) ? `<button type="button" class="btn sm" data-cw-action="cancel-job" data-id="${e(job.id)}"${busy ? " disabled" : ""}>${busy ? "Cancelling…" : "Cancel"}</button>` : ""}</li>`;
 }
 
 export function createCoworkers({ mount, api, current, boards = () => [], navigate = hash => { location.hash = hash; }, timers = globalThis, doc = globalThis.document, events = globalThis.window }) {

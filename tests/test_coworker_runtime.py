@@ -727,3 +727,34 @@ def test_completed_reply_survives_reopen_without_replaying(env, monkeypatch):
         close = getattr(reopened, "close", None)
         if close:
             close()
+
+
+def test_exact_origin_revoked_during_context_blocks_provider_despite_other_session(
+    env, monkeypatch
+):
+    from commonplace.chat.coworkers.routes import Authority
+
+    env.store._authority = Authority(env.gateway, env.wid)
+    # A different live session must not substitute for this intake's authority.
+    sessions.start_session(env.db, env.uid, env.wid)
+    cid = env.conversation()["id"]
+    receipt = env.store.post_message(
+        env.uid,
+        cid,
+        "Private request",
+        "exact-origin",
+        session_hash=sessions._hash(env.session),
+    )
+    assert "session_hash" not in receipt["job"]
+    worker = env.worker()
+    context = worker._context
+
+    def revoke_after_context(*args):
+        result = context(*args)
+        sessions.end_session(env.db, env.session)
+        return result
+
+    monkeypatch.setattr(worker, "_context", revoke_after_context)
+    assert worker.run_once(env.wid)
+    assert replies(env, cid) == []
+    assert jobs(env, cid)[0]["state"] == "interrupted"
