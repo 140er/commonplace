@@ -87,3 +87,5 @@
   .coworkers button, .coworkers select { min-height: 44px; }
   .cw-send-row { align-items: end; }
 }
+
+.cw-verbatim { white-space: pre-wrap; overflow-wrap: anywhere; }

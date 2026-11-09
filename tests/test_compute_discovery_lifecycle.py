@@ -56,9 +56,13 @@ def test_discovery_only_startup_installs_fence_without_enabling_execution(local_
     )
     env.db._compute_config = replace(state.config, workspaces=(workspace,))
     start = discovery_service.DiscoveryService.start
-    monkeypatch.setattr(
-        discovery_service.DiscoveryService, "start", lambda self: start(self, background=False)
-    )
+
+    def start_without_transport(self):
+        # Lifecycle-only fixture: any transport call on this sentinel fails.
+        self.driver = object()
+        return start(self, background=False)
+
+    monkeypatch.setattr(discovery_service.DiscoveryService, "start", start_without_transport)
     compute._install_execution(env.gateway)
     discovery_service.install_lifecycle(env.gateway)
     assert env.gateway._compute_execution_reasons[env.workspace] == "disabled"

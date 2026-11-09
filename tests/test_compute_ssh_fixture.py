@@ -69,7 +69,9 @@ def _selected_pins(gateway, route, wrong_pin):
 
 
 @pytest.mark.parametrize("wrong_pin", [None, "gateway", "target"])
-def test_encrypted_custody_to_actual_two_hop_ssh_without_network(tmp_path, wrong_pin):
+def test_encrypted_custody_to_actual_two_hop_ssh_without_network(
+    tmp_path, wrong_pin, compute_private_filesystem
+):
     data, keys = tmp_path / "data", tmp_path / "keys"
     data.mkdir(mode=0o700)
     keys.mkdir(mode=0o700)

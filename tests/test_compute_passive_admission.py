@@ -584,6 +584,15 @@ def test_one_use_immutable_permit_and_restart_keep_capacity(passive_state):
 
 
 def _crash_after_permit(control_path, config, now, channel):
+    from pathlib import Path
+
+    from tests._compute_filesystem import private_filesystem
+
+    with private_filesystem(Path(control_path).parent):
+        _crash_after_permit_with_filesystem(control_path, config, now, channel)
+
+
+def _crash_after_permit_with_filesystem(control_path, config, now, channel):
     """Separate process: genuine durable admission, then abrupt process death."""
     from commonplace import compute
     from commonplace.control_db import ControlDB

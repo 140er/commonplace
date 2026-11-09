@@ -28,7 +28,7 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX protected cust
 
 
 @pytest.fixture
-def custody(tmp_path):
+def custody(tmp_path, compute_private_filesystem):
     data = tmp_path / "data"
     service = tmp_path / "service-key"
     data.mkdir(mode=0o700)
@@ -716,3 +716,20 @@ def test_unknown_credential_id_and_duplicate_version_cannot_substitute(custody):
     assert len(rows(custody, "compute_credentials")) == 1
     with acquire(custody, enrollment) as handle:
         assert internal_transport_private_bytes(handle)
+
+
+def test_fixture_preserves_foreign_directory_ownership_denial(custody, monkeypatch):
+    inode = custody.service.stat().st_ino
+    original_fstat = os.fstat
+
+    def foreign_owner(fd):
+        info = original_fstat(fd)
+        if info.st_ino == inode:
+            fields = list(info)
+            fields[4] = os.geteuid() + 1
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(os, "fstat", foreign_owner)
+    with pytest.raises(CredentialError, match="credential_unavailable"):
+        custody.reopen()

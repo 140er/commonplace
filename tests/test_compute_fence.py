@@ -38,7 +38,10 @@ from tests.test_compute_executor import (
     run_row,
 )
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="local POSIX authority fence")
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="local POSIX authority fence"),
+    pytest.mark.usefixtures("compute_private_filesystem"),
+]
 
 
 def _gateway(db, workspace_config):
@@ -180,6 +183,13 @@ def _mutate(db, gateway, store, action, data, config):
 
 
 def _child(control_path, config, action, data, channel):
+    from tests._compute_filesystem import private_filesystem
+
+    with private_filesystem(Path(control_path).parent):
+        _child_with_filesystem(control_path, config, action, data, channel)
+
+
+def _child_with_filesystem(control_path, config, action, data, channel):
     db = None
     try:
         db = ControlDB(control_path, compute_config=config)

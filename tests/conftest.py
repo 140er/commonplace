@@ -366,8 +366,12 @@ def _close_test_storage_clients(monkeypatch):
     monkeypatch.setattr(Client, "__init__", tracked_client_init)
     _when_imported(monkeypatch, "commonplace.control_db", track_control_db)
     _when_imported(monkeypatch, "mempalace.backends.sqlite_exact", track_sqlite_exact)
-    yield
-    resources.close()
+    # Explicit fixture environments must outlive every tracked client close.
+    with ExitStack() as environments:
+        try:
+            yield environments
+        finally:
+            resources.close()
 
 
 def _realign_default_backend(palace_module):
@@ -712,3 +716,11 @@ def seeded_kg(kg):
     kg.add_triple("Alice", "works_at", "NewCo", valid_from="2025-01-01")
 
     return kg
+
+
+@pytest.fixture
+def compute_private_filesystem(tmp_path, _close_test_storage_clients):
+    """Isolate custody tests from system-ancestor UID mapping in containers."""
+    from tests._compute_filesystem import private_filesystem
+
+    _close_test_storage_clients.enter_context(private_filesystem(tmp_path))

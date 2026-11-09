@@ -161,7 +161,7 @@ class SyntheticDriver:
 
 
 @pytest.fixture
-def execution_env(compute_env, tmp_path):
+def execution_env(compute_env, tmp_path, compute_private_filesystem):
     env = compute_env
     fence = FixtureFence(tmp_path / "fixture-fence.sqlite3")
     env.store = Store(

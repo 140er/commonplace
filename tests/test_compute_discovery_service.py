@@ -202,7 +202,7 @@ class State(SimpleNamespace):
 
 
 @pytest.fixture
-def discovery_env(compute_env, tmp_path):
+def discovery_env(compute_env, tmp_path, compute_private_filesystem):
     env = compute_env
     tmp_path.chmod(0o700)
     fence = FixtureFence(tmp_path / "discovery-fence.sqlite3")
@@ -638,6 +638,8 @@ def _claim_in_process(settings, barrier, result):
             wrapping_key_path=settings["key_path"],
             provisioning_keys=settings["keys"],
             sources=("linux_arp", "ip_neigh"),
+            # Claim-only fixture: no optional SSH library or network operations.
+            driver=object(),
             job_limits=DiscoveryLimits(1, 1, 1, 2, 1),
         )
         assert service.start(background=False)
