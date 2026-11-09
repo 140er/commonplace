@@ -603,6 +603,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
+  - Decision-document migration compares raw bytes against a committed immutable fixture, without requiring historical Git objects.
+
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
