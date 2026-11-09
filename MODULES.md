@@ -550,6 +550,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
 
   - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
@@ -1646,6 +1647,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval forms and session/route response fencing; transport capabilities remain server-authoritative.
+
   - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
 
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
@@ -1659,6 +1662,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task admission is labeled Task created rather than completed work.
+  - Compute metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
   - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.

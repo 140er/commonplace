@@ -88,6 +88,25 @@ Space chat; the caller must obtain explicit intent before sharing requested task
 text with the selected board. This internal seam adds no public agent tool or
 permission and rechecks existing board write authority on replay.
 
+### Compute management interface
+
+The owner-only `#/compute` screen consumes authenticated Compute inventories and
+existing project lists. Gateway/target forms record full public host keys and
+explicit confirmation, never private keys. Enrollment remains pending verification.
+The UI can shape passive scopes, revoke them, propose only system.info.v1 actions,
+inspect/confirm an exact SHA256 digest and cancel pre-dispatch proposals. Approved
+means not dispatched; no active discovery, script box or fabricated live inventory
+is provided. Server authority, pin verification and digest recomputation remain
+mandatory. Client form validation is not authorization.
+
+Every visit binds responses to its exact session object, workspace, actor and
+route. Route departure/sign-out/session expiry abort requests and clear form and
+approval state; stale responses cannot populate another visit. Only proposal
+creation has idempotent retry identity; ambiguous other mutations require inventory
+reload. Compute API installation and service/execution wiring are separate from
+this UI slice. UI tests use inert requests; backend/browser integration still
+requires the authenticated control implementation.
+
 ### Isolated Compute custody and SSH transport
 
 Compute is an opt-in dependency extra (Paramiko >=5.1,<6); installation enables
