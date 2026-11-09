@@ -79,6 +79,7 @@ def webhook_server():
         headers={},
         received=[],
         slow=False,
+        dispatch=threading.Event(),
         release=threading.Event(),
     )
 
@@ -106,13 +107,20 @@ def webhook_server():
         def log_message(self, *_args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class Server(ThreadingHTTPServer):
+        def process_request_thread(self, request, client_address):
+            state.dispatch.wait()
+            super().process_request_thread(request, client_address)
+
+    state.dispatch.set()
+    server = Server(("127.0.0.1", 0), Handler)
     state.url = f"http://127.0.0.1:{server.server_port}/launch"
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
     thread.start()
     try:
         yield state
     finally:
+        state.dispatch.set()
         state.release.set()
         server.shutdown()
         server.server_close()
@@ -481,7 +489,11 @@ def test_webhook_never_follows_redirects(status, handoff, tmp_path, webhook_serv
     assert len(webhook_server.received) == 1
 
 
-def test_webhook_times_out(handoff, tmp_path, webhook_server):
+@pytest.mark.parametrize("phase", ["before-handler", "before-response"])
+def test_webhook_times_out(phase, handoff, tmp_path, webhook_server):
+    if phase == "before-handler":
+        # Keep the listening socket open, but prevent the handler from reading.
+        webhook_server.dispatch.clear()
     webhook_server.slow = True
     with pytest.raises(LaunchError, match="request failed"):
         launch(
@@ -491,7 +503,10 @@ def test_webhook_times_out(handoff, tmp_path, webhook_server):
             prompt_dir=str(tmp_path),
             timeout=0.05,
         )
-    assert len(webhook_server.received) == 1
+    # A socket timeout need not wait for the server to record the request.
+    # Successful delivery and exact signed payloads are covered separately.
+    if phase == "before-handler":
+        assert webhook_server.received == []
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,8 @@ entry was written.
 
 ## Decisions
 
+- **Webhook timeout verification:** A real socket timeout can precede request handling. Tests hold dispatch or the response with events and keep the 50 ms timeout; successful-delivery tests verify the request and exact signed payload. Launcher behavior is unchanged.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
