@@ -5,8 +5,9 @@ ExecutionRequest, compile_operation, encode_frame/decode_frame, FrameIO,
 ReplayJournal and GatewayHelper. GatewayHelper receives protected installation
 bindings, an authenticated SSH-key workspace/gateway binding, a current-authority
 callback and an explicitly supplied SQLite connection. It never reads config,
-credentials or inventory and never creates a listener. Passive collection is
-explicitly unavailable; active discovery and scripts are unsupported.
+credentials or inventory and never creates a listener. Passive collection needs
+an explicitly configured trusted collector, independent ceiling and live scope
+resolver; it is unavailable by default. Active discovery/scripts are unsupported.
 
 The journal consumes an execution (across all attempts) before calling the route
 opener. Keep its rows across restarts/restores; deleting them re-enables replay.
@@ -31,6 +32,9 @@ import struct
 import time
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
+
+from .discovery import DiscoveryDenied, PassiveCollector, validate_sources
+from .scopes import DiscoveryContext, DiscoveryLimits, NetworkScope, ScopeDenied
 
 VERSION = 1
 MAX_FRAME_BYTES = 8192
@@ -100,6 +104,64 @@ def canonical(value):
         ).encode("ascii")
     except (TypeError, ValueError, OverflowError, RecursionError):
         raise ProtocolDenied("invalid_json") from None
+
+
+@dataclass(frozen=True)
+class PassiveDiscoveryRequest:
+    """Exact selection of an authenticated stored scope, never a wire grant.
+
+    The trusted resolver must fetch ``scope`` in this exact context and check
+    current authority/epoch. Caller-supplied CIDRs, approval and paths are absent.
+    """
+
+    discovery: str
+    scope: str
+    gateway_epoch: int
+    authority_epoch: int
+    context: DiscoveryContext
+    sources: tuple[str, ...]
+    limits: DiscoveryLimits
+    output_bytes: int = MAX_FRAME_BYTES
+    method: str = "passive"
+
+    def __post_init__(self):
+        identifier(self.discovery)
+        identifier(self.scope)
+        positive_integer(self.gateway_epoch)
+        positive_integer(self.authority_epoch)
+        if type(self.context) is not DiscoveryContext or type(self.limits) is not DiscoveryLimits:
+            raise ProtocolDenied("invalid_discovery_contract")
+        for name in self.context.__dataclass_fields__:
+            identifier(getattr(self.context, name))
+        if self.method != "passive":
+            raise ProtocolDenied("unsupported_discovery_method")
+        positive_integer(self.output_bytes, MAX_FRAME_BYTES)
+        try:
+            object.__setattr__(self, "sources", validate_sources(self.sources))
+        except DiscoveryDenied:
+            raise ProtocolDenied("unsupported_passive_source") from None
+
+    def message(self):
+        return {"v": VERSION, "kind": "collect_passive", **asdict(self)}
+
+    @classmethod
+    def from_message(cls, value):
+        exact_fields(value, {"v", "kind", *cls.__dataclass_fields__})
+        if (
+            type(value["v"]) is not int
+            or value["v"] != VERSION
+            or value["kind"] != "collect_passive"
+        ):
+            raise ProtocolDenied("unsupported_protocol")
+        fields = {name: value[name] for name in cls.__dataclass_fields__}
+        exact_fields(fields["context"], DiscoveryContext.__dataclass_fields__)
+        exact_fields(fields["limits"], DiscoveryLimits.__dataclass_fields__)
+        try:
+            fields["context"] = DiscoveryContext(**fields["context"])
+            fields["limits"] = DiscoveryLimits(**fields["limits"])
+            return cls(**fields)
+        except ScopeDenied:
+            raise ProtocolDenied("invalid_discovery_contract") from None
 
 
 @dataclass(frozen=True)
@@ -583,6 +645,9 @@ class GatewayHelper:
         wall=time.time,
         monotonic=time.monotonic,
         nonce=lambda: secrets.token_hex(32),
+        passive_collector=None,
+        passive_ceiling=None,
+        passive_scope=None,
     ):
         limits = Limits() if limits is None else limits
         if (
@@ -607,7 +672,78 @@ class GatewayHelper:
         self.authorize, self.open_route = authorize, open_route
         self.limits, self.enabled = limits, enabled is True
         self.wall, self.monotonic, self.nonce = wall, monotonic, nonce
+        configured = (passive_collector, passive_ceiling, passive_scope)
+        if any(x is not None for x in configured) and (
+            type(passive_collector) is not PassiveCollector
+            or type(passive_ceiling) is not NetworkScope
+            or not callable(passive_scope)
+            or (passive_ceiling.context.workspace, passive_ceiling.context.gateway) != binding
+        ):
+            raise ProtocolDenied("invalid_passive_configuration")
+        self.passive_collector = passive_collector
+        self.passive_ceiling, self.passive_scope = passive_ceiling, passive_scope
         self._pending = None
+
+    def collect_passive(self, request, *, cancelled=lambda: False):
+        """Return bounded observations without touching route/enrollment state.
+
+        The existing authenticated authority callback must understand discovery
+        requests and the trusted resolver must return current stored authority.
+        The protected ceiling is checked independently for every observation.
+        """
+        if not self.enabled:
+            raise ProtocolDenied("transport_disabled")
+        if self.passive_collector is None:
+            raise ProtocolDenied("passive_source_unavailable")
+        if type(request) is not PassiveDiscoveryRequest:
+            raise ProtocolDenied("invalid_discovery_contract")
+        if (request.context.workspace, request.context.gateway) != (
+            self.gateway.workspace,
+            self.gateway.gateway,
+        ) or request.gateway_epoch != self.gateway.epoch:
+            raise ProtocolDenied("invalid_controller_binding")
+
+        def current_scope():
+            try:
+                # These are the helper's own clocks and protected installation
+                # state, independently of the collector's trusted runtime.
+                now = finite(self.wall())
+                if self.passive_ceiling.revoked or now >= self.passive_ceiling.expires_at:
+                    raise ProtocolDenied("scope_revoked_or_expired")
+                allowed = self.authorize(request, "collect_passive")
+                if allowed is not True:
+                    raise ProtocolDenied("authority_denied")
+                current = self.passive_scope(request)
+                now = finite(self.wall())
+                if (
+                    type(current) is not NetworkScope
+                    or current.context != request.context
+                    or current.revoked
+                    or now >= current.expires_at
+                    or now >= self.passive_ceiling.expires_at
+                ):
+                    raise ProtocolDenied("scope_revoked_or_expired")
+                return current
+            except ProtocolDenied:
+                raise
+            except Exception:
+                raise ProtocolDenied("authority_unavailable") from None
+
+        header = {"v": VERSION, "kind": "passive_observations", "discovery": request.discovery}
+        try:
+            result = self.passive_collector.collect(
+                context=request.context,
+                limits=request.limits,
+                sources=request.sources,
+                ceiling=self.passive_ceiling,
+                current_scope=current_scope,
+                output_bytes=min(request.output_bytes, self.limits.output_bytes),
+                envelope_bytes=len(canonical(header)) - 1,
+                cancelled=cancelled,
+            )
+        except ScopeDenied:
+            raise ProtocolDenied("passive_collection_denied") from None
+        return {**header, **result.document()}
 
     def _route(self, request, phase):
         if not self.enabled:
@@ -686,6 +822,17 @@ class GatewayHelper:
         deadline = self.monotonic() + self.limits.connect_seconds
         io = FrameIO(channel, deadline, monotonic=self.monotonic)
         message = io.receive()
+        if message.get("kind") == "collect_passive" and (
+            self.passive_collector is not None
+            or set(message) != {"v", "kind", "workspace", "gateway"}
+        ):
+            request = PassiveDiscoveryRequest.from_message(message)
+            # Source work has its own bounded monotonic duration. Cancellation
+            # stops further work; no claim of force-stopping a trusted callback.
+            io.deadline = self.monotonic() + request.limits.duration_seconds
+            result = self.collect_passive(request)
+            io.send(result)
+            return
         if message.get("kind") in {"describe", "collect_passive"}:
             exact_fields(message, {"v", "kind", "workspace", "gateway"})
             if (
@@ -701,8 +848,11 @@ class GatewayHelper:
                 {
                     "v": VERSION,
                     "kind": "description",
-                    "methods": ["describe", "open_enrolled_ssh"],
-                    "passive_sources": [],
+                    "methods": ["describe", "open_enrolled_ssh"]
+                    + (["collect_passive"] if self.passive_collector is not None else []),
+                    "passive_sources": sorted(self.passive_collector.sources)
+                    if self.passive_collector is not None
+                    else [],
                     "limits": asdict(self.limits),
                 }
             )
