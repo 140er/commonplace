@@ -236,7 +236,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
-  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody builder boundaries in `docs/compute/`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI builder boundaries in `docs/compute/`.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -327,6 +327,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Plain pytest excludes the `timing` marker from behavior checks; explicit timing selection remains available for serial informational measurements.
 
+  - The optional compute extra adds Paramiko >=5.1,<6 and cryptography without enabling remote access; uv.lock records its resolved dependency set.
   - `uv sync --extra dev` reproduces the locked environment; `ruff check` and `ruff format --check` define style; the coverage threshold in `pyproject.toml` is the gate.
 
 - **How it fails:**
@@ -1452,18 +1453,23 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Pure validation of explicitly approved, finite gateway discovery scopes.
+  - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
 
 - **Promises:**
 
   - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
   - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
+  - Custody uses strict protected external wrapping keys, encrypted workspace keys and binding-authenticated private-key ciphertext; only public enrollment data is returned. Acquisition and transport access require current exact authority callbacks.
+  - Helper routing is enrollment-only, one execution is consumed before opening a target, both SSH pins precede authentication, and only the fixed read-only probe compiles. Budgets bound frames, admission, bytes, time and active tunnels; uncertain reservations persist.
 
 - **How it fails:**
 
-  - Invalid, incomplete, nonfinite, foreign or out-of-scope requests raise ScopeDenied without network or credential access. Aggregate runtime accounting remains the dispatch service's responsibility.
+  - Invalid, incomplete, nonfinite, foreign or out-of-scope requests raise ScopeDenied without network or credential access. Aggregate discovery accounting remains the dispatch service's responsibility.
+  - Missing/unsafe credential custody fails closed; transport is inert without explicit enablement. Host-key mismatch, missing approvals, expiry, replay or unknown operations deny; uncertain remote outcomes never imply termination. Public control authority fencing, output redaction and outbox integration remain parent-service prerequisites.
 
 - **Tests:**
 
+  - `tests/test_compute_credentials.py`, `tests/test_compute_transport.py` and the optional actual Paramiko socketpair `tests/test_compute_ssh_fixture.py` cover authenticated custody, lifecycle, safe-open refusals, protocol validation, replay, limits and both SSH pins before authentication.
   - `tests/test_compute_scopes.py` covers approved IPv4/IPv6, every actor dimension, expiry/revocation, unsupported destinations/methods/interfaces, finite limits and mutation attempts.
 
 ## chat-and-voice

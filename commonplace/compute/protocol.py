@@ -234,7 +234,11 @@ def enrollment_digest(gateway, route):
 
 def compile_operation(operation, arguments):
     """Return a literal Linux probe; no interpolation or caller shell fragments."""
-    if operation != "system.info.v1" or type(arguments) is not dict or arguments:
+    if (
+        operation != "system.info.v1"
+        or type(arguments) not in (dict, MappingProxyType)
+        or arguments
+    ):
         raise ProtocolDenied("unsupported_operation")
     return "/usr/bin/uname -srm"
 
@@ -738,7 +742,12 @@ class GatewayHelper:
                 raise ProtocolDenied("deadline_exceeded")
             if used > ceiling:
                 raise ProtocolDenied("tunnel_budget_exceeded")
-            sources = wait([channel, target], remaining)
+            try:
+                sources = wait([channel, target], remaining)
+            except (OSError, ValueError):
+                # A peer may close its channel while select builds descriptors.
+                # The encrypted target's outcome remains uncertain in the journal.
+                raise ProtocolDenied("tunnel_disconnected") from None
             if not sources:
                 raise ProtocolDenied("deadline_exceeded")
             for source in sources:

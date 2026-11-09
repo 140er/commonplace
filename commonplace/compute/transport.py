@@ -136,7 +136,11 @@ class ParamikoDriver:
             pin.verify(transport.get_remote_server_key(), hop)
             return transport
         except BaseException:
-            transport.close()
+            # Teardown must not replace an independently detected pin failure.
+            try:
+                transport.close()
+            except Exception:
+                pass
             raise
 
     def authenticate(self, transport, account, key, timeout):
@@ -227,7 +231,9 @@ class BudgetedChannel:
     def _prepare(self, offered=0):
         with self._lock:
             remaining = self.deadline - self.monotonic()
-            if self.closed or remaining <= 0:
+            if self.closed:
+                raise OSError("tunnel_closed")
+            if remaining <= 0:
                 self.failure_reason = self.failure_reason or "deadline_exceeded"
                 self.close()
                 raise ProtocolDenied("deadline_exceeded")

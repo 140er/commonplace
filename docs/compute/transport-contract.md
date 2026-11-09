@@ -72,3 +72,11 @@ routing, replay denial, unknown/oversize field rejection and no silent fallback.
 These modules are disabled until parent adds authenticated persistent enrollment,
 approvals, current-authority fencing and deployment prerequisites. A domain
 binding, callback or passing synthetic fixture grants no live execution right.
+
+## Integrated dependency evidence
+
+The optional compute extra resolves Paramiko 5.1.0, checked against the primary
+[changelog](https://www.paramiko.org/changelog.html) (5.1.0 dated2026-10-17).
+The dependency is lazy and never enables transports on installation. Parent
+socketpair fixtures exercise the actual library and encrypted synthetic keys,
+not just an injected fake driver. No live network/device acceptance is claimed.
