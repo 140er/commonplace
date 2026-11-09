@@ -985,7 +985,9 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
     )
     present = request()
     if kind == "wildcard":
-        assert present.get("result", {}).get("isError"), "unreadable blank wing was accepted"
+        assert present == _tool_response(
+            700, {"error": "this connection can't read wing '  '", "denied": True}, is_error=True
+        ), "member blank-wing denial envelope changed"
     else:
         assert present == expected, "blank wing replaced the validation error"
     remove_hidden(w)
@@ -1007,7 +1009,7 @@ def test_card253_s07_r6_blank_wings(kgworld, kind, tool, args, protocol):
 )
 def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
     from commonplace import sessions
-    from commonplace.gateway import _tool_result
+    from commonplace.gateway import _tool_response, _tool_result
 
     w = kgworld
     principal = (
@@ -1032,7 +1034,12 @@ def test_card253_s07_r7_canonical_empty_wings(kgworld, kind, args):
 
     present = request()
     if kind == "wildcard":
-        assert present.get("result", {}).get("isError"), "unreadable empty wing was accepted"
+        wing = next(wing for wing in args["wings"] if wing != "wing_fixture")
+        assert present == _tool_response(
+            701,
+            {"error": f"this connection can't read wing {wing!r}", "denied": True},
+            is_error=True,
+        ), "member canonical-empty wing denial envelope changed"
     elif args["entity"] is None:
         assert present == {
             "jsonrpc": "2.0",

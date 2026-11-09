@@ -63,7 +63,7 @@ def test_event_feed_hides_private_events_and_cursor(world):
     after = w.http(w.member, path)
     assert after == before, "hidden events changed the member feed or cursor"
     empty = w.http(w.member, f"/api/events?after={cursor}&epoch={epoch}")
-    assert empty[0] == 200 and empty[1]["events"] == [] and empty[1]["seq"] == cursor
+    assert empty == (200, {"events": [], "seq": cursor, "epoch": epoch, "reset": False})
     events.emit(
         w.hub.db, w.hub.workspace, "card.updated", data={"board": "visible", "title": "next shared"}
     )

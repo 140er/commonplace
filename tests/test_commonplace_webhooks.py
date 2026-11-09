@@ -669,15 +669,41 @@ def test_dispatcher_replays_committed_events_idempotently_from_durable_cursor(
         reopened.close()
 
 
+def assert_restricted_event(s, raw, event):
+    payload = json.loads(raw)
+    assert "seq" not in payload and "event_seq" not in payload
+    with s.db._lock:
+        key = s.db._conn.execute(
+            "SELECT event_id_key FROM webhooks WHERE id=?", (s.hook["id"],)
+        ).fetchone()[0]
+    expected = (
+        "evt_"
+        + hmac.new(key.encode(), str(event["seq"]).encode("ascii"), hashlib.sha256).hexdigest()[:32]
+    )
+    assert payload["id"] == expected
+    assert payload["kind"] == event["kind"]
+    assert payload["subject"] == event["subject"]
+    assert payload["workspace"] == event["workspace_id"]
+
+
 def test_dispatcher_out_of_order_notifications_do_not_skip_events(security):
     s = security
     first, second = security_event(s), security_event(s)
     s.dispatcher.on_event(second)
     s.dispatcher.on_event(first)
-    assert {r["event_seq"] for r in webhooks.deliveries(s.db, s.agent, s.hook["id"])} == {
-        first["seq"],
-        second["seq"],
-    }
+    listing = webhooks.deliveries(s.db, s.agent, s.hook["id"])
+    assert len(listing) == 2
+    assert all("event_seq" not in row and "seq" not in row for row in listing)
+    with s.db._lock:
+        stored = s.db._conn.execute(
+            "SELECT id,event_seq,payload FROM webhook_deliveries WHERE webhook_id=?",
+            (s.hook["id"],),
+        ).fetchall()
+    assert {row["event_seq"] for row in stored} == {first["seq"], second["seq"]}
+    assert {row["id"] for row in listing} == {row["id"] for row in stored}
+    by_seq = {event["seq"]: event for event in (first, second)}
+    for row in stored:
+        assert_restricted_event(s, bytes(row["payload"]), by_seq[row["event_seq"]])
 
 
 def test_committed_board_event_recovers_when_listener_enqueue_fails(security, monkeypatch, caplog):
@@ -705,7 +731,7 @@ def test_committed_board_event_recovers_when_listener_enqueue_fails(security, mo
     try:
         dispatcher.start()
         wait_for(lambda: len(sent) == 1)
-        assert json.loads(sent[0][1])["seq"] == persisted[0]["seq"]
+        assert_restricted_event(s, sent[0][1], persisted[0])
         assert s.owner.task_show(created["number"])["title"] == "PRIVATE-CANARY"
     finally:
         dispatcher.stop()
@@ -735,7 +761,7 @@ def test_dispatcher_thread_survives_an_unexpected_pass_error(security, monkeypat
         event = security_event(s)  # first wake: the listener enqueues and wakes the loop
         dispatcher._wake.set()  # second wake
         wait_for(lambda: len(sent) == 1)
-        assert json.loads(sent[0][1])["seq"] == event["seq"]
+        assert_restricted_event(s, sent[0][1], event)
         assert dispatcher.thread.is_alive()
         assert "OperationalError" in caplog.text
         assert "PRIVATE-CANARY" not in caplog.text
@@ -861,7 +887,7 @@ def test_dispatcher_recovers_from_programming_error(security, monkeypatch, caplo
     assert waits == [dispatcher.error_backoff]
     assert alive == [True]
     assert len(sent) == 1
-    assert json.loads(sent[0][1])["seq"] == event["seq"]
+    assert_restricted_event(security, sent[0][1], event)
     records = [r for r in caplog.records if r.name == webhooks.logger.name]
     assert len(records) == 1
     assert "webhook dispatcher pass failed (ProgrammingError)" in records[0].getMessage()

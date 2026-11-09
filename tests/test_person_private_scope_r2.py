@@ -57,8 +57,10 @@ def test_member_webhook_http_numbering_has_no_hidden_gaps(world, monkeypatch):
     dispatcher.reconcile()
     status, listing = w.http(w.member, f"/api/webhooks/{hooks[0]}/deliveries")
     assert status == 200
-    numbers = sorted(row["event_seq"] for row in listing["deliveries"])
-    assert numbers == [1, 2], "member webhook numbering counts hidden events"
+    assert len(listing["deliveries"]) == 2
+    assert all("event_seq" not in row for row in listing["deliveries"]), (
+        "restricted webhook exposes event numbers"
+    )
     sent = []
     monkeypatch.setattr(
         webhooks, "_post", lambda url, body, *a, **kw: sent.append(json.loads(body)) or 200
@@ -69,8 +71,9 @@ def test_member_webhook_http_numbering_has_no_hidden_gaps(world, monkeypatch):
         ).fetchall()
     for row in rows:
         dispatcher._deliver(row)
-    assert [p["seq"] for p in sent] == [1, 2]
-    assert [p["id"] for p in sent] == ["evt_1", "evt_2"]
+    assert len(sent) == 2 and all("seq" not in p for p in sent)
+    assert len({p["id"] for p in sent}) == 2
+    assert all(p["id"].startswith("evt_") and len(p["id"]) == 36 for p in sent)
     assert PRIVATE not in json.dumps(sent)
     owner = w.http(w.owner, f"/api/webhooks/{hooks[1]}/deliveries")[1]
     assert {first["seq"], last["seq"]}.issubset({d["event_seq"] for d in owner["deliveries"]})

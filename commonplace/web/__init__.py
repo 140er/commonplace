@@ -183,8 +183,15 @@ def install(gateway):
             return
         with gateway.db._lock:
             latest = events.latest_seq(gateway.db, principal.workspace_id)
-            batch = events.after(gateway.db, principal.workspace_id, min(seq, latest), latest or 1)
-        send_json(h, 200, {"events": batch, "seq": latest})
+            if query(h).get("epoch"):
+                # A member-era ordinal is not a raw workspace cursor.
+                response = {"events": [], "seq": latest, "reset": True}
+            else:
+                batch = events.after(
+                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                )
+                response = {"events": batch, "seq": latest}
+        send_json(h, 200, response)
 
     def connections(h):
         principal = require_principal(gateway, h)

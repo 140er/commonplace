@@ -582,7 +582,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Restricted event regressions cover subscription-local numbering, readable-set resets, cursor recovery and saved-but-unlinked notices. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
+  - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
@@ -1072,7 +1072,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection; subscription ordinals hide workspace event gaps while raw keys remain internal for replay deduplication.
+  - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill.
 
   - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
@@ -1639,9 +1639,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor.
+  - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
-  - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses or sequence gaps.
+  - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 

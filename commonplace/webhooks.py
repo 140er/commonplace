@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     url TEXT NOT NULL,
     secret_hash TEXT NOT NULL,
     secret TEXT NOT NULL,
+    event_id_key TEXT,
     kinds TEXT NOT NULL,
     board TEXT NOT NULL DEFAULT '',
     waiting_on TEXT NOT NULL DEFAULT '',
@@ -126,6 +127,8 @@ def ensure_schema(db):
         columns = {row[1] for row in db._conn.execute("PRAGMA table_info(webhooks)")}
         if "auth_header" not in columns:
             db._conn.execute("ALTER TABLE webhooks ADD COLUMN auth_header TEXT")
+        if "event_id_key" not in columns:
+            db._conn.execute("ALTER TABLE webhooks ADD COLUMN event_id_key TEXT")
         if "start_seq" not in columns:
             db._conn.execute("ALTER TABLE webhooks ADD COLUMN start_seq INTEGER NOT NULL DEFAULT 0")
             # Older registrations lack a sequence boundary; exclude events from
@@ -139,18 +142,9 @@ def ensure_schema(db):
             "report_auth_retry_count": "INTEGER NOT NULL DEFAULT 0",
             "report_auth_retry_since": "TEXT DEFAULT NULL",
             "report_envelope": "TEXT",
-            "ordinal": "INTEGER NOT NULL DEFAULT 0",
         }.items():
             if name not in delivery_columns:
                 db._conn.execute(f"ALTER TABLE webhook_deliveries ADD COLUMN {name} {datatype}")
-        if "ordinal" not in delivery_columns:
-            # Existing subscriptions retain a stable local position without
-            # changing the raw deduplication key or owner delivery history.
-            db._conn.execute(
-                "UPDATE webhook_deliveries AS d SET ordinal=(SELECT count(*) "
-                "FROM webhook_deliveries AS prior WHERE prior.webhook_id=d.webhook_id "
-                "AND prior.rowid<=d.rowid)"
-            )
         from commonplace.projects import reports
 
         reports.ensure_control(db)
@@ -358,9 +352,10 @@ def remove(db, principal, webhook_id):
 def deliveries(db, principal, webhook_id):
     _authorize(principal, "list")
     with db._lock:
-        _get(db, principal, webhook_id)
+        registration = _get(db, principal, webhook_id)
+        sees_all_wings = _subscription_sees_all_wings(db, registration)
         rows = db._conn.execute(
-            "SELECT id, webhook_id, event_seq, ordinal, attempt, status, http_status, error, next_at, "
+            "SELECT id, webhook_id, event_seq, attempt, status, http_status, error, next_at, "
             "delivered_at, report_auth_retry_count AS count, report_auth_retry_since AS retry_since "
             "FROM webhook_deliveries WHERE webhook_id = ? AND (report_auth_retry_count > 0 OR "
             "rowid IN (SELECT rowid FROM webhook_deliveries WHERE webhook_id = ? "
@@ -370,9 +365,8 @@ def deliveries(db, principal, webhook_id):
         result = []
         for row in rows:
             item = dict(row)
-            ordinal = item.pop("ordinal")
-            if db.role(principal.workspace_id, principal.user_id) != "owner":
-                item["event_seq"] = ordinal
+            if not sees_all_wings:
+                item.pop("event_seq")
             item["attempts"] = [
                 dict(a)
                 for a in db._conn.execute(
@@ -489,60 +483,86 @@ def _payload(db, event):
     ).encode("utf-8")
 
 
-def _subscription_owner(db, row):
-    if row["connection_id"]:
-        principal = db.authenticate_connection(row["connection_id"])
-        return principal is not None and db.role(row["workspace_id"], principal.user_id) == "owner"
-    actor = row["owner_actor"]
-    return actor.startswith("user:") and db.role(row["workspace_id"], actor[5:]) == "owner"
+def _subscription_principal(db, row):
+    """Resolve the subscription's current authority, never its viewer's role."""
+    try:
+        if row["connection_id"]:
+            principal = db.authenticate_connection(row["connection_id"])
+        elif row["owner_actor"].startswith("user:"):
+            from .sessions import person_principal
+
+            principal = person_principal(db, row["owner_actor"][5:], row["workspace_id"])
+        else:
+            return None
+        if principal is not None and principal.workspace_id == row["workspace_id"]:
+            return principal
+    except Exception:
+        # Unresolvable identity must never enable workspace sequence metadata.
+        return None
+    return None
+
+
+def _subscription_sees_all_wings(db, row):
+    principal = _subscription_principal(db, row)
+    return principal is not None and principal.policy.sees_all_wings
+
+
+def _event_identity(db, row, event_seq):
+    # The signing secret is disclosed to subscribers. This independent key is
+    # server-only, durable, and initialized once without scanning delivery rows.
+    webhook_id = row["webhook_id"] if "webhook_id" in row.keys() else row["id"]
+    with db._lock:
+        stored = db._conn.execute(
+            "SELECT event_id_key FROM webhooks WHERE id=?", (webhook_id,)
+        ).fetchone()
+        if stored is None:
+            raise ToolError("no: webhook not found")
+        if stored[0] is None:
+            db._conn.execute(
+                "UPDATE webhooks SET event_id_key=? WHERE id=? AND event_id_key IS NULL",
+                (secrets.token_urlsafe(32), webhook_id),
+            )
+            stored = db._conn.execute(
+                "SELECT event_id_key FROM webhooks WHERE id=?", (webhook_id,)
+            ).fetchone()
+        key = stored[0].encode()
+    digest = hmac.new(key, str(event_seq).encode("ascii"), hashlib.sha256).hexdigest()[:32]
+    return "evt_" + digest
+
+
+def _delivery_payload(db, row, payload, event_seq):
+    if _subscription_sees_all_wings(db, row):
+        payload.update(seq=event_seq, id=f"evt_{event_seq}")
+    else:
+        payload.pop("seq", None)
+        payload["id"] = _event_identity(db, row, event_seq)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def _enqueue(db, row, event):
-    # Keep the raw event key strictly internal for durable replay dedupe. The
-    # separately allocated subscription ordinal counts only admitted events.
+    # The raw key remains internal for durable deduplication. Restricted
+    # subscriptions receive neither a workspace number nor a local counter.
     delivery_id = "dlv_" + secrets.token_hex(12)
-    payload = json.loads(_payload(db, event))
-    owner = _subscription_owner(db, row)
+    payload = _delivery_payload(db, row, json.loads(_payload(db, event)), event["seq"])
     with db._lock:
-        db._conn.execute("SAVEPOINT webhook_enqueue")
-        try:
-            inserted = db._conn.execute(
-                "INSERT OR IGNORE INTO webhook_deliveries "
-                "(id,webhook_id,event_seq,ordinal,next_at,payload,report_envelope) "
-                "VALUES (?,?,?,(SELECT coalesce(max(ordinal),0)+1 FROM webhook_deliveries "
-                "WHERE webhook_id=?),?,?,?) RETURNING ordinal",
-                (
-                    delivery_id,
-                    row["id"],
-                    event["seq"],
-                    row["id"],
-                    time.time(),
-                    b"",
-                    json.dumps(event) if event["kind"] == "project.report" else None,
-                ),
-            ).fetchone()
-            if inserted is not None:
-                number = event["seq"] if owner else inserted[0]
-                payload.update(seq=number, id=f"evt_{number}")
-                db._conn.execute(
-                    "UPDATE webhook_deliveries SET payload=? WHERE id=?",
-                    (
-                        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
-                            "utf-8"
-                        ),
-                        delivery_id,
-                    ),
-                )
-            else:
-                delivery_id = db._conn.execute(
-                    "SELECT id FROM webhook_deliveries WHERE webhook_id=? AND event_seq=?",
-                    (row["id"], event["seq"]),
-                ).fetchone()[0]
-            db._conn.execute("RELEASE webhook_enqueue")
-        except Exception:
-            db._conn.execute("ROLLBACK TO webhook_enqueue")
-            db._conn.execute("RELEASE webhook_enqueue")
-            raise
+        inserted = db._conn.execute(
+            "INSERT OR IGNORE INTO webhook_deliveries "
+            "(id,webhook_id,event_seq,next_at,payload,report_envelope) "
+            "VALUES (?,?,?,?,?,?) RETURNING id",
+            (
+                delivery_id,
+                row["id"],
+                event["seq"],
+                time.time(),
+                payload,
+                json.dumps(event) if event["kind"] == "project.report" else None,
+            ),
+        ).fetchone()
+        if inserted is None:
+            delivery_id = db._conn.execute(
+                "SELECT id FROM webhook_deliveries WHERE webhook_id=? AND event_seq=?",
+                (row["id"], event["seq"]),
+            ).fetchone()[0]
     return delivery_id
 
 
@@ -551,14 +571,7 @@ def _can_receive(db, gateway, row, event):
     try:
         if not row["active"] or row["workspace_id"] != event["workspace_id"]:
             return False
-        if row["connection_id"]:
-            principal = db.authenticate_connection(row["connection_id"])
-        elif row["owner_actor"].startswith("user:"):
-            from .sessions import person_principal
-
-            principal = person_principal(db, row["owner_actor"][5:], row["workspace_id"])
-        else:
-            return False
+        principal = _subscription_principal(db, row)
         if principal is None or principal.workspace_id != row["workspace_id"]:
             return False
         if not principal.policy.has_scope("memory:read"):
@@ -837,11 +850,8 @@ class Dispatcher:
 
     def _send(self, row):
         payload = json.loads(bytes(row["payload"]))
-        # Recheck numbering too: a formerly owning subscriber may be demoted
-        # while a delivery is queued. No stored owner cursor may escape then.
-        number = row["event_seq"] if _subscription_owner(self.db, row) else row["ordinal"]
-        payload.update(seq=number, id=f"evt_{number}")
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        # Recheck effective authority at send, including queued owner payloads.
+        body = _delivery_payload(self.db, row, payload, row["event_seq"])
         kind = payload["kind"]
         status, error = None, ""
         attempt = row["attempt"] + 1
