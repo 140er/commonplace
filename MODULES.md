@@ -549,6 +549,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
