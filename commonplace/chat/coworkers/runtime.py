@@ -28,6 +28,8 @@ from commonplace.chat.types import (
 )
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
+from commonplace.orch import runner_bridge, store as orch_store
+from commonplace.projects import orchestration
 
 from .store import StoreError, open_store
 
@@ -380,15 +382,39 @@ class CoworkerWorker:
         board = snapshot["conversation"].get("board")
         if not board or not title or len(title) > 200:
             raise _Withheld("task_needs_details")
+        origin = f"coworker:{job['conversation_id']}:{job['id']}"
         with self.gateway.db._lock:
             principal = self._fresh(wid, store, job, snapshot, [])
             service = BoardService(ToolContext(principal=principal, gateway=self.gateway))
-            # A persona is never used as a principal or as an assignee. Admission
-            # leaves execution, approvals and scheduling to the canonical board.
             card = service.ensure_chat_task(
-                f"coworker:{job['conversation_id']}:{job['id']}",
+                origin,
                 {"board": board, "title": title, "body": payload or title},
             )
+
+        # The card is already durable. Starting a runner must not hold the front
+        # provider slot, a boards writer or the broad control lock. The canonical
+        # runner owns actual launch, deduplication and uncertain-start recovery.
+        code = "task_created"
+        try:
+            if orchestration.enabled(self.gateway.db, wid):
+                result = service.start_chat_task(
+                    origin,
+                    card["number"],
+                    board=board,
+                    authorize=lambda: self._fresh(wid, store, job, snapshot, []),
+                )
+                code = "runner_" + result["job"]["state"]
+        except (runner_bridge.StartRefused, orch_store.OrchError) as exc:
+            code = "runner_" + exc.code
+        except (ControlError, ToolError, LookupError, PermissionError):
+            code = "runner_unavailable"
+        except _Withheld:
+            raise
+        except Exception:
+            # Admission may have committed before its acknowledgement was lost.
+            # Preserve the card; never retry a possibly queued worker here.
+            code = "runner_interrupted"
+        with self.gateway.db._lock:
             self._fresh(wid, store, job, snapshot, [])
             # A typed job acknowledgement is distinct from a model answer.
             # Store atomically records admission and the canonical task link;
@@ -396,7 +422,7 @@ class CoworkerWorker:
             store.finish_job(
                 job["id"],
                 "done",
-                code="task_created",
+                code=code,
                 task={"board": board, "number": card["number"]},
             )
 

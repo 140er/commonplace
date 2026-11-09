@@ -2676,6 +2676,101 @@ class BoardService:
             )
         return card
 
+    def start_chat_task(self, origin_key, task, *, board, authorize):
+        """Admit an existing chat-origin card through the configured person fence.
+
+        Internal only, like ``ensure_chat_task``. The caller must recheck the
+        originating session and conversation in ``authorize``; persona identity
+        never enters this path. Creating the card and queuing its runner are
+        separate durable facts. A refusal leaves the card untouched.
+        """
+        from commonplace.orch import runner_bridge
+        from commonplace.projects import orchestration
+        from commonplace.runner import jobs, tools
+
+        if (
+            not isinstance(origin_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", origin_key)
+            or type(task) is not int
+            or not callable(authorize)
+        ):
+            raise ToolError("no: invalid chat task dispatch")
+        authorize()
+        if not tools.person_owner(self.principal):
+            raise runner_bridge.StartRefused("not_allowed")
+        ws, gateway = self.principal.workspace_id, self.ctx.gateway
+        if not orchestration.enabled(self.ctx.db, ws):
+            raise runner_bridge.StartRefused("orchestration_disabled")
+
+        def card_snapshot():
+            with self.store.connection() as conn:
+                row = task_row(conn, task)
+                found = conn.execute(
+                    "SELECT * FROM boards WHERE id=?", (row["board_id"],)
+                ).fetchone()
+                if (
+                    found is None
+                    or found["slug"] != board
+                    or found["archived"]
+                    or not self.principal.policy.can_read_wing(found["wing"])
+                ):
+                    raise runner_bridge.StartRefused("card_not_found")
+                self._write(found, row=row)
+                return dict(row), dict(found)
+
+        with self.store.connection() as conn:
+            origin = conn.execute(
+                "SELECT task_id FROM chat_task_origins WHERE actor=? AND origin_key=?",
+                (self.principal.actor, origin_key),
+            ).fetchone()
+            if origin is None or origin["task_id"] != task:
+                raise ToolError("no: chat task origin not found")
+        if not runner_bridge.configured(gateway, ws, board):
+            raise runner_bridge.StartRefused("not_configured")
+        store = jobs.open_store(gateway, ws)
+        jobs.sweep(store, self.ctx.db, ws)
+        version = runner_bridge.resolve_version(gateway, ws, board)
+        row, board_row = card_snapshot()
+        # Same control snapshot and fenced admission as person_start; all launch
+        # arguments come from the accepted config, never from chat/model output.
+        plan = runner_bridge.prepare(
+            gateway,
+            ws,
+            board_row=board_row,
+            card_row=row,
+            version=version,
+            principal=self.principal,
+            requested_by=jobs.requester_ref(self.principal),
+            person=True,
+        )
+        authorize()
+        current_row, current_board = card_snapshot()
+        if (current_row, current_board) != (row, board_row):
+            raise runner_bridge.StartRefused("card_changed")
+        current_plan = runner_bridge.prepare(
+            gateway,
+            ws,
+            board_row=current_board,
+            card_row=current_row,
+            version=version,
+            principal=self.principal,
+            requested_by=jobs.requester_ref(self.principal),
+            person=True,
+        )
+        if current_plan != plan:
+            raise runner_bridge.StartRefused("config_changed")
+        if not orchestration.enabled(self.ctx.db, ws):
+            raise runner_bridge.StartRefused("orchestration_disabled")
+        # No boards transaction or control lock spans runner admission. Hash the
+        # opaque origin to fit the runner's 128-character request-key ceiling.
+        outcome = runner_bridge.fenced_start(
+            store,
+            plan,
+            path="person",
+            request_key="chat:" + hashlib.sha256(origin_key.encode("utf-8")).hexdigest(),
+        )
+        return runner_bridge.launch_reply(plan, outcome)
+
     def _release_origin(self, conn, row, approve, reason, escalate):
         p = self.principal
         if not self._can_release_origin(p, row):
