@@ -19,8 +19,9 @@ guards. This requires no unsafe UDF or weakening of custody safe-open rules.
 
 This implements local ordering, not an authenticated remote controller channel.
 A local lease deliberately lacks gateway_admission. Execution stays disabled
-until that separate integration exists. The existing helper authenticates SSH,
-binds request/epoch and consumes its nonce; a pre-revocation issued permit is
+unless the explicitly configured SSH challenge/permit adapter participates;
+its wire exchange never upgrades a local lease's domains. The helper binds the
+authenticated SSH peer, exact request/epoch and durably consumes its nonce; a pre-revocation issued permit is
 already in flight, never an instantaneous remote-revocation promise.
 """
 

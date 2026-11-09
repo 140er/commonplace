@@ -19,6 +19,9 @@ class WorkspaceExecutionConfig:
     wrapping_key_path: Path
     provisioning_keys: dict[str, bytes] = field(default_factory=dict)
     enabled: bool = False
+    admission_mode: str | None = None
+    discovery_enabled: bool = False
+    discovery_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -151,6 +154,7 @@ def _install_execution(gateway):
                 fence=fence,
                 wrapping_key_path=workspace.wrapping_key_path,
                 provisioning_keys=workspace.provisioning_keys,
+                admission_mode=workspace.admission_mode,
             )
             db._compute_services.append(service)
             gateway._compute_services[workspace.workspace] = service
@@ -170,4 +174,7 @@ def install(gateway):
 
     routes.install(gateway)
     _install_execution(gateway)
+    from .discovery_service import install_lifecycle
+
+    install_lifecycle(gateway)
     gateway.compute_installed = True

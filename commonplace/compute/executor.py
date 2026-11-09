@@ -3,8 +3,10 @@
 Host integration is explicit: pass the same participating AuthorityFence to Store
 and ExecutionService, an externally provisioned wrapping-key path, and pinned
 Ed25519 provisioning public keys. Local writer participation is implemented in
-fence.py; its lease deliberately excludes the missing authenticated remote
-gateway callback channel. Such a local-only service cannot start transport.
+fence.py; its lease deliberately excludes remote admission. Explicit
+controller-ssh-permit-v1 configuration wires a separate challenge/permit round
+trip over the existing authenticated SSH helper channel. A local-only service
+cannot start transport.
 
 start/stop manage bounded background threads; there is no public dispatch or
 verification setter. Trusted provisioning calls _accept_enrollment with a signed
@@ -40,6 +42,8 @@ from .credentials import (
 )
 from .fence import FenceDenied, _held, _LocalAuthorityFence
 from .protocol import (
+    ADMISSION_MODE,
+    AdmissionChallenge,
     ExecutionRequest,
     Limits,
     ProtocolDenied,
@@ -185,7 +189,11 @@ class ExecutionService:
         wrapping_key_path=None,
         provisioning_keys=None,
         driver=None,
+        admission_mode=None,
     ):
+        if admission_mode not in (None, ADMISSION_MODE):
+            raise ProtocolDenied("unsupported_admission_mode")
+        self.admission_mode = admission_mode
         self.store, self.enabled = store, enabled is True
         self.fence, self.wrapping_key_path = fence, wrapping_key_path
         self._provisioning_keys = dict(provisioning_keys or {})
@@ -211,7 +219,7 @@ class ExecutionService:
     def start(self):
         if not self.enabled:
             return False
-        if isinstance(self.fence, _LocalAuthorityFence):
+        if isinstance(self.fence, _LocalAuthorityFence) and self.admission_mode is None:
             self.last_reason = "gateway_admission_unintegrated"
             return False
         try:
@@ -417,6 +425,8 @@ class ExecutionService:
                             (candidate["id"],),
                         )
                         continue
+                    if binding.get("admission_mode") != self.admission_mode:
+                        continue
                     limits = Limits.from_dict(binding["limits"])
                     count = conn.execute(
                         "SELECT count(*) FROM execution_runs WHERE gateway_id=? AND reserved=1",
@@ -451,6 +461,10 @@ class ExecutionService:
                         limits=limits,
                         operation=binding["operation"],
                         arguments=binding["arguments"],
+                        admission_mode=self.admission_mode,
+                        approval_digest=(
+                            self._consent_digest(row) if self.admission_mode is not None else None
+                        ),
                     )
                     if isinstance(self.fence, _LocalAuthorityFence):
                         try:
@@ -504,7 +518,15 @@ class ExecutionService:
             or lease.epoch != request.authority_epoch
         ):
             raise StoreError("authority_changed", 409)
-        row, *_ = self._fresh(conn, request.execution)
+        row, binding, *_ = self._fresh(conn, request.execution)
+        if request.admission_mode != self.admission_mode or (
+            request.admission_mode is not None
+            and (
+                binding.get("admission_mode") != request.admission_mode
+                or request.approval_digest != self._consent_digest(row)
+            )
+        ):
+            raise StoreError("authority_changed", 409)
         if not hmac.compare_digest(run["approval_digest"], self._consent_digest(row)):
             raise StoreError("authority_changed", 409)
         self._unchanged(lease)
@@ -518,6 +540,14 @@ class ExecutionService:
                     run = self._check(conn, lease, request)
                     if stage != run["stage"] + 1 or self.store._now() >= request.start_by:
                         return False
+                    if stage >= 3 and self.admission_mode == ADMISSION_MODE:
+                        permit = conn.execute(
+                            "SELECT wire_permit FROM gateway_admissions WHERE execution_id=? "
+                            "AND attempt_id=? AND authority_epoch=?",
+                            (request.execution, request.attempt, request.authority_epoch),
+                        ).fetchone()
+                        if permit is None or not permit["wire_permit"]:
+                            return False
                     conn.execute(
                         "UPDATE execution_runs SET stage=?,phase=?,updated_at=? WHERE execution_id=?",
                         (
@@ -531,21 +561,25 @@ class ExecutionService:
         except Exception:
             return False
 
-    def _gateway_admission(self, request, phase):
-        """Existing GatewayHelper authorize(request, ready|admit) callback seam.
+    def _gateway_admission(self, request, phase, *, challenge=None):
+        """Consume one exact permit under fresh local authority, then return.
 
-        This is a concrete current-check/durable local permit, not a network
-        endpoint. A protected helper must reach it over an authenticated channel;
-        no such remote channel is installed here, so local-fence transport stays
-        off. Helper nonce/channel/deadline validation and AdmissionJournal.consume
-        remain independent. Once this callback commits, a later revocation is
-        ordered after issuance; it cannot retract an already in-flight permit.
+        Explicit wire mode requires the immutable challenge read by SSHTransport
+        on the already pinned/authenticated helper channel. The durable identity
+        includes that nonce/channel/deadline and the exact approved attempt. The
+        caller sends only after this method releases its fence/transaction.
+        Legacy callback-only fixtures remain inert without explicit wire mode.
+        Revocation committed before issuance wins; an issued permit is in flight.
         """
         if (
             not self.enabled
             or type(request) is not ExecutionRequest
             or phase not in ("ready", "admit")
         ):
+            return False
+        if self.admission_mode is not None:
+            return self._issue_wire_permit(request, phase, challenge)
+        if request.admission_mode is not None or challenge is not None:
             return False
         try:
             with self._guard() as lease:
@@ -567,6 +601,69 @@ class ExecutionService:
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def _wire_schema(conn):
+        # Additive migration under the existing local participating fence and
+        # FULL-synchronous Store transaction. Existing append-only/guard triggers
+        # remain intact. Old local-only permits cannot become wire permits.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(gateway_admissions)")}
+        for name in ("helper_channel", "helper_nonce", "wire_permit"):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE gateway_admissions ADD COLUMN {name} TEXT")
+        for name in ("helper_channel", "helper_nonce"):
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS gateway_admissions_{name} "
+                f"ON gateway_admissions({name})"
+            )
+
+    def _issue_wire_permit(self, request, phase, challenge):
+        if (
+            phase != "admit"
+            or self.admission_mode != ADMISSION_MODE
+            or type(challenge) is not AdmissionChallenge
+            or challenge.request != request
+        ):
+            return False
+        try:
+            with self._guard() as lease:
+                with self.store._journal() as conn:
+                    run = self._check(conn, lease, request)
+                    if run["stage"] != 2:
+                        return False
+                    challenge.validate_time(self.store._now())
+                    _, _, gateway, route, _ = self._fresh(conn, request.execution)
+                    request.validate_binding(gateway, route, request.limits, self.store._now())
+                    self._admission_credentials(request, gateway, route)
+                    self._unchanged(lease)
+                    self._wire_schema(conn)
+                    permit = challenge.message("admission_permit")
+                    conn.execute(
+                        "INSERT INTO gateway_admissions(execution_id,attempt_id,authority_epoch,"
+                        "issued_at,helper_channel,helper_nonce,wire_permit) VALUES (?,?,?,?,?,?,?)",
+                        (
+                            request.execution,
+                            request.attempt,
+                            lease.epoch,
+                            self.store._now(),
+                            challenge.channel,
+                            challenge.nonce,
+                            canonical(permit).decode(),
+                        ),
+                    )
+                    # Time spent in current reads/migration must not extend the
+                    # helper's short deadline. Failure rolls back the insertion.
+                    challenge.validate_time(self.store._now())
+            # The commit/fence have both finished before the caller may send.
+            return permit
+        except Exception:
+            return False
+
+    def _wire_admission(self, request, challenge):
+        permit = self._gateway_admission(request, "admit", challenge=challenge)
+        if type(permit) is not dict:
+            raise ProtocolDenied("authority_denied")
+        return permit
 
     @staticmethod
     def _credential_bindings(request, gateway, route):
@@ -734,7 +831,10 @@ class ExecutionService:
             and type(result.exit_code) is int
             and 0 <= result.exit_code <= 255
         )
-        not_started = valid and result.state == "not_started" and run["stage"] < 3
+        issued = conn.execute(
+            "SELECT 1 FROM gateway_admissions WHERE execution_id=?", (request.execution,)
+        ).fetchone()
+        not_started = valid and result.state == "not_started" and run["stage"] < 3 and not issued
         known = known_exit or not_started
         reason = result.reason if valid and result.reason in _REASONS else "transport_unavailable"
         if not_started and run["cancel_requested_at"] is not None:
@@ -759,7 +859,7 @@ class ExecutionService:
         """Internal background iteration; a fixture may drive it synchronously."""
         if not self.enabled or self._stop.is_set():
             return False
-        if isinstance(self.fence, _LocalAuthorityFence):
+        if isinstance(self.fence, _LocalAuthorityFence) and self.admission_mode is None:
             self.last_reason = "gateway_admission_unintegrated"
             return False
         try:
@@ -779,6 +879,10 @@ class ExecutionService:
                 limits=request.limits,
                 driver=self._driver,
                 wall=self.store.clock,
+                admission_mode=self.admission_mode,
+                gateway_admission=(
+                    self._wire_admission if self.admission_mode is not None else None
+                ),
             ).execute(request, gateway, route, *keys, cancelled=_Cancellation(self, request))
         except Exception:
             # No raw exception strings or key-bearing objects enter the journal.

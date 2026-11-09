@@ -9,10 +9,11 @@ target socket, shell, PTY, alternate driver or retry path is used.
 
 ``authorize(request, phase) is True`` is required before connecting, immediately
 after ready (phase ``dispatch``), and before target authentication and execution.
-The dispatch callback must atomically consume approval and check current service
-authority under the parent's cross-store fence. These callbacks alone do not
-implement that fence. Provide only service-fetched immutable enrollments and
-fresh explicit keys; no public HTTP/tool integration is registered here.
+The controller consumes exact approval before connecting and checks current
+service authority under its participating local fence. Explicit wire mode also
+requires a helper challenge and a durable nonce/channel-bound controller permit;
+no local fence is held during network I/O. A callback alone grants no authority.
+Provide only service-fetched immutable enrollments and fresh explicit keys; no public HTTP/tool integration is registered here.
 
 Results contain bounded raw remote bytes for an authorized background consumer.
 They are NOT safe UI/log output; parent owns redaction and audience fencing before
@@ -31,6 +32,8 @@ import time
 from dataclasses import dataclass, field
 
 from .protocol import (
+    ADMISSION_MODE,
+    AdmissionChallenge,
     EnrolledRoute,
     ExecutionRequest,
     FrameIO,
@@ -307,10 +310,19 @@ class SSHTransport:
         driver=None,
         wall=time.time,
         monotonic=time.monotonic,
+        admission_mode=None,
+        gateway_admission=None,
     ):
         limits = Limits() if limits is None else limits
         if not callable(authorize) or not isinstance(limits, Limits):
             raise ProtocolDenied("invalid_transport_configuration")
+        if (
+            admission_mode not in (None, ADMISSION_MODE)
+            or ((admission_mode is None) != (gateway_admission is None))
+            or (gateway_admission is not None and not callable(gateway_admission))
+        ):
+            raise ProtocolDenied("invalid_admission_configuration")
+        self.admission_mode, self.gateway_admission = admission_mode, gateway_admission
         self.authorize, self.enabled, self.limits = authorize, enabled is True, limits
         self.driver = driver if driver is not None else ParamikoDriver()
         self.wall, self.monotonic = wall, monotonic
@@ -344,6 +356,8 @@ class SSHTransport:
             or not target_key.available
         ):
             raise ProtocolDenied("credential_unavailable")
+        if request.admission_mode != self.admission_mode:
+            raise ProtocolDenied("unsupported_admission_mode")
         request.validate_binding(gateway, route, self.limits, self.wall())
         command = compile_operation(request.operation, dict(request.arguments))
         self._authorize(request, "connect", cancelled)
@@ -410,10 +424,30 @@ class SSHTransport:
             )
             routed = True  # A lost/partial go send is ambiguous, never retry it.
             control.send({**ready, "kind": "go"})
+            if self.admission_mode == ADMISSION_MODE:
+                challenge = AdmissionChallenge.from_message(control.receive(), request, ready)
+                challenge.validate_time(self.wall())
+                self._authorize_cancel(cancelled)
+                try:
+                    permit = self.gateway_admission(request, challenge)
+                except ProtocolDenied:
+                    raise
+                except Exception:
+                    raise ProtocolDenied("authority_unavailable") from None
+                # Validate the exact committed response before any send. A lost
+                # or partial permit send is uncertain and never issued again.
+                validate_admission(permit, "admission_permit", request)
+                if permit != challenge.message("admission_permit"):
+                    raise ProtocolDenied("admission_mismatch")
+                challenge.validate_time(self.wall())
+                self._authorize_cancel(cancelled)
+                control.send(permit)
             opened = control.receive()
             validate_admission(opened, "opened", request)
             if opened != {**ready, "kind": "opened"}:
                 raise ProtocolDenied("admission_mismatch")
+            if self.wall() >= ready["start_by"]:
+                raise ProtocolDenied("admission_expired")
             inner = self.driver.handshake(tunnel, route.pin, "target", remaining())
             resources.append(inner)
             self._authorize(request, "target_auth", cancelled)

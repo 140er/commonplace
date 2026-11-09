@@ -4,7 +4,10 @@ Public integration seams: Limits, HostKeyPin, GatewayEnrollment, EnrolledRoute,
 ExecutionRequest, compile_operation, encode_frame/decode_frame, FrameIO,
 ReplayJournal and GatewayHelper. GatewayHelper receives protected installation
 bindings, an authenticated SSH-key workspace/gateway binding, a current-authority
-callback and an explicitly supplied SQLite connection. It never reads config,
+callback and an explicitly supplied SQLite connection. Explicit
+controller-ssh-permit-v1 mode adds a fresh controller admission round trip on the
+same authenticated SSH stream; neither mode enables passive execution permits.
+It never reads config,
 credentials or inventory and never creates a listener. Passive collection needs
 an explicitly configured trusted collector, independent ceiling and live scope
 resolver; it is unavailable by default. Active discovery/scripts are unsupported.
@@ -37,6 +40,8 @@ from .discovery import DiscoveryDenied, PassiveCollector, validate_sources
 from .scopes import DiscoveryContext, DiscoveryLimits, NetworkScope, ScopeDenied
 
 VERSION = 1
+ADMISSION_MODE = "controller-ssh-permit-v1"
+ADMISSION_VERSION = 1
 MAX_FRAME_BYTES = 8192
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -327,6 +332,8 @@ class ExecutionRequest:
     limits: Limits = field(default_factory=Limits)
     operation: str = "system.info.v1"
     arguments: dict = field(default_factory=dict)
+    admission_mode: str | None = None
+    approval_digest: str | None = None
 
     def __post_init__(self):
         for name in (
@@ -357,6 +364,11 @@ class ExecutionRequest:
         finite(self.run_until)
         if self.run_until <= self.start_by:
             raise ProtocolDenied("invalid_deadline")
+        if self.admission_mode is not None or self.approval_digest is not None:
+            if self.admission_mode != ADMISSION_MODE:
+                raise ProtocolDenied("unsupported_admission_mode")
+            if type(self.approval_digest) is not str or not _HEX.fullmatch(self.approval_digest):
+                raise ProtocolDenied("invalid_digest")
         compile_operation(self.operation, self.arguments)
         object.__setattr__(self, "arguments", MappingProxyType({}))
 
@@ -364,6 +376,8 @@ class ExecutionRequest:
         result = {name: getattr(self, name) for name in self.__dataclass_fields__}
         result["arguments"] = dict(self.arguments)
         result["limits"] = asdict(self.limits)
+        if self.admission_mode is None:
+            del result["admission_mode"], result["approval_digest"]
         return result
 
     @property
@@ -375,14 +389,19 @@ class ExecutionRequest:
 
     @classmethod
     def from_message(cls, value):
-        exact_fields(value, {"v", "kind", *cls.__dataclass_fields__})
+        if type(value) is not dict:
+            raise ProtocolDenied("invalid_fields")
+        fields = set(cls.__dataclass_fields__)
+        if "admission_mode" not in value and "approval_digest" not in value:
+            fields -= {"admission_mode", "approval_digest"}
+        exact_fields(value, {"v", "kind", *fields})
         if (
             type(value["v"]) is not int
             or value["v"] != VERSION
             or value["kind"] != "open_enrolled_ssh"
         ):
             raise ProtocolDenied("unsupported_protocol")
-        fields = {name: value[name] for name in cls.__dataclass_fields__}
+        fields = {name: value[name] for name in fields}
         fields["limits"] = Limits.from_dict(fields["limits"])
         return cls(**fields)
 
@@ -465,7 +484,10 @@ def decode_frame(frame):
 class FrameIO:
     """Unbuffered framing: never consume bytes from the subsequent nested SSH."""
 
-    def __init__(self, channel, deadline, *, monotonic=time.monotonic):
+    def __init__(self, channel, deadline, *, monotonic=time.monotonic, byte_limit=None):
+        if byte_limit is not None:
+            positive_integer(byte_limit, 1048576)
+        self.byte_limit = byte_limit
         self.channel = channel
         self.deadline = deadline
         self.monotonic = monotonic
@@ -477,7 +499,12 @@ class FrameIO:
             raise ProtocolDenied("deadline_exceeded")
         self.channel.settimeout(remaining)
 
+    def _budget(self, offered):
+        if self.byte_limit is not None and self.used + offered > self.byte_limit:
+            raise ProtocolDenied("tunnel_budget_exceeded")
+
     def _read(self, count):
+        self._budget(count)
         result = bytearray()
         while len(result) < count:
             self._timeout()
@@ -498,6 +525,7 @@ class FrameIO:
 
     def send(self, message):
         data = encode_frame(message)
+        self._budget(len(data))
         self._timeout()
         self.used += len(data)
         self.channel.sendall(data)
@@ -518,7 +546,7 @@ _ADMISSION_FIELDS = {
 
 
 def admission_message(kind, request, channel, nonce, start_by):
-    return {
+    message = {
         "v": VERSION,
         "kind": kind,
         "execution": request.execution,
@@ -529,10 +557,21 @@ def admission_message(kind, request, channel, nonce, start_by):
         "start_by": start_by,
         "run_until": request.run_until,
     }
+    if request.admission_mode is not None:
+        message.update(
+            admission_mode=request.admission_mode,
+            admission_v=ADMISSION_VERSION,
+            authority_epoch=request.authority_epoch,
+            approval_digest=request.approval_digest,
+        )
+    return message
 
 
 def validate_admission(message, kind, request):
-    exact_fields(message, _ADMISSION_FIELDS)
+    fields = _ADMISSION_FIELDS
+    if request.admission_mode is not None:
+        fields = fields | {"admission_mode", "admission_v", "authority_epoch", "approval_digest"}
+    exact_fields(message, fields)
     if type(message["v"]) is not int or message["v"] != VERSION or message["kind"] != kind:
         raise ProtocolDenied("unsupported_protocol")
     if (message["execution"], message["attempt"], message["digest"], message["run_until"]) != (
@@ -547,6 +586,60 @@ def validate_admission(message, kind, request):
             raise ProtocolDenied("invalid_nonce")
     finite(message["start_by"])
     finite(message["run_until"])
+    if request.admission_mode is not None and (
+        type(message["admission_v"]) is not int
+        or type(message["authority_epoch"]) is not int
+        or message
+        != admission_message(
+            kind, request, message["channel"], message["nonce"], message["start_by"]
+        )
+    ):
+        raise ProtocolDenied("admission_mismatch")
+
+
+@dataclass(frozen=True)
+class AdmissionChallenge:
+    """Immutable identity received on the pinned, authenticated SSH channel.
+
+    This value grants no authority. Only the controller's fresh fenced journal
+    commit can produce its permit. SSH provides peer authentication/integrity;
+    no extra shared key or bearer token is introduced.
+    """
+
+    request: ExecutionRequest
+    channel: str
+    nonce: str
+    start_by: float
+
+    def __post_init__(self):
+        if (
+            type(self.request) is not ExecutionRequest
+            or self.request.admission_mode != ADMISSION_MODE
+        ):
+            raise ProtocolDenied("unsupported_admission_mode")
+        validate_admission(self.message(), "admission_challenge", self.request)
+        if self.start_by > self.request.start_by:
+            raise ProtocolDenied("admission_expired")
+
+    def message(self, kind="admission_challenge"):
+        return admission_message(kind, self.request, self.channel, self.nonce, self.start_by)
+
+    def validate_time(self, now):
+        finite(now)
+        if (
+            not now
+            < self.start_by
+            <= min(self.request.start_by, now + self.request.limits.admission_seconds)
+        ):
+            raise ProtocolDenied("admission_expired")
+
+    @classmethod
+    def from_message(cls, message, request, ready):
+        validate_admission(message, "admission_challenge", request)
+        validate_admission(ready, "ready", request)
+        if message != {**ready, "kind": "admission_challenge"}:
+            raise ProtocolDenied("admission_mismatch")
+        return cls(request, message["channel"], message["nonce"], message["start_by"])
 
 
 class ReplayJournal:
@@ -566,9 +659,27 @@ class ReplayJournal:
             workspace TEXT NOT NULL, gateway TEXT NOT NULL, execution TEXT NOT NULL,
             attempt TEXT NOT NULL, digest TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
             state TEXT NOT NULL, PRIMARY KEY(workspace, gateway, execution))""")
+        # Preserve older replay records; an additive migration never clears
+        # consumed executions or uncertain reservations on helper restart.
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(compute_transport_journal)")
+        }
+        for name in ("channel", "permit_digest"):
+            if name not in columns:
+                connection.execute(f"ALTER TABLE compute_transport_journal ADD COLUMN {name} TEXT")
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS compute_transport_channel "
+            "ON compute_transport_journal(channel)"
+        )
         connection.commit()
 
-    def consume(self, request, nonce):
+    def consume(self, request, nonce, *, channel=None, permit=None):
+        if request.admission_mode is not None:
+            validate_admission(permit, "admission_permit", request)
+            if permit["channel"] != channel or permit["nonce"] != nonce:
+                raise ProtocolDenied("admission_mismatch")
+        elif channel is not None or permit is not None:
+            raise ProtocolDenied("admission_mismatch")
         db = self.connection
         if db.in_transaction:
             raise ProtocolDenied("journal_transaction_active")
@@ -586,7 +697,8 @@ class ReplayJournal:
             if count >= request.limits.tunnels:
                 raise ProtocolDenied("tunnel_capacity_exceeded")
             db.execute(
-                "INSERT INTO compute_transport_journal VALUES (?,?,?,?,?,?, 'consumed')",
+                "INSERT INTO compute_transport_journal(workspace,gateway,execution,attempt,digest,"
+                "nonce,state,channel,permit_digest) VALUES (?,?,?,?,?,?, 'consumed',?,?)",
                 (
                     request.workspace,
                     request.gateway,
@@ -594,6 +706,8 @@ class ReplayJournal:
                     request.attempt,
                     request.digest,
                     nonce,
+                    channel,
+                    hashlib.sha256(canonical(permit)).hexdigest() if permit is not None else None,
                 ),
             )
             db.commit()
@@ -648,6 +762,7 @@ class GatewayHelper:
         passive_collector=None,
         passive_ceiling=None,
         passive_scope=None,
+        admission_mode=None,
     ):
         limits = Limits() if limits is None else limits
         if (
@@ -668,6 +783,9 @@ class GatewayHelper:
             or not callable(open_route)
         ):
             raise ProtocolDenied("invalid_controller_binding")
+        if admission_mode not in (None, ADMISSION_MODE):
+            raise ProtocolDenied("unsupported_admission_mode")
+        self.admission_mode = admission_mode
         self.gateway, self.routes, self.journal = gateway, MappingProxyType(copied), journal
         self.authorize, self.open_route = authorize, open_route
         self.limits, self.enabled = limits, enabled is True
@@ -761,6 +879,10 @@ class GatewayHelper:
         return route
 
     def prepare(self, request):
+        if request.admission_mode != self.admission_mode:
+            raise ProtocolDenied("unsupported_admission_mode")
+        if self._pending is not None:
+            raise ProtocolDenied("admission_mismatch")
         self._route(request, "ready")
         ready = admission_message(
             "ready",
@@ -778,6 +900,11 @@ class GatewayHelper:
         return ready
 
     def admit(self, request, ready, go):
+        if self.admission_mode is not None or request.admission_mode is not None:
+            raise ProtocolDenied("admission_permit_required")
+        return self._open(request, self._take_go(request, ready, go), go)
+
+    def _take_go(self, request, ready, go):
         pending, self._pending = self._pending, None
         validate_admission(ready, "ready", request)
         validate_admission(go, "go", request)
@@ -789,8 +916,45 @@ class GatewayHelper:
             or self.wall() >= go["start_by"]
         ):
             raise ProtocolDenied("admission_mismatch")
+        return pending
+
+    def challenge(self, request, ready, go):
+        if self.admission_mode != ADMISSION_MODE or request.admission_mode != ADMISSION_MODE:
+            raise ProtocolDenied("unsupported_admission_mode")
+        pending = self._take_go(request, ready, go)
+        challenge = AdmissionChallenge.from_message(
+            {**ready, "kind": "admission_challenge"}, request, ready
+        )
+        challenge.validate_time(self.wall())
+        self._pending = (challenge, pending)
+        return challenge.message()
+
+    def admit_permit(self, request, challenge, permit):
+        pending, self._pending = self._pending, None
+        if (
+            self.admission_mode != ADMISSION_MODE
+            or type(challenge) is not AdmissionChallenge
+            or challenge.request != request
+            or pending is None
+            or pending[0] != challenge
+        ):
+            raise ProtocolDenied("admission_mismatch")
+        validate_admission(permit, "admission_permit", request)
+        if permit != challenge.message("admission_permit"):
+            raise ProtocolDenied("admission_mismatch")
+        challenge.validate_time(self.wall())
+        return self._open(request, pending[1], permit)
+
+    def _open(self, request, pending, go):
         route = self._route(request, "admit")
-        self.journal.consume(request, go["nonce"])
+        if self.monotonic() >= pending[2] or self.wall() >= go["start_by"]:
+            raise ProtocolDenied("admission_expired")
+        self.journal.consume(
+            request,
+            go["nonce"],
+            channel=go["channel"] if request.admission_mode is not None else None,
+            permit=go if request.admission_mode is not None else None,
+        )
         try:
             remaining = min(
                 request.limits.connect_seconds,
@@ -820,7 +984,9 @@ class GatewayHelper:
         if not self.enabled:
             raise ProtocolDenied("transport_disabled")
         deadline = self.monotonic() + self.limits.connect_seconds
-        io = FrameIO(channel, deadline, monotonic=self.monotonic)
+        io = FrameIO(
+            channel, deadline, monotonic=self.monotonic, byte_limit=self.limits.tunnel_bytes
+        )
         message = io.receive()
         if message.get("kind") == "collect_passive" and (
             self.passive_collector is not None
@@ -858,13 +1024,27 @@ class GatewayHelper:
             )
             return
         request = ExecutionRequest.from_message(message)
+        io.byte_limit = min(io.byte_limit, request.limits.tunnel_bytes)
+        io._budget(0)
         ready = self.prepare(request)
         io.send(ready)
         io.deadline = min(deadline, self.monotonic() + max(0, ready["start_by"] - self.wall()))
         go = io.receive()
         if io.used + len(encode_frame({**ready, "kind": "opened"})) > request.limits.tunnel_bytes:
             raise ProtocolDenied("tunnel_budget_exceeded")
-        target = self.admit(request, ready, go)
+        if self.admission_mode == ADMISSION_MODE:
+            challenge_message = self.challenge(request, ready, go)
+            io.send(challenge_message)
+            permit = io.receive()
+            challenge = AdmissionChallenge.from_message(challenge_message, request, ready)
+            if (
+                io.used + len(encode_frame({**ready, "kind": "opened"}))
+                > request.limits.tunnel_bytes
+            ):
+                raise ProtocolDenied("tunnel_budget_exceeded")
+            target = self.admit_permit(request, challenge, permit)
+        else:
+            target = self.admit(request, ready, go)
         try:
             io.send({**ready, "kind": "opened"})
             runtime = min(request.limits.runtime_seconds, request.run_until - self.wall())

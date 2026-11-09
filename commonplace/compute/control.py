@@ -755,6 +755,21 @@ class Store:
             "limits": asdict(Limits()),
             "expires_at": proposal_expires_at,
         }
+        # Only the trusted startup configuration selects the wire contract.
+        # Binding it here makes prior/changed modes require fresh exact consent;
+        # neither request JSON nor enrollment metadata can select a mode.
+        from . import ExecutionConfig, WorkspaceExecutionConfig
+
+        config = getattr(self.gateway.db, "_compute_config", None)
+        if type(config) is ExecutionConfig:
+            for workspace in config.workspaces:
+                if (
+                    type(workspace) is WorkspaceExecutionConfig
+                    and workspace.workspace == self.workspace_id
+                    and workspace.admission_mode is not None
+                ):
+                    binding["admission_mode"] = workspace.admission_mode
+                    break
         verification = conn.execute(
             "SELECT receipt_digest,expires_at FROM enrollment_verifications WHERE node_id=?",
             (node_id,),
