@@ -152,7 +152,7 @@ def test_ipv6_numeric_normalization_and_neigh_states():
 @pytest.mark.parametrize(
     "address",
     (
-        "pi.local",
+        "device.local",
         "10.077.0.3",
         "127.0.0.1",
         "169.254.1.1",
@@ -199,7 +199,7 @@ def test_incomplete_or_unsupported_arp_records_are_discarded(data):
         neigh(state="INCOMPLETE"),
         neigh(state="STALE REACHABLE"),
         neigh(state="STALE STALE"),
-        neigh(state="STALE hostname=pi.local"),
+        neigh(state="STALE hostname=device.local"),
         neigh(state="STALE <script>alert(1)</script>"),
         neigh(state="STALE $(touch /tmp/no)"),
         neigh(interface="eth0\x1b[1m"),
