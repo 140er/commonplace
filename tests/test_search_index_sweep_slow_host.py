@@ -32,7 +32,7 @@ def test_mirror_tests_pass_when_waits_give_up_and_jobs_start_late():
     )
     command = [
         sys.executable, "-m", "pytest", "-p", "tests._slow_sweep_plugin",
-        "-p", "no:cacheprovider", "-p", "no:xdist", "-q", "--no-header",
+        "-p", "no:cacheprovider", "-p", "no:xdist", "-q", "--no-header", "--maxfail=1",
         "-o", "addopts=-m 'not benchmark and not slow and not stress and not timing'",
         *SELECTION,
     ]  # fmt: skip

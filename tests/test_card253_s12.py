@@ -80,9 +80,16 @@ def worlds(tmp_path, monkeypatch, request):
         return w
 
     yield create
-    for w, server, thread, supervisor in opened:
+    close_worlds(opened)
+
+
+def close_world(w, server, thread, supervisor):
+    # A job that never settles fails the drain, but the server thread is not a
+    # daemon: every handle below must still be released or the process hangs.
+    try:
         w.release.set()
         drain_service(w.service)
+    finally:
         server.shutdown()
         thread.join(3)
         server.server_close()
@@ -90,6 +97,17 @@ def worlds(tmp_path, monkeypatch, request):
         w.gateway.handoff.close()
         supervisor.stop_all()
         w.db.close()
+
+
+def close_worlds(opened):
+    failures = []
+    for entry in opened:
+        try:
+            close_world(*entry)
+        except BaseException as error:
+            failures.append(error)
+    if failures:
+        raise failures[0]
 
 
 def put(w, label, *, hidden=False, count=1, indexed=False, identity=None):
@@ -429,6 +447,7 @@ def test_card253_s12_failed_writes_do_not_accrue(worlds):
     assert poll(w) == dict(state="idle", threads_indexed=0, threads_pending=1, units_written=0)
 
 
+@pytest.mark.timing
 def test_card253_s12_bounded_metadata_polling(worlds, monkeypatch, record_property):
     import statistics
     from time import perf_counter
