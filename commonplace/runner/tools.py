@@ -166,7 +166,17 @@ def card_start(
 def card_start_cancel(ctx, job):
     _requester(ctx)
     row = jobs.cancel(_store(ctx), job, ctx.principal)
-    return {key: row[key] for key in ("state", "cancel_requested_at", "updated_at")}
+    return {
+        key: row[key]
+        for key in (
+            "state",
+            "cancel_requested_at",
+            "updated_at",
+            "stop_status",
+            "stop_code",
+            "stop_confirmed_at",
+        )
+    }
 
 
 def card_start_resolve(ctx, job, outcome, thread_id=None):

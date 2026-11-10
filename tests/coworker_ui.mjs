@@ -206,6 +206,9 @@ const cases = {
     assert.match(html, /Task in progress/);
     assert.match(html, /Runner outcome unknown/);
     assert.match(html, /termination unconfirmed/);
+    const stopped = coworkerJobHTML({ ...linked("doing"), task_progress: { ...progress, runner: { state: "cancelled", cancel_requested_at: "now", stop_status: "confirmed", stop_confirmed_at: "later" } } });
+    assert.match(stopped, /Worker stopped; termination confirmed/);
+    assert.doesNotMatch(stopped, /Admission cancelled before launch|termination unconfirmed/);
     assert.match(html, /Exact worker result &lt;safe&gt;/);
     assert.match(html, /Invalidated evidence/);
     assert.match(html, /Older task events omitted/);

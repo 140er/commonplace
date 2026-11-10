@@ -15,8 +15,9 @@ release gates have not passed.
   history. Current origin/viewer/audience/task authority fences publication.
 - Explicit targeted follow-ups and stop requests with durable replay receipts.
   Follow-ups save exact task comments. Queued/leased stops fence canonical launch;
-  starting stops remain intent, and ongoing-worker control is not supported by
-  the current runner protocol. Front completion never implies worker termination.
+  starting/launched stops remain intent until the external run-stop host supplies
+  matching terminal evidence through the [runner protocol](../runner.md#confirmed-stop-of-a-launched-worker).
+  Unsupported hosts remain a visible gap. Front completion never implies worker termination.
 - Owner Compute inventories, pending gateway/target enrollment, explicit passive
   scopes, exact proposals/approvals/cancellation and bounded execution evidence.
 - Protected encrypted credential custody, independently pinned outer/inner SSH,

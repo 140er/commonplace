@@ -28,7 +28,92 @@ The fixed workspace strategy is `{"type":"root"}`, **unverified until D2**. Its 
 
 An ambiguous launch becomes `uncertain`, never automatically queued again. Starting and its retries serialize fresh binding checks through the guarded write and commit in both orchestration modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
 
-`card_start_cancel` on `uncertain` returns 409 for everyone, including the owner: `start outcome is uncertain; a workspace owner must resolve it`. Cancelling a `starting` job only records the request; it does not stop a remote thread or free the slot. Resolve spans the control and workspace databases: the control audit commits before the runner resolution, so a crash between commits can leave an audit entry without the resolution. A completed resolution retains `resolved_by` and `resolved_at`.
+`card_start_cancel` on `uncertain` returns 409 for everyone, including the owner: `start outcome is uncertain; a workspace owner must resolve it`. Cancelling a `starting` job records intent; once its launch result supplies the run ID, the same request enters the stop protocol below. Requesting cancellation does not confirm termination or free the slot. Resolve spans the control and workspace databases: the control audit commits before the runner resolution, so a crash between commits can leave an audit entry without the resolution. A completed resolution retains `resolved_by` and `resolved_at`.
+
+## Confirmed stop of a launched worker
+
+Launch parsing retains both `structuredContent.threadId` and `runId`. The local
+launch journal and `runner_jobs.run_id` preserve the run ID across delivery and
+restart. Both IDs are bounded opaque identifiers; the hub refuses a replay that
+changes either. Existing jobs/journals without run IDs remain readable but cannot
+confirm a worker stop. No run ID is guessed from a thread or a card.
+
+The requester or signed-in owner can cancel a launched job through the existing
+cancel API. This records intent and a durable `stop_request_id`, leaving its state
+`started`. Starting jobs retain intent until a launch result arrives. Uncertain
+launches still require owner resolution; this protocol does not discover runs.
+Queued/leased cancellation continues to fence admission immediately, without
+claiming that any worker was terminated.
+
+The machine-only runner protocol adds:
+
+- `POST /api/runner/stop` with `{}`: 204 when no stop is available, otherwise
+  `{job_id, attempt, thread_id, run_id, stop_request_id}`. `attempt` is a decimal
+  string. Pending/unconfirmed requests replay the same identity on later polls;
+  unsupported requests wait for another explicit cancellation request.
+- `POST /api/runner/stop-result`: the exact command fields plus `outcome`
+  (`confirmed`, `unconfirmed`, `unsupported`), optional fixed `code`
+  (`stop_unconfirmed`, `host_unsupported`), and, for confirmation, `accepted_at`
+  and `ended_at`. Every identity field must match the current machine/job and
+  attempt. A stale result returns 409 without changing that job. A confirmation
+  lacking valid later terminal evidence returns 400. These routes use the same
+  machine credential and fresh workspace settings checks as other runner routes.
+
+### External host contract, version 1
+
+The host is outside this repository. This is a required adapter contract, not a
+claim that an installed host already implements it. The runner invokes its
+configured executable without a shell:
+
+```text
+acp-mcp-call t3_run_stop <JSON request>
+```
+
+Request:
+
+```json
+{"contractVersion":1,"threadId":"example-thread","runId":"example-run","stopRequestId":"stop_0123456789abcdef0123456789abcdef"}
+```
+
+A confirming response must be a successful JSON tool envelope:
+
+```json
+{"isError":false,"structuredContent":{"contractVersion":1,"threadId":"example-thread","runId":"example-run","stopRequestId":"stop_0123456789abcdef0123456789abcdef","status":"stopped","acceptedAt":"2026-01-01T00:00:00.000001Z","endedAt":"2026-01-01T00:00:00.000002Z"}}
+```
+
+The host must bind the run to the supplied thread, register this stop request,
+request termination, and **observe that exact run end after accepting the stop**
+before returning `stopped`. `acceptedAt` and `endedAt` are host-observed UTC
+instants (seconds with optional 1–6 fractional digits, ending in `Z`), with
+`endedAt` strictly later than `acceptedAt`. Both observations come from the same
+host clock; the request identity supplies causal binding, not a comparison with
+the hub clock. A host must not confirm an already-ended run, a sent signal,
+accepted intent, a front-turn completion, a closed socket or a missing process
+lookup. It must have positive terminal evidence for that exact run. A run ending
+before stop acceptance is `already_ended`, which does not confirm this stop.
+
+The host must make `stopRequestId` idempotent: repeated identical requests return
+the same observed terminal receipt, or re-observe an unconfirmed stop; reuse for
+a different run/thread is an error and must never stop another run. It must retain
+the receipt across its own restart. The host may return `status: "running"` or
+`"unconfirmed"` while termination is unproven. An unsupported adapter returns
+`{"isError":true,"structuredContent":{"code":"unsupported"}}`. Unknown tools,
+nonzero exit, timeout, connection loss, malformed receipts, wrong version or
+mismatched IDs all fail closed as unconfirmed. No fallback stops a whole thread,
+changes a card or launches replacement work. The configured subprocess timeout
+also bounds each stop call.
+
+The runner writes the result to its private `journal_dir/stops/` before delivery.
+Restart replays delivery before making new stop calls; an interrupted host call
+is retried with the same request ID. The hub commits confirmation atomically with
+`state=cancelled`, `stop_status=confirmed`, the host acceptance/end instants and
+`stop_confirmed_at`. Duplicate confirmation is idempotent and cannot overwrite
+that evidence. Unconfirmed/unsupported results leave the launched state intact.
+Status APIs expose stop status/code and confirmation time. Coworker progress
+shows the canonical confirmation independently of the historical intent receipt;
+task completion alone never produces it. Tests use a synthetic host, so a real
+host adapter and an owner-approved capture are still required before claiming
+live worker termination support.
 
 ## Boards with an orchestrator config
 

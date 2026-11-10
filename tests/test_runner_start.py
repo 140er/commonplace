@@ -712,7 +712,7 @@ def test_V1_cancel_state_rules(signup_hub, owners, state):
             409,
             {"error": "no: card already has an active start"},
         )
-    elif state in ("started", "failed", "cancelled"):
+    elif state in ("failed", "cancelled"):
         before = _status(hub, task, owner=owner)
         assert http(hub.port, "POST", path, token=token, body={}) == (
             409,
@@ -722,8 +722,10 @@ def test_V1_cancel_state_rules(signup_hub, owners, state):
     else:
         code, body = http(hub.port, "POST", path, token=token, body={})
         assert code == 200, (code, body)
-        assert body["state"] == ("starting" if state == "starting" else "cancelled")
+        assert body["state"] == (state if state in ("starting", "started") else "cancelled")
         assert body["cancel_requested_at"]
+        if state == "started":
+            assert body["stop_status"] == "unsupported"  # legacy launch has no run_id
 
 
 @pytest.mark.parametrize("surface", ["rest", "mcp"])

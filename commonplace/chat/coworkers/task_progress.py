@@ -124,7 +124,7 @@ def _runner(authority, job, task, viewer):
     origin = f"coworker:{job['conversation_id']}:{job['id']}"
     with _read(path) as conn:
         row = conn.execute(
-            "SELECT state,updated_at,cancel_requested_at,"
+            "SELECT state,updated_at,cancel_requested_at,stop_status,stop_confirmed_at,"
             + _bounded(("outcome_code",))
             + " FROM runner_jobs WHERE task_number=? AND board_slug=? "
             "AND requested_by=? AND request_key=? LIMIT 1",
@@ -138,7 +138,16 @@ def _runner(authority, job, task, viewer):
         if row is None:
             return None
         return {
-            **{key: row[key] for key in ("state", "updated_at", "cancel_requested_at")},
+            **{
+                key: row[key]
+                for key in (
+                    "state",
+                    "updated_at",
+                    "cancel_requested_at",
+                    "stop_status",
+                    "stop_confirmed_at",
+                )
+            },
             **_fields(row, ("outcome_code",)),
         }
 

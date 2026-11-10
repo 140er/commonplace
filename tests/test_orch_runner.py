@@ -1057,11 +1057,12 @@ def test_r12_pin_runner_store_gains_columns_and_keeps_digest_and_payload(world):
     store = jobs.open_store(world.gw, world.ws)
     with store.connection() as conn:
         after = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    assert after == before | set(jobs.CONFIG_COLUMNS)
+    assert after == before | set(jobs.CONFIG_COLUMNS) | set(jobs.STOP_COLUMNS)
     card = world.card(board=PLAIN)
     status, job = world.person_start(card)
     assert status == 201 and set(job) == PIN_JOB_KEYS
     [row] = world.jobs_for(card)
+    assert all(row[key] is None for key in jobs.STOP_COLUMNS)
     arguments = dict(
         machine_id=world.machine_id,
         project="demo",

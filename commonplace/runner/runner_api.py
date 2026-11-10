@@ -18,7 +18,19 @@ BODY_KEYS = {
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
-    "result": {"lease_token", "outcome", "thread_id", "code"},
+    "result": {"lease_token", "outcome", "thread_id", "run_id", "code"},
+    "stop": set(),
+    "stop-result": {
+        "job_id",
+        "attempt",
+        "thread_id",
+        "run_id",
+        "stop_request_id",
+        "outcome",
+        "accepted_at",
+        "ended_at",
+        "code",
+    },
 }
 
 
@@ -38,7 +50,9 @@ def _body(h, action):
         raise HTTPError(400, "invalid JSON") from None
     if not isinstance(value, dict) or value.keys() - BODY_KEYS[action]:
         raise HTTPError(400, "invalid request body")
-    required = set() if action == "lease" else {"lease_token"}
+    required = set() if action in ("lease", "stop") else {"lease_token"}
+    if action == "stop-result":
+        required = {"job_id", "attempt", "thread_id", "run_id", "stop_request_id", "outcome"}
     if action == "result":
         required.add("outcome")
     if required - value.keys():
@@ -207,14 +221,23 @@ def register(gateway):
                 body = _body(h, action)
                 if url.query:
                     raise HTTPError(400, "invalid query")
-                if action == "lease":
-                    row = jobs.lease(store, machine)
+                if action in ("lease", "stop"):
+                    row = (
+                        jobs.lease(store, machine)
+                        if action == "lease"
+                        else jobs.stop(store, machine)
+                    )
                     if row is None:
                         h.send_response(204)
                         h.send_header("Content-Length", "0")
                         h.send_header("Cache-Control", "no-store")
                         h.end_headers()
                         return
+                    if action == "stop":
+                        send_json(h, 200, row)
+                        return
+                elif action == "stop-result":
+                    row = jobs.stop_result(store, machine, **body)
                 elif action == "renew":
                     row = jobs.renew(store, machine, **body)
                 elif action == "starting":

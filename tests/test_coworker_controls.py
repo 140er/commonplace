@@ -1,7 +1,6 @@
 """Actual synthetic canonical stores/API, without providers or worker launches.
 
-Authored for the parent's grouped run. The start ledger has no running-worker
-termination protocol: task/front completion is deliberately never such evidence.
+Task/front completion is deliberately never worker termination evidence.
 """
 
 import json
@@ -129,6 +128,55 @@ def test_uncertain_start_is_never_resolved_retried_or_reported_terminated(env, d
     assert control(env, item, operation="stop") == receipt
     assert dispatch.runner_jobs()[0]["state"] == "uncertain"
     assert len(dispatch.runner_jobs()) == 1
+
+
+def test_launched_stop_projects_only_canonical_confirmed_evidence(env, dispatch, progress):
+    item = progress.start()
+    machine = registry.get_machine(env.db, env.wid, dispatch.machine)
+    ledger = jobs.open_store(env.gateway, env.wid)
+    leased = jobs.lease(ledger, machine)
+    jobs.starting(ledger, machine, leased["lease_token"], validate=lambda row: None)
+    jobs.result(
+        ledger,
+        machine,
+        leased["lease_token"],
+        "started",
+        thread_id="worker-thread",
+        run_id="worker-run",
+    )
+    receipt = control(env, item, operation="stop")
+    assert receipt["code"] == "stop_requested_termination_unconfirmed"
+    command = jobs.stop(ledger, machine)
+    assert command["run_id"] == "worker-run"
+    jobs.stop_result(
+        ledger,
+        machine,
+        **command,
+        outcome="confirmed",
+        accepted_at="2026-11-10T16:00:00.000001Z",
+        ended_at="2026-11-10T16:00:00.000002Z",
+    )
+    runner = progress.view(item)["task_progress"]["runner"]
+    assert runner["stop_status"] == "confirmed" and runner["stop_confirmed_at"]
+    # Immutable receipt records intent; a fresh control can observe confirmation.
+    assert control(env, item, operation="stop") == receipt
+    confirmed = control(env, item, operation="stop", key="observe-confirmation")
+    assert (confirmed["state"], confirmed["code"]) == ("applied", "worker_stop_confirmed")
+
+
+def test_stop_binding_fences_released_attempt(env, dispatch, progress):
+    item = progress.start()
+    principal = env.principal
+    authority = env.store._authority
+    with env.store._transaction() as conn:
+        job = dict(conn.execute("SELECT * FROM jobs WHERE id=?", (item.job["id"],)).fetchone())
+    # Derive the real canonical binding rather than accepting a caller run ID.
+    task = progress.view(item)["task"]
+    binding = task_controls.target(authority, job, task, env.uid)
+    with jobs.open_store(env.gateway, env.wid).transaction() as conn:
+        conn.execute("UPDATE runner_jobs SET attempt=attempt+1")
+    with pytest.raises(StoreError):
+        task_controls.apply(authority, binding, "stop", "", lambda: (principal, job))
 
 
 def test_followup_exact_comment_and_receipt_share_no_private_history_memory_or_new_work(

@@ -237,6 +237,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
+  - The Compute build inventory links the versioned runner stop contract and keeps unsupported external hosts explicitly unconfirmed.
   - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel builder boundaries and isolated local-running instructions in `docs/compute/`.
   - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
 
@@ -555,6 +556,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Runner stop CLI/HTTP witnesses cover retained run IDs, confirmed termination, ignored/disconnected/unsupported hosts, stale attempts, terminal evidence and durable replay; coworker controls and UI project confirmation truthfully.
 
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
@@ -1152,6 +1155,8 @@ Format (read by `commonplace orch docs-check`):
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
 
+  - Launch run IDs survive delivery and replay. Versioned external run-stop requests and durable terminal evidence are fenced to the exact machine/job/attempt/run/request; unsupported hosts and missing evidence remain unconfirmed.
+
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
 
@@ -1227,6 +1232,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - Runner migration tests retain old digests/payloads while adding nullable run-stop evidence columns in place.
 
   - `tests/test_orch_areas.py` covers area roundtrips, ordered topology errors, frozen experiments, owner boundaries and complete refusal snapshots through store, MCP, REST and local CLI.
 
@@ -1524,6 +1531,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
+  - Coworker stops bind the current attempt and expose canonical confirmed termination separately from immutable intent receipts.
   - Task controls journal explicit immutable intents before cross-store mutation; exact replays never repeat effects. Follow-ups preserve exact task comments without claiming worker application; queued stops use canonical cancellation and in-flight requests never imply termination.
   - Canonical task progress is projected only for freshly authorized origin/viewer/audience bindings, never copied into shared chat history. Lost front acknowledgements recover existing origin links without launching work; exact fields are bounded by whole-field omission with notices.
   - Explicit coworker task requests can enter the existing configured person-owner runner admission path with stable canonical origin deduplication; refusal preserves the card and does not invent a worker launch.
@@ -1690,6 +1698,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
+
+  - Coworker task progress distinguishes confirmed worker termination from cancellation before launch and unconfirmed intent.
 
   - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
 
