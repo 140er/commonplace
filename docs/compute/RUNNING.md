@@ -173,8 +173,11 @@ jobs. After confirmed termination, iterative cleanup removes trees within the
 4096-entry ceiling without a depth cutoff or descriptors per ancestor.
 
 A lost control channel is cancellation intent at the target. The target kills
-the process group and cleans scratch only after confirming emptiness; before
-spawn it records confirmed cancellation without starting a process. Setup/spawn
+the process group, polling emptiness after child/pipe exit within the original
+one-second kill bound. The final observation determines state and confirmation;
+a populated group stays uncertain/unconfirmed with scratch retained. Cleanup
+runs only after observing emptiness. Before spawn it records confirmed
+cancellation without starting a process. Setup/spawn
 failures with no process record confirmed non-runs. These confirmed target claims
 can be pruned after expiry/grace. A lost result acknowledgement still leaves the
 controller uncertain and requires the reconciliation procedure above; inspect

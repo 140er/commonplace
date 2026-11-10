@@ -69,7 +69,11 @@ metadata; the free-resource admission check still applies to subsequent requests
 
 Control-channel EOF or receive I/O failure becomes cancellation intent on the
 target, including before spawn. During execution the target kills the group,
-confirms emptiness and persists its terminal result before cleaning scratch.
+then polls emptiness within the remaining original one-second kill bound, even
+after the direct child and its pipes have exited. One final observation sets both
+result state and termination confirmation. Observed emptiness permits terminal
+result persistence and scratch cleanup; a group still populated at the bound
+stays uncertain/unconfirmed and keeps its scratch and claim.
 Lost delivery still leaves the controller uncertain; target cleanup alone does
 not settle that controller reservation. Cancellation digest mismatches remain
 binding errors. Setup/spawn failures with no process are confirmed non-runs,

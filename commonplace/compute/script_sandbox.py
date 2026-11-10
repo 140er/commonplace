@@ -565,14 +565,21 @@ class BubblewrapSandbox:
                 if process.poll() is not None and killed_at is None:
                     group.write("cgroup.kill", "1")
                     killed_at = time.monotonic()
+            empty = group.empty()
+            while not empty and killed_at is not None:
+                remaining = killed_at + 1 - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.01, remaining))
+                empty = group.empty()
             stdout = bytes(output["stdout"])
             started = stdout.startswith(_STARTED)
             if not started:
                 return ScriptResult(
-                    "denied",
+                    "denied" if empty else "uncertain",
                     "sandbox_unavailable",
                     cancel_requested=cancel,
-                    termination_confirmed=group.empty(),
+                    termination_confirmed=empty,
                 )
             stdout = stdout[len(_STARTED) :]
             stderr = bytes(output["stderr"])
@@ -580,11 +587,11 @@ class BubblewrapSandbox:
                 stdout, stderr = b"", b""
                 reason = "output_limit"
             return ScriptResult(
-                "observed_exit" if group.empty() else "uncertain",
+                "observed_exit" if empty else "uncertain",
                 reason,
                 exit_code=process.returncode,
                 cancel_requested=cancel,
-                termination_confirmed=group.empty(),
+                termination_confirmed=empty,
                 stdout=stdout,
                 stderr=stderr,
             )

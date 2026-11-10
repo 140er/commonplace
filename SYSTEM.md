@@ -332,7 +332,10 @@ and removes up to4096 entries without a depth cutoff or descriptors per ancestor
 Cleanup I/O errors preserve observed results; later admissions still require
 resource headroom.
 Lost control-channel receives become target cancellation intent, including before
-spawn. Running groups must be observed empty before scratch cleanup; failures
+spawn. After child/pipe exit, group emptiness is polled within the remaining
+original one-second kill bound. One final observation determines state and
+confirmation; populated groups remain uncertain/unconfirmed with scratch
+retained. Running groups must be observed empty before scratch cleanup; failures
 with no spawned process are confirmed non-runs. Target result persistence/cleanup
 does not settle a controller run whose result acknowledgement was lost.
 
