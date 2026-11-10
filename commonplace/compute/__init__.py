@@ -26,10 +26,12 @@ class WorkspaceExecutionConfig:
     discovery_sources: tuple[str, ...] = ()
     scripts_enabled: bool = False
     script_runtimes: tuple[ScriptRuntimeConfig, ...] = ()
+    allow_script_self_approval: bool = False
 
     def __post_init__(self):
         if (
-            type(self.scripts_enabled) is not bool
+            type(self.allow_script_self_approval) is not bool
+            or type(self.scripts_enabled) is not bool
             or type(self.script_runtimes) is not tuple
             or len(self.script_runtimes) > 32
             or any(type(r) is not ScriptRuntimeConfig for r in self.script_runtimes)

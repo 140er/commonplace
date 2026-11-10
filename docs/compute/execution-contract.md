@@ -131,3 +131,39 @@ while new HTTP/store intake/B conversation progress. Keep old runtime tests vali
 Return actual limitations; do not claim natural-language/tool parity or installed
 worker capabilities without evidence. No new natural-language side effects are
 authorized by model output.
+
+
+## Security reconcile: approval, context, audit and execution barrier
+
+`WorkspaceExecutionConfig.allow_script_self_approval` is a trusted startup-only
+boolean, false by default. Script approval rejects the requester's user ID even
+from another session, and `_fresh` repeats the check before claim/dispatch. An
+operator may explicitly allow single-owner script workflows by setting it true;
+no request body can set policy. Fixed read-only operations retain existing
+same-owner approval behavior. Scope contexts encode a missing task as JSON null,
+distinct from every task ID; all other context dimensions remain mandatory.
+
+Pre-claim security refusals write `execution.admission_denied` in the same
+transaction without granting admission or changing the refusal. Each refusal is
+audited, including repeated refused attempts. Result/recovery transitions write
+`execution.<terminal|uncertain>.<fixed_reason>`; observed exits additionally write
+`execution.exit.<code>`. Attribution uses the stored requester ID, even when that
+session has been revoked. Audit never contains stdout, stderr, script source,
+credential data, operator notes or raw exception text. Existing operator settlement
+and cancellation intent audit records retain their existing semantics.
+
+At the rename-to-execute barrier TargetHelper passes anchored paths relative to
+its still-held claim and job directory descriptors. `_spawn` re-reads no-follow
+regular files relative to these handles, validates size and SHA-256 against the
+approved manifest and creates sealed memfd copies. bwrap receives those copies
+using `--ro-bind-data` with inherited descriptors; the job directory bind also
+uses its held descriptor. Replacement of an ancestor path cannot redirect the
+upload, and changes to file content fail validation or cannot change the sealed
+snapshot. Unsupported memfd/sealing/bwrap functionality fails closed. Runtime
+host qualification and actual confinement still require the separately provisioned
+disposable target; synthetic process spies do not establish that evidence.
+
+Regression selection for both pinned base and implementation:
+`pytest -q tests/test_compute_security_regressions.py tests/test_compute_scopes.py`.
+The IPv6 /125 endpoints, /127 and /128 tests are coverage additions; no scope
+normalization bug is assumed when those tests pass on both revisions.

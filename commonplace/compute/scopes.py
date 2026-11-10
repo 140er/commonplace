@@ -67,11 +67,13 @@ class DiscoveryContext:
     gateway: str
     user: str
     agent: str
-    task: str
+    task: str | None
 
     def __post_init__(self):
         for name in self.__dataclass_fields__:
             value = getattr(self, name)
+            if name == "task" and value is None:
+                continue
             if not isinstance(value, str) or not value.strip() or len(value) > 200:
                 raise ScopeDenied("incomplete discovery context")
 

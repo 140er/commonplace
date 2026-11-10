@@ -701,7 +701,7 @@ class Store:
                     gateway_id,
                     current.user_id,
                     agent.connection_id or current.actor,
-                    str(task_number),
+                    str(task_number) if task_number is not None else None,
                 ),
                 cidrs=cidrs,
                 interfaces=interfaces,
@@ -893,6 +893,22 @@ class Store:
             raise StoreError("not_found", 404)
         return row
 
+    def _check_script_approver(self, row, approver_id, operation):
+        if operation != "workspace.script.v1" or row["user_id"] != approver_id:
+            return
+        from . import ExecutionConfig, WorkspaceExecutionConfig
+
+        config = getattr(self.gateway.db, "_compute_config", None)
+        if type(config) is ExecutionConfig:
+            for workspace in config.workspaces:
+                if (
+                    type(workspace) is WorkspaceExecutionConfig
+                    and workspace.workspace == self.workspace_id
+                    and workspace.allow_script_self_approval is True
+                ):
+                    return
+        raise StoreError("self_approval_denied", 403)
+
     def approve_execution(
         self, principal, execution_id, *, session_hash, expected_digest, expires_at
     ):
@@ -912,6 +928,7 @@ class Store:
                 )
                 origin = self._owner(origin, row["session_hash"])
                 stored = json.loads(row["binding"])
+                self._check_script_approver(row, current.user_id, stored["operation"])
                 fresh = self._binding(
                     conn,
                     origin,

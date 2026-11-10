@@ -21,6 +21,7 @@ import pytest
 
 from commonplace.compute.protocol import ProtocolDenied
 from commonplace.compute.script_sandbox import (
+    AnchoredPath,
     BubblewrapSandbox,
     ScriptResult,
     ScriptTargetConfig,
@@ -86,7 +87,10 @@ def test_disabled_and_root_hosts_deny_without_subprocess_or_storage(tmp_path, mo
     settings = config(tmp_path)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(
-        BubblewrapSandbox, "_check_host", lambda *a: pytest.fail("root must deny early")
+        AnchoredPath,
+        BubblewrapSandbox,
+        "_check_host",
+        lambda *a: pytest.fail("root must deny early"),
     )
     with pytest.raises(ScriptDenied, match="sandbox_unavailable"):
         BubblewrapSandbox(settings).check(value.manifest)
@@ -336,16 +340,23 @@ def test_spawn_has_real_descendant_cgroup_preexec_and_no_shell(tmp_path, monkeyp
         return "process fixture"
 
     monkeypatch.setattr(subprocess, "Popen", fixture_popen)
-    result = BubblewrapSandbox(settings)._spawn(
-        request(),
-        "/private/script.py",
-        "/private/job",
-        SimpleNamespace(procs=999),
-    )
+    root = Path(settings.workspace_root)
+    (root / "script.py").write_bytes(b"print('fixture')\n")
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        result = BubblewrapSandbox(settings)._spawn(
+            request(),
+            AnchoredPath(directory, "script.py"),
+            AnchoredPath(directory),
+            SimpleNamespace(procs=999),
+        )
+    finally:
+        os.close(directory)
     assert result == "process fixture"
     assert seen["shell"] is False and seen["env"] == {}
     assert seen["close_fds"] and seen["start_new_session"]
-    assert seen["pass_fds"] == (999,) and callable(seen["preexec_fn"])
+    assert seen["pass_fds"][:2] == (999, directory)
+    assert len(seen["pass_fds"]) == 3 and callable(seen["preexec_fn"])
 
 
 @pytest.mark.parametrize("scenario", ["exit", "cancel", "timeout", "output", "unstarted"])

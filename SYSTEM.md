@@ -143,6 +143,19 @@ acknowledgements and reconciles receipts on reload while keeping the composer us
 
 ### Compute management REST and durable authority
 
+Script requester self-approval is denied by default, including a second session
+for the same user. Only trusted workspace startup configuration
+`allow_script_self_approval=True` permits it; dispatch rechecks that policy.
+Fixed read-only operations keep their existing same-owner approval policy.
+Taskless discovery scope context preserves JSON null rather than the string
+"None". Pre-claim denials and terminal/uncertain outcomes (including recovery
+and observed exit codes) enter the private audit journal in the same transaction;
+no output or exception text is included. Target execution reads uploads and
+staged inputs relative to held directory handles, verifies their approved digests
+and gives bwrap sealed memfd snapshots via `--ro-bind-data`. The writable job bind
+also uses its held directory descriptor. Synthetic barrier tests prove substitution
+refusal or approved-byte use; they do not prove real-host confinement.
+
 `/api/compute` is installed with the gateway and admits only cookie-person current
 workspace owners, including reads. Mutations reuse the mandatory exact Origin and
 bounded JSON boundary. Every store operation rechecks the exact session, current
