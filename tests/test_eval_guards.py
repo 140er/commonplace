@@ -193,7 +193,10 @@ def test_a3_threads_wing_collision_raises_and_adds_no_sync_row(env):
 # A best-effort lint over SQL string literals. Its rule is the union of the
 # per-piece rule (every literal and f-string on its own, upper-case dynamic
 # match) and the joined, anchored rule (f-strings and ``+`` chains rendered
-# whole, case-insensitive), so it never catches less than the per-piece rule.
+# whole, case-insensitive). Allowlist keys name the statement kind they were
+# written for, so an exemption never covers another kind of statement in the
+# same file; a path-aware test checks that the scan never catches less than
+# the per-piece rule with its own allowlist.
 _TABLE = r"(?:\w+\s*\.\s*)?[\"'\[`]?"  # optional schema, optional quote
 _CONTENT_TABLES = r"(threads|messages|line|message|block|blob|dict)"
 _SET_TARGET = re.compile(r"[\"'\[`]?\b(wing|source_thread_id)\b[\"'\]`]?\s*=", re.I)
@@ -239,12 +242,25 @@ _JOINED_DYNAMIC = re.compile(
     re.I | re.S,
 )
 # Dynamic table names that are reviewed and touch no thread-store table.
+# Keys are (path, kind, text): "piece" is one literal or one f-string, "joined"
+# is a whole ``+`` chain.
 ALLOWED_DYNAMIC = {
-    ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE id = ANY(%s)"): "pgvector drawers",
-    ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE \x00"): "pgvector drawers",
-    ("mempalace/backends/pgvector.py", "DROP TABLE IF EXISTS \x00"): "pgvector drop_table",
-    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS \x00"): "three literal fact_search tables",
-    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS "): "the same loop, per-piece form",
+    ("mempalace/backends/pgvector.py", "piece", "DELETE FROM \x00 WHERE id = ANY(%s)"): "drawers",
+    ("mempalace/backends/pgvector.py", "piece", "DELETE FROM \x00 WHERE \x00"): "drawers",
+    ("mempalace/backends/pgvector.py", "piece", "DROP TABLE IF EXISTS \x00"): "drop_table",
+    (
+        "mempalace/fact_index.py",
+        "piece",
+        "DROP TABLE IF EXISTS ",
+    ): "three literal fact_search tables",
+    ("mempalace/fact_index.py", "joined", "DROP TABLE IF EXISTS \x00"): "the same loop, joined",
+}
+# The per-piece rule's own allowlist (path and text only), for the floor test.
+_PIECE_ALLOWED = {
+    ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE id = ANY(%s)"),
+    ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE \x00"),
+    ("mempalace/backends/pgvector.py", "DROP TABLE IF EXISTS \x00"),
+    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS "),
 }
 
 
@@ -298,24 +314,28 @@ def _joined(tree):
 
 
 def _statements(tree):
-    yield from dict.fromkeys([*_pieces(tree), *_joined(tree)])
+    """``(line, text, kind)`` for every piece and every joined ``+`` chain."""
+    yield from dict.fromkeys(
+        [*((line, text, "piece") for line, text in _pieces(tree))]
+        + [*((line, text, "joined") for line, text in _joined(tree))]
+    )
 
 
 def _findings(relative, source):
     found = []
-    for line, text in _statements(ast.parse(source)):
+    for line, text, kind in _statements(ast.parse(source)):
         for match in (_UPDATE_THREADS.search(text), _UPSERT_THREADS.search(text)):
             if match and _SET_TARGET.search(match.group(match.lastindex)):
                 found.append((relative, line, "rewrites wing or source_thread_id"))
         if _DESTRUCTIVE.search(text):
             found.append((relative, line, "destructive thread-store statement"))
         dynamic = _PIECE_DYNAMIC.search(text) or _JOINED_DYNAMIC.search(text)
-        if dynamic and (relative, text) not in ALLOWED_DYNAMIC:
+        if dynamic and (relative, kind, text) not in ALLOWED_DYNAMIC:
             found.append((relative, line, "dynamic table name not on the allowlist"))
     return found
 
 
-def _piece_rule(source):
+def _piece_rule(source, relative="synthetic.py"):
     """The original per-piece rule alone (upper-case dynamic, unqualified tables)."""
     found = []
     for _, text in _pieces(ast.parse(source)):
@@ -334,7 +354,9 @@ def _piece_rule(source):
             r"\b(DELETE\s+FROM|DROP\s+TABLE(\s+IF\s+EXISTS)?|REPLACE\s+INTO|"
             r"INSERT\s+OR\s+REPLACE\s+INTO)\s+[\"\[`]?" + _CONTENT_TABLES + r"\b"
         )
-        if re.search(destructive, text, re.I) or _PIECE_DYNAMIC.search(text):
+        if re.search(destructive, text, re.I) or (
+            _PIECE_DYNAMIC.search(text) and (relative, text) not in _PIECE_ALLOWED
+        ):
             found.append(text)
     return found
 
@@ -353,6 +375,7 @@ def _scan():
 # Positive corpus: SQL with a thread-identity rewrite, a thread-content delete or
 # a dynamic table name. Must always be flagged.
 CAUGHT = [
+    'conn.execute(f"DROP TABLE IF EXISTS {name}")',
     'conn.execute("update threads set wing=? where id=?", args)',
     'conn.execute("UPDATE threads " + "SET wing=? WHERE id=?", args)',
     'conn.execute("delete from " + name)',
@@ -430,7 +453,8 @@ PROSE = [
     'msg = f"Delete from {path} as a fallback"',
 ]
 
-# Known false positives, accepted: prose that ends in a placeholder.
+# Known false positives, accepted: prose with a placeholder followed by the end,
+# ``;``, ``)``, ``WHERE`` or ``RETURNING``. Prose is never allowlisted.
 KNOWN_FALSE_POSITIVES = [
     'log.info("Delete from {path}")',
     'log.info("Drop table {name}")',
@@ -439,6 +463,21 @@ KNOWN_FALSE_POSITIVES = [
 
 # Known limits, caught by neither rule (documented in docs/evals.md and SYSTEM.md):
 KNOWN_LIMITS = [
+    'conn.execute("UPDATE threads /* c */ SET wing=?", args)',
+    'conn.execute("UPDATE threads INDEXED BY ix SET wing=?", args)',
+    'conn.execute("UPDATE threads NOT INDEXED SET wing=?", args)',
+    "conn.execute('UPDATE \"main\".threads SET wing=?', args)",
+    'conn.execute("UPDATE threads SET (wing) = (?) WHERE id=?", args)',
+    'conn.execute("UPDATE threads SET (x, wing) = (?, ?) WHERE id=?", args)',
+    'conn.execute(f"UPDATE threads SET {col}=? WHERE id=?", args)',
+    'conn.execute(\'DELETE FROM "main"."messages" WHERE thread_id=?\', args)',
+    "conn.execute('DROP TABLE \"main\".messages')",
+    "conn.execute('REPLACE INTO \"main\".messages (id) VALUES (?)', args)",
+    'conn.execute("DELETE FROM /**/messages WHERE thread_id=?", args)',
+    'conn.execute(f"delete from {name} as d where d.id=?")',
+    'conn.execute("delete from %s as d where d.id=?" % name)',
+    'conn.execute("/* x */ delete from " + name)',
+    'conn.execute("/* x */ REPLACE INTO " + name + " (id) VALUES (?)")',
     'conn.execute("TRUNCATE TABLE messages")',
     'conn.execute("DELETE/**/FROM messages WHERE thread_id=?", args)',
     'conn.execute("DELETE FROM ONLY " + name + " WHERE id=?", args)',
@@ -465,6 +504,14 @@ def test_a4_scan_catches_everything_the_per_piece_rule_catches():
     assert missed == [], f"A4 scan fell below the per-piece rule: {missed}"
 
 
+@pytest.mark.parametrize("relative", sorted({key[0] for key in ALLOWED_DYNAMIC} | {"synthetic.py"}))
+def test_a4_scan_never_falls_below_the_per_piece_rule_on_allowlisted_paths(relative):
+    # Each allowlist applies only on its own path, so the floor is checked there.
+    corpus = CAUGHT + PROSE + KNOWN_LIMITS + KNOWN_FALSE_POSITIVES
+    missed = [s for s in corpus if _piece_rule(s, relative) and not _findings(relative, s)]
+    assert missed == [], f"A4 scan fell below the per-piece rule in {relative}: {missed}"
+
+
 def test_a4_known_false_positives_are_recorded():
     # The accepted trade-off, stated as behaviour: if a rule change stops flagging
     # one of these, move it into PROSE.
@@ -487,7 +534,7 @@ def test_a4_scan_sees_the_known_count_updates():
             "commonplace/handoff/thread_store.py",
             "commonplace/handoff/thread_store_v2.py",
         )
-        for _, text in _statements(ast.parse((ROOT / path).read_text(encoding="utf-8")))
+        for _, text, _ in _statements(ast.parse((ROOT / path).read_text(encoding="utf-8")))
         if _UPDATE_THREADS.search(text)
     ]
     assert len(texts) == 2 and all("sha256" in text for text in texts)

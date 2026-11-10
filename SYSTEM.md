@@ -900,12 +900,17 @@ playbooks and the original wider orchestration acceptance remain separate work.
 ## Residuals
 
 - **Eval guard A4 is a lint:** the scan that no code rewrites thread
-  identity or deletes thread rows reads SQL string literals, f-strings, `+`
-  chains and `%`-formatted literals, schema-qualified and quoted names
-  included. It cannot see SQL built with `str.join` or `+=`, `%(name)s`
-  formatting, comments inside keywords, `TRUNCATE`, `ALTER TABLE … DROP
-  COLUMN` or Postgres `DELETE FROM ONLY`. It flags prose that ends in a
-  placeholder; such a hit would be allowlisted (`docs/evals.md`).
+  identity or deletes thread-store content rows (the seven content tables
+  `threads`, `messages`, `line`, `message`, `block`, `blob`, `dict`) reads SQL
+  string literals, f-strings, `+` chains and `%`-formatted literals. It never
+  catches less than the original per-piece scan, allowlist included (entries
+  are scoped to a file and a statement kind). Known limits include `str.join`
+  or `+=` building, `%(name)s` formatting, comments inside or before keywords,
+  `INDEXED BY` before `SET`, tuple `SET`, quoted schemas, dynamic `SET`
+  columns, lower-case dynamic statements with an alias tail, `TRUNCATE`,
+  `ALTER TABLE … DROP COLUMN` and Postgres `DELETE FROM ONLY`. Prose with a
+  placeholder followed by the end, `;`, `)`, `WHERE` or `RETURNING` is flagged
+  as an accepted false positive and is never allowlisted (`docs/evals.md`).
 
 - **Eval archives:** slice 1 covers handoff transcripts and ACL imports only:
   0% of live captures and grant imports, the automatic high-volume trace path;

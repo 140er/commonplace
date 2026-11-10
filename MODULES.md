@@ -1609,7 +1609,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
-  - The A4 scan is a best-effort lint: the union of a per-piece rule (each literal and f-string, upper-case dynamic match) and a joined, anchored, case-insensitive rule over f-strings and `+` chains, so it never catches less than the per-piece rule (a test checks this on the corpus). A committed positive corpus must stay flagged and a negative corpus must stay clean; three prose lines ending in a placeholder are accepted false positives, and the forms neither rule catches are listed as known limits.
+  - The A4 scan is a best-effort lint: the union of a per-piece rule (each literal and f-string, upper-case dynamic match) and a joined, anchored, case-insensitive rule over f-strings and `+` chains. Allowlist keys are scoped to file, statement kind and text, and a path-aware test checks the scan never catches less than the per-piece rule with its own allowlist. A committed positive corpus must stay flagged and a negative corpus must stay clean; three prose lines are accepted false positives. Known limits include the forms in `KNOWN_LIMITS` and `docs/evals.md`.
 
   - `tests/test_eval_guards.py` and `tests/test_eval_lifecycle_guards.py` hold the base guards eval relies on (read-only opener, continuity invariants, identity-rewrite scan, import-view scope and auth, backup, encryption and switch carriage) without importing eval.
 

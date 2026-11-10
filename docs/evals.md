@@ -129,18 +129,37 @@ Artifacts redirected from a plaintext file stay outside encryption and purge.
 
 The test suite guards the base behaviour eval relies on. One guard, A4, is a
 best-effort lint over SQL string literals in `commonplace/` and `mempalace/`.
-It must flag any statement that rewrites a thread's `wing` or
-`source_thread_id`, deletes or replaces thread-store rows, or uses a dynamic
-table name that is not on its reviewed allowlist. It reads literals,
-f-strings, `+` chains and `%`-formatted literals, including schema-qualified
-and quoted table names, `REPLACE INTO` and `INSERT OR REPLACE INTO`. It cannot
-see:
+It flags three kinds of statement:
+- a rewrite of `threads.wing` or `threads.source_thread_id`;
+- a `DELETE`, `DROP TABLE` or `REPLACE INTO` on one of the seven thread-store
+  content tables: `threads`, `messages`, `line`, `message`, `block`, `blob` and
+  `dict`;
+- a `DELETE`, `DROP TABLE`, `UPDATE` or `REPLACE INTO` on a dynamic table name
+  that is not on its reviewed allowlist.
+
+Other thread-store tables, such as `chunks`, `handoff_docs` and
+`mirror_progress`, are not covered. The lint reads literals, f-strings, `+`
+chains and `%`-formatted literals, including unquoted schema prefixes
+(`main.messages`) and quoted table names. Allowlist entries are scoped to one
+file and one statement kind.
+
+Its rule can never catch less than the original upper-case, per-piece scan,
+allowlist included. Known limits include:
 - SQL built with `str.join` or `+=`;
 - `%(name)s` dictionary formatting;
-- comments inside keywords (`DELETE/**/FROM`);
+- comments inside or before keywords and names (`DELETE/**/FROM`,
+  `DELETE FROM /**/messages`, a comment before `SET`, a leading comment before
+  a lower-case or `REPLACE INTO` statement);
+- `INDEXED BY` or `NOT INDEXED` before `SET` on a literal `threads`;
+- row-value (tuple) `SET`;
+- quoted schemas (`"main".messages`);
+- a dynamic column in `SET {col}=`;
+- lower-case dynamic statements with an alias tail (`delete from {t} as d`);
 - `TRUNCATE`;
 - `ALTER TABLE … DROP COLUMN`;
 - Postgres `DELETE FROM ONLY`.
 
-Prose that ends in a placeholder, such as `"Delete from {path}"`, is flagged
-as a false positive. A real hit of that kind would be allowlisted.
+Prose with a placeholder followed by the end, `;`, `)`, `WHERE` or `RETURNING`,
+such as `"Delete from {path}"` or `"Delete from {path} where possible"`, is
+flagged. That is an accepted false positive. Prose is never allowlisted; only
+reviewed SQL is.
