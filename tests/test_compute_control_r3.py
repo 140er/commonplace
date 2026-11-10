@@ -134,7 +134,7 @@ def _revoke(state, kind):
             conn.execute("UPDATE tasks SET assignee=? WHERE id=?", ("user:" + env.member, env.task))
         elif kind == "status":
             # Both todo and doing are startable; their authority still differs.
-            conn.execute("UPDATE tasks SET status='todo' WHERE id=?", (env.task,))
+            conn.execute("UPDATE tasks SET status='todo',claim_until=NULL WHERE id=?", (env.task,))
         else:
             conn.execute(
                 "UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?", (env.task,)
