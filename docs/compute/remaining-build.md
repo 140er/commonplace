@@ -4,10 +4,10 @@
 
 ## Participating authority fence and execution lifecycle
 
-Builder owns commonplace/compute/fence.py, executor.py, control.py, __init__.py,
+The execution-component implementer owns commonplace/compute/fence.py, executor.py, control.py, __init__.py,
 and narrowly needed central control_db.py / boards/store.py / credentials.py
 mutation integration plus new tests/test_compute_fence.py. Do not edit protocol,
-transport, scopes, discovery or UI. Parent owns shared docs and grouped checks.
+transport, scopes, discovery or UI. The integration maintainer owns shared docs and grouped checks.
 
 Replace the abstract-only production integration gap with a concrete, bounded,
 cross-process local authority fence and actual central mutation participation.
@@ -43,9 +43,9 @@ other concrete implementation rather than returning an abstract-only scaffold.
 
 ## Bounded passive gateway inventory
 
-Separate builder owns new commonplace/compute/discovery.py and narrowly needed
+A separate component implementer owns new commonplace/compute/discovery.py and narrowly needed
 protocol.py helper support plus tests/test_compute_discovery.py. No control Store,
-executor/fence, custody, transport, routes or UI edits. Parent integrates controller
+executor/fence, custody, transport, routes or UI edits. The integration maintainer integrates controller
 persistence and public discovery surface after this component is tested.
 
 Implement actual bounded passive-cache parsing and collection with exact existing
