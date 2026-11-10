@@ -558,6 +558,8 @@ def test_script_owned_cleanup_cannot_destroy_observed_result(tmp_path, monkeypat
     try:
         result = helper.execute_verified(request(), b"print('fixture')\n")
         assert result == observed
+        if tree != "deep":
+            assert list((root / "scratch").iterdir()) == []
         stored = json.loads(
             next((root / "attempts").iterdir()).joinpath("result.json").read_bytes()
         )

@@ -357,7 +357,7 @@ def test_default_job_limits_collect_all_in_scope_hosts(discovery_env, monkeypatc
         assert {row["address"] for row in result["observations"]} == {
             f"10.20.0.{n}" for n in range(2, host_count + 2)
         }
-        assert result["state"] == "completed" and result["reason"] is None
+        assert result["state"] == "completed" and result["reason"] == "collection_complete"
     finally:
         service.stop()
 
