@@ -271,3 +271,24 @@ def test_observed_exit_requires_actual_bounded_exit_code(exit_code):
     _send_result(ScriptWire(channel), value, ScriptResult("observed_exit", "exited", exit_code))
     with pytest.raises(ScriptDenied):
         receive_result(ScriptWire(MemoryChannel(channel.sent)), value)
+
+
+def test_cleanup_without_nofollow_chmod(tmp_path, monkeypatch):
+    import os
+
+    from commonplace.compute.target_helper import _remove_owned_job
+
+    def chmod(*args, **kwargs):
+        if kwargs.get("follow_symlinks") is False:
+            raise NotImplementedError("no-follow chmod unavailable")
+
+    monkeypatch.setattr(os, "chmod", chmod)
+    (tmp_path / "job" / "nested").mkdir(parents=True)
+    (tmp_path / "job" / "nested" / "data").write_bytes(b"owned")
+    fd = os.open(tmp_path / "job", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        _remove_owned_job(fd)
+    finally:
+        os.close(fd)
+    (tmp_path / "job").rmdir()
+    assert not (tmp_path / "job").exists()
