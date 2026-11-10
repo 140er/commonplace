@@ -100,7 +100,7 @@ def test_chat_config_validation(relay_hub, tmp_path):
     assert result.returncode == 0  # RED
     assert "chat: answers run your configured CLI" in result.stdout
     full = runner_config(tmp_path / "full", h.hub, "synthetic-machine-credential", chat=chat)
-    assert runner(["check", "--config", str(full)], {}).returncode == 0
+    assert runner(["check", "--config", str(full)], {}).returncode == 4
 
     invalid = {}
     missing_tools = copy.deepcopy(config)

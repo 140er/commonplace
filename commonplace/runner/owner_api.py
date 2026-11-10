@@ -14,18 +14,70 @@ from commonplace.http_util import (
 )
 from commonplace.web.agents import _read_wings
 
-from . import jobs, registry
+from . import grant_scope, jobs, registry
 
 LOG = logging.getLogger(__name__)
+MAX_REPORT_BYTES = 20 * 1024
+MAX_CONFIRM_BYTES = 4 * 1024
+
+
+def _scope(stored):
+    if stored["grant_scope"] is None:
+        return None
+    return {
+        "record": json.loads(stored["grant_scope"]),
+        "sha256": stored["grant_scope_sha256"],
+        "reported_at": stored["grant_scope_reported_at"],
+        "source": "runner-local-owner-submitted",
+        "verified": False,
+    }
 
 
 def _view(row):
     result = dict(row)
+    stored = {key: result.pop(key) for key in registry.SCOPE_COLUMNS}
     for key in registry.JSON_KEYS:
         if result[key] is not None:
             result[key] = json.loads(result[key])
-    result.update(machine_id=result["id"], enabled=bool(result["enabled"]), verified=False)
+    result.update(
+        machine_id=result["id"],
+        enabled=bool(result["enabled"]),
+        verified=False,
+        scope=_scope(stored),
+        scope_epoch=result["binding_epoch"],
+    )
     return result
+
+
+def _refuse(h, status, error):
+    send_json(h, status, {"error": error})
+    raise ValueError(error)
+
+
+def _read_attest(h):
+    """Read an attest body strictly, replying before raising ValueError on refusal."""
+    if h.headers.get("Transfer-Encoding"):
+        _refuse(h, 400, "Invalid JSON body")
+    try:
+        length = int(h.headers.get("Content-Length", "0"))
+    except ValueError:
+        _refuse(h, 400, "Invalid JSON body")
+    if length <= 0:
+        _refuse(h, 400, "Invalid JSON body")
+    if length > MAX_REPORT_BYTES:
+        _refuse(h, 413, "attest body is too large")
+    raw = h.rfile.read(length)
+    if len(raw) != length:
+        _refuse(h, 400, "Invalid JSON body")
+    try:
+        data = grant_scope.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        _refuse(h, 400, "scope_invalid")
+    if not isinstance(data, dict):
+        _refuse(h, 400, "Invalid JSON body")
+    if "grant_scope" not in data and length > MAX_CONFIRM_BYTES:
+        _refuse(h, 413, "attest body is too large")
+    return data
 
 
 def _wings(gateway, owner, data):
@@ -71,7 +123,7 @@ def register(gateway):
             return
         if method != "DELETE":
             try:
-                data = read_json(h)
+                data = _read_attest(h) if parts[1:] == ["attest"] else read_json(h)
             except ValueError:
                 return
         try:

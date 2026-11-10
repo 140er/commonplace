@@ -17,6 +17,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from ..client import ClientError, _endpoint
 from ..handoff.hook import _atomic_text, _NoRedirect
 from ..mailer import _loopback
+from . import grant_scope
 
 WORKSPACE_STRATEGY = {"type": "root"}  # UNVERIFIED until D2
 SPAWN_MESSAGE = (
@@ -28,7 +29,7 @@ SPAWN_MESSAGE = (
     "any card except #{n}."
 )
 
-_MODES = ("approval-required", "auto-accept-edits", "auto", "full-access")
+_MODES = grant_scope.MODES
 MAX_MESSAGE_CHARS = 120_000  # thread launch message limit
 _MAX_REPLY_BYTES = 65_536
 _MAX_LEASE_BYTES = 1_048_576  # a config-driven lease carries the pinned launch message
@@ -488,20 +489,22 @@ def check(config_path) -> int:
         config = _read(config_path)
         chat_only = isinstance(config, dict) and config.keys() == chat_agent.CONFIG_KEYS
         config = chat_agent.load(config_path) if chat_only else _load(config_path)
-        if (
-            not chat_only
-            and os.environ.get(config["token_env"])
-            and os.environ.get(config["t3_grant_env"])
-        ):
-            _environment(config)
         chat_lines = chat_agent.check_lines(config) if "chat" in config else []
     except (OSError, ValueError, ClientError, TypeError, KeyError) as exc:
         return _config_failure(exc)
     if not chat_only:
+        try:
+            token, grant, _ = _environment(config)
+            scope_lines = grant_scope.check_lines(config, (token, grant))
+        except (OSError, ValueError, TypeError, KeyError):
+            print("runner: config_invalid: scope_invalid", file=sys.stderr)
+            return 4
         print("launch shape uncaptured (D2 open); attestation is not verification")
         print("workspace strategy root (unverified, D2); started agents share the project checkout")
         for label in config["projects"]:
             print(f"project {label}: shared checkout acknowledged; one agent per project per hour")
+        for line in scope_lines:
+            print(line)
     for line in chat_lines:
         print(line)
     return 0

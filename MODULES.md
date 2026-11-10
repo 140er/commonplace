@@ -563,6 +563,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - The runner harness gives `runner check` an empty home and only explicit credentials, so the local grant scope record never reads host settings.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
@@ -1166,12 +1168,15 @@ Format (read by `commonplace orch docs-check`):
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
+  - The versioned per-machine grant scope record: shared validation and canonical bytes in `grant_scope.py`, the offline `runner check` producer, owner-submitted reports and the owner projection.
 
 - **Promises:**
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
 
+  - A grant scope report is always unverified and never creates a binding. Any changed canonical record resets the binding and increments the epoch once; an identical one does not. A confirmation after a report compares the stored digest and epoch.
+  - Grant scope records hold no configured credential and no credential-shaped value, and appear only in the owner view; T3 access fields stay unknown.
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
 
@@ -1194,6 +1199,7 @@ Format (read by `commonplace orch docs-check`):
 
 
   - A reset invalidates queued/leased snapshots; previously starting work becomes uncertain and retains capacity. A bound provider change requires explicit reset before reattestation.
+  - Invalid, duplicate-key, nonfinite or oversize scope bodies are refused without a write and close the connection; a stale confirmation digest or epoch returns 409. A full-config `runner check` with missing credentials or invalid settings exits 4 with `scope_invalid` and prints no record.
 
   - A lost launch result becomes `uncertain` and waits for a person; a revoked machine cancels queued jobs on the next sweep; a busy queue refuses with `busy`.
 
@@ -1204,6 +1210,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
+  - `tests/test_runner_scope.py` covers report storage, reset per field, confirmation compare-and-set and owner-only projection; `tests/test_runner_scope_local.py` covers the offline check record, provider selection and credential screening.
 
 
 ## orch

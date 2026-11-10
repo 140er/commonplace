@@ -52,7 +52,7 @@ def test_public_surface_unchanged(relay_hub, monkeypatch):
 def test_runner_config_shapes(relay_hub, tmp_path):
     h = relay_hub
     path = runner_config(tmp_path, h.hub, "synthetic-machine-credential")
-    assert runner(["check", "--config", str(path)], {}).returncode == 0
+    assert runner(["check", "--config", str(path)], {}).returncode == 4
     config = json.loads(path.read_text())
     _private_json(path, {**config, "x": True})
     assert runner(["check", "--config", str(path)], {}).returncode == 4

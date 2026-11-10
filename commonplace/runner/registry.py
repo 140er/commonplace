@@ -8,13 +8,15 @@ from commonplace import control_db
 from commonplace.control_db import ControlError
 from commonplace.policy import Policy, canonical_wing, is_private_wing
 
+from . import grant_scope
+from .grant_scope import MODES
+
 MACHINE_ID = re.compile(r"mach_[0-9a-f]{16}")
 LABEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}")
 PROJECT = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 TOPIC = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
 CHAT_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
 PROVIDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
-MODES = ("approval-required", "auto-accept-edits", "auto", "full-access")
 WORKER_TOOLS = (
     "task_show",
     "task_take_next",
@@ -35,10 +37,19 @@ GRANT_KEYS = {
     "max_starts_per_hour",
 }
 JSON_KEYS = ("projects", "topics", "wings", "requesters", "binding_topics")
+SCOPE_COLUMNS = (
+    "grant_scope",
+    "grant_scope_sha256",
+    "grant_scope_reported_at",
+    "binding_scope_sha256",
+)
+LEGACY_CONFIRM_KEYS = {"topics", "provider_instance_id", "worker_connection_id"}
+SCOPED_CONFIRM_KEYS = LEGACY_CONFIRM_KEYS | {"grant_scope_sha256", "expected_scope_epoch"}
 RESET = (
     "binding_state='unbound', binding_topics=NULL, binding_provider_instance_id=NULL, "
     "binding_worker_connection_id=NULL, binding_attested_by=NULL, "
-    "binding_attested_at=NULL, binding_grant_version=NULL, binding_epoch=binding_epoch+1"
+    "binding_attested_at=NULL, binding_grant_version=NULL, binding_scope_sha256=NULL, "
+    "binding_epoch=binding_epoch+1"
 )
 
 
@@ -73,6 +84,8 @@ def ensure(db):
                 binding_topics TEXT, binding_provider_instance_id TEXT,
                 binding_worker_connection_id TEXT, binding_attested_by TEXT,
                 binding_attested_at TEXT, binding_grant_version INTEGER,
+                grant_scope TEXT, grant_scope_sha256 TEXT, grant_scope_reported_at TEXT,
+                binding_scope_sha256 TEXT,
                 enrolled_by TEXT NOT NULL, updated_by TEXT NOT NULL,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL, revoked_at TEXT
             );
@@ -86,6 +99,9 @@ def ensure(db):
                 db._conn.execute(
                     "ALTER TABLE runner_machines ADD COLUMN binding_epoch INTEGER NOT NULL DEFAULT 1"
                 )
+            for column in SCOPE_COLUMNS:
+                if column not in columns:
+                    db._conn.execute(f"ALTER TABLE runner_machines ADD COLUMN {column} TEXT")
             db._conn.execute("COMMIT")
         except BaseException:
             db._conn.execute("ROLLBACK")
@@ -318,52 +334,111 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
     return get_machine(db, owner.workspace_id, row["id"])
 
 
-def attest(db, owner, machine_id, binding):
+def _report_scope(db, owner, row, body):
+    """Store a reported record; a different one resets the binding, none ever creates it."""
+    if set(body) != {"grant_scope"}:
+        raise ValueError("a scope report carries only grant_scope")
+    record = grant_scope.validate(body["grant_scope"])
+    sha256 = grant_scope.digest(record)
+    reset = sha256 != row["grant_scope_sha256"]
+    now = control_db._iso(control_db._now())
+    _write(
+        db,
+        row["id"],
+        dict(
+            grant_scope=grant_scope.canonical_bytes(record).decode("utf-8"),
+            grant_scope_sha256=sha256,
+            grant_scope_reported_at=now,
+            updated_by=owner.user_id,
+            updated_at=now,
+        ),
+    )
+    if reset:
+        db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
+    _audit(db, owner, "scope_report", row["id"], reset=reset)
+    current = get_machine(db, owner.workspace_id, row["id"])
+    return {
+        "binding_state": current["binding_state"],
+        "grant_scope_sha256": sha256,
+        "scope_epoch": current["binding_epoch"],
+        "verified": False,
+        "note": "reported by the runner; not verified by Commonplace",
+    }
+
+
+def _reported_scope(row, binding):
+    """Check a scoped confirm's shape; return (record, digest), or None for a legacy confirm."""
+    if set(binding) == LEGACY_CONFIRM_KEYS and row["grant_scope"] is None:
+        return None
+    if set(binding) != SCOPED_CONFIRM_KEYS or row["grant_scope"] is None:
+        raise ValueError("confirm the reported grant scope with its sha256 and epoch")
+    sha256, epoch = binding["grant_scope_sha256"], binding["expected_scope_epoch"]
+    if not isinstance(sha256, str) or not grant_scope.SHA256.fullmatch(sha256):
+        raise ValueError("invalid grant_scope_sha256")
+    if type(epoch) is not int:
+        raise ValueError("invalid expected_scope_epoch")
+    record = grant_scope.validate(grant_scope.loads(row["grant_scope"]))
+    return record, grant_scope.digest(record)
+
+
+def attest(db, owner, machine_id, body):
+    """Apply one of two disjoint requests: a scope report, or a binding confirmation."""
     _owner(owner)
     with db._lock, db._tx():
         row = _active(db, owner, machine_id)
-        if not isinstance(binding, dict) or set(binding) != {
-            "topics",
-            "provider_instance_id",
-            "worker_connection_id",
-        }:
-            raise ValueError("topics, provider_instance_id and worker_connection_id are required")
-        topics = _strings(binding["topics"], "topics", 32, TOPIC)
-        if set(topics) != set(json.loads(row["topics"])):
-            raise ValueError("topics must match the machine grant")
-        if binding["worker_connection_id"] != row["worker_connection_id"]:
-            raise ValueError("worker_connection_id must match the machine worker")
-        provider = binding["provider_instance_id"]
-        if not isinstance(provider, str) or not PROVIDER.fullmatch(provider):
-            raise ValueError("invalid provider_instance_id")
+        if isinstance(body, dict) and "grant_scope" in body:
+            return _report_scope(db, owner, row, body)
+        return _confirm(db, owner, row, body)
+
+
+def _confirm(db, owner, row, binding):
+    if not isinstance(binding, dict) or not LEGACY_CONFIRM_KEYS <= set(binding):
+        raise ValueError("topics, provider_instance_id and worker_connection_id are required")
+    reported = _reported_scope(row, binding)
+    topics = _strings(binding["topics"], "topics", 32, TOPIC)
+    if set(topics) != set(json.loads(row["topics"])):
+        raise ValueError("topics must match the machine grant")
+    if binding["worker_connection_id"] != row["worker_connection_id"]:
+        raise ValueError("worker_connection_id must match the machine worker")
+    provider = binding["provider_instance_id"]
+    if not isinstance(provider, str) or not PROVIDER.fullmatch(provider):
+        raise ValueError("invalid provider_instance_id")
+    if reported is not None:
+        record, sha256 = reported
         if (
-            row["binding_state"] == "owner_attested"
-            and provider != row["binding_provider_instance_id"]
+            binding["grant_scope_sha256"] != row["grant_scope_sha256"]
+            or sha256 != row["grant_scope_sha256"]
+            or binding["expected_scope_epoch"] != row["binding_epoch"]
         ):
-            raise Conflict("provider_change_requires_reset")
-        now = control_db._iso(control_db._now())
-        _write(
-            db,
-            row["id"],
-            dict(
-                binding_state="owner_attested",
-                binding_topics=topics,
-                binding_provider_instance_id=provider,
-                binding_worker_connection_id=row["worker_connection_id"],
-                binding_attested_by=owner.user_id,
-                binding_attested_at=now,
-                binding_grant_version=row["grant_version"],
-                updated_by=owner.user_id,
-                updated_at=now,
-            ),
-        )
-        _audit(db, owner, "attest", row["id"])
-        return {
-            "binding_state": "owner_attested",
-            "verified": False,
-            "note": "attested by the owner; not verified by Commonplace",
-            "launch_shape": "uncaptured",
-        }
+            raise Conflict("grant scope changed; review it and confirm again")
+        if record["provider_instance_id"] not in (None, provider):
+            raise ValueError("provider_instance_id must match the reported grant scope")
+    if row["binding_state"] == "owner_attested" and provider != row["binding_provider_instance_id"]:
+        raise Conflict("provider_change_requires_reset")
+    now = control_db._iso(control_db._now())
+    _write(
+        db,
+        row["id"],
+        dict(
+            binding_state="owner_attested",
+            binding_topics=topics,
+            binding_provider_instance_id=provider,
+            binding_worker_connection_id=row["worker_connection_id"],
+            binding_attested_by=owner.user_id,
+            binding_attested_at=now,
+            binding_grant_version=row["grant_version"],
+            binding_scope_sha256=reported[1] if reported is not None else None,
+            updated_by=owner.user_id,
+            updated_at=now,
+        ),
+    )
+    _audit(db, owner, "attest", row["id"])
+    return {
+        "binding_state": "owner_attested",
+        "verified": False,
+        "note": "attested by the owner; not verified by Commonplace",
+        "launch_shape": "uncaptured",
+    }
 
 
 def rotate(db, owner, machine_id, kind="worker"):

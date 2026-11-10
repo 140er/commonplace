@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from http.client import HTTPConnection
 
 import pytest
@@ -248,15 +249,30 @@ def card(hub, owner, **fields):
     return body
 
 
-def runner(args, env):
-    """Invoke the ordinary runner CLI without interpreting its output."""
+_CHECK_ENV = ("PATH", "PYTHONPATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL")
+
+
+def _runner(args, env):
     return subprocess.run(
         [sys.executable, "-m", "commonplace", "runner", *args],
-        env={**os.environ, **env},
+        env=env,
         capture_output=True,
         text=True,
         timeout=90,
     )
+
+
+def runner(args, env):
+    """Invoke the ordinary runner CLI without interpreting its output.
+
+    ``check`` reads credentials and local T3 settings, so it sees only the process
+    basics, an empty home and the caller's explicit values, never the host's.
+    """
+    if args[:1] != ["check"]:
+        return _runner(args, {**os.environ, **env})
+    with tempfile.TemporaryDirectory() as home:
+        basics = {key: os.environ[key] for key in _CHECK_ENV if key in os.environ}
+        return _runner(args, {**basics, "HOME": home, "T3CODE_HOME": home, **env})
 
 
 def _private_json(path, value):
