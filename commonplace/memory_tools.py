@@ -660,11 +660,7 @@ def _map_memory(ctx, identifier, theme=None):
         ):
             memory["source"] = None
         topic = memory["topic"]
-        if (
-            isinstance(topic, str)
-            and topic.startswith("thr_")
-            and _map_private_thread(ctx, topic, private_threads)
-        ):
+        if isinstance(topic, str) and _map_private_reference(ctx, topic, private_threads):
             memory["topic"] = None
     memory["cards"] = _map_cards(ctx, memory["cards"], store, theme, hide_private)
     return memory

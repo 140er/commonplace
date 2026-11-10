@@ -154,6 +154,9 @@ def test_map_selection_obeys_private_boundary_without_changing_other_reads(hub):
     for suffix in ("", "?view=map"):
         status, raw = hub.raw(None, b"", method="GET", path=path + suffix, headers=headers)
         assert status == 404, raw
+    # Hidden must look identical to absent.
+    absent = hub.raw(None, b"", method="GET", path="/api/memory/absent?view=map", headers=headers)
+    assert (status, raw) == absent
     owner = owner_ctx(hub)
     assert memory_tools._map_memory(owner, identifiers[0])["text"] == "PRIVATE_OWNER_PROBE"
     with pytest.raises(memory_tools.ToolError, match="memory not found"):
@@ -201,3 +204,13 @@ def test_private_linked_card_is_hidden_in_graph_and_selection(hub, board_store):
         None, b"", method="GET", path=f"/api/memory/{identifier}?view=map", headers=headers
     )
     assert status == 200 and json.loads(raw)["cards"] == []
+
+
+def test_map_selection_scopes_by_theme(hub):
+    identifier = _save(hub, hub.owner_token(), "Visible exact words", theme="shared")
+    _, headers = person(hub)
+    path = f"/api/memory/{identifier}?view=map"
+    status, raw = hub.raw(None, b"", method="GET", path=path + "&theme=shared", headers=headers)
+    assert status == 200 and json.loads(raw)["text"] == "Visible exact words"
+    status, raw = hub.raw(None, b"", method="GET", path=path + "&theme=other", headers=headers)
+    assert status == 404 and json.loads(raw) == {"error": "no: memory not found"}

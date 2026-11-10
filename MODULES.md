@@ -608,13 +608,9 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
-  - Map regressions include failed identity refresh, RuntimeError drawer lookups and private room/origin/approval references, with ordinary-reference controls.
-
-  - Map regressions include pending, failed, null and stale identity refreshes, RuntimeError drawer lookups, ordinary drawer rooms and public/private thread-link path controls; reference caching is request-local.
-
   - Map regressions include pending, late-owner, real API deadline, failed, null and stale identity refreshes, RuntimeError drawer lookups, ordinary drawer rooms and public/private thread-link path controls; reference caching is request-local.
 
-  - Map citation regressions cover member-owned private sources, fact_sources rows, thread topics, failed lookups, orphan people and wildcard theme refusal parity.
+  - Map citation regressions cover fact_sources rows, failed lookups, orphan people and wildcard theme refusal parity. Selection regressions run through `GET /api/memory/<id>?view=map` as a member (every thread-reference form of a drawer room, member-level null source, theme scoping, hidden-equals-absent bodies); the owner-with-unproved-role guard path runs through the helpers, since members hold no people overlay.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
@@ -1537,7 +1533,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Map-only derived thread references and drawer rooms use the same handoff proof; every drawer lookup exception drops its fact, including dangling citations.
 
-  - Map-only citation checks resolve all fact and selection threads through the workspace handoff store, fail closed, and cache repeated references per response; orphan people remain visible and unreadable themes look absent.
+  - Map-only citation checks resolve all fact and selection threads, including thread-valued selection topics in every reference form, through the workspace handoff store, fail closed, and cache repeated references per response; only an owner-held overlay with unproved role keeps orphan people, and unreadable themes look absent.
 
   - Map graph and selection reads exclude private wings, private drawer metadata, private/secret facts and private linked cards for person sessions without current control-database workspace-owner proof. Counts and limits follow exclusion; policies and other Memory reads are unchanged.
 
@@ -1686,8 +1682,6 @@ Format (read by `commonplace orch docs-check`):
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
-
-  - A failed map identity refresh retains the conservative notice while graph loading continues independently.
 
   - Map identity refresh runs concurrently with graph loading under a 10-second deadline; pending, failed or null identity retains the notice and stale or stopped reads cannot clear it.
 

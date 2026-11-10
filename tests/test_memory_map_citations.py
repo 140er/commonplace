@@ -96,18 +96,80 @@ def test_private_thread_topic_is_null_in_map_only(hub, collection):
     assert result["topic"] is None and result["source"] is None
 
 
-def test_member_selection_of_private_thread_memory_is_refused_on_every_route(hub, collection):
+ROOMS = {
+    "app_threads": "/app/threads/{}",
+    "app_deep": "/app/threads/{}/messages/3",
+    "t3_link": "t3-thread://v1/{}",
+    "mcp_prefix": "mcp:{}",
+}
+
+
+def select(hub, headers, identifier, suffix):
+    return hub.raw(
+        None, b"", method="GET", path=f"/api/memory/{identifier}{suffix}", headers=headers
+    )
+
+
+@pytest.mark.parametrize("form", ROOMS)
+def test_member_map_selection_nulls_thread_reference_topic(hub, collection, form):
+    _, headers = person(hub)
+    thread = private_thread(hub, hub.admin)
+    collection.add(
+        ids=["probe"],
+        documents=["Public exact words"],
+        metadatas=[{"wing": "shared", "room": ROOMS[form].format(thread.id)}],
+    )
+    status, raw = select(hub, headers, "probe", "?view=map")
+    assert status == 200, raw
+    body = json.loads(raw)
+    assert body["text"] == "Public exact words" and "topic" in body and body["topic"] is None
+    assert thread.id not in raw
+
+
+def test_member_map_selection_keeps_an_ordinary_topic(hub, collection):
+    _, headers = person(hub)
+    collection.add(
+        ids=["probe"],
+        documents=["Public exact words"],
+        metadatas=[{"wing": "shared", "room": "general"}],
+    )
+    status, raw = select(hub, headers, "probe", "?view=map")
+    assert status == 200 and json.loads(raw)["topic"] == "general"
+
+
+def test_member_selection_never_returns_a_private_thread_source(hub, collection):
     uid, headers = person(hub)
     thread = private_thread(hub, uid)
     collection.add(
-        ids=["thread-topic"],
+        ids=["probe"],
+        documents=["Public exact words"],
+        metadatas=[
+            {
+                "wing": "shared",
+                "room": "general",
+                "source_thread": thread.id,
+                "source_seq_start": 0,
+                "source_seq_end": 0,
+            }
+        ],
+    )
+    for suffix in ("", "?view=map"):
+        status, raw = select(hub, headers, "probe", suffix)
+        assert status == 200, raw
+        assert json.loads(raw)["text"] == "Public exact words"
+        assert json.loads(raw)["source"] is None and thread.id not in raw
+
+
+def test_member_selection_of_private_thread_room_is_refused_on_every_route(hub, collection):
+    uid, headers = person(hub)
+    thread = private_thread(hub, uid)
+    collection.add(
+        ids=["probe"],
         documents=["Public exact words"],
         metadatas=[{"wing": "shared", "room": thread.id, "source_thread": thread.id}],
     )
     for suffix in ("", "?view=map"):
-        status, raw = hub.raw(
-            None, b"", method="GET", path="/api/memory/thread-topic" + suffix, headers=headers
-        )
+        status, raw = select(hub, headers, "probe", suffix)
         assert status == 404 and thread.id not in raw
 
 
