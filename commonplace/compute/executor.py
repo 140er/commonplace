@@ -348,7 +348,7 @@ class ExecutionService:
         )
         return self.store._owner(principal, session_hash)
 
-    def _fresh(self, conn, execution_id):
+    def _fresh(self, conn, execution_id, *, request=None):
         row = self.store._row(conn, "executions", execution_id)
         now = self.store._now()
         if (
@@ -393,17 +393,39 @@ class ExecutionService:
             or not proof["verified_at"] <= now < proof["expires_at"]
         ):
             raise StoreError("enrollment_unverified", 409)
+        if request is not None:
+            # An in-flight attempt is authorized by its exact current consent,
+            # authority and custody, not a coordinator-wide write counter.
+            run = self._run(conn, request)
+            if (
+                run["cancel_requested_at"] is not None
+                or request.operation != fresh["operation"]
+                or request.admission_mode != self.admission_mode
+                or fresh.get("admission_mode") != self.admission_mode
+                or not hmac.compare_digest(run["approval_digest"], self._consent_digest(row))
+                or (
+                    request.admission_mode is not None
+                    and request.approval_digest != self._consent_digest(row)
+                )
+            ):
+                raise StoreError("authority_changed", 409)
+            if request.operation == "workspace.script.v1":
+                self._script_payload(request, conn, fresh, origin)
+            # This also re-reads active/revoked/expired credential state after
+            # target auth, when the one-use target key has already been spent.
+            self._admission_credentials(request, outer, inner)
         return row, fresh, outer, inner, origin
 
     def _recover(self, conn):
-        # Stage zero precedes any socket and is a confirmed non-run on recovery.
+        # A durable stage below 4 precedes every exec channel, including after
+        # authentication. Recovery can prove these attempts never ran.
         conn.execute(
             "UPDATE execution_runs SET phase='terminal',reason='interrupted_before_start',"
             "certainty='known',reserved=0,updated_at=? "
-            "WHERE phase='admitted' AND stage=0 AND run_until<=?",
+            "WHERE phase IN ('admitted','dispatching') AND stage<4 AND run_until<=?",
             (self.store._now(), self.store._now()),
         )
-        # An elapsed deadline after dispatch is no proof of remote death.
+        # Once an exec channel could have opened, elapsed time proves no death.
         conn.execute(
             "UPDATE execution_runs SET phase='uncertain',reason='interrupted',updated_at=? "
             "WHERE phase IN ('admitted','dispatching','running') AND run_until<=?",
@@ -580,24 +602,9 @@ class ExecutionService:
             run["phase"] in ("terminal", "uncertain")
             or run["cancel_requested_at"] is not None
             or self._stop.is_set()
-            or lease.epoch != request.authority_epoch
         ):
             raise StoreError("authority_changed", 409)
-        row, binding, _, _, origin = self._fresh(conn, request.execution)
-        if request.operation != binding["operation"]:
-            raise StoreError("authority_changed", 409)
-        if request.operation == "workspace.script.v1":
-            self._script_payload(request, conn, binding, origin)
-        if request.admission_mode != self.admission_mode or (
-            request.admission_mode is not None
-            and (
-                binding.get("admission_mode") != request.admission_mode
-                or request.approval_digest != self._consent_digest(row)
-            )
-        ):
-            raise StoreError("authority_changed", 409)
-        if not hmac.compare_digest(run["approval_digest"], self._consent_digest(row)):
-            raise StoreError("authority_changed", 409)
+        self._fresh(conn, request.execution, request=request)
         self._unchanged(lease)
         return run
 
@@ -626,6 +633,8 @@ class ExecutionService:
                             request.execution,
                         ),
                     )
+            # In particular stage 4 is durably committed before the transport
+            # can open either a fixed-command or script exec channel.
             return True
         except Exception:
             return False
@@ -665,7 +674,12 @@ class ExecutionService:
                         conn.execute(
                             "INSERT INTO gateway_admissions(execution_id,attempt_id,authority_epoch,issued_at) "
                             "VALUES (?,?,?,?)",
-                            (request.execution, request.attempt, lease.epoch, self.store._now()),
+                            (
+                                request.execution,
+                                request.attempt,
+                                request.authority_epoch,
+                                self.store._now(),
+                            ),
                         )
             return True
         except Exception:
@@ -713,7 +727,7 @@ class ExecutionService:
                         (
                             request.execution,
                             request.attempt,
-                            lease.epoch,
+                            request.authority_epoch,
                             self.store._now(),
                             challenge.channel,
                             challenge.nonce,
@@ -901,7 +915,8 @@ class ExecutionService:
         try:
             with self._guard() as lease:
                 with self.store._journal() as conn:
-                    self._check(conn, lease, request)
+                    self._fresh(conn, request.execution, request=request)
+                    self._unchanged(lease)
                     self._record_result(conn, request, result, publish=True)
                     return
         except Exception:
@@ -927,9 +942,10 @@ class ExecutionService:
         issued = conn.execute(
             "SELECT 1 FROM gateway_admissions WHERE execution_id=?", (request.execution,)
         ).fetchone()
-        # Before target authentication there can be no target operation. The
-        # absence of a durable permit independently proves a non-run.
-        not_started = run["stage"] < 3 or not issued
+        # Stage 4 commits strictly before command/script_command opens an exec
+        # channel. Authentication alone cannot run the requested operation.
+        # A missing permit proves a non-run only in the explicit wire contract.
+        not_started = run["stage"] < 4 or (request.admission_mode == ADMISSION_MODE and not issued)
         known = known_exit or not_started
         reason = result.reason if valid and result.reason in _REASONS else "transport_unavailable"
         if not_started and run["cancel_requested_at"] is not None:

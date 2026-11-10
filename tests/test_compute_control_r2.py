@@ -143,7 +143,8 @@ def test_major1_stage_three_denial_is_a_nonrun(admission_state):
     challenge = AdmissionChallenge(request, "c" * 64, "a" * 64, request.start_by)
     assert state.service._gateway_admission(request, "admit", challenge=challenge)
     assert state.service._authorize(request, "target_auth")
-    state.env.service.task_update(state.env.task, status="doing")
+    with BoardStore(state.env.path.parent, create=False).transaction() as conn:
+        conn.execute("UPDATE tasks SET status='done' WHERE id=?", (state.env.task,))
     assert not state.service._authorize(request, "execute")
     state.service._finish(request, ExecutionResult("uncertain", "authority_denied"))
     row = run_row(state, state.proposal)
@@ -226,7 +227,8 @@ def _revoke(state, kind, releaser):
         credential = state.credentials[0]
         state.custody.revoke(credential.credential_id, credential.binding, state.context)
     elif kind == "task":
-        env.service.task_update(env.task, status="doing")
+        with BoardStore(env.path.parent, create=False).transaction() as conn:
+            conn.execute("UPDATE tasks SET status='done' WHERE id=?", (env.task,))
     elif kind == "origin_release":
         with BoardStore(env.path.parent, create=False).transaction() as conn:
             conn.execute("UPDATE tasks SET approved_by=NULL WHERE id=?", (env.task,))

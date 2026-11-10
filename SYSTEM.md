@@ -212,14 +212,18 @@ separately pinned provisioning public keys; a browser owner cannot assert live
 verification. Receipts expire within one hour and rebind proposals on verification
 changes. A participating AuthorityFence must cover control, boards, Compute,
 custody, enrollment and gateway admission. Explicit trusted ExecutionConfig now
-installs bounded cross-process POSIX locking, durable epoch invalidation and
+installs bounded cross-process POSIX locking, durable authority epochs and
 persisted SQL guards for central local authority writers. Private registered
 functions reject unparticipating legacy connections; missing/replaced participant
 files, changed guards or unknown workspaces deny. ControlDB locks/transactions,
 BoardStore connections/transactions, Compute journals/enrollment and custody
 transactions participate. UPDATE guards cover permission-relevant columns;
-connection last-used timestamps, session creation timestamps, task heartbeats,
-progress counters and display text do not invalidate attempts. Exact legacy
+connection last-used timestamps, progress counters and display text are excluded.
+Real heartbeats renew claim_until, and sign-ins/new cards insert rows, so they can
+still advance the epoch. In-flight attempts re-read exact current authority and
+active custody through _fresh instead of comparing the coordinator-wide epoch.
+Permits retain the request epoch; session/connection/membership/consent/task/origin
+release or credential revocation still denies effects and publication. Exact legacy
 guards are migrated under the coordinator; unknown guards still fail closed. These local domains exclude gateway_admission. Explicit trusted
 admission_mode=controller-ssh-permit-v1 installs a separate wire adapter:
 request/ready/go/challenge, fresh fenced durable one-use permit issuance,
@@ -235,12 +239,15 @@ remote revocation or filesystem rollback guarantee is claimed.
 Approved actions are consumed once into append-only identity-bound execution_runs
 before keys or network are opened. Exact origin/approver sessions, fresh canonical
 authority, pinned enrollment, credential versions and expiries are rechecked at
-stages. Claims cannot be deleted/rebound or automatically replayed. Stage-zero
-recovery, missing gateway permits and failures before target authentication settle
-known and release capacity; authenticated confirmed script non-runs do too.
+stages. Claims cannot be deleted/rebound or automatically replayed. Stage 4 commits
+before either exec channel opens. Recovery and returned failures below stage 4
+settle known non-runs. Missing permits prove non-runs only in wire mode; legacy
+stage-4 unknowns retain capacity. Authenticated confirmed script non-runs settle too.
 Real uncertain outcomes retain capacity until the trusted local operator CLI
 records external reconciliation, its private note and an audit event through the
-fence (terminal reason operator_settled). No HTTP settlement route is exposed.
+fence (terminal reason operator_settled). The CLI checks every participant's
+expected guards before attaching; missing guards cannot initialize an unrelated
+workspace. No HTTP settlement route is exposed.
 Pre-effect cancellation can be confirmed;
 later cancellation is intent until exact exit evidence arrives. Canonical tasks
 are not marked complete by probe completion. Shutdown requests cancellation and
@@ -279,8 +286,9 @@ replay consumption before any cache supplier call. Exact scope, request digest,
 attempt, epochs, source configuration and short expiry are bound on both peers.
 Discovery completion validates the durable permit independently of publication
 freshness, releasing its slot while withholding observations after authority loss.
-No issued permit means failed with slot=0; intake epoch is not reused after
-admission. Discovery attempts/permits use immutable durable journals; helper replay records
+No issued permit means failed with slot=0. Uncertain controller discoveries have
+fenced operator recovery after restart, with an audit note and terminal reason
+discovery_operator_settled; quotas, attempts and permits remain intact. Discovery attempts/permits use immutable durable journals; helper replay records
 have a separate passive namespace and preserve existing execution records.
 Discovery-only startup installs the same required local authority participation
 without enabling execution. Central shutdown signals and joins configured workers.
@@ -360,9 +368,12 @@ literal system.info.v1 probe is compiled. Bounded exact JSON control frames
 (maximum 8KiB), five-second admission challenges and durable replay consumption
 precede route opening. Defaults/ceilings: 30-second runtime, five-second connect,
 64KiB combined output, 1MiB tunnel bytes and two active tunnels per gateway.
-Normally ended, closed tunnels release helper concurrency and retain replay
-tombstones. Crash-orphaned consumed rows and abnormal endings stay counted;
-closure alone does not prove target termination.
+Failed opens and successful target.close release helper concurrency, including
+after abnormal relay endings, while retaining replay tombstones. Close failures
+and crash-orphaned consumed rows stay counted. Named helper tunnel/passive rows
+have operator recovery under the same SQLite admission fence, with private audit
+notes and operator_closed state. Late completion cannot re-reserve them. Closure
+alone does not prove target process termination.
 Remote output is raw bounded bytes and must pass redaction/audience checks before
 publication. Passive observation sources and scripts are deliberately unavailable.
 

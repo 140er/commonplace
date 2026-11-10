@@ -43,12 +43,24 @@ short-lived and only converted internally after fresh checks. Missing keys,
 verification, transport or authority produces a safe local reason.
 
 Persist admission/approval consumption before first remote effect. Never blindly
-repeat an execution. Stage zero precedes any socket: recovery records a known
-non-run and releases its reservation. A missing durable gateway permit, or a
-failure before target authentication, likewise settles as known. Permission
-changes still invalidate admission; bookkeeping timestamps and progress counters
-do not advance the authority epoch. Existing guarded databases receive the exact
-narrowed triggers under the coordinator, without clearing replay identities.
+repeat an execution. Stage 4 is committed before either fixed-command or script
+exec channel opens. A returned outcome or recovery at stage <4 is a confirmed
+non-run and releases its reservation. Missing durable permits prove non-runs only
+in explicit wire mode; a legacy stage-4 unknown retains its reservation.
+
+After claim, `_fresh` re-reads exact binding and consumed consent, origin and
+approver sessions, current membership, task/origin release, enrollment/runtime and
+active custody credentials at each boundary. Discovery similarly rechecks its
+owner session, scope/agent connection, membership, task/origin release, gateway
+receipt and custody. Discovery's pre-pin connect check does not touch custody;
+after the independent gateway pin, custody is rechecked before authentication,
+collection, permit issuance and publication. Permission loss denies dispatch and
+withholds publication.
+The coordinator-wide epoch is not compared with the claimed epoch: real agent
+heartbeats renew claim leases, and sign-ins/new cards insert rows that can advance
+it without revoking this attempt. Narrowed UPDATE guards remain installed.
+Permits and their lookup retain the request's epoch. Current-fence exclusion and
+checks for writes during a single fenced operation remain intact.
 
 Authenticated target script results in denied/cancelled state with confirmed
 termination are known non-runs. The target's pre-claim script_error codes
@@ -56,7 +68,7 @@ runtime_digest_mismatch, binding_mismatch, replay_denied, target_capacity and
 sandbox_unavailable are also known non-runs, with their specific reason retained.
 An unlisted error or helper_unavailable does not prove a non-run.
 
-Unknown outcomes after target authentication retain uncertain capacity until
+Unknown outcomes after the stage-4 exec boundary retain uncertain capacity until
 reconciliation with external evidence. The trusted service operator can use
 python -m commonplace.compute.operator (see RUNNING.md) to settle only an
 uncertain execution, supplying its id and a nonempty note of at most 1000

@@ -34,9 +34,10 @@ remain unchanged. A script permit cannot authorize another operation.
 After independent outer and inner SSH pins/authentication, transport invokes only
 TARGET_HELPER_COMMAND and strict ScriptWire transfer. Target safe upload, claims,
 confinement and result semantics remain in target_helper.py/script_sandbox.py.
-Cancellation sends intent. Failures before target authentication settle as known
-non-runs, including lost permit acknowledgements. After target authentication,
-lost commit/result acknowledgements reserve uncertainty and never automatically
+Cancellation sends intent. Stage 4 commits before the script exec channel opens.
+Failures and recovery below stage 4 settle as known non-runs, including lost permit
+acknowledgements. After the stage-4 boundary, lost commit/result acknowledgements
+reserve uncertainty and never automatically
 repeat work. Authenticated denied/cancelled results with confirmed termination
 and the documented pre-claim script_error codes settle as known non-runs; unknown
 helper errors keep the reservation. See execution-contract.md for the exact codes

@@ -94,12 +94,8 @@ class Helper(BytesChannel):
         if message["kind"] == "open_enrolled_ssh":
             request = ExecutionRequest.from_message(message)
             self.ready = admission_message("ready", request, "c" * 64, "a" * 64, request.start_by)
-            self.request = request
             self.incoming.extend(encode_frame(self.ready))
         elif message["kind"] == "go":
-            # Model durable admission, as the real helper adapter does. A
-            # dropped open acknowledgement still cannot start target auth.
-            assert self.driver.service._gateway_admission(self.request, "admit")
             self.driver.hit("go")
             if not self.driver.lost_open_ack:
                 self.incoming.extend(encode_frame({**self.ready, "kind": "opened"}))
@@ -235,7 +231,6 @@ def execution_env(compute_env, tmp_path, compute_private_filesystem):
         provisioning_keys={"fixture-provisioner": provisioner_public},
         driver=driver,
     )
-    driver.service = service
     state = SimpleNamespace(
         env=env,
         fence=fence,
@@ -508,7 +503,15 @@ def test_stale_authority_before_claim_makes_zero_connections(execution_env, chan
     ],
 )
 @pytest.mark.parametrize(
-    "change", ["origin_session", "node_pin", "node_epoch", "task", "fence_epoch", "approval_expiry"]
+    "change",
+    [
+        "origin_session",
+        "node_pin",
+        "node_epoch",
+        "task",
+        "credential_revocation",
+        "approval_expiry",
+    ],
 )
 def test_every_admission_stage_rechecks_live_binding(
     execution_env, boundary, forbidden, change, monkeypatch
@@ -539,7 +542,8 @@ def test_revoked_custody_handle_is_checked_again_at_actual_target_auth(execution
     assert "auth:compute" in state.driver.calls
     assert "auth:inspect" not in state.driver.calls
     assert "exec" not in state.driver.calls
-    assert view(state, proposal)["run"]["capacity_reserved"]
+    assert run_row(state, proposal)["stage"] < 4
+    assert not view(state, proposal)["run"]["capacity_reserved"]
 
 
 def test_double_claim_uses_independent_connections_and_one_durable_attempt(execution_env, tmp_path):
@@ -596,7 +600,7 @@ def test_crash_reopen_never_reexecutes_and_retains_only_dispatched_capacity(
     reopened = ExecutionService(state.env.store, enabled=True, fence=state.fence)
     assert not reopened._run_once()
     run = view(state, proposal)["run"]
-    if crash_stage == 0:
+    if crash_stage < 4:
         assert run["phase"] == "terminal" and not run["capacity_reserved"]
         assert run["certainty"] == "known" and run["reason"] == "interrupted_before_start"
     else:
@@ -626,6 +630,7 @@ def test_uncertain_capacity_never_expires_into_free_slots(execution_env):
             assert state.service._authorize(request, phase)
         assert state.service._gateway_admission(request, "admit")
         assert state.service._authorize(request, "target_auth")
+        assert state.service._authorize(request, "execute")
     state.env.clock.now += 31
     proposal = prepare(state, request_id="third")
     assert not state.service._run_once()

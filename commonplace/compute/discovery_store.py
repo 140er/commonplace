@@ -27,6 +27,7 @@ from mempalace.sqlite_crypto import connect, row_factory
 
 from .control import StoreError, open_store as open_control_store
 from .discovery import validate_sources
+from .fence import _held
 from .protocol import ProtocolDenied, canonical, identifier
 from .scopes import DiscoveryContext, DiscoveryLimits, NetworkScope, ScopeDenied
 
@@ -47,6 +48,12 @@ CREATE TABLE IF NOT EXISTS discoveries (
  worker TEXT, deadline REAL, ended_at REAL, cancel_requested INTEGER NOT NULL DEFAULT 0,
  observations TEXT NOT NULL DEFAULT '[]', usage TEXT NOT NULL DEFAULT '{}',
  UNIQUE(user_id,request_id));
+CREATE TABLE IF NOT EXISTS discovery_operator_audit (
+ id INTEGER PRIMARY KEY, discovery_id TEXT NOT NULL, note TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TRIGGER IF NOT EXISTS discovery_operator_no_update BEFORE UPDATE ON discovery_operator_audit
+ BEGIN SELECT RAISE(ABORT,'discovery operator audit is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS discovery_operator_no_delete BEFORE DELETE ON discovery_operator_audit
+ BEGIN SELECT RAISE(ABORT,'discovery operator audit is append-only'); END;
 CREATE INDEX IF NOT EXISTS discovery_queue ON discoveries(state,created_at);
 CREATE INDEX IF NOT EXISTS discovery_scope ON discoveries(scope_id);
 CREATE TRIGGER IF NOT EXISTS discovery_no_delete BEFORE DELETE ON discoveries
@@ -103,6 +110,10 @@ class DiscoveryStore:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.executescript(_SCHEMA)
+                if "operator_note" not in {
+                    row[1] for row in conn.execute("PRAGMA table_info(discoveries)")
+                }:
+                    conn.execute("ALTER TABLE discoveries ADD COLUMN operator_note TEXT")
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     yield conn
@@ -114,6 +125,26 @@ class DiscoveryStore:
                 conn.close()
         except sqlite3.Error:
             raise StoreError("discovery_unavailable", 503) from None
+
+    def settle_uncertain(self, discovery_id, note):
+        identifier(discovery_id)
+        if type(note) is not str or not note.strip() or len(note) > 1000:
+            raise StoreError("invalid_operator_note", 400)
+        with _held(self.control._authority_fence, self.workspace_id, local=True):
+            with self.gateway.db._lock, self._journal() as conn:
+                row = self._row(conn, discovery_id)
+                if row["state"] != "uncertain" or row["slot"] != 1:
+                    raise StoreError("uncertain_discovery_required", 409)
+                now = self.control._now()
+                conn.execute(
+                    "UPDATE discoveries SET state='operator_settled',reason='discovery_operator_settled',"
+                    "slot=0,observations='[]',operator_note=?,updated_at=?,ended_at=? WHERE id=?",
+                    (note, now, now, discovery_id),
+                )
+                conn.execute(
+                    "INSERT INTO discovery_operator_audit(discovery_id,note,created_at) VALUES (?,?,?)",
+                    (discovery_id, note, now),
+                )
 
     @contextmanager
     def _transaction(self, principal, session_hash, *, admit=False):

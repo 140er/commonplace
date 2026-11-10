@@ -346,12 +346,21 @@ def test_committed_revocation_before_local_claim_wins(local_state, action):
         "credential",
         "rotation",
         "connection",
-        "scope",
         "blocker",
     ],
 )
 def test_central_writers_cannot_slip_between_fresh_check_and_claim(local_state, action):
     state = local_state
+    if action == "connection":
+        # Bind the revoked connection to actual origin-release authority; an
+        # unrelated token write is no longer an execution revocation.
+        from tests.test_compute_control_r2 import _released_origin
+
+        state.env.store.cancel_execution(
+            state.env.principal, state.proposal["id"], **state.env.auth
+        )
+        state.connection = _released_origin(state).connection_id
+        state.proposal = prepare(state, verified=False, request_id="live-origin-connection")
     child = Child(state, action)
     try:
         with state.service._guard() as lease:

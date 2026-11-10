@@ -381,7 +381,7 @@ def test_journal_survives_reopen_and_uncertain_routes_keep_capacity(setup, tmp_p
     assert len(opened) == 1
 
 
-def test_route_open_failure_is_consumed_and_uncertain(setup):
+def test_route_open_failure_releases_capacity_and_keeps_replay_denial(setup):
     def fail(route, timeout):
         raise OSError("synthetic route failure")
 
@@ -389,7 +389,9 @@ def test_route_open_failure_is_consumed_and_uncertain(setup):
     ready = helper.prepare(setup.request)
     with pytest.raises(OSError):
         helper.admit(setup.request, ready, {**ready, "kind": "go"})
-    assert journal.state(setup.request) == "uncertain"
+    assert journal.state(setup.request) == "closed"
+    with pytest.raises(ProtocolDenied, match="replayed_execution"):
+        journal.consume(setup.request, "f" * 64)
 
 
 def test_disabled_helper_and_unsupported_passive_never_open(setup):

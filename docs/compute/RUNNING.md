@@ -50,7 +50,8 @@ same mode. This is constructor configuration, never a browser field. Changing
 the mode changes the action digest and requires fresh approval. Existing local
 authority leases do not certify remote admission; the adapter performs a fresh
 one-use permit round trip over pinned SSH. A permit already issued is in flight,
-and a lost response does not release its durable reservation.
+and an unknown outcome after the stage-4 exec boundary retains its reservation.
+Earlier stages prove the requested operation did not run.
 
 The Passive observations section shows configured availability and persistent
 collection history. Collection requires separate trusted passive admission: set discovery_enabled=True
@@ -78,20 +79,50 @@ uv run python -m commonplace.compute.operator \
 ```
 
 Use the existing provisioned paths, service UID and workspace crypto context.
-The command opens no wrapping key or credential contents, creates no replacement
-control plane, and sends no remote commands. It requires an uncertain row and a
+Before attaching any participant, the command requires every expected guard
+on all four controller files, including control. An absent or unknown guard
+refuses the operation without installing guards into an unconfigured workspace.
+It opens no wrapping key or credential contents, creates no replacement control
+plane, and sends no remote commands. It requires an uncertain row and a
 nonblank note of at most 1000 characters. The private journal stores the note
 (no secrets), an audit event and terminal reason operator_settled. It preserves
 replay denial and does not publish withheld output or assert an observed exit.
 Elapsed time alone is not external evidence. There is no browser or HTTP settle
-operation. Stage-zero recovery and confirmed non-runs release automatically;
+operation. Recovery below stage 4 and confirmed non-runs release automatically;
 real unknown outcomes keep their reservation until this reconciliation.
 
-A normally ended, closed gateway tunnel releases helper concurrency while
-preserving its replay tombstone. Crash-orphaned consumed rows and abnormal
-endings remain counted. A valid permit-bound discovery completion releases its
-slot even if current authority forbids publishing the observations; an invocation
-without a durable permit is a failed non-run. Scope quotas remain charged.
+The same command settles uncertain controller discoveries with `--kind discovery`
+and the discovery id in place of EXECUTION_ID. It requires state uncertain and
+slot=1, records the note and an append-only discovery audit event, and sets terminal
+reason discovery_operator_settled with slot=0. It works after a worker restart,
+retains attempts/permits and permanently charged scope usage, and publishes no
+observations. A valid permit-bound completion also releases its slot even if
+current authority forbids publication; no durable permit means a failed non-run.
+
+## Recover helper journal capacity
+
+Run on the helper host as its service operator, after independently stopping or
+confirming quiescence of the named helper invocation. Controller settlement does
+not reconcile a separate helper journal. A failed route open releases automatically;
+so does any relay ending once target.close succeeds. A close failure or a
+crash-orphaned consumed row stays counted until this reconciliation:
+
+```sh
+uv run python -m commonplace.compute.operator --kind tunnel \
+  --journal /absolute/private/helper-replay.sqlite3 \
+  --workspace WORKSPACE_ID --gateway GATEWAY_ID \
+  --note 'Operator confirmed helper process and sockets stopped' EXECUTION_ID
+```
+
+Use `--kind passive` and its discovery id for a counted passive helper row. Both
+operations serialize with helper admission using the journal's BEGIN IMMEDIATE
+fence, require a named consumed/uncertain row, append the private operator note
+to the helper audit, and mark operator_closed. Replay remains denied and late
+completion cannot re-reserve the row. No controller files or keys are needed on
+the helper host; its existing journal and parent directory must be service-owned
+and private (0600 and 0700). The command never creates a replacement journal.
+A closed socket proves no target process termination. Confirm external evidence
+separately before settling a controller execution that reached stage 4.
 
 ## Verification
 

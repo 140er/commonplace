@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from commonplace import sessions
 from commonplace.boards.store import BoardStore
 from commonplace.compute.executor import ExecutionService
 from commonplace.compute.protocol import (
@@ -80,26 +81,26 @@ def test_a2_bookkeeping_preserves_epoch_dispatch_and_published_evidence(local_st
         policy=Policy.build(scopes=["memory:read"]),
         actor=env.owner,
     )
+    from tests.test_compute_control_r2 import _holder
+
+    holder = _holder(state) if kind == "heartbeat" else None
     request, _, _ = state.service._claim()
     assert state.service._authorize(request, "connect")
     if kind == "pat_use":
         assert env.db.authenticate_token(token) is not None
-    elif kind in ("heartbeat", "task_version"):
+    elif kind == "heartbeat":
+        holder.task_heartbeat(state.blocker)
+    elif kind == "session_created":
+        sessions.start_session(env.db, env.owner, env.workspace)
+    elif kind == "task_version":
         with BoardStore(env.path.parent, create=False).transaction() as conn:
-            update = (
-                "heartbeat_at='2026-11-10T00:00:00Z'"
-                if kind == "heartbeat"
-                else "version=version+1"
-            )
-            conn.execute(f"UPDATE tasks SET {update} WHERE id=?", (state.blocker,))
+            conn.execute("UPDATE tasks SET version=version+1 WHERE id=?", (state.blocker,))
     else:
         with env.db._lock, env.db._tx() as conn:
-            if kind == "user_name":
-                conn.execute("UPDATE users SET name='Fixture rename' WHERE id=?", (env.owner,))
-            else:
-                conn.execute("UPDATE sessions SET created_at='2026-11-09T00:00:00Z'")
-    with state.fence.hold(env.workspace) as lease:
-        assert lease.epoch == request.authority_epoch
+            conn.execute("UPDATE users SET name='Fixture rename' WHERE id=?", (env.owner,))
+    if kind not in ("heartbeat", "session_created"):
+        with state.fence.hold(env.workspace) as lease:
+            assert lease.epoch == request.authority_epoch
     for phase in ("dispatch", "target_auth", "execute"):
         assert state.service._authorize(request, phase)
     state.service._finish(
@@ -192,6 +193,7 @@ def test_a2_uncertain_reservation_has_trusted_operator_release(local_state):
         assert state.service._authorize(request, phase)
     assert state.service._gateway_admission(request, "admit")
     assert state.service._authorize(request, "target_auth")
+    assert state.service._authorize(request, "execute")
     state.service._finish(request, ExecutionResult("uncertain", "ssh_transport_failed"))
     assert run_row(state, state.proposal)["reserved"] == 1
     with sqlite3.connect(state.env.path) as conn:

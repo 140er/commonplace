@@ -408,7 +408,9 @@ class DiscoveryService:
             ),
         }
 
-    def _fresh(self, control, conn, row, lease, *, publishing=False):
+    def _fresh(
+        self, control, conn, row, lease, *, publishing=False, request=None, check_custody=True
+    ):
         principal = sessions.person_principal(
             self.control.gateway.db, row["user_id"], self.store.workspace_id
         )
@@ -424,6 +426,8 @@ class DiscoveryService:
             or (row["deadline"] is not None and self.control._now() >= row["deadline"])
         ):
             raise StoreError("authority_changed", 409)
+        if request is not None and check_custody:
+            self._admission_credential(request, outer)
         return scope, outer
 
     def _recover(self, conn):
@@ -509,11 +513,13 @@ class DiscoveryService:
                         return request, gateway, deadline
         return None
 
-    def _check(self, control, conn, lease, request):
+    def _check(self, control, conn, lease, request, *, check_custody=True):
         row = self.store._row(conn, request.discovery)
         if row["worker"] != self._worker or row["state"] not in ("claimed", "dispatching"):
             raise StoreError("authority_changed", 409)
-        scope, gateway = self._fresh(control, conn, row, lease)
+        scope, gateway = self._fresh(
+            control, conn, row, lease, request=request, check_custody=check_custody
+        )
         attempt = conn.execute(
             "SELECT * FROM discovery_attempts WHERE discovery_id=?", (request.discovery,)
         ).fetchone()
@@ -523,7 +529,6 @@ class DiscoveryService:
             or attempt["request"] != canonical(request.message()).decode()
             or request.passive_admission_mode != self.passive_admission_mode
             or request.gateway_epoch != gateway.epoch
-            or request.authority_epoch != lease.epoch
             or (request.run_until is not None and request.run_until != row["deadline"])
         ):
             raise StoreError("authority_changed", 409)
@@ -534,7 +539,11 @@ class DiscoveryService:
             with self._guard() as lease:
                 with self.control._journal() as control:
                     with self.store._journal() as conn:
-                        row, _, _ = self._check(control, conn, lease, request)
+                        # connect precedes the independent gateway pin. All
+                        # later boundaries revalidate custody before using it.
+                        row, _, _ = self._check(
+                            control, conn, lease, request, check_custody=phase != "connect"
+                        )
                         if phase not in ("connect", "auth", "collect") or row["state"] != "claimed":
                             return False
                         if phase == "collect":
@@ -601,7 +610,7 @@ class DiscoveryService:
                                 request.discovery,
                                 PASSIVE_PURPOSE,
                                 request.digest,
-                                lease.epoch,
+                                request.authority_epoch,
                                 challenge.channel,
                                 challenge.nonce,
                                 canonical(permit).decode(),
@@ -780,11 +789,12 @@ class DiscoveryService:
                     ).fetchone()
                     known, observations, measured, partial = False, [], {}, None
                     reason, publish = outcome.reason, False
-                    try:
-                        self._fresh(control, conn, row, lease, publishing=True)
-                        publish = True
-                    except Exception:
-                        pass
+                    if outcome.response is not None:
+                        try:
+                            self._fresh(control, conn, row, lease, publishing=True, request=request)
+                            publish = True
+                        except Exception:
+                            pass
                     try:
                         # Settlement authenticates the durable attempt/permit,
                         # independently of permission to publish remote data.
@@ -846,6 +856,10 @@ class DiscoveryService:
                             request.discovery,
                         ),
                     )
+
+    def settle_uncertain(self, discovery_id, note):
+        """Trusted operator action; no worker identity or HTTP route required."""
+        self.store.settle_uncertain(discovery_id, note)
 
     def _run_once(self):
         claimed = self._claim()

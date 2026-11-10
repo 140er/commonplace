@@ -20,7 +20,12 @@ and unknown modes. Partial or lost responses after durable permit issuance
 preserve uncertainty and capacity. Without that permit, the controller records a
 failed non-run with slot=0. A valid permit-bound final response settles the slot
 even after publication authority is lost, withholding observations in that case.
-Intake epoch changes do not replace the fresh authority check at admission.
+After claim, global epoch changes do not replace exact fresh authority checks.
+Session, membership, agent connection, scope/task/origin release, gateway receipt
+and custody are re-read before dispatch and publication; permit records retain
+the request epoch. The pre-pin connect check opens no custody. Active credentials
+are checked after the independent gateway pin, before authentication, collection,
+permit issuance and publication; a bad pin never accesses keys.
 Restart never automatically recollects. Scope ceilings remain permanently
 charged, including unused/cancelled allocations.
 
@@ -43,3 +48,14 @@ No live cache, LAN, operator key or remote device was accessed. Issued short
 permits remain in flight; no instantaneous remote kill or filesystem rollback
 guarantee is claimed. External helper enrollment, protected persistent journals
 and independent reconciliation before restore remain operator responsibilities.
+
+An uncertain controller discovery can be reconciled after worker restart using
+python -m commonplace.compute.operator --kind discovery with the existing
+controller paths, discovery id and external-evidence note (RUNNING.md). The local
+authority fence and discovery transaction guard this operator action. It requires
+uncertain/slot=1, appends the note to discovery_operator_audit, records terminal
+reason discovery_operator_settled and releases only concurrency. Quotas remain
+charged; attempts/permits stay immutable; observations are not published. Counted
+consumed/uncertain rows on the helper host have separate --kind passive recovery,
+serialized with consume by the helper journal's BEGIN IMMEDIATE fence. Reconciled
+helper rows stay denied on replay and late completion cannot re-reserve them.

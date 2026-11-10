@@ -64,6 +64,7 @@ def _uncertain(state):
         assert state.service._authorize(request, phase)
     assert state.service._gateway_admission(request, "admit")
     assert state.service._authorize(request, "target_auth")
+    assert state.service._authorize(request, "execute")
     state.service._finish(request, ExecutionResult("uncertain", "ssh_transport_failed"))
     assert run_row(state, state.proposal)["reserved"] == 1
     return request
@@ -148,7 +149,7 @@ def test_pre_target_auth_permit_failure_is_known(admission_state):
     assert (row["phase"], row["reserved"]) == ("terminal", 0)
 
 
-def test_abnormally_ended_helper_stays_reserved(setup):
+def test_abnormally_ended_helper_releases_when_close_succeeds(setup):
     helper, journal, _ = make_helper(setup)
 
     class Controller(BytesChannel):
@@ -161,10 +162,10 @@ def test_abnormally_ended_helper_stays_reserved(setup):
     wire = Controller(encode_frame(setup.request.message()))
     with pytest.raises(ProtocolDenied, match="deadline_exceeded"):
         helper.serve(wire, wait_readable=lambda *args: [])
-    assert journal.state(setup.request) == "uncertain"
+    assert journal.state(setup.request) == "closed"
     assert wire.closed
     journal.closed(setup.request)
-    assert journal.state(setup.request) == "uncertain"
+    assert journal.state(setup.request) == "closed"
 
 
 @pytest.mark.parametrize(

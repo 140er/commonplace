@@ -83,15 +83,29 @@ not just an injected fake driver. No live network/device acceptance is claimed.
 
 ## Tunnel concurrency and settlement
 
-The helper's tunnels limit bounds concurrent tunnels. A relay that ends normally
-and whose target socket closes is journaled closed, excluded from the concurrent
-count, and remains denied on replay. Abnormal endings and crash-orphaned consumed
-rows retain capacity. Closing a tunnel does not prove target process termination.
-In wire mode go cannot open a route: uncertainty starts immediately before the
-permit send. A denied issuance sends no permit and remains not_started.
+The helper's tunnels limit bounds concurrent tunnels. A failed route open creates
+no tunnel and records closed. Once target.close succeeds, any relay ending is
+closed, including timeouts, byte-budget failures and disconnections. Closed rows
+release concurrency and remain denied on replay; they prove no process kill.
+Close failures and crash-orphaned consumed rows stay counted. A trusted operator
+can reconcile a named row using the same CLI's --kind tunnel on the helper host,
+with its private journal, workspace/gateway/execution id and external evidence
+note. BEGIN IMMEDIATE serializes this action with consume; operator_closed and
+its append-only audit release capacity while preserving replay identity. Passive
+helper rows have the analogous --kind passive action. See RUNNING.md.
 
-Discovery validates its final response against the immutable attempt and durable
-permit independently of current publication authority. A verified final exchange
-settles its slot even after scope/session revocation, withholding observations.
-No durable permit means a known failed non-run. Current exact authority and the
-fresh request epoch still gate dispatch; intake epoch is not a publication gate.
+In wire mode go cannot open a route: transport uncertainty starts immediately
+before permit send. A denied issuance sends no permit and remains not_started.
+The controller commits stage 4 before either exec channel opens; earlier stages
+settle known non-run, while legacy stage-4 unknowns cannot infer a non-run from a
+missing wire permit.
+
+In-flight execution/discovery authorization re-reads exact current authority and
+custody under the fence instead of comparing the global epoch with the claim.
+Permit inserts and lookups use the request's epoch. Discovery validates its final
+response against the immutable attempt and durable permit independently of current
+publication authority. A verified final exchange settles its slot even after
+scope/session revocation, withholding observations. No durable permit means a
+known failed non-run. Uncertain controller discovery slots have fenced operator
+recovery through --kind discovery, with a note and discovery_operator_settled
+terminal reason. Scope quotas remain charged and attempts are never retried.

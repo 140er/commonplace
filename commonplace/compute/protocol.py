@@ -811,6 +811,54 @@ class ReplayJournal:
         )
         connection.commit()
         self._passive_schema()
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS compute_helper_operator_audit (
+                id INTEGER PRIMARY KEY, workspace TEXT NOT NULL, gateway TEXT NOT NULL,
+                object_id TEXT NOT NULL, purpose TEXT NOT NULL, note TEXT NOT NULL, created_at REAL NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS helper_operator_no_update BEFORE UPDATE ON compute_helper_operator_audit
+                BEGIN SELECT RAISE(ABORT,'helper operator audit is append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS helper_operator_no_delete BEFORE DELETE ON compute_helper_operator_audit
+                BEGIN SELECT RAISE(ABORT,'helper operator audit is append-only'); END;
+        """)
+
+    def operator_release(self, workspace, gateway, object_id, note, *, passive=False):
+        """Trusted local recovery under the same SQLite fence as consume.
+
+        External proof of quiescence belongs to the operator. This never deletes
+        an identity, retries work, or asserts a target process's exit status.
+        """
+        for value in (workspace, gateway, object_id):
+            identifier(value)
+        if type(note) is not str or not note.strip() or len(note) > 1000:
+            raise ProtocolDenied("invalid_operator_note")
+        db = self.connection
+        if db.in_transaction:
+            raise ProtocolDenied("journal_transaction_active")
+        table, column, purpose = (
+            ("compute_passive_journal", "discovery", PASSIVE_PURPOSE)
+            if passive
+            else ("compute_transport_journal", "execution", "execution")
+        )
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                f"SELECT state FROM {table} WHERE workspace=? AND gateway=? AND {column}=?",
+                (workspace, gateway, object_id),
+            ).fetchone()
+            if row is None or row[0] not in ("consumed", "uncertain"):
+                raise ProtocolDenied("counted_helper_row_required")
+            db.execute(
+                f"UPDATE {table} SET state='operator_closed' WHERE workspace=? AND gateway=? AND {column}=?",
+                (workspace, gateway, object_id),
+            )
+            db.execute(
+                "INSERT INTO compute_helper_operator_audit(workspace,gateway,object_id,purpose,note,created_at) VALUES (?,?,?,?,?,?)",
+                (workspace, gateway, object_id, purpose, note, time.time()),
+            )
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
 
     def consume(self, request, nonce, *, channel=None, permit=None):
         if request.admission_mode is not None:
@@ -862,7 +910,7 @@ class ReplayJournal:
             raise ProtocolDenied("journal_transaction_active")
         with self.connection:
             self.connection.execute(
-                "UPDATE compute_transport_journal SET state='uncertain' WHERE workspace=? AND gateway=? AND execution=?",
+                "UPDATE compute_transport_journal SET state='uncertain' WHERE workspace=? AND gateway=? AND execution=? AND state!='operator_closed'",
                 (request.workspace, request.gateway, request.execution),
             )
 
@@ -951,7 +999,7 @@ class ReplayJournal:
             raise ProtocolDenied("journal_transaction_active")
         with self.connection:
             self.connection.execute(
-                "UPDATE compute_passive_journal SET state=? WHERE workspace=? AND gateway=? AND discovery=?",
+                "UPDATE compute_passive_journal SET state=? WHERE workspace=? AND gateway=? AND discovery=? AND state!='operator_closed'",
                 (
                     "completed" if known else "uncertain",
                     request.context.workspace,
@@ -1316,15 +1364,15 @@ class GatewayHelper:
                 raise ProtocolDenied("admission_expired")
             return self.open_route(route, remaining)
         except BaseException:
-            self.journal.uncertain(request)
+            self.journal.closed(request)
             raise
 
     def serve(self, channel, *, wait_readable=None):
         """Serve exactly one control exchange, then relay bounded nested SSH bytes.
 
-        The returned connection is never retried. A normally ended, closed tunnel
-        releases helper concurrency, without claiming target termination.
-        Abnormal endings retain uncertain capacity.
+        The returned connection is never retried. Successful target close
+        releases helper concurrency, even after relay failure, without claiming
+        target process termination. Close failures and crash orphans stay held.
         ``wait_readable`` is an isolated synthetic-test seam.
         """
         try:
@@ -1392,7 +1440,6 @@ class GatewayHelper:
             target = self.admit_permit(request, challenge, permit)
         else:
             target = self.admit(request, ready, go)
-        clean = False
         try:
             io.send({**ready, "kind": "opened"})
             runtime = min(request.limits.runtime_seconds, request.run_until - self.wall())
@@ -1404,7 +1451,6 @@ class GatewayHelper:
                 wait_readable,
                 used=io.used,
             )
-            clean = True
         finally:
             try:
                 target.close()
@@ -1412,10 +1458,7 @@ class GatewayHelper:
                 self.journal.uncertain(request)
                 raise
             else:
-                if clean:
-                    self.journal.closed(request)
-                else:
-                    self.journal.uncertain(request)
+                self.journal.closed(request)
 
     def _relay(self, channel, target, deadline, ceiling, wait_readable, *, used=0):
         wait = wait_readable or (
