@@ -472,6 +472,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     }
   }
   host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
+  renderMain();
   if (settings) {
     installProjectStyles();
     bindSettingsNavigation(host, {slug, origin, onBack, current: active});
@@ -559,8 +560,8 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
   const scope = project.board;
   host.innerHTML = '<p role="status">Loading chat settings…</p>';
   let payload;
-  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`); }
-  catch { if (active()) host.innerHTML = `<p role="alert">${CHAT_SAVE_ERROR}</p>`; return; }
+  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`, {timeoutMs: 10000}); }
+  catch { if (active()) host.innerHTML = '<p role="alert">Could not load chat settings</p>'; return; }
   if (!active()) return;
   let front = payload.front || {provider: "none"};
   let selected = answerMode(front), busy = false, status = "", error = "";
@@ -766,10 +767,11 @@ export async function mountProjectAgents(host, {project, api, e, current, onUpda
   const active = () => current() && host.isConnected;
   let connections = [], cards = [], busy = false, error = "";
   const name = value => String(value || "").replace(/^conn:/, "");
+  host.innerHTML = '<p role="status">Loading agents…</p>';
   try {
     const results = await Promise.all([
-      project.can_configure ? api("/api/connections") : Promise.resolve({connections: []}),
-      api(`/api/boards/${encodeURIComponent(project.board)}/cards`),
+      project.can_configure ? api("/api/connections", {timeoutMs: 10000}) : Promise.resolve({connections: []}),
+      api(`/api/boards/${encodeURIComponent(project.board)}/cards`, {timeoutMs: 10000}),
     ]);
     connections = results[0].connections || [];
     cards = [...results[1].cards || [], ...results[1].linked || []];

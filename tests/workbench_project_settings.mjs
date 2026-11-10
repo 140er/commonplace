@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-
-const source = await readFile(new URL("../commonplace/web/static/projects.js", import.meta.url), "utf8");
-const ui = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const ui = await import(new URL("../commonplace/web/static/projects.js", import.meta.url));
 const e = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
 const project = { board: "atlas", name: "Atlas", can_configure: true, main: { name: "orchestrator:atlas", connected: true, seen: true, connectable: true }, limits: {max_agents: 3} };
 const local = {provider: "openai_compatible", base_url: "http://localhost:9000", model: "small", enabled: true, applies: true};
@@ -31,6 +28,58 @@ class Host {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   closest() { return null; }
+  replaceChildren() { this.innerHTML = ""; }
+}
+// Settings sections own their DOM, so rendering one cannot replace its siblings.
+class ProjectHost extends Host {
+  sections = new Map();
+  querySelector(selector) {
+    if (selector === ".workbench-project") return this;
+    if (selector === "[data-project-connect]") return this.querySelector("[data-project-heading]").querySelector(selector);
+    if (["heading", "chat", "agents", "limit", "trust", "memory"].some(name => selector === `[data-project-${name}]`)) {
+      if (!this.sections.has(selector)) this.sections.set(selector, new Host());
+      return this.sections.get(selector);
+    }
+    return super.querySelector(selector);
+  }
+}
+async function pendingSettings(pending, fail = false) {
+  globalThis.CSSStyleSheet = class { replaceSync() {} };
+  globalThis.document = {adoptedStyleSheets: [], addEventListener() {}, removeEventListener() {}};
+  const host = new ProjectHost(), calls = [], resolvers = [];
+  const api = async (path, options = {}) => {
+    calls.push({path, ...options});
+    if (path === "/api/projects/atlas") return {...project, main: {...project.main, connected: false}};
+    if (path.endsWith("/orchestrator/connect")) throw new Error("connect failed");
+    const payload = path === "/api/connections" ? {connections: []} : path.includes("chat-settings") ? {front: {provider: "none"}} : {cards: []};
+    if (pending.some(part => path.includes(part))) return new Promise((resolve, reject) => resolvers.push(() => fail ? reject(new Error("private failure details")) : resolve(payload)));
+    return payload;
+  };
+  const mounting = ui.mountProject(host, {slug: "atlas", api, e, settings: true});
+  try {
+    await new Promise(setImmediate);
+    assert.equal(resolvers.length, pending.length, "prerequisite requests must still be pending");
+    const heading = host.querySelector("[data-project-heading]");
+    assert.match(heading.innerHTML || "", /Atlas orchestrator/, "the card must render before prerequisite reads settle");
+    assert.match(heading.innerHTML, /Connect agent/);
+    await click(host, "[data-project-connect]");
+    assert.ok(calls.some(call => call.path.endsWith("/orchestrator/connect") && call.method === "POST"), "Connect must work while sections load");
+    assert.match(node(host, "[data-project-connect-status]").textContent, /Could not connect/);
+    if (pending.includes("connections")) assert.match(host.querySelector("[data-project-agents]").innerHTML, /Loading agents/);
+    if (pending.includes("chat-settings")) assert.match(host.querySelector("[data-project-chat]").innerHTML, /Loading chat settings/);
+  } finally {
+    resolvers.forEach(resolve => resolve());
+    await mounting;
+  }
+  assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /Loading agents/);
+  assert.match(host.querySelector("[data-project-heading]").innerHTML, /Atlas orchestrator/);
+  if (fail) {
+    assert.match(host.querySelector("[data-project-chat]").innerHTML, /Could not load chat settings/);
+    assert.match(host.querySelector("[data-project-agents]").innerHTML, /Could not load the agent list/);
+    assert.doesNotMatch(host.querySelector("[data-project-chat]").innerHTML, /private failure/);
+    assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /private failure/);
+    assert.equal(node(host, "[data-project-connect]").disabled, false);
+  }
 }
 const node = (host, selector) => { const n = host.querySelector(selector); assert.ok(n, `${selector} missing`); return n; };
 const click = async (host, selector) => { const n = node(host, selector); assert.equal(n.disabled, false); assert.equal(typeof n.onclick, "function"); await n.onclick({currentTarget: n, preventDefault() {}, stopPropagation() {}}); };
@@ -47,6 +96,11 @@ async function chat({front = local, error, models = ["small"], owner = true} = {
   return {host, calls, puts};
 }
 const cases = {
+  settings_pending_connections: () => pendingSettings(["connections"]),
+  settings_pending_chat: () => pendingSettings(["chat-settings"]),
+  settings_pending_both: () => pendingSettings(["connections", "chat-settings"]),
+  settings_pending_cards: () => pendingSettings(["/cards"]),
+  settings_pending_unavailable: () => pendingSettings(["connections", "chat-settings"], true),
   async hosted_panel() {
     const {host, calls} = await chat(); const before = calls.length;
     await change(host, '[data-chat-mode="hosted"]');

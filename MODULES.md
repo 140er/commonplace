@@ -255,6 +255,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The project guide describes independently loading settings sections, a usable
+    orchestrator card during pending reads and the bounded connection-wing fallback.
+
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
@@ -562,6 +565,10 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - Project-settings regressions hold connection, chat and card reads pending while
+    exercising Connect; gateway tests cover slow and blocked wing enumeration,
+    transport budgets, bounded concurrency and fallback recovery.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -1667,6 +1674,13 @@ Format (read by `commonplace orch docs-check`):
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
+  - Project settings render and bind the orchestrator card before optional chat,
+    connection, card and chat-status reads settle. Chat and agent sections show
+    loading or local errors; their initial reads use ten-second client deadlines.
+    `GET /api/connections` bounds optional wing enumeration to one second and one
+    outstanding daemon per gateway, returning connections with empty wings on
+    timeout, busy lookup or `ToolError`; late results are discarded.
+
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
@@ -1719,6 +1733,11 @@ Format (read by `commonplace orch docs-check`):
   - Rendering errors surface in the browser; the server state is unaffected.
 
 - **Tests:**
+
+  - `tests/test_commonplace_web.py` covers wing lookup deadlines, single-flight
+    fallback/recovery and the existing `ToolError` fallback.
+    `tests/test_workbench_project_settings.py` and its Node fixture hold connection,
+    chat and card requests pending while exercising Connect and section errors.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 

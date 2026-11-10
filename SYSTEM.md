@@ -234,6 +234,18 @@ visibility for slim, standard and full profiles remain unchanged.
 
 ### Project seat wake recommendations
 
+- Project settings render the orchestrator status and bind Connect as soon as the
+  project view arrives, before chat settings, connections, cards or chat status
+  settle. Chat and agent sections show loading and their own unavailable states;
+  their initial reads have ten-second client deadlines.
+
+- `GET /api/connections` spends at most one second waiting for its optional memory
+  wing listing, including worker transport. Timeout, `ToolError` or an already
+  busy lookup returns the existing connections and `wings: []`. One daemon lookup
+  per gateway bounds outstanding work; a timed-out call may finish later, without
+  caching its result or delaying later requests. Until it finishes, other requests
+  use the same empty-wings fallback, including requests from other workspaces.
+
 - Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
 
 - Setup is advisory: Connect and reconnect neither register nor modify subscriptions.

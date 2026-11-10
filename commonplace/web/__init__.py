@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import threading
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -13,6 +15,7 @@ from commonplace.http_util import log_failure, query, require_principal, send_js
 LOG = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
+CONNECTION_WINGS_TIMEOUT_S = 1.0
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self'; font-src 'self'; connect-src 'self'; "
@@ -65,7 +68,41 @@ def _static(h):
     _response(h, 200, target.read_bytes(), mime)
 
 
+def _connection_wings(gateway, principal, slot):
+    """Bound an optional read even if worker startup or queueing blocks."""
+    from commonplace.extensions import ToolError
+    from commonplace.rules.checks import deadline
+
+    if not slot.acquire(blocking=False):
+        raise ToolError("Memory wing listing is busy")
+    result = Future()
+
+    def list_wings():
+        try:
+            # Also bound the worker transport, not just the HTTP caller's wait.
+            with deadline(CONNECTION_WINGS_TIMEOUT_S):
+                wings = gateway.call_memory_tool(principal, "mempalace_list_wings", {})
+            result.set_result(wings)
+        except Exception as exc:
+            result.set_exception(exc)
+        finally:
+            slot.release()
+
+    try:
+        threading.Thread(target=list_wings, daemon=True).start()
+    except Exception:
+        slot.release()
+        raise
+    try:
+        return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S).get("wings", {})
+    except (FutureTimeoutError, TimeoutError):
+        raise ToolError("Memory wing listing timed out") from None
+
+
 def install(gateway):
+    # A timed-out read may still be unwinding; never queue more optional reads.
+    connection_wings_slot = threading.BoundedSemaphore()
+
     def login(h):
         token = query(h).get("t", "")
         if not token:
@@ -207,7 +244,7 @@ def install(gateway):
 
         rows = gateway.db.connections(principal.workspace_id)
         try:
-            known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
+            known = _connection_wings(gateway, principal, connection_wings_slot)
         except ToolError:
             # Connection management remains available while memory is offline.
             known = {}
