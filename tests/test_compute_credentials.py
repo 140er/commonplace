@@ -23,6 +23,7 @@ from commonplace.compute.credentials import (
     initialize_wrapping_key,
     internal_transport_private_bytes,
 )
+from commonplace.compute.fence import _Coordinator, _coordinator, _guards
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX protected custody boundary")
 
@@ -611,6 +612,47 @@ def test_initialization_coexists_with_existing_compute_tables(custody):
         store.generate(custody.binding, custody.context)
     with sqlite3.connect(custody.database) as conn:
         assert conn.execute("SELECT * FROM compute_nodes").fetchall() == [("existing-node",)]
+
+
+def test_fresh_initialization_with_registered_coordinator(tmp_path, compute_private_filesystem):
+    data = tmp_path / "data"
+    service = tmp_path / "service-key"
+    authority = tmp_path / "authority"
+    for directory in (data, service, authority):
+        directory.mkdir(mode=0o700)
+    database = data / "compute.sqlite3"
+    key_path = service / "compute.wrap"
+    initialize_wrapping_key(key_path, data, database_path=database)
+    coordinator = _Coordinator(authority)
+    context = object()
+    args = (database, key_path, data, lambda request, supplied: supplied is context)
+    try:
+        coordinator.register(database, "custody")
+        assert _coordinator(database) is coordinator
+        assert not database.exists()
+        try:
+            store = CredentialStore.initialize(*args)
+        except CredentialError as error:
+            cause = error
+            while cause.__context__ is not None:
+                cause = cause.__context__
+            pytest.fail(
+                f"fresh registered custody initialization failed: {type(cause).__name__}: {cause}"
+            )
+        with store:
+            binding = CredentialBinding("workspace", "owner", "gateway", "node", "svc", "target", 1)
+            enrollment = store.generate(binding, context)
+            store.activate(enrollment.credential_id, binding, context)
+        with CredentialStore(*args) as reopened:
+            with reopened.acquire(enrollment.credential_id, binding, context):
+                pass
+        with sqlite3.connect(database) as conn:
+            guards = dict(conn.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger'"))
+            assert guards == dict(_guards("custody", coordinator.identity))
+            with pytest.raises(sqlite3.DatabaseError, match="authority_writer_unavailable"):
+                conn.execute("UPDATE compute_credential_meta SET format_version=format_version")
+    finally:
+        coordinator.close()
 
 
 @pytest.mark.parametrize("field", ["verifier", "format_version", "store_id", "wrapping_key_id"])
