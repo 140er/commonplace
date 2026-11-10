@@ -128,7 +128,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Every root and `commonplace/` entry has exactly one owner block with all five fields; `SYSTEM.md` changes with every change that `docs-check` covers, unless a base-listed waiver applies.
 
-  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary and unproven live OAuth behavior.
+  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary, the separate public-repository merge consent and unproven live OAuth behavior.
 
   - **Connection lifecycle proof:** Records overlap fencing, process recovery proof and the deferred account-deletion integration boundary.
 
@@ -742,7 +742,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
-  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
+  - **Browser GitHub connection:** Browser GitHub merge tests cover opt-in consent and scope, own-grant-only merging, head pinning, private-repository refusal and token secrecy with synthetic transports. Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
 
   - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 
@@ -1697,6 +1697,8 @@ Format (read by `commonplace orch docs-check`):
 
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
+  - **Merge through the person's own connection:** Merge-ready cards offer Allow merging, then Merge with a second Confirm merge click, only on a safe github.com PR URL and a consented connection; refusals keep Open PR with a plain reason.
+
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
 
   - **Connection teardown boundary:** Stopping clears rendered GitHub details while preserving the established teardown contract for other Needs details.
@@ -1740,14 +1742,17 @@ Format (read by `commonplace orch docs-check`):
 
   - Browser sessions use exact Origin and session-derived CSRF; scope evidence and expiry fail closed; GitHub login and connect share subject ownership.
   - **Browser GitHub connection:** Default-off consent requests an empty scope, reads only the GitHub id/login and never creates login identities.
+  - **Merge through the person's own connection:** A separate Allow merging consent requests `public_repo` only (merge-purpose flow, same subject, confirmation before the token replaces the stored one). `merge.py` merges a card's merge-ready github.com PR on the caller's own grant, resolving the PR server-side, refusing private repositories, non-clean or moved heads, and pinning the head `sha`; branch protection stays with GitHub.
   - **Connection lifecycle proof:** Durable remote-work accounting holds the reconnect fence until revocation and older token cleanup both settle; only HTTPS or loopback development may start consent.
   - **Connection recovery:** Known expiry purges locally and reconnects without revocation acknowledgement; duplicate scope headers are all checked, and cleanup settles exchange counters even on failure. Own-person disconnect remains available across workspaces and while consent is disabled.
 
 - **How it fails:**
 
+  - Merge fails closed without the caller's own consented grant, for private repositories, a moved head or a PR that GitHub does not report clean; refusals are generic codes and never carry GitHub bodies or tokens.
+
   - Unknown expiry, scope conflict or missing keys refuse connection. Startup recovery requires an absent or expired shared-database lease; a competing serve cannot write GitHub state until its periodic retry claims after release/expiry; live OAuth behavior and production ingress logging remain unproven.
 - **Tests:**
 
-  - `tests/test_github_grants.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
+  - `tests/test_github_grants.py`, `tests/test_github_merge.py`, `tests/test_github_merge_units.py`, `tests/test_github_ui.py`, `tests/github_render.mjs`.
 
   - `tests/github_lifecycle.mjs` checks connected rendering, card switches and logout; a shared-volume lease fences recovery across private temporary directories without any lifetime lock file. Heartbeats renew the 30-second lease every 5 seconds, and expired owners fail closed on state writes.

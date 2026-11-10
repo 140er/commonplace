@@ -57,3 +57,52 @@ assert.ok(errorDetail.innerHTML.includes('GitHub connection unavailable'));
 assert.ok(errorDetail.innerHTML.includes('data-needs-approve') && errorDetail.innerHTML.includes('Review'));
 assert.ok(!errorDetail.innerHTML.includes('Could not load this card'));
 failedStatus.stop();
+
+// Merging through the person's own connection: a separate opt-in, public repositories only.
+const ready = {...card, pr_head: 'a'.repeat(40)};
+const noConsent = renderNeedDetail(ready, {github: {state: 'connected', merge: false, login: 'test-person'}});
+assert.ok(noConsent.includes('Open PR') && noConsent.includes('data-needs-github="allow-merge"'), 'connected without consent offers Allow merging beside Open PR');
+assert.ok(!noConsent.includes('data-needs-github="merge"') && !noConsent.includes('arm-merge'), 'no Merge without the separate consent');
+const consented = renderNeedDetail(ready, {github: {state: 'connected', merge: true, login: 'test-person'}});
+assert.ok(consented.includes('data-needs-github="arm-merge"') && consented.includes('Open PR'));
+assert.ok(!consented.includes('data-needs-github="merge"'), 'merging asks for a second confirmation first');
+const armed = renderNeedDetail(ready, {github: {state: 'connected', merge: true, armed: true}});
+assert.ok(armed.includes('data-needs-github="merge"') && armed.includes('aaaaaaa') && armed.includes('example/project#1') && armed.includes('branch protection'));
+const unsafe = renderNeedDetail({...ready, pr_url: 'https://evil.example/a/b/pull/1'}, {github: {state: 'connected', merge: true}});
+assert.ok(!unsafe.includes('arm-merge') && !unsafe.includes('allow-merge'), 'no merge controls without a safe github.com PR URL');
+const refused = renderNeedDetail(ready, {github: {state: 'connected', merge: true, notice: 'This repository is private, so Commonplace will not merge it. Use Open PR to merge it on GitHub.'}});
+assert.ok(refused.includes('role="alert"') && refused.includes('private') && refused.includes('Open PR'));
+const asking = renderNeedDetail(ready, {github: {state: 'merge_confirm', login: 'test-person', scopes: ['public_repo'], connect_enabled: true}});
+assert.ok(asking.includes('public_repo') && asking.includes('all of your public repositories') && asking.includes('data-needs-github="confirm"') && asking.includes('Allow merging'));
+assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connected', merge: true}}).includes('arm-merge'));
+
+// The controller sends the card number only; the server resolves the PR and refuses by code.
+{
+  const calls = [];
+  const mount2 = root(), detail2 = root();
+  let clickHandler;
+  detail2.querySelector = () => null;
+  const click = [];
+  const doc2 = { hidden: false, addEventListener() {}, removeEventListener() {} };
+  const api2 = async (path, options = {}) => {
+    calls.push([path, options.method, options.body]);
+    if (path.startsWith('/api/cards/')) return {...ready, number: Number(path.split('/').at(-1))};
+    if (path === '/api/github' && !options.method) return {state: 'connected', merge: true, csrf: 'synthetic-csrf', login: 'test-person'};
+    if (path === '/api/github/merge') { const err = new Error('github_private_repo'); err.status = 409; err.payload = {error: 'github_private_repo'}; throw err; }
+    return {holds: []};
+  };
+  mount2.addEventListener = (name, fn) => { if (name === 'click') clickHandler = fn; };
+  detail2.addEventListener = (name, fn) => { if (name === 'click') clickHandler = fn; };
+  const ui2 = createNeeds({mount: mount2, detailMount: detail2, document: doc2, setInterval: () => 1, clearInterval() {}, api: api2});
+  await ui2.select(7);
+  const press = async (name) => clickHandler({target: {closest: () => ({disabled: false, hasAttribute: (a) => a === 'data-needs-github', dataset: {needsGithub: name}})}, preventDefault() {}, stopPropagation() {}});
+  await press('arm-merge');
+  assert.ok(detail2.innerHTML.includes('Confirm merge') && !calls.some(([path]) => path === '/api/github/merge'), 'arming never calls the server');
+  await press('merge');
+  const sent = calls.find(([path]) => path === '/api/github/merge');
+  assert.deepEqual(Object.keys(sent[2]).sort(), ['accept', 'acknowledge', 'card', 'csrf'].sort());
+  assert.equal(sent[2].card, 7);
+  assert.ok(detail2.innerHTML.includes('This repository is private') && detail2.innerHTML.includes('Open PR'), 'a private repository leaves Open PR with a plain reason');
+  assert.ok(!detail2.innerHTML.includes('Confirm merge'));
+  ui2.stop();
+}

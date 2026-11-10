@@ -16,13 +16,14 @@ from dataclasses import replace
 from urllib.parse import quote, urlsplit
 
 from .. import sessions, urls
+from ..boards import display
 from ..boards.service import BoardService
 from ..extensions import ToolContext, ToolError
 from ..oauth.http import OAuthError, body, query, redirect, send_json
 from ..oauth.store import digest
 from ..social import accounts
 from ..social.providers import SignInError
-from . import client
+from . import client, merge as pr_merge
 from .store import Store
 
 COOKIE = "cmmn_github_connect"
@@ -202,6 +203,10 @@ class GitHub:
             path = urlsplit(h.path).path
             if path == "/api/github/connect":
                 return self.start(h, principal, session, data)
+            if path == "/api/github/merge-consent":
+                return self.start(h, principal, session, data, purpose="merge")
+            if path == "/api/github/merge":
+                return self.merge(h, principal, data)
             if path == "/api/github/confirm":
                 return self.confirm(h, principal, session, data)
             return send_json(h, 200, self.disconnect(principal.user_id, principal.workspace_id))
@@ -232,8 +237,12 @@ class GitHub:
             ).fetchone()
             if grant and not grant["disabled"] and grant["expires_at"] > time.time():
                 # Unlock on reads too: missing keys or tampering never shows a usable connection.
-                self.store.decrypt(conn, uid, "grant", grant["secret"])
-                result.update(state="connected", login=grant["login"])
+                payload = self.store.decrypt(conn, uid, "grant", grant["secret"])
+                result.update(
+                    state="connected",
+                    login=grant["login"],
+                    merge=pr_merge.SCOPE in (payload.get("scopes") or ()),
+                )
             elif grant:
                 result.update(
                     state="expired",
@@ -253,15 +262,38 @@ class GitHub:
             ).fetchone()
             if pending and pending["expires_at"] > time.time():
                 value = self.store.decrypt(conn, uid, "confirmation", pending["secret"])
-                result.update(
-                    state="confirm",
-                    login=value["login"],
-                    subject=value["subject"],
-                    inherited_scopes=value["scopes"],
-                )
+                if value.get("purpose") == "merge":
+                    result.update(
+                        state="merge_confirm", login=value["login"], scopes=value["scopes"]
+                    )
+                else:
+                    result.update(
+                        state="confirm",
+                        login=value["login"],
+                        subject=value["subject"],
+                        inherited_scopes=value["scopes"],
+                    )
         return result
 
-    def start(self, h, principal, session, data):
+    def own_grant(self, conn, principal):
+        """The caller's own live grant here and its secret payload; else fail closed."""
+        uid = principal.user_id
+        life = self.store.lifecycle(conn, uid)
+        grant = conn.execute(
+            "SELECT * FROM github_grants WHERE user_id=? AND workspace_id=?",
+            (uid, principal.workspace_id),
+        ).fetchone()
+        if (
+            grant is None
+            or grant["disabled"]
+            or grant["expires_at"] <= time.time()
+            or life["disconnect_pending"]
+            or life["deleting"]
+        ):
+            raise SignInError("github_not_connected")
+        return grant, self.store.decrypt(conn, uid, "grant", grant["secret"])
+
+    def start(self, h, principal, session, data, purpose="connect"):
         origin = urlsplit(urls.APP_URL)
         if origin.scheme != "https" and not (
             origin.scheme == "http" and origin.hostname in ("localhost", "127.0.0.1", "::1")
@@ -276,9 +308,15 @@ class GitHub:
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             life = self.store.lifecycle(conn, uid)
+            if purpose == "merge":
+                # Merge consent upgrades the caller's own connection, never a new one.
+                _, payload = self.own_grant(conn, principal)
+                if pr_merge.SCOPE in (payload.get("scopes") or ()):
+                    raise SignInError("github_merge_consented")
             grant = conn.execute("SELECT * FROM github_grants WHERE user_id=?", (uid,)).fetchone()
             if (
-                grant
+                purpose == "connect"
+                and grant
                 and grant["expires_at"] <= time.time()
                 and not life["active_exchanges"]
                 and not life["disconnect_pending"]
@@ -294,7 +332,7 @@ class GitHub:
                 life["disconnect_pending"]
                 or life["active_exchanges"]
                 or life["deleting"]
-                or grant
+                or (grant and purpose == "connect")
                 or conn.execute(
                     "SELECT 1 FROM github_connect_flows WHERE user_id=?", (uid,)
                 ).fetchone()
@@ -303,11 +341,11 @@ class GitHub:
                 ).fetchone()
             ):
                 raise SignInError("github_pending")
-            if life["unconfirmed"] and data.get("acknowledge") is not True:
+            if purpose == "connect" and life["unconfirmed"] and data.get("acknowledge") is not True:
                 raise SignInError("github_acknowledge")
             secret = self.store.encrypt(conn, uid, "verifier", verifier)
             conn.execute(
-                "INSERT INTO github_connect_flows(state_hash,user_id,session_hash,browser_hash,workspace_id,card,generation,expires_at,secret,next) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO github_connect_flows(state_hash,user_id,session_hash,browser_hash,workspace_id,card,generation,expires_at,secret,next,purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     digest(state),
                     uid,
@@ -319,13 +357,16 @@ class GitHub:
                     time.time() + TTL,
                     secret,
                     f"/app/?github_card={data['card']}#/needs",
+                    purpose,
                 ),
             )
-            conn.execute("UPDATE github_lifecycle SET unconfirmed=0 WHERE user_id=?", (uid,))
+            if purpose == "connect":
+                conn.execute("UPDATE github_lifecycle SET unconfirmed=0 WHERE user_id=?", (uid,))
         cookie = f"{COOKIE}={browser}; Path={CALLBACK}; HttpOnly; SameSite=Lax; Max-Age=600"
         if self.gateway.secure_cookies:
             cookie += "; Secure"
-        authorize = replace(self.provider(), scope="").authorize_url(state, verifier, "")
+        scope = pr_merge.SCOPE if purpose == "merge" else ""
+        authorize = replace(self.provider(), scope=scope).authorize_url(state, verifier, "")
         import json
 
         from ..oauth.http import send
@@ -366,7 +407,7 @@ class GitHub:
                 if (
                     not browser
                     or digest(browser) != row["browser_hash"]
-                    or row["purpose"] != "connect"
+                    or row["purpose"] not in ("connect", "merge")
                 ):
                     raise SignInError("github_expired")
                 self.binding(conn, row, session, principal)
@@ -405,7 +446,13 @@ class GitHub:
             if status != 200 or "error" in value:
                 raise SignInError("github_token")
             granted = scopes(value.get("scope"))
-            if not granted <= {"read:user", "user:email"}:
+            merging = row["purpose"] == "merge"
+            # Only a merge flow may carry public_repo, and it must carry it.
+            if not granted <= {"read:user", "user:email"} | (
+                {pr_merge.SCOPE} if merging else set()
+            ):
+                raise SignInError("github_scope")
+            if merging and pr_merge.SCOPE not in granted:
                 raise SignInError("github_scope")
             expiry = value.get("expires_in")
             if expiry is None:
@@ -452,6 +499,14 @@ class GitHub:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
                 self.binding(conn, row, session, principal)
+                if merging:
+                    own = conn.execute(
+                        "SELECT subject FROM github_grants WHERE user_id=? AND workspace_id=? AND disabled=0",
+                        (uid, row["workspace_id"]),
+                    ).fetchone()
+                    if own is None or own["subject"] != candidate["subject"]:
+                        raise SignInError("github_subject")
+                    candidate["purpose"] = "merge"
                 known = conn.execute(
                     "SELECT subject FROM user_identities WHERE provider='github' AND user_id=? AND subject=?",
                     (uid, candidate["subject"]),
@@ -510,10 +565,29 @@ class GitHub:
             ),
         )
 
+    def upgrade(self, conn, uid, row, candidate):
+        """Swap the caller's own token for the merge-scoped one; returns the old token."""
+        grant = conn.execute(
+            "SELECT * FROM github_grants WHERE user_id=? AND workspace_id=? AND disabled=0 AND subject=?",
+            (uid, row["workspace_id"], candidate["subject"]),
+        ).fetchone()
+        if grant is None or grant["expires_at"] <= time.time():
+            raise SignInError("github_expired")
+        previous = self.store.decrypt(conn, uid, "grant", grant["secret"])["token"]
+        secret = self.store.encrypt(
+            conn, uid, "grant", {"token": candidate["token"], "scopes": candidate["scopes"]}
+        )
+        conn.execute(
+            "UPDATE github_grants SET secret=?, expires_at=? WHERE user_id=?",
+            (secret, candidate["expires_at"], uid),
+        )
+        return previous
+
     def confirm(self, h, principal, session, data):
         uid = principal.user_id
         candidate = None
         accepted = False
+        previous = None
         try:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
@@ -539,16 +613,52 @@ class GitHub:
                 self._fence(conn)
                 self.binding(conn, row, session, principal)
                 if data.get("accept") is True:
-                    self.commit(conn, uid, row, candidate)
+                    if candidate.get("purpose") == "merge":
+                        previous = self.upgrade(conn, uid, row, candidate)
+                    else:
+                        self.commit(conn, uid, row, candidate)
                     accepted = True
         finally:
             if candidate:
                 try:
                     if not accepted:
                         self.cleanup_token(uid, candidate["token"])
+                    elif previous:
+                        self.revoke_token(uid, previous)
                 finally:
                     self.finish_exchange(uid)
-        send_json(h, 200, {"state": "connected" if accepted else "absent"})
+        # Declining merge consent keeps the connection that was already there.
+        kept = bool(candidate) and candidate.get("purpose") == "merge"
+        send_json(h, 200, {"state": "connected" if accepted or kept else "absent"})
+
+    def merge(self, h, principal, data):
+        """Merge the card's own reported PR with the caller's grant; never the body's."""
+        card = self.visible(principal, data.get("card"))
+        target = pr_merge.pull_request(card.get("pr_url"))
+        if target is None or not display.merge_ready(card, display.stale_before()):
+            raise SignInError("github_not_merge_ready")
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            _, payload = self.own_grant(conn, principal)
+        if pr_merge.SCOPE not in (payload.get("scopes") or ()):
+            raise SignInError("github_merge_consent")
+        outcome = ""
+        try:
+            result = pr_merge.merge(payload["token"], *target, card["pr_head"])
+        except SignInError as exc:
+            outcome = exc.code
+            raise
+        finally:
+            self.db.audit(
+                action="github.merge",
+                decision="deny" if outcome else "allow",
+                workspace_id=principal.workspace_id,
+                user_id=principal.user_id,
+                auth="session",
+                reason=outcome,
+                target_ids=["%s/%s#%d" % target],
+            )
+        send_json(h, 200, result)
 
     def cleanup_token(self, uid, token):
         try:
@@ -754,6 +864,8 @@ def install(gateway):
         ("GET", "/api/github"),
         ("POST", "/api/github/connect"),
         ("POST", "/api/github/confirm"),
+        ("POST", "/api/github/merge-consent"),
+        ("POST", "/api/github/merge"),
         ("DELETE", "/api/github"),
     ):
         gateway.add_route(method, path, gateway.github.handle)
