@@ -445,6 +445,41 @@ def test_truthful_provider_failure_no_canned_answer(env, monkeypatch, mode, code
     assert replies(env, cid) == []
 
 
+@pytest.mark.parametrize("poster", ["uid", "other"])
+def test_boardless_hosted_provider_requires_configuration(env, monkeypatch, poster):
+    settings.set_front(
+        env.db,
+        env.principal,
+        {
+            "front": {
+                "provider": "openai_compatible",
+                "model": "hosted-fixture",
+                "base_url": "https://provider.example.test",
+            }
+        },
+    )
+    config = settings.front(env.db, env.wid)
+    assert config.enabled and config.applies and not settings.is_local(config)
+    user = getattr(env, poster)
+    conversation = env.conversation(user=user)
+    assert conversation["board"] is None
+    cid = conversation["id"]
+    env.store.add_memory(user, cid, "Private verbatim memory")
+    env.post(cid, "Private human words", user=user)
+    calls = []
+
+    def complete(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "Synthetic hosted answer"
+
+    monkeypatch.setattr(runtime.model, "complete", complete)
+    assert env.worker().run_once(env.wid)
+    assert calls == [], "A board-less conversation must not send context to a hosted provider"
+    result = jobs(env, cid, user=user)[0]
+    assert (result["state"], result["code"]) == ("needs_configuration", "needs_configuration")
+    assert replies(env, cid, user=user) == []
+
+
 def test_atomic_quota_reservations_count_inflight_calls(env, monkeypatch):
     a, b = env.conversation(), env.conversation()
     settings.set_front(

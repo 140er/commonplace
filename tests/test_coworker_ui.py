@@ -11,6 +11,7 @@ import pytest
 @pytest.mark.parametrize(
     "case",
     [
+        "authors",
         "escaping",
         "send",
         "reconciliation",

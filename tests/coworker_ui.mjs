@@ -63,6 +63,32 @@ function fixture() {
 }
 
 const cases = {
+  async authors() {
+    for (const kind of ['dm', 'group']) {
+      const f = fixture();
+      await f.open('a', detail('a', {
+        conversation: conversation('a', { kind }),
+        messages: [
+          message(1, 'a', '@Mira these are my words', { bot_id: bot.id }),
+          message(2, 'a', 'These are the bot words', { actor: `bot:${bot.id}`, bot_id: bot.id }),
+          message(3, 'a', 'A different bot actor', { actor: 'bot:another-bot', bot_id: bot.id }),
+        ],
+      }));
+      const row = id => {
+        const html = new RegExp(`<li id="cw-message-${id}"[\\s\\S]*?</li>`).exec(f.host.innerHTML)?.[0];
+        assert.ok(html, `Message ${id} is rendered in the ${kind}`);
+        return html;
+      };
+      assert.match(row(1), /<strong>June<\/strong>/, 'An addressed human message keeps its person author');
+      assert.doesNotMatch(row(1), /cw-from-bot|<small>Bot<\/small>|<strong>Mira<\/strong>/);
+      assert.match(row(1), /@Mira these are my words/);
+      assert.match(row(2), /cw-from-bot/);
+      assert.match(row(2), /<strong>Mira<\/strong><small>Bot<\/small>/);
+      assert.doesNotMatch(row(3), /cw-from-bot|<small>Bot<\/small>|<strong>Mira<\/strong>/, 'Bot identity must match the actor exactly');
+      f.ui.stop();
+    }
+  },
+
   async control_reconnect() {
     const f = fixture();
     const receipt = { id: 1, job_id: 9, operation: 'follow_up', request_id: 'durable-original-key', text: 'Exact unknown instruction', state: 'uncertain', code: 'acknowledgement_pending' };
