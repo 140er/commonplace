@@ -4,7 +4,6 @@ Set PLAYWRIGHT_BROWSERS_PATH to an installed browser cache when HOME is isolated
 """
 
 import asyncio
-import time
 
 import pytest
 
@@ -29,6 +28,8 @@ async def with_card(hub, fresh, number, check):
             page = await context.new_page()
             await page.goto(f"http://127.0.0.1:{hub.port}/app/#/card/{number}")
             await page.wait_for_selector(f'#card-panel [data-card="{number}"]', timeout=15000)
+            # Start only after the first refresh has settled; a redraw after that fails the test.
+            await page.wait_for_load_state("networkidle")
             await check(page)
         finally:
             await browser.close()
@@ -58,21 +59,11 @@ async def present(page, selector, state="visible"):
 
 
 async def submit_handoff(page, recipient):
-    from playwright.async_api import TimeoutError as Timeout
-
-    # The first board refresh can redraw the panel over a freshly opened form.
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        try:
-            if not await page.locator(HANDOFF).count():
-                await open_handoff(page)
-            await page.fill(f'{HANDOFF} [name="to"]', recipient, timeout=3000)
-            await page.fill(f'{HANDOFF} [name="note"]', "Passing this on", timeout=3000)
-            await page.click(f"{HANDOFF} button.blockbtn", timeout=3000)
-            return
-        except Timeout:
-            continue
-    raise AssertionError("the handoff form never stayed open")
+    if not await page.locator(HANDOFF).count():
+        await open_handoff(page)
+    await page.fill(f'{HANDOFF} [name="to"]', recipient, timeout=5000)
+    await page.fill(f'{HANDOFF} [name="note"]', "Passing this on", timeout=5000)
+    await page.click(f"{HANDOFF} button.blockbtn", timeout=5000)
 
 
 def test_owner_release_button_is_reflected_on_the_card(hub, fresh):
@@ -95,14 +86,12 @@ def test_handoff_form_names_the_orchestrator_and_the_pool(hub, fresh):
     _, coordinator, number = released(hub, fresh)
 
     async def check(page):
-        values, deadline = [], time.monotonic() + 30
-        while not values and time.monotonic() < deadline:
-            if not await page.locator(HANDOFF).count():
-                await open_handoff(page)
-            if await present(page, "#handoff-recipients option", state="attached"):
-                values = await page.eval_on_selector_all(
-                    "#handoff-recipients option", "nodes => nodes.map(n => n.value)"
-                )
+        await open_handoff(page)
+        values = []
+        if await present(page, "#handoff-recipients option", state="attached"):
+            values = await page.eval_on_selector_all(
+                "#handoff-recipients option", "nodes => nodes.map(n => n.value)"
+            )
         assert {"orchestrator", "anyone"} <= set(values)
         await submit_handoff(page, "orchestrator")
         await page.wait_for_selector(HANDOFF, state="detached", timeout=15000)

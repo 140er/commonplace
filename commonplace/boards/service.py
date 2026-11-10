@@ -1139,6 +1139,20 @@ class BoardService:
             and self._can_release_origin(self.principal, row)
         )
 
+    def _member_reservation(self, row):
+        """People other than the owner never take, drop or reassign another actor's reservation."""
+        p = self.principal
+        if (
+            p.person
+            and p.role != "owner"
+            and row["status"] in ("todo", "doing")
+            and row["assignee"] not in (None, p.actor)
+        ):
+            raise ToolError(
+                "no: card is reserved for another connection; the workspace owner or the "
+                "board coordinator can move it"
+            )
+
     def _can_cancel_reservation(self, row):
         p = self.principal
         return (
@@ -1767,8 +1781,11 @@ class BoardService:
         annotating=False,
         completing=False,
         dropping=False,
+        moving=False,
     ):
         if self.principal.person:
+            if moving:
+                self._member_reservation(row)
             return
         if row["proposal_status"] in ("pending", "rejected") and not self._own_card(row):
             raise ToolError("no: proposal needs its parent or the workspace owner")
@@ -3177,10 +3194,16 @@ class BoardService:
             }
             if status == "backlog" or (old, status) in allowed:
                 return
-            if old == "todo" and status == "done" and self.principal.role == "owner":
+            if (
+                old == "todo"
+                and status == "done"
+                and self.principal.role == "owner"
+                and self._restricted_origin(row)
+            ):
                 if self._awaits_origin_release(row):
                     raise ToolError("no: release this card before closing it")
-                return
+                if self._origin_released(row):
+                    return
         else:
             if old != "review" and _waiting_on_person(row):
                 raise ToolError("no: this move requires a person or a handoff")
@@ -3476,6 +3499,7 @@ class BoardService:
                 raise ToolError("no: unknown update field")
             self._holder(
                 row,
+                moving=args.get("status", row["status"]) != row["status"],
                 completing=args.get("status") == "done",
                 dropping=set(args) == {"status"} and args["status"] == "backlog",
                 editing=bool(set(args) & {"title", "body", "labels", "blocked_by", "task_type"})
@@ -3677,7 +3701,7 @@ class BoardService:
         self._write(board, row=row)
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        self._holder(row)
+        self._holder(row, moving=True)
         if not self.principal.person and _waiting_on_person(row):
             raise ToolError("no: waiting on a person, they must answer via decide")
         target = self._work_actor(to, board)

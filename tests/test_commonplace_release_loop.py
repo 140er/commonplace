@@ -4,6 +4,7 @@ import pytest
 
 from commonplace import sessions
 from commonplace.extensions import ToolError
+from commonplace.policy import Policy
 from commonplace.projects.types import SEAT_CLIENT
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_board_authority import fresh as fresh
@@ -40,9 +41,9 @@ def appoint_elsewhere(hub, fresh, coordinator, change):
         )
 
 
-def refuse(work, number, call):
+def refuse(work, number, call, match=None):
     before = snapshot(work, number)
-    with pytest.raises(ToolError):
+    with pytest.raises(ToolError, match=match):
         call()
     assert snapshot(work, number) == before
 
@@ -221,7 +222,12 @@ def test_owner_cannot_close_an_unreleased_card(hub, fresh, coordinator):
     edit(fresh.owner, number, status="todo", assignee=None)
     version = raw(fresh.owner, number)["version"]
     refuse(
-        fresh.owner, number, lambda: fresh.owner.task_update(number, status="done", version=version)
+        fresh.owner,
+        number,
+        lambda: fresh.owner.task_update(number, status="done", version=version),
+        match="needs parent or workspace owner release"
+        if coordinator
+        else "release this card before closing it",
     )
 
 
@@ -238,3 +244,142 @@ def test_owner_move_does_not_release_with_a_live_coordinator(hub, fresh):
     refuse(
         fresh.owner, number, lambda: fresh.owner.task_update(number, status="todo", version=version)
     )
+
+
+def member_cookie(hub, fresh):
+    hub.db.add_member(
+        fresh.workspace, hub.db.create_user("web@example.test"), "member", actor=fresh.user
+    )
+    link = sessions.create_login_link(hub.db, "web@example.test", fresh.workspace)
+    return {"Cookie": f"{sessions.COOKIE}={sessions.redeem_login_link(hub.db, link)}"}
+
+
+def reserved_for_agent(hub, fresh, kind):
+    if kind == "released":
+        creator, _, number = released(hub, fresh)
+        creator.work.task_handoff(number, fresh.connect("holder").principal.actor, NOTE)
+        return number
+    author = fresh.connect("author")
+    number = author.work.task_add(board="work", title="Ordinary work")["number"]
+    assert author.work.task_take_next(task=number)["status"] == "doing"
+    author.work.task_handoff(number, fresh.connect("holder").principal.actor, NOTE)
+    assert raw(fresh.owner, number)["status"] == "todo"
+    return number
+
+
+MEMBER_MOVES = {
+    "take-over": ("PATCH", "", {"status": "doing"}),
+    "drop": ("PATCH", "", {"status": "backlog"}),
+    "handoff-anyone": ("POST", "/handoff", {"to": "anyone", "note": NOTE}),
+}
+
+
+@pytest.mark.parametrize("kind", ["released", "ordinary"])
+@pytest.mark.parametrize("move", sorted(MEMBER_MOVES))
+def test_member_web_session_cannot_move_another_reservation(hub, fresh, kind, move):
+    number = reserved_for_agent(hub, fresh, kind)
+    cookie = member_cookie(hub, fresh)
+    method, suffix, body = MEMBER_MOVES[move]
+    before = snapshot(fresh.owner, number)
+    status, reply = api(
+        hub,
+        cookie,
+        method,
+        f"/api/cards/{number}{suffix}",
+        {**body, "version": before[0]["version"]},
+    )
+    assert status == 403, reply
+    assert snapshot(fresh.owner, number) == before
+
+
+@pytest.mark.parametrize("move", ["take-over", "drop", "handoff-anyone"])
+def test_member_service_cannot_move_another_reservation(hub, fresh, move):
+    number = reserved_for_agent(hub, fresh, "released")
+    member = member_session(hub, fresh)
+    version = raw(fresh.owner, number)["version"]
+    calls = {
+        "take-over": lambda: member.task_update(number, status="doing", version=version),
+        "drop": lambda: member.task_update(number, status="backlog", version=version),
+        "handoff-anyone": lambda: member.task_handoff(number, "anyone", NOTE, version=version),
+    }
+    refuse(fresh.owner, number, calls[move])
+
+
+@pytest.mark.parametrize("move", ["take-over", "drop", "handoff-anyone"])
+def test_owner_web_session_moves_another_reservation(hub, fresh, move):
+    number = reserved_for_agent(hub, fresh, "released")
+    method, suffix, body = MEMBER_MOVES[move]
+    version = raw(fresh.owner, number)["version"]
+    status, reply = api(
+        hub, fresh.cookie, method, f"/api/cards/{number}{suffix}", {**body, "version": version}
+    )
+    assert status == 200, reply
+    assert reply["assignee"] in (None, f"user:{fresh.user}")
+
+
+def test_owner_cannot_close_an_unrestricted_reserved_card(hub, fresh):
+    number = reserved_for_agent(hub, fresh, "ordinary")
+    version = raw(fresh.owner, number)["version"]
+    refuse(
+        fresh.owner, number, lambda: fresh.owner.task_update(number, status="done", version=version)
+    )
+
+
+def test_recorded_release_lapses_when_the_approver_is_revoked(hub, fresh):
+    creator, coordinator, number = released(hub, fresh)
+    seat = fresh.connect("other-seat", trust="trusted")
+    creator.work.task_handoff(number, seat.principal.actor, NOTE)
+    fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
+    hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
+    assert fresh.owner.task_show(number).get("awaiting_release") is True
+    refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+
+
+def test_recorded_release_by_a_creator_descendant_is_not_authority(hub, fresh):
+    creator, number = waiting_card(fresh)
+    descendant = fresh.connect("descendant", parent=creator.id, trust="trusted")
+    seat = fresh.connect("other-seat", trust="trusted")
+    recorded_marker(hub, fresh, number, descendant)
+    edit(fresh.owner, number, assignee=seat.principal.actor)
+    refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+
+
+def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
+    number = reserved_for_agent(hub, fresh, "released")
+    other_user = hub.db.create_user("other-owner@example.test")
+    other_ws = hub.db.create_workspace("other-workspace", other_user)
+    _, token = hub.db.create_token(
+        name="coordinator",
+        client="generic",
+        user_ref=other_user,
+        workspace_ref=other_ws,
+        policy=Policy.build(
+            profile="standard",
+            scopes=["memory:read", "memory:write"],
+            read_wings=["shared"],
+            write_wing="shared",
+            trust="trusted",
+        ),
+        actor=other_user,
+    )
+    twin = service(hub, hub.db.authenticate_token(token))
+    version = raw(fresh.owner, number)["version"]
+    refuse(fresh.owner, number, lambda: twin.task_take_next(task=number))
+    refuse(fresh.owner, number, lambda: twin.task_update(number, status="backlog", version=version))
+
+
+def test_member_web_session_cannot_drop_work_another_agent_holds(hub, fresh):
+    number = reserved_for_agent(hub, fresh, "ordinary")
+    holder = fresh.connect("worker")
+    edit(fresh.owner, number, status="doing", assignee=holder.principal.actor)
+    cookie = member_cookie(hub, fresh)
+    before = snapshot(fresh.owner, number)
+    status, reply = api(
+        hub,
+        cookie,
+        "PATCH",
+        f"/api/cards/{number}",
+        {"status": "backlog", "version": before[0]["version"]},
+    )
+    assert status == 403, reply
+    assert snapshot(fresh.owner, number) == before
