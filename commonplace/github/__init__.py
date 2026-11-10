@@ -980,22 +980,10 @@ class GitHub:
             (int(not (revoked and ok)), uid),
         )
         life = self.store.lifecycle(conn, uid)
-        if (
-            deleting
-            and not life["active_exchanges"]
-            and not life["remote_work"]
-            and not self._holds_record(conn, uid)
-        ):
+        if deleting and not life["active_exchanges"] and not life["remote_work"]:
             self.release_owner(conn, uid)
         if marked:
             self._settle_exchange(conn, uid)
-
-    def _holds_record(self, conn, uid):
-        # Keys outlive every record: the sweep must still decrypt a candidate to revoke it.
-        return (
-            conn.execute("SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)).fetchone()
-            is not None
-        )
 
     def release_owner(self, conn, uid):
         conn.execute("DELETE FROM user_identities WHERE provider='github' AND user_id=?", (uid,))
@@ -1027,7 +1015,13 @@ class GitHub:
             ).fetchone()
         ):
             conn.execute("UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,))
-            if life["deleting"] and not self._holds_record(conn, uid):
+            # Keys outlive every record: the sweep must still decrypt a lapsed candidate to revoke it.
+            if (
+                life["deleting"]
+                and not conn.execute(
+                    "SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)
+                ).fetchone()
+            ):
                 self.release_owner(conn, uid)
 
     def recover(self):
