@@ -1,8 +1,8 @@
 """Guarded passive admission over actual pinned Paramiko socketpairs only.
 
 All custody, pins, receipts, scopes and cache bytes are synthetic. No TCP, LAN,
-OS cache, external provider, deployment, review or gate. Parent runs the tests;
-the implementation worker runs only static checks and normal commit hooks.
+OS cache, external provider, deployment, review or gate. The integration maintainer runs the tests;
+the component author runs only static checks and normal commit hooks.
 """
 
 import json

@@ -1,6 +1,6 @@
 """Authenticated SSH admission, guarded stores and synthetic socketpairs only.
 
-Parent executes this suite. The worker authors it and runs lint/syntax only.
+The integration maintainer runs this suite; its author runs lint/syntax only.
 No LAN, listeners, device keys, model calls or independently granted authority.
 """
 
