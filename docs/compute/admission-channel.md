@@ -1,14 +1,14 @@
 # Authenticated helper admission round-trip implementation
 
-Implemented in source9ea079d908005e3cd65ce448d87f68fd322b30bb, integrated2641cc18.
+The authenticated helper admission path uses explicit trusted configuration.
 Trusted WorkspaceExecutionConfig.admission_mode must explicitly equal
 `controller-ssh-permit-v1`; the helper must independently select the same mode.
 The mode enters Store._binding and therefore the exact approval digest. Local
 leases still cover only LOCAL_DOMAINS; actual remote ordering uses the separate
 SSH exchange, never an added lease flag. Unconfigured execution stays disabled.
-Initial guarded64checks passed after the parent corrected a fixture control-frame
-injector that misclassified subsequent encrypted SSH packets. This is component
-verification, not independent review, provisioning or a release verdict.
+The initial guarded selection passed 64 checks after a fixture control-frame
+injector was corrected to distinguish subsequent encrypted SSH packets. This is
+component verification, not independent review, provisioning or a release verdict.
 
 Controller gateway_admissions and the helper replay journal use additive schema
 migrations preserving earlier consumed identities. The controller records the
@@ -19,13 +19,13 @@ Passive cache collection uses its own purpose-bound admission, documented
 in passive-admission.md. A local-only lease without that adapter grants no
 collection authority.
 
-The frozen implementation brief follows for traceability.
+## Components and integration requirements
 
-Next builder owns compute/protocol.py, transport.py, executor.py and narrowly
-needed fence.py / __init__.py lifecycle configuration, plus new
- tests/test_compute_admission.py and necessary isolated SSH fixture updates.
-Do not edit discovery.py or the active discovery_store/service/routes/transport
-builder files. Parent owns shared docs, UI and grouped checks.
+The admission path spans compute/protocol.py, transport.py, executor.py,
+fence.py and __init__.py lifecycle configuration. Its tests include
+ tests/test_compute_admission.py and isolated SSH fixtures. Changes must preserve
+interfaces to discovery.py and discovery_store/service/routes/transport, and keep
+shared documentation, UI and focused integration checks consistent.
 
 Close gateway_admission_unintegrated using the existing authenticated controller
 SSH helper channel. No new HTTP listener, token/identity registry, private-key
@@ -72,5 +72,6 @@ private directories explicit. No LAN/device/operator-secret access. Prove wrong
 pins before auth, unknown modes deny, missing challenge/permit, replay/tamper/
 expired/timeouts, no network under authority lock, no duplicate admission/effect
 on restart/lost ack, and that default/unintegrated deployments remain disabled.
-Parent runs test suites; child quick lint/syntax/diff + normal hooks only. Return
-actual checks/limitations and commit. No review/gate/deployment claim.
+Run focused tests alongside syntax/lint/diff checks and normal commit hooks.
+Record actual checks and limitations; do not treat them as independent review,
+release approval or deployment evidence.
