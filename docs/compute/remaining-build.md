@@ -1,13 +1,15 @@
-# Remaining Compute integration ownership
+# Compute integration requirements
 
-2026-11-09. Continue implementation; no release/review approval.
+2026-11-09. Requirements for authority fencing and bounded passive inventory;
+implementation checks do not establish release or review approval.
 
 ## Participating authority fence and execution lifecycle
 
-The execution-component implementer owns commonplace/compute/fence.py, executor.py, control.py, __init__.py,
-and narrowly needed central control_db.py / boards/store.py / credentials.py
-mutation integration plus new tests/test_compute_fence.py. Do not edit protocol,
-transport, scopes, discovery or UI. The integration maintainer owns shared docs and grouped checks.
+The execution and authority-fence components are commonplace/compute/fence.py,
+executor.py, control.py and __init__.py, with central mutation integration in
+control_db.py / boards/store.py / credentials.py and tests/test_compute_fence.py.
+Preserve protocol, transport, scopes, discovery and UI interfaces; keep shared
+documentation and focused integration checks consistent.
 
 Replace the abstract-only production integration gap with a concrete, bounded,
 cross-process local authority fence and actual central mutation participation.
@@ -43,10 +45,11 @@ other concrete implementation rather than returning an abstract-only scaffold.
 
 ## Bounded passive gateway inventory
 
-A separate component implementer owns new commonplace/compute/discovery.py and narrowly needed
-protocol.py helper support plus tests/test_compute_discovery.py. No control Store,
-executor/fence, custody, transport, routes or UI edits. The integration maintainer integrates controller
-persistence and public discovery surface after this component is tested.
+The passive inventory components are commonplace/compute/discovery.py, typed
+protocol.py helper support and tests/test_compute_discovery.py. Changes must
+preserve control Store, executor/fence, custody, transport, routes and UI interfaces.
+Controller persistence and the public discovery surface must remain consistent
+with the tested collector contract.
 
 Implement actual bounded passive-cache parsing and collection with exact existing
 DiscoveryContext/NetworkScope/DiscoveryLimits. Trusted injected cache suppliers

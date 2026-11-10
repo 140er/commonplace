@@ -585,7 +585,7 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 ### Privacy scanner timing checks
 
-- Large-input and many-delimiter near-miss correctness checks run in the behaviour suite without measuring time.
+- Large-input and delimiter-heavy near-miss correctness checks run in the behaviour suite without measuring time.
 
 - Each input also retains a separate `timing`-marked check of the 20 ms average scan budget over 20 iterations.
 
@@ -1154,11 +1154,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | M | A non-person start within 24 h of the last start is refused | `commonplace/runner/jobs.py:236-243` |
 | M | Started jobs hold machine in-flight capacity and per-machine project exclusion while their card remains doing with that machine's worker as assignee; failed/cancelled jobs and cards no longer doing or reassigned release capacity, irrespective of elapsed time | `commonplace/runner/jobs.py:lease` |
 | M | Hourly start-rate limits, the 24 h started_recently refusal and the separate 3600 s orchestrator admission hold remain unchanged | `commonplace/runner/jobs.py:_hourly,create_in`, `commonplace/orch/runner_bridge.py:_cap_count` |
-| M | Agent launch timeout 2–60 s; a timed-out launch is `uncertain` and never re-queued | `commonplace/runner/agent.py:127,333-336` |
+| M | T3 launch timeout 2–60 s; a timed-out launch is `uncertain` and never re-queued | `commonplace/runner/agent.py:127,333-336` |
 | M | Runner hub timeout 15 s | `commonplace/runner/agent.py:247` |
 | M | Machine queue limit 8 queued jobs | `commonplace/runner/jobs.py:16` |
 | M | `request_key` at most 128 characters | `commonplace/runner/tools.py:92,157` |
-| M | Agent launch message at most 120,000 characters | Agent-launch MCP schema |
+| M | T3 launch message at most 120,000 characters | T3 MCP launch schema |
 | T | A resume is one call; zero duplicate jobs after a lost acknowledgement | acceptance tests |
 | T | Config at most 128 KiB, at most 16 roles, a prompt at most 32 KiB | `commonplace/orch/schema.py` |
 | T | Per board at most 8 experiments and 20 open proposals, at most 5 per principal | `commonplace/orch/store.py` |
@@ -1581,7 +1581,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - **D2 launch shape.**
 
-  - Whether the agent runtime accepts `modelSelection` at runtime is unverified; when it is given, effort comes from the runtime defaults.
+  - Whether T3 accepts `modelSelection` at runtime is unverified; when it is given, effort comes from T3's defaults.
 
 - **D3 thread-list keys.**
 
