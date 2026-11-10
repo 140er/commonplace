@@ -222,6 +222,10 @@ connection last-used timestamps, progress counters and display text are excluded
 Real heartbeats renew claim_until, and sign-ins/new cards insert rows, so they can
 still advance the epoch. In-flight attempts re-read exact current authority and
 active custody through _fresh instead of comparing the coordinator-wide epoch.
+Task snapshots exclude the renewable claim_until, so a holder's heartbeat or
+comment on the bound card preserves agent-bound discovery evidence. Assignee,
+status and the canonical claim_expired_at marker remain bound. Older bindings
+compare without claim_until while preserving original consent and permit bytes.
 Permits retain the request epoch; session/connection/membership/consent/task/origin
 release or credential revocation still denies effects and publication. Exact legacy
 guards are migrated under the coordinator; unknown guards still fail closed. These local domains exclude gateway_admission. Explicit trusted

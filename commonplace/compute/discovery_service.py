@@ -33,7 +33,7 @@ from pathlib import Path
 
 from commonplace import sessions
 
-from .control import StoreError, _digest
+from .control import StoreError, _digest, _same_binding
 from .credentials import CredentialBinding, CredentialError, CredentialStore
 from .discovery import (
     MAX_CACHE_AGE_SECONDS,
@@ -418,7 +418,7 @@ class DiscoveryService:
         _, scope, _, outer, authority = self.store._scope(control, current, row["scope_id"])
         sources = tuple(json.loads(row["intake"])["sources"])
         binding = self._binding(conn, scope, outer, authority, sources)
-        if canonical(binding).decode() != row["binding"]:
+        if not _same_binding(binding, json.loads(row["binding"])):
             raise StoreError("authority_changed", 409)
         if not publishing and (
             row["cancel_requested"]

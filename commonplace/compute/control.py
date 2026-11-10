@@ -228,6 +228,20 @@ def _document(binding):
     return result
 
 
+def _same_binding(fresh, stored):
+    """Compare authority without the renewable timestamp in older snapshots.
+
+    Keep stored consent bytes/digests intact. Holder, status and the canonical
+    lease-expiry marker remain bound, as does every other authority field.
+    """
+    comparable = []
+    for binding in (fresh, stored):
+        authority = binding["authority"]
+        task = {k: v for k, v in authority["task"].items() if k != "claim_until"}
+        comparable.append({**binding, "authority": {**authority, "task": task}})
+    return canonical(comparable[0]) == canonical(comparable[1])
+
+
 class Store:
     """Lazy workspace storage; constructors perform no I/O or remote work."""
 
@@ -349,12 +363,11 @@ class Store:
                 service._write(b, row=task)
                 context = {"board": b["slug"], "board_id": b["id"], "wing": b["wing"]}
                 if task is not None:
-                    # Progress text/version is intentionally excluded. Only
-                    # permission-relevant canonical task state binds consent.
+                    # Progress text/version and the renewable claim_until are
+                    # excluded. Holder/status/claim_expired_at still bind consent.
                     fields = (
                         "status",
                         "assignee",
-                        "claim_until",
                         "claim_expired_at",
                         "agent_parent",
                         "proposal_status",
@@ -909,10 +922,10 @@ class Store:
                     row["id"],
                     row["request_id"],
                 )
-                digest = hashlib.sha256(canonical(fresh)).hexdigest()
+                digest = hashlib.sha256(canonical(stored)).hexdigest()
                 if not all(
                     hmac.compare_digest(digest, value) for value in (row["digest"], expected_digest)
-                ) or canonical(stored) != canonical(fresh):
+                ) or not _same_binding(fresh, stored):
                     raise StoreError("conflict", 409)
             except (ControlError, ProtocolDenied, StoreError):
                 raise StoreError("conflict", 409) from None

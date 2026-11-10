@@ -7,10 +7,12 @@ that UID and filesystem rollback are outside this boundary.
 
 PARTICIPATION maps actual central seams to guarded tables. Persistent triggers
 call a connection-local function which requires the coordinator and advances a
-FULL-synchronous epoch *before* the authority write. A failed/rolled-back write
-may advance the epoch: conservative invalidation is intentional. Legacy/raw
-connections have no function and cannot mutate guarded tables, including when
-an old prepared statement is invalidated by the new schema.
+FULL-synchronous epoch *before* the authority write. Failed/rolled-back writes
+may also advance it. The epoch orders local operations; in-flight attempts
+re-read current scoped authority instead of comparing epochs. Legacy/raw
+connections have no function and cannot insert/delete guarded rows or update
+guarded columns, including after prepared-statement schema invalidation.
+Updates limited to unguarded bookkeeping columns remain allowed.
 
 Custody keeps trusted_schema=OFF. Its guards unconditionally refuse writes;
 the participating transaction removes and reinstalls them inside the same
@@ -166,8 +168,9 @@ def _guards(domain, identity, *, legacy=False):
     for table in PARTICIPATION[domain][1]:
         for operation in ("INSERT", "UPDATE", "DELETE"):
             name = f"{_PREFIX}{table}_{operation.lower()}"
-            # Stage/result/audit writes are deliberately outside this list.
-            # Consent changes invalidate permits; progress bookkeeping does not.
+            # Guarded writes participate in local ordering; attempts re-read
+            # current consent/authority at their boundaries. Stage/result/audit
+            # writes and unguarded progress updates do not advance the epoch.
             verb = operation
             if operation == "UPDATE" and table in _UPDATE_COLUMNS:
                 if not legacy or table == "executions":

@@ -34,7 +34,7 @@ from pathlib import Path
 from commonplace import redact, sessions
 from commonplace.control_db import ControlError
 
-from .control import StoreError, _digest
+from .control import StoreError, _digest, _same_binding
 from .credentials import (
     CredentialBinding,
     CredentialError,
@@ -374,8 +374,8 @@ class ExecutionService:
             row["request_id"],
         )
         self.store._authority(approver, fresh["authority"]["board"], fresh["task_number"])
-        if canonical(fresh) != canonical(stored) or not hmac.compare_digest(
-            hashlib.sha256(canonical(fresh)).hexdigest(), row["digest"]
+        if not _same_binding(fresh, stored) or not hmac.compare_digest(
+            hashlib.sha256(canonical(stored)).hexdigest(), row["digest"]
         ):
             raise StoreError("authority_changed", 409)
         node, nm, gateway, gm = self.store._node(conn, origin, row["node_id"])

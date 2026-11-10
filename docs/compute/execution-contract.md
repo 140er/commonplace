@@ -59,6 +59,12 @@ withholds publication.
 The coordinator-wide epoch is not compared with the claimed epoch: real agent
 heartbeats renew claim leases, and sign-ins/new cards insert rows that can advance
 it without revoking this attempt. Narrowed UPDATE guards remain installed.
+Task snapshots bind assignee, status and the canonical `claim_expired_at` marker,
+excluding the renewable `claim_until`. A holder's heartbeat or comment on the
+bound card preserves agent-bound discovery dispatch and observations. A holder
+change, status change or recorded lease expiry still denies. Older immutable
+bindings compare without `claim_until`, retaining their original consent digests,
+attempts and permits through upgrade.
 Permits and their lookup retain the request's epoch. Current-fence exclusion and
 checks for writes during a single fenced operation remain intact.
 
