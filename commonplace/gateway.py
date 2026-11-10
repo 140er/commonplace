@@ -108,6 +108,7 @@ def _render_scoped_cli_search(result, args):
             metric=result.get("distance_metric", "cosine"),
             facts=result.get("facts", []),
             vector_disabled=bool(result.get("vector_disabled")),
+            flat=True,
         ),
         "results": [],
     }

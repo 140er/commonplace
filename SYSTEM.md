@@ -1705,8 +1705,11 @@ private scope; literal-wing policies keep their existing tool visibility.
 For principals without every-wing access, CLI-compatible search acquires structured
 hits and renders only after the same drawer gate as structured search: room and
 provenance checks; body text is not scanned. This applies with a literal wing and
-with no wing. Both CLI paths use the same pure formatter. Restricted CLI responses
-contain only query, CLI text, an empty results array, optional searched wings and
+with no wing. Both CLI paths use the same pure formatter. The gateway explicitly
+renders flat rows, so import-authorization metadata cannot replace a
+readable row's wing, room or source; the owner renderer retains its metadata mode.
+Restricted CLI responses contain only query, CLI text, an empty results array,
+optional searched wings and
 non-empty facts; structured search also omits acquisition counts and truncation
 flags that could include hidden candidates. Every-wing policies retain those
 diagnostics and their existing CLI output.
@@ -1715,6 +1718,11 @@ Content placed in an ordinary shared room is visible on every route. Body text
 and arbitrary provenance labels are not scanned for private words or fingerprinted;
 recognized protected references in source_file, source_path and media path/title
 aliases are still checked.
+
+Provenance containing control or format characters (for example a tab or zero-width
+space) is omitted even for ordinary paths. This remains fail-closed because hidden
+or encoded characters can make reference interpretation ambiguous; readable drawer
+text is retained without rewriting the path to guess its meaning.
 
 Unprojected whole-palace operations remain unavailable to members: mesh estate,
 duplicate detection, checkpoint, source-wide deletion, tunnel/hallway deletion,

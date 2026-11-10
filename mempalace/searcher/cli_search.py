@@ -240,10 +240,12 @@ def render_cli_search(
     metric="cosine",
     facts=(),
     vector_disabled=False,
+    flat=False,
 ):
     """Pure canonical CLI formatting over header inputs and authorized hits.
 
-    Local CLI hits carry metadata; gateway hits are flattened structured rows.
+    Local CLI hits carry metadata; the gateway explicitly selects flat rows,
+    whose metadata may contain unrelated import authorization information.
     Authorization must finish before calling this formatter.
     """
     from io import StringIO
@@ -282,9 +284,9 @@ def render_cli_search(
         return output.getvalue()
 
     for i, hit in enumerate(hits, 1):
-        meta = hit.get("metadata", hit)
+        meta = hit if flat else hit.get("metadata", hit)
         source = meta.get("source_file", "?")
-        if "metadata" not in hit and not vector_disabled:
+        if (flat or "metadata" not in hit) and not vector_disabled:
             source = hit.get("source_path", source)
         emit(f"  [{i}] {meta.get('wing', '?')} / {meta.get('room', '?')}")
         emit(f"      Source: {Path(source if source is not None else '?').name}")

@@ -5,6 +5,46 @@ import pytest
 from mempalace.searcher import render_cli_search
 
 
+@pytest.mark.parametrize("vector_disabled", [False, True])
+def test_gateway_flat_row_ignores_unrelated_metadata(vector_disabled):
+    from commonplace.gateway import _render_scoped_cli_search
+
+    row = {
+        "wing": "private_chats",
+        "room": "thr_0123456789abcdef",
+        "source_file": "right.md",
+        "source_path": "/notes/right.md",
+        "text": "Imported words",
+        "metadata": {"source_thread": "thr_0123456789abcdef", "import_view_sha256": "digest"},
+    }
+    result = {"query": "Imported", "results": [row], "vector_disabled": vector_disabled}
+    output = _render_scoped_cli_search(result, {"query": "Imported"})["cli_output"]
+    expected = """
+============================================================
+  Results for: "Imported"
+============================================================
+
+  [1] private_chats / thr_0123456789abcdef
+      Source: right.md
+      Match:  bm25=0.0  (lexical candidate)
+
+      Imported words
+
+  --------------------------------------------------------
+
+"""
+    if vector_disabled:
+        expected = (
+            "\n  NOTICE: vector search disabled — HNSW index has diverged from SQLite.\n"
+            "          Showing BM25-only results. Run `mempalace repair` to restore vector search.\n\n"
+            + expected.replace("\n=", "=", 1).replace("(lexical candidate)", "(vector disabled)")
+        )
+    assert output == expected, "Flat row metadata replaced the authorized location"
+    assert (
+        render_cli_search("Imported", [row], flat=True, vector_disabled=vector_disabled) == expected
+    )
+
+
 def test_canonical_cli_hit_golden():
     flat = {
         "wing": "shared",

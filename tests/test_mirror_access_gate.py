@@ -230,6 +230,39 @@ def test_restricted_search_omits_acquisition_diagnostics(world):
     )
 
 
+@pytest.mark.parametrize(
+    ("source_path", "visible"),
+    [
+        ("/home/x/tab\there/note.md", False),
+        ("/home/x/zw\u200bspace/note.md", False),
+        ("/home/x/ordinary/note.md", True),
+        ("/home/x/ordinary%20space/note.md", True),
+    ],
+    ids=["tab", "zero-width", "plain", "encoded-space"],
+)
+def test_ordinary_source_path_keeps_control_character_refusal(world, source_path, visible):
+    principal = replace(
+        world.principal,
+        policy=replace(world.principal.policy, scopes=("memory:read",), read_wings=("shared",)),
+    )
+    payload = {
+        "results": [
+            {
+                "wing": "shared",
+                "room": "notes",
+                "text": "Ordinary words",
+                "source_file": "note.md",
+                "source_path": source_path,
+            }
+        ]
+    }
+    row = gate(world.gateway, principal, "search", payload)["results"][0]
+    assert row["text"] == "Ordinary words" and row["source_file"] == "note.md"
+    assert ("source_path" in row) is visible
+    if visible:
+        assert row["source_path"] == source_path
+
+
 @pytest.mark.parametrize("value", [None, "unexpected words", 42, True])
 @pytest.mark.parametrize("rule", ["search", "drawer_read", "read_wing"])
 def test_odd_result_fails_closed(world, value, rule):

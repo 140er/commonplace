@@ -626,12 +626,27 @@ def test_cli_compatible_wing_union_never_prints_private_drawer(monkeypatch, conf
         workspace_id="fixture-workspace",
         policy=Policy.build(profile="full", scopes=["memory:read"], read_wings=["public"]),
     )
+    protected_room = "thr_0123456789abcdef"
+    col.add(
+        ids=["protected-public-needle"],
+        documents=["ZXQ739251 PRIVATE_SECRET"],
+        embeddings=[[0.0, 0.0]],
+        metadatas=[{"wing": "public", "room": protected_room}],
+    )
     acquired = mediator._fan_out_search(member, "mempalace_search", args)
+    assert any("PUBLIC_NEEDLE" in row["text"] for row in acquired["results"])
+    assert any(
+        "PRIVATE_SECRET" in row["text"]
+        and row["wing"] == "public"
+        and row["room"] == protected_room
+        for row in acquired["results"]
+    ), "Protected public-room drawer never reached the gate"
     response, _ = mediator._gate_response(
         member, "mempalace_search", "search", 1, _tool_response(1, acquired), cli_args=args
     )
     gated = _tool_result(response)
-    assert "PUBLIC_NEEDLE" in gated["cli_output"] and "PRIVATE_SECRET" not in gated["cli_output"]
+    assert "PUBLIC_NEEDLE" in gated["cli_output"]
+    assert "PRIVATE_SECRET" not in gated["cli_output"], "Protected public-room drawer leaked"
     assert gated["results"] == []
 
 

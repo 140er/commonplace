@@ -119,6 +119,44 @@ def imported(w, text, token=None, source="claude-code"):
     return post(w, "/api/import", payload(text, source), token)
 
 
+@pytest.mark.parametrize("wing", [None, "private_chats"])
+def test_import_reader_cli_preserves_imported_location(world, wing):
+    w = world
+    text = words("clirowlocation")
+    status, connection = post(
+        w,
+        "/api/connections",
+        {
+            "name": "synthetic-import-reader",
+            "client": "generic",
+            "import": True,
+            "import_read": True,
+        },
+    )
+    assert status == 201
+    token = connection["token"]
+    principal = w.gateway.authenticate("Bearer " + token)
+    assert principal.policy.has_scope("memory:import:read")
+    assert not principal.policy.has_scope("private:read")
+    status, _ = imported(w, text, token)
+    assert status == 200
+    args = {"query": text.split()[0], **({"wing": wing} if wing else {})}
+    status, reply = rpc(w, token, "mempalace_search", args)
+    assert status == 200
+    structured = tool_value(reply)
+    row = next(r for r in structured["results"] if r["drawer_id"].startswith("imported:"))
+    assert row["wing"] == "private_chats" and row["room"].startswith("thr_")
+    assert args["query"] in row["text"]
+    status, reply = rpc(w, token, "mempalace_search", {**args, "cli_compatible": True})
+    assert status == 200
+    result = tool_value(reply)
+    output = result["cli_output"]
+    for line in row["text"].strip().split("\n"):
+        assert f"      {line}" in output, "Imported text changed in CLI output"
+    assert f"private_chats / {row['room']}" in output, "Allowed imported-row location is missing"
+    assert result["results"] == []
+
+
 def search(w, text):
     status, _, raw = w.client.request(
         "/api/memory/search?q=" + quote(text.split()[0]), cookie=w.cookie
