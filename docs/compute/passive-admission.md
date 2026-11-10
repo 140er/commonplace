@@ -16,9 +16,13 @@ created by collection.
 DiscoveryStore preserves immutable discovery_attempts/discovery_permits. Helper
 replay uses a separate passive namespace, preserving existing execution records.
 Controller and helper both reject replay, tampering, expired/reordered exchanges
-and unknown modes. Partial or lost responses after possible dispatch preserve
-uncertainty and capacity. Restart never automatically recollects. Scope ceilings
-remain permanently charged, including unused/cancelled allocations.
+and unknown modes. Partial or lost responses after durable permit issuance
+preserve uncertainty and capacity. Without that permit, the controller records a
+failed non-run with slot=0. A valid permit-bound final response settles the slot
+even after publication authority is lost, withholding observations in that case.
+Intake epoch changes do not replace the fresh authority check at admission.
+Restart never automatically recollects. Scope ceilings remain permanently
+charged, including unused/cancelled allocations.
 
 Default jobs reserve up to32 hosts/results over10 seconds and admit up to32
 observations per second. Intake still clamps those limits to the remaining scope

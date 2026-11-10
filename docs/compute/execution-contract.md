@@ -66,8 +66,8 @@ action, and records terminal/known with reason operator_settled and reserved=0.
 It works after worker restart, preserves the immutable attempt and never retries
 or republishes withheld output. It is not an HTTP route or owner-browser action.
 Notes belong in the private workspace journal and must contain no secrets.
- Expose cancel requested separately from confirmed pre-dispatch
-cancellation/observed exit. Finite concurrency/time/byte/output limits apply.
+Expose cancel requested separately from confirmed pre-dispatch cancellation or
+observed exit. Finite concurrency/time/byte/output limits apply.
 No locks may span network/model work. Do not claim Python force-stops a thread.
 
 Only the fixed compiled system.info.v1 operation may run. Store bounded redacted
