@@ -55,13 +55,6 @@ CREATE TABLE IF NOT EXISTS card_splits (
  state TEXT NOT NULL CHECK(state IN ('split','kept')),
  by TEXT NOT NULL, at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS chat_task_origins (
- actor TEXT NOT NULL,
- origin_key TEXT NOT NULL,
- request_digest TEXT NOT NULL,
- task_id INTEGER NOT NULL REFERENCES tasks(id),
- PRIMARY KEY(actor, origin_key)
-);
 """
 
 
