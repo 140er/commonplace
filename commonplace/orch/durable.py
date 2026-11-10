@@ -39,6 +39,11 @@ Checkpoint: derived from the journal, the jobs and the board, never stored: open
 classes ``held`` / ``expired`` / ``not_held_by_caller`` and the unstarted todo cards.
 ``resume`` additionally heartbeats the caller's own held cards; it never claims a card.
 
+Destinations: every step records its owning card, or a parked destination with the
+reason ``no_owning_card``. This is assigned on insert, before any result, including
+gate verdicts, next notes and job-derived results. Older steps migrate additively.
+Checkpoints expose each step's destination and a separate list of parked results.
+
 Clocks: every public function takes ``now`` (``"YYYY-MM-DDTHH:MM:SSZ"``); ``None`` means
 the current UTC time.
 """
@@ -130,6 +135,8 @@ SCHEMA_STATEMENTS = (
  code TEXT,
  detail TEXT,
  evidence TEXT,
+ destination_kind TEXT CHECK (destination_kind IN ('card','parked')),
+ destination_reason TEXT,
  job_id TEXT,
  created_epoch INTEGER NOT NULL,
  epoch INTEGER NOT NULL,
@@ -228,6 +235,38 @@ def ensure_schema(conn) -> None:
     """Create the durable tables (idempotent). Safe inside an open transaction."""
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")}
+    if {"destination_kind", "destination_reason"} <= columns and conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='orch_steps_destination'"
+    ).fetchone():
+        return
+    # A savepoint also works when a fenced start already holds BEGIN IMMEDIATE.
+    # Serialize the column probe, additive migration and trigger installation so
+    # concurrent first opens cannot see or commit a partially migrated schema.
+    conn.execute("SAVEPOINT orch_destinations_schema")
+    try:
+        conn.execute("UPDATE orch_steps SET updated_at=updated_at WHERE 0")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")}
+        for name, datatype in (
+            ("destination_kind", "TEXT CHECK (destination_kind IN ('card','parked'))"),
+            ("destination_reason", "TEXT"),
+        ):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE orch_steps ADD COLUMN {name} {datatype}")
+        assignment = (
+            "destination_kind=CASE WHEN card IS NULL THEN 'parked' ELSE 'card' END, "
+            "destination_reason=CASE WHEN card IS NULL THEN 'no_owning_card' ELSE NULL END"
+        )
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS orch_steps_destination AFTER INSERT ON orch_steps "
+            "BEGIN UPDATE orch_steps SET " + assignment + " WHERE id=NEW.id; END"
+        )
+        conn.execute("UPDATE orch_steps SET " + assignment + " WHERE destination_kind IS NULL")
+        conn.execute("RELEASE orch_destinations_schema")
+    except BaseException:
+        conn.execute("ROLLBACK TO orch_destinations_schema")
+        conn.execute("RELEASE orch_destinations_schema")
+        raise
 
 
 def _int(value, name, *, minimum=1):
@@ -424,6 +463,15 @@ def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now:
 
 def step_public(row) -> dict:
     data = dict(row)
+    destination_kind = data.pop("destination_kind")
+    destination_reason = data.pop("destination_reason")
+    data["destination"] = (
+        {"kind": "card", "board": data["board"], "card": data["card"]}
+        if destination_kind == "card"
+        else {"kind": "parked", "reason": destination_reason}
+        if destination_kind == "parked"
+        else None
+    )
     evidence = data.pop("evidence")
     data["evidence"] = json.loads(evidence) if evidence else None
     data["voided"] = data["voided_at"] is not None
@@ -1248,8 +1296,16 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
             (board, MAX_LIST),
         ).fetchall()
         misses = _misses(conn, board)
-    view = {"open": [], "in_doubt": [], "needs_person": [], "holds": [], "finished": []}
+    view = {
+        "open": [],
+        "in_doubt": [],
+        "needs_person": [],
+        "holds": [],
+        "finished": [],
+        "parked": [],
+    }
     next_note = None
+    next_step = None
     for row in steps:
         job_state = row["job_state"]
         data = dict(row)
@@ -1257,8 +1313,11 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         step = _derived(step_public(data), job_state)
         if step["voided"]:
             continue
+        if step["state"] in TERMINAL_STATES and (step["destination"] or {}).get("kind") == "parked":
+            view["parked"].append(step)
         if step["kind"] == "next":
             next_note = step["detail"]
+            next_step = step
             continue
         if step["state"] in OPEN_STATES:
             view["holds" if step["kind"] == "hold" else "open"].append(step)
@@ -1269,6 +1328,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
     for key in view:
         view[key] = view[key][-MAX_LIST:]
     view["finished"].reverse()
+    view["parked"].reverse()
     from commonplace.projects import orchestration, split
 
     inbox_note = {}
@@ -1297,6 +1357,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "restore_pending": bool(restore.flagged),
         **view,
         "next": next_note,
+        "next_step": next_step,
         "jobs": [dict(row) for row in job_rows],
         "gates": [_gate_public(row) for row in gates],
         "misses": misses,

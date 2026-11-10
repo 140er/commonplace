@@ -233,6 +233,17 @@ failed after commit is still found.
   (stored, never acted on).
 - **Gates.** `gate_pass`, `gate_fail`, `gate_error`, `gate_budget`; one gate
   per `(board, repo, PR, head)` across roles unless the owner voids it.
+- **Result destinations.** Each journal step records a `destination` before
+  its effect: `{kind: "card", board, card}` when it has an owning card,
+  otherwise `{kind: "parked", reason: "no_owning_card"}`. This covers journal
+  completions, gate verdicts, `next` notes and runner-start results derived
+  from their jobs. The checkpoint includes destinations on steps and a
+  bounded `parked` list of finished results, including `next` notes. `next_step`
+  exposes the full latest note and its destination alongside the existing `next`
+  text. A park
+  records the missing ownership explicitly; it requires owner follow-up and
+  does not dispatch a message. Existing journal rows gain destination metadata
+  on first open without changing their content, evidence, state or history.
 - **External effects** are never re-issued by the hub. Before any re-issue the
   resume protocol checks the truth source: merge → PR state and head; gate →
   the PR's `Reviewed head:` and `Verdict:` lines, else `needs_person`; runner
@@ -309,3 +320,8 @@ project limit; model or harness routing for non-runner roles and more than two
 model slots; non-T3 runner harnesses, other triggers and experiment triggers;
 lease-fenced card moves and early handoff transfer; an owner UI; evaluations and
 replay of recorded runs.
+
+Bounded repair ownership and deduplication, delivery of findings to live owning
+sessions, and admission based on reusable agent context/capacity remain pending.
+Recorded card destinations establish where a result belongs; they do not prove
+that a session received it or that an existing agent has capacity.

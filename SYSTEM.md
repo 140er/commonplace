@@ -556,6 +556,17 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - The journal records `intent → started → waiting → done | failed | in_doubt`.
 
+- Every journal step persists a result destination on insert: its immutable
+  owning card (`kind=card`, board and card number), or an explicit park
+  (`kind=parked`, `reason=no_owning_card`). This also covers immediate `next`
+  notes, gate verdicts and job-derived completions. Checkpoints expose each
+  destination and a bounded list of parked finished results. An additive,
+  atomic migration fills this metadata for existing steps without rewriting
+  their content, evidence, states or journal events. Destination metadata is
+  routing state, with no claim of session delivery. Repair identity/bounds,
+  live session ownership/delivery and reusable agent capacity remain pending;
+  none is inferred from historical runner launch success.
+
 - External effects (merge, gate, thread launch, card move) are never re-issued by the hub; a successor checks the truth source first, and an unproven effect becomes `needs_person`.
 
 - One gate per `(board, repo, PR, head)` across roles unless the owner voids it.

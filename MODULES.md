@@ -1228,6 +1228,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Lease snapshot failures log sanitized diagnostics without exception messages.
 
+  - Journal inserts persist a card destination or an explicit park reason before any result; checkpoints include parked finished results, including next notes. Older steps gain only additive destination metadata.
+
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
@@ -1253,6 +1255,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_orch_areas.py` covers area roundtrips, ordered topology errors, frozen experiments, owner boundaries and complete refusal snapshots through store, MCP, REST and local CLI.
 
   - The `tests/test_orch_` files listed in Paths and `tests/test_docs_obligations.py`; R22 in `tests/test_orch_checks.py` covers misplaced labels, missing files, accepted label forms and repository-root resolution.
+
+  - Destination regressions in `tests/test_orch_durable.py` cover journal, gate and job-derived results, owner checkpoint visibility and idempotent migration preserving existing history.
 
   - R1, R1b, R1d, R1e, R8b, R10a and R11e map to `tests/test_orch_acceptance.py`.
 

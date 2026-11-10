@@ -167,6 +167,116 @@ def lease(env, principal=None, role=ROLE, now=T0):
     return claim["epoch"], claim["token"]
 
 
+@pytest.mark.parametrize("card_bound", [False, True])
+@pytest.mark.parametrize("result", ["done", "failed", "next", "pass", "fail", "error", "budget"])
+def test_fleet_result_destination(env, card_bound, result):
+    """A result cannot disappear: its owning card or explicit park is persisted."""
+    ctx = env.ctx(env.a)
+    epoch, token = lease(env)
+    card = env.card() if card_bound else None
+    if result in ("pass", "fail", "error", "budget"):
+        durable.gate_open(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "result",
+            repo=REPO,
+            pr=7,
+            head=HEAD,
+            card=card,
+            now=at(1),
+        )
+        step = durable.gate_record(ctx, BOARD, ROLE, epoch, token, "result", result, now=at(2))[
+            "step"
+        ]
+    else:
+        step = durable.journal_intent(
+            ctx,
+            BOARD,
+            ROLE,
+            epoch,
+            token,
+            "result",
+            "next" if result == "next" else "thread",
+            card=card,
+            detail="Inspect the result.",
+            now=at(1),
+        )
+        if result != "next":
+            step = durable.journal_record(
+                ctx, BOARD, ROLE, epoch, token, "result", result, now=at(2)
+            )
+    expected = (
+        {"kind": "card", "board": BOARD, "card": card}
+        if card_bound
+        else {"kind": "parked", "reason": "no_owning_card"}
+    )
+    assert step.get("destination") == expected, "finished result has no recorded destination"
+    # A different principal, the owner, must be able to read the recorded route.
+    checkpoint = durable.checkpoint(env.ctx(env.owner), BOARD, ROLE, now=at(3))
+    if result != "next":
+        assert checkpoint["finished"][0]["destination"] == expected
+    else:
+        assert checkpoint["next_step"]["destination"] == expected
+    if not card_bound:
+        assert [step["step_key"] for step in checkpoint["parked"]] == ["result"]
+        assert checkpoint["parked"][0]["destination"] == expected
+    with env.runner_db() as conn:
+        row = conn.execute(
+            "SELECT destination_kind, destination_reason FROM orch_steps WHERE step_key='result'"
+        ).fetchone()
+    assert row["destination_kind"] == expected["kind"]
+    assert row["destination_reason"] == expected.get("reason")
+
+
+@pytest.mark.parametrize("job_state", ["started", "failed", "cancelled"])
+def test_fleet_runner_result_destination(env, job_state):
+    epoch, token = lease(env)
+    card = env.card()
+    job = "job_ffffffffffffffff"
+    _orch_job(env, job=job, card=card, role=ROLE, step_key="run", state=job_state)
+    _start_step(env, epoch=epoch, token=token, step_key="run", card=card, job=job)
+    checkpoint = durable.checkpoint(env.ctx(env.owner), BOARD, ROLE, now=at(6))
+    step = checkpoint["finished"][0]
+    assert step.get("destination") == {"kind": "card", "board": BOARD, "card": card}
+    # Checkpoint-derived completion does not need a resume write to have a destination.
+    with env.runner_db() as conn:
+        row = conn.execute("SELECT state, destination_kind FROM orch_steps").fetchone()
+    assert row["state"] == "waiting" and row["destination_kind"] == "card"
+
+
+def test_fleet_destination_migrates_old_steps_without_changing_history():
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        # The exact earlier table definition, with only the two new columns omitted.
+        old_schema = durable.SCHEMA.replace(
+            " destination_kind TEXT CHECK (destination_kind IN ('card','parked')),\n", ""
+        ).replace(" destination_reason TEXT,\n", "")
+        conn.executescript(old_schema)
+        assert "destination_kind" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")
+        }
+        for key, card in (("unbound", None), ("bound", 7)):
+            conn.execute(
+                "INSERT INTO orch_steps(board,role,step_key,kind,card,state,detail,created_epoch,"
+                "epoch,created_at,updated_at) VALUES (?,?,?,'thread',?,'done','verbatim',1,1,?,?)",
+                (BOARD, ROLE, key, card, T0, T0),
+            )
+        before = [dict(row) for row in conn.execute("SELECT * FROM orch_steps ORDER BY id")]
+        durable.ensure_schema(conn)
+        durable.ensure_schema(conn)
+        after = [dict(row) for row in conn.execute("SELECT * FROM orch_steps ORDER BY id")]
+        assert [{key: row[key] for key in before[0]} for row in after] == before
+        assert [row["destination_kind"] for row in after] == ["parked", "card"]
+        assert [row["destination_reason"] for row in after] == ["no_owning_card", None]
+        assert conn.execute("SELECT COUNT(*) FROM orch_journal").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------- R7
 
 
