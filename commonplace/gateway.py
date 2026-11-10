@@ -1673,6 +1673,11 @@ def _rest_tool(method, path):
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 3 and parts[:2] == ["api", "spaces"] and method == "GET":
         return "board_list"
+    if len(parts) == 4 and parts[:2] == ["api", "spaces"]:
+        return {
+            "cards": {"GET": "task_list", "POST": "task_add"},
+            "chat": {"GET": "space_read", "POST": "space_post"},
+        }.get(parts[3], {}).get(method)
     if parts == ["api", "boards"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":

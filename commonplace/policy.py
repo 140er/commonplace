@@ -236,6 +236,22 @@ def _workstation(name: str) -> bool:
     return bool(wing_spellings(name) & WORKSTATION_WINGS)
 
 
+# Space names for board tools: the same operation, so a connection that lists
+# either name is granted both and the alias can never widen what it may do.
+TOOL_ALIASES = {
+    "space_list": "board_list",
+    "space_add": "board_add",
+    "space_set": "board_set",
+    "space_own_wing": "board_own_wing",
+}
+
+
+def _with_aliases(names: frozenset) -> frozenset:
+    extra = {alias for alias, legacy in TOOL_ALIASES.items() if legacy in names}
+    extra |= {legacy for alias, legacy in TOOL_ALIASES.items() if alias in names}
+    return names | extra
+
+
 @dataclass(frozen=True)
 class Policy:
     scopes: tuple = ()
@@ -404,7 +420,7 @@ class Policy:
                 t.name for t in extensions.REGISTRY.values() if self.tools in t.profiles
             )
             return PROFILES.get(self.tools, frozenset()) | local
-        return frozenset(self.tools)
+        return _with_aliases(frozenset(self.tools))
 
     def tool_visible(self, name: str) -> bool:
         """Listed and callable. One answer for tools/list and tools/call."""

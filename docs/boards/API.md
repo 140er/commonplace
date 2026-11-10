@@ -20,6 +20,7 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | Tool | Arguments | Profiles |
 |---|---|---|
 | `board_list` | — | slim, standard, full |
+| `space_list` | — | slim, standard, full; same operation as `board_list` |
 | `task_list` | `board?`, `status?`, `mine?` | slim, standard, full |
 | `task_show` | `task` | slim, standard, full |
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo` \| `doing`), `assignee?`, `claim?` | slim, standard, full |
@@ -28,6 +29,9 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | `task_heartbeat` | `task` | slim, standard, full |
 | `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | slim, standard, full |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | all profiles; trusted tokens or signed-in users |
+| `space_add` | `slug`, `name?`, `wing?`, `repo?` | same operation and authority as `board_add` |
+| `space_set` | `space`, `coordinator` | same operation and authority as `board_set` |
+| `space_own_wing` | `space` | same operation and authority as `board_own_wing` |
 | `task_update` | `task`, `title?`, `body?`, `status?` (`backlog` \| `todo` \| `doing` \| `review` \| `done`), `before?`, `after?`, `link?`, `unlink?`, `lesson?`, `reason?` (review returns only), `person_reason?` (opening review only) | slim, standard, full |
 | `ask` | `question`, `options?`, `context?`, `board?`, `task?`, `person_reason?` | slim, standard, full |
 | `task_handoff` | `task`, `to`, `note`, `options?` | slim, standard, full |
@@ -702,8 +706,33 @@ PATCH/DELETE and item POST/PATCH/DELETE are 405 `method_not_allowed` with
 An Idempotency-Key or include_deleted query is rejected with 400
 `unsupported_idempotency` or `unsupported_include_deleted`.
 
-Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
-new-user migration and desktop synchronization are deferred.
+#### Space cards and chat
+
+`GET`/`POST /api/spaces/<slug>/cards` and `GET`/`POST /api/spaces/<slug>/chat` are
+adapters over the board card and chat operations of one exact Space. They run the
+same service calls as `/api/boards/<slug>/cards` and `/chat`, so card payloads,
+authority, verbatim chat and rules freshness are unchanged. Differences are the
+canonical vocabulary and identity: the slug must match an active, readable Space
+exactly (a repo reference or a sole visible board is not accepted; otherwise 404
+`space_not_found`); chat reads name the Space as `space` instead of `board`; a body
+`space` or `board` must equal the path slug; a body `rules_seq`, an unknown field or
+invalid JSON is 400 `invalid_arguments`; freshness comes only from
+`Commonplace-Rules-Seq`. Non-person callers must pass the `task_list`/`task_add`
+or `space_read`/`space_post` tool gate. Other methods are 405 with `Allow: GET, POST`
+and other subpaths are 404 `not_found`.
+
+#### MCP names
+
+`space_list`, `space_add`, `space_set` and `space_own_wing` run the `board_list`,
+`board_add`, `board_set` and `board_own_wing` operations with a `space` argument; the
+board names remain. `space_read` and `space_post` accept `space` or the legacy
+`board`; naming two different spaces, or none, is refused. A connection that lists
+either name of a pair is granted both, so an alias never widens authority. Scope,
+trust, owner and profile rules, rules freshness and legacy output are unchanged.
+
+Rename, archive, versions/retries/tombstones, settings and orchestrator adapters,
+the `space` argument on card tools, UI wording, new-user migration and desktop
+synchronization are deferred.
 
 Workspace owners can inspect members and connections through the separate
 [Admin GET API](../admin.md); board actions retain their existing authority.

@@ -246,6 +246,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
   - Public Space endpoint and error documentation alongside legacy board routes.
+  - `docs/spaces.md` and the API and contract tables document the Space routes, space-named tools and what is deferred.
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
@@ -568,6 +569,7 @@ Format (read by `commonplace orch docs-check`):
   - Synthetic legacy safety-stop cases and explicitly classified transcript-only fixture updates.
   - `tests/test_backup_online_processes.py` reproduces separate backup/gateway ancestry and preserves foreign-writer and paused-worker refusals using a synthetic `/proc`.
   - The canonical Space REST matrix and base-captured profile/tool schemas.
+  - `tests/test_spaces_adapters.py` covers the Space cards and chat adapters, the space-named MCP tools and alias authority; `tests/spaces_surfaces.json` adds exactly the four space tools and the `space` property of `space_read` and `space_post`.
 
   - Card339 regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
 
@@ -871,6 +873,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space REST aliases mapped to existing board tool authority.
+  - Space tool names (`space_list`, `space_add`, `space_set`, `space_own_wing`) resolve to the board tools through `policy.TOOL_ALIASES`; a connection that lists either name of a pair holds both, so an alias never widens authority.
+  - Space cards and chat routes (`/api/spaces/<slug>/cards` and `/chat`) map to the existing task and chat tool gates.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
@@ -905,6 +909,7 @@ Format (read by `commonplace orch docs-check`):
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
+  - The space-named tools keep each board tool's scope, trust, owner and profile rules; Space cards and chat routes pass the matching tool gate before any handler runs.
   - Gateway installation registers project reports without resolving workspace directories; the webhook worker recovers existing sources on its first scan and drives independent monotonic deadlines without adding authority or holding database locks during report HTTP.
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
@@ -1053,6 +1058,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space REST response projection and typed creation refusals.
+  - Space card and chat adapters over the board service, and the `space` argument for the chat and board-setting tools.
+  - Adapters resolve an exact active readable slug first (no repo reference or sole-board fallback); a body `space` or `board` must equal the path, a body `rules_seq` is refused, and chat reads name the Space as `space`. Card payloads, verbatim chat and legacy board routes are unchanged.
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
@@ -1274,6 +1281,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space create in the checked REST write inventory.
+  - Canonical Space card and chat posts and the `space_add`, `space_set` and `space_own_wing` tools in the checked write inventory.
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
@@ -1293,6 +1301,7 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
+  - The checked REST harness enrolls the Space card and chat posts with header-only freshness, and the AST write inventory covers the Space dispatch functions.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
 
