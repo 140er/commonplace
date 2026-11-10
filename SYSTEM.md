@@ -147,8 +147,10 @@ Script requester self-approval is denied by default, including a second session
 for the same user. Only trusted workspace startup configuration
 `allow_script_self_approval=True` permits it; dispatch rechecks that policy.
 Fixed read-only operations keep their existing same-owner approval policy.
-Taskless discovery scope context preserves JSON null rather than the string
-"None". Pre-claim denials and terminal/uncertain outcomes (including recovery
+Taskless discovery scopes remain unsupported: the NOT NULL task column rejects
+them before any metadata can persist, including the literal "None". Development
+installs include the Compute crypto/SSH dependencies so transport tests collect.
+Pre-claim denials and terminal/uncertain outcomes (including recovery
 and observed exit codes) enter the private audit journal in the same transaction;
 no output or exception text is included. Target execution reads uploads and
 staged inputs relative to held directory handles, verifies their approved digests

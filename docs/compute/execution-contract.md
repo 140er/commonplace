@@ -140,8 +140,11 @@ boolean, false by default. Script approval rejects the requester's user ID even
 from another session, and `_fresh` repeats the check before claim/dispatch. An
 operator may explicitly allow single-owner script workflows by setting it true;
 no request body can set policy. Fixed read-only operations retain existing
-same-owner approval behavior. Scope contexts encode a missing task as JSON null,
-distinct from every task ID; all other context dimensions remain mandatory.
+same-owner approval behavior. The pinned base cannot store taskless scopes: `scopes.task_number` is NOT NULL,
+so `create_scope(task_number=None)` raises IntegrityError before metadata is
+persisted. The reconcile correctly identified `str(None)` construction but its
+claim that the literal is stored was not reproducible. Scope creation is left
+unchanged; a synthetic regression asserts rejection and an empty scope table.
 
 Pre-claim security refusals write `execution.admission_denied` in the same
 transaction without granting admission or changing the refusal. Each refusal is
@@ -164,6 +167,11 @@ host qualification and actual confinement still require the separately provision
 disposable target; synthetic process spies do not establish that evidence.
 
 Regression selection for both pinned base and implementation:
-`pytest -q tests/test_compute_security_regressions.py tests/test_compute_scopes.py`.
+`pytest -q tests/test_compute_security_regressions.py tests/test_compute_scopes.py tests/test_compute_dependencies.py`.
 The IPv6 /125 endpoints, /127 and /128 tests are coverage additions; no scope
 normalization bug is assumed when those tests pass on both revisions.
+
+The `dev` extra and dev dependency group include both `cryptography>=42` and
+`paramiko>=5.1,<6`, matching the unchanged opt-in `compute` extra. This ensures
+normal `.[dev]` check installs collect the Compute SSH suites. The dependency
+regression reads pyproject.toml and requires every compute requirement in dev.

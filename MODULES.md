@@ -240,7 +240,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
-  - Compute security reconcile documents default-denied script self-approval, null task context, durable denial/outcome auditing and held-handle sealed execution snapshots in `docs/compute/execution-contract.md`.
+  - Compute security reconcile documents default-denied script self-approval, task-required scope storage, durable denial/outcome auditing and held-handle sealed execution snapshots in `docs/compute/execution-contract.md`.
   - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
   - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-adviser design decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel component ownership boundaries and isolated local-running instructions in `docs/compute/`.
   - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
@@ -336,7 +336,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Plain pytest excludes the `timing` marker from behavior checks; explicit timing selection remains available for serial informational measurements.
 
-  - The optional compute extra adds Paramiko >=5.1,<6 and cryptography without enabling remote access; uv.lock records its resolved dependency set.
+  - The optional compute extra adds Paramiko >=5.1,<6 and cryptography without enabling remote access; the dev extra and dev dependency group also include them so normal checks collect Compute SSH tests. `tests/test_compute_dependencies.py` guards extra inclusion; uv.lock records the resolved dependency set.
   - `uv sync --extra dev` reproduces the locked environment; `ruff check` and `ruff format --check` define style; the coverage threshold in `pyproject.toml` is the gate.
 
 - **How it fails:**
@@ -567,7 +567,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
-  - `tests/test_compute_security_regressions.py` covers script self-approval policy, null task scopes, durable refusal/outcome/recovery audits and rename-to-execute substitution with synthetic fixtures. IPv6 /127, /128 and endpoint normalization are covered in `tests/test_compute_scopes.py`.
+  - `tests/test_compute_security_regressions.py` covers script self-approval policy, taskless-scope storage refusal, durable refusal/outcome/recovery audits and rename-to-execute substitution with synthetic fixtures. IPv6 /127, /128 and endpoint normalization are covered in `tests/test_compute_scopes.py`.
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
   - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
@@ -1521,7 +1521,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Inventory reports current automatic executor availability without opening transport or custody. Approval explicitly authorizes automatic background execution over SSH; it is not a no-dispatch promise. Discovery cancellation shares the queued/claimed/dispatching/uncertain state predicate and distinguishes intent from confirmed termination.
 
-  - Script self-approval defaults to denied unless trusted workspace configuration explicitly allows it, rechecked at claim. Scope task context preserves null. Pre-claim security denials and terminal/uncertain/exit outcomes are audited durably without output or exception text.
+  - Script self-approval defaults to denied unless trusted workspace configuration explicitly allows it, rechecked at claim. Taskless scopes remain rejected by the NOT NULL task column. Pre-claim security denials and terminal/uncertain/exit outcomes are audited durably without output or exception text.
   - Script execution verifies bytes relative to held upload/job descriptors and binds sealed snapshots of code/inputs, so pathname replacement cannot change approved bytes.
   - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
   - Target claims are pruned only with a protected, parseable confirmed terminal result and recorded expiry more than300 seconds past; unknown, malformed, legacy and unfinished claims retain replay denial. Before claim creation, scratch requires16 available inodes/1MiB available space or returns sandbox_unavailable as an authenticated non-run. Iterative cleanup restores directory permissions, removes up to4096 entries with constant descriptor use/no depth cutoff and cannot replace observed results on I/O failure.

@@ -701,7 +701,7 @@ class Store:
                     gateway_id,
                     current.user_id,
                     agent.connection_id or current.actor,
-                    str(task_number) if task_number is not None else None,
+                    str(task_number),
                 ),
                 cidrs=cidrs,
                 interfaces=interfaces,

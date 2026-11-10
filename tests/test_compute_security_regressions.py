@@ -1,7 +1,6 @@
 """Acceptance reconcile regressions; synthetic stores/files and no device or LAN."""
 
 import hashlib
-import json
 import os
 import sqlite3
 import subprocess
@@ -83,16 +82,20 @@ def test_self_approval_policy_is_rechecked_before_claim(script_state):
     assert "execution.admission_denied" in actions(state.env, proposal["id"])
 
 
-def test_taskless_scope_preserves_null_context(compute_env):
+def test_taskless_scope_cannot_store_literal_none(compute_env):
+    # The reconcile's persisted-string finding is not real at the pinned base:
+    # scopes require a task at the SQL boundary. Preserve evidence, not a new
+    # taskless discovery policy or a migration to make that policy possible.
     env = compute_env
     gateway, _ = enroll(env)
-    scope = env.store.create_scope(
-        env.principal, **env.auth, **scope_payload(env, gateway["id"], task_number=None)
-    )
-    assert scope["context"]["task"] is None
+    with pytest.raises(
+        sqlite3.IntegrityError, match="NOT NULL constraint failed: scopes.task_number"
+    ):
+        env.store.create_scope(
+            env.principal, **env.auth, **scope_payload(env, gateway["id"], task_number=None)
+        )
     with sqlite3.connect(env.path) as conn:
-        task, metadata = conn.execute("SELECT task_number,metadata FROM scopes").fetchone()
-    assert task is None and json.loads(metadata)["context"]["task"] is None
+        assert conn.execute("SELECT count(*) FROM scopes").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(
@@ -113,11 +116,17 @@ def test_execution_outcome_and_exit_are_durably_audited(execution_env, outcome):
     state = execution_env
     proposal = prepare(state)
     if outcome == "uncertain":
-        state.driver.lost_open_ack = True
+
+        def lost():
+            raise OSError("synthetic-exception-canary")
+
+        state.driver.hooks["exec"] = lost
     elif outcome == "authority_lost":
         state.driver.hooks["exec"] = lambda: mutate(state, "origin_session")
     assert state.service._run_once()
     row = run_row(state, proposal)
+    if outcome == "uncertain":
+        assert row["phase"] == "uncertain"
     audit = actions(state.env, proposal["id"])
     assert f"execution.{row['phase']}.{row['reason']}" in audit
     if row["exit_code"] is not None:
