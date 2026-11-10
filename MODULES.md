@@ -237,6 +237,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel builder boundaries and isolated local-running instructions in `docs/compute/`.
+  - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -556,6 +557,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
+  - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
 
   - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
 
@@ -1519,6 +1521,7 @@ Format (read by `commonplace orch docs-check`):
   - Canonical task progress is projected only for freshly authorized origin/viewer/audience bindings, never copied into shared chat history. Lost front acknowledgements recover existing origin links without launching work; exact fields are bounded by whole-field omission with notices.
   - Explicit coworker task requests can enter the existing configured person-owner runner admission path with stable canonical origin deduplication; refusal preserves the card and does not invent a worker launch.
   - Internal runtime dispatch rechecks the exact originating session before sending context; bounded lexical recall considers later relevant memories without truncating their words; only explicit task syntax reaches canonical boards and model output never executes tools.
+  - Board-less coworker turns require a local provider; workspace hosted settings yield `needs_configuration` before context, credentials or provider calls. Board-associated hosted turns retain project Turn on consent.
   - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
@@ -1698,6 +1701,7 @@ Format (read by `commonplace orch docs-check`):
   - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task creation and runner admission/recorded launch/refusal/uncertainty are labeled separately from completed work.
   - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
   - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
+  - Coworker message authors follow `actor`: a human row's `bot_id` remains its recipient; only the exact matching bot actor receives a bot name, badge and styling.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 

@@ -26,6 +26,8 @@ bounds. The composer remains available during background jobs; ambiguous HTTP re
 reuse their original request key. Conversation changes, lost access, workspace
 changes and sign-out invalidate older responses and clear private views. No
 worker identity, model response or live execution is fabricated in this UI.
+An addressed human message retains its person author even when `bot_id` names
+the recipient. Bot names, badges and styling require the exact matching bot actor.
 Human group invitations currently use explicit existing workspace user IDs;
 a member directory is not implemented by this slice.
 
@@ -38,6 +40,10 @@ Model requests have a 3.5 second timeout, bounded input/output and atomic per-da
 attempt accounting. This is a responsiveness limit, not measured real-provider
 latency. An endpoint circuit opens after repeated failures; no silent provider
 fallback or automatic failed-turn replay occurs.
+Board-less conversations use local providers only; inherited workspace hosted
+settings are refused with `needs_configuration` before context preparation,
+credential resolution or provider calls. Hosted conversations associated with
+a board still require the existing project Turn on; no coworker Turn on exists.
 
 The internal Store.runtime_job rechecks the exact originating session, live
 membership, bot binding, running state and memory visibility before context is

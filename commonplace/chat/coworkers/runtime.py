@@ -458,6 +458,7 @@ class CoworkerWorker:
                 or not config.applies
                 or config.provider not in ("openai_compatible", "anthropic")
                 or not config.model
+                or (not board and not settings.is_local(config))
             ):
                 raise _Withheld("needs_configuration")
             key = None

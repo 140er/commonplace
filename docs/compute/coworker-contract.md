@@ -73,6 +73,9 @@ answers record model/provider metadata without secrets. Memory:
 `{id,conversation_id,message_id,bot_id,user_id,state,code,created_at,updated_at,task?}`.
 UI must not label pending/running as completed or claim real model responses
 when no provider is configured. Existing BoardService remains canonical task truth.
+`bot_id` on a human message identifies its recipient, not its author. Only an
+exact `actor === "bot:" + bot_id` match permits a bot author name, badge and
+styling; addressed human messages retain their person author and `bot_id`.
 
 ## Store/runtime interface
 
@@ -128,8 +131,13 @@ memory only. Revalidate sessions/membership/bot association before calling the
 provider and before publishing results. Use configured local/approved front model
 through existing `chat.settings`/`chat.model` where supported; disabled/unavailable
 provider produces explicit `needs_configuration`/unavailable state, not a canned
-model answer. Worker task dispatch must use existing BoardService with authentic
-user permissions and explicit intent; do not execute free-form model output.
+model answer. Conversations without a board accept local providers only; a
+workspace-wide hosted provider is refused with `needs_configuration` before
+context or credentials are prepared or any provider is called. Board-associated
+conversations retain the existing per-project Turn on requirement for hosted
+providers; there is no coworker-level Turn on. Worker task dispatch must use
+existing BoardService with authentic user permissions and explicit intent; do
+not execute free-form model output.
 
 ## Verification
 
