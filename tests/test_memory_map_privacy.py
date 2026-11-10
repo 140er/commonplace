@@ -23,6 +23,19 @@ def person(hub):
     return uid, {"Cookie": f"{sessions.COOKIE}={cookie}"}
 
 
+def owner_ctx(hub):
+    """Owner-held overlay: the only people-capable context left for the map-only guard."""
+    principal = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    return ToolContext(principal=principal, gateway=hub.gateway)
+
+
+def unproved(hub, ctx, call=None, *args):
+    """Run a map read while the current workspace role cannot be proved as owner."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(hub.db, "role", lambda *_: "member")
+        return (call or memory_tools.memory_map)(ctx, *args)
+
+
 def graph(hub, headers, suffix=""):
     status, raw = hub.raw(None, b"", method="GET", path=f"/api/memory/map{suffix}", headers=headers)
     assert status == 200, raw
@@ -137,9 +150,15 @@ def test_map_selection_obeys_private_boundary_without_changing_other_reads(hub):
     identifiers = seed_private(hub)
     _, headers = person(hub)
     path = f"/api/memory/{identifiers[0]}"
-    assert hub.raw(None, b"", method="GET", path=path, headers=headers)[0] == 200
-    status, raw = hub.raw(None, b"", method="GET", path=path + "?view=map", headers=headers)
-    assert status == 404 and json.loads(raw) == {"error": "no: memory not found"}
+    # Members cannot read private wings on any route (workspace-owner rule).
+    for suffix in ("", "?view=map"):
+        status, raw = hub.raw(None, b"", method="GET", path=path + suffix, headers=headers)
+        assert status == 404, raw
+    owner = owner_ctx(hub)
+    assert memory_tools._map_memory(owner, identifiers[0])["text"] == "PRIVATE_OWNER_PROBE"
+    with pytest.raises(memory_tools.ToolError, match="memory not found"):
+        unproved(hub, owner, memory_tools._map_memory, identifiers[0])
+    assert memory_tools._get(owner, identifiers[0], memory_tools._boards(owner))["id"]
 
 
 def test_private_drawer_metadata_does_not_change_member_counts(hub, collection):

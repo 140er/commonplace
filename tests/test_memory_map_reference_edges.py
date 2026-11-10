@@ -11,7 +11,7 @@ from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_memory import _save
 from tests.test_memory_map_citations import private_thread
-from tests.test_memory_map_privacy import graph, person
+from tests.test_memory_map_privacy import owner_ctx, unproved
 
 
 def graph_path(hub):
@@ -26,9 +26,10 @@ def cited_fact(hub, **kwargs):
 
 
 @pytest.mark.parametrize("citation", ["metadata", "room", "missing", "runtime"])
-def test_member_drawer_citation_fails_closed(hub, collection, monkeypatch, citation):
+def test_unproved_owner_drawer_citation_fails_closed(hub, collection, monkeypatch, citation):
     _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    uid, headers = person(hub)
+    ctx = owner_ctx(hub)
+    uid = hub.admin
     thread = private_thread(hub, uid)
     if citation in ("metadata", "room"):
         metadata = {"wing": "shared", "room": "general"}
@@ -37,7 +38,7 @@ def test_member_drawer_citation_fails_closed(hub, collection, monkeypatch, citat
         else:
             metadata.update(source_thread=thread.id, source_seq_start=0, source_seq_end=0)
         collection.add(ids=["cited-drawer"], documents=["Public exact words"], metadatas=[metadata])
-    before = graph(hub, headers)
+    before = unproved(hub, ctx)
     cited_fact(hub, source_drawer_id="cited-drawer")
     original = memory_tools._memory
 
@@ -51,23 +52,24 @@ def test_member_drawer_citation_fails_closed(hub, collection, monkeypatch, citat
         return original(ctx, name, args)
 
     monkeypatch.setattr(memory_tools, "_memory", memory)
-    assert graph(hub, headers) == before
+    assert unproved(hub, ctx) == before
 
 
 @pytest.mark.parametrize("field", ["origin_id", "origin_link", "approval_link"])
 @pytest.mark.parametrize("kind", ["private", "ordinary"])
-def test_member_derived_reference_only_filters_threads(hub, field, kind):
+def test_unproved_owner_derived_reference_only_filters_threads(hub, field, kind):
     _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    uid, headers = person(hub)
+    ctx = owner_ctx(hub)
+    uid = hub.admin
     thread = private_thread(hub, uid)
-    before = graph(hub, headers)
+    before = unproved(hub, ctx)
     cited_fact(hub)
     value = thread.id if field == "origin_id" else f"/app/threads/{thread.id}"
     if kind == "ordinary":
         value = "user:writer" if field == "origin_id" else "https://example.test/notes"
     with sqlite3.connect(graph_path(hub)) as conn:
         conn.execute(f"UPDATE triples SET {field} = ?", (value,))
-    after = graph(hub, headers)
+    after = unproved(hub, ctx)
     if kind == "private":
         assert after == before
     else:
@@ -94,11 +96,12 @@ def test_member_derived_reference_only_filters_threads(hub, field, kind):
         )
     ],
 )
-def test_member_thread_reference_path_segment(hub, form, private):
+def test_unproved_owner_thread_reference_path_segment(hub, form, private):
     from commonplace.handoff.models import ThreadMessage
 
     _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    uid, headers = person(hub)
+    ctx = owner_ctx(hub)
+    uid = hub.admin
     thread = hub.gateway.handoff.store_for(hub.workspace).store(
         hub.workspace,
         f"capture:{uid}:reference-path",
@@ -106,7 +109,7 @@ def test_member_thread_reference_path_segment(hub, form, private):
         actor=uid,
         wing="private_chats" if private and not form.endswith("mcp") else "shared",
     )
-    before = graph(hub, headers)
+    before = unproved(hub, ctx)
     cited_fact(hub)
     value = {
         "app_slash": f"/app/threads/{thread.id}/",
@@ -124,23 +127,23 @@ def test_member_thread_reference_path_segment(hub, form, private):
     }[form]
     with sqlite3.connect(graph_path(hub)) as conn:
         conn.execute("UPDATE triples SET origin_link = ?, approval_link = ?", (value, value))
-    after = graph(hub, headers)
+    after = unproved(hub, ctx)
     if private:
         assert after == before
     else:
         assert any(link["label"] == "derived_citation" for link in after["links"])
 
 
-def test_member_ordinary_drawer_room_keeps_fact(hub, collection):
+def test_unproved_owner_ordinary_drawer_room_keeps_fact(hub, collection):
     _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    _, headers = person(hub)
+    ctx = owner_ctx(hub)
     collection.add(
         ids=["ordinary-room"],
         documents=["Public exact words"],
         metadatas=[{"wing": "shared", "room": "general"}],
     )
     cited_fact(hub, source_drawer_id="ordinary-room")
-    assert any(link["label"] == "derived_citation" for link in graph(hub, headers)["links"])
+    assert any(link["label"] == "derived_citation" for link in unproved(hub, ctx)["links"])
 
 
 def test_reference_decision_is_request_local_and_memoized(monkeypatch):

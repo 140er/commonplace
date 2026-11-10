@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from commonplace import memory_tools
 from commonplace.handoff.models import ThreadMessage
 from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_memory import _save
-from tests.test_memory_map_privacy import graph, person
+from tests.test_memory_map_privacy import graph, owner_ctx, person, unproved
 
 
 def private_thread(hub, uid):
@@ -51,36 +52,32 @@ def test_member_own_private_thread_fact_equals_absent(hub, citation):
     assert graph(hub, headers) == before
 
 
-def test_member_own_private_thread_selection_keeps_null_source(hub):
-    _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    uid, headers = person(hub)
-    thread = private_thread(hub, uid)
-    status, raw = hub.raw(
-        None,
-        {
-            "text": "Public exact words",
-            "theme": "shared",
-            "source": {"thread": thread.id, "seq_start": 0, "seq_end": 0},
-        },
-        method="POST",
-        path="/api/memory",
-        headers=headers,
+def test_private_thread_source_is_null_in_map_only(hub, collection):
+    ctx = owner_ctx(hub)
+    thread = private_thread(hub, hub.admin)
+    collection.add(
+        ids=["thread-source"],
+        documents=["Public exact words"],
+        metadatas=[
+            {
+                "wing": "shared",
+                "room": "general",
+                "source_thread": thread.id,
+                "source_seq_start": 0,
+                "source_seq_end": 0,
+            }
+        ],
     )
-    assert status == 201, raw
-    identifier = json.loads(raw)["id"]
-    path = f"/api/memory/{identifier}"
-    status, raw = hub.raw(None, b"", method="GET", path=path, headers=headers)
-    assert status == 200 and json.loads(raw)["source"]["thread"] == thread.id
-    status, raw = hub.raw(None, b"", method="GET", path=path + "?view=map", headers=headers)
-    assert status == 200 and json.loads(raw)["text"] == "Public exact words"
-    assert "source" in json.loads(raw) and json.loads(raw)["source"] is None
-    assert thread.id not in raw
+    # A proved owner keeps the citation; without proof only the map drops it.
+    assert memory_tools._map_memory(ctx, "thread-source")["source"]["thread"] == thread.id
+    result = unproved(hub, ctx, memory_tools._map_memory, "thread-source")
+    assert result["text"] == "Public exact words" and result["source"] is None
+    assert thread.id not in json.dumps(result)
 
 
 def test_private_thread_topic_is_null_in_map_only(hub, collection):
-    _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
-    uid, headers = person(hub)
-    thread = private_thread(hub, uid)
+    ctx = owner_ctx(hub)
+    thread = private_thread(hub, hub.admin)
     collection.add(
         ids=["thread-topic"],
         documents=["Public exact words"],
@@ -94,21 +91,36 @@ def test_private_thread_topic_is_null_in_map_only(hub, collection):
             }
         ],
     )
-    path = "/api/memory/thread-topic"
-    status, raw = hub.raw(None, b"", method="GET", path=path, headers=headers)
-    assert status == 200 and json.loads(raw)["topic"] == thread.id
-    status, raw = hub.raw(None, b"", method="GET", path=path + "?view=map", headers=headers)
-    assert status == 200
-    assert json.loads(raw)["topic"] is None and json.loads(raw)["source"] is None
+    assert memory_tools._map_memory(ctx, "thread-topic")["topic"] == thread.id
+    result = unproved(hub, ctx, memory_tools._map_memory, "thread-topic")
+    assert result["topic"] is None and result["source"] is None
 
 
-def test_member_orphan_people_remain_visible(hub):
+def test_member_selection_of_private_thread_memory_is_refused_on_every_route(hub, collection):
+    uid, headers = person(hub)
+    thread = private_thread(hub, uid)
+    collection.add(
+        ids=["thread-topic"],
+        documents=["Public exact words"],
+        metadatas=[{"wing": "shared", "room": thread.id, "source_thread": thread.id}],
+    )
+    for suffix in ("", "?view=map"):
+        status, raw = hub.raw(
+            None, b"", method="GET", path="/api/memory/thread-topic" + suffix, headers=headers
+        )
+        assert status == 404 and thread.id not in raw
+
+
+def test_member_has_no_people_overlay_and_owner_orphans_stay_visible(hub):
     _save(hub, hub.owner_token(), "Visible anchor", theme="shared")
     _, headers = person(hub)
     path = Path(hub.gateway.workspace_dir(hub.workspace)) / "palace" / KNOWLEDGE_GRAPH_FILENAME
     with KnowledgeGraph(str(path)) as kg:
         kg.add_entity("Orphan person", "person")
-    assert "Orphan person" in json.dumps(graph(hub, headers))
+    assert "Orphan person" not in json.dumps(graph(hub, headers))
+    ctx = owner_ctx(hub)
+    assert "Orphan person" in json.dumps(memory_tools.memory_map(ctx))
+    assert "Orphan person" in json.dumps(unproved(hub, ctx))
 
 
 @pytest.mark.parametrize("lookup", ["missing", "error"])
