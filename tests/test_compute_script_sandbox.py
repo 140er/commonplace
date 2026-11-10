@@ -87,7 +87,6 @@ def test_disabled_and_root_hosts_deny_without_subprocess_or_storage(tmp_path, mo
     settings = config(tmp_path)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(
-        AnchoredPath,
         BubblewrapSandbox,
         "_check_host",
         lambda *a: pytest.fail("root must deny early"),

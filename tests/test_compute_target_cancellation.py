@@ -68,7 +68,9 @@ def test_control_loss_confirms_empty_target_cleans_and_allows_next_admission(
         return result
 
     def spawn(value, script_path, job_path, group):
-        jobs.append(Path(job_path))
+        # This fixed synthetic child does not run the uploaded script. Keep a
+        # lasting fixture path for observations after the helper closes its fd.
+        jobs.append(Path(job_path).resolve())
         group.process = subprocess.Popen(
             [
                 sys.executable,
@@ -78,7 +80,7 @@ def test_control_loss_confirms_empty_target_cleans_and_allows_next_admission(
                 "print('COMPUTE_SCRIPT_STARTED_V1', flush=True); "
                 "pathlib.Path(sys.argv[1], 'fill').write_bytes(b'x'*3000000); "
                 "signal.pause()",
-                str(job_path),
+                str(jobs[-1]),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -224,7 +226,9 @@ def test_cgroup_drain_after_child_exit_controls_confirmation_and_cleanup(
             return empty
 
     def spawn(value, script_path, job_path, group):
-        jobs.append(Path(job_path))
+        # This fixed synthetic child does not run the uploaded script. Keep a
+        # lasting fixture path for observations after the helper closes its fd.
+        jobs.append(Path(job_path).resolve())
         group.process = subprocess.Popen(
             [
                 sys.executable,
@@ -233,7 +237,7 @@ def test_cgroup_drain_after_child_exit_controls_confirmation_and_cleanup(
                 "import pathlib,signal,sys; "
                 + ("print('COMPUTE_SCRIPT_STARTED_V1', flush=True); " if started else "")
                 + "pathlib.Path(sys.argv[1], 'fill').write_bytes(b'x'*3000000); signal.pause()",
-                str(job_path),
+                str(jobs[-1]),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

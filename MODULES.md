@@ -567,6 +567,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Cancellation process fixtures resolve their synthetic job path before the held descriptor closes; audit redaction checks exclude arbitrary content while allowing fixed outcome reason names.
   - `tests/test_compute_security_regressions.py` covers script self-approval policy, taskless-scope storage refusal, durable refusal/outcome/recovery audits and rename-to-execute substitution with synthetic fixtures. IPv6 /127, /128 and endpoint normalization are covered in `tests/test_compute_scopes.py`.
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
