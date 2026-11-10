@@ -1,30 +1,30 @@
-"""Separately provisioned target helper and strict chunked script wire contract.
+"""Provisioned target helper and strict chunked script wire contract.
 
-TARGET_HELPER_COMMAND is a literal SSH exec command, used only after the existing
-independently pinned inner SSH handshake. No paths/arguments/env enter that
-command. This module adds no transport route or installation. An operator must
-provision a dedicated account, exclusive controller key (ExposeAuthInfo yes),
-protected fixed configuration, private workspace/{attempts,inputs,scratch},
-read-only runtime and delegated cgroups. Everything is disabled by default.
+Literal TARGET_HELPER_COMMAND runs after independently pinned inner SSH; no
+caller paths/arguments/env. No installation/routes; disabled by default.
+Provision: dedicated account, exclusive controller key (ExposeAuthInfo yes),
+protected fixed config, private workspace/{attempts,inputs,scratch}, read-only
+runtime and delegated cgroups.
 
 API: TargetHelper(config, key_principal=..., authorize=...).serve(channel).
-authorize(request, phase) must return True at begin/commit; the parent controller
-must already have consumed the exact current task approval/fenced SSH permit.
-key_principal comes from SSH authentication, NEVER from caller JSON. The fixed
-CLI checks sshd's public authentication-info file against protected local config.
+authorize(request, phase) approves begin/commit after controller consumption of
+exact current task approval/fenced SSH permit. Accepted risk: main() always allows;
+the controller enforces approval, only the dedicated forced-command key reaches
+the helper, and the sandbox applies. key_principal is SSH-authenticated, never
+caller JSON; CLI checks sshd's public authentication-info against protected config.
 
-Wire: existing length-prefixed JSON (8KiB/frame), v=1, <=64 frames/192KiB/40s.
+Wire: v=1 length-prefixed JSON, 8KiB/frame, <=64 frames/192KiB/40s.
 script_begin {request:ScriptRequest.document(),digest:request.digest} ->
 script_ready {digest} -> script_chunk {seq:int,data:base64 <=3072 raw bytes}*
 -> script_commit {digest} -> script_result {digest,result:metadata} ->
 script_data {stream,path,seq,data}* -> script_done {digest}.
-All frames include v/kind, exact fields only. A script_cancel {digest} may be
-sent after commit on the same authenticated channel; cancellation is intent
-until observed exit and cgroup emptiness. Partial/lost frames never cause retry.
-Raw output/artifacts are private controller data; use scripts.project_result.
+Frames contain v/kind and exact fields. script_cancel {digest} after commit uses
+the same authenticated channel: intent until observed exit and cgroup emptiness.
+Partial/lost frames never retry; scripts.project_result projects private controller
+output/artifacts.
 
-ScriptWire, send_bundle, receive_result, cancel_frame are parent integration
-helpers. No private key or filesystem root is representable in this payload.
+Controller integration: ScriptWire, send_bundle, receive_result, cancel_frame.
+Payloads cannot contain private keys or filesystem roots.
 """
 
 from __future__ import annotations
@@ -369,9 +369,6 @@ def _remove_owned_job(directory, *, remaining=4096):
             if remaining < 0:
                 raise ScriptDenied("target_capacity")
             if entry.is_dir(follow_symlinks=False):
-                # The script owns these directories and may have removed every
-                # permission. Restore access before opening, then fchmod the fd.
-                os.chmod(entry.name, 0o700, dir_fd=current, follow_symlinks=False)
                 child = os.open(
                     entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
                 )
