@@ -3,7 +3,7 @@
 All identities, keys, receipts and paths are synthetic. The target process is an
 explicit WIRE-ONLY fixture: it runs TargetHelper's real strict upload/result
 protocol and a durable synthetic attempt journal, but NEVER launches a script or
-claims production confinement. Parent owns suite execution; child static checks.
+claims production confinement. The integration maintainer runs the suite; component authors run static checks.
 """
 
 import base64

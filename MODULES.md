@@ -241,7 +241,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
-  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel builder boundaries and isolated local-running instructions in `docs/compute/`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-adviser design decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel component ownership boundaries and isolated local-running instructions in `docs/compute/`.
   - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
@@ -597,7 +597,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_backup_online_processes.py` reproduces separate backup/gateway ancestry and preserves foreign-writer and paused-worker refusals using a synthetic `/proc`.
   - The canonical Space REST matrix and base-captured profile/tool schemas.
 
-  - Card339 regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
+  - Space request regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
 
