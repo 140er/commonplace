@@ -1,5 +1,6 @@
 """Thread access at the mirror response boundary (synthetic data only)."""
 
+import json
 import sqlite3
 import threading
 from dataclasses import replace
@@ -180,6 +181,53 @@ def test_identity_for_unchanged_results(world):
     assert gate(world.gateway, world.principal, "search", plain) is plain
     mirror = {"results": [hit(world)]}
     assert gate(world.gateway, world.principal, "drawer_read", mirror) is mirror
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["primary", "folded-copy"])
+def test_search_source_path_uses_the_source_file_boundary(world, nested):
+    source = f"handoff:{world.thread.id}#v2:0-0:conversation:0"
+    row = {"wing": "shared", "room": "ordinary", "source_file": source, "source_path": source}
+    payload = {
+        "results": [
+            {"wing": "shared", "text": "Ordinary words", "also_in": [row]} if nested else row
+        ]
+    }
+    assert source in json.dumps(gate(world.gateway, world.principal, "search", payload))
+    world.private.readable.return_value = False
+    result = gate(world.gateway, world.principal, "search", payload)
+    assert world.thread.id not in json.dumps(result), "Protected folded-copy provenance leaked"
+    assert "handoff:" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("field", ["path", "title"])
+def test_search_asset_source_aliases_are_proved(world, field):
+    source = f"handoff:{world.thread.id}#v2:0-0:conversation:0"
+    payload = {
+        "results": [{"result_type": "asset", "wing": "shared", "room": "ordinary", field: source}]
+    }
+    assert source in json.dumps(gate(world.gateway, world.principal, "search", payload))
+    world.private.readable.return_value = False
+    result = gate(world.gateway, world.principal, "search", payload)
+    assert world.thread.id not in json.dumps(result), "Protected asset source alias leaked"
+
+
+def test_restricted_search_omits_acquisition_diagnostics(world):
+    payload = {
+        "results": [],
+        "total_before_filter": 7,
+        "filtered_by_max_distance": 3,
+        "date_filter_pool_truncated": True,
+        "candidates_truncated": True,
+        "distinct_results_truncated": True,
+    }
+    assert gate(world.gateway, world.principal, "search", payload) == payload
+    principal = replace(
+        world.principal, policy=replace(world.principal.policy, scopes=("memory:read",))
+    )
+    assert not principal.policy.sees_all_wings
+    assert gate(world.gateway, principal, "search", payload) == {"results": []}, (
+        "Hidden acquisition diagnostics leaked"
+    )
 
 
 @pytest.mark.parametrize("value", [None, "unexpected words", 42, True])

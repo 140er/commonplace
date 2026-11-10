@@ -110,6 +110,67 @@ def case(world, config, kg, tmp_path, monkeypatch):  # noqa: F811
 
 
 @pytest.mark.parametrize("wing", [None, "shared"])
+@pytest.mark.parametrize("cli", [False, True], ids=["structured", "cli"])
+def test_search_hides_ordinary_copy_protected_source(case, wing, cli):
+    args = {"query": "qqprovenance", **({"wing": wing} if wing else {})}
+    added = call(
+        case.w,
+        case.owner,
+        "add_drawer",
+        wing="shared",
+        room="ordinary-copy",
+        content="qqprovenance ordinary copy words",
+        source_file=f"handoff:{case.room}#v2:0-0:conversation:0",
+    )
+    assert added.get("success")
+    owner = call(case.w, case.owner, "search", cli_compatible=cli, **args)
+    assert case.room in json.dumps(owner) and "handoff:" in json.dumps(owner)
+    result = call(case.w, case.actor, "search", cli_compatible=cli, **args)
+    encoded = json.dumps(result)
+    assert "qqprovenance ordinary copy words" in encoded
+    assert case.room not in encoded, "Protected thread id leaked through ordinary-copy provenance"
+    assert "handoff:" not in encoded, "Protected source leaked through ordinary-copy provenance"
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
+@pytest.mark.parametrize("cli", [False, True], ids=["structured", "cli"])
+def test_search_hides_candidate_counts(case, wing, cli):
+    args = {
+        "query": "zqmutationfixture synthetic verbatim words",
+        "limit": 1,
+        **({"wing": wing} if wing else {}),
+    }
+    owner = call(case.w, case.owner, "search", **args)
+    assert owner.get("total_before_filter", 0) > 0 and owner.get("results")
+    result = call(case.w, case.actor, "search", cli_compatible=cli, **args)
+    assert result.get("results") == []
+    assert "total_before_filter" not in result, "Hidden-candidate count leaked"
+    if cli:
+        assert set(result) <= {"cli_output", "query", "wings_searched", "results", "facts"}, (
+            "Restricted CLI exposed structured-only fields"
+        )
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
+@pytest.mark.parametrize("query", ["Public fixture", "qqnomatchzz"], ids=["hit", "empty"])
+def test_shared_cli_output_matches_owner(case, wing, query):
+    args = {"query": query, "cli_compatible": True, **({"wing": wing} if wing else {})}
+    args["room"] = "read-control" if query == "Public fixture" else "absent-control-room"
+    owner = call(case.w, case.owner, "search", **args)
+    result = call(case.w, case.actor, "search", **args)
+    if query == "Public fixture":
+        assert "Public fixture independently readable control" in owner["cli_output"]
+        assert "Match:" in owner["cli_output"] and "=" * 60 in owner["cli_output"]
+    else:
+        assert f'No results found for: "{query}"' in owner["cli_output"]
+    assert result["cli_output"] == owner["cli_output"], "Restricted CLI formatting changed"
+    assert set(result) <= {"cli_output", "query", "wings_searched", "results", "facts"}, (
+        "Restricted CLI exposed structured-only fields"
+    )
+    assert result.get("results") == [], "Restricted CLI exposed hit objects"
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
 @pytest.mark.parametrize("query", ["zqmutationfixture", "synthetic", "verbatim", "words"])
 def test_cli_search_hides_protected_shared_copy(case, wing, query):
     args = {"cli_compatible": True, **({"wing": wing} if wing else {})}

@@ -92,22 +92,29 @@ def _scoped_cli_search_error(args):
     return None
 
 
-def _render_scoped_cli_search(result):
+def _render_scoped_cli_search(result, args):
     """Render only structured hits and facts that passed the final drawer gate."""
-    from mempalace.fact_render import format_facts
+    from mempalace.searcher import render_cli_search
 
-    out = dict(result)
-    lines = []
-    for i, hit in enumerate(result.get("results", []), 1):
-        lines.append(f"  [{i}] {hit.get('wing', '?')} / {hit.get('room', '?')}")
-        lines.append(f"      Source: {hit.get('source_file', '?')}")
-        lines.extend(f"      {line}" for line in hit.get("text", "").split("\n"))
-        lines.append("")
-    out["cli_output"] = format_facts(result.get("facts", [])) + (
-        "\n".join(lines) if lines else "No results found.\n"
-    )
-    if not out.get("facts") and not out.get("facts_error"):
-        out.pop("facts", None)
+    out = {
+        "query": result.get("query", args.get("query", "")),
+        "cli_output": render_cli_search(
+            result.get("query", args.get("query", "")),
+            result.get("results", []),
+            wing=args.get("wing"),
+            room=args.get("room"),
+            since=args.get("since"),
+            before=args.get("before"),
+            metric=result.get("distance_metric", "cosine"),
+            facts=result.get("facts", []),
+            vector_disabled=bool(result.get("vector_disabled")),
+        ),
+        "results": [],
+    }
+    if "wings_searched" in result:
+        out["wings_searched"] = result["wings_searched"]
+    if result.get("facts"):
+        out["facts"] = result["facts"]
     return out
 
 
@@ -626,10 +633,12 @@ class Mediator:
                 rule,
                 req_id,
                 response,
-                render_cli=(
-                    name == "mempalace_search"
+                cli_args=(
+                    import_filters
+                    if name == "mempalace_search"
                     and import_filters.get("cli_compatible")
                     and not principal.policy.sees_all_wings
+                    else None
                 ),
             )
 
@@ -646,7 +655,7 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response, *, render_cli=False):
+    def _gate_response(self, principal, name, rule, req_id, response, *, cli_args=None):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
@@ -654,8 +663,8 @@ class Mediator:
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
             cleaned = gate(self.gateway, principal, rule, result)
-            if render_cli and isinstance(cleaned, dict) and not cleaned.get("error"):
-                cleaned = _render_scoped_cli_search(cleaned)
+            if cli_args is not None and isinstance(cleaned, dict) and not cleaned.get("error"):
+                cleaned = _render_scoped_cli_search(cleaned, cli_args)
             if name == "mempalace_list_drawers":
                 from .handoff.drawer_pages import finish_page
 
