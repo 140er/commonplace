@@ -174,6 +174,8 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
         if not events and not on:
             return results
         version = orch_store.resolve_in(conn, board)
+        if not version.config().triggers:
+            return results
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         for event in events:
             principal, ref, refusal = _actor(gateway, ws, event, machine)
@@ -232,6 +234,8 @@ def _reconcile(js, st, board, now):
         if pair is None or pair[0] is None:
             return results
         version = orch_store.resolve_in(conn, board)
+        if not version.config().triggers:
+            return results
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         for row in roots:
             if not split.retry_due(conn, row, now):

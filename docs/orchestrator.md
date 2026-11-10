@@ -7,8 +7,9 @@ settings and the `todo` trigger. Commonplace's own runner (see
 prompt, workflow and model and records the config version and model on every
 job. For other harnesses the rendered config is advisory.
 
-Nothing changes for a board until its owner accepts a live config with a
-`[runner]` table. Decisions, numbers and residuals are in `SYSTEM.md`.
+A board has no attached host until its owner accepts a live config with a
+`[runner]` table. That config enables a persistent board session by default,
+independently of `[[triggers]]` and the workspace splitting switch. Decisions, numbers and residuals are in `SYSTEM.md`.
 
 ## The config
 
@@ -182,7 +183,8 @@ and recent-start guards still apply. These are existing limits of admission.
 
 ## Triggers
 
-Only boards with an accepted live `[runner]` config are swept, on each wake-up
+Per-card starts require an accepted live `[runner]` config with a `card.todo`
+trigger. Those boards are swept on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
 (`add`, `move`, `decide`) and on the plan-approval row. An event emission that
@@ -203,6 +205,51 @@ failed after commit is still found.
   next sweep. A refused card is not retried automatically, even when the
   refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
   checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
+
+## Persistent board session
+
+The machine runner owns one session record per board in `runner_sessions`,
+separate from `runner_jobs` and from role leases. Its regular polling pass
+watches board state without a webhook or `card.todo` trigger. It launches the
+sole parentless orchestrator role into the accepted runner's machine/project,
+with that role's topic, prompt, workflow and resolved model. It retains the
+returned thread ID and sends continuations to that same thread.
+
+A card is actionable unless it is done, has an unresolved `task_blockers`
+dependency, or has a person-directed ask. Blocked cards expose their dependency
+names or question in the project response. Backlog, unfinished split children,
+Doing and other Review cards still count; capacity limits are not blockers.
+When a host turn ends, the hub checks the entire board again. Actionable cards
+schedule continuation; otherwise the session becomes idle. A later new card or
+unblocked card wakes an idle session. A clear idle board causes no host calls
+and no model turns. Running threads are inspected without sending model input.
+
+`GET /api/projects/<board>` includes `session`, with state, reason, thread ID,
+pending command, actionable card numbers and explicit blockers. An absent
+accepted `[runner]` is `no_host`, with reason `no host attached`; no machine is
+chosen implicitly. `unavailable` reports withdrawn grants or changed config,
+binding or model instead of claiming the orchestrator is running.
+
+Signed-in owners can POST `{}` to
+`/api/projects/<board>/orchestrator/stop` or `/resume`. Stop persists across
+polls and new cards until explicit resume. `stopping` means interruption is
+pending; `stopped` is distinct from idle. A stop racing a launch retains the
+in-flight acknowledgement so its thread can be interrupted. Neither an agent
+seat nor a worker token gains owner or requester authority.
+
+The machine-only `POST /api/runner/sessions/lease`, `/starting` and `/result`
+protocol leases one fenced command at a time. Fresh accepted config, its
+accepting owner's current requester identity, machine binding/epoch, grants,
+wing access and model selection are checked before host effects. Restore
+markers and flags refuse commands. Launches, continuations and stops have a
+local replay journal: ambiguous effects become `uncertain`, never automatically
+replayed or cleared by resume. Config/binding/model changes also fail closed.
+
+Recovery/rebinding after ambiguity or changed configuration, runner service
+activation, richer owner UI, and coordination beyond the host's existing
+credential scope remain follow-up work. The runner must already be running;
+this feature does not enroll machines, activate a service, change credentials
+or grant access. Session commands do not reserve per-card worker slots.
 
 ## Durable orchestrator
 

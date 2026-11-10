@@ -255,6 +255,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Project guides describe default runner-owned sessions without todo triggers, visible no-host state and durable owner stop/resume; webhook-only delivery remains the fallback without an accepted runner.
+
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
@@ -562,6 +564,8 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - Persistent runner session base/head regressions and independent authority, launch/stop race, duplicate lease and uncertainty checks.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -1171,6 +1175,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Persistent board sessions use accepted runner authority without todo triggers, retain thread bindings and durable owner stops, continue actionable boards and leave clear boards idle. Ambiguous effects and changed bindings fail closed; per-card worker slots remain separate.
+
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
 
@@ -1201,6 +1207,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_orch_sessions.py` proves the six base/head lifecycle contracts; `tests/test_runner_session_guards.py` covers authority, races, duplicate leases and uncertain recovery.
+
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
 
 
@@ -1218,6 +1226,8 @@ Format (read by `commonplace orch docs-check`):
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
 - **Promises:**
+
+  - Per-card trigger sweeps require an explicit card.todo trigger; persistent session watches are independent of those triggers and role leases.
 
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 
@@ -1272,6 +1282,8 @@ Format (read by `commonplace orch docs-check`):
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
 - **Promises:**
+
+  - Project responses include read-only session state and explicit blocker reasons. Signed-in owners alone stop or resume persistent sessions; no accepted runner reports no host attached.
 
   - Orchestration settings reads wait at most one second for the shared control lock, then return the existing retryable `settings_unavailable` refusal without reading an unlocked connection.
   - The explicit Admin-only optional-input flag permits absent runner jobs/config without initialization while ordinary doing cards still count. Admission defaults retain strict runner input and shared accounting.

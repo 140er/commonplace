@@ -219,6 +219,10 @@ def _job_code(config, job):
         _launch_text(job)
     except ValueError:
         return "job_invalid"
+    return _local_grant_code(config, job)
+
+
+def _local_grant_code(config, job):
     project = job.get("project")
     if not isinstance(project, str) or project not in config["projects"]:
         return "project_not_configured"
@@ -280,14 +284,18 @@ class _Hub:
                 if status == 204:
                     result = None
                 else:
-                    limit = _MAX_LEASE_BYTES if route == "lease" else _MAX_REPLY_BYTES
+                    limit = (
+                        _MAX_LEASE_BYTES
+                        if route in ("lease", "sessions/lease")
+                        else _MAX_REPLY_BYTES
+                    )
                     raw = response.read(limit + 1)
                     if len(raw) > limit:
                         raise ValueError
                     result = json.loads(raw)
                     if not isinstance(result, dict):
                         raise ValueError
-                    if route == "lease" and (
+                    if route in ("lease", "sessions/lease") and (
                         not isinstance(result.get("lease_token"), str) or not result["lease_token"]
                     ):
                         raise ValueError
@@ -300,7 +308,9 @@ class _Hub:
                 else "refused"
                 if status == 404
                 else "fenced"
-                if status == 409 and route in {"starting", "result", "answer", "fail"}
+                if status == 409
+                and route
+                in {"starting", "result", "answer", "fail", "sessions/starting", "sessions/result"}
                 else "transient"
             )
         except (
@@ -435,6 +445,8 @@ def _run(config, once):
     while True:
         try:
             for path in sorted(journal.glob("*.json")):
+                if path.name == "session-command.json":
+                    continue
                 try:
                     entry = json.loads(path.read_text(encoding="utf-8"))
                     if (
@@ -450,6 +462,9 @@ def _run(config, once):
                     print("runner: invalid journal quarantined", file=sys.stderr)
                     continue
                 _deliver(hub, path, entry, replay=True)
+            from . import session_agent
+
+            session_agent.tick(hub, config, journal, env, (token, grant))
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))

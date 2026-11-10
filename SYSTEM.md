@@ -329,7 +329,7 @@ visibility for slim, standard and full profiles remain unchanged.
 
   - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
 
-  - An always-running orchestrator is separate work.
+  - An accepted live `[runner]` now enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; no service is activated automatically.
 
   - Splitting and inbox behavior are not introduced by this switch.
 
@@ -546,6 +546,40 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - The actor is rebuilt from the event stamps and must pass `requester_ok`; a member's move does not start work.
 
+### Runner-owned persistent board sessions
+
+- Every owner-accepted live `[runner]` enables a separate `runner_sessions`
+  record, without `[[triggers]]`, a manual watch/webhook or the workspace
+  splitting switch. No accepted runner is `no_host: no host attached`; no
+  machine is selected implicitly.
+- The runner launches the parentless orchestrator role with the accepted
+  machine/project/runtime, its role topic/instructions and resolved model,
+  retains the returned thread binding, inspects host turns and continues the
+  same thread while actionable cards remain. Card worker jobs stay separate.
+- Only Done, unresolved `task_blockers` and person-directed asks clear work.
+  Blockers show dependency names or the question. Backlog, Doing, split children
+  and capacity-saturated cards remain actionable. Completed turns cannot make
+  an actionable board idle; clear idle boards produce no host calls or model
+  turns, and new/unblocked work is found on the next runner pass.
+- Project GET includes session state, reason, pending command, thread binding
+  and actionable/blocked cards. Signed-in owners POST `{}` to project
+  `orchestrator/stop` or `orchestrator/resume`; stop persists across new work
+  until resume. `stopping` distinguishes a pending interrupt from `stopped`.
+- Machine-only session lease/starting/result routes fence every host effect
+  against accepted config, the accepting owner's current requester identity,
+  machine binding epoch and grants, wing and model. Restore flags/markers
+  refuse effects. Runner then control locks cover guarded admission/commit;
+  board reads inside runner transactions are read-only.
+- Journals preserve ambiguous outcomes as `uncertain`, never automatic replay.
+  Stop during launch preserves its acknowledgement and schedules interrupt.
+  Changed configs, bindings or models fail closed. Recovery/rebinding, richer
+  owner UI and service activation remain follow-up work; existing host
+  credentials are neither switched nor elevated. Sessions do not occupy
+  per-card worker capacity.
+- Migration only adds `runner_sessions`; existing card jobs and their grants,
+  leases and history are untouched. Read-only project status does not create
+  an absent runner database. Existing per-card triggers require `card.todo`.
+
 ### Durable orchestrator
 
 - Card tool discovery defaults to the off schema when no control database is available or a settings read fails.
@@ -624,8 +658,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   return `409 busy` without mutation. No external service is called.
 - Without a runner, card delivery uses a subscribed `card.created` webhook
   plus the inbox at the next session. Without either, a new card waits for that
-  session. Continuous orchestration, done/stuck routing and runner-job events
-  remain separate work. Stable keys are the agent's responsibility; changing
+  session. Runner-owned persistent board sessions are described below; richer
+  done/stuck routing and runner-job events remain separate work. Stable keys are the agent's responsibility; changing
   keys after a crash can create additional children.
 
 - `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
