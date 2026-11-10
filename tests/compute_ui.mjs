@@ -23,7 +23,7 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [] } = {}) {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], currentTime = clock } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
   const listeners = new Map(), requests = [], boardsSeen = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
@@ -40,7 +40,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     const request = { path, options, settled: false, resolve(value) { request.settled = true; yes(structuredClone(value)); }, reject(error) { request.settled = true; no(error); } };
     requests.push(request); return promise;
   };
-  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => clock, requestId: () => `request-${++sequence}` });
+  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}` });
   const take = (path, method = 'GET') => {
     const request = requests.find(item => !item.taken && !item.settled && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
@@ -70,7 +70,7 @@ const cases = {
     const runningHTML = computeExecutionHTML(running);
     assert.match(runningHTML, /Execution running/);
     assert.match(runningHTML, /Request cancellation/);
-    assert.doesNotMatch(runningHTML, /Approved · not dispatched|<img|<script>/);
+    assert.doesNotMatch(runningHTML, /Approved · automatic execution authorized|<img|<script>/);
     const cancelled = computeExecutionHTML({ ...running, run: { ...running.run, cancel_requested_at: 1000 } });
     assert.match(cancelled, /termination unconfirmed/);
     assert.doesNotMatch(cancelled, /data-compute-action="cancel"/);
@@ -152,7 +152,7 @@ const cases = {
     first.reject(new Error('lost receipt')); await flush(); assert.match(f.host.innerHTML, /reuse its original request ID/);
     f.submit('proposal', proposalValues()); const retry = f.take('/api/compute/executions', 'POST'); assert.deepEqual(retry.options.body, first.options.body);
     retry.resolve({ execution: execution('approved') }); await flush();
-    assert.match(f.host.innerHTML, /Approved · not dispatched/); assert.doesNotMatch(f.host.innerHTML, /Server state: Awaiting approval/);
+    assert.match(f.host.innerHTML, /Approved · automatic execution authorized/); assert.doesNotMatch(f.host.innerHTML, /Server state: Awaiting approval/);
     f.click('proposal'); f.submit('proposal', { node_id: node.id, task_number: '43' });
     const next = f.take('/api/compute/executions', 'POST'); assert.notEqual(next.options.body.request_id, first.options.body.request_id);
     next.resolve({ execution: execution('awaiting_approval', { id: 'e-two', task_number: 43 }) }); await flush();
@@ -164,14 +164,17 @@ const cases = {
   },
 
   async approval() {
-    const f = fixture(); await f.open(); f.click('approve', 'e-one');
+    const f = fixture(); await f.open();
+    assert.match(f.host.innerHTML, /automatic execution worker is currently unavailable/i);
+    assert.match(f.host.innerHTML, /if the worker becomes available before approval expires/);
+    f.click('approve', 'e-one');
     assert.match(f.host.innerHTML, /data-compute-form="approve"/); assert.match(f.host.innerHTML, /fixture-gateway-key/); assert.match(f.host.innerHTML, /fixture-target-key/); assert.match(f.host.innerHTML, new RegExp(pin.key));
     f.submit('approve', { expected_digest: 'b'.repeat(64), expires_minutes: '2' }); assert.equal(f.requests.filter(row => row.options.method === 'POST').length, 0);
     assert.match(f.host.innerHTML, /does not match/);
     f.submit('approve', { expected_digest: execution().digest, expires_minutes: '2' });
     const approve = f.take('/api/compute/executions/e-one/approve', 'POST'); assert.deepEqual(approve.options.body, { expected_digest: execution().digest, expires_at: clock + 120 });
     f.click('cancel', 'e-one'); assert.equal(f.requests.filter(row => row.options.method === 'POST').length, 1);
-    approve.resolve({ execution: execution('approved') }); await flush(); assert.match(f.host.innerHTML, /Approved · not dispatched/); assert.doesNotMatch(f.host.innerHTML, /data-compute-action="approve"/);
+    approve.resolve({ execution: execution('approved') }); await flush(); assert.match(f.host.innerHTML, /Approved · automatic execution authorized/); assert.doesNotMatch(f.host.innerHTML, /data-compute-action="approve"/);
     f.click('cancel', 'e-one'); f.take('/api/compute/executions/e-one/cancel', 'POST').resolve({ execution: execution('cancelled') }); await flush();
     assert.match(f.host.innerHTML, /Cancelled before dispatch/); assert.doesNotMatch(f.host.innerHTML, /data-compute-action="cancel"/);
     f.ui.stop();
@@ -269,6 +272,54 @@ const cases = {
     const late = fixture({ scripts: [bundle] }); await late.open(); late.click('inspect-script', bundle.id);
     const pending = late.take('/api/compute/scripts/bundle-one'); late.setRoute('#/coworkers'); late.events.dispatchEvent(new Event('hashchange'));
     pending.resolve({ script: { ...bundle, source: 'PRIVATE_LATE_SOURCE' } }); await flush(); assert.equal(late.host.innerHTML, '');
+  },
+
+  async 'enabled-executor'() {
+    const payload = JSON.parse(readFileSync(0, 'utf8'));
+    assert.equal(payload.inventory.capabilities.transport, true);
+    const f = fixture({ currentTime: payload.now });
+    await f.open(payload.inventory);
+    assert.match(f.host.innerHTML, /automatic execution worker is available/i);
+    assert.doesNotMatch(f.host.innerHTML, /Remote dispatch is unavailable|Record approval without dispatch/);
+    const proposal = payload.inventory.executions[0];
+    f.click('approve', proposal.id);
+    assert.match(f.host.innerHTML, />Approve automatic execution<\/button>/);
+    assert.match(f.host.innerHTML, /run this exact operation automatically in the background over SSH/);
+    assert.match(f.host.innerHTML, /No additional dispatch confirmation is required/);
+    f.submit('approve', { expected_digest: proposal.digest, expires_minutes: '2' });
+    const approval = f.take(`/api/compute/executions/${proposal.id}/approve`, 'POST');
+    const body = approval.options.body;
+    approval.resolve({ execution: { ...proposal, state: 'approved' } });
+    await flush();
+    assert.match(f.host.innerHTML, /Approved · automatic execution authorized/);
+    assert.equal(f.requests.filter(row => row.options.method === 'POST').length, 1);
+    f.ui.stop();
+    console.log(JSON.stringify(body));
+  },
+
+  async 'discovery-cancellation'() {
+    for (const state of ['queued', 'claimed', 'dispatching', 'uncertain']) {
+      const row = { id: 'd-one', scope_id: scope.id, board: 'demo', task_number: 42, state, observations: [], usage: {} };
+      const f = fixture({ passive: { discoveries: [row], capabilities: { passive_discovery: true } } });
+      await f.open();
+      assert.match(f.host.innerHTML, /data-compute-action="discovery-cancel"/, state);
+      assert.match(f.host.innerHTML, /A cancellation request does not confirm remote termination/, state);
+      f.click('discovery-cancel', row.id);
+      const write = f.take('/api/compute/discoveries/d-one/cancel', 'POST');
+      assert.deepEqual(write.options.body, {});
+      write.resolve({ discovery: { ...row, state: state === 'queued' ? 'cancelled' : state, reason: state === 'queued' ? 'cancelled_before_dispatch' : 'cancellation_requested' } });
+      await flush();
+      assert.doesNotMatch(f.host.innerHTML, /data-compute-action="discovery-cancel"/, state);
+      if (state !== 'queued') assert.match(f.host.innerHTML, /Cancellation requested; remote termination is unconfirmed/);
+      f.ui.stop();
+    }
+    for (const state of ['completed', 'cancelled', 'denied', 'running']) {
+      const f = fixture({ passive: { discoveries: [{ id: 'd-one', state }], capabilities: { passive_discovery: true } } });
+      await f.open(); f.click('discovery-cancel', 'd-one');
+      assert.doesNotMatch(f.host.innerHTML, /data-compute-action="discovery-cancel"/, state);
+      assert.equal(f.requests.filter(row => row.options.method === 'POST').length, 0);
+      f.ui.stop();
+    }
   },
 
   async discovery() {

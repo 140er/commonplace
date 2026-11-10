@@ -22,6 +22,7 @@ import pytest
         "failures",
         "routing",
         "discovery",
+        "discovery-cancellation",
         "scripts",
     ],
 )

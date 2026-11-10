@@ -217,6 +217,15 @@ class ExecutionService:
         ):
             raise StoreError("authority_changed", 409)
 
+    @property
+    def running(self):
+        """Current automatic worker availability, not a target readiness guarantee."""
+        return (
+            self.enabled
+            and not self._stop.is_set()
+            and any(thread.is_alive() for thread in self._threads)
+        )
+
     def start(self):
         if not self.enabled:
             return False

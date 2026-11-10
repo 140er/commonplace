@@ -409,6 +409,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_dsh_plugin.py` runs the plugin Node suite; hook serialization uses explicit fake subprocess completion rather than elapsed sleeps, preserving transcript and deduplication assertions.
+
   - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`.
 
 
@@ -1467,6 +1469,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Inventory reports current automatic executor availability without opening transport or custody. Approval explicitly authorizes automatic background execution over SSH; it is not a no-dispatch promise. Discovery cancellation shares the queued/claimed/dispatching/uncertain state predicate and distinguishes intent from confirmed termination.
+
   - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
   - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
   - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection without the separately configured purpose-bound SSH permit adapter.
@@ -1489,6 +1493,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
   - `tests/test_compute_admission.py` covers explicit digest-bound mode, guarded two-hop SSH permits, tampering/replay/expiry, pre/post-issuance revocation, writer exclusion and uncertainty retention.
   - `tests/test_compute_fence.py` proves local cross-process writer exclusion, durable epoch invalidation, stale-authority refusal, timeout/crash/restart, persistent unparticipating-writer denial and default-off lifecycle.
+  - `tests/test_compute_executor.py` feeds real enabled-worker inventory into the production UI and verifies that its approval starts the synthetic background transport without a second dispatch action. `tests/test_compute_ui.py` covers each cancellable discovery state and truthful approval wording.
   - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
   - `tests/test_compute_control.py` and `tests/test_compute_api.py` cover persistent/replayed actions, current authority, Origin/framing, typed enrollment/grants and stale digest rejection; `tests/test_compute_browser.py` exercises the full real gateway UI lifecycle.
   - `tests/test_compute_credentials.py`, `tests/test_compute_transport.py` and the optional actual Paramiko socketpair `tests/test_compute_ssh_fixture.py` cover authenticated custody, lifecycle, safe-open refusals, protocol validation, replay, limits and both SSH pins before authentication.

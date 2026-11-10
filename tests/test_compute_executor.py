@@ -865,3 +865,42 @@ def test_publication_rechecks_origin_and_withholds_text_after_revoke(execution_e
     )
     with pytest.raises(StoreError, match="sign_in"):
         view(state, proposal)
+
+
+def test_enabled_executor_ui_approval_authorizes_automatic_background_execution(execution_env):
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from tests.test_compute_api import API
+
+    state, env = execution_env, execution_env.env
+    proposal = prepare(state, approval=False)
+    env.gateway._compute_services = {env.workspace: state.service}
+    executed = threading.Event()
+    state.driver.hooks["exec"] = executed.set
+    api = API(env)
+    assert api.request()[1]["capabilities"]["transport"] is False
+    try:
+        assert state.service.start()
+        status, inventory = api.request()
+        assert status == 200 and inventory["capabilities"]["transport"] is True
+        node = shutil.which("node")
+        assert node, "Node is required for the enabled-executor UI check"
+        result = subprocess.run(
+            [node, str(Path(__file__).with_name("compute_ui.mjs")), "enabled-executor"],
+            input=json.dumps({"inventory": inventory, "now": env.clock.now}),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not state.driver.calls
+        approval = json.loads(result.stdout.splitlines()[0])
+        assert approval["expected_digest"] == proposal["digest"]
+        assert api.request("POST", f"/executions/{proposal['id']}/approve", approval)[0] == 200
+        assert executed.wait(5), "approved proposal did not reach the automatic worker"
+        assert "connect" in state.driver.calls and "exec" in state.driver.calls
+    finally:
+        assert state.service.stop(timeout=5)
+    assert api.request()[1]["capabilities"]["transport"] is False

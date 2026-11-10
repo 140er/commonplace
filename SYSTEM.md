@@ -153,20 +153,24 @@ executions2000; scope expiry at most one hour, proposal15minutes, approval5minut
 and no later than proposal expiry. Exhaustion conflicts without deleting history.
 Exact user/request-key/payload replay reuses a proposal; changed payload conflicts.
 Approval recomputes the entire binding/digest and current authority before storing
-consent. Epoch/key/task/session changes invalidate it. Approval/cancellation here
-are pre-dispatch local facts. No verification, approval consumption, discovery,
-key loading, network I/O or remote dispatch is exposed by the management surface.
+consent. Epoch/key/task/session changes invalidate it. An enabled executor may
+consume approval and execute automatically in the background. Management requests
+do not perform network I/O directly. Cancellation can record intent without
+confirming remote termination.
 
 ### Compute management interface
 
 The owner-only `#/compute` screen consumes authenticated Compute inventories and
 existing project lists. Gateway/target forms record full public host keys and
 explicit confirmation, never private keys. Enrollment remains pending verification.
-The UI can shape passive scopes, revoke them, propose only system.info.v1 actions,
-inspect/confirm an exact SHA256 digest and cancel pre-dispatch proposals. Approved
-means not dispatched; no active discovery, script box or fabricated live inventory
-is provided. Server authority, pin verification and digest recomputation remain
-mandatory. Client form validation is not authorization.
+The UI can shape passive scopes, revoke them, propose exact system.info.v1 actions
+or immutable workspace.script.v1 bundles, and confirm an exact SHA256 digest.
+It displays automatic worker availability and labels approval as permission for
+automatic background execution over SSH without another dispatch confirmation.
+Approval does not confirm that execution started or completed. Discovery
+cancellation supports queued, claimed, dispatching and uncertain attempts, with
+intent distinguished from confirmed termination. Server authority, pin verification
+and digest recomputation remain mandatory. Client validation is not authorization.
 
 Every visit binds responses to its exact session object, workspace, actor and
 route. Route departure/sign-out/session expiry abort requests and clear form and

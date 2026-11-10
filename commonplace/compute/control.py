@@ -986,13 +986,15 @@ class Store:
         with self._transaction(principal, session_hash) as (conn, current):
             from .script_control import capable
 
+            executor = getattr(self.gateway, "_compute_services", {}).get(self.workspace_id)
             return {
                 **{
                     kind: self._list(conn, current, kind)
                     for kind in ("gateways", "nodes", "scopes", "executions")
                 },
                 "capabilities": {
-                    "transport": False,
+                    # Reading worker status never opens custody or transport.
+                    "transport": bool(executor and executor.running),
                     "passive_discovery": False,
                     "scripts": capable(self, conn, current),
                 },

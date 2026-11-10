@@ -42,7 +42,10 @@ All paths are under `/api/compute`. API module exports `install(gateway)` and
 Store mutation methods take an actual principal and revalidate it through the
 existing control DB; not a boolean authority claim. Document public methods.
 
-- GET root: `{gateways:[],nodes:[],scopes:[],executions:[],capabilities:{transport:false,passive_discovery:false,scripts:false},can_manage:true}`.
+- GET root defaults: `{gateways:[],nodes:[],scopes:[],executions:[],capabilities:{transport:false,passive_discovery:false,scripts:false},can_manage:true}`.
+  `transport` reports current automatic executor availability. It is a snapshot,
+  not proof that an individual target is ready; dispatch rechecks authority,
+  credentials and verified bindings.
 - GET `/gateways`, `/nodes`, `/scopes`, `/executions`: named array.
 - POST `/gateways`: `{board,name,address,port,account,host_key:{algorithm,key},credential_id,credential_version,pin_confirmed:true}` -> `{gateway}`.
   `key` is base64 full public SSH host-key bytes, not an unchecked display hash.
@@ -69,11 +72,13 @@ existing control DB; not a boolean authority claim. Document public methods.
 - POST `/executions/<id>/approve`: `{expected_digest,expires_at}` -> `{execution}`.
   Current owner only, exact freshly recomputed digest, bounded finite expiry.
   Record current session digest privately, never raw cookie. Approval state
-  `approved` is not dispatch/running/completion. A public request cannot mark a
-  gateway/node verified, consume approval or supply transport keys.
+  `approved` authorizes automatic background execution by an enabled worker,
+  without another dispatch confirmation, but does not confirm start/completion.
+  The worker consumes consent after rechecking authority and verified bindings.
+  A public request cannot mark a gateway/node verified or supply transport keys.
 - POST `/executions/<id>/cancel`: `{}` -> `{execution}`.
-  Pre-dispatch proposal/approval cancellation is confirmed locally; any future
-  in-flight execution must distinguish request from confirmed termination.
+  Pre-dispatch proposal/approval cancellation is confirmed locally. In-flight
+  cancellation records intent and does not confirm remote termination.
 
 Responses explicitly project metadata (no sessions, key material, credentials,
 callback objects). Gateway includes id/name/board/address/port/account/host_key/
@@ -94,10 +99,15 @@ Discoverable `#/compute` workspace-owner view with existing warm Workbench style
 Real inventories, empty/setup states, gateway/node enrollment forms, full public
 host-key confirmation, exact scope grants/revocation, typed read-only execution
 proposal, explicit digest approval and cancel state. Use only the REST above.
-Show pending verification, approved but not dispatched, and unavailable capability
-honestly. Link canonical tasks; use app lifecycle/AbortController and response
-fences on navigation/signout/workspace changes. Escape remote/user metadata.
-No raw secret input, fake gateway, active scan, shell/script box or generic proxy.
+Show pending verification, automatic execution consent, and current worker
+availability honestly. Approval permits automatic background execution over SSH
+without another dispatch confirmation, including when a currently unavailable
+worker becomes available before approval expires. It does not confirm execution.
+Discovery cancellation is offered for queued, claimed, dispatching and uncertain
+attempts. A cancellation request does not confirm remote termination. Link canonical tasks;
+use app lifecycle/AbortController and response fences on navigation/signout/workspace changes. Escape remote/user metadata.
+No raw secret input, fake gateway, active scan, arbitrary shell or generic proxy.
+Scripts follow the immutable bundle, exact approval and verified runtime contract.
 
 ## Checks
 

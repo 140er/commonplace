@@ -98,13 +98,15 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 execution = store.list_executions(principal, session_hash=sessions._hash(cookie))[0]
                 page.locator('input[name="expected_digest"]').fill(execution["digest"])
                 page.locator('input[name="expires_minutes"]').fill("1")
-                page.get_by_role(
-                    "button", name="Record approval without dispatch", exact=True
-                ).click()
+                page.get_by_role("button", name="Approve automatic execution", exact=True).click()
                 approved = page.locator(".compute-row").filter(has_text=execution["digest"])
-                approved.get_by_text("Approved · not dispatched", exact=True).wait_for()
+                approved.get_by_text(
+                    "Approved · automatic execution authorized", exact=True
+                ).wait_for()
                 page.reload()
-                approved.get_by_text("Approved · not dispatched", exact=True).wait_for()
+                approved.get_by_text(
+                    "Approved · automatic execution authorized", exact=True
+                ).wait_for()
                 page.locator('[data-compute-action="cancel"]').click()
                 page.get_by_text("Cancelled before dispatch", exact=True).wait_for()
                 inventory = store.inventory(principal, session_hash=sessions._hash(cookie))
@@ -211,13 +213,15 @@ def test_compute_browser_immutable_script_inspection_and_approval(script_state, 
                 )
                 page.locator('input[name="expected_digest"]').fill(proposal["digest"])
                 page.locator('input[name="expires_minutes"]').fill("1")
-                page.get_by_role(
-                    "button", name="Record approval without dispatch", exact=True
-                ).click()
+                page.get_by_role("button", name="Approve automatic execution", exact=True).click()
                 approved = page.locator(".compute-row").filter(has_text=proposal["digest"])
-                approved.get_by_text("Approved · not dispatched", exact=True).wait_for()
+                approved.get_by_text(
+                    "Approved · automatic execution authorized", exact=True
+                ).wait_for()
                 page.reload()
-                approved.get_by_text("Approved · not dispatched", exact=True).wait_for()
+                approved.get_by_text(
+                    "Approved · automatic execution authorized", exact=True
+                ).wait_for()
                 scripts = store.list_scripts(env.principal, **env.auth)
                 created = next(
                     row
