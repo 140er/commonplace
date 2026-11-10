@@ -967,8 +967,18 @@ playbooks and the original wider orchestration acceptance remain separate work.
   bounds acquisition; this contract makes no timing or constant-time claim.
 - Imported holder-room counts can include rows outside a consented range,
   as before this projection; content reads retain their separate range gate.
-  Search `total_before_filter` can include hidden candidates inside a visible
-  wing before the response gate filters them.
+- Restricted structured drawer searches gate each ranked prefix before
+  applying the requested result limit, for explicit wings and fan-out alike.
+  A short readable page retries with doubled worker limits until filled,
+  the worker returns a short prefix, or the 100-candidate bound is reached.
+  At most eight worker searches share one existing request deadline; ranking
+  still uses the same joint wing pool. Readable hits beyond that bound may
+  remain unavailable. Every-wing principals keep their existing search path.
+- Restricted structured responses omit `total`, `total_before_filter` and
+  `filtered_by_max_distance`; any `count` describes only returned readable
+  hits. No hidden-candidate count or refill diagnostic is returned. Captured
+  CLI search retains its existing separate path until structured CLI gating
+  is applied; that path can then use the same refill before rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 

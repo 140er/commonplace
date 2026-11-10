@@ -52,6 +52,9 @@ HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
+# The public worker schema caps each ranked prefix at 100 hits. Doubling
+# from a minimum limit of one takes at most eight searches per request.
+MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
@@ -932,6 +935,12 @@ class Mediator:
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
             if cli and not policy.sees_all_wings:
                 args["cli_compatible"] = False
+            if not policy.sees_all_wings and not args.get("cli_compatible"):
+                return {
+                    "respond": _with_search_facts(
+                        self._readable_search(principal, name, args), fact_result["facts"]
+                    )
+                }
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -1476,8 +1485,62 @@ class Mediator:
         except TimeoutError:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
 
+    def _readable_search(self, principal, name, args) -> dict:
+        """Fill from gated ranked prefixes, bounded by 100 candidates and one deadline."""
+        from .handoff.mirror_access import gate
+        from .rules import checks
+
+        # Deadline-bound drawer checks reuse only open stores, as in overview
+        # projection. Pinned-wing searches do not pass through that projection.
+        context = getattr(self.gateway, "handoff", None)
+        if context is not None:
+            with contextlib.suppress(Exception):
+                context.store_for(principal.workspace_id)
+        try:
+            with checks.deadline(WORKER_TIMEOUT_S):
+                worker_args = dict(args)
+                while True:
+                    checks.remaining(0)
+                    result = self.workers.call_tool(principal, name, worker_args)
+                    if not isinstance(result, dict):
+                        raise WorkerUnavailable()
+                    if result.get("error") or not isinstance(result.get("results"), list):
+                        return result
+                    limit = max(1, min(int(args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    fetched = max(1, min(int(worker_args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    candidates = result["results"]
+                    result = gate(
+                        self.gateway,
+                        principal,
+                        "search",
+                        {
+                            **result,
+                            "results": [
+                                h
+                                for h in candidates
+                                if _scrub(h, principal.policy.can_read_wing) is not _DROP
+                            ],
+                        },
+                    )
+                    result = {**result, "results": result.get("results", [])[:limit]}
+                    # Worker diagnostics describe candidates before authorization.
+                    for key in ("total", "total_before_filter", "filtered_by_max_distance"):
+                        result.pop(key, None)
+                    if "count" in result:
+                        result["count"] = len(result["results"])
+                    checks.remaining(0)
+                    if (
+                        len(result["results"]) >= limit
+                        or len(candidates) < fetched
+                        or fetched == MAX_SEARCH_CANDIDATES
+                    ):
+                        return result
+                    worker_args["limit"] = min(fetched * 2, MAX_SEARCH_CANDIDATES)
+        except TimeoutError:
+            return {"query": args.get("query", ""), "results": []}
+
     def _scoped_fan_out_search(self, principal, name, args) -> dict:
-        """One worker search and one ranking over the readable wing union."""
+        """Rank the readable wing union, refilling after drawer authorization."""
         from .handoff.models import MIRROR_WING
         from .handoff.overview import project
 
@@ -1499,7 +1562,12 @@ class Mediator:
         worker_args = {**args, "wings": wings}
         if args.get("cli_compatible") and not principal.policy.sees_all_wings:
             worker_args["cli_compatible"] = False
-        result = self.workers.call_tool(principal, name, worker_args)
+        search = (
+            self.workers.call_tool
+            if principal.policy.sees_all_wings or worker_args.get("cli_compatible")
+            else self._readable_search
+        )
+        result = search(principal, name, worker_args)
         if not isinstance(result, dict):
             raise WorkerUnavailable()
         if result.get("error"):

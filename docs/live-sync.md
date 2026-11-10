@@ -156,7 +156,16 @@ and `delete_hallway` take no room and are not checked yet.
 Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived
 facts are not room-checked. A member with fact-write permissions but no source-thread
 read access can mutate those hidden facts. Invalidate's `closed` count is a yes/no
-oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
+oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`.
+
+Restricted structured Memory search gates ranked hits before limiting the reply.
+Explicit-wing and fan-out searches retry with doubled prefixes until readable hits
+fill the requested limit, candidates run out, or the 100-candidate bound is reached
+(at most eight worker searches on one deadline). Replies omit candidate and filter
+totals; any result count describes only returned readable hits. Readable hits beyond
+the bound can still be missed, and ranking is not independent of hidden candidates.
+Every-wing principals and captured CLI search keep their existing paths; structured
+CLI gating can reuse the refill before rendering. This makes no timing privacy claim.
 
 Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
 verified on compact, sqlite_exact and chroma.

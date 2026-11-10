@@ -112,7 +112,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Architecture describes exact-slug, workspace-local reads without implying lifecycle support.
 
-  - Cold-start readability, imported-room count compatibility and remaining search totals are documented separately from content range checks.
+  - Cold-start readability, imported-room count compatibility and bounded restricted-search refill with suppressed candidate totals are documented separately from content range checks.
 
   - Standalone mediator compatibility distinguishes policy-only local helpers from workspace-bound callers without thread authority.
 
@@ -239,6 +239,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
+
+  - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and unchanged captured CLI path.
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
@@ -562,6 +564,8 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, filters and deadline failures; the same fixture reports information-only latency.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -939,6 +943,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
 
+  - Restricted structured drawer searches gate before limiting and double ranked prefixes up to 100 candidates in at most eight worker calls on one deadline. Responses omit candidate/filter totals and count only returned hits; every-wing and captured CLI paths retain existing behavior.
+
   - Direct mediator helpers default to no gateway; workspace-bound callers still project metadata.
 
   - Policy-only callers without workspace context receive empty overview and fan-out results through the shared projection boundary.
@@ -1008,6 +1014,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
+
+  - `tests/test_restricted_search_fill.py` covers bounded refill and response privacy, with a synthetic latency fixture.
 
 
 ## sessions-and-sign-in
