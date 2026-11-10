@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -191,3 +192,78 @@ def test_scratch_statistics_failure_denies_before_claim(tmp_path, monkeypatch):
         helper.execute_verified(request(), SCRIPT, cancelled=lambda: True)
     assert list((root / "attempts").iterdir()) == []
     assert list((root / "scratch").iterdir()) == []
+
+
+@pytest.mark.parametrize("empty_delay", [0.05, None], ids=["drains", "populated"])
+@pytest.mark.parametrize("started", [True, False], ids=["started", "bootstrap_failed"])
+def test_cgroup_drain_after_child_exit_controls_confirmation_and_cleanup(
+    tmp_path, monkeypatch, empty_delay, started
+):
+    settings = config(tmp_path)
+    root = Path(settings.workspace_root)
+    helper = TargetHelper(settings, key_principal="c" * 64, authorize=lambda *a: True)
+    monkeypatch.setattr(helper.sandbox, "check", lambda value: None)
+    groups, jobs = [], []
+
+    class DrainingGroup(ProcessGroup):
+        """A hidden descendant keeps cgroup.events populated after pipe EOF/reap."""
+
+        def __init__(self, config, request):
+            super().__init__(config, request)
+            self.exited_at = None
+            self.confirmed_reads = 0
+            groups.append(self)
+
+        def empty(self):
+            if not super().empty():
+                return False
+            if self.exited_at is None:
+                self.exited_at = time.monotonic()
+            empty = empty_delay is not None and time.monotonic() - self.exited_at >= empty_delay
+            self.confirmed_reads += int(empty)
+            return empty
+
+    def spawn(value, script_path, job_path, group):
+        jobs.append(Path(job_path))
+        group.process = subprocess.Popen(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import pathlib,signal,sys; "
+                + ("print('COMPUTE_SCRIPT_STARTED_V1', flush=True); " if started else "")
+                + "pathlib.Path(sys.argv[1], 'fill').write_bytes(b'x'*3000000); signal.pause()",
+                str(job_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        return group.process
+
+    monkeypatch.setattr(script_sandbox, "_Cgroup", DrainingGroup)
+    monkeypatch.setattr(helper.sandbox, "_spawn", spawn)
+
+    def cancelled():
+        return bool(
+            jobs and (jobs[0] / "fill").exists() and (jobs[0] / "fill").stat().st_size == 3000000
+        )
+
+    result = helper.execute_verified(request(), SCRIPT, cancelled=cancelled)
+    group = groups[0]
+    assert group.process.poll() is not None
+    confirmed = empty_delay is not None
+    assert result.termination_confirmed is confirmed
+    assert result.state == (
+        ("observed_exit" if started else "denied") if confirmed else "uncertain"
+    )
+    stored = json.loads(next((root / "attempts").iterdir()).joinpath("result.json").read_bytes())
+    assert stored["termination_confirmed"] is confirmed
+    if confirmed:
+        assert list((root / "scratch").iterdir()) == []
+        # One final observation in _collect, then the separate run/finally read.
+        assert group.confirmed_reads == 2
+    else:
+        assert (jobs[0] / "fill").stat().st_size == 3000000
+        assert group.confirmed_reads == 0
+    assert group.empty_after_close is confirmed
