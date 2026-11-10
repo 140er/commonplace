@@ -17,7 +17,7 @@ MAX_BODY_BYTES = 4096
 BODY_KEYS = {
     "sessions/lease": set(),
     "sessions/starting": {"lease_token"},
-    "sessions/result": {"lease_token", "outcome", "thread_id"},
+    "sessions/result": {"lease_token", "outcome", "thread_id", "code"},
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
@@ -235,6 +235,7 @@ def register(gateway):
                             body["lease_token"],
                             body["outcome"],
                             body.get("thread_id"),
+                            body.get("code"),
                         )
                     send_json(h, 200, payload)
                     return

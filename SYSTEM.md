@@ -561,8 +561,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   and capacity-saturated cards remain actionable. Completed turns cannot make
   an actionable board idle; clear idle boards produce no host calls or model
   turns, and new/unblocked work is found on the next runner pass.
-- Project GET includes session state, reason, pending command, thread binding
-  and actionable/blocked cards. Signed-in owners POST `{}` to project
+- Project GET includes session state, reason and pending command. Only owners
+  receive the thread binding and actionable/blocked card details. Signed-in owners POST `{}` to project
   `orchestrator/stop` or `orchestrator/resume`; stop persists across new work
   until resume. `stopping` distinguishes a pending interrupt from `stopped`.
 - Machine-only session lease/starting/result routes fence every host effect
@@ -576,6 +576,13 @@ playbooks and the original wider orchestration acceptance remain separate work.
   owner UI and service activation remain follow-up work; existing host
   credentials are neither switched nor elevated. Sessions do not occupy
   per-card worker capacity.
+- Owner stop preserves unknown-effect state and markers, so stop followed by
+  resume cannot relaunch an ambiguous effect. Session leasing filters by machine
+  before board reads and skips each unavailable board independently.
+- Invalid session journals are quarantined, and session-pass failures do not
+  prevent per-card leasing in that pass. Before starting, a machine can report a
+  fenced `refused` result with an allowlisted code; status shows `unavailable`
+  and the reason without making a host call.
 - Migration only adds `runner_sessions`; existing card jobs and their grants,
   leases and history are untouched. Read-only project status does not create
   an absent runner database. Existing per-card triggers require `card.todo`.

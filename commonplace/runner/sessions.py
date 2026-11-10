@@ -5,16 +5,20 @@ operation; ambiguous effects are never replayed. Runner polling inspects threads
 not model turns. Only a nonempty actionable board schedules a continuation.
 """
 
+import logging
 import secrets
 from contextlib import ExitStack
 
 from commonplace.boards.store import active_blockers
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
+from commonplace.http_util import log_failure
 from commonplace.orch import schema, store as configs
 from commonplace.projects import models, orchestration, split
 from commonplace.runner import jobs, predicate, registry
 from commonplace.sessions import person_principal
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runner_sessions (
@@ -161,6 +165,10 @@ def _new(conn, gateway, ws, version, board):
     return conn.execute("SELECT * FROM runner_sessions WHERE board=?", (board["slug"],)).fetchone()
 
 
+def _uncertain(row):
+    return row is not None and (row["state"] == "uncertain" or row["code"] == "effect_unknown")
+
+
 def status(gateway, ws, board):
     b, work = board_state(gateway, ws, board)
     with split.runner_read(gateway.workspace_dir(ws)) as conn:
@@ -183,12 +191,14 @@ def status(gateway, ws, board):
         problem = _authority(gateway, ws, conn, version, b, row)
         return {
             "state": (
-                "stopping"
+                "uncertain"
+                if _uncertain(row)
+                else "stopping"
                 if row and row["paused"] and row["phase"]
                 else "stopped"
                 if row and row["paused"] and row["state"] != "uncertain"
                 else "unavailable"
-                if problem
+                if problem or (row and row["code"] in jobs.PRESPAWN_CODES)
                 else row["state"]
                 if row
                 else "idle"
@@ -219,7 +229,7 @@ def control(gateway, principal, board, action):
         row = conn.execute("SELECT * FROM runner_sessions WHERE board=?", (board,)).fetchone()
         # Stop must remain available even if grants were withdrawn.
         if action == "resume":
-            if row is not None and row["state"] == "uncertain":
+            if _uncertain(row):
                 raise ToolError("no: session effect uncertain; person must reconcile")
             refusal = _authority(gateway, principal.workspace_id, conn, version, b, row)
             if refusal:
@@ -230,7 +240,12 @@ def control(gateway, principal, board, action):
                 raise ToolError("no: " + refusal)
             row = _new(conn, gateway, principal.workspace_id, version, b)
         if action == "stop":
-            if row["phase"] == "starting":
+            if _uncertain(row):
+                conn.execute(
+                    "UPDATE runner_sessions SET paused=1,state='uncertain',action=NULL,phase=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE board=?",
+                    (jobs._now(), board),
+                )
+            elif row["phase"] == "starting":
                 # Keep the fence and accept the in-flight launch acknowledgement,
                 # so a stop racing a launch never loses the returned thread binding.
                 conn.execute(
@@ -268,61 +283,74 @@ def lease(gateway, ws, machine_id):
         }
         boards = sorted(configs.configured_boards_in(conn), key=lambda b: (turns.get(b, 0), b))
     for name in boards:
-        b, work = board_state(gateway, ws, name)
-        with ExitStack() as locks, st.transaction() as conn:
-            locks.enter_context(gateway.db._lock)
-            version = _host(conn, name)
-            if version is None or version.config().runner.machine != machine_id:
-                continue
-            row = conn.execute("SELECT * FROM runner_sessions WHERE board=?", (name,)).fetchone()
-            if _authority(gateway, ws, conn, version, b, row):
-                continue
-            if row is None:
-                row = _new(conn, gateway, ws, version, b)
-            if row["state"] == "uncertain":
-                continue
-            if row["phase"] in ("leased", "starting"):
-                if row["lease_until"] > jobs._now():
+        try:
+            with st.connection() as conn:
+                version = _host(conn, name)
+                if version is None or version.config().runner.machine != machine_id:
                     continue
-                if row["phase"] == "starting":
-                    conn.execute(
-                        "UPDATE runner_sessions SET state='uncertain',phase=NULL,action=NULL,code='effect_unknown' WHERE board=?",
-                        (name,),
-                    )
+            b, work = board_state(gateway, ws, name)
+            with ExitStack() as locks, st.transaction() as conn:
+                locks.enter_context(gateway.db._lock)
+                version = _host(conn, name)
+                if version is None or version.config().runner.machine != machine_id:
                     continue
-            action = row["action"]
-            if row["paused"]:
-                if action not in ("stop", "inspect"):
+                row = conn.execute(
+                    "SELECT * FROM runner_sessions WHERE board=?", (name,)
+                ).fetchone()
+                if _authority(gateway, ws, conn, version, b, row):
                     continue
-            elif action is None:
-                if row["state"] == "running":
-                    action = "inspect"
-                elif work["actionable"]:
-                    action = "continue" if row["thread_id"] else "launch"
-                else:
+                if row is None:
+                    row = _new(conn, gateway, ws, version, b)
+                if _uncertain(row):
                     continue
-            token = secrets.token_urlsafe(32)
-            conn.execute(
-                "UPDATE runner_sessions SET action=?,phase='leased',lease_token=?,lease_until=?,updated_at=?,dispatch=(SELECT COALESCE(MAX(dispatch),0)+1 FROM runner_sessions) WHERE board=?",
-                (action, token, jobs._after(jobs._now(), 120), jobs._now(), name),
-            )
-            config = version.config()
-            role_name = next(
-                k for k, r in config.roles.items() if r.kind == "orchestrator" and r.parent is None
-            )
-            return {
-                "job_id": row["id"],
-                "board_slug": name,
-                "project": row["project"],
-                "topic": row["topic"],
-                "runtime_mode": row["runtime_mode"],
-                "action": action,
-                "thread_id": row["thread_id"],
-                "lease_token": token,
-                "modelSelection": {"instanceId": row["model_provider"], "model": row["model"]},
-                "message": schema.role_instructions(config, role_name)
-                + f"\nCoordinate board {name}. Keep working until every card is done or explicitly blocked by a dependency or person-directed ask. Capacity is not blocked. Re-read the board after each batch. The machine runner manages this session's continuation and stop; do not start another session.",
-            }
+                if row["phase"] in ("leased", "starting"):
+                    if row["lease_until"] > jobs._now():
+                        continue
+                    if row["phase"] == "starting":
+                        conn.execute(
+                            "UPDATE runner_sessions SET state='uncertain',phase=NULL,action=NULL,code='effect_unknown' WHERE board=?",
+                            (name,),
+                        )
+                        continue
+                action = row["action"]
+                if row["paused"]:
+                    if action not in ("stop", "inspect"):
+                        continue
+                elif action is None:
+                    if row["state"] == "running":
+                        action = "inspect"
+                    elif work["actionable"]:
+                        action = "continue" if row["thread_id"] else "launch"
+                    else:
+                        continue
+                token = secrets.token_urlsafe(32)
+                conn.execute(
+                    "UPDATE runner_sessions SET action=?,phase='leased',lease_token=?,lease_until=?,updated_at=?,dispatch=(SELECT COALESCE(MAX(dispatch),0)+1 FROM runner_sessions) WHERE board=?",
+                    (action, token, jobs._after(jobs._now(), 120), jobs._now(), name),
+                )
+                config = version.config()
+                role_name = next(
+                    k
+                    for k, r in config.roles.items()
+                    if r.kind == "orchestrator" and r.parent is None
+                )
+                return {
+                    "job_id": row["id"],
+                    "board_slug": name,
+                    "project": row["project"],
+                    "topic": row["topic"],
+                    "runtime_mode": row["runtime_mode"],
+                    "action": action,
+                    "thread_id": row["thread_id"],
+                    "lease_token": token,
+                    "modelSelection": {"instanceId": row["model_provider"], "model": row["model"]},
+                    "message": schema.role_instructions(config, role_name)
+                    + f"\nCoordinate board {name}. Keep working until every card is done or explicitly blocked by a dependency or person-directed ask. Capacity is not blocked. Re-read the board after each batch. The machine runner manages this session's continuation and stop; do not start another session.",
+                }
+        except AssertionError:
+            raise
+        except Exception as exc:
+            log_failure(logger, "orchestrator session lease for a board failed", exc)
     return None
 
 
@@ -360,8 +388,8 @@ def starting(gateway, ws, machine_id, token):
     return True
 
 
-def result(gateway, ws, machine_id, token, outcome, thread_id=None):
-    if outcome not in ("running", "finished", "stopped", "uncertain"):
+def result(gateway, ws, machine_id, token, outcome, thread_id=None, code=None):
+    if outcome not in ("running", "finished", "stopped", "uncertain", "refused"):
         raise ValueError("invalid session outcome")
     if thread_id is not None and (
         not isinstance(thread_id, str) or jobs.THREAD_ID.fullmatch(thread_id) is None
@@ -375,6 +403,18 @@ def result(gateway, ws, machine_id, token, outcome, thread_id=None):
     # admission, and an event committed later is found by the next idle sweep.
     with st.transaction() as conn:
         row = _fenced(conn, machine_id, token)
+        if outcome == "refused":
+            if row["phase"] != "leased" or _uncertain(row):
+                raise jobs.Conflict("session command is not leased")
+            if code not in jobs.PRESPAWN_CODES or thread_id is not None:
+                raise ValueError("invalid session refusal")
+            conn.execute(
+                "UPDATE runner_sessions SET action=NULL,phase=NULL,lease_token=NULL,lease_until=NULL,code=?,updated_at=? WHERE board=?",
+                (code, jobs._now(), name),
+            )
+            return {"state": "unavailable", "reason": code}
+        if code is not None:
+            raise ValueError("code requires a refusal")
         if row["phase"] != "starting":
             raise jobs.Conflict("session command not started")
         allowed = {

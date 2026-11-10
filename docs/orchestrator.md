@@ -224,8 +224,9 @@ schedule continuation; otherwise the session becomes idle. A later new card or
 unblocked card wakes an idle session. A clear idle board causes no host calls
 and no model turns. Running threads are inspected without sending model input.
 
-`GET /api/projects/<board>` includes `session`, with state, reason, thread ID,
-pending command, actionable card numbers and explicit blockers. An absent
+`GET /api/projects/<board>` includes session state, reason and pending command.
+Only workspace owners receive the thread ID, actionable card numbers and
+blocker details; non-owner projections omit those fields. An absent
 accepted `[runner]` is `no_host`, with reason `no host attached`; no machine is
 chosen implicitly. `unavailable` reports withdrawn grants or changed config,
 binding or model instead of claiming the orchestrator is running.
@@ -243,7 +244,19 @@ accepting owner's current requester identity, machine binding/epoch, grants,
 wing access and model selection are checked before host effects. Restore
 markers and flags refuse commands. Launches, continuations and stops have a
 local replay journal: ambiguous effects become `uncertain`, never automatically
-replayed or cleared by resume. Config/binding/model changes also fail closed.
+replayed or cleared by resume. Owner stop preserves the uncertainty marker,
+including for a subsequent resume. Config/binding/model changes also fail closed.
+
+A lease pass filters configs by the requesting machine before reading board
+cards, and skips unavailable boards individually. Archived or missing boards
+cannot starve another board or machine. Invalid local session journals are
+quarantined. Session journal, transport or command failures are isolated from
+per-card leasing in the same runner pass.
+
+A local command refusal sends `sessions/result` with `outcome="refused"` and a
+known `code` while the command is still leased, before any host effect. The
+project session then reports `unavailable` and that reason. Refusals are fenced
+and journaled; they cannot replace an already-starting or uncertain result.
 
 Recovery/rebinding after ambiguity or changed configuration, runner service
 activation, richer owner UI, and coordination beyond the host's existing

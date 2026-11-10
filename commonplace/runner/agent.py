@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import stat
@@ -16,7 +17,10 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from ..client import ClientError, _endpoint
 from ..handoff.hook import _atomic_text, _NoRedirect
+from ..http_util import log_failure
 from ..mailer import _loopback
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_STRATEGY = {"type": "root"}  # UNVERIFIED until D2
 SPAWN_MESSAGE = (
@@ -464,10 +468,18 @@ def _run(config, once):
                 _deliver(hub, path, entry, replay=True)
             from . import session_agent
 
-            session_agent.tick(hub, config, journal, env, (token, grant))
+            session_error = None
+            try:
+                session_agent.tick(hub, config, journal, env, (token, grant))
+            except _HubError as exc:
+                session_error = exc
+            except Exception as exc:
+                log_failure(logger, "orchestrator session pass failed", exc)
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))
+            if session_error is not None:
+                session_error.report()
         except _HubError as exc:
             exc.report()
             if exc.kind == "credential":

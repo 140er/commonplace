@@ -46,6 +46,10 @@ def _view(gateway, principal, board):
     from commonplace.runner import sessions
 
     result["session"] = sessions.status(gateway, principal.workspace_id, board["slug"])
+    if not result["can_configure"]:
+        result["session"] = {
+            k: v for k, v in result["session"].items() if k in ("state", "reason", "pending")
+        }
     if orchestration.enabled(gateway.db, principal.workspace_id):
         seat = seats.ensure_main(gateway.db, principal.workspace_id, board["slug"])
         live = seats.active_connection(gateway.db, principal.workspace_id, seat.connection_id)

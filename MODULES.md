@@ -565,6 +565,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - Session gate regressions pin unknown-effect stop/resume, foreign and same-machine unavailable boards, corrupt journals, session transport isolation, visible local refusals and owner-only session card details.
+
   - Persistent runner session base/head regressions and independent authority, launch/stop race, duplicate lease and uncertainty checks.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
@@ -1175,6 +1177,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Owner stop never clears an unknown-effect marker. Session leasing filters by machine and skips bad boards, session failures leave per-card leasing available, and fenced local refusals expose their code without host effects.
+
   - Persistent board sessions use accepted runner authority without todo triggers, retain thread bindings and durable owner stops, continue actionable boards and leave clear boards idle. Ambiguous effects and changed bindings fail closed; per-card worker slots remain separate.
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
@@ -1207,6 +1211,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_runner_session_regressions.py` runs unchanged on the rejected head and the fixes, alongside the six lifecycle cases and twelve existing fence checks.
+
   - `tests/test_orch_sessions.py` proves the six base/head lifecycle contracts; `tests/test_runner_session_guards.py` covers authority, races, duplicate leases and uncertain recovery.
 
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
@@ -1220,6 +1226,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`
 - **Owns:**
+
+  - The session guide documents durable uncertainty across owner stop, board and journal failure isolation, local refusal reporting and owner-only session details.
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
 
@@ -1282,6 +1290,8 @@ Format (read by `commonplace orch docs-check`):
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
 
 - **Promises:**
+
+  - Non-owner project viewers receive session state, reason and pending command only; thread binding, card numbers, dependency titles and ask text are omitted.
 
   - Project responses include read-only session state and explicit blocker reasons. Signed-in owners alone stop or resume persistent sessions; no accepted runner reports no host attached.
 
