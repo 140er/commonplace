@@ -882,31 +882,40 @@ class GitHub:
                         ]
                     except SignInError:
                         readable = False
-        # A pending candidate goes first: revoking the whole grant would otherwise answer its own
-        # revoke as already gone and read as unconfirmed.
+        # A pending candidate goes first. Assumed, not verified against live GitHub: revoking the
+        # whole grant first would also remove the app's tokens, so the candidate's own revoke
+        # would answer already gone and read as unconfirmed.
         ok = readable
-        for token in tokens:
-            if token != grant_token:
-                ok = self.revoke(token, grant=False) and ok
-        ok = (self.revoke(grant_token, grant=True) if grant_token else grant is None) and ok
-        with self.db._lock, self.db._tx() as conn:
-            self._fence(conn)
-            # The record outlives its revoke: a death before this point leaves it for the sweep.
-            if pending:
+        try:
+            for token in tokens:
+                if token != grant_token:
+                    ok = self.revoke(token, grant=False) and ok
+            ok = (self.revoke(grant_token, grant=True) if grant_token else grant is None) and ok
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
+                # The record outlives its revoke: a death before this point leaves it for the sweep.
+                if pending:
+                    conn.execute(
+                        "DELETE FROM github_confirmations WHERE user_id=? AND secret=?",
+                        (uid, pending["secret"]),
+                    )
+                conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
                 conn.execute(
-                    "DELETE FROM github_confirmations WHERE user_id=? AND secret=?",
-                    (uid, pending["secret"]),
+                    "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
+                    (int(not ok), uid),
                 )
-            conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
-            conn.execute(
-                "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
-                (int(not ok), uid),
-            )
-            life = self.store.lifecycle(conn, uid)
-            if deleting and not life["active_exchanges"] and not life["remote_work"]:
-                self.release_owner(conn, uid)
+                life = self.store.lifecycle(conn, uid)
+                if deleting and not life["active_exchanges"] and not life["remote_work"]:
+                    self.release_owner(conn, uid)
+                if marked:
+                    self._settle_exchange(conn, uid)
+        except Exception:
+            # Any failure before the closing transaction commits releases the in-flight marker
+            # and keeps the record, as expire and confirm do, so the sweep and a decline still
+            # revoke the candidate in this process. The revoke outcome is unknown: flag it.
             if marked:
-                self._settle_exchange(conn, uid)
+                self._release_failed_disconnect(uid)
+            raise
         return {
             "state": "absent",
             "message": "Disconnected"
@@ -914,6 +923,14 @@ class GitHub:
             else "Disconnected locally; GitHub revocation unconfirmed",
             "app_access_url": ACCESS,
         }
+
+    def _release_failed_disconnect(self, uid):
+        try:
+            with self.db._lock, self.db._tx() as conn:
+                conn.execute("UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,))
+                self._settle_exchange(conn, uid)
+        except Exception:  # noqa: BLE001 - a fenced or failing release is cleared by the next claim
+            logging.getLogger(__name__).warning("GitHub disconnect marker not released for %s", uid)
 
     def release_owner(self, conn, uid):
         conn.execute("DELETE FROM user_identities WHERE provider='github' AND user_id=?", (uid,))

@@ -1269,3 +1269,153 @@ def test_disconnect_deletes_only_the_record_it_revoked(merging):
     s.remote.on_revoke = once(successor)
     s.gateway.github.disconnect(s.uid, s.workspace)
     assert len(rows(s, "github_confirmations")) == 1
+
+
+def failing_once(error):
+    fired = []
+
+    def hook():
+        if not fired:
+            fired.append(True)
+            raise error
+
+    return hook
+
+
+def marker(s):
+    life = rows(s, "github_lifecycle")[0]
+    return life["active_exchanges"], life["unconfirmed"]
+
+
+def test_a_failed_candidate_revoke_in_disconnect_releases_its_marker_for_the_sweep(
+    merging, monkeypatch
+):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the candidate revoke"))
+    with pytest.raises(RuntimeError):
+        s.gateway.github.disconnect(s.uid, s.workspace)
+    s.remote.on_revoke = None
+    assert marker(s) == (0, 1)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    tick(s.gateway.github, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert revoked_tokens(s).count(candidate) == 2
+
+
+def test_a_decline_after_a_failed_disconnect_revoke_still_revokes_the_candidate(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the candidate revoke"))
+    with pytest.raises(RuntimeError):
+        s.gateway.github.disconnect(s.uid, s.workspace)
+    s.remote.on_revoke = None
+    # The generation moved on, so the answer is a refusal, but the cleanup still revokes the candidate.
+    declined = post_confirm(s, False)
+    assert declined and declined[0] == 409
+    assert revoked_tokens(s).count(candidate) == 2
+    assert not rows(s, "github_confirmations")
+
+
+def test_a_failed_closing_transaction_in_disconnect_releases_its_marker(merging, monkeypatch):
+    import sqlite3
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    real, armed = worker.store.lifecycle, []
+
+    def lifecycle(conn, uid):
+        # The first lifecycle read after the candidate revoke is in disconnect's closing transaction.
+        if armed:
+            armed.clear()
+            raise sqlite3.OperationalError("database is locked (synthetic)")
+        return real(conn, uid)
+
+    monkeypatch.setattr(worker.store, "lifecycle", lifecycle)
+    s.remote.on_revoke = lambda: armed.append(True)
+    with pytest.raises(sqlite3.OperationalError):
+        worker.disconnect(s.uid, s.workspace)
+    s.remote.on_revoke = None
+    monkeypatch.setattr(worker.store, "lifecycle", real)
+    assert marker(s) == (0, 1)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    tick(worker, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert revoked_tokens(s).count(candidate) == 2
+
+
+def test_a_lease_lost_in_disconnects_closing_transaction_is_cleared_by_the_next_claim(
+    merging, monkeypatch
+):
+    import threading
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    real, lost = worker._fence, []
+
+    def fence(conn):
+        if lost and threading.current_thread() is not worker._heartbeat_thread:
+            raise providers.SignInError("github_pending")
+        return real(conn)
+
+    monkeypatch.setattr(worker, "_fence", fence)
+    s.remote.on_revoke = lambda: lost.append(True)
+    with pytest.raises(providers.SignInError):
+        worker.disconnect(s.uid, s.workspace)
+    s.remote.on_revoke = None
+    monkeypatch.setattr(worker, "_fence", real)
+    # A fenced worker cannot release its marker; the next claim does, and the sweep then revokes.
+    assert marker(s)[0] == 1 and len(rows(s, "github_confirmations")) == 1
+    worker.recover()
+    assert marker(s)[0] == 0
+    tick(worker, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert revoked_tokens(s).count(candidate) == 2
+
+
+def test_an_ordinary_failure_in_the_sweep_revoke_is_retried_in_process(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the sweep revoke"))
+    with pytest.raises(RuntimeError):
+        tick(s.gateway.github, monkeypatch)
+    s.remote.on_revoke = None
+    assert marker(s)[0] == 0 and len(rows(s, "github_confirmations")) == 1
+    tick(s.gateway.github, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert revoked_tokens(s).count(candidate) == 2
+
+
+def test_an_ordinary_failure_in_a_decline_revoke_releases_its_marker_and_can_be_retried(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the decline revoke"))
+    post_confirm(s, False)
+    s.remote.on_revoke = None
+    assert marker(s)[0] == 0 and len(rows(s, "github_confirmations")) == 1
+    declined = post_confirm(s, False)
+    assert declined and declined[0] == 200
+    assert revoked_tokens(s).count(candidate) == 2
+    assert not rows(s, "github_confirmations")
+
+
+def test_an_ordinary_failure_revoking_the_replaced_token_leaves_the_settlement_for_the_sweep(
+    merging, monkeypatch
+):
+    s = merging
+    connect(s)
+    first = s.remote.issued[0]
+    s.remote.scope = "public_repo"
+    finish(s, begin_consent(s))
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure revoking the replaced token"))
+    post_confirm(s, True)
+    s.remote.on_revoke = None
+    # The swap committed, the marker is released, and the settlement record keeps the old token.
+    assert stored_token(s) == s.remote.issued[-1]
+    assert marker(s)[0] == 0 and len(rows(s, "github_confirmations")) == 1
+    tick(s.gateway.github, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert revoked_tokens(s).count(first) == 2
