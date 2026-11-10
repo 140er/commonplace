@@ -179,22 +179,25 @@ def test_card253_s11_literal_wing(case, extra_wing):
     from tests.test_typed_association_reads import SCOPES, TOOLS
 
     c = case
+    # Private read is owner-only, so a real member literal-wing reader never holds it.
+    scopes = [scope for scope in SCOPES if scope != "private:read"]
     uid = c.h.db.create_user("literal-reader@example.test")
     c.h.db.add_member(c.h.workspace, uid, "member", actor=c.h.admin)
     c.token = c.h.token(
         "literal",
         user=uid,
         tools=TOOLS,
-        scopes=SCOPES,
+        scopes=scopes,
         read_wings=["shared"],
         write_wings=["shared"],
         trust="trusted",
     )
     principal = c.h.db.authenticate_token(c.token)
+    assert principal.role == "member" and not principal.policy.has_scope("private:read")
     assert not principal.policy.sees_all_wings
     assert principal.policy.can_read_wing("shared")
     assert not principal.policy.can_read_wing("other")
-    assert all(principal.policy.has_scope(scope) for scope in SCOPES)
+    assert all(principal.policy.has_scope(scope) for scope in scopes)
     assert principal.policy.refusal("mempalace_kg_query") is None
     assert c.h.gateway.handoff.recall.can_read(principal, c.primary.id)
     assert not c.h.gateway.handoff.recall.can_read(principal, c.hidden.id)
