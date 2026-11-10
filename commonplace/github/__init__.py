@@ -144,7 +144,7 @@ class GitHub:
         except SignInError as exc:
             # This code is never lease loss by itself: the heartbeat's own fence on the next tick
             # decides that and stops the worker. A revoke that failed is flagged unconfirmed and its
-            # record dropped; only a crash or restart leaves a record for another sweep.
+            # record dropped; a crash, restart or lease loss leaves the record for another sweep.
             logging.getLogger(__name__).warning(
                 "GitHub consent sweep failed for %s: %s", row["user_id"], exc.code
             )
@@ -405,7 +405,7 @@ class GitHub:
     def callback(self, h):
         token = None
         uid = None
-        active = False
+        active = settled = False
         landing = "/app/"
         try:
             if h.command != "GET" or not enabled() or self.provider() is None:
@@ -551,7 +551,15 @@ class GitHub:
                             secret,
                         ),
                     )
+                # The record never exists while its exchange still counts as in flight: a
+                # disconnect between the two would skip a candidate that has no owner left.
+                self._settle_exchange(conn, uid)
                 token = None
+                settled = True
+            if settled:
+                active = False
+                with self.db._lock:
+                    self._live -= 1
         except (OAuthError, SignInError):
             pass
         finally:
@@ -826,6 +834,7 @@ class GitHub:
 
     def disconnect(self, uid, workspace=None, *, deleting=False):
         tokens = []
+        pending = None
         grant = None
         grant_token = None
         readable = True
@@ -855,7 +864,7 @@ class GitHub:
                     )
                 except SignInError:
                     readable = False
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
             if grant:
                 conn.execute("UPDATE github_grants SET disabled=1 WHERE user_id=?", (uid,))
                 if grant["expires_at"] > time.time():
@@ -865,13 +874,21 @@ class GitHub:
                         ]
                     except SignInError:
                         readable = False
-        ok = self.revoke(grant_token, grant=True) if grant_token else grant is None
-        ok = ok and readable
+        # A pending candidate goes first: revoking the whole grant would otherwise answer its own
+        # revoke as already gone and read as unconfirmed.
+        ok = readable
         for token in tokens:
             if token != grant_token:
                 ok = self.revoke(token, grant=False) and ok
+        ok = (self.revoke(grant_token, grant=True) if grant_token else grant is None) and ok
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
+            # The record outlives its revoke: a death before this point leaves it for the sweep.
+            if pending:
+                conn.execute(
+                    "DELETE FROM github_confirmations WHERE user_id=? AND secret=?",
+                    (uid, pending["secret"]),
+                )
             conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
             conn.execute(
                 "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
@@ -901,24 +918,26 @@ class GitHub:
         with self.db._lock:
             self._live -= 1
         with self.db._lock, self.db._tx() as conn:
-            self._fence(conn)
-            conn.execute(
-                "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
-                (uid,),
-            )
-            life = self.store.lifecycle(conn, uid)
-            if (
-                not life["active_exchanges"]
-                and not life["remote_work"]
-                and not conn.execute(
-                    "SELECT 1 FROM github_grants WHERE user_id=? AND disabled=1", (uid,)
-                ).fetchone()
-            ):
-                conn.execute(
-                    "UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,)
-                )
-                if life["deleting"]:
-                    self.release_owner(conn, uid)
+            self._settle_exchange(conn, uid)
+
+    def _settle_exchange(self, conn, uid):
+        """Release one in-flight exchange; callers may do this in the transaction that ends it."""
+        self._fence(conn)
+        conn.execute(
+            "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
+            (uid,),
+        )
+        life = self.store.lifecycle(conn, uid)
+        if (
+            not life["active_exchanges"]
+            and not life["remote_work"]
+            and not conn.execute(
+                "SELECT 1 FROM github_grants WHERE user_id=? AND disabled=1", (uid,)
+            ).fetchone()
+        ):
+            conn.execute("UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,))
+            if life["deleting"]:
+                self.release_owner(conn, uid)
 
     def recover(self):
         if self._live:

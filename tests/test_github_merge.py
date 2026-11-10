@@ -45,6 +45,8 @@ class MergeRemote(Remote):
         self.methods = {"squash": True, "merge": True, "rebase": True}
         self.pull_status = 200
         self.on_revoke = None
+        self.github_semantics = False
+        self.dead = set()
 
     def request(self, method, url, **kwargs):
         if url.endswith("access_token"):
@@ -86,9 +88,20 @@ class MergeRemote(Remote):
             if self.merge_status != 200:
                 return self.merge_status, {}, {}
             return 200, {}, {"merged": True, "sha": "c" * 40}
-        if method == "DELETE" and self.on_revoke:
+        if method == "DELETE" and (self.on_revoke or self.github_semantics):
             self.calls.append((method, url, kwargs))
-            self.on_revoke()
+            if self.on_revoke:
+                self.on_revoke()
+            if self.github_semantics:
+                # A grant delete sweeps every token of the user; a token already gone answers 404.
+                if url.endswith("/grant"):
+                    self.dead.update(self.issued)
+                    return 204, {}, {}
+                token = kwargs["json_body"]["access_token"]
+                if token in self.dead:
+                    return 404, {}, {}
+                self.dead.add(token)
+                return 204, {}, {}
             return self.status, {}, {}
         return super().request(method, url, **kwargs)
 
@@ -1071,16 +1084,21 @@ def test_tokens_stay_out_of_logs_audit_and_responses_on_the_sweep_and_decline_pa
     pending_merge_consent(s)
     s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
     tick(s.gateway.github, monkeypatch)
+    # A lapsed decline takes the binding-rejection path, a fresh one the plain decline path.
+    finish(s, begin_consent(s))
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    lapsed = post_confirm(s, False)
     finish(s, begin_consent(s))
     declined = post_confirm(s, False)
     raw = (
         caplog.text
         + repr(s.db.audit_entries())
+        + repr(lapsed)
         + repr(declined)
         + json.dumps(status(s))
         + repr(rows(s, "github_confirmations"))
     )
-    assert len(s.remote.issued) == 3
+    assert len(s.remote.issued) == 4 and not rows(s, "github_confirmations")
     for token in (*s.remote.issued, "synthetic-app-secret"):
         assert token not in raw
 
@@ -1109,6 +1127,7 @@ def test_the_replaced_token_stays_recorded_until_it_is_revoked(merging, monkeypa
 
     monkeypatch.setattr(worker, "_fence", fence)
     s.remote.on_revoke = hook
+    s.remote.github_semantics = True
     post_confirm(s, True)
     monkeypatch.setattr(worker, "_fence", real)
     s.remote.on_revoke = None
@@ -1120,3 +1139,71 @@ def test_the_replaced_token_stays_recorded_until_it_is_revoked(merging, monkeypa
     assert revoked_tokens(s).count(first) == 2
     assert not rows(s, "github_confirmations")
     assert stored_token(s) == s.remote.issued[-1]
+    # The retry hit a token GitHub had already revoked (404): the documented cost is a false
+    # "unconfirmed", chosen over an orphaned token (SYSTEM.md, remaining windows).
+    assert status(s).get("acknowledge_required") is True
+
+
+def test_disconnect_revokes_a_pending_candidate_before_the_grant(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.github_semantics = True
+    result = s.gateway.github.disconnect(s.uid, s.workspace)
+    tokens = [c[2]["json_body"]["access_token"] for c in s.remote.calls if c[0] == "DELETE"]
+    # The candidate is revoked once, while it still exists, and the grant delete follows.
+    assert tokens.count(candidate) == 1 and tokens[0] == candidate
+    assert result["message"] == "Disconnected"
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    assert status(s).get("acknowledge_required") is False
+
+
+def test_a_crash_in_disconnects_candidate_revoke_keeps_the_candidate_recorded(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+
+    def die():
+        raise Crash
+
+    s.remote.on_revoke = die
+    with pytest.raises(Crash):
+        s.gateway.github.disconnect(s.uid, s.workspace)
+    s.remote.on_revoke = None
+    # A death before the candidate's revoke finished must not forget the live token.
+    assert len(rows(s, "github_confirmations")) == 1
+    s.gateway.github.recover()
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate, candidate]
+    assert not rows(s, "github_confirmations")
+    assert status(s).get("acknowledge_required") is True
+
+
+def test_a_disconnect_right_after_the_callback_records_a_candidate_still_revokes_it(
+    merging, monkeypatch
+):
+    s = merging
+    flow = begin(s)
+    real, fired, result = s.db._tx, [], []
+
+    class Spy:
+        def __init__(self):
+            self.inner = real()
+
+        def __enter__(self):
+            return self.inner.__enter__()
+
+        def __exit__(self, kind, exc, tb):
+            out = self.inner.__exit__(kind, exc, tb)
+            if exc is None and not fired and rows(s, "github_confirmations"):
+                # The instant the callback's record is visible, a disconnect lands.
+                fired.append(True)
+                result.append(s.gateway.github.disconnect(s.uid, s.workspace))
+            return out
+
+    monkeypatch.setattr(s.db, "_tx", Spy)
+    finish(s, flow)
+    monkeypatch.setattr(s.db, "_tx", real)
+    candidate = s.remote.issued[-1]
+    assert fired and result[0]["message"] == "Disconnected"
+    assert revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+    assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 0
