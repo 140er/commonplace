@@ -943,7 +943,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
 
-  - Restricted structured drawer searches gate before limiting and double ranked prefixes up to 100 candidates in at most eight worker calls on one deadline. Responses omit candidate/filter totals and count only returned hits; every-wing and captured CLI paths retain existing behavior.
+  - Restricted structured drawer searches with an attached handoff context gate before limiting and double ranked prefixes up to 100 candidates in at most eight worker calls on one deadline. Responses omit candidate/filter totals and count only returned hits; every-wing, standalone and captured CLI paths retain existing behavior. Pinned searches preserve original protocol errors and opaque worker replies before structured refill.
 
   - Direct mediator helpers default to no gateway; workspace-bound callers still project metadata.
 

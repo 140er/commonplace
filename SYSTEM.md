@@ -974,6 +974,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
   At most eight worker searches share one existing request deadline; ranking
   still uses the same joint wing pool. Readable hits beyond that bound may
   remain unavailable. Every-wing principals keep their existing search path.
+- Refill requires an attached gateway handoff context; standalone worker
+  helpers retain their exact response shape and existing authorization gates.
+  Pinned-wing searches retain the original forwarded worker response, including
+  protocol errors and opaque replies, and refill only structured search hits.
+  The first search and every refill share the same deadline and call bound.
 - Restricted structured responses omit `total`, `total_before_filter` and
   `filtered_by_max_distance`; any `count` describes only returned readable
   hits. No hidden-candidate count or refill diagnostic is returned. Captured

@@ -576,6 +576,7 @@ class Mediator:
             forwarded = dict(request)
             forwarded["params"] = {"name": name, "arguments": args}
             response = self.workers.post(principal, forwarded)
+            response = self._refill_search_response(principal, name, args, response, plan)
             response = self._after(principal, name, rule, args, response)
             if isinstance(plan, dict) and "facts" in plan:
                 result = _tool_result(response)
@@ -935,12 +936,12 @@ class Mediator:
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
             if cli and not policy.sees_all_wings:
                 args["cli_compatible"] = False
-            if not policy.sees_all_wings and not args.get("cli_compatible"):
-                return {
-                    "respond": _with_search_facts(
-                        self._readable_search(principal, name, args), fact_result["facts"]
-                    )
-                }
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not policy.sees_all_wings
+                and not args.get("cli_compatible")
+            ):
+                return {**fact_result, "search_deadline": monotonic() + WORKER_TIMEOUT_S}
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -1485,11 +1486,29 @@ class Mediator:
         except TimeoutError:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
 
-    def _readable_search(self, principal, name, args) -> dict:
+    def _refill_search_response(self, principal, name, args, response, plan):
+        """Preserve the first worker reply unless it carries structured search hits."""
+        deadline = plan.get("search_deadline") if isinstance(plan, dict) else None
+        if deadline is None:
+            return response
+        result = _tool_result(response)
+        if (
+            not isinstance(result, dict)
+            or result.get("error")
+            or not isinstance(result.get("results"), list)
+        ):
+            return response
+        return _replace_result(
+            response,
+            self._readable_search(principal, name, args, initial=result, deadline=deadline),
+        )
+
+    def _readable_search(self, principal, name, args, *, initial=None, deadline=None) -> dict:
         """Fill from gated ranked prefixes, bounded by 100 candidates and one deadline."""
         from .handoff.mirror_access import gate
         from .rules import checks
 
+        end = deadline if deadline is not None else monotonic() + WORKER_TIMEOUT_S
         # Deadline-bound drawer checks reuse only open stores, as in overview
         # projection. Pinned-wing searches do not pass through that projection.
         context = getattr(self.gateway, "handoff", None)
@@ -1497,11 +1516,13 @@ class Mediator:
             with contextlib.suppress(Exception):
                 context.store_for(principal.workspace_id)
         try:
-            with checks.deadline(WORKER_TIMEOUT_S):
+            with checks.deadline(max(0, end - monotonic())):
                 worker_args = dict(args)
+                result = initial
                 while True:
                     checks.remaining(0)
-                    result = self.workers.call_tool(principal, name, worker_args)
+                    if result is None:
+                        result = self.workers.call_tool(principal, name, worker_args)
                     if not isinstance(result, dict):
                         raise WorkerUnavailable()
                     if result.get("error") or not isinstance(result.get("results"), list):
@@ -1536,6 +1557,7 @@ class Mediator:
                     ):
                         return result
                     worker_args["limit"] = min(fetched * 2, MAX_SEARCH_CANDIDATES)
+                    result = None
         except TimeoutError:
             return {"query": args.get("query", ""), "results": []}
 
@@ -1563,9 +1585,13 @@ class Mediator:
         if args.get("cli_compatible") and not principal.policy.sees_all_wings:
             worker_args["cli_compatible"] = False
         search = (
-            self.workers.call_tool
-            if principal.policy.sees_all_wings or worker_args.get("cli_compatible")
-            else self._readable_search
+            self._readable_search
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not principal.policy.sees_all_wings
+                and not worker_args.get("cli_compatible")
+            )
+            else self.workers.call_tool
         )
         result = search(principal, name, worker_args)
         if not isinstance(result, dict):

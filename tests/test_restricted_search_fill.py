@@ -56,6 +56,13 @@ def search_world(hidden=9, readable=4, *, every_wing=False):
         return _tool_response(request.get("id"), call_tool(p, params["name"], params["arguments"]))
 
     mediator = Mediator(Mock(), SimpleNamespace(call_tool=call_tool, post=post))
+    store = MemoryStore()
+    context = SimpleNamespace(
+        store_for=lambda workspace: store,
+        _stores={principal.workspace_id: store},
+        recall=Recall(lambda workspace: store),
+    )
+    mediator.gateway = SimpleNamespace(handoff=context)
     return SimpleNamespace(mediator=mediator, principal=principal, calls=calls, hits=hits)
 
 
@@ -161,9 +168,12 @@ def test_refill_preserves_worker_error():
 
 def test_refill_rejects_malformed_worker_response():
     world = search_world()
-    world.mediator.workers.call_tool = lambda *args: None
+    original = world.mediator.workers.call_tool
+    world.mediator.workers.call_tool = lambda p, name, args: (
+        None if name == "mempalace_search" else original(p, name, args)
+    )
     with pytest.raises(WorkerUnavailable):
-        request(world, wing="shared")
+        request(world)
 
 
 def test_expired_refill_discards_partial_results(monkeypatch):
@@ -172,7 +182,8 @@ def test_expired_refill_discards_partial_results(monkeypatch):
 
     def call_tool(*args):
         result = original(*args)
-        checks._deadline.set(0)
+        if checks._deadline.get() is not None:
+            checks._deadline.set(0)
         return result
 
     monkeypatch.setattr(world.mediator.workers, "call_tool", call_tool)

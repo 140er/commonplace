@@ -166,6 +166,9 @@ totals; any result count describes only returned readable hits. Readable hits be
 the bound can still be missed, and ranking is not independent of hidden candidates.
 Every-wing principals and captured CLI search keep their existing paths; structured
 CLI gating can reuse the refill before rendering. This makes no timing privacy claim.
+Standalone worker helpers retain their original response shape and authorization
+gates. Refill runs with an attached gateway handoff context, and pinned-wing
+searches preserve the original worker reply unless it contains structured hits.
 
 Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
 verified on compact, sqlite_exact and chroma.
