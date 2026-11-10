@@ -1,19 +1,20 @@
 # Execution and coworker handoff integration
 
-2026-11-09. Build real durable components, not release/deployment claims.
+2026-11-09. This contract describes durable execution and coworker runner integration;
+implementation and synthetic verification do not establish deployment readiness.
 
-## Ownership
+## Components
 
-Compute execution builder: new `commonplace/compute/executor.py`, any narrowly
-required `commonplace/compute/fence.py`, owning `control.py` additions/migrations,
-and `tests/test_compute_executor.py`. Keep existing public REST schema/semantics
-and metadata tests. No changes to routes, credentials, protocol, transport,
-chat/runtime or shared docs. Parent integrates worker installation and UI fields.
+Compute execution spans `commonplace/compute/executor.py`, its authority fence in
+`fence.py`, control-store additions/migrations in `control.py`, and
+`tests/test_compute_executor.py`. Preserve existing public REST schemas, metadata
+tests and the interfaces to routes, credentials, protocol, transport and chat/runtime.
+Worker installation and UI fields must remain consistent with these interfaces.
 
-Coworker runner builder: `commonplace/chat/coworkers/runtime.py`, narrowly required
-`commonplace/boards/service.py` changes, and dedicated new
-`tests/test_coworker_dispatch.py`. Do not edit other builders' Compute files or
-existing coworker store/routes/UI. Parent handles necessary store/result gluing.
+Coworker runner integration spans `commonplace/chat/coworkers/runtime.py`, the
+canonical task methods in `commonplace/boards/service.py`, and
+`tests/test_coworker_dispatch.py`. Preserve existing coworker store/routes/UI and
+Compute interfaces, including the storage and result projections between them.
 
 ## Durable Compute execution
 
