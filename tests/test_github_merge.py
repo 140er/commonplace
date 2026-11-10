@@ -738,7 +738,7 @@ def sweep_ticks(worker, monkeypatch, turns):
     return len(asked)
 
 
-def test_a_sweep_that_hits_pending_is_retried_and_does_not_stop_the_worker(
+def test_a_sweep_that_hits_pending_is_logged_and_leaves_stopping_to_the_next_fence_check(
     merging, monkeypatch, caplog
 ):
     s = merging
@@ -939,3 +939,184 @@ def test_a_lapsed_candidate_that_is_the_live_grant_is_neither_revoked_nor_flagge
     assert not rows(s, "github_confirmations")
     assert stored_token(s) == live
     assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+
+
+def post_confirm(s, accept):
+    csrf = status(s)["csrf"]
+    try:
+        return request(
+            s,
+            "/api/github/confirm",
+            "POST",
+            cookie=s.cookie,
+            raw=json.dumps({"csrf": csrf, "card": s.card, "accept": accept}).encode(),
+            headers={"Content-Type": "application/json", "Origin": urls.APP_URL},
+        )
+    except Exception:  # noqa: BLE001 - a synthetic failure may close the connection
+        return None
+
+
+def disconnect_once(s):
+    fired = []
+
+    def hook():
+        if not fired:
+            fired.append(True)
+            s.gateway.github.disconnect(s.uid, s.workspace)
+
+    return hook
+
+
+def test_a_disconnect_during_a_sweep_revoke_leaves_the_candidate_to_its_owner(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    s.remote.on_revoke = disconnect_once(s)
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s).count(candidate) == 1
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
+
+
+def test_a_disconnect_during_a_decline_revoke_leaves_the_candidate_to_its_owner(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = disconnect_once(s)
+    post_confirm(s, False)
+    assert revoked_tokens(s).count(candidate) == 1
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
+
+
+def test_a_restart_mid_revoke_needs_no_acknowledgement_once_the_sweep_revokes(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+
+    def die():
+        raise Crash
+
+    s.remote.on_revoke = die
+    with pytest.raises(Crash):
+        tick(s.gateway.github, monkeypatch)
+    # A real death runs no handler: the in-flight marker is still set when the next process starts.
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1")
+    s.remote.on_revoke = None
+    s.gateway.github.recover()
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate, candidate]
+    assert status(s).get("acknowledge_required") is False
+
+
+def test_a_restart_mid_exchange_without_a_record_still_requires_acknowledgement(merging):
+    s = merging
+    connect(s)
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1")
+    s.gateway.github.recover()
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+
+
+def two_pending(s):
+    """Owner first, then another person, both stopped at a lapsed Allow merging confirmation."""
+    first = pending_merge_consent(s)
+    owner_cookie = s.cookie
+    s.remote.scope = ""
+    other = other_person(s, 456)
+    s.cookie = sessions.COOKIE + "=" + sessions.start_session(s.db, other, s.workspace)
+    second = pending_merge_consent(s)
+    s.cookie = owner_cookie
+    s.remote.subject = 123
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    return first, second, other
+
+
+def test_a_sweep_skips_a_record_with_an_exchange_in_flight_and_serves_the_rest(
+    merging, monkeypatch
+):
+    s = merging
+    first, second, _ = two_pending(s)
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [second]
+    assert [r["user_id"] for r in rows(s, "github_confirmations")] == [s.uid]
+
+
+def test_expire_leaves_a_record_with_an_exchange_in_flight_to_its_owner(merging):
+    s = merging
+    pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1")
+    s.gateway.github.expire(s.uid)
+    assert revoked_tokens(s) == []
+    assert len(rows(s, "github_confirmations")) == 1
+
+
+def test_a_second_consumer_is_refused_while_an_exchange_is_in_flight(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    first = s.remote.issued[0]
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1")
+    code, _, raw = post_confirm(s, True)
+    assert code == 409 and json.loads(raw)["error"] == "github_pending"
+    assert stored_token(s) == first and revoked_tokens(s) == []
+    assert len(rows(s, "github_confirmations")) == 1 and candidate
+
+
+def test_tokens_stay_out_of_logs_audit_and_responses_on_the_sweep_and_decline_paths(
+    merging, monkeypatch, caplog
+):
+    s = merging
+    caplog.set_level(logging.DEBUG)
+    pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    tick(s.gateway.github, monkeypatch)
+    finish(s, begin_consent(s))
+    declined = post_confirm(s, False)
+    raw = (
+        caplog.text
+        + repr(s.db.audit_entries())
+        + repr(declined)
+        + json.dumps(status(s))
+        + repr(rows(s, "github_confirmations"))
+    )
+    assert len(s.remote.issued) == 3
+    for token in (*s.remote.issued, "synthetic-app-secret"):
+        assert token not in raw
+
+
+def test_the_replaced_token_stays_recorded_until_it_is_revoked(merging, monkeypatch):
+    import threading
+
+    s = merging
+    connect(s)
+    first = s.remote.issued[0]
+    s.remote.scope = "public_repo"
+    finish(s, begin_consent(s))
+    worker = s.gateway.github
+    real, lost = worker._fence, {"on": False}
+
+    def fence(conn):
+        if lost["on"] and threading.current_thread() is not worker._heartbeat_thread:
+            raise providers.SignInError("github_pending")
+        return real(conn)
+
+    during = []
+
+    def hook():
+        during.append(len(rows(s, "github_confirmations")))
+        lost["on"] = True  # the lease is lost while the replaced token's revoke is in flight
+
+    monkeypatch.setattr(worker, "_fence", fence)
+    s.remote.on_revoke = hook
+    post_confirm(s, True)
+    monkeypatch.setattr(worker, "_fence", real)
+    s.remote.on_revoke = None
+    assert during == [1], "the replaced token's record must exist while it is being revoked"
+    assert stored_token(s) == s.remote.issued[-1]
+    assert len(rows(s, "github_confirmations")) == 1
+    worker.recover()
+    tick(worker, monkeypatch)
+    assert revoked_tokens(s).count(first) == 2
+    assert not rows(s, "github_confirmations")
+    assert stored_token(s) == s.remote.issued[-1]

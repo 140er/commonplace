@@ -136,3 +136,28 @@ assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connec
   assert.ok(detail3.innerHTML.includes('Merged') && !detail3.innerHTML.includes('arm-merge') && !detail3.innerHTML.includes('data-needs-github="merge"'), 'merge controls stay gone after a re-select');
   ui3.stop();
 }
+
+// A merge that completes after the person moved to another card still counts when they come back.
+{
+  const detail4 = root();
+  let clickHandler, finishMerge;
+  detail4.addEventListener = (name, fn) => { if (name === 'click') clickHandler = fn; };
+  const api4 = async (path, options = {}) => {
+    if (path.startsWith('/api/cards/')) return {...ready, number: Number(path.split('/').at(-1))};
+    if (path === '/api/github' && !options.method) return {state: 'connected', merge: true, csrf: 'synthetic-csrf', login: 'test-person'};
+    if (path === '/api/github/merge') return new Promise((resolve) => { finishMerge = () => resolve({merged: true, sha: ready.pr_head}); });
+    return {holds: []};
+  };
+  const ui4 = createNeeds({mount: root(), detailMount: detail4, document: doc, setInterval: () => 1, clearInterval() {}, api: api4});
+  await ui4.select(7);
+  const press = async (name) => clickHandler({target: {closest: () => ({disabled: false, hasAttribute: (a) => a === 'data-needs-github', dataset: {needsGithub: name}})}, preventDefault() {}, stopPropagation() {}});
+  await press('arm-merge');
+  const pending = press('merge');
+  await new Promise((resolve) => setImmediate(resolve));
+  await ui4.select(8);
+  finishMerge();
+  await pending;
+  await ui4.select(7);
+  assert.ok(detail4.innerHTML.includes('Merged') && !detail4.innerHTML.includes('arm-merge') && !detail4.innerHTML.includes('data-needs-github="merge"'), 'a merge finishing after the person moved on is still remembered');
+  ui4.stop();
+}

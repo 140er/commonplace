@@ -142,8 +142,9 @@ class GitHub:
         try:
             self.expire(row["user_id"])
         except SignInError as exc:
-            # Never lease loss by itself: the heartbeat's own fence on the next tick decides that,
-            # so a failed or fenced revocation is retried instead of stopping the worker.
+            # This code is never lease loss by itself: the heartbeat's own fence on the next tick
+            # decides that and stops the worker. A revoke that failed is flagged unconfirmed and its
+            # record dropped; only a crash or restart leaves a record for another sweep.
             logging.getLogger(__name__).warning(
                 "GitHub consent sweep failed for %s: %s", row["user_id"], exc.code
             )
@@ -589,7 +590,11 @@ class GitHub:
         )
 
     def upgrade(self, conn, uid, row, candidate):
-        """Swap the caller's own token for the merge-scoped one; returns the old token."""
+        """Swap the caller's own token for the merge-scoped one.
+
+        Returns the old token and the record that keeps it until it is revoked: the pending
+        record becomes a lapsed settlement record in the swap's own transaction.
+        """
         grant = conn.execute(
             "SELECT * FROM github_grants WHERE user_id=? AND workspace_id=? AND disabled=0 AND subject=?",
             (uid, row["workspace_id"], candidate["subject"]),
@@ -604,13 +609,23 @@ class GitHub:
             "UPDATE github_grants SET secret=?, expires_at=? WHERE user_id=?",
             (secret, candidate["expires_at"], uid),
         )
-        return previous
+        replaced = self.store.encrypt(
+            conn,
+            uid,
+            "confirmation",
+            {**candidate, "token": previous, "scopes": [], "purpose": "replaced"},
+        )
+        conn.execute(
+            "UPDATE github_confirmations SET secret=?, expires_at=0 WHERE user_id=?",
+            (replaced, uid),
+        )
+        return previous, replaced
 
     def confirm(self, h, principal, session, data):
         uid = principal.user_id
         candidate = None
         accepted = False
-        previous = None
+        previous = settlement = None
         try:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
@@ -640,10 +655,10 @@ class GitHub:
                 accept = data.get("accept") is True
                 if accept:
                     if candidate.get("purpose") == "merge":
-                        previous = self.upgrade(conn, uid, row, candidate)
+                        previous, settlement = self.upgrade(conn, uid, row, candidate)
                     else:
                         self.commit(conn, uid, row, candidate)
-                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                        conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
             # Only a committed swap counts: a failed COMMIT must revoke the candidate, not the stored token.
             accepted = accept
         finally:
@@ -655,6 +670,7 @@ class GitHub:
                         self.drop_confirmation(uid, row["secret"])
                     elif previous:
                         self.revoke_token(uid, previous)
+                        self.drop_confirmation(uid, settlement)
                 finally:
                     self.finish_exchange(uid)
         # Declining merge consent keeps the connection that was already there.
@@ -824,9 +840,14 @@ class GitHub:
                 (int(deleting), uid),
             )
             conn.execute("DELETE FROM github_connect_flows WHERE user_id=?", (uid,))
-            pending = conn.execute(
-                "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
-            ).fetchone()
+            # A record whose exchange is in flight belongs to its owner, who revokes it exactly once.
+            pending = (
+                None
+                if life["active_exchanges"]
+                else conn.execute(
+                    "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
+                ).fetchone()
+            )
             if pending:
                 try:
                     tokens.append(
@@ -912,7 +933,7 @@ class GitHub:
             # A pending candidate alone is revoked by the sweep, which flags a failed revoke itself.
             "unconfirmed=CASE WHEN user_id IN (SELECT user_id FROM github_confirmations) "
             "AND user_id NOT IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_grants WHERE disabled=1) "
-            "AND disconnect_pending=0 AND active_exchanges=0 AND remote_work=0 THEN unconfirmed ELSE 1 END "
+            "AND disconnect_pending=0 AND remote_work=0 THEN unconfirmed ELSE 1 END "
             "WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
         )
         conn.execute("DELETE FROM github_connect_flows")

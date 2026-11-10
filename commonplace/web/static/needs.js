@@ -470,12 +470,14 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       const method = action === "disconnect" ? "DELETE" : "POST";
       const path = { disconnect: "/api/github", connect: "/api/github/connect", "allow-merge": "/api/github/merge-consent", merge: "/api/github/merge" }[action] || "/api/github/confirm";
       const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge, ...(action === "merge" ? { head: card.pr_head } : {}) } });
+      // Remember the merge before any stale-view check: it happened whichever card is on screen now.
+      if (action === "merge" && !stopped) mergedHeads.set(card.number, card.pr_head);
       if (stopped || token !== revision) return;
       github = null;
       if (result.authorize_url) { globalThis.location.assign(result.authorize_url); return; }
       github = await api("/api/github");
       if (stopped || token !== revision) { github = null; return; }
-      if (action === "merge") { mergedHeads.set(card.number, card.pr_head); github = { ...github, merged: result.sha || true }; }
+      if (action === "merge") github = { ...github, merged: result.sha || true };
       error = result.message || ""; drawDetail();
     } catch (failure) {
       const code = failure?.payload?.error;
