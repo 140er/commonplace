@@ -47,6 +47,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Thread-valued rooms: one shared thread-reference check covers bare IDs, app paths and URLs, t3-thread links, mcp: forms and embedded IDs on every room-returning route.
+
   - Private-read containment includes event cursor projection, indistinguishable unreadable write retries, readable tunnel endpoints, current-role token caps and explicit private-save notices.
 
   - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
@@ -254,6 +256,8 @@ Format (read by `commonplace orch docs-check`):
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
 - **Promises:**
+
+  - The handoff guide counts rooms naming a thread through a link, mcp: form or embedded ID as that thread's room.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
@@ -556,6 +560,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Thread-reference room regressions run each reference form against REST get/search and MCP drawer, listing, room and taxonomy reads as a member, with owner, readable-thread and ordinary-room controls.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -899,6 +905,8 @@ Format (read by `commonplace orch docs-check`):
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
 - **Promises:**
+
+  - The write-side room check shares the handoff thread-reference check, so a room naming an unreadable thread in any form is refused as not found.
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
@@ -1341,6 +1349,8 @@ Format (read by `commonplace orch docs-check`):
   - Agent context handoff to a fresh agent and append-only native session continuity.
 
 - **Promises:**
+
+  - `thread_ids` names the whole thread IDs in a room, topic or link in any reference form, raw or percent-decoded; `unreadable_room` and read_wing room filtering hide a room naming any thread the reader cannot read. Ordinary names such as `thr_deadline` name no thread.
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for restricted readers. Body text and arbitrary provenance labels are not scanned for private words.
 

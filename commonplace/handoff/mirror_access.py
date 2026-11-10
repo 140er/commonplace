@@ -14,6 +14,8 @@ from .recall import Recall
 
 _DROP = object()
 _THREAD_ROOM = re.compile(r"thr_[0-9a-f]+\Z")
+# A whole thread ID: ordinary names such as thr_deadline name no thread.
+_THREAD_REFERENCE = re.compile(r"(?<![0-9a-z_])thr_[0-9a-f]+(?![0-9a-z_])", re.IGNORECASE)
 
 
 class _ResponseAccess:
@@ -168,15 +170,16 @@ def thread_ids(value):
 
     Every route that returns a room or topic shares this check. Bare thread
     IDs, /app/threads/ paths and URLs, t3-thread://v1/ links, mcp: forms and
-    IDs embedded anywhere else count alike; percent-encoded copies are decoded
-    and undecodable values are scanned raw.
+    whole IDs embedded anywhere else count alike. Both the raw value and its
+    percent-decoded copy are scanned.
     """
     if not isinstance(value, str):
         return ()
     parsed = provenance_refs.refs(value)
-    decoded = () if parsed is provenance_refs.REFUSE else parsed.tokens
-    tokens = (*decoded, *provenance_refs.label_tokens(value))
-    return tuple(dict.fromkeys(t for t in tokens if t[:4].lower() == "thr_"))
+    texts = [value]
+    if parsed is not provenance_refs.REFUSE and parsed.text:
+        texts.append(parsed.text)
+    return tuple(dict.fromkeys(m[0] for text in texts for m in _THREAD_REFERENCE.finditer(text)))
 
 
 def private_thread_reference(can_read, value):

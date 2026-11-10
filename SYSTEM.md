@@ -1719,6 +1719,17 @@ shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
 labels, ranks or counts. Wildcard policies can reach those projections without
 private scope; literal-wing policies keep their existing tool visibility.
 
+A room or topic names a thread when it contains a whole thread ID in any form:
+a bare ID, an `/app/threads/` path or URL, a `t3-thread://v1/` link, an `mcp:`
+form or an ID embedded elsewhere, raw or percent-encoded. One shared check
+(`mirror_access.thread_ids`) applies to every route that returns or writes a
+room: drawer reads, search, drawer listings, room lists, taxonomy, tunnels,
+graph and overview pairs, and the write-side room check. A reader who cannot
+read every thread the value names receives the drawer as not found and the room
+is omitted from listings, exactly as for a bare thread-ID room. Readers of the
+thread, including owners, keep the room verbatim. Ordinary names that only
+start like an ID, such as `thr_notes` or `thr_deadline`, name no thread.
+
 For principals without every-wing access, CLI-compatible search acquires structured
 hits and renders only after the same drawer gate as structured search: room and
 provenance checks; body text is not scanned. This applies with a literal wing and

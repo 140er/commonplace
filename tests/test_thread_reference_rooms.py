@@ -116,16 +116,18 @@ def test_thread_ids_names_every_reference_form():
     for form, pattern in FORMS.items():
         assert mirror_access.thread_ids(pattern.format("thr_ab12")) == ("thr_ab12",), form
     assert mirror_access.thread_ids("/app/threads/thr%5Fab12") == ("thr_ab12",)
-    assert mirror_access.thread_ids("general") == ()
+    for ordinary in ("general", "thr_notes", "thr_deadline", "path_thr_ab12"):
+        assert mirror_access.thread_ids(ordinary) == (), ordinary
     assert mirror_access.thread_ids(None) == ()
 
 
-def test_member_ordinary_room_unchanged(hub, collection):
+@pytest.mark.parametrize("room", ["general", "thr_deadline"])
+def test_member_ordinary_room_unchanged(hub, collection, room):
     collection.add(
         ids=[DRAWER],
         documents=["Shared exact words about the plan"],
-        metadatas=[{"wing": "shared", "room": "general"}],
+        metadatas=[{"wing": "shared", "room": room}],
     )
     status, raw = rest(hub, member(hub), f"/api/memory/{DRAWER}")
     assert status == 200, raw
-    assert json.loads(raw)["topic"] == "general"
+    assert json.loads(raw)["topic"] == room
